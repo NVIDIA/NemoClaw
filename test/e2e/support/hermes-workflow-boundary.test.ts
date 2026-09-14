@@ -223,7 +223,7 @@ describe("Hermes GPU boundary", () => {
       step(
         workflow.jobs["hermes-e2e"],
         "Install reviewed OpenShell SDK archive without package credentials",
-      ).run = "npm ci";
+      ).uses = "./.github/actions/install-reviewed-openshell-sdk";
     }, validateE2eWorkflowBoundary);
 
     expect(missingNeed).toContain(
@@ -234,6 +234,19 @@ describe("Hermes GPU boundary", () => {
     );
     expect(unsafeInstall).toContain(
       "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
+    );
+  });
+
+  it("requires the shared reviewed SDK installer for external gateway health", () => {
+    const errors = wfErrors((workflow) => {
+      step(
+        workflow.jobs["external-gateway-health"],
+        "Install reviewed OpenShell SDK archive without package credentials",
+      ).uses = "./.github/actions/install-reviewed-openshell-sdk";
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toContain(
+      "external-gateway-health job must install the reviewed SDK with the shared action",
     );
   });
 

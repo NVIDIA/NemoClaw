@@ -27,6 +27,11 @@ export const E2E_ACTION_PROVENANCE = {
       "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf",
     contentSha256: "4a6a6b21993e579855916dfb897995a3f35dc4461d04666094af7eddb8676077",
   },
+  reviewedSdkInstall: {
+    reference:
+      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@9e24e6f0dd8a8566f463432ab81e3ce3f9343d0a",
+    contentSha256: "f5797c3764d62a5b395543dfe67971e091d9313b9231ffe1be5fac6beb066ec4",
+  },
   uploadArtifacts: {
     reference:
       "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",

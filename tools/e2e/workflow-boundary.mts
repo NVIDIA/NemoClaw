@@ -50,10 +50,12 @@ import {
   type E2eGatewayRuntime,
   type E2eGatewayRuntimeSupport,
 } from "./gateway-runtime.mts";
+import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import {
-  SDK_INSTALL_SCRIPT,
-  validateStandardProfileWorkflowBoundary,
-} from "./standard-profile-workflow-boundary.mts";
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+  validateReviewedOpenShellSdkInstallAction,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
@@ -1318,6 +1320,21 @@ function validateCatalogueOwnedJobs(errors: string[], jobs: WorkflowRecord): voi
   }
 }
 
+function validateExternalGatewayHealthSdkInstall(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "external-gateway-health";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) return;
+  const sdkInstall = requireJobStep(
+    errors,
+    jobName,
+    asSteps(job.steps),
+    REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+  );
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+    errors.push("external-gateway-health job must install the reviewed SDK with the shared action");
+  }
+}
+
 function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
   return asSteps(job.steps).some(
     (step) => asRecord(step.env).NVIDIA_INFERENCE_API_KEY !== undefined,
@@ -1830,19 +1847,8 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   ) {
     errors.push("hermes-e2e job must download the run-scoped reviewed SDK archive");
   }
-  const sdkInstall = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install reviewed OpenShell SDK archive without package credentials",
-  );
-  if (
-    !isDeepStrictEqual(sdkInstall, {
-      name: "Install reviewed OpenShell SDK archive without package credentials",
-      shell: "bash",
-      run: SDK_INSTALL_SCRIPT,
-    })
-  ) {
+  const sdkInstall = requireJobStep(errors, jobName, steps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
     errors.push(
       "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
     );
@@ -3206,6 +3212,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateStagingBrevLaunchableIdentityJob(errors, jobs);
   validateCatalogueOwnedJobs(errors, jobs);
+  validateExternalGatewayHealthSdkInstall(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
 
@@ -3353,6 +3360,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   return [
+    ...validateReviewedOpenShellSdkInstallAction(),
     ...validateDockerHubAuthAction(),
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),

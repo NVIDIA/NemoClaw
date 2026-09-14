@@ -6,33 +6,18 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, vi } from "vitest";
-import YAML from "yaml";
+import { describe, expect, it, vi } from "vitest";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import {
   runSupervisedProcess,
   type SupervisedProcessOwner,
   type SupervisedProcessResult,
 } from "../../helpers/supervised-process.ts";
-
-const profile = YAML.parse(
-  fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
-) as {
-  jobs: { run: { steps: Array<{ name?: string; run?: string }> } };
-};
-const installScript = profile.jobs.run.steps.find(
-  (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
-)!.run!;
-
-const e2eWorkflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-  jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
-};
-const externalGatewayInstallScript = e2eWorkflow.jobs["external-gateway-health"]!.steps.find(
-  (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
-)!.run!;
-const hermesInstallScript = e2eWorkflow.jobs["hermes-e2e"]!.steps.find(
-  (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
-)!.run!;
+import {
+  readReviewedOpenShellSdkInstallScript,
+  validateReviewedOpenShellSdkInstallAction,
+} from "../../../tools/e2e/reviewed-openshell-sdk-install-workflow-boundary.mts";
+const installScript = readReviewedOpenShellSdkInstallScript();
 
 type RunProcessOptions = {
   cwd?: string;
@@ -177,6 +162,24 @@ fs.writeFileSync(directory + "/index.js", process.env.SDK_SOURCE);
 `;
 
 describe.concurrent("catalogue OpenShell SDK installation", () => {
+  it("rejects changes to the immutable action content", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-action-"));
+    const actionPath = path.join(directory, "action.yaml");
+    try {
+      fs.writeFileSync(
+        actionPath,
+        fs
+          .readFileSync(".github/actions/install-reviewed-openshell-sdk/action.yaml", "utf8")
+          .replace("npm ci --offline --ignore-scripts", "npm ci --offline"),
+      );
+      expect(validateReviewedOpenShellSdkInstallAction(actionPath)).toContain(
+        "reviewed OpenShell SDK install action content must match its immutable commit pin",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("reaps helper descendants after the process-group leader exits", async (context) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-process-tree-"));
     const pidFile = path.join(root, "descendant.pid");
@@ -202,24 +205,12 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
   });
 
   it.for([
-    { name: "catalogue active SDK", script: installScript, lockedSdkVersion: "0.9.0" },
-    { name: "catalogue replacement SDK", script: installScript, lockedSdkVersion: "1.0.0" },
-    {
-      name: "external gateway active SDK",
-      script: externalGatewayInstallScript,
-      lockedSdkVersion: "0.9.0",
-    },
-    {
-      name: "external gateway replacement SDK",
-      script: externalGatewayInstallScript,
-      lockedSdkVersion: "1.0.0",
-    },
-    { name: "Hermes active SDK", script: hermesInstallScript, lockedSdkVersion: "0.9.0" },
-    { name: "Hermes replacement SDK", script: hermesInstallScript, lockedSdkVersion: "1.0.0" },
+    { name: "active SDK", lockedSdkVersion: "0.9.0" },
+    { name: "replacement SDK", lockedSdkVersion: "1.0.0" },
   ])(
     "installs the lock-selected SDK and dependencies offline for $name",
     testTimeoutOptions(90_000),
-    async ({ lockedSdkVersion, script }, context) => {
+    async ({ lockedSdkVersion }, context) => {
       const { expect } = context;
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-real-npm-"));
       try {
@@ -299,7 +290,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
         fs.copyFileSync(sdk.archive, path.join(root, "openshell-sdk", "sdk.tgz"));
         fs.copyFileSync(previousSdk.archive, path.join(root, "openshell-sdk", "previous-sdk.tgz"));
 
-        await runSuccessfulProcess("bash", ["-c", script], {
+        await runSuccessfulProcess("bash", ["-c", installScript], {
           cwd: workspace,
           env,
           owner: context,
@@ -421,13 +412,10 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
     },
   );
 
-  it.for([
-    { name: "catalogue", script: installScript },
-    { name: "Hermes", script: hermesInstallScript },
-  ])(
-    "rejects a candidate-local SDK in the $name install even when it claims a reviewed version",
+  it(
+    "rejects a candidate-local SDK even when it claims a reviewed version",
     testTimeoutOptions(90_000),
-    async ({ script }, context) => {
+    async (context) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-local-"));
       try {
         const [reviewedSdk] = await writePackageArchives(
@@ -471,7 +459,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
 
         await runProcessWithStatus(
           "bash",
-          ["-c", script],
+          ["-c", installScript],
           {
             cwd: workspace,
             env: {
