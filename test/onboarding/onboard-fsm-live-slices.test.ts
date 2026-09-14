@@ -33,6 +33,7 @@ type ProbeMode =
   | "providerless-staged-messaging"
   | "stale-recovery-admission"
   | "stale-session-decision"
+  | "active-cancellation"
   | "ahead-core";
 
 interface ProbeOptions {
@@ -243,6 +244,13 @@ async function runSliceProbe(
       scriptPath,
       `
 const scenario = ${JSON.stringify(scenario)};
+if (scenario.mode === "active-cancellation") {
+  require("node:fs").writeFileSync(
+    require("node:path").join(process.env.HOME, "active-child.pid"),
+    String(process.pid),
+  );
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+}
 const dashboardScenario = scenario.mode.startsWith("dashboard-");
 const flowSlices = require(${flowSlicesPath});
 const { advanceTo, branchTo } = require(${resultPath});
@@ -746,6 +754,42 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
       );
       assert.deepEqual(fs.readdirSync(workspaceRoot), []);
     } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for an actively cancelled child to exit before removing its workspace", async (context) => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fsm-active-"));
+    const controller = new AbortController();
+    const probe = runSliceProbe(
+      { slice: "initial", mode: "active-cancellation", workspaceRoot },
+      { signal: controller.signal, onTestFinished: context.onTestFinished },
+    );
+    let childPid = 0;
+    try {
+      await vi.waitFor(
+        () => {
+          const [workspace] = fs.readdirSync(workspaceRoot);
+          assert.ok(workspace);
+          const pidPath = path.join(workspaceRoot, workspace, "active-child.pid");
+          assert.ok(fs.existsSync(pidPath));
+          childPid = Number(fs.readFileSync(pidPath, "utf8"));
+          assert.ok(Number.isSafeInteger(childPid) && childPid > 0);
+          process.kill(childPid, 0);
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+
+      controller.abort(new Error("fixture test cancelled after launch"));
+      await assert.rejects(probe, /slice probe exited with status null and signal SIGKILL/u);
+      assert.throws(
+        () => process.kill(childPid, 0),
+        (error: NodeJS.ErrnoException) => error.code === "ESRCH",
+      );
+      assert.deepEqual(fs.readdirSync(workspaceRoot), []);
+    } finally {
+      controller.abort();
+      await probe.catch(() => undefined);
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
