@@ -1789,6 +1789,11 @@ RUN set -eu; \
                 rm -f "$target"; \
             fi; \
             if [ -d "$entry" ]; then \
+                nested_link="$(find -P "$entry" -type l -print -quit)"; \
+                if [ -n "$nested_link" ]; then \
+                    echo "ERROR: refusing legacy layout cleanup because $nested_link is a symlink" >&2; \
+                    exit 1; \
+                fi; \
                 mkdir -p "$target"; \
                 cp -a "$entry"/. "$target"/; \
             elif [ ! -e "$target" ]; then \

@@ -77,7 +77,10 @@ function dockerHealthCommandBetween(
   return command.trim();
 }
 
-function runOpenclawRepairLayoutCase(legacy: boolean) {
+function runOpenclawRepairLayoutCase(
+  legacy: boolean,
+  options: { prepareLegacyFixture?: (tmp: string, dataDir: string) => void } = {},
+) {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const cleanupBlock = dockerRunCommandBetween(
     dockerfile,
@@ -134,6 +137,7 @@ function runOpenclawRepairLayoutCase(legacy: boolean) {
     fs.mkdirSync(path.join(dataDir, "extensions"), { recursive: true });
     fs.writeFileSync(path.join(dataDir, "extensions", "legacy-plugin.json"), "{}\n");
     fs.writeFileSync(path.join(dataDir, ".legacy-state"), "preserved\n");
+    options.prepareLegacyFixture?.(tmp, dataDir);
   }
 
   const cleanup = runLoggedDockerShell(rewrite(cleanupBlock), tmp, functionDefs);
@@ -848,6 +852,17 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         `find ${legacy.openclawDir} -type d -exec chmod g+s {} +`,
       ]),
     );
+
+    const unsafeLegacy = runOpenclawRepairLayoutCase(true, {
+      prepareLegacyFixture: (tmp, dataDir) => {
+        const outsideState = path.join(tmp, "outside-state");
+        fs.writeFileSync(outsideState, "outside\n");
+        fs.symlinkSync(outsideState, path.join(dataDir, "extensions", "unsafe-link"));
+      },
+    });
+    expect(unsafeLegacy.cleanup.result.status).not.toBe(0);
+    expect(unsafeLegacy.cleanup.result.stderr).toContain("refusing legacy layout cleanup because");
+    expect(unsafeLegacy.cleanup.result.stderr).toContain("unsafe-link is a symlink");
   });
 
   it("provisions unified mutable .openclaw layout and editable personal profiles", () => {
