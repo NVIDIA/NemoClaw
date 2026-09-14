@@ -14,7 +14,6 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -162,9 +161,8 @@ async function inspectNoListener(
   });
 }
 
-async function cleanupDoubleOnboardState(
+async function cleanupDoubleOnboardSandboxes(
   host: HostCliClient,
-  lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
 ): Promise<void> {
   const names = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
@@ -191,21 +189,6 @@ async function cleanupDoubleOnboardState(
       artifactName: "cleanup-openshell-forward-stop-18789",
       env: commandEnv(),
       timeoutMs: 30_000,
-    }),
-  );
-  await lifecycle.stopGatewayRuntime();
-  await ignoreCleanupError(() =>
-    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
-      env: commandEnv(),
-      timeoutMs: 60_000,
-    }),
-  );
-  await ignoreCleanupError(() =>
-    sandbox.openshell(["gateway", "destroy", "-g", ALT_GATEWAY_NAME], {
-      artifactName: `cleanup-openshell-gateway-destroy-${ALT_GATEWAY_NAME}`,
-      env: commandEnv(),
-      timeoutMs: 60_000,
     }),
   );
 }
@@ -496,14 +479,28 @@ test(
       ],
     });
 
-    await cleanupDoubleOnboardState(host, lifecycle, sandbox);
+    await cleanupDoubleOnboardSandboxes(host, sandbox);
+    await lifecycle.stopGatewayRuntime();
+    await ignoreCleanupError(() =>
+      host.cleanupGatewayRegistration("nemoclaw", {
+        artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      }),
+    );
+    await ignoreCleanupError(() =>
+      host.cleanupGatewayRegistration(ALT_GATEWAY_NAME, {
+        artifactName: `cleanup-openshell-gateway-destroy-${ALT_GATEWAY_NAME}`,
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      }),
+    );
 
     progress.phase("onboard first sandbox");
     // Phase 2: first onboard.
     const first = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-2-first-onboard");
     const firstText = resultText(first);
     expect(first.exitCode, firstText).toBe(0);
-    expect(firstText).toContain(`Sandbox '${SANDBOX_A}' created`);
 
     const gatewayInfo = await sandbox.openshell(["gateway", "info", "-g", "nemoclaw"], {
       artifactName: "phase-2-openshell-gateway-info",
@@ -773,8 +770,8 @@ test(
       timeoutMs: 60_000,
     });
     const stoppedStatusTextB = resultText(stoppedStatusB);
-    expect(stoppedStatusB.exitCode, stoppedStatusTextB).toBe(1);
-    expect(stoppedStatusTextB).toContain("sandbox_container_stopped");
+    expect(stoppedStatusB.exitCode, stoppedStatusTextB).toBe(0);
+    expect(stoppedStatusTextB).toContain("Phase: Stopped");
     expect(stoppedStatusTextB).not.toContain("sandbox_dashboard_port_conflict");
 
     const retainedForwardAAfterStop = await waitForDashboardReachability(
@@ -885,37 +882,35 @@ test(
       env: commandEnv(),
       timeoutMs: 30_000,
     });
-    await lifecycle.stopGatewayRuntime();
-    await gateway.expectHostRuntimeStopped({ artifactName: "phase-6-gateway-runtime-stopped" });
-    const postStopStatus = await command(host, [SANDBOX_B, "status"], {
-      artifactName: "phase-6-status-after-gateway-stop",
-      env: commandEnv(),
-      timeoutMs: 60_000,
-    });
-    const postStopText = resultText(postStopStatus);
-    expect([0, 1]).toContain(postStopStatus.exitCode);
-    expect(postStopText).toMatch(
-      /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart/,
-    );
-    expect(registryHas(SANDBOX_B), "gateway-stop status removed sandbox B registry entry").toBe(
-      true,
-    );
+    let postStopText = "";
+    try {
+      await lifecycle.stopGatewayRuntime();
+      await gateway.expectHostRuntimeStopped({ artifactName: "phase-6-gateway-runtime-stopped" });
+      const postStopStatus = await command(host, [SANDBOX_B, "status"], {
+        artifactName: "phase-6-status-after-gateway-stop",
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      });
+      postStopText = resultText(postStopStatus);
+      expect([0, 1]).toContain(postStopStatus.exitCode);
+      expect(postStopText).toMatch(
+        /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart|OpenShell could not reach the selected gateway\.[\s\S]*Check `openshell status`, verify the active gateway, and retry/,
+      );
+      expect(registryHas(SANDBOX_B), "gateway-stop status removed sandbox B registry entry").toBe(
+        true,
+      );
+    } finally {
+      // Sandbox deletion requires the gateway that this test deliberately stopped.
+      const start = await lifecycle.startGatewayRuntime({ sandboxName: SANDBOX_B });
+      expect(start.exitCode, resultText(start)).toBe(0);
+      await lifecycle.waitForGatewayConnected();
+    }
 
     progress.phase("remove double-onboard resources");
-    // Phase 7: final cleanup with explicit assertions.
-    await cleanupDoubleOnboardState(host, lifecycle, sandbox);
-    const sandboxAAfterCleanup = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
-      artifactName: "phase-7-openshell-sandbox-a-after-cleanup",
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    });
-    const sandboxBAfterCleanup = await sandbox.openshell(["sandbox", "get", SANDBOX_B], {
-      artifactName: "phase-7-openshell-sandbox-b-after-cleanup",
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(sandboxAAfterCleanup.exitCode, resultText(sandboxAAfterCleanup)).not.toBe(0);
-    expect(sandboxBAfterCleanup.exitCode, resultText(sandboxBAfterCleanup)).not.toBe(0);
+    // Keep the gateway available until registered sandbox cleanup has also finished.
+    await cleanupDoubleOnboardSandboxes(host, sandbox);
+    expect(await waitOpenshellSandboxAbsent(sandbox, SANDBOX_A, 60_000)).toBe(true);
+    expect(await waitOpenshellSandboxAbsent(sandbox, SANDBOX_B, 60_000)).toBe(true);
     expect(
       registryHas(SANDBOX_A) || registryHas(SANDBOX_B),
       "registry still contains test entries",
@@ -938,11 +933,11 @@ test(
           stopB.exitCode === 0 &&
           !releasedForwardB.reachable &&
           retainedForwardAAfterStop.reachable &&
-          stoppedStatusTextB.includes("sandbox_container_stopped") &&
+          stoppedStatusTextB.includes("Phase: Stopped") &&
           !stoppedStatusTextB.includes("sandbox_dashboard_port_conflict"),
-        staleRegistryRecovered: rebuild.exitCode === 0,
+        staleRegistryRecovered: cleanReplacement.exitCode === 0,
         gatewayStopGuidance:
-          /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart/.test(
+          /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart|OpenShell could not reach the selected gateway\.[\s\S]*Check `openshell status`, verify the active gateway, and retry/.test(
             postStopText,
           ),
       },

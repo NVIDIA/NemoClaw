@@ -25,3 +25,23 @@ as TypeScript or Vitest.
 
 GitHub workflows must execute the advisor entrypoint from the trusted `ADVISOR_DIR` checkout. PR
 workspaces remain inert analysis data only.
+
+The deterministic focused mapping recommends `staging-brev-launchable` for these behavior owners:
+
+- Gateway discovery and ownership, shared forward recovery or startup, and connect/probe entrypoints
+  listed in `BREV_LAUNCHABLE_FILES` in `risk-plan.mts`.
+- Runtime files in the `src/lib/onboard/gateway-binding/` and
+  `src/lib/actions/sandbox/launch-readiness/` modules, including new nested helpers.
+- The `full-e2e` scenario and companion source files under `test/e2e/live/` and `test/e2e/fixtures/`,
+  including new helpers in `full-e2e/` directories.
+
+Module matching excludes source-unit tests and documentation. Scenario matching includes live tests
+and source helpers, but excludes documentation and support-unit tests. Similarly named sibling modules
+and Hermes-only neighboring implementations do not trigger this mapping. Existing lifecycle
+recommendations remain selected, and specialist output cannot remove Brev from the deterministic plan.
+
+This recommendation needs the full runtime scenario; `staging-brev-launchable-identity` only proves
+image identity. An authorized maintainer selects `jobs=staging-brev-launchable` with empty `targets`
+through the trusted workflow on `main`. Do not combine that selector with other job IDs. Follow the
+[maintainer E2E procedure](../../.agents/skills/nemoclaw-maintainer-e2e/SKILL.md) for candidate eligibility,
+credentials, deployment, and cleanup. The recommendation does not dispatch a run or authorize deployment.

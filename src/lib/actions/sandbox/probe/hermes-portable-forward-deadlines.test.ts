@@ -49,7 +49,7 @@ describe("Hermes Portable forward recovery deadline", () => {
     expect(fixture.forwardServiceLaunches).toHaveLength(0);
   });
 
-  it("rejects a backward operation clock and checks restoration (#11652)", async () => {
+  it("restores an owned child after rejecting a backward operation clock (#11649, #11652)", async () => {
     const fixture = createRecoveryFixture();
     await fixture.input.deps.sleep!(10);
     const now = fixture.input.deps.now!;
@@ -66,15 +66,15 @@ describe("Hermes Portable forward recovery deadline", () => {
       },
     });
     await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
-      "restoration-unproved",
+      "recovery-failed",
     );
     expect(fixture.forwardServiceLaunches).toHaveLength(1);
-    expect(fixture.records.get(18_789)?.reachable).toBe(true);
+    expect(fixture.records.has(18_789)).toBe(false);
     expect(fixture.currentMutationCalls).toHaveLength(0);
     expect(fixture.rollbackCaptureCalls).not.toHaveLength(0);
   });
 
-  it("rejects settlement when the final ownership check exhausts the allowance (#11652)", async () => {
+  it("restores an owned child when the final ownership check exhausts the allowance (#11649, #11652)", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789] });
     Object.assign(fixture.input, { operationTimeoutMs: 100 });
     const owner = fixture.input.deps.isForwardServiceOwner!;
@@ -86,13 +86,14 @@ describe("Hermes Portable forward recovery deadline", () => {
       },
     });
     await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
-      "restoration-unproved",
+      "recovery-failed",
     );
     expect(fixture.elapsedMs()).toBe(100);
+    expect(fixture.records.has(18_789)).toBe(false);
     expect(fixture.rollbackCaptureCalls).not.toHaveLength(0);
   });
 
-  it("passes the remaining transaction allowance to the second forward (#11652)", async () => {
+  it("restores owned children after passing the remaining allowance to the second forward (#11649, #11652)", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
     Object.assign(fixture.input, { operationTimeoutMs: 100 });
     const launch = fixture.input.deps.launchForwardService!;
@@ -108,9 +109,10 @@ describe("Hermes Portable forward recovery deadline", () => {
       },
     });
     await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
-      "restoration-unproved",
+      "recovery-failed",
     );
     expect(allowances).toEqual([100, 40]);
     expect(fixture.elapsedMs()).toBe(100);
+    expect(fixture.records.size).toBe(0);
   });
 });
