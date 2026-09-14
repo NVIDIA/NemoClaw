@@ -3791,6 +3791,7 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
     stagingRoot = interruptedUninstallStagingRoot(paths, runtime);
     recoveryRoots = interruptedUninstallRecoveryRoots(stagingRoot);
   } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return true;
     runtime.warn(
       `Unable to inspect interrupted-uninstall recovery state before cleanup: ${formatError(error)}. The selected state was preserved.`,
     );
