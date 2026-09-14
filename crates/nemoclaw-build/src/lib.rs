@@ -76,14 +76,17 @@ pub fn source_archive(
         if !metadata.is_file() {
             return Err("source archive requires regular files".into());
         }
-        let mut mode = 0o644;
         #[cfg(unix)]
-        {
+        let mode = {
             use std::os::unix::fs::PermissionsExt;
             if metadata.permissions().mode() & 0o111 != 0 {
-                mode = 0o755;
+                0o755
+            } else {
+                0o644
             }
-        }
+        };
+        #[cfg(not(unix))]
+        let mode = 0o644;
         let mut header = tar::Header::new_gnu();
         header.set_size(metadata.len());
         header.set_mode(mode);

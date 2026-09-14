@@ -5,6 +5,7 @@ use crate::{CancellationToken, Error};
 use process_wrap::tokio::{CommandWrap, KillOnDrop};
 use std::{collections::BTreeMap, path::Path, process::Stdio, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio_util::task::AbortOnDropHandle;
 
 async fn capture(
     mut pipe: impl AsyncRead + Unpin,
@@ -62,11 +63,14 @@ pub(crate) async fn run(
         operation: args.first().unwrap_or(&"command").to_string(),
         diagnostic: "cannot launch bundled executable".into(),
     })?;
-    let stdout = tokio::spawn(capture(
+    let stdout = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stdout().take().expect("piped stdout"),
         64 * 1024 * 1024,
-    ));
-    let stderr = tokio::spawn(capture(child.stderr().take().expect("piped stderr"), 16384));
+    )));
+    let stderr = AbortOnDropHandle::new(tokio::spawn(capture(
+        child.stderr().take().expect("piped stderr"),
+        16384,
+    )));
     let status = tokio::select! {
         status=child.wait()=>status,
         ()=cancel.cancelled()=>{
@@ -80,20 +84,26 @@ pub(crate) async fn run(
     };
     // Clean up descendants even when their parent exited normally.
     let _ = child.start_kill();
-    let ((output, overflow), (mut diagnostic, diagnostic_overflow)) = tokio::try_join!(
-        async {
-            stdout
-                .await
-                .map_err(|_| Error::State("stdout task failed"))?
-                .map_err(|_| Error::State("cannot read child stdout"))
-        },
-        async {
-            stderr
-                .await
-                .map_err(|_| Error::State("stderr task failed"))?
-                .map_err(|_| Error::State("cannot read child stderr"))
-        }
-    )?;
+    let capture = async {
+        tokio::try_join!(
+            async {
+                stdout
+                    .await
+                    .map_err(|_| Error::State("stdout task failed"))?
+                    .map_err(|_| Error::State("cannot read child stdout"))
+            },
+            async {
+                stderr
+                    .await
+                    .map_err(|_| Error::State("stderr task failed"))?
+                    .map_err(|_| Error::State("cannot read child stderr"))
+            }
+        )
+    };
+    let ((output, overflow), (mut diagnostic, diagnostic_overflow)) = tokio::select! {
+        ()=cancel.cancelled()=>return Err(Error::Cancelled),
+        result=tokio::time::timeout(Duration::from_secs(5),capture)=>result.map_err(|_|Error::State("child exited but its output streams did not close; retain state for reconciliation"))??,
+    };
     if status.is_ok_and(|status| status.success()) && !overflow {
         return Ok(output);
     }
@@ -173,7 +183,7 @@ async fn cancelling_a_running_command_kills_its_background_child() {
     .expect("background child must terminate after cancellation");
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     #[tokio::test]
@@ -210,4 +220,21 @@ mod tests {
             Err(crate::Error::Cancelled)
         ));
     }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[tokio::test]
+async fn exited_parent_cannot_leave_capture_waiting_for_an_escaped_descendant() {
+    let directory = tempfile::tempdir().unwrap();
+    let result=tokio::time::timeout(Duration::from_secs(7),run(directory.path(),Path::new("/usr/bin/python3"),&["-c", "import os,time; pid=os.fork(); (os.setsid(),open('escaped.pid','w').write(str(os.getpid())),time.sleep(30)) if pid==0 else None"],&Default::default(),&CancellationToken::new())).await;
+    if let Ok(pid) = std::fs::read_to_string(directory.path().join("escaped.pid")) {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", pid.trim()])
+            .status();
+    }
+    assert!(
+        result.is_ok(),
+        "capture outlived the exited command without a bound"
+    );
+    assert!(result.unwrap().is_err());
 }

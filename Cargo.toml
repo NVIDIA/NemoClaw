@@ -35,7 +35,7 @@ http = "1"
 tokio-stream = { version = "0.1", features = ["net"] }
 getrandom = "0.4"
 process-wrap = { version = "10", features = ["tokio1"] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["rt"] }
 clap = { version = "4", features = ["derive"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
