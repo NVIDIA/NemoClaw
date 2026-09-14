@@ -29,6 +29,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Pa
 }
 $files = @(Get-ChildItem -LiteralPath $RuntimeRoot -Recurse -File -Force)
 $logicalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+$sourceManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()
 $maximumMiB = [Math]::Max(4096, [Math]::Ceiling(($logicalBytes + 536870912) / 1MB))
 $mount = Join-Path $env:RUNNER_TEMP ('nemoclaw-image-' + [guid]::NewGuid().ToString('N'))
 $diskpart = Join-Path $env:SystemRoot 'System32\diskpart.exe'
@@ -71,15 +72,17 @@ try {
         throw 'The runtime image NTFS root could not enable inherited compression.'
     }
     $copyLog = [IO.Path]::ChangeExtension($ReceiptPath, '.robocopy.log')
-    & (Join-Path $env:SystemRoot 'System32\robocopy.exe') $RuntimeRoot $mount /E /COPY:DT /DCOPY:DT /R:0 /W:0 /NP "/LOG:$copyLog" | Out-Null
+    & (Join-Path $env:SystemRoot 'System32\robocopy.exe') $RuntimeRoot $mount /E /MOV /COPY:DT /DCOPY:DT /R:0 /W:0 /NP "/LOG:$copyLog" | Out-Null
     $copyStatus = $LASTEXITCODE
     $receipt['population'] = @{ status = $copyStatus; log = [IO.Path]::GetFileName($copyLog) }
     if ($copyStatus -ge 8) {
         $detail = ((Get-Content -LiteralPath $copyLog -Tail 40) -join ' | ')
         throw "Runtime image population failed with status ${copyStatus}: $detail"
     }
-    if ((Get-FileHash -LiteralPath (Join-Path $mount 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant() -ne
-        (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()) {
+    $mountedFiles = @(Get-ChildItem -LiteralPath $mount -Recurse -File -Force)
+    $mountedBytes = [long](($mountedFiles | Measure-Object -Property Length -Sum).Sum)
+    if ($mountedFiles.Count -ne $files.Count -or $mountedBytes -ne $logicalBytes -or
+        (Get-FileHash -LiteralPath (Join-Path $mount 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sourceManifestSha256) {
         throw 'The mounted runtime manifest differs after image population.'
     }
     @("select vdisk file=`"$OutputImage`"", 'detach vdisk', 'compact vdisk', 'exit') |
@@ -93,7 +96,7 @@ try {
         maximumMiB = $maximumMiB
     }
     $receipt['innerFilesystemCompression'] = 'ntfs-inherited-before-population'
-    $receipt['manifestSha256'] = (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $receipt['manifestSha256'] = $sourceManifestSha256
     $receipt.status = 'built-detached-and-verified'
 } catch {
     $primary = $_

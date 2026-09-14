@@ -186,7 +186,6 @@ def compose(
     ):
         raise ValueError("The selected runtime assembly did not complete.")
     relative = "runtimes/" + identity["runtimeId"]
-    verify_seal(assembled / relative, identity)
     if (runtime_image is None) != (runtime_image_receipt is None):
         raise ValueError("The runtime image and its receipt must be supplied together.")
     image = None
@@ -206,6 +205,8 @@ def compose(
             or image.get("image", {}).get("bytes") != runtime_image.stat().st_size
         ):
             raise ValueError("The finished runtime application image differs from its seal.")
+    else:
+        verify_seal(assembled / relative, identity)
     if hash_file(host / "bin/node.exe")[1] != identity["nodeSha256"]:
         raise ValueError("The package shared Node differs from the runtime seal.")
     native = read_json(capabilities, 4096)
