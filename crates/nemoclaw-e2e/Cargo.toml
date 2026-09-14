@@ -1,0 +1,23 @@
+[package]
+name = "nemoclaw-e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+nemoclaw-provider = { path = "../nemoclaw-provider" }
+async-trait.workspace = true
+serde_json.workspace = true
+tf-provider.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+
+[[bin]]
+name = "terraform-provider-nemoclaw-fixture"
+path = "src/bin/provider.rs"
+
+[lints]
+workspace = true

@@ -623,6 +623,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
+name = "nemoclaw-e2e"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemoclaw-provider",
+ "nemoclaw-sdk",
+ "serde_json",
+ "tempfile",
+ "tf-provider",
+ "tokio",
+]
+
+[[package]]
 name = "nemoclaw-provider"
 version = "0.1.0"
 dependencies = [
@@ -637,6 +650,9 @@ dependencies = [
 [[package]]
 name = "nemoclaw-sdk"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+]
 
 [[package]]
 name = "nom"

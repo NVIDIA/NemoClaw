@@ -8,3 +8,6 @@ publish = false
 
 [lints]
 workspace = true
+
+[dependencies]
+async-trait.workspace = true

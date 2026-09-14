@@ -5,7 +5,9 @@ The Go implementation and its validation remain on `v1-poc`.
 
 See [DESIGN.md](DESIGN.md) for the accepted scope and implementation sequence.
 The SDK currently exposes checked durable bindings and refresh semantics.
-Runtime provisioning and provider protocol qualification are not implemented yet.
+A Rust provider adapter is qualified against OpenTofu for fixture-backed refresh
+and partial-creation state retention. Runtime provisioning is not implemented yet.
+See [test instructions](docs/testing.md).
 
 Run `cargo test --workspace`, `cargo fmt --check`, and
 `cargo clippy --workspace --all-targets -- -D warnings`.
