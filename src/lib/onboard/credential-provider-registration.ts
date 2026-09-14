@@ -232,6 +232,7 @@ function validatePlannedCredentialProviderBindings(
 }
 
 export function createCredentialProviderRegistration(deps: CredentialProviderRegistrationDeps) {
+  const refreshReceipts = new Map<string, string>();
   const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
   async function upsertProvider(
@@ -293,6 +294,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       target: namedOpenShellGateway(gatewayName),
       definitions: application.definitions,
       refreshes: application.refreshes,
+      refreshReceipts,
       requireCompleteBindings: true,
       replaceExisting: options.replaceExisting,
       allowedSandboxes: options.allowedSandboxes,
