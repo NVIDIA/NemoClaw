@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+
 /**
  * Pure classifiers for SSH probe outcomes into transport-level failures
  * (unreachable) vs application-level failures (reachable but exit-non-zero).
@@ -30,4 +32,22 @@ export function isSshTransportFailure(result: {
   if (result.signal === "SIGHUP" || result.signal === "SIGPIPE") return true;
   if (result.status === null) return true;
   return result.status === 255;
+}
+
+/** The enclosing recovery transaction owns the exact target and execution user. */
+export type SandboxStateRestoreCommand = (
+  command: string,
+  options: { input?: Buffer; timeout: number; maxBuffer?: number },
+) => Pick<SpawnSyncReturns<Buffer>, "status" | "signal" | "error" | "stdout" | "stderr">;
+
+export function sshStateRestoreCommand(
+  args: readonly string[],
+  env?: NodeJS.ProcessEnv,
+): SandboxStateRestoreCommand {
+  return (command, options) =>
+    spawnSync("ssh", [...args, command], {
+      ...options,
+      ...(env ? { env } : {}),
+      stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    });
 }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { type SandboxStateRestoreCommand, sshStateRestoreCommand } from "./ssh-transport.js";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -148,6 +148,7 @@ export function restoreStateFile(
   freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   env?: NodeJS.ProcessEnv,
+  runCommand: SandboxStateRestoreCommand = sshStateRestoreCommand(sshArgs, env),
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
@@ -168,6 +169,7 @@ export function restoreStateFile(
       previousImagePluginInstalls,
       specPath: spec.path,
       sshArgs,
+      runCommand,
     });
     if (result.ok) {
       input = result.input;
@@ -186,10 +188,8 @@ export function restoreStateFile(
   }
   if (input === null) return false;
 
-  const result = spawnSync("ssh", [...sshArgs, command], {
-    ...(env ? { env } : {}),
+  const result = runCommand(command, {
     input,
-    stdio: ["pipe", "pipe", "pipe"],
     timeout: 120000,
   });
 

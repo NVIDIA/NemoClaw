@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "child_process";
+import { type SandboxStateRestoreCommand, sshStateRestoreCommand } from "./ssh-transport.js";
 
 import { shellQuote } from "../runner.js";
 import {
@@ -26,6 +26,7 @@ export interface OpenClawConfigRestoreFromSandboxOptions {
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   specPath: string;
   sshArgs: readonly string[];
+  runCommand?: SandboxStateRestoreCommand;
 }
 
 function openClawConfigRemotePath(dir: string, specPath: string): string {
@@ -49,11 +50,10 @@ function readCurrentOpenClawConfig(
   specPath: string,
   log: (message: string) => void,
   env?: NodeJS.ProcessEnv,
+  runCommand = sshStateRestoreCommand(sshArgs, env),
 ): Buffer | null {
   const command = buildOpenClawConfigReadCommand(dir, specPath);
-  const result = spawnSync("ssh", [...sshArgs, command], {
-    ...(env ? { env } : {}),
-    stdio: ["ignore", "pipe", "pipe"],
+  const result = runCommand(command, {
     timeout: 120000,
     maxBuffer: 256 * 1024 * 1024,
   });
@@ -100,6 +100,7 @@ export function buildOpenClawConfigRestoreInputFromSandbox({
   previousImagePluginInstalls,
   specPath,
   sshArgs,
+  runCommand,
 }: OpenClawConfigRestoreFromSandboxOptions): OpenClawConfigRestoreInputResult {
   if ((previousImagePluginInstalls === undefined) !== (freshImagePluginInstalls === undefined)) {
     return {
@@ -121,7 +122,7 @@ export function buildOpenClawConfigRestoreInputFromSandbox({
   }
   return buildOpenClawConfigRestoreInput(
     backupContents,
-    readCurrentOpenClawConfig(sshArgs, dir, specPath, log, env),
+    readCurrentOpenClawConfig(sshArgs, dir, specPath, log, env, runCommand),
     { freshImagePluginInstalls, previousImagePluginInstalls },
   );
 }

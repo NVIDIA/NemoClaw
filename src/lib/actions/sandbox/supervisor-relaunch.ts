@@ -12,7 +12,6 @@ import {
   type DockerGpuPatchResult,
   parseDockerInspectJson,
 } from "../../onboard/docker-gpu-patch";
-import { sameContainerId } from "../../onboard/docker-gpu-patch-clone";
 import {
   type DockerGpuPatchFinalizeOutcome,
   finalizeDockerGpuPatchBackup,
@@ -33,6 +32,7 @@ import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
 import { backupSandboxStateWithManagedAuthority } from "./snapshot/backup-authority";
+import { restoreRecreatedDockerSandboxState } from "./snapshot/docker-recreated-restore";
 
 /**
  * Legacy sandboxes persist `sleep infinity` while `scripts/nemoclaw-start.sh`
@@ -69,7 +69,7 @@ export type ManagedSupervisorRelaunchDeps = {
   restartRestoredManagedGateway?: (containerId: string, retainedDockerBackupId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
   sleep?: (seconds: number) => void;
-  restoreState?: typeof sandboxState.restoreSandboxState;
+  restoreState?: typeof restoreRecreatedDockerSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   recreate?: (
@@ -239,7 +239,7 @@ export function relaunchManagedSupervisorSession(
   const backupState =
     deps.backupState ??
     ((name: string) => backupSandboxStateWithManagedAuthority(name, {}, { getSandbox }));
-  const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
+  const restoreState = deps.restoreState ?? restoreRecreatedDockerSandboxState;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
   const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
   const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
@@ -336,13 +336,11 @@ export function relaunchManagedSupervisorSession(
       }
       let replacementOwned = false;
       try {
-        replacementOwned = sameContainerId(
+        replacementOwned =
           resolveContainer(sandboxName, driver, {
             expectedResourceHandle: result.newContainerId,
             retainedDockerBackupId: result.oldContainerId,
-          }),
-          result.newContainerId,
-        );
+          }) === result.newContainerId;
       } catch {
         replacementOwned = false;
       }
@@ -351,9 +349,27 @@ export function relaunchManagedSupervisorSession(
       }
       let stateRestored = false;
       try {
-        stateRestored = restoreState(sandboxName, backupManifest.backupPath).success;
-      } catch {
+        const restored = restoreState(
+          sandboxName,
+          backupManifest,
+          {
+            targetAgentType: entry.agent || "openclaw",
+            ...(entry.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
+            newContainerId: result.newContainerId,
+            oldContainerId: result.oldContainerId,
+          },
+          { getSandbox, resolveContainer },
+        );
+        stateRestored = restored.success;
+        if (!stateRestored && restored.error) throw new Error(restored.error);
+      } catch (error) {
         stateRestored = false;
+        if (!quiet || process.env.NEMOCLAW_REBUILD_VERBOSE === "1") {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(
+            `  Trusted state restore failed: ${redactFull(redact(detail)).slice(0, 1000)}`,
+          );
+        }
       }
       if (!stateRestored) {
         return finalizeFailure();

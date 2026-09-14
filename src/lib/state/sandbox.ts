@@ -89,7 +89,11 @@ import type {
 } from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
-import { isSshTransportFailure } from "./ssh-transport.js";
+import {
+  isSshTransportFailure,
+  type SandboxStateRestoreCommand,
+  sshStateRestoreCommand,
+} from "./ssh-transport.js";
 import { restoreStateFile } from "./state-file-restore.js";
 import { nemoclawStateRoot } from "./state-root.js";
 import { runTarListing, type TarArchiveSource } from "./tar-listing.js";
@@ -331,6 +335,8 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
   runtimeSelection?: OpenShellRuntimeSelection;
+  /** Direct transport for an identity-pinned replacement before its OpenShell handoff. */
+  runCommand?: SandboxStateRestoreCommand;
 }
 
 interface InternalRestoreOptions {
@@ -341,6 +347,7 @@ interface InternalRestoreOptions {
   runtimeSelection?: OpenShellRuntimeSelection;
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void;
+  runCommand?: SandboxStateRestoreCommand;
 }
 
 export interface TarValidationResult {
@@ -2451,6 +2458,7 @@ export function restoreRecreatedSandboxState(
 ): RestoreResult {
   return restoreSandboxStateInternal(sandboxName, backupPath, {
     targetAgentType: options.targetAgentType,
+    ...(options.runCommand ? { runCommand: options.runCommand } : {}),
     ...(options.allowCustomImageWholeStateFileRestore
       ? { allowCustomImageWholeStateFileRestore: true }
       : {}),
@@ -2654,6 +2662,7 @@ function restoreSandboxStateInternal(
         getSshConfig: (name) =>
           getSshConfig(name, selectedSshConfigOptions(options.runtimeSelection)),
         sshArgs,
+        ...(options.runCommand ? { runCommand: options.runCommand } : {}),
       },
       targetAgent.configPaths.dir,
     );
@@ -2682,9 +2691,15 @@ function restoreSandboxStateInternal(
     };
   }
 
-  _log("Getting SSH config for restore");
-  const sshConfig = getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
-  if (!sshConfig) {
+  _log(
+    options.runCommand
+      ? "Using the transaction-owned restore transport"
+      : "Getting SSH config for restore",
+  );
+  const sshConfig = options.runCommand
+    ? null
+    : getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
+  if (!options.runCommand && !sshConfig) {
     _log("FAILED: Could not get SSH config for restore");
     return {
       success: false,
@@ -2695,8 +2710,9 @@ function restoreSandboxStateInternal(
     };
   }
 
-  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
-  const configFile = tempSshConfig.file;
+  const tempSshConfig = sshConfig ? createTempSshConfig(sshConfig, "nemoclaw-state-") : null;
+  const commandArgs = tempSshConfig ? sshArgs(tempSshConfig.file, sandboxName) : [];
+  const runCommand = options.runCommand ?? sshStateRestoreCommand(commandArgs, selectedSshEnv);
   const previousOpenClawImagePluginInstalls =
     freshOpenClawImagePluginInstalls !== undefined
       ? manifest.openclawImagePluginInstalls
@@ -2788,9 +2804,7 @@ function restoreSandboxStateInternal(
         staleContentDirs,
       );
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
-      const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
-        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-        stdio: ["ignore", "pipe", "pipe"],
+      const rmResult = runCommand(rmCmd, {
         timeout: 30000,
       });
       if (rmResult.status !== 0 || rmResult.error || rmResult.signal) {
@@ -2812,10 +2826,8 @@ function restoreSandboxStateInternal(
 
     if (restoreTar !== undefined) {
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
-      const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
-        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+      const sshResult = runCommand(extractCmd, {
         input: restoreTar,
-        stdio: ["pipe", "pipe", "pipe"],
         timeout: 120000,
       });
 
@@ -2828,9 +2840,7 @@ function restoreSandboxStateInternal(
         // are usable by that user.
         const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
         _log(`Best-effort ownership repair: ${chownCmd}`);
-        const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
-          ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-          stdio: ["ignore", "pipe", "pipe"],
+        const chownResult = runCommand(chownCmd, {
           timeout: 30000,
         });
         if (chownResult.error || chownResult.signal) {
@@ -2849,15 +2859,9 @@ function restoreSandboxStateInternal(
           )
           .join(" && ");
         _log(`Verifying restored state usability: ${usabilityCmd}`);
-        const usabilityResult = spawnSync(
-          "ssh",
-          [...sshArgs(configFile, sandboxName), usabilityCmd],
-          {
-            ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 30000,
-          },
-        );
+        const usabilityResult = runCommand(usabilityCmd, {
+          timeout: 30000,
+        });
         if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
           restoredDirs.push(...localDirs);
         } else {
@@ -2881,7 +2885,7 @@ function restoreSandboxStateInternal(
       if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
       if (
         restoreStateFile(
-          sshArgs(configFile, sandboxName),
+          commandArgs,
           dir,
           spec,
           backupPath,
@@ -2891,6 +2895,7 @@ function restoreSandboxStateInternal(
           configFreshOpenClawImagePluginInstalls,
           previousOpenClawImagePluginInstalls,
           selectedSshEnv,
+          runCommand,
         )
       ) {
         restoredFiles.push(spec.path);
@@ -2900,7 +2905,7 @@ function restoreSandboxStateInternal(
     }
   } finally {
     try {
-      tempSshConfig.cleanup();
+      tempSshConfig?.cleanup();
     } catch {
       /* ignore */
     }

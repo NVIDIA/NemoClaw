@@ -298,7 +298,7 @@ test(
         "validate recovered guard and stable PID",
         "restart sandbox container with persisted startup command",
         "recover managed supervisor and inference",
-        "recreate and restart sandbox container with legacy keepalive",
+        "recreate sandbox container with legacy keepalive",
         "recover legacy managed supervisor and inference",
       ],
     },
@@ -537,8 +537,8 @@ test(
       resultText(inference),
     ).toBe(true);
 
-    progress.phase("recreate and restart sandbox container with legacy keepalive");
-    // ── Assert #6635 legacy Docker restart recovery ────────────────
+    progress.phase("recreate sandbox container with legacy keepalive");
+    // ── Assert #6635 legacy keepalive migration ────────────────
     // Existing sandboxes may still persist the historical keepalive. Recreate
     // that exact state from the identity-pinned modern container so recovery
     // proves the compatibility migration independently of fresh onboarding.

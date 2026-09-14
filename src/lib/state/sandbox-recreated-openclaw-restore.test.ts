@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,6 +32,7 @@ function runRestoreScenario(options: {
   backupConfig: Record<string, unknown>;
   backupExtensionDirs: string[];
   discoverFreshPluginInstalls?: boolean;
+  directCommand?: boolean;
   freshConfig: Record<string, unknown>;
   freshPluginInstalls: OpenClawImagePluginInstall[];
   previousPluginInstalls?: OpenClawImagePluginInstall[];
@@ -120,8 +122,9 @@ if (args[0] === "sandbox" && args[1] === "ssh-config") {
 process.exit(0);
 `,
     );
+    const restoreCommand = path.join(binDir, options.directCommand ? "restore-command" : "ssh");
     writeExecutable(
-      path.join(binDir, "ssh"),
+      restoreCommand,
       `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
@@ -176,6 +179,18 @@ process.exit(1);
     process.env.PATH = `${binDir}:${previousPath ?? ""}`;
     const restore = restoreRecreatedSandboxState("alpha", backupPath, {
       targetAgentType: "openclaw",
+      ...(options.directCommand
+        ? {
+            runCommand: (
+              command: string,
+              commandOptions: { input?: Buffer; timeout: number; maxBuffer?: number },
+            ) =>
+              spawnSync(restoreCommand, [command], {
+                ...commandOptions,
+                stdio: [commandOptions.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+              }),
+          }
+        : {}),
       ...(options.discoverFreshPluginInstalls
         ? {}
         : { freshOpenClawImagePluginInstalls: options.freshPluginInstalls }),
@@ -187,10 +202,12 @@ process.exit(1);
       .split("\n")
       .map((line) => JSON.parse(line) as { cmd: string; env: Record<string, string> });
     const loggedCommands = sshInvocations.map(({ cmd }) => cmd);
-    const openshellInvocations = fs
-      .readFileSync(openshellLog, "utf8")
+    const openshellInvocations = (
+      fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : ""
+    )
       .trim()
       .split("\n")
+      .filter(Boolean)
       .map((line) => JSON.parse(line) as { args: string[]; env: Record<string, string> });
 
     return {
@@ -319,10 +336,12 @@ describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
     },
   );
 
-  it("uses fresh primary-model routing during an ordinary sandbox re-create (#7011)", () => {
+  it("uses fresh primary-model routing through the transaction-owned restore transport (#7011)", () => {
     const result = runRestoreScenario({
       previousPluginInstalls: [],
       freshPluginInstalls: [],
+      discoverFreshPluginInstalls: true,
+      directCommand: true,
       backupExtensionDirs: [],
       backupConfig: {
         agents: {
@@ -339,6 +358,10 @@ describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
     });
 
     expectSuccessfulRestore(result);
+    expect(result.openshellInvocations).toEqual([]);
+    expect(result.sshInvocations.some(({ cmd }) => cmd.includes("installed_plugin_index"))).toBe(
+      true,
+    );
     expect(result.restoredConfig.agents).toEqual({
       defaults: {
         model: { primary: "inference/fresh-model" },

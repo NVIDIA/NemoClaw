@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-import { spawnSync } from "child_process";
+import { type SandboxStateRestoreCommand, sshStateRestoreCommand } from "./ssh-transport.js";
 
 import { isObjectRecord } from "../core/json-types.js";
 import { shellQuote } from "../core/shell-quote.js";
@@ -50,6 +50,7 @@ export type CompleteOpenClawImagePluginInstall = Omit<OpenClawImagePluginInstall
 
 export interface OpenClawPluginDiscoveryDeps {
   env?: NodeJS.ProcessEnv;
+  runCommand?: SandboxStateRestoreCommand;
   getSshConfig(sandboxName: string): string | null;
   sshArgs(configFile: string, sandboxName: string): string[];
 }
@@ -138,32 +139,22 @@ function readFreshOpenClawPluginInstallIndex(
   configFile: string,
   sandboxName: string,
   dir: string,
-): ReturnType<typeof spawnSync> {
+): ReturnType<SandboxStateRestoreCommand> {
   // OpenClaw 2026.6.10 moved install records into its shared SQLite state.
   // Fall back only when that database is absent so a corrupt/incomplete
   // canonical index cannot be masked by stale legacy JSON.
-  const sqliteResult = spawnSync(
-    "ssh",
-    [...deps.sshArgs(configFile, sandboxName), buildFreshOpenClawPluginIndexSqliteReadCommand(dir)],
-    {
-      ...(deps.env ? { env: deps.env } : {}),
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30000,
-      maxBuffer: OPENCLAW_PLUGIN_INSTALL_REGISTRY_MAX_BYTES,
-    },
-  );
+  const runCommand =
+    deps.runCommand ?? sshStateRestoreCommand(deps.sshArgs(configFile, sandboxName), deps.env);
+  const sqliteResult = runCommand(buildFreshOpenClawPluginIndexSqliteReadCommand(dir), {
+    timeout: 30000,
+    maxBuffer: OPENCLAW_PLUGIN_INSTALL_REGISTRY_MAX_BYTES,
+  });
   if (sqliteResult.status !== 2 || sqliteResult.error || sqliteResult.signal) return sqliteResult;
 
-  return spawnSync(
-    "ssh",
-    [...deps.sshArgs(configFile, sandboxName), buildLegacyOpenClawPluginIndexReadCommand(dir)],
-    {
-      ...(deps.env ? { env: deps.env } : {}),
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30000,
-      maxBuffer: OPENCLAW_PLUGIN_INSTALL_REGISTRY_MAX_BYTES,
-    },
-  );
+  return runCommand(buildLegacyOpenClawPluginIndexReadCommand(dir), {
+    timeout: 30000,
+    maxBuffer: OPENCLAW_PLUGIN_INSTALL_REGISTRY_MAX_BYTES,
+  });
 }
 
 export function discoverFreshOpenClawPluginExtensionDirs(
@@ -203,6 +194,9 @@ export function discoverFreshOpenClawImagePluginInstalls(
   deps: OpenClawPluginDiscoveryDeps,
   dir = "/sandbox/.openclaw",
 ): OpenClawManagedExtensionDiscoveryResult {
+  if (deps.runCommand) {
+    return discoverFreshOpenClawPluginExtensionDirs(deps, "", sandboxName, dir);
+  }
   const sshConfig = deps.getSshConfig(sandboxName);
   if (!sshConfig) {
     return { ok: false, error: "could not get SSH config for OpenClaw plugin discovery" };
