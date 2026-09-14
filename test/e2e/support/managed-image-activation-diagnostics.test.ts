@@ -4,11 +4,21 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  managedOpenClawSubagentCommand,
   preclean,
   summarizeOnboardFailureStartupSignals,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
 describe("managed image activation failure diagnostics", () => {
+  it("drives the managed OpenClaw caller through sessions_spawn", () => {
+    expect(managedOpenClawSubagentCommand("subagent-proof")).toEqual(
+      expect.arrayContaining([
+        "subagent-proof",
+        expect.stringContaining("use sessions_spawn once"),
+      ]),
+    );
+  });
+
   it("emits only the fixed setup signal from arbitrary container output (#8543)", () => {
     const secret = "untrusted-prompt-and-credential";
     const summary = summarizeOnboardFailureStartupSignals(

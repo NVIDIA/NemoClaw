@@ -219,7 +219,6 @@
     },
     {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
-      "liveSources": ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
         "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
@@ -228,7 +227,6 @@
         "src/lib/sandbox/privileged-exec.test.ts",
         "test/inference/managed/managed-gateway-control.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
-        "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
