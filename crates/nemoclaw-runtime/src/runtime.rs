@@ -1,18 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use crate::supervisor::{self, Monitors};
-use nemoclaw_sdk::{
-    CancellationToken, Error,
-    config::Service,
-    snapshot,
-    spark::{self, PreparationAction, PreparationRunner},
-};
-use process_wrap::tokio::{CommandWrap, KillOnDrop, ProcessGroup};
-use std::{fs, io::Write, path::Path, process::Stdio, time::Duration};
-use tokio::io::AsyncReadExt;
+use nemoclaw_sdk::{CancellationToken, Error, config::Service};
+use process_wrap::tokio::{KillOnDrop, ProcessGroup};
+use std::{fs, io::Write, path::Path, time::Duration};
 const ROOT: &str = "/data";
-const PREPARER: &str = "/opt/nemoclaw/source/recipe/files/build_ple_packed_table.py";
-const VERIFIER: &str = "/opt/nemoclaw/source/verify_packed.py";
 pub(crate) fn report(phase: &str, detail: &str, pid: u32) -> Result<(), Error> {
     let updated = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -30,67 +22,6 @@ pub(crate) fn report(phase: &str, detail: &str, pid: u32) -> Result<(), Error> {
         .map_err(|_| Error::State("cannot sync runtime status directory"))?;
     eprintln!("{phase}: {detail}");
     Ok(())
-}
-struct PackagedTools;
-#[async_trait::async_trait]
-impl PreparationRunner for PackagedTools {
-    async fn run(
-        &self,
-        action: PreparationAction,
-        model: &Path,
-        directory: &Path,
-        cancel: &CancellationToken,
-    ) -> Result<Vec<u8>, Error> {
-        let (script, digest) = match action {
-            PreparationAction::Prepare => (PREPARER, spark::PREPARER_SHA256.to_owned()),
-            PreparationAction::Verify => (VERIFIER, spark::verifier_sha256()),
-        };
-        if nemoclaw_sdk::bundle::hash_file(Path::new(script))? != digest {
-            return Err(Error::Conflict(
-                "packaged preparation tool does not match its pin",
-            ));
-        }
-        let mut command = CommandWrap::with_new("python3", |cmd| {
-            cmd.args(["-u", script])
-                .arg(model)
-                .arg(directory)
-                .stdin(Stdio::null())
-                .stderr(Stdio::inherit());
-            if action == PreparationAction::Verify {
-                cmd.stdout(Stdio::piped());
-            } else {
-                cmd.stdout(Stdio::inherit());
-            }
-        });
-        command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
-        let mut child = command
-            .spawn()
-            .map_err(|_| Error::State("cannot start packaged preparation tool"))?;
-        let mut stdout = child.stdout().take();
-        let collect = async {
-            let mut bytes = Vec::new();
-            if let Some(pipe) = stdout.as_mut() {
-                pipe.take((1 << 20) + 1)
-                    .read_to_end(&mut bytes)
-                    .await
-                    .map_err(|_| Error::State("cannot read verifier output"))?;
-            }
-            if bytes.len() > 1 << 20 {
-                return Err(Error::State("verifier output exceeds limit"));
-            }
-            Ok(bytes)
-        };
-        let result = tokio::select! {
-            ()=cancel.cancelled()=>Err(Error::Cancelled),
-            result=async {
-                let (status,bytes)=tokio::try_join!(async {child.wait().await.map_err(|_|Error::State("cannot wait for packaged preparation tool"))},collect)?;
-                if !status.success() {return Err(Error::Conflict("packed PLE tool failed; staged data retained"));}
-                Ok(bytes)
-            }=>result
-        };
-        supervisor::terminate(child.as_mut()).await;
-        result
-    }
 }
 pub(crate) async fn run(
     spec: &Service,
@@ -121,76 +52,17 @@ async fn run_owned(
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
-    let manifest = spark::model_manifest();
-    let model = Path::new(ROOT).join("models").join(&manifest.revision);
-    report("downloading", "verifying exact model snapshot", 0)?;
-    let client = snapshot::Client::new()?;
-    let progress = |file: &str| {
-        let _ = report("downloading", file, 0);
-    };
-    tokio::time::timeout(
-        Duration::from_secs(8 * 3600),
-        client.ensure(&model, &manifest, cancel, &progress),
-    )
-    .await
-    .map_err(|_| {
-        Error::Conflict("model download exceeded eight-hour budget; partial data retained")
-    })??;
-    report("preparing", "building and verifying packed PLE", 0)?;
-    let prepared = Path::new(ROOT).join("prepared");
-    spark::prepare(&prepared, &model, &PackagedTools, cancel).await?;
+    let recipe = nemoclaw_sdk::recipes::resolve(spec)?;
+    let prepared = crate::recipe::prepare(recipe, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(
             "memory protection tripped by operator; explicit apply required",
         ));
     }
-    let capacity = memory()?;
-    if capacity.available < spec.gpu_bytes()? + 20 * spark::GIB
-        || spec.gpu_bytes()? + spec.memory.host_reserve_gib as u64 * spark::GIB > capacity.total
-    {
-        return Err(Error::Conflict(
-            "memory headroom changed during preparation; service was not started",
-        ));
-    }
-    let gpu = tokio::process::Command::new("nvidia-smi")
-        .args(["--query-compute-apps=pid", "--format=csv,noheader,nounits"])
-        .kill_on_drop(true)
-        .output();
-    let gpu = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(15),gpu)=>result.map_err(|_|Error::State("GPU availability observation timed out"))?.map_err(|_|Error::State("GPU availability is unobservable"))?};
-    if !gpu.status.success() || !String::from_utf8_lossy(&gpu.stdout).trim().is_empty() {
-        return Err(Error::Conflict(
-            "GPU availability changed after preparation; service was not started",
-        ));
-    }
-    let args = spec.arguments(
-        model
-            .to_str()
-            .ok_or(Error::State("invalid model storage path"))?,
-        capacity.total,
-    )?;
-    let mut command = CommandWrap::with_new("python3", |cmd| {
-        cmd.args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-        cmd.envs([
-            ("HF_HUB_OFFLINE", "1"),
-            ("TRANSFORMERS_OFFLINE", "1"),
-            ("VLLM_USE_V2_MODEL_RUNNER", "1"),
-            ("VLLM_PLE_CPU_OFFLOAD", "1"),
-            ("VLLM_PLE_OFFLOAD_STEP_TIMEOUT", "300"),
-            (
-                "VLLM_MTP_DRAFT_VOCAB",
-                "/opt/nemoclaw/source/recipe/files/draft_vocab_en_code_47k.txt",
-            ),
-            ("HF_HOME", "/data/huggingface"),
-            ("VLLM_CACHE_ROOT", "/data/vllm-cache"),
-        ]);
-        cmd.env(
-            "VLLM_PLE_PACKED_TABLE_DIR",
-            prepared.join(spark::preparation_key()),
-        );
-    });
+    let profile = recipe.hardware();
+    let capacity = crate::hardware::before_start(profile, spec, cancel).await?;
+    let (mut command, readiness) =
+        crate::backend::launch(recipe.backend(), spec, &prepared, capacity.total)?;
     command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
     let mut child = command
         .spawn()
@@ -208,35 +80,17 @@ async fn run_owned(
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
-            if samples_tx.send(memory()).await.is_err() {
+            if samples_tx
+                .send(crate::hardware::memory(profile))
+                .await
+                .is_err()
+            {
                 break;
             }
         }
     });
     let (ready_tx, ready) = tokio::sync::mpsc::channel(1);
-    let port = spec.serving.port;
-    let health = tokio::spawn(async move {
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(Duration::from_secs(1))
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .build()
-            .map_err(|_| Error::State("cannot initialize readiness transport"))?;
-        loop {
-            if client
-                .get(format!("http://127.0.0.1:{port}/health"))
-                .send()
-                .await
-                .is_ok_and(|r| r.status() == reqwest::StatusCode::OK)
-            {
-                let _ = ready_tx.send(true).await;
-                break;
-            }
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        }
-        Ok::<(), Error>(())
-    });
+    let health = tokio::spawn(async move { crate::backend::wait_ready(readiness, ready_tx).await });
     let result = supervisor::supervise(
         supervisor::Policy {
             startup_timeout: Duration::from_secs(spec.serving.startup_timeout_seconds as u64),
@@ -255,10 +109,4 @@ async fn run_owned(
     sampler.abort();
     health.abort();
     result
-}
-
-fn memory() -> Result<nemoclaw_sdk::hardware::Capacity, Error> {
-    let file =
-        fs::File::open("/proc/meminfo").map_err(|_| Error::State("host memory is unobservable"))?;
-    nemoclaw_sdk::hardware::read_memory(file)
 }

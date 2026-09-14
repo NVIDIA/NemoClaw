@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use sha2::{Digest, Sha256};
+fn hex(bytes: impl AsRef<[u8]>) -> String {
+    bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
+}
 fn service() -> Service {
     crate::config::Document::parse(
         include_str!("../../tests/fixtures/config/spark.yaml").as_bytes(),
@@ -112,7 +116,9 @@ fn available_memory_may_be_below_free_memory_after_kernel_reserves() {
 #[test]
 fn pinned_manifest_and_preparation_identity_match_reference() {
     assert_eq!(
-        hex(Sha256::digest(include_bytes!("model.json"))),
+        hex(Sha256::digest(include_bytes!(
+            "../recipes/qwen38/model.json"
+        ))),
         "c11c41935994dc9fd1d3c15e94bdcdcb0893052f55475b62e946e6a31adb4e61"
     );
     let manifest = model_manifest();

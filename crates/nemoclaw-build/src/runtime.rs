@@ -84,7 +84,7 @@ pub(super) async fn build_runtime(pins: &Pins) -> Result<()> {
     }
     for name in ["verify_packed.py", "model.json"] {
         fs::copy(
-            Path::new("crates/nemoclaw-sdk/src/spark").join(name),
+            Path::new("crates/nemoclaw-sdk/src/recipes/qwen38").join(name),
             context.join(name),
         )?;
     }

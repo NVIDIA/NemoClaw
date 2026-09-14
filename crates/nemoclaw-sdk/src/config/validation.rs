@@ -322,31 +322,9 @@ impl Gateway {
 impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
         require(
-            self.backend == "vllm-qwen38-spark-v1"
-                && self.model.repository == "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4"
-                && self.model.revision == "925d7be6c14c6c9442ef83e8f05b5a3c39304f69"
-                && IMAGE.is_match(&self.image),
+            IMAGE.is_match(&self.image),
             "Spark requires qualified backend, pinned model, and immutable image",
         )?;
-        let serving = &self.serving;
-        require(
-            (1024..=65535).contains(&serving.port)
-                && (8192..=65536).contains(&serving.context_tokens)
-                && (1..=2).contains(&serving.max_sequences)
-                && (512..=2048).contains(&serving.batch_tokens)
-                && (0..=3).contains(&serving.speculative_tokens)
-                && (900..=3600).contains(&serving.startup_timeout_seconds),
-            "serving settings exceed qualified Spark bounds",
-        )?;
-        let memory = &self.memory;
-        require(
-            (28..=64).contains(&memory.host_reserve_gib)
-                && (4..=12).contains(&memory.kv_cache_gib)
-                && (6..=16).contains(&memory.min_available_gib)
-                && (2..=8).contains(&memory.min_free_gib)
-                && (memory.min_available_gib..=24).contains(&memory.free_gate_gib)
-                && (1..=5).contains(&memory.consecutive_samples),
-            "memory policy exceeds qualified Spark bounds",
-        )
+        crate::recipes::validate(self)
     }
 }

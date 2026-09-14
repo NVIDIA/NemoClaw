@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(target_os = "linux")]
+mod backend;
+#[cfg(target_os = "linux")]
+mod hardware;
+#[cfg(target_os = "linux")]
+mod recipe;
+#[cfg(target_os = "linux")]
 mod runtime;
 #[cfg(target_os = "linux")]
 mod supervisor;

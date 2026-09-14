@@ -128,3 +128,6 @@ pub mod docker;
 pub mod managed;
 
 pub mod hardware;
+
+pub mod backends;
+pub mod recipes;
