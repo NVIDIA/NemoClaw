@@ -598,10 +598,16 @@ describe("advisor session runner", () => {
 
   it("rejects multiple submit attempts during terminal-submit repair", async () => {
     sdk.state.terminalResponses = ["fail-once", "fail-then-success"];
-    const result = await run([submitTurn("prepare-and-submit")]);
+    const progress: string[] = [];
+    const result = await run([submitTurn("prepare-and-submit")], undefined, [], (message) =>
+      progress.push(message),
+    );
 
     expect(result.fatalError).toContain("terminal-submit repair must make exactly 1");
     expect(sdk.state.prompts).toHaveLength(2);
+    expect(progress.join("\n")).toContain(
+      '"repairAttempts":{"assistantText":false,"atomicTerminal":false,"terminalSubmit":true}',
+    );
   });
 
   it("rejects prose during preparatory terminal-submit repair", async () => {
@@ -727,7 +733,13 @@ describe("advisor session runner", () => {
 
   it("fails closed after one unsuccessful atomic-terminal repair (#6446)", async () => {
     sdk.state.terminalResponses = ["omit", "omit"];
-    const result = await run([analysisTurn("only-analysis"), commitTurn("only-commit")]);
+    const progress: string[] = [];
+    const result = await run(
+      [analysisTurn("only-analysis"), commitTurn("only-commit")],
+      undefined,
+      [],
+      (message) => progress.push(message),
+    );
 
     expect(result.fatalError).toContain(
       "only-commit atomic-terminal repair must commit turn_action successfully once",
@@ -738,6 +750,9 @@ describe("advisor session runner", () => {
       ),
     ]);
     expect(sdk.state.prompts).toHaveLength(3);
+    expect(progress.join("\n")).toContain(
+      '"repairAttempts":{"assistantText":false,"atomicTerminal":true,"terminalSubmit":false}',
+    );
   });
 
   it("rejects prose during the tool-only atomic-terminal repair (#6446)", async () => {
