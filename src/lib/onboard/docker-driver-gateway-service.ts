@@ -452,53 +452,10 @@ function runSystemctlUser(
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
 ) {
   const env = { ...opts.env, LC_ALL: "C" };
-  if (process.platform === "linux" && opts.spawnSyncImpl === spawnSync) {
-    const uid = process.getuid?.();
-    if (uid === undefined || !Number.isSafeInteger(uid) || uid < 0) {
-      throw new OpenShellGatewayServiceTrustError(
-        "Could not derive the current user for OpenShell gateway service control.",
-      );
-    }
-    const runtimeDir = `/run/user/${String(uid)}`;
-    const busAddress = `unix:path=${runtimeDir}/bus`;
-    const configuredRuntimeDir = env.XDG_RUNTIME_DIR?.trim();
-    const configuredBusAddress = env.DBUS_SESSION_BUS_ADDRESS?.trim();
-    if (configuredRuntimeDir && path.normalize(configuredRuntimeDir) !== runtimeDir) {
-      throw new OpenShellGatewayServiceTrustError(
-        "XDG_RUNTIME_DIR does not match the current user's systemd runtime directory.",
-      );
-    }
-    if (configuredBusAddress && configuredBusAddress !== busAddress) {
-      throw new OpenShellGatewayServiceTrustError(
-        "DBUS_SESSION_BUS_ADDRESS does not match the current user's systemd bus.",
-      );
-    }
-    let runtimeStats: fs.Stats;
-    let busStats: fs.Stats;
-    try {
-      runtimeStats = fs.lstatSync(runtimeDir);
-      busStats = fs.lstatSync(path.join(runtimeDir, "bus"));
-    } catch {
-      throw new OpenShellGatewayServiceTrustError(
-        "The current user's systemd runtime directory or bus is unavailable.",
-      );
-    }
-    if (
-      !runtimeStats.isDirectory() ||
-      runtimeStats.uid !== uid ||
-      (runtimeStats.mode & 0o777) !== 0o700
-    ) {
-      throw new OpenShellGatewayServiceTrustError(
-        "The current user's systemd runtime directory failed validation.",
-      );
-    }
-    if (!busStats.isSocket() || busStats.uid !== uid) {
-      throw new OpenShellGatewayServiceTrustError(
-        "The current user's systemd bus failed validation.",
-      );
-    }
+  if (typeof process.getuid === "function") {
+    const runtimeDir = env.XDG_RUNTIME_DIR?.trim() || `/run/user/${String(process.getuid())}`;
     env.XDG_RUNTIME_DIR = runtimeDir;
-    env.DBUS_SESSION_BUS_ADDRESS = busAddress;
+    env.DBUS_SESSION_BUS_ADDRESS ||= `unix:path=${runtimeDir}/bus`;
   }
   return runCommand("systemctl", ["--user", ...args], {
     ...opts,
