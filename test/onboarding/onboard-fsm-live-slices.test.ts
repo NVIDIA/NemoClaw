@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeAll, describe, it } from "vitest";
+import { beforeAll, describe, it, type TestContext, vi } from "vitest";
+import {
+  type OnboardProcessResult,
+  runOnboardProcessAsync,
+} from "../helpers/onboard-child-process-harness";
+
+vi.setConfig({ maxConcurrency: 4 });
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const probeTimeoutMs = 60_000;
@@ -162,7 +167,7 @@ function redactProbeOutput(value: string): string {
     .slice(0, 4000);
 }
 
-function probeFailureMessage(result: SpawnSyncReturns<string>): string {
+function probeFailureMessage(result: OnboardProcessResult): string {
   const details = [
     `slice probe exited with status ${result.status ?? "null"}${result.signal ? ` and signal ${result.signal}` : ""}`,
     result.error ? `error: ${redactProbeOutput(result.error.message)}` : null,
@@ -172,7 +177,7 @@ function probeFailureMessage(result: SpawnSyncReturns<string>): string {
   return details.join("\n\n");
 }
 
-function runSliceProbe(options: ProbeOptions) {
+async function runSliceProbe(options: ProbeOptions, context: TestContext) {
   const scenario = { mode: options.mode ?? "fresh", slice: options.slice };
   const tmpDir = fs.mkdtempSync(
     path.join(os.tmpdir(), `nemoclaw-onboard-fsm-${scenario.mode}-${scenario.slice}-`),
@@ -659,12 +664,10 @@ const { onboard } = require(${onboardPath});
 `,
   );
 
-  const result = spawnSync(
-    process.execPath,
+  const result = await runOnboardProcessAsync(
     ["--require", path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
     {
       cwd: repoRoot,
-      encoding: "utf-8",
       env: {
         ...probeEnvironment(tmpDir),
         ...(scenario.mode === "endpoint-override"
@@ -685,7 +688,8 @@ const { onboard } = require(${onboardPath});
             }
           : {}),
       },
-      timeout: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
+      timeoutMs: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
+      context,
     },
   );
   try {
@@ -705,7 +709,7 @@ const { onboard } = require(${onboardPath});
   }
 }
 
-describe("live onboard FSM slice boundaries", () => {
+describe.concurrent("live onboard FSM slice boundaries", () => {
   /*
    * The live dispatcher is still loaded from compiled CommonJS:
    * src/lib/onboard.ts captures these helpers through require-time bindings,
@@ -718,99 +722,119 @@ describe("live onboard FSM slice boundaries", () => {
     assertFreshDistArtifacts();
   });
 
-  it("enters the initial slice on fresh onboard runs", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial" }), ["initial:init"]);
+  it("enters the initial slice on fresh onboard runs", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "initial" }, context), ["initial:init"]);
   });
 
-  it("rejects an ambient gateway endpoint before entering the initial slice", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "endpoint-override" }), []);
-  });
-
-  it("rejects staged messaging before entering the onboarding state machine (#9833)", () => {
+  it("rejects an ambient gateway endpoint before entering the initial slice", async (context) => {
     assert.deepEqual(
-      runSliceProbe({ slice: "initial", mode: "providerless-staged-messaging" }),
+      await runSliceProbe({ slice: "initial", mode: "endpoint-override" }, context),
+      [],
+    );
+  });
+
+  it("rejects staged messaging before entering the onboarding state machine (#9833)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "initial", mode: "providerless-staged-messaging" }, context),
       [],
     );
   });
 
   it(
     "validates the registered component before providerless onboarding effects (#11486)",
-    () => {
+    async (context) => {
       assert.deepEqual(
-        runSliceProbe({ slice: "initial", mode: "providerless-external-component" }),
+        await runSliceProbe({ slice: "initial", mode: "providerless-external-component" }, context),
         ["component-validated", "preflight-effect", "gateway-effect", "sandbox-effect"],
       );
     },
     probeTimeoutMs,
   );
 
-  it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }), []);
+  it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }, context),
+      [],
+    );
   });
 
-  it("uses the session decision read after acquiring the onboarding lock (#9833)", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-session-decision" }), [
-      "locked-resume:true",
+  it("uses the session decision read after acquiring the onboarding lock (#9833)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "initial", mode: "stale-session-decision" }, context),
+      ["locked-resume:true"],
+    );
+  });
+
+  it("enters the core slice after the initial slice reaches provider selection", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "core" }, context), ["initial:init", "core"]);
+  });
+
+  it("enters the final slice after the core slice reaches the branch state", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "final" }, context), [
+      "initial:init",
+      "core",
+      "final",
     ]);
   });
 
-  it("enters the core slice after the initial slice reaches provider selection", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core" }), ["initial:init", "core"]);
-  });
-
-  it("enters the final slice after the core slice reaches the branch state", () => {
-    assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
-  });
-
-  it("reports a missing forward executable through the production onboarding action (#11648)", () => {
-    const called = runSliceProbe({ slice: "final", mode: "dashboard-spawn-failure" });
+  it("reports a missing forward executable through the production onboarding action (#11648)", async (context) => {
+    const called = await runSliceProbe(
+      { slice: "final", mode: "dashboard-spawn-failure" },
+      context,
+    );
     assert.ok(called.includes("forward-launch"), JSON.stringify(called));
     assert.match(called.at(-1) ?? "", /failure:.*ENOENT/);
     assert.ok(!called.includes("terminate-process-tree"));
     assert.ok(!called.some((entry) => entry.startsWith("registry-port:")));
   }, 60_000);
 
-  it("keeps the single dashboard port established during agent onboarding (#8214)", () => {
-    assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [
-      "initial:init",
-      "core",
-      "agent-executor:function",
-      "forward-port:18791",
-      "registry-port:18791",
-      "dashboard-url:http://127.0.0.1:18791/",
-    ]);
+  it("keeps the single dashboard port established during agent onboarding (#8214)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }, context),
+      [
+        "initial:init",
+        "core",
+        "agent-executor:function",
+        "forward-port:18791",
+        "registry-port:18791",
+        "dashboard-url:http://127.0.0.1:18791/",
+      ],
+    );
   }, 60_000);
 
-  it("enters the strict initial runner at preflight on an exact-state resume", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "resume-initial" }), [
+  it("enters the strict initial runner at preflight on an exact-state resume", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "initial", mode: "resume-initial" }, context), [
       "initial:preflight",
     ]);
   });
 
-  it("bypasses the strict core runner when fresh state is already past the core entry", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core", mode: "ahead-core" }), [
+  it("bypasses the strict core runner when fresh state is already past the core entry", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "core", mode: "ahead-core" }, context), [
       "initial:init",
       "provider-compat",
     ]);
   });
 
-  it("routes ordinary resume through the sandbox's recorded gateway", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-core-gateway" }), [
+  it("routes ordinary resume through the sandbox's recorded gateway", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "core", mode: "resume-core-gateway" }, context), [
       "gateway:nemoclaw-9090:nemoclaw-9090",
       "provider-compat:nemoclaw-9090",
     ]);
   });
 
-  it("routes an incomplete registered resume through its requested sandbox gateway", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-incomplete-core-gateway" }), [
-      "gateway:nemoclaw-9090:nemoclaw-9090",
-      "provider-compat:nemoclaw-9090",
-    ]);
-  });
-
-  it("wires the live sandbox registry resolver into core provenance", () => {
+  it("routes an incomplete registered resume through its requested sandbox gateway", async (context) => {
     assert.deepEqual(
-      runSliceProbe({ slice: "core", mode: "resume-core-gateway-provenance-resolver" }),
+      await runSliceProbe({ slice: "core", mode: "resume-incomplete-core-gateway" }, context),
+      ["gateway:nemoclaw-9090:nemoclaw-9090", "provider-compat:nemoclaw-9090"],
+    );
+  });
+
+  it("wires the live sandbox registry resolver into core provenance", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe(
+        { slice: "core", mode: "resume-core-gateway-provenance-resolver" },
+        context,
+      ),
       [
         "gateway:nemoclaw-9090:nemoclaw-9090",
         "registry-provenance:openai-api:https://persisted.example.test/v1:onboard",
@@ -818,28 +842,31 @@ describe("live onboard FSM slice boundaries", () => {
     );
   });
 
-  it("keeps an authoritative rebuild gateway after the registry row is removed", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core", mode: "authoritative-core-gateway" }), [
-      "gateway:nemoclaw-9090:nemoclaw-9090",
-      "provider-compat:nemoclaw-9090",
-    ]);
+  it("keeps an authoritative rebuild gateway after the registry row is removed", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "core", mode: "authoritative-core-gateway" }, context),
+      ["gateway:nemoclaw-9090:nemoclaw-9090", "provider-compat:nemoclaw-9090"],
+    );
   });
 
-  it.each(["balanced", "restricted"] as const)(
+  it.for(["balanced", "restricted"] as const)(
     "leaves ordinary policy tiers non-authoritative in the runOnboard machine [case %#]",
-    (policyTier) => {
-      assert.deepEqual(runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }), [
-        "initial:init",
-        "authoritative-policy-tier:undefined",
-      ]);
+    async (policyTier, context) => {
+      assert.deepEqual(
+        await runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }, context),
+        ["initial:init", "authoritative-policy-tier:undefined"],
+      );
     },
   );
 
-  it("does not carry a policy tier through authoritative rebuild state", () => {
-    const called = runSliceProbe({
-      slice: "core",
-      mode: "authoritative-core-gateway-policy-tier",
-    });
+  it("does not carry a policy tier through authoritative rebuild state", async (context) => {
+    const called = await runSliceProbe(
+      {
+        slice: "core",
+        mode: "authoritative-core-gateway-policy-tier",
+      },
+      context,
+    );
     assert.equal(called.at(-1), "authoritative-policy-tier:undefined");
   });
 });
