@@ -115,3 +115,10 @@ destroys its owned registrations and sandbox. It retains JSON evidence and the
 workspace. The hosted Fabric runtime must keep its identity throughout native
 access and reconciliation. This test makes a real model request; ordinary apply
 does not inject a Fabric conversation.
+
+Use the separate `spark_image_change` test filter with the same three Spark
+paths to qualify an explicit runtime image upgrade. The new YAML may differ
+from retained intent only by its inference image pin. The test requires complete
+artifact receipts, allows an established stopped service, and verifies that plan
+is read-only and apply replaces only that process while preserving all other
+bindings and prepared data. It retains `spark-artifact-validation.json`.
