@@ -66,6 +66,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       },
     })),
     confirmMissingSupervisor: vi.fn(() => true),
+    confirmRestoredManagedGateway: vi.fn(() => true),
     restartRestoredManagedGateway: vi.fn(() => true),
     backupState: vi.fn(() => ({
       success: true,
@@ -205,6 +206,7 @@ describe("relaunchManagedSupervisorSession", () => {
       rolledBack: false,
       stateRestored: true,
       stateBackupRemoved: true,
+      postHandoffGatewayReady: true,
     });
     expect(deps.resolveContainer).toHaveBeenNthCalledWith(2, "alpha", "docker", "new-container-id");
     expect(deps.restoreState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery", {
@@ -221,6 +223,7 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.finalize).toHaveBeenCalledWith(
       {
         finalHandoffTimeoutSecs: 900,
+        replacementAlreadyRunning: true,
         result: expect.objectContaining({ newContainerId: "new-container-id" }),
         sandboxName: "alpha",
         supervisorReady: true,
@@ -651,13 +654,17 @@ describe("relaunchManagedSupervisorSession", () => {
           failedFiles: [],
         };
       }),
+      confirmRestoredManagedGateway: vi.fn(() => {
+        order.push("probe-restored-gateway");
+        return true;
+      }),
       restartRestoredManagedGateway: vi.fn(() => {
         order.push("restart-restored-gateway");
         return true;
       }),
       finalize: vi.fn(async () => {
         order.push("commit-container");
-        return { backupRemoved: true, rolledBack: false };
+        return { backupRemoved: true, finalHandoffAcknowledged: true, rolledBack: false };
       }),
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
@@ -667,11 +674,18 @@ describe("relaunchManagedSupervisorSession", () => {
       rolledBack: false,
       stateRestored: true,
     });
-    expect(order).toEqual(["restore-state", "restart-restored-gateway", "commit-container"]);
+    expect(order).toEqual([
+      "restore-state",
+      "probe-restored-gateway",
+      "commit-container",
+      "restart-restored-gateway",
+    ]);
+    expect(deps.confirmRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
     expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
         finalHandoffTimeoutSecs: 900,
+        replacementAlreadyRunning: true,
         result: expect.objectContaining({ newContainerId: "new-container-id" }),
         sandboxName: "alpha",
         supervisorReady: true,
@@ -714,8 +728,8 @@ describe("relaunchManagedSupervisorSession", () => {
           failedFiles: [],
         };
       }),
-      restartRestoredManagedGateway: vi.fn(() => {
-        order.push("restart-restored-gateway");
+      confirmRestoredManagedGateway: vi.fn(() => {
+        order.push("probe-restored-gateway");
         return false;
       }),
       finalize: vi.fn(async ({ supervisorReady }) => {
@@ -733,7 +747,8 @@ describe("relaunchManagedSupervisorSession", () => {
       stateRestored: false,
       stateBackupRemoved: true,
     });
-    expect(order).toEqual(["restore-state", "restart-restored-gateway", "rollback-container"]);
+    expect(order).toEqual(["restore-state", "probe-restored-gateway", "rollback-container"]);
+    expect(deps.restartRestoredManagedGateway).not.toHaveBeenCalled();
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ newContainerId: "new-container-id" }),
       supervisorReady: false,
@@ -787,6 +802,7 @@ describe("relaunchManagedSupervisorSession", () => {
       rolledBack: false,
       stateRestored: true,
       stateBackupRemoved: false,
+      postHandoffGatewayReady: true,
     });
   });
 
@@ -807,6 +823,7 @@ describe("relaunchManagedSupervisorSession", () => {
       lastSandboxPhase: "Deleting",
       rolledBack: false,
       stateRestored: true,
+      postHandoffGatewayReady: false,
     });
     expect(deps.removeBackup).not.toHaveBeenCalled();
   });

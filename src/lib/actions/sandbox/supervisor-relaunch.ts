@@ -51,6 +51,7 @@ const STATE_BACKUP_RETRY_SECONDS = 2;
 type ManagedSupervisorFinalizeOutcome = DockerGpuPatchFinalizeOutcome & {
   stateRestored?: boolean;
   stateBackupRemoved?: boolean;
+  postHandoffGatewayReady?: boolean;
 };
 
 export type ManagedSupervisorRelaunch = {
@@ -67,6 +68,7 @@ export type ManagedSupervisorRelaunchDeps = {
   inspectContainer?: (containerId: string, timeoutMs?: number) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
   restartRestoredManagedGateway?: (containerId: string) => boolean;
+  confirmRestoredManagedGateway?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
   captureRestoreAuthority?: typeof sandboxState.captureSnapshotRestoreAuthority;
   createRestoreCommandExecutor?: typeof createPinnedSandboxUserRestoreCommandExecutor;
@@ -277,6 +279,7 @@ export function relaunchManagedSupervisorSession(
   const inspect = deps.inspectContainer ?? inspectContainer;
   const confirmMissingSupervisor = deps.confirmMissingSupervisor;
   const restartRestoredManagedGateway = deps.restartRestoredManagedGateway;
+  const confirmRestoredManagedGateway = deps.confirmRestoredManagedGateway;
   const backupState =
     deps.backupState ??
     ((name: string) => backupSandboxStateWithManagedAuthority(name, {}, { getSandbox }));
@@ -430,16 +433,13 @@ export function relaunchManagedSupervisorSession(
       let restoredManagedGatewayReady = false;
       try {
         restoredManagedGatewayReady =
-          restartRestoredManagedGateway?.(result.newContainerId) === true;
+          confirmRestoredManagedGateway?.(result.newContainerId) === true;
       } catch {
         restoredManagedGatewayReady = false;
       }
       if (!restoredManagedGatewayReady) {
-        // Apply restored state to a fresh managed gateway process. OpenClaw
-        // can otherwise retain pre-restore runtime state or enter its
-        // in-process reload path. Keep the previous container available for
-        // rollback until the pinned replacement restart and health proof
-        // both succeed.
+        // Keep the rollback container until the restored config and current
+        // gateway pass a pinned integrity and health probe.
         return finalizeFailure();
       }
       const runLifecycleProbe = deps.runOpenshell;
@@ -457,12 +457,22 @@ export function relaunchManagedSupervisorSession(
           supervisorReady: true,
           sandboxName,
           finalHandoffTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
+          replacementAlreadyRunning: true,
         },
         lifecycleDeps,
       );
+      let postHandoffGatewayReady = false;
+      try {
+        postHandoffGatewayReady =
+          finalized.finalHandoffAcknowledged === true &&
+          restartRestoredManagedGateway?.(result.newContainerId) === true;
+      } catch {
+        postHandoffGatewayReady = false;
+      }
       return {
         ...finalized,
         stateRestored: true,
+        postHandoffGatewayReady,
         ...(finalized.finalHandoffAcknowledged === true
           ? { stateBackupRemoved: removeSettledStateBackup() }
           : {}),

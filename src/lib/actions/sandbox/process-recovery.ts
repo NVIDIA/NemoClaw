@@ -663,6 +663,9 @@ function finalRelaunchContainerFailureDetail(
       completion.lastSandboxPhase ? `; last sandbox phase was ${completion.lastSandboxPhase}` : ""
     }. NemoClaw did not start the primary dashboard/API host forward`;
   }
+  if (completion.postHandoffGatewayReady === false) {
+    return "the restored managed gateway did not pass its post-handoff restart and health check. NemoClaw did not start the primary dashboard/API host forward";
+  }
   return null;
 }
 
@@ -1024,6 +1027,10 @@ async function recoverSandboxProcesses(
             isExactlyManagedControlMarker(
               effectivePinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
               "SUPERVISOR_NOT_RUNNING",
+            ),
+          confirmRestoredManagedGateway: (containerId) =>
+            hasGatewayRecoveryMarker(
+              effectivePinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
             ),
           restartRestoredManagedGateway: (containerId) => {
             const restarted = parseManagedGatewayControlCompletion(

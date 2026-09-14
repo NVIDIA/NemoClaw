@@ -91,7 +91,12 @@ function composedRelaunchTransaction(
     async ({ supervisorReady }: { supervisorReady: boolean }) => {
       order.push(supervisorReady ? "commit-container" : "rollback-container");
       return supervisorReady
-        ? { backupRemoved: true, rolledBack: false }
+        ? {
+            backupRemoved: true,
+            finalHandoffAcknowledged: true,
+            replacementRestarted: true,
+            rolledBack: false,
+          }
         : { backupRemoved: false, rolledBack: true };
     },
   ),
@@ -487,7 +492,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       relaunchManagedSupervisorSessionImpl,
       waitForRecreatedSandboxOpenShellReadyImpl,
     });
-
     expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: true });
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith(
       "recovered-box",
@@ -519,7 +523,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       210000,
       "replacement-container-id",
     );
-    expect(order).toEqual(["restore-state", "post-restore-restart", "commit-container"]);
+    expect(order).toEqual(["restore-state", "commit-container", "post-restore-restart"]);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -709,7 +713,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     },
   );
 
-  it("rolls back when post-restore restart does not report an exact ok disposition", async () => {
+  it("fails after commit when the post-handoff restart does not report an exact ok disposition", async () => {
     mockOpenClawSandbox("post-restore-fail");
     setImmediateRecoveryPolling();
     const order: string[] = [];
@@ -745,13 +749,14 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       recovered: false,
       forwardRecovered: false,
       recoveryFailureDetail:
-        "Sandbox recovery did not complete; the previous container was restored",
+        "the restored managed gateway did not pass its post-handoff restart and health check. NemoClaw did not start the primary dashboard/API host forward",
     });
-    expect(order).toEqual(["restore-state", "post-restore-restart", "rollback-container"]);
-    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
+    expect(order).toEqual(["restore-state", "commit-container", "post-restore-restart"]);
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(5);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ supervisorReady: false }),
+      expect.objectContaining({ replacementAlreadyRunning: true, supervisorReady: true }),
+      expect.any(Object),
     );
   });
 
