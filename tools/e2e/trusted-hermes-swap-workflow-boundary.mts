@@ -258,7 +258,12 @@ export function validateTrustedHermesSwapWorkflow(workflowValue: unknown): strin
       continue;
     }
 
-    if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
+    const expectedNeeds = [
+      "base-image-publication",
+      "generate-matrix",
+      ...(jobName === "hermes-e2e" ? ["package-openshell-sdk"] : []),
+    ];
+    if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
       errors.push(`${jobName} trusted Hermes swap job must depend on controller validation`);
     }
     if (provisionSteps.length !== 1) {
