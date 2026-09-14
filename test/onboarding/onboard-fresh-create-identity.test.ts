@@ -16,7 +16,7 @@ import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { onboardScriptMocksPath } from "../helpers/onboard-split-context";
 import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
-vi.setConfig({ maxConcurrency: 10 });
+vi.setConfig({ maxConcurrency: 6 });
 
 function runNodeScript(
   scriptPath: string,
