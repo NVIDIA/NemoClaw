@@ -14,7 +14,6 @@ import {
   startOwnedOpenShellInference,
   type OwnedOpenShellInference,
   createOpenShellSandbox,
-  credentialFreeEnvironment,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
   downloadOpenShellPath,

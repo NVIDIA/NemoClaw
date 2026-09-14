@@ -87,7 +87,7 @@ export interface ReusedSandboxDashboardForwarding {
     sandboxName: string,
     rollback?: boolean,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): void;
+  ): void | Promise<void>;
 }
 
 export interface ReusedSandboxDashboardStateInput {
@@ -110,7 +110,7 @@ export interface ReusedSandboxDashboardStateInput {
       reuseExistingForward?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
     },
-  ): number;
+  ): number | Promise<number>;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
   revalidateSandboxIdentity?(operation: string): void;
@@ -132,9 +132,9 @@ export interface ReusedSandboxDashboardStateResult {
   hermesDashboardState: HermesDashboardOnboardState;
 }
 
-export function applyReusedSandboxDashboardState(
+export async function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
-): ReusedSandboxDashboardStateResult {
+): Promise<ReusedSandboxDashboardStateResult> {
   const manageDashboard = input.manageDashboard ?? true;
   // Capture the operator's external origin before the loopback rewrite below
   // overwrites `input.env.CHAT_UI_URL`, so the persisted external URL reflects
@@ -153,7 +153,7 @@ export function applyReusedSandboxDashboardState(
   input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
   const reuseExistingForward = canReuseDashboardForwardForAgent(input.agent);
   const dashboardPort = manageDashboard
-    ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+    ? await input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
         ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
         ...(input.revalidateSandboxIdentity
           ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
@@ -174,7 +174,7 @@ export function applyReusedSandboxDashboardState(
     );
     // The primary forward already serves the enabled Hermes dashboard.
     if (hermesDashboardState.config?.port !== dashboardPort) {
-      input.hermesDashboardForwarding.ensureForState(
+      await input.hermesDashboardForwarding.ensureForState(
         hermesDashboardState,
         input.sandboxName,
         false,

@@ -12,7 +12,8 @@ import { isValidDashboardExternalUrl } from "../dashboard/url";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 
-export { GATEWAYS_SUBDIR } from "./state-root";
+export { GATEWAYS_SUBDIR, resolveHome } from "./state-root";
+export { DEFAULT_GATEWAY_PORT } from "../core/ports";
 export {
   releaseManagedGatewayStateLifecycleLock,
   tryAcquireManagedGatewayStateLifecycleLock,

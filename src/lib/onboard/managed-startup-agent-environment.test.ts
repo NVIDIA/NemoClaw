@@ -803,17 +803,17 @@ describe("managed startup agent environment", () => {
     const after = mapManagedStartupProfileToAgentEnvironment({
       ...base,
       inference: {
-        ...base.inference,
+        ...base.inference!,
         routeProvider: "rebuilt-inference",
         upstreamProvider: "openrouter",
         model: "openai/gpt-5.4",
-        routedBaseUrl: "https://rebuilt.inference.local/v1",
+        routedBaseUrl: "https://rebuilt.inference!.local/v1",
       },
       proxy: { ...base.proxy, managedHost: "10.200.0.9", managedPort: 3129 },
     });
 
     expect(after.configurationEnvironment).toMatchObject({
-      NEMOCLAW_INFERENCE_BASE_URL: "https://rebuilt.inference.local/v1",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://rebuilt.inference!.local/v1",
       NEMOCLAW_INFERENCE_PROVIDER_ID: "rebuilt-inference",
       NEMOCLAW_MODEL: "openai/gpt-5.4",
       NEMOCLAW_UPSTREAM_PROVIDER: "openrouter",
@@ -882,7 +882,7 @@ describe("managed startup agent environment", () => {
     const upstreamProvider = "a".repeat(64);
     const result = mapManagedStartupProfileToAgentEnvironment({
       ...profile,
-      inference: { ...profile.inference, upstreamProvider },
+      inference: { ...profile.inference!, upstreamProvider },
     });
 
     expect(
@@ -1016,7 +1016,7 @@ describe("managed startup agent environment", () => {
       const dcodeBase = dcodeProfile();
       const dcode: ManagedStartupProfile = {
         ...dcodeBase,
-        inference: { ...dcodeBase.inference, upstreamEndpointUrl: null },
+        inference: { ...dcodeBase.inference!, upstreamEndpointUrl: null },
       };
       const dcodeResult = mapManagedStartupProfileToAgentEnvironment(dcode);
       expect(dcodeResult.configurationEnvironment.NEMOCLAW_UPSTREAM_ENDPOINT_URL).toBe("");
@@ -1032,15 +1032,15 @@ describe("managed startup agent environment", () => {
     const reordered: ManagedStartupProfile = {
       ...cloned,
       inference: {
-        api: profile.inference.api,
-        upstreamEndpointUrl: profile.inference.upstreamEndpointUrl,
-        compatibility: profile.inference.compatibility,
-        inputModalities: profile.inference.inputModalities,
-        routeProvider: profile.inference.routeProvider,
-        upstreamProvider: profile.inference.upstreamProvider,
-        primaryModelRef: profile.inference.primaryModelRef,
-        routedBaseUrl: profile.inference.routedBaseUrl,
-        model: profile.inference.model,
+        api: profile.inference!.api,
+        upstreamEndpointUrl: profile.inference!.upstreamEndpointUrl,
+        compatibility: profile.inference!.compatibility,
+        inputModalities: profile.inference!.inputModalities,
+        routeProvider: profile.inference!.routeProvider,
+        upstreamProvider: profile.inference!.upstreamProvider,
+        primaryModelRef: profile.inference!.primaryModelRef,
+        routedBaseUrl: profile.inference!.routedBaseUrl,
+        model: profile.inference!.model,
       },
     };
     const first = mapManagedStartupProfileToAgentEnvironment(profile);
@@ -1078,7 +1078,7 @@ describe("managed startup agent environment", () => {
       const base = dcodeProfile();
       const profile: ManagedStartupProfile = {
         ...base,
-        inference: { ...base.inference, upstreamProvider },
+        inference: { ...base.inference!, upstreamProvider },
       };
 
       expect(() => mapManagedStartupProfileToAgentEnvironment(profile)).toThrow(
@@ -1103,7 +1103,7 @@ describe("managed startup agent environment", () => {
     const credentialBearing: ManagedStartupProfile = {
       ...openclawBase,
       inference: {
-        ...openclawBase.inference,
+        ...openclawBase.inference!,
         routedBaseUrl: "https://user:password@inference.local/v1",
       },
     };

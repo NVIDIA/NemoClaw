@@ -14,6 +14,11 @@ import {
 } from "../adapters/openshell/sandbox-observer";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import * as registry from "../state/registry";
+import {
+  assertNoHermesPortableHostAuthority,
+  defaultPortableStateDir,
+} from "../state/portable-uninstall-retirement";
+import { inspectHermesPortableDebugSummary, runHermesPortableDebug } from "./hermes-portable-debug";
 
 const useColor = !process.env.NO_COLOR && !!process.stderr.isTTY;
 const B = useColor ? "\x1b[1m" : "";
@@ -42,6 +47,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
   const liveSandboxNames = async (
     target: OpenShellGatewayTarget,
   ): Promise<ReadonlySet<string> | "denied" | undefined> => {
+    assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), "debug");
     const result = await sandboxObserver.listSandboxes({ target });
     if (!result.ok) {
       const denied =
@@ -53,6 +59,8 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
   };
 
   const getSandboxAvailability: RunDebugCommandDeps["getSandboxAvailability"] = async (name) => {
+    const portable = inspectHermesPortableDebugSummary(name);
+    if (portable) return { state: "available", gatewayName: portable.gatewayName };
     const { sandboxes } = registry.listSandboxes();
     const registered = sandboxes.find((sandbox) => sandbox.name === name);
     if (!registered) return { state: "unregistered" };
@@ -66,6 +74,10 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
   };
 
   const getDefaultSandbox: RunDebugCommandDeps["getDefaultSandbox"] = async () => {
+    assertNoHermesPortableHostAuthority(
+      defaultPortableStateDir(process.env),
+      "debug without --sandbox NAME",
+    );
     const { defaultSandbox, sandboxes } = registry.listSandboxes();
     const selectedName = defaultSandbox ?? sandboxes.find((sandbox) => sandbox.name)?.name;
     if (!selectedName) {
@@ -115,6 +127,13 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
   return {
     getDefaultSandbox,
     getSandboxAvailability,
-    runDebug,
+    runDebug: (options) => {
+      const portable = options.sandboxName
+        ? inspectHermesPortableDebugSummary(options.sandboxName)
+        : null;
+      if (portable) return runHermesPortableDebug(options, portable);
+      assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), "debug");
+      runDebug(options);
+    },
   };
 }
