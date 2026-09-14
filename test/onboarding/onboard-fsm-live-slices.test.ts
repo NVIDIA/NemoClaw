@@ -245,6 +245,19 @@ async function runSliceProbe(
       `
 const scenario = ${JSON.stringify(scenario)};
 if (scenario.mode === "active-cancellation") {
+  const activeCloseReadyPath = require("node:path").join(process.env.HOME, "active-close-hold.ready");
+  const activeCloseReleasePath = require("node:path").join(process.env.HOME, "active-close-hold.release");
+  const activeCloseHolder = require("node:child_process").spawn(
+    process.execPath,
+    [
+      "-e",
+      'const fs = require("node:fs"); const [readyPath, releasePath] = process.argv.slice(1); fs.writeFileSync(readyPath, String(process.pid)); const poll = setInterval(() => { if (fs.existsSync(releasePath)) { clearInterval(poll); process.exit(0); } }, 10); setTimeout(() => process.exit(2), 5000);',
+      activeCloseReadyPath,
+      activeCloseReleasePath,
+    ],
+    { stdio: ["ignore", "inherit", "inherit"] },
+  );
+  activeCloseHolder.unref();
   require("node:fs").writeFileSync(
     require("node:path").join(process.env.HOME, "active-child.pid"),
     String(process.pid),
@@ -758,37 +771,73 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
     }
   });
 
-  it("waits for an actively cancelled child to exit before removing its workspace", async (context) => {
+  it("waits for an actively cancelled child to close before removing its workspace", async (context) => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fsm-active-"));
     const controller = new AbortController();
     const probe = runSliceProbe(
       { slice: "initial", mode: "active-cancellation", workspaceRoot },
       { signal: controller.signal, onTestFinished: context.onTestFinished },
     );
+    let childWorkspace = path.join(workspaceRoot, "pending");
     let childPid = 0;
+    let closeHolderPid = 0;
+    let probeSettled = false;
+    void probe.then(
+      () => {
+        probeSettled = true;
+      },
+      () => {
+        probeSettled = true;
+      },
+    );
     try {
       await vi.waitFor(
         () => {
           const [workspace] = fs.readdirSync(workspaceRoot);
           assert.ok(workspace);
-          const pidPath = path.join(workspaceRoot, workspace, "active-child.pid");
+          childWorkspace = path.join(workspaceRoot, workspace);
+          const pidPath = path.join(childWorkspace, "active-child.pid");
+          const closeHolderPath = path.join(childWorkspace, "active-close-hold.ready");
           assert.ok(fs.existsSync(pidPath));
+          assert.ok(fs.existsSync(closeHolderPath));
           childPid = Number(fs.readFileSync(pidPath, "utf8"));
+          closeHolderPid = Number(fs.readFileSync(closeHolderPath, "utf8"));
           assert.ok(Number.isSafeInteger(childPid) && childPid > 0);
+          assert.ok(Number.isSafeInteger(closeHolderPid) && closeHolderPid > 0);
           process.kill(childPid, 0);
+          process.kill(closeHolderPid, 0);
         },
         { timeout: 5_000, interval: 10 },
       );
 
       controller.abort(new Error("fixture test cancelled after launch"));
+      await vi.waitFor(
+        () => {
+          assert.throws(
+            () => process.kill(childPid, 0),
+            (error: NodeJS.ErrnoException) => error.code === "ESRCH",
+          );
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+      assert.equal(probeSettled, false);
+      assert.ok(fs.existsSync(childWorkspace));
+      process.kill(closeHolderPid, 0);
+      fs.writeFileSync(path.join(childWorkspace, "active-close-hold.release"), "");
       await assert.rejects(probe, /slice probe exited with status null and signal SIGKILL/u);
+      assert.equal(probeSettled, true);
       assert.throws(
-        () => process.kill(childPid, 0),
+        () => process.kill(closeHolderPid, 0),
         (error: NodeJS.ErrnoException) => error.code === "ESRCH",
       );
       assert.deepEqual(fs.readdirSync(workspaceRoot), []);
     } finally {
       controller.abort();
+      try {
+        fs.writeFileSync(path.join(childWorkspace, "active-close-hold.release"), "");
+      } catch {
+        // The workspace may already be gone after a successful close and cleanup.
+      }
       await probe.catch(() => undefined);
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
