@@ -420,6 +420,33 @@ describe("exportSandboxSessions", () => {
     }
   });
 
+  it("does not start the next directory download after the retained transfer is interrupted", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: "sid-a" },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-b" },
+        ]),
+      ),
+    );
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    const chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => {});
+    const first = makeTransferCompletion();
+    vi.mocked(first.wasInterrupted).mockReturnValueOnce(false).mockReturnValue(true);
+    transferRunMock.mockResolvedValueOnce(first);
+
+    try {
+      await expect(
+        exportSandboxSessions({ sandboxName: "alpha", out: "./sessions-alpha" }),
+      ).rejects.toThrow(/Failed to download.*\(exit null\)/);
+      expect(transferRunMock).toHaveBeenCalledOnce();
+      expect(first.release).toHaveBeenCalledOnce();
+    } finally {
+      mkdirSpy.mockRestore();
+      chmodSpy.mockRestore();
+    }
+  });
+
   it("does not report success when the retained transfer is interrupted while the lifecycle lock settles", async () => {
     captureMock.mockReturnValueOnce(
       makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),

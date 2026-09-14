@@ -134,6 +134,7 @@ class SessionExportTransfers {
     request: Omit<OpenShellSandboxTransferRequest, "direction"> & { remoteLabel: string },
   ): Promise<{ status: number | null }> {
     const { remoteLabel, ...transfer } = request;
+    this.assertNotInterrupted();
     const next = await this.executor.run({ direction: "download", ...transfer });
 
     if (this.completion) {
