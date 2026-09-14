@@ -1,0 +1,35 @@
+{
+  "image_id": "sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd",
+  "network": "none",
+  "external_messages": 0,
+  "source_sha256": {
+    "tools/openclaw-native-test.py": "c7cb5923edebd21bcb55394ef37f0d4655928b45c9295f5b5b03d5083399f5ec",
+    "test/openclaw_native_messaging.py": "ed733fe62f491d637a417077f9afaf566310a3b373c2902f727d43f50b7acb2d",
+    "test/openclaw_cli_driver.mjs": "b893009ec9bd0aee70d6fd42ef4324af1e98231768d83e6a8d239db73a617494",
+    "test/openclaw_fixture_transport.mjs": "21283f42598a1700baa3e665c9016d573f3b1e3f54bad4cfbb06c91123c6f41c",
+    "image/fabric/openclaw_adapter.py": "7fb568d84e72ce3f35ec2f440341eef853a0936adebd25ae87751ef2487f0d90",
+    "image/fabric/fabric.py": "c2a2cef60be73ff53fad758cb522dc0b154e0ed8ccd52e706d315139bab189cd"
+  },
+  "phases": [
+    {
+      "phase": "configure",
+      "evidence_type": "native processes; Telegram and inference protocol fixtures; network none",
+      "runtime_id": "runtime-1789419498695-20-2",
+      "unauthorized_blocked": true,
+      "native_pairing": true,
+      "separate_conversations": true,
+      "native_tool_verified": true,
+      "provisioning_check_preserves_native_settings": true,
+      "gateway_pid": 26
+    },
+    {
+      "phase": "recreate",
+      "evidence_type": "native processes; Telegram and inference protocol fixtures; network none",
+      "runtime_id": "runtime-1789419507600-10-2",
+      "recreated_runtime_retains_native_configuration_enrollment_history_workspace": true,
+      "native_disable_blocks_invocation": true,
+      "native_credential_failure_visible": true,
+      "native_agent_independent_of_channel_failure": true
+    }
+  ]
+}

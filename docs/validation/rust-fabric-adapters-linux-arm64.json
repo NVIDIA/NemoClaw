@@ -1,0 +1,138 @@
+{
+  "scope": "retained native harness images executing ported protocol fixtures; no external inference or messages",
+  "harnesses": [
+    {
+      "harness": "claude",
+      "image": {
+        "image": "nc-prototype-fabric@sha256:ad0f0a9bdef6b1d1efd77b850cff8137d257fee03aa29e3b6980d81cd52fb3fb",
+        "exit_code": 0
+      },
+      "proof": {
+        "harness": "claude",
+        "readiness_without_inference": true,
+        "tool_file_verified": false,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789419988840-1-2",
+        "request_paths": [
+          "/v1/messages?beta=true"
+        ],
+        "network": "none; local TLS protocol fixture; no live model"
+      }
+    },
+    {
+      "harness": "codex",
+      "image": {
+        "image": "nc-prototype-fabric@sha256:5d7ab97e878116ae728df2a29386345b4214975fa7360c8d091b6eb45cfb1479",
+        "exit_code": 0
+      },
+      "proof": {
+        "harness": "codex",
+        "readiness_without_inference": true,
+        "tool_file_verified": false,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789419997620-1-2",
+        "request_paths": [
+          "/v1/responses"
+        ],
+        "network": "none; local TLS protocol fixture; no live model"
+      }
+    },
+    {
+      "harness": "mini-swe-agent",
+      "image": {
+        "image": "nc-prototype-fabric@sha256:b362c65247df2db9fd50f4699df5f2e067f68aabf3e7d2a6800b3ec03a9674f9",
+        "exit_code": 0
+      },
+      "proof": {
+        "harness": "mini-swe-agent",
+        "readiness_without_inference": true,
+        "tool_file_verified": true,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789420008042-1-2",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "network": "none; local TLS protocol fixture; no live model"
+      }
+    },
+    {
+      "harness": "nooa",
+      "image": {
+        "image": "nc-prototype-fabric@sha256:c1cf75ce3036c2c438375b8e9921eeca06f302a3f7f42d1e412cd571ffd8323b",
+        "exit_code": 0
+      },
+      "proof": {
+        "harness": "nooa",
+        "readiness_without_inference": true,
+        "tool_file_verified": true,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789420012873-1-2",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "network": "none; local TLS protocol fixture; no live model"
+      }
+    },
+    {
+      "harness": "nooa-bench",
+      "image": {
+        "image": "nc-prototype-fabric@sha256:deaa2580e46f5d27105c7051771d36da36c5879ac2fea98e6b22cd651c910260",
+        "exit_code": 0
+      },
+      "proof": {
+        "harness": "nooa-bench",
+        "readiness_without_inference": true,
+        "tool_file_verified": true,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789420018915-1-2",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "network": "none; local TLS protocol fixture; no live model"
+      }
+    },
+    {
+      "harness": "remote-agent",
+      "image": {
+        "image": "nc-prototype-fabric@sha256:a60d580895c1667bddd2063078837134eb5cc7fea73aea7b0b6a55a4fa89204a",
+        "exit_code": 0
+      },
+      "proof": {
+        "harness": "remote-agent",
+        "readiness_without_inference": true,
+        "tool_file_verified": false,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789420023617-1-2",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "network": "none; local TLS protocol fixture; no live model"
+      }
+    },
+    {
+      "harness": "pi",
+      "image": {
+        "image": "nc-prototype-fabric@sha256:69a045d358a5ef73cb4e448aa9555c2d198272445a39e80981145c4acffc4e1b",
+        "exit_code": 0
+      },
+      "proof": {
+        "harness": "pi",
+        "readiness_without_inference": true,
+        "tool_file_verified": false,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789420026143-1-2",
+        "request_paths": [
+          "/v1/responses"
+        ],
+        "network": "none; local TLS protocol fixture; no live model"
+      }
+    }
+  ]
+}
