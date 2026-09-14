@@ -11,3 +11,10 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
+sha2.workspace = true
+regex.workspace = true
+url.workspace = true
+ipnet.workspace = true

@@ -1,0 +1,181 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+use nemoclaw_sdk::config::{Document, validate_endpoint};
+use serde_json::Value;
+
+#[test]
+fn all_reference_recipes_preserve_defaults_digest_workspace_and_round_trip() {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config");
+    for entry in std::fs::read_dir(&fixtures).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().unwrap() != "yaml" {
+            continue;
+        }
+        let input = std::fs::read_to_string(&path).unwrap();
+        let expected: Value =
+            serde_json::from_slice(&std::fs::read(path.with_extension("yaml.json")).unwrap())
+                .unwrap();
+        let document = Document::parse(input.as_bytes()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&document).unwrap(),
+            expected["document"],
+            "{}",
+            path.display()
+        );
+        assert_eq!(document.digest(), expected["digest"].as_str().unwrap());
+        assert_eq!(
+            document.workspace(),
+            expected["workspace"].as_str().unwrap()
+        );
+        assert_eq!(
+            document.inference_endpoint(),
+            expected["endpoint"].as_str().unwrap()
+        );
+        assert_eq!(
+            Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+            document
+        );
+    }
+}
+#[test]
+fn unsafe_yaml_and_secret_values_are_rejected_without_echoing_input() {
+    let base = include_str!("fixtures/config/local.yaml");
+    let changes = [
+        (
+            "management: external",
+            "management: external\n    surprise: secret-do-not-print",
+        ),
+        (
+            "provider: openai",
+            "provider: openai\n      apiKey: secret-do-not-print",
+        ),
+        ("name: local-agent", "name: local-agent\n  name: second"),
+        ("name: local-agent", "name: &name local-agent"),
+        ("management: external", "management: null"),
+        ("providerRef: local", "providerRef: foreign"),
+        (
+            "model: qwen3.5:0.8b",
+            "model: '${file(\"secret-do-not-print\")}'",
+        ),
+        ("provider: docker", "provider: unsupported"),
+        ("type: openclaw", "type: fabric\n          harness: unknown"),
+    ];
+    for (from, to) in changes {
+        let error = Document::parse(base.replace(from, to).as_bytes()).unwrap_err();
+        assert!(!error.to_string().contains("secret-do-not-print"));
+    }
+    assert!(Document::parse(format!("{base}\n---\nkind: NemoClawConfig\n").as_bytes()).is_err());
+    assert!(Document::parse(vec![b' '; (1 << 20) + 1].as_slice()).is_err());
+}
+#[test]
+fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
+    for endpoint in [
+        "http://169.254.169.254/v1",
+        "http://example.com/v1",
+        "https://user:secret@example.com/v1",
+        "https://example.com/v1?key=secret",
+        "https://[fe80::1]/v1",
+        "http://0.0.0.0:1",
+        "file:///etc/passwd",
+        "https://metadata.google.internal/",
+    ] {
+        assert!(validate_endpoint(endpoint, false).is_err(), "{endpoint}");
+    }
+    for endpoint in [
+        "http://127.0.0.1:11434/v1",
+        "http://172.20.0.1:11436/v1",
+        "https://api.example.com/v1",
+    ] {
+        assert!(validate_endpoint(endpoint, false).is_ok());
+    }
+    assert!(validate_endpoint("http://172.20.0.1:17671", true).is_err());
+}
+
+#[test]
+fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
+    let original = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
+    let mut defaulted = original.clone();
+    defaulted.spec.gateway.endpoint.clear();
+    defaulted.spec.gateway.engine.clear();
+    defaulted.spec.gateway.image.clear();
+    defaulted.spec.inference_providers[0]
+        .service
+        .as_mut()
+        .unwrap()
+        .serving = Default::default();
+    defaulted.spec.inference_providers[0]
+        .service
+        .as_mut()
+        .unwrap()
+        .memory = Default::default();
+    defaulted.spec.sandboxes[0].image.ref_.clear();
+    defaulted.spec.sandboxes[0].runtime.provider.clear();
+    defaulted.spec.sandboxes[0].network.tier.clear();
+    defaulted.defaults();
+    assert_eq!(defaulted, original);
+    for timeout in [0, 899, 3601] {
+        let mut changed = original.clone();
+        changed.spec.inference_providers[0]
+            .service
+            .as_mut()
+            .unwrap()
+            .serving
+            .startup_timeout_seconds = timeout;
+        assert!(changed.validate().is_err());
+    }
+    let mut changed = original.clone();
+    changed.spec.inference_providers[0].endpoint = "http://127.0.0.1:18888/v1".into();
+    assert!(changed.validate().is_err());
+    let mut changed = original;
+    changed.spec.inference_providers[0]
+        .service
+        .as_mut()
+        .unwrap()
+        .memory
+        .host_reserve_gib = 1;
+    assert!(changed.validate().is_err());
+}
+
+#[test]
+fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
+    let original = Document::parse(include_str!("fixtures/config/fabric.yaml").as_bytes()).unwrap();
+    for harness in [
+        "deepagents",
+        "hermes",
+        "openclaw",
+        "claude",
+        "codex",
+        "mini-swe-agent",
+        "nooa",
+        "nooa-bench",
+        "remote-agent",
+        "pi",
+    ] {
+        let mut document = original.clone();
+        document.spec.sandboxes[0].agents[0].harness = harness.into();
+        document.spec.inference_providers[0].provider = if harness == "claude" {
+            "anthropic"
+        } else {
+            "openai"
+        }
+        .into();
+        assert!(document.validate().is_ok());
+        assert_eq!(
+            document.spec.sandboxes[0].agents[0].runtime(),
+            format!("fabric-{harness}")
+        );
+    }
+    let mut wrong = original;
+    wrong.spec.sandboxes[0].agents[0].harness = "claude".into();
+    assert!(wrong.validate().is_err());
+    let base = include_str!("fixtures/config/managed-ollama.yaml");
+    for (from, to) in [
+        ("unix:///var/run/docker.sock", "tcp://127.0.0.1:2375"),
+        ("172.20.0.1:11436", "0.0.0.0:11436"),
+        ("172.20.0.1:11436", "172.20.0.1"),
+        ("qwen3:0.6b", "qwen3"),
+    ] {
+        assert!(Document::parse(base.replace(from, to).as_bytes()).is_err());
+    }
+}

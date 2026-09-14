@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Replace the fixture endpoint/model with your own compatible service.
+# See docs/reference/fabric-harnesses.md for protocol requirements and test commands.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: fabric-pi
+  uid: c4a639f3-2bd3-42ba-8f5d-658d7913b0f9
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-fabric@sha256:69a045d358a5ef73cb4e448aa9555c2d198272445a39e80981145c4acffc4e1b
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      agents:
+        - name: main
+          type: fabric
+          harness: pi
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: fixture-model

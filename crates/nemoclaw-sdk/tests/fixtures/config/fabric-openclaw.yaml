@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: fabric-openclaw
+  uid: c892587f-6439-44b5-9a70-a43e8936461f
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      agents:
+        - name: main
+          type: fabric
+          harness: openclaw
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: qwen3:4b

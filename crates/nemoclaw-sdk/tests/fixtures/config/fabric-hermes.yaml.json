@@ -1,0 +1,58 @@
+{
+  "digest": "e96289fb4f5af6332f751ce9cd3e8b33e962432ebadc14e4b796ae8eed997123",
+  "document": {
+    "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
+    "kind": "NemoClawConfig",
+    "metadata": {
+      "name": "fabric-hermes",
+      "uid": "55377f6f-3987-476d-8934-4c95dd385a62"
+    },
+    "spec": {
+      "gateway": {
+        "management": "external",
+        "endpoint": "http://127.0.0.1:17681"
+      },
+      "inferenceProviders": [
+        {
+          "name": "local",
+          "provider": "openai",
+          "endpoint": "http://172.20.0.1:11446/v1"
+        }
+      ],
+      "sandboxes": [
+        {
+          "name": "assistant",
+          "image": {
+            "ref": "nc-prototype-fabric@sha256:22e0c2ddf37b8ee46c89341af7fd26f913072309630924038b62ad220dff0d40"
+          },
+          "runtime": {
+            "provider": "docker"
+          },
+          "network": {
+            "tier": "isolated"
+          },
+          "agents": [
+            {
+              "name": "main",
+              "type": "fabric",
+              "harness": "hermes",
+              "inference": {
+                "routes": [
+                  {
+                    "name": "primary",
+                    "providerRef": "local",
+                    "overrides": {
+                      "model": "qwen3:1.7b"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "endpoint": "http://172.20.0.1:11446/v1",
+  "workspace": "nc-d9dbb05d0991d823"
+}
