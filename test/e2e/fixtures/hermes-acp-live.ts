@@ -257,6 +257,8 @@ type HermesAcpLiveReceipt = Readonly<{
 
 function hermesAcpStderrCategory(stderr: string): string {
   const categories = [
+    ["recovery blocked after selection", "gateway-selection-blocked"],
+    ["remained unavailable after startup", "gateway-post-start-unavailable"],
     ["could not safely inspect the sandbox registry", "registry-inspection"],
     ["not a compatible managed Hermes sandbox", "registry-incompatible"],
     ["changed before the ACP adapter could start", "registry-changed"],
@@ -267,7 +269,14 @@ function hermesAcpStderrCategory(stderr: string): string {
     ["OpenShell SSH could not reach", "ssh-unreachable"],
   ] as const;
   const match = categories.find(([text]) => stderr.includes(text));
-  return match?.[1] ?? (stderr ? "unclassified" : "none");
+  const state = stderr.match(
+    /state=(healthy_named|named_unreachable|named_unhealthy|connected_other|missing_named|observation_failed) error=(authentication|transport|schema|timeout|command|none)/u,
+  );
+  return match
+    ? `${match[1]}${state ? `:${state[1]}:${state[2]}` : ""}`
+    : stderr
+      ? "unclassified"
+      : "none";
 }
 
 async function writeHermesAcpLiveReceipt(
