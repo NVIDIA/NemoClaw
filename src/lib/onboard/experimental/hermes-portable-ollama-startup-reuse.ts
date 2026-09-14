@@ -1,0 +1,119 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+
+import type {
+  HermesPortableOllamaRecoveryInput,
+  HermesPortableOllamaPreparedProbeDependency,
+  inspectHermesPortableOllamaReadinessRuntime,
+} from "./hermes-portable-ollama-inference";
+import type { qualifyHermesPortableOperatingAuthority } from "./hermes-portable-operating-authority";
+import type {
+  HermesPortableConfiguredReceipt,
+  readHermesPortableLifecycleReceipt,
+} from "./hermes-portable-receipt";
+import { currentHermesPortableStartupOperation } from "./hermes-portable-startup-operation";
+import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
+
+interface StartupReuseDeps {
+  readonly readReceipt: typeof readHermesPortableLifecycleReceipt;
+  readonly qualifyOperatingAuthority: typeof qualifyHermesPortableOperatingAuthority;
+  readonly inspectReadinessRuntime: typeof inspectHermesPortableOllamaReadinessRuntime;
+}
+
+/** Prove a healthy published runtime before opening a mutating recovery transaction. */
+export async function tryReuseHermesPortableOllamaStartup(
+  input: HermesPortableOllamaRecoveryInput,
+  deps: StartupReuseDeps,
+): Promise<boolean> {
+  const env = input.env ?? process.env;
+  const stateDir = input.stateDir ?? defaultPortableDemoStateDir(env);
+  const scope = currentHermesPortableStartupOperation(input.sandboxName);
+  if (
+    input.intent !== "connect-probe-only" ||
+    env.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" ||
+    env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE !== "1" ||
+    !scope ||
+    scope.stateDir !== path.join(stateDir, "state")
+  ) {
+    return false;
+  }
+  const currentScope = () => currentHermesPortableStartupOperation(input.sandboxName) === scope;
+  input.assertCallerCurrent?.();
+  const snapshot = deps.readReceipt(input.sandboxName, stateDir);
+  if (!snapshot || snapshot.receipt.phase !== "active" || !snapshot.successor) return false;
+  const expectedSnapshot = structuredClone(snapshot);
+  const expectedEnv = { ...env };
+  const expectedEntry = structuredClone(input.entry);
+  const operating = deps.qualifyOperatingAuthority(
+    snapshot as typeof snapshot & { readonly receipt: HermesPortableConfiguredReceipt },
+    { env },
+  );
+  const assertCurrent = () => {
+    input.assertCallerCurrent?.();
+    operating.assertCurrent();
+    if (
+      !isDeepStrictEqual({ ...env }, expectedEnv) ||
+      !isDeepStrictEqual({ ...(input.env ?? process.env) }, expectedEnv) ||
+      !isDeepStrictEqual(
+        structuredClone(deps.readReceipt(input.sandboxName, stateDir)),
+        expectedSnapshot,
+      ) ||
+      !isDeepStrictEqual(input.entry, expectedEntry) ||
+      !isDeepStrictEqual(input.readRegistry(input.sandboxName), expectedEntry)
+    ) {
+      throw new Error("Hermes Portable inference startup authority changed");
+    }
+    input.assertCallerTransactionCurrent?.();
+  };
+  const inspect = () =>
+    deps.inspectReadinessRuntime({
+      intent: "connect-probe-only",
+      sandboxName: input.sandboxName,
+      entry: input.entry,
+      operatingReceipt: operating.receipt,
+      readRegistry: input.readRegistry,
+      assertCallerCurrent: assertCurrent,
+      env,
+      stateDir,
+    });
+  assertCurrent();
+  const initial = inspect();
+  if (initial.kind !== "running-current" || !currentScope()) return false;
+  let verified;
+  try {
+    verified = await input.verifyRoute();
+  } catch {
+    // A missing route can require the existing rollback-safe recovery path.
+    assertCurrent();
+    return false;
+  }
+  assertCurrent();
+  initial.assertCurrent();
+  if (!isDeepStrictEqual(verified, expectedEntry)) {
+    throw new Error("Hermes Portable inference startup route authority changed");
+  }
+  if (!currentScope()) return false;
+  let dependency: HermesPortableOllamaPreparedProbeDependency | null = null;
+  try {
+    dependency = (await input.prepareProbeDependency?.()) ?? null;
+    assertCurrent();
+    // Re-inspect after the async route/dependency boundaries: retained file proof
+    // alone cannot establish that the same container is still running.
+    const completed = inspect();
+    completed.assertCurrent();
+    if (completed.kind !== "running-current" || !currentScope()) {
+      const rollback = dependency;
+      dependency = null;
+      await rollback?.rollback();
+      return false;
+    }
+    dependency?.release();
+    return true;
+  } catch (error) {
+    await dependency?.rollback();
+    throw error;
+  }
+}
