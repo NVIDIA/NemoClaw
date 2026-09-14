@@ -766,6 +766,37 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
 describe("finalization process-recovery refusal propagation", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("pauses when process inspection cannot complete (#11758)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(false);
+  });
+
+  it("allows checked terminal recovery without a gateway process (#11758)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+        runtime: "terminal" as const,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+  });
+
   it.each([
     "raw-secret",
     "exec-failed",

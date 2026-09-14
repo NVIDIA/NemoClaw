@@ -14,6 +14,21 @@ import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalizat
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
 import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 
+const refusedRecovery = {
+  checked: true,
+  wasRunning: true,
+  recovered: false,
+  forwardRecovered: false,
+  secretBoundaryRefused: true,
+  secretBoundaryReason: "unexpected-marker",
+};
+const uncheckedRecovery = {
+  checked: false,
+  wasRunning: null,
+  recovered: false,
+  forwardRecovered: false,
+};
+
 function deploymentResult(healthy: boolean): VerifyDeploymentResult {
   return {
     healthy,
@@ -466,19 +481,17 @@ describe("final onboard flow runtime boundary", () => {
     });
   });
 
-  it.each(["finalizing", "post_verify"] as const)(
-    "retains a refused %s session and completes only after repair (#11758)",
-    async (initialState) => {
+  it.each([
+    ["finalizing", "refused", refusedRecovery],
+    ["post_verify", "refused", refusedRecovery],
+    ["finalizing", "unchecked", uncheckedRecovery],
+    ["post_verify", "unchecked", uncheckedRecovery],
+  ] as const)(
+    "retains the %s session after %s recovery and completes only after repair (#11758)",
+    async (initialState, _outcome, recoveryResult) => {
       const harness = createRuntimeHarness(sessionAt(initialState));
       const recorders = harness.boundary.recorders();
-      const recovery = vi.fn().mockResolvedValue({
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        secretBoundaryRefused: true,
-        secretBoundaryReason: "unexpected-marker",
-      });
+      const recovery = vi.fn().mockResolvedValue(recoveryResult);
       vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
         checkAndRecoverSandboxProcesses: recovery,
         waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),

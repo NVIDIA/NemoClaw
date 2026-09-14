@@ -759,10 +759,13 @@ describe("secret-boundary refusal during finalization", () => {
       });
       expect(result.stateResult).toMatchObject({
         type: "pause",
-        metadata: { state: phase, reason: "secret_boundary_refused" },
+        metadata: { state: phase, reason: "recovery_check_incomplete" },
       });
       expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
       expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("secret-boundary"));
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("nemoclaw my-assistant doctor"),
+      );
       expect(calls.error).toHaveBeenCalledWith(
         expect.stringContaining("nemoclaw onboard --resume"),
       );

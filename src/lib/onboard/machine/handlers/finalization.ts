@@ -195,8 +195,8 @@ function logTerminalReadyBlock(
   }
 }
 
-function secretBoundaryIncompleteMessage(sandboxName: string): string {
-  return `Onboarding for '${sandboxName}' is incomplete because the required secret-boundary check did not pass. Resolve the validator diagnostic, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+function recoveryIncompleteMessage(sandboxName: string): string {
+  return `Onboarding for '${sandboxName}' is incomplete because a required process or secret-boundary check did not pass. Inspect with ${CLI_NAME} ${sandboxName} doctor, resolve the reported problem, then resume onboarding with ${CLI_NAME} onboard --resume.`;
 }
 
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
@@ -285,14 +285,14 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover before verification (#3573).
     if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
-      deps.error(`  ${secretBoundaryIncompleteMessage(sandboxName)}`);
+      deps.error(`  ${recoveryIncompleteMessage(sandboxName)}`);
       deps.reportDeploymentReadiness(false);
       return {
         stateResult: pauseOnboardMachine(
           {},
           {
             state: "finalizing",
-            reason: "secret_boundary_refused",
+            reason: "recovery_check_incomplete",
           },
         ),
         unmigratedLegacyKeys,
@@ -391,7 +391,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   if (manageDashboard) {
     // Recheck after pairing and on resume, including Hermes secret-boundary enforcement.
     if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
-      const message = secretBoundaryIncompleteMessage(sandboxName);
+      const message = recoveryIncompleteMessage(sandboxName);
       deps.error(`  ${message}`);
       deps.reportDeploymentReadiness(false);
       return {
@@ -403,7 +403,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
             hermesAuthMethod,
             hermesToolGateways,
           }),
-          { state: "post_verify", reason: "secret_boundary_refused" },
+          { state: "post_verify", reason: "recovery_check_incomplete" },
         ),
         verificationDiagnostics: [message],
         deploymentHealthy: false,

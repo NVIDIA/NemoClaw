@@ -362,7 +362,10 @@ export const finalizationHandlerDeps = {
   ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
     const result = await processRecovery.checkAndRecoverSandboxProcesses(name, options);
-    return !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true);
+    return (
+      result.checked === true &&
+      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
+    );
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
