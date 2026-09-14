@@ -1008,6 +1008,7 @@ async function verifyHermesPortableInferenceRouteOrExit(
 }
 
 type HermesPortableProbeRouteResult = {
+  readonly entry: SandboxEntry;
   readonly forwardsRecovered: boolean;
 };
 
@@ -1046,7 +1047,7 @@ async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
     } catch {
       failHermesPortableInferenceRoute(sandboxName, "changed during verification");
     }
-    return { forwardsRecovered: false };
+    return { entry, forwardsRecovered: false };
   }
   let verified: SandboxEntry | null = null;
   let preparedForwards: PreparedHermesPortableForwardRecovery | null = null;
@@ -1120,7 +1121,46 @@ async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
   options.probeTiming?.setForwardAction(
     retainedForwards.result.kind === "restored" ? "restored" : "verified",
   );
-  return { forwardsRecovered: true };
+  return { entry: verified, forwardsRecovered: true };
+}
+
+/** Keep healthy interactive routes read-only; recover only unavailable managed inference. */
+async function prepareHermesPortableInteractiveInference(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+): Promise<HermesPortableProbeRouteResult> {
+  let authority: HermesPortableActiveLifecycleAuthority;
+  try {
+    authority = requireHermesPortableActiveLifecycleAuthority(
+      sandboxName,
+      undefined,
+      portableAgentLifecycleAuthorityDeps(),
+    );
+  } catch {
+    failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
+  }
+  try {
+    const entry = await verifyHermesPortableInferenceRoute(sandboxName, agent, authority);
+    return { entry, forwardsRecovered: false };
+  } catch (error) {
+    if (
+      authority.entry.provider !== "ollama-local" ||
+      !(error instanceof HermesPortableInferenceRouteVerificationError) ||
+      error.reason !== "unreachable"
+    ) {
+      failHermesPortableInferenceRoute(
+        sandboxName,
+        error instanceof HermesPortableInferenceRouteVerificationError
+          ? error.reason
+          : "unreachable",
+      );
+    }
+  }
+  return await verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+    sandboxName,
+    agent,
+    authority,
+  );
 }
 
 function isBlockingGatewayLifecycle(
@@ -2320,11 +2360,14 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
       requalify();
       // ── Inference route swap (#1248, #3390) ───────────────────────
       const agent = agentRuntime.getSessionAgent(sandboxName);
-      const sb = hermesPortable
-        ? await verifyHermesPortableInferenceRouteOrExit(sandboxName, agent)
+      const portableInference = hermesPortable
+        ? await prepareHermesPortableInteractiveInference(sandboxName, agent)
+        : null;
+      const sb = portableInference
+        ? portableInference.entry
         : await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
       requalify();
-      if (hermesPortable) {
+      if (hermesPortable && !portableInference?.forwardsRecovered) {
         const authority = requireHermesPortableActiveLifecycleAuthority(
           sandboxName,
           undefined,
