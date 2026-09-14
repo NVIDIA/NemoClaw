@@ -121,6 +121,10 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" >"$output/pull.json"
           gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_HEAD_SHA" >"$output/source-commit.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ADVISOR_RUN_ID" >"$output/advisor-run.json"
+          advisor_workflow_sha="$(jq -r '.workflow_sha' "$output/advisor-run.json")"
+          [[ "$advisor_workflow_sha" =~ ^[0-9a-f]{40}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/compare/$advisor_workflow_sha...$WORKFLOW_SHA" \
+            >"$output/advisor-workflow-comparison.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ADVISOR_RUN_ID/artifacts?per_page=100" \
             --paginate --slurp | jq '[.[] | .artifacts[]]' >"$output/artifacts.json"
           gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
@@ -145,6 +149,7 @@ jobs:
             --arg workflowSha "$WORKFLOW_SHA" \
             --slurpfile actorPermission "$output/actor-permission.json" \
             --slurpfile advisorRun "$output/advisor-run.json" \
+            --slurpfile advisorWorkflowComparison "$output/advisor-workflow-comparison.json" \
             --slurpfile artifacts "$output/artifacts.json" \
             --slurpfile comments "$output/comments.json" \
             --slurpfile pull "$output/pull.json" \
@@ -157,6 +162,7 @@ jobs:
               triggeringActor:$triggeringActor, currentRunId:$currentRunId,
               currentRunAttempt:$advisorRun[0].run_attempt, optedFindingIds:$findingIds,
               pullRequest:$pull[0], sourceCommit:$sourceCommit[0], advisorRun:$advisorRun[0],
+              advisorWorkflowComparison:$advisorWorkflowComparison[0],
               artifacts:$artifacts[0], state:{pull:$pull[0], comments:$comments[0],
               reviewComments:$reviewComments[0]}, reviews:$reviews[0],
               permissions:{actor:$actorPermission[0], triggeringActor:$triggeringPermission[0]}}' \
@@ -279,6 +285,11 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" configure
 
+      - name: Reconcile the previous retry sandbox
+        env:
+          RECONCILIATION_RECEIPT_FILE: ${{ runner.temp }}/reconciliation.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" reconcile
+
       - id: create
         name: Create the credential-free repair sandbox
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" create
@@ -327,12 +338,13 @@ jobs:
           set -euo pipefail
           [[ "$ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          existing="$RUNNER_TEMP/attempt-checks.json"
-          gh api -H "Accept: application/vnd.github+json" \
+          existing="$RUNNER_TEMP/attempt-check-pages.json"
+          gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
             "repos/$GITHUB_REPOSITORY/commits/$SOURCE_HEAD_SHA/check-runs?check_name=Advisor%20Repair%20Attempt&per_page=100" \
             >"$existing"
-          jq -e --arg attempt "$ATTEMPT_KEY" \
-            'all(.check_runs[]; .external_id != $attempt)' "$existing" >/dev/null
+          ATTEMPT_PAGES_FILE="$existing" \
+            node --experimental-strip-types --no-warnings \
+            "${GITHUB_WORKSPACE}/trusted/tools/pr-review-advisor/repair-claim.mts"
           gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
             -f name='Advisor Repair Attempt' \
             -f head_sha="$SOURCE_HEAD_SHA" \

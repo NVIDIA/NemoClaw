@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { OpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
+
 import {
   attemptKey,
   type RepairSelection,
@@ -14,6 +16,7 @@ import {
 import {
   materializeAdvisorRepairWorkspace,
   prepareAdvisorRepairInputs,
+  runAdvisorRepairTask,
 } from "../../../tools/pr-review-advisor/repair-resolve.mts";
 
 const temporaryDirectories: string[] = [];
@@ -82,6 +85,65 @@ function selection(sourceHeadSha = "a".repeat(40)): RepairSelection {
 }
 
 describe("PR Review Advisor two-turn resolver", () => {
+  it("runs exactly two ordered bounded turns in the repair sandbox (#10791)", () => {
+    const calls: Array<{ args: readonly string[]; options: { env: NodeJS.ProcessEnv } }> = [];
+    const tools: OpenShellTools = {
+      run: (command, args, options) => {
+        expect(command).toBe("openshell");
+        calls.push({ args, options });
+        return "";
+      },
+      runAsync: () => ({ cancel: () => {}, completion: Promise.resolve() }),
+      start: () => {},
+      wait: async () => {},
+    };
+
+    runAdvisorRepairTask(
+      {
+        GITHUB_TOKEN: "must-not-cross-boundary",
+        HOME: "/tmp/advisor-repair-test-home",
+        PATH: "/usr/bin",
+        PR_REVIEW_ADVISOR_API_KEY: "must-not-cross-boundary",
+        SANDBOX_NAME: "advisor-repair-123-1",
+      },
+      tools,
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.args).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "exec",
+        "--name",
+        "advisor-repair-123-1",
+        "--timeout",
+        "600",
+        "--workdir",
+        "/sandbox/repo",
+        "@/sandbox/pi-config/turn-1.txt",
+      ]),
+    );
+    expect(calls[1]?.args).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "exec",
+        "--name",
+        "advisor-repair-123-1",
+        "--timeout",
+        "600",
+        "--workdir",
+        "/sandbox/repo",
+        "@/sandbox/pi-config/turn-2.txt",
+      ]),
+    );
+    expect(calls[0]?.args.join(" ")).toContain("read,edit,write,grep,find,ls");
+    expect(calls[1]?.args.join(" ")).toContain("read,edit,write,grep,find,ls");
+    expect(calls[0]?.options.env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(calls[1]?.options.env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(calls[0]?.options.env).not.toHaveProperty("PR_REVIEW_ADVISOR_API_KEY");
+    expect(calls[1]?.options.env).not.toHaveProperty("PR_REVIEW_ADVISOR_API_KEY");
+  });
+
   it("materializes exact blobs without candidate attributes or symlinks (#10791)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-materialize-"));
     temporaryDirectories.push(directory);

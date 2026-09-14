@@ -122,6 +122,11 @@ describe("PR Review Advisor repair core", () => {
         repository: { full_name: "NVIDIA/NemoClaw" },
         pull_requests: [],
       },
+      advisorWorkflowComparison: {
+        status: "identical",
+        base_commit: { sha: workflowSha },
+        merge_base_commit: { sha: workflowSha },
+      },
       artifacts: artifactNames.map((name, index) => ({
         id: index + 100,
         name,
@@ -141,8 +146,35 @@ describe("PR Review Advisor repair core", () => {
       sourceHeadSha: headSha,
       baseSha,
       findingIds: [findingId],
-      advisor: { runId: 77, runAttempt: 2 },
+      workflowSha,
+      advisor: { runId: 77, runAttempt: 2, workflowSha },
     });
+    const olderAdvisorWorkflowSha = "d".repeat(40);
+    expect(
+      bindRepairSelection({
+        ...request,
+        advisorRun: { ...request.advisorRun, workflow_sha: olderAdvisorWorkflowSha },
+        advisorWorkflowComparison: {
+          status: "ahead",
+          base_commit: { sha: olderAdvisorWorkflowSha },
+          merge_base_commit: { sha: olderAdvisorWorkflowSha },
+        },
+      }),
+    ).toMatchObject({
+      workflowSha,
+      advisor: { workflowSha: olderAdvisorWorkflowSha },
+    });
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        advisorRun: { ...request.advisorRun, workflow_sha: olderAdvisorWorkflowSha },
+        advisorWorkflowComparison: {
+          status: "diverged",
+          base_commit: { sha: olderAdvisorWorkflowSha },
+          merge_base_commit: { sha: "e".repeat(40) },
+        },
+      }),
+    ).toThrow("successful trusted workflow revision");
     expect(selectedAdvisorArtifactIds(request)).toEqual(
       request.artifacts.map(({ id }) => id).sort((left, right) => left - right),
     );

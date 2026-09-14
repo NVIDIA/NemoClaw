@@ -103,6 +103,26 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect([resolve, validate, publish].join("\n")).not.toContain("pattern:");
   });
 
+  // source-shape-contract: security -- The one-shot claim must inspect every check-run page before allowing another model attempt
+  it("paginates all existing attempt claims before creating a new claim (#10791)", () => {
+    const claim = serialized(workflow.jobs.claim);
+
+    expect(claim).toContain("gh api --paginate --slurp");
+    expect(claim).toContain("repair-claim.mts");
+  });
+
+  // source-shape-contract: security -- A retry must delete the prior attempt sandbox before creating another credential-free resolver
+  it("reconciles the previous retry sandbox before creating a new one (#10791)", () => {
+    const steps = workflow.jobs.resolve.steps ?? [];
+    const reconcile = steps.findIndex((step) =>
+      step.run?.includes('repair-resolve.mts" reconcile'),
+    );
+    const create = steps.findIndex((step) => step.run?.includes('repair-resolve.mts" create'));
+
+    expect(reconcile).toBeGreaterThan(-1);
+    expect(create).toBeGreaterThan(reconcile);
+  });
+
   it.each(jobEnvironmentCases)(
     "uses contexts available while GitHub compiles the %s job environment (#10791)",
     (_jobName, env) => {

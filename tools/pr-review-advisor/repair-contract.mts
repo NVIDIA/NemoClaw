@@ -137,6 +137,12 @@ type AdvisorRunSnapshot = {
   pull_requests?: Array<{ number?: unknown; base?: { sha?: unknown }; head?: { sha?: unknown } }>;
 };
 
+type AdvisorWorkflowComparisonSnapshot = {
+  status?: unknown;
+  base_commit?: { sha?: unknown };
+  merge_base_commit?: { sha?: unknown };
+};
+
 type SourceCommitSnapshot = {
   commit?: { message?: unknown };
 };
@@ -425,6 +431,7 @@ export function bindRepairSelection(input: {
   pullRequest: PullRequestSnapshot;
   sourceCommit: SourceCommitSnapshot;
   advisorRun: AdvisorRunSnapshot;
+  advisorWorkflowComparison: AdvisorWorkflowComparisonSnapshot;
   artifacts: ArtifactSnapshot[];
   ledgers: AdvisorFindingLedger[];
   state: unknown;
@@ -471,12 +478,18 @@ export function bindRepairSelection(input: {
     input.advisorRun.pull_requests[0]?.number === input.prNumber &&
     input.advisorRun.pull_requests[0]?.head?.sha === input.sourceHeadSha &&
     input.advisorRun.pull_requests[0]?.base?.sha === baseSha;
+  const advisorWorkflowSha = fullSha(input.advisorRun.workflow_sha, "Advisor workflow SHA");
+  const trustedAdvisorRevision =
+    (input.advisorWorkflowComparison.status === "ahead" ||
+      input.advisorWorkflowComparison.status === "identical") &&
+    input.advisorWorkflowComparison.base_commit?.sha === advisorWorkflowSha &&
+    input.advisorWorkflowComparison.merge_base_commit?.sha === advisorWorkflowSha;
   if (
     input.advisorRun.repository?.full_name !== input.repository ||
     input.advisorRun.status !== "completed" ||
     input.advisorRun.conclusion !== "success" ||
     input.advisorRun.path !== ".github/workflows/pr-review-advisor.yaml" ||
-    input.advisorRun.workflow_sha !== input.workflowSha ||
+    !trustedAdvisorRevision ||
     (!exactDispatch && !exactTargetRun)
   )
     fail("Advisor run is not the successful trusted workflow revision");
@@ -511,7 +524,7 @@ export function bindRepairSelection(input: {
     advisor: {
       runId: advisorRunId,
       runAttempt: advisorRunAttempt,
-      workflowSha: fullSha(input.advisorRun.workflow_sha, "Advisor workflow SHA"),
+      workflowSha: advisorWorkflowSha,
       artifactIds: selectedArtifacts.map(({ id }) => id).sort((left, right) => left - right),
     },
     stateDigest: digest(canonicalJson(input.state)),
