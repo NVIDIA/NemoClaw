@@ -165,15 +165,15 @@ export function qualifyPiReadTask(
     const text = assistantText(event.message);
     return text === null ? [] : [{ index, text }];
   });
-  if (replies.length === 0) {
-    const assistantErrors = events.flatMap((event) => {
-      if (event.type !== "message_end") return [];
-      const error = assistantError(event.message);
-      return error === null ? [] : [error];
-    });
-    if (assistantErrors.length > 0) {
-      throw new PiInferenceFailure(`Pi inference failed: ${assistantErrors.at(-1)}`);
-    }
+  const assistantErrors = events.flatMap((event, index) => {
+    if (event.type !== "message_end") return [];
+    const error = assistantError(event.message);
+    return error === null ? [] : [{ error, index }];
+  });
+  const latestReply = replies.at(-1);
+  const latestAssistantError = assistantErrors.at(-1);
+  if (latestAssistantError && (!latestReply || latestAssistantError.index >= latestReply.index)) {
+    throw new PiInferenceFailure(`Pi inference failed: ${latestAssistantError.error}`);
   }
   const starts = events.flatMap((event, index) =>
     event.type === "tool_execution_start" ? [{ event, index }] : [],

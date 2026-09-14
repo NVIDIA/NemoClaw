@@ -203,6 +203,33 @@ describe("Pi qualification event oracle", () => {
     expect(qualifyPiReadTask(recoveredRetry, PATH, TOKEN).assistantText).toBe(TOKEN);
   });
 
+  it("retries a transient provider error after an assistant response (#11761)", () => {
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "HTTP 503: Service Unavailable",
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const failedAfterReply = valid.flatMap((event) =>
+      event.type === "message_end" ? [event, providerError] : [event],
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(failedAfterReply, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(
+      classifyPiReadTaskAttempt({ failure, proof: undefined, result: failedProbe() }, undefined),
+    ).toEqual({ outcome: "failed", failureClass: "transient-external" });
+  });
+
   it.each(["authentication failed", "HTTP 400: invalid request", "HTTP 501: unsupported"])(
     "does not classify a deterministic Pi provider error as transient: %s",
     (errorMessage) => {
@@ -214,14 +241,15 @@ describe("Pi qualification event oracle", () => {
     },
   );
 
-  it("redacts a provider credential before reporting a Pi error", () => {
+  it("redacts and bounds a provider error diagnostic (#11761)", () => {
+    const diagnosticPrefix = "Pi inference failed: ";
     const providerError = {
       type: "message_end",
       message: {
         role: "assistant",
         content: [],
         stopReason: "error",
-        errorMessage: "HTTP 503 for nvapi-secret-value-0123456789",
+        errorMessage: `HTTP 503 for nvapi-secret-value-0123456789 ${"x".repeat(500)}`,
       },
     };
     const valid = parsePiJsonEvents(eventStream());
@@ -229,8 +257,18 @@ describe("Pi qualification event oracle", () => {
       event.type === "message_end" ? [providerError] : [event],
     );
 
-    expect(() => qualifyPiReadTask(failed, PATH, TOKEN)).toThrow("HTTP 503");
-    expect(() => qualifyPiReadTask(failed, PATH, TOKEN)).not.toThrow(/nvapi-secret/iu);
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(failed, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    const message = (failure as Error).message;
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(message).toContain("HTTP 503");
+    expect(message).not.toMatch(/nvapi-secret/iu);
+    expect(message.length).toBeLessThanOrEqual(diagnosticPrefix.length + 200);
   });
 
   it("rejects missing, extra, or mismatched read events", () => {
