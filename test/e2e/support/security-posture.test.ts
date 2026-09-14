@@ -998,13 +998,18 @@ describe("security posture fixture", () => {
       const command = vi
         .fn<HostCliClient["command"]>()
         .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+        .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"))
         .mockResolvedValueOnce(successfulProbe(capabilitySurfaceProof("connect")));
       const execShell = vi.fn<SandboxClient["execShell"]>(async (_name, script) =>
         String(script).includes("surface=exec")
           ? successfulProbe(capabilitySurfaceProof("exec"))
           : successfulProbe(),
       );
-      const host = { command, commandPath: "/tmp/nemoclaw" } as unknown as HostCliClient;
+      const host = {
+        command,
+        commandPath: "/tmp/nemoclaw",
+        openshellCommandPath: "/tmp/openshell",
+      } as unknown as HostCliClient;
       const sandbox = { execShell } as unknown as SandboxClient;
       const resolvePrivilegedTarget = vi.fn(() => ({
         providerId,
@@ -1018,6 +1023,7 @@ describe("security posture fixture", () => {
       }));
 
       const summary = await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw", {
+        environment: { NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
         executePrivilegedCommand,
         resolvePrivilegedTarget,
       });
@@ -1049,13 +1055,17 @@ describe("security posture fixture", () => {
         hostNonRoot: true,
         rcFilesMutable: true,
         runtimeProxyEnvLocked: true,
+        runtimeVersions: {
+          managedImageRevision: "a".repeat(40),
+          openshell: "0.0.116",
+        },
         splitProcess: {
           childSupervisor: directChildSupervisor,
           supervisor: report.supervisor,
         },
         startupLogClean: true,
       });
-      expect(command).toHaveBeenCalledTimes(2);
+      expect(command).toHaveBeenCalledTimes(3);
       expect(resolvePrivilegedTarget).toHaveBeenCalledTimes(2);
       expect(executePrivilegedCommand).toHaveBeenCalledWith(
         SANDBOX_NAME,
@@ -1075,7 +1085,8 @@ describe("security posture fixture", () => {
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
     const command = vi
       .fn<HostCliClient["command"]>()
-      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"));
+      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
     const resolvePrivilegedTarget = vi
       .fn()
@@ -1090,15 +1101,19 @@ describe("security posture fixture", () => {
 
     await expect(
       assertSecurityPosture(
-        { command } as unknown as HostCliClient,
+        { command, openshellCommandPath: "/tmp/openshell" } as unknown as HostCliClient,
         { execShell } as unknown as SandboxClient,
         SANDBOX_NAME,
         "openclaw",
-        { executePrivilegedCommand, resolvePrivilegedTarget },
+        {
+          environment: { NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+          executePrivilegedCommand,
+          resolvePrivilegedTarget,
+        },
       ),
     ).rejects.toThrow(/runtime provider resource identity changed/u);
 
-    expect(command).toHaveBeenCalledTimes(1);
+    expect(command).toHaveBeenCalledTimes(2);
     expect(executePrivilegedCommand).toHaveBeenCalledOnce();
     expect(execShell).not.toHaveBeenCalled();
   });
@@ -1108,7 +1123,8 @@ describe("security posture fixture", () => {
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
     const command = vi
       .fn<HostCliClient["command"]>()
-      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"));
+      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
     const resolvePrivilegedTarget = vi.fn(() => ({
       providerId: "podman",
@@ -1123,15 +1139,19 @@ describe("security posture fixture", () => {
 
     await expect(
       assertSecurityPosture(
-        { command } as unknown as HostCliClient,
+        { command, openshellCommandPath: "/tmp/openshell" } as unknown as HostCliClient,
         { execShell } as unknown as SandboxClient,
         SANDBOX_NAME,
         "openclaw",
-        { executePrivilegedCommand, resolvePrivilegedTarget },
+        {
+          environment: { NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+          executePrivilegedCommand,
+          resolvePrivilegedTarget,
+        },
       ),
     ).rejects.toThrow(/provider probe failed/u);
 
-    expect(command).toHaveBeenCalledTimes(1);
+    expect(command).toHaveBeenCalledTimes(2);
     expect(executePrivilegedCommand).toHaveBeenCalledOnce();
     expect(execShell).not.toHaveBeenCalled();
   });

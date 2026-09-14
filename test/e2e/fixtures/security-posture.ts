@@ -57,6 +57,10 @@ export interface SecurityPostureSummary {
   hostNonRoot: true;
   rcFilesMutable: true;
   runtimeProxyEnvLocked: true;
+  runtimeVersions: {
+    managedImageRevision: string;
+    openshell: string;
+  };
   splitProcess: {
     childSupervisor: ProcessSecurityIdentity;
     supervisor: ProcessSecurityIdentity;
@@ -81,6 +85,7 @@ export interface SecurityPostureExpectations {
 }
 
 export interface SecurityPostureDependencies {
+  environment?: NodeJS.ProcessEnv;
   executePrivilegedCommand?: typeof executePrivilegedSandboxCommand;
   resolvePrivilegedTarget?: typeof resolvePrivilegedSandboxTarget;
 }
@@ -102,6 +107,8 @@ const MAX_PROC_ENTRIES = 32_768;
 const MAX_CENSUS_STABILITY_ATTEMPTS = 4;
 const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
 const CAPABILITY_SURFACE_MARKER = "NEMOCLAW_SECURITY_CAPABILITY_SURFACE";
+const EXPECTED_OPENSHELL_VERSION = "0.0.116";
+const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 // The pinned OpenShell supervisor has the Docker default capabilities plus
 // NET_ADMIN, SYS_ADMIN, SYS_PTRACE, and SYSLOG. Freeze the
 // resulting Linux capability mask so additions and removals both require an
@@ -404,6 +411,17 @@ function probeEnv(): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
+}
+
+function selectedManagedImageRevision(environment: NodeJS.ProcessEnv): string {
+  const revision =
+    environment.E2E_MANAGED_IMAGE_REVISION?.trim() ||
+    environment.NEMOCLAW_E2E_MANAGED_IMAGE_REVISION?.trim() ||
+    "";
+  if (!REVISION_PATTERN.test(revision)) {
+    throw new Error("security-posture requires one exact managed-image revision");
+  }
+  return revision;
 }
 
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -857,6 +875,24 @@ export async function assertSecurityPosture(
   );
   requireSuccess("non-root host user", hostUser);
 
+  const openshellVersionProbe = await host.command(host.openshellCommandPath, ["--version"], {
+    artifactName: "security-posture-openshell-version",
+    env: probeEnv(),
+    timeoutMs: 15_000,
+  });
+  requireSuccess("OpenShell version", openshellVersionProbe);
+  const openshellVersions = [
+    ...resultText(openshellVersionProbe).matchAll(/\b\d+\.\d+\.\d+\b/gu),
+  ].map((match) => match[0]);
+  if (openshellVersions.length !== 1 || openshellVersions[0] !== EXPECTED_OPENSHELL_VERSION) {
+    throw new Error(
+      `security-posture expected OpenShell ${EXPECTED_OPENSHELL_VERSION}, got ${openshellVersions.join(", ") || "unreported"}`,
+    );
+  }
+  const managedImageRevision = selectedManagedImageRevision(
+    dependencies.environment ?? process.env,
+  );
+
   const resolvePrivilegedTarget =
     dependencies.resolvePrivilegedTarget ?? resolvePrivilegedSandboxTarget;
   const executePrivilegedCommand =
@@ -1051,6 +1087,10 @@ tail -n 20 "$log"
     hostNonRoot: true,
     rcFilesMutable: true,
     runtimeProxyEnvLocked: true,
+    runtimeVersions: {
+      managedImageRevision,
+      openshell: openshellVersions[0],
+    },
     splitProcess: {
       childSupervisor: selectNemoclawStartSupervisor(splitProcess.childSupervisors),
       supervisor: splitProcess.supervisor,
