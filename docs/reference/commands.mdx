@@ -3032,6 +3032,9 @@ Restore OpenShell connectivity and confirm the sandbox's live state before you r
 Keep the printed backup path for recovery.
 Before deletion, rebuild records a replacement journal that binds the operation to the recorded gateway, source identity, and target settings.
 Rerunning the same rebuild continues from the recorded boundary or accepts the proven replacement instead of deleting it again.
+An older recovery marker can lack an MCP handoff, as can an interruption before NemoClaw records the handoff.
+NemoClaw reads MCP state again only when the source still exists and the matching journal remains in the `planned` or `deleting` phase.
+If either check fails, the retry stops without another delete attempt.
 A mount-free journal written before host-mount identity binding remains resumable.
 An older journal that used host mounts fails closed because it cannot prove the original host source identity, even when the visible mount settings are unchanged.
 Preserve the sandbox, onboarding session, printed backup, exact error, and `Journaled replacement` diagnostic.

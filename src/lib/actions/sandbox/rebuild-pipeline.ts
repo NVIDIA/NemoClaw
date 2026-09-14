@@ -269,16 +269,29 @@ async function rebuildSandboxUnlocked(
           recoveryManifest.rebuildMcpHandoff?.retired === true ||
           recoveryManifest.hermesOperatorConfigHandoff?.retired === true
         : false;
+      const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+      // Older manifests and a crash immediately after marker creation can lack
+      // the MCP handoff. Re-observe only while the journal remains pre-delete
+      // and live-state preflight still sees the source. Journal opening below
+      // proves its exact identity before MCP preparation mutates anything.
+      const canRecapturePreparedRecoveryMcp = Boolean(
+        recoveryManifest &&
+        recoveryManifest.rebuildMcpHandoff === undefined &&
+        !staleRecovery &&
+        activeRecoveryTransaction?.sandboxName === sandboxName &&
+        (activeRecoveryTransaction.phase === "planned" ||
+          activeRecoveryTransaction.phase === "deleting"),
+      );
       if (
         recoveryManifest &&
         !recoveryCleanupRequired &&
-        recoveryManifest.rebuildMcpHandoff === undefined
+        recoveryManifest.rebuildMcpHandoff === undefined &&
+        !canRecapturePreparedRecoveryMcp
       ) {
         return bail(
-          "The retained rebuild MCP recovery observation is unavailable. The original sandbox was not deleted.",
+          "The retained rebuild MCP recovery observation is unavailable, so rebuild cannot safely resume. No sandbox deletion was attempted.",
         );
       }
-      const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
       const retainedMcpHandoff = recoveryManifest ? readRebuildMcpHandoff(recoveryManifest) : null;
       if (
         recoveryManifest?.rebuildMcpHandoff &&
@@ -292,7 +305,8 @@ async function rebuildSandboxUnlocked(
         (await observeMcpStateForRebuild(
           sandboxEntry,
           recreateOptions.runtimeSelection,
-          recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName,
+          (recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName) ||
+            canRecapturePreparedRecoveryMcp,
         ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;

@@ -456,6 +456,61 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
+  it("recaptures MCP state when a pre-delete recovery marker predates its handoff", async () => {
+    const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+    const interrupted = createRebuildFlowHarness({
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+        scrubbedAdapterEntries: [],
+      },
+    });
+    interrupted.prepareMcpBridgesForRebuildSpy.mockRejectedValueOnce(
+      new Error("interrupted before MCP preparation"),
+    );
+
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Failed to preserve MCP bridges before rebuild");
+
+    const recoveryManifest = JSON.parse(
+      fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+    ) as ReturnType<typeof makePreparedRecoveryManifest>;
+    expect(recoveryManifest).not.toHaveProperty("rebuildMcpHandoff");
+    expect(
+      (interrupted.session.checkpoint as { sandboxRecreate?: { phase?: string } }).sandboxRecreate
+        ?.phase,
+    ).toBe("planned");
+
+    const restarted = createRebuildFlowHarness({
+      preDeleteLatestManifest: recoveryManifest,
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+        scrubbedAdapterEntries: [],
+      },
+    });
+    restarted.session.checkpoint = interrupted.session.checkpoint;
+
+    await expect(
+      restarted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(restarted.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      { gatewayName: "nemoclaw", workspace: "default" },
+      [expect.objectContaining(mcpEntry)],
+    );
+    expect(restarted.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(restarted.onboardSpy).toHaveBeenCalled();
+  });
+
   it("keeps the requested disclosure mode in a zero-MCP prepared-recovery retry", async () => {
     const harness = createRebuildFlowHarness({
       defaultSandbox: "alpha",
