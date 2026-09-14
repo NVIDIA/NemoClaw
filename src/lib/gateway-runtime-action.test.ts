@@ -112,16 +112,12 @@ describe("gateway observations and recovery", () => {
     expect(start.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);
   });
 
-  it("does not extend exact-target recovery authority to authentication failures", async () => {
-    observe.mockResolvedValue({
-      ...observation("observation_failed"),
-      error: {
-        kind: "authentication",
-        reason: "unauthorized",
-        message: "The selected gateway rejected authentication.",
-      },
-    });
-
+  it("blocks recovery when unreachable CLI probes report a conflicting gateway", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 1, output: "Gateway: foreign\nConnection refused" })
+      .mockResolvedValueOnce({ status: 1, output: "Connection refused" });
+    observe.mockImplementation(createCliOpenShellGatewayObserver(capture).observeGateway);
     expect(
       await gatewayRuntime.recoverNamedGatewayRuntime({
         authorizeExactTargetTransportRecovery: true,

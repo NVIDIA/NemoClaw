@@ -366,7 +366,7 @@ function Get-WslCheckoutSyncScript {
 
     $normalizedCheckout = $Checkout.TrimEnd('/')
     $normalizedWorkdir = $Workdir.TrimEnd('/')
-    $dedicatedWorkdirPattern = '^/tmp/nemoclaw-wsl-(?:workdir|vitest)/[1-9][0-9]*-[1-9][0-9]*$'
+    $dedicatedWorkdirPattern = '^/(?:tmp/nemoclaw-wsl-(?:workdir|vitest)|home/nemoclaw-ci/nemoclaw-wsl-vitest)/[1-9][0-9]*-[1-9][0-9]*$'
     $workdirUsesDedicatedRoot = $normalizedWorkdir -cmatch $dedicatedWorkdirPattern
     $unsafePathSegment = '(^|/)\.{1,2}(/|$)'
     $pathsOverlap = $normalizedCheckout -eq $normalizedWorkdir -or
@@ -386,7 +386,7 @@ function Get-WslCheckoutSyncScript {
         $normalizedWorkdir -match $unsafePathSegment -or
         $pathsOverlap
     ) {
-        throw "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal: '$Workdir'."
+        throw "WSL sync workdir must use a supported dedicated root with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal: '$Workdir'."
     }
 
     $workdirRoot = $normalizedWorkdir.Substring(0, $normalizedWorkdir.LastIndexOf('/'))
@@ -424,6 +424,9 @@ function Get-WslCheckoutSyncScript {
         "git -C $workdirLiteral reset --hard HEAD"
         "git -C $workdirLiteral clean -ffdx"
         $ownerCommand
+        "chmod -R go-w -- $workdirLiteral"
+        "chmod 0711 $workdirRootLiteral"
+        "chmod 0700 $workdirLiteral"
         "git -C $workdirLiteral status --short"
         "echo 'WSL ext4 workspace is ready'"
     ) -join "`n"
