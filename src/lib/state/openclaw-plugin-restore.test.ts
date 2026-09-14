@@ -6,11 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS } from "./openclaw-managed-extensions";
 import {
   buildFreshOpenClawPluginIndexSqliteReadCommand,
+  discoverFreshOpenClawImagePluginInstalls,
   hasCompleteOpenClawImagePluginProvenance,
   parseFreshOpenClawPluginExtensionDirs,
   parseOpenClawImagePluginInstalls,
@@ -18,6 +19,17 @@ import {
 } from "./openclaw-plugin-restore";
 
 const OPENCLAW_DIR = "/sandbox/.openclaw";
+
+function successfulPluginDiscovery(): ReturnType<typeof spawnSync> {
+  return {
+    pid: 1,
+    output: [],
+    stdout: Buffer.from('{"version":1,"installRecords":{},"loadPaths":[]}'),
+    stderr: Buffer.alloc(0),
+    status: 0,
+    signal: null,
+  } as ReturnType<typeof spawnSync>;
+}
 
 function install(installPath: string): Record<string, unknown> {
   return { source: "npm", installPath };
@@ -123,6 +135,33 @@ describe("buildFreshOpenClawPluginIndexSqliteReadCommand", () => {
       expect(result.status).toBe(10);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("discoverFreshOpenClawImagePluginInstalls", () => {
+  it("maps cleanup failure to a result with the retained credential directory", () => {
+    const originalRmSync = fs.rmSync;
+    let retainedDirectory = "";
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation(((target: fs.PathLike) => {
+      retainedDirectory = String(target);
+      throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
+    }) as typeof fs.rmSync);
+
+    try {
+      const result = discoverFreshOpenClawImagePluginInstalls("alpha", {
+        getSshConfig: () => "Host openshell-alpha\n",
+        sshArgs: () => [],
+        runSsh: () => successfulPluginDiscovery(),
+      });
+      expect(result).toEqual({
+        ok: false,
+        error: `OpenClaw plugin discovery completed, but temporary SSH configuration remains at ${JSON.stringify(retainedDirectory)}`,
+      });
+      expect(retainedDirectory).toContain("nemoclaw-plugin-discovery-");
+    } finally {
+      rmSpy.mockRestore();
+      originalRmSync(retainedDirectory, { recursive: true, force: true });
     }
   });
 });

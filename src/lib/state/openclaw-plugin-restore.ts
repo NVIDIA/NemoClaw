@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-import { spawnSync } from "child_process";
+import { spawnSync, type SpawnSyncOptions } from "child_process";
 
 import { isObjectRecord } from "../core/json-types.js";
 import { shellQuote } from "../core/shell-quote.js";
-import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
+import { createTempSshConfig, TempSshConfigCleanupError } from "../sandbox/temp-ssh-config.js";
 import {
   OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS,
   shouldPreserveOpenClawManagedExtensions,
@@ -52,6 +52,11 @@ export interface OpenClawPluginDiscoveryDeps {
   env?: NodeJS.ProcessEnv;
   getSshConfig(sandboxName: string): string | null;
   sshArgs(configFile: string, sandboxName: string): string[];
+  runSsh?: (
+    command: string,
+    args: readonly string[],
+    options: SpawnSyncOptions,
+  ) => ReturnType<typeof spawnSync>;
 }
 
 export type OpenClawPluginRestorePlanResult =
@@ -142,7 +147,8 @@ function readFreshOpenClawPluginInstallIndex(
   // OpenClaw 2026.6.10 moved install records into its shared SQLite state.
   // Fall back only when that database is absent so a corrupt/incomplete
   // canonical index cannot be masked by stale legacy JSON.
-  const sqliteResult = spawnSync(
+  const runSsh = deps.runSsh ?? spawnSync;
+  const sqliteResult = runSsh(
     "ssh",
     [...deps.sshArgs(configFile, sandboxName), buildFreshOpenClawPluginIndexSqliteReadCommand(dir)],
     {
@@ -154,7 +160,7 @@ function readFreshOpenClawPluginInstallIndex(
   );
   if (sqliteResult.status !== 2 || sqliteResult.error || sqliteResult.signal) return sqliteResult;
 
-  return spawnSync(
+  return runSsh(
     "ssh",
     [...deps.sshArgs(configFile, sandboxName), buildLegacyOpenClawPluginIndexReadCommand(dir)],
     {
@@ -208,11 +214,42 @@ export function discoverFreshOpenClawImagePluginInstalls(
     return { ok: false, error: "could not get SSH config for OpenClaw plugin discovery" };
   }
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-plugin-discovery-");
+  let outcome: OpenClawManagedExtensionDiscoveryResult | undefined;
+  let operationError: unknown;
   try {
-    return discoverFreshOpenClawPluginExtensionDirs(deps, tempSshConfig.file, sandboxName, dir);
-  } finally {
-    tempSshConfig.cleanup();
+    outcome = discoverFreshOpenClawPluginExtensionDirs(deps, tempSshConfig.file, sandboxName, dir);
+  } catch (error) {
+    operationError = error;
   }
+  let cleanupError: unknown;
+  try {
+    tempSshConfig.cleanup();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (operationError !== undefined) {
+    if (cleanupError !== undefined) {
+      throw new AggregateError(
+        [operationError, cleanupError],
+        `OpenClaw plugin discovery failed and temporary SSH configuration remains at ${JSON.stringify(tempSshConfig.dir)}`,
+      );
+    }
+    throw operationError;
+  }
+  if (cleanupError !== undefined) {
+    const retainedDirectory =
+      cleanupError instanceof TempSshConfigCleanupError ? cleanupError.dir : tempSshConfig.dir;
+    const cleanupMessage = `temporary SSH configuration remains at ${JSON.stringify(retainedDirectory)}`;
+    return {
+      ok: false,
+      error:
+        outcome && !outcome.ok
+          ? `${outcome.error}; ${cleanupMessage}`
+          : `OpenClaw plugin discovery completed, but ${cleanupMessage}`,
+    };
+  }
+  if (!outcome) throw new Error("OpenClaw plugin discovery completed without an outcome");
+  return outcome;
 }
 
 function isSafeOpenClawPluginInstallId(id: string): boolean {

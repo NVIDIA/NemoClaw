@@ -3,7 +3,11 @@
 
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isValidName } from "../../sandbox-name-contract";
-import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import {
+  createTempSshConfig,
+  TempSshConfigCleanupError,
+  type TempSshConfig,
+} from "../../sandbox/temp-ssh-config";
 import { resolveOpenshell } from "./resolve";
 import {
   runCliOpenShellBufferedCommand,
@@ -36,6 +40,7 @@ export function createCliOpenShellSandboxSshExecutor(
     resolveBinary?: () => string | null;
     runBuffered?: OpenShellBufferedCommandRunner;
     commandTransport?: boolean;
+    createTempConfig?: typeof createTempSshConfig;
   } = {},
 ): OpenShellSandboxSshExecutor {
   const run = deps.runBuffered ?? runCliOpenShellBufferedCommand;
@@ -79,59 +84,95 @@ export function createCliOpenShellSandboxSshExecutor(
         if (sshHost === null) {
           return { kind: "failed", reason: "configuration" };
         }
-        const temporary = createTempSshConfig(
-          config.stdout,
-          deps.commandTransport ? "nemoclaw-ssh-" : "nemoclaw-ver-",
-        );
+        let temporary: TempSshConfig;
         try {
-          const result = await run(
-            "ssh",
-            [
-              "-F",
-              temporary.file,
-              "-o",
-              "StrictHostKeyChecking=no",
-              "-o",
-              "UserKnownHostsFile=/dev/null",
-              "-o",
-              "ConnectTimeout=5",
-              "-o",
-              "LogLevel=ERROR",
-              sshHost,
-              request.command,
-            ],
-            {
-              environment,
-              timeoutMilliseconds: request.timeoutMilliseconds ?? 15000,
-            },
+          temporary = (deps.createTempConfig ?? createTempSshConfig)(
+            config.stdout,
+            deps.commandTransport ? "nemoclaw-ssh-" : "nemoclaw-ver-",
           );
-          // OpenSSH cannot distinguish a transport failure from remote exit 255.
-          const commandFailure =
-            failure(result) ??
-            (result.status === 255
-              ? { kind: "failed" as const, reason: "transport" as const }
-              : null);
-          if (commandFailure) {
-            return deps.commandTransport
-              ? {
-                  ...commandFailure,
-                  command: {
-                    exitCode: result.status ?? 1,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                  },
-                }
-              : commandFailure;
+        } catch (error) {
+          if (error instanceof TempSshConfigCleanupError) {
+            return { kind: "failed", reason: "cleanup", retainedDirectory: error.dir };
           }
-          return {
-            kind: "completed",
-            exitCode: result.status ?? 1,
-            stdout: result.stdout,
-            stderr: result.stderr,
-          };
-        } finally {
-          temporary.cleanup();
+          throw error;
         }
+        let outcome: OpenShellSandboxSshResult | undefined;
+        let operationError: unknown;
+        try {
+          outcome = await (async () => {
+            const result = await run(
+              "ssh",
+              [
+                "-F",
+                temporary.file,
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "LogLevel=ERROR",
+                sshHost,
+                request.command,
+              ],
+              {
+                environment,
+                timeoutMilliseconds: request.timeoutMilliseconds ?? 15000,
+              },
+            );
+            // OpenSSH cannot distinguish a transport failure from remote exit 255.
+            const commandFailure =
+              failure(result) ??
+              (result.status === 255
+                ? { kind: "failed" as const, reason: "transport" as const }
+                : null);
+            if (commandFailure) {
+              return deps.commandTransport
+                ? {
+                    ...commandFailure,
+                    command: {
+                      exitCode: result.status ?? 1,
+                      stdout: result.stdout,
+                      stderr: result.stderr,
+                    },
+                  }
+                : commandFailure;
+            }
+            return {
+              kind: "completed" as const,
+              exitCode: result.status ?? 1,
+              stdout: result.stdout,
+              stderr: result.stderr,
+            };
+          })();
+        } catch (error) {
+          operationError = error;
+        }
+        try {
+          temporary.cleanup();
+        } catch (error) {
+          if (error instanceof TempSshConfigCleanupError) {
+            const command =
+              outcome?.kind === "completed"
+                ? {
+                    exitCode: outcome.exitCode,
+                    stdout: outcome.stdout,
+                    stderr: outcome.stderr,
+                  }
+                : outcome?.command;
+            return {
+              kind: "failed",
+              reason: "cleanup",
+              retainedDirectory: error.dir,
+              ...(deps.commandTransport && command ? { command } : {}),
+            };
+          }
+          throw error;
+        }
+        if (operationError !== undefined) throw operationError;
+        if (!outcome) throw new Error("OpenShell SSH transport completed without an outcome");
+        return outcome;
       } catch {
         return { kind: "failed", reason: "transport" };
       }

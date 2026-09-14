@@ -15,6 +15,12 @@ export type OpenShellSandboxSshResult =
   | Readonly<{ kind: "completed"; exitCode: number; stdout: string; stderr: string }>
   | Readonly<{
       kind: "failed";
+      reason: "cleanup";
+      retainedDirectory: string;
+      command?: Readonly<{ exitCode: number; stdout: string; stderr: string }>;
+    }>
+  | Readonly<{
+      kind: "failed";
       reason: "configuration" | "unavailable" | "timeout" | "cancelled" | "transport" | "capture";
       signal?: NodeJS.Signals;
       command?: Readonly<{ exitCode: number; stdout: string; stderr: string }>;

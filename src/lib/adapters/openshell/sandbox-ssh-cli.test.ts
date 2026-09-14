@@ -14,6 +14,7 @@ import {
 } from "./sandbox-ssh-cli";
 import { namedOpenShellGateway } from "./sandbox-observer";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+import { TempSshConfigCleanupError } from "../../sandbox/temp-ssh-config";
 
 const request = {
   sandboxName: "alpha",
@@ -203,6 +204,51 @@ describe("CLI sandbox SSH execution", () => {
       .mockRejectedValueOnce(new Error("private diagnostic"));
     expect(await executor.run(request)).toEqual({ kind: "failed", reason: "transport" });
     expect(existsSync(dirname(run.mock.calls[2][1][1]))).toBe(false);
+  });
+
+  it("reports the retained credential directory when cleanup fails", async () => {
+    const { run } = fixture();
+    const retainedDirectory = "/tmp/nemoclaw-ssh-retained";
+    const executor = createCliOpenShellSandboxSshExecutor({
+      resolveBinary: () => "/bin/openshell",
+      runBuffered: run,
+      createTempConfig: () => ({
+        dir: retainedDirectory,
+        file: `${retainedDirectory}/ssh_config`,
+        cleanup: () => {
+          throw new TempSshConfigCleanupError(retainedDirectory, new Error("injected failure"));
+        },
+      }),
+    });
+
+    expect(await executor.run(request)).toEqual({
+      kind: "failed",
+      reason: "cleanup",
+      retainedDirectory,
+    });
+  });
+
+  it("retains the command outcome when command-transport cleanup fails", async () => {
+    const { run } = fixture({ status: 17, stdout: "out", stderr: "err" });
+    const retainedDirectory = "/tmp/nemoclaw-command-ssh-retained";
+    const executor = createCliOpenShellSandboxSshCommandExecutor({
+      resolveBinary: () => "/bin/openshell",
+      runBuffered: run,
+      createTempConfig: () => ({
+        dir: retainedDirectory,
+        file: `${retainedDirectory}/ssh_config`,
+        cleanup: () => {
+          throw new TempSshConfigCleanupError(retainedDirectory, new Error("injected failure"));
+        },
+      }),
+    });
+
+    expect(await executor.run(request)).toEqual({
+      kind: "failed",
+      reason: "cleanup",
+      retainedDirectory,
+      command: { exitCode: 17, stdout: "out", stderr: "err" },
+    });
   });
 
   it("uses the runner's filtered environment when no override is supplied", async () => {
