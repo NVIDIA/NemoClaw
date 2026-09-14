@@ -89,6 +89,14 @@ const CLI_SELECTOR_DEPENDENCIES = [
   "normalizeOptionalString",
   "listDevicePairing",
 ] as const;
+const CLI_SELECTOR_SQLITE_DEPENDENCIES = [
+  "normalizeDeviceRoles",
+  "resolvePairedOperatorScopes",
+  "OPERATOR_ROLE",
+  "PAIRING_SCOPE",
+  "normalizeOptionalString",
+  "isKnownNonAdminOperatorScope",
+] as const;
 
 const CALL_OMIT_IDENTITY_TARGET = [
   "function shouldOmitDeviceIdentityForGatewayCall(params) {",
@@ -1542,7 +1550,10 @@ const STATE_SQLITE_AUTH_UPDATE_REPLACEMENT = [
   "\t\t\tconst nemoclawUpdatedAtMs = Date.now();",
   "\t\t\tconst nemoclawUpdate = db.prepare(`UPDATE device_auth_tokens SET token = ?, scopes_json = ?, updated_at_ms = ? WHERE device_id = ? AND role = 'operator' AND token = ?`).run(nemoclawAuthTransition.afterToken, JSON.stringify(nemoclawAuthTransition.scopes), nemoclawUpdatedAtMs, nemoclawAuthTransition.deviceId, nemoclawAuthTransition.beforeToken);",
   '\t\t\tif (nemoclawUpdate.changes !== 1) throw new Error("bounded self-approval stored-auth fence failed");',
-  "\t\t\tdb.prepare(`UPDATE gateway_origin_device_tokens SET token = ?, scopes_json = ?, updated_at_ms = ? WHERE device_id = ? AND role = 'operator' AND token = ?`).run(nemoclawAuthTransition.afterToken, JSON.stringify(nemoclawAuthTransition.scopes), nemoclawUpdatedAtMs, nemoclawAuthTransition.deviceId, nemoclawAuthTransition.beforeToken);",
+  "\t\t\tconst nemoclawOriginRows = db.prepare(`SELECT token FROM gateway_origin_device_tokens WHERE device_id = ? AND role = 'operator'`).all(nemoclawAuthTransition.deviceId);",
+  '\t\t\tif (nemoclawOriginRows.some((row) => row.token !== nemoclawAuthTransition.beforeToken)) throw new Error("bounded self-approval origin-auth precondition failed");',
+  "\t\t\tconst nemoclawOriginUpdate = db.prepare(`UPDATE gateway_origin_device_tokens SET token = ?, scopes_json = ?, updated_at_ms = ? WHERE device_id = ? AND role = 'operator' AND token = ?`).run(nemoclawAuthTransition.afterToken, JSON.stringify(nemoclawAuthTransition.scopes), nemoclawUpdatedAtMs, nemoclawAuthTransition.deviceId, nemoclawAuthTransition.beforeToken);",
+  '\t\t\tif (nemoclawOriginUpdate.changes !== nemoclawOriginRows.length) throw new Error("bounded self-approval origin-auth fence failed");',
   "\t\t}",
   "\t\tfor (const nodeId of new Set(options?.clearApnsNodeIds ?? [])) clearApnsRegistrationFromDatabase(db, nodeId);",
 ].join("\n");
@@ -1754,7 +1765,7 @@ const BASE_FILE_SPECS: FileSpec[] = [
         if (result.error) return { source, status: "no-match", error: result.error };
         changed = true;
       }
-      if (sqliteLayout && result.source.includes(CALL_OMIT_IDENTITY_CALLSITE_TARGET)) {
+      if (sqliteLayout && !result.source.includes(CALL_OMIT_IDENTITY_CALLSITE_REPLACEMENT)) {
         result = replaceExactlyOnce(
           result.source,
           CALL_OMIT_IDENTITY_CALLSITE_TARGET,
@@ -1790,8 +1801,9 @@ const BASE_FILE_SPECS: FileSpec[] = [
           source.includes("async function approvePairingWithFallback(opts, requestId, context)")) &&
         source.includes("function resolveApprovePairingScopesForRequest(request, paired)") &&
         source.includes('callGatewayCli("device.pair.approve"') &&
-        (sqliteLayout ||
-          CLI_SELECTOR_DEPENDENCIES.every((dependency) => source.includes(dependency)))
+        (sqliteLayout ? CLI_SELECTOR_SQLITE_DEPENDENCIES : CLI_SELECTOR_DEPENDENCIES).every(
+          (dependency) => source.includes(dependency),
+        )
       );
     },
     patch(source, file) {

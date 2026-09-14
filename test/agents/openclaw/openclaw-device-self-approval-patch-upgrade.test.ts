@@ -11,6 +11,7 @@ import {
   openPatchedPairingFixture,
   runPatch,
   selfApprovalTransactionSnapshots as transactionSnapshots,
+  writeCurrentGatewayCallFixtureDist,
   writeFixtureDist,
 } from "../../helpers/openclaw-device-self-approval-patch-harness";
 
@@ -32,6 +33,36 @@ function legacyTransactionJournal(
 }
 
 describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
+  it("fails closed when the current gateway callsite cannot receive device-auth scope", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-callsite-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      const file = path.join(dist, "call-current-fixture.js");
+      const source = fs.readFileSync(file, "utf8");
+      const callsite = [
+        "function gatewayClientOptions(opts, password, authMode) {",
+        '\tconst deviceAuthScope = "operator.pairing";',
+        "\treturn shouldOmitDeviceIdentityForGatewayCall({",
+        "\t\topts,",
+        "\t\tauthMode,",
+        "\t\tpassword,",
+        '\t\tallowAuthNone: opts.requireLocalBackendSharedAuth === true && authMode === "none"',
+        "\t});",
+        "}",
+      ].join("\n");
+      expect(source).toContain(callsite);
+      fs.writeFileSync(file, source.replace(callsite, ""));
+
+      const apply = runPatch(dist);
+      expect(apply.status).not.toBe(0);
+      expect(`${apply.stdout}${apply.stderr}`).toContain("gateway call device-auth scope target");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("adds pairing-only stored auth to an earlier patched settlement list (#9844)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-list-upgrade-"));
     const dist = path.join(tmp, "dist");

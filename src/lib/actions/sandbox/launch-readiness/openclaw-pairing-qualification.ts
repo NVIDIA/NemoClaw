@@ -475,7 +475,10 @@ def validate_identity_key_pair(public_key_pem, private_key_pem):
     if not isinstance(public_key_pem, str) or not isinstance(private_key_pem, str):
         raise ValueError('invalid identity key material')
     openssl = '/usr/bin/openssl'
-    openssl_metadata = os.stat(openssl, follow_symlinks=False)
+    try:
+        openssl_metadata = os.stat(openssl, follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise ValueError('openssl is unavailable') from error
     if (
         not stat.S_ISREG(openssl_metadata.st_mode)
         or openssl_metadata.st_nlink != 1
@@ -497,6 +500,8 @@ def validate_identity_key_pair(public_key_pem, private_key_pem):
             check=True,
             timeout=2,
         ).stdout
+    except FileNotFoundError as error:
+        raise ValueError('openssl is unavailable') from error
     except (subprocess.SubprocessError, UnicodeError) as error:
         raise ValueError('invalid identity private key') from error
     match = re.fullmatch(

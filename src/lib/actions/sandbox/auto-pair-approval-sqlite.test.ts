@@ -40,6 +40,7 @@ describe("auto-pair approval SQLite compatibility", () => {
         { encoding: "utf-8" },
       );
       expect(setup.status, setup.stderr).toBe(0);
+      fs.chmodSync(databasePath, 0o660);
       expect([...fs.readFileSync(databasePath).subarray(18, 20)]).toEqual([2, 2]);
       expect(fs.existsSync(`${databasePath}-wal`)).toBe(false);
       expect(fs.existsSync(`${databasePath}-shm`)).toBe(false);

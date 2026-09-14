@@ -170,6 +170,15 @@ function shouldOmitDeviceIdentityForGatewayCall(params) {
   const isLocalCliSharedAuth = mode === GATEWAY_CLIENT_MODES.CLI && clientName === GATEWAY_CLIENT_NAMES.CLI && hasSharedSecretAuth && isLoopback;
   return isLocalBackendSharedAuth || isLocalCliSharedAuth;
 }
+function gatewayClientOptions(opts, password, authMode) {
+  const deviceAuthScope = "operator.pairing";
+  return shouldOmitDeviceIdentityForGatewayCall({
+    opts,
+    authMode,
+    password,
+    allowAuthNone: opts.requireLocalBackendSharedAuth === true && authMode === "none"
+  });
+}
 function setForcedIdentityDescriptor(value) {
   process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING = "1";
   process.env.NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID = "a".repeat(64);

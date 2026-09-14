@@ -103,18 +103,6 @@ function requiredDockerArg(name: string): string {
   return value as string;
 }
 
-function requiredMessagingPluginIntegrity(channel: string): string {
-  const agentPackage = createBuiltInChannelManifestRegistry()
-    .get(channel)
-    ?.agentPackages?.find(
-      (candidate) => candidate.agent === "openclaw" && candidate.manager === "openclaw-plugin",
-    );
-  const integrity =
-    agentPackage?.integrity ?? agentPackage?.integrityByVersion?.[PINNED_OPENCLAW_VERSION];
-  expect(integrity, `Missing ${channel} OpenClaw plugin trust anchor`).toBeDefined();
-  return integrity as string;
-}
-
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
   "sha512-3MWLli9L6HTVdrjqHmwOvNvIr6emsnuNQe4iE2sDqb8E5wn4Vq1rcsz+InL1YFudbStr089ZtS0tNAQ6qU+tnA==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
@@ -123,8 +111,10 @@ const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
   "sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJYyuLytfpd/sJK/HjR43dgKBqKpBsb1+I3w1Jr6PLpnjSf6/I3//3K0cdnA==";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
   "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz";
-const PINNED_OPENCLAW_SLACK_INTEGRITY = requiredMessagingPluginIntegrity("slack");
-const PINNED_OPENCLAW_MSTEAMS_INTEGRITY = requiredMessagingPluginIntegrity("teams");
+const PINNED_OPENCLAW_SLACK_INTEGRITY =
+  "sha512-tU372jE40nnPcKQ6oxmDHf2/UhGtdz8ysi4JKsRZIO1QBAEkZd2YfsOw8aucmb2r0B0vjcFD3OmIV/Qzb57COg==";
+const PINNED_OPENCLAW_MSTEAMS_INTEGRITY =
+  "sha512-seRGr9/X6Vk9xU5elLVpDwq8R+TO0QFvUmxPEitqkngqDnMoXW0LEEXkriG6jgue74w2YLcNnAv/Rjf0a9jong==";
 const LEGACY_REBUILD_OPENCLAW_VERSION = "2026.3.11";
 const LEGACY_REBUILD_OPENCLAW_INTEGRITY =
   "sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==";

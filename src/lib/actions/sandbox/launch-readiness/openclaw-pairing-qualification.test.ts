@@ -536,6 +536,36 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(() => observe()).toThrow("OpenClaw pairing qualification is unavailable");
     });
 
+    sqliteIt("treats an unavailable OpenSSL binary as a terminal qualification failure", () => {
+      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      const spawnWithoutOpenSsl = (
+        _binary: string,
+        _args: readonly string[],
+        options: Parameters<typeof spawnSync>[2],
+      ) => {
+        return localScriptSpawn("sh", ["-s"], {
+          ...options,
+          input: String(options?.input).replace(
+            "openssl = '/usr/bin/openssl'",
+            "openssl = '/definitely-missing/nemoclaw-openssl'",
+          ),
+        });
+      };
+
+      let failure: unknown;
+      try {
+        observeOpenClawPairingQualification("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
+          getOpenshellBinary: () => "openshell",
+          readApprovalPolicy: () => POLICY,
+          spawnSync: spawnWithoutOpenSsl as typeof spawnSync,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(OpenClawPairingQualificationError);
+      expect(failure).not.toBeInstanceOf(OpenClawPairingObservationRetryableError);
+    });
+
     it("retries a nonempty WAL without SHM instead of creating the missing sidecar", () => {
       writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
       const sqliteStateDirectory = path.join(stateDirectory, "state");

@@ -840,7 +840,7 @@ When the gateway is not serving, `openclaw health` can report `gateway_transport
 
 The watchdog converts a gateway that cannot serve into a process exit that the sandbox supervisor already knows how to relaunch. It does not correct the OpenClaw lifecycle condition that left the process running. It stays necessary until an OpenClaw gateway that cannot serve exits on its own.
 
-Because of the `hot` pin, restart-class configuration changes made inside the sandbox log `config reload requires gateway restart; hot mode ignoring` and do not take effect until the gateway restarts. For example, `openclaw plugins install` logs that message until the gateway restarts. Apply them with a supervised restart:
+Because `gateway.reload.mode` is pinned to `off`, configuration changes made inside the sandbox do not hot-reload. For example, `openclaw plugins install` can update the configuration while the running gateway continues using its previous configuration. Apply changes with a supervised restart:
 
 ```bash
 $$nemoclaw <name> gateway restart
