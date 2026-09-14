@@ -64,11 +64,14 @@ pub enum ObservationError {
     Extension,
     Incomplete,
     BindingMismatch,
+    /// A fixed, non-secret diagnostic from an owning backend.
+    Backend(&'static str),
 }
 
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            Self::Backend(message) => message,
             Self::Authentication => "observation authentication failed",
             Self::Permission => "observation permission denied",
             Self::Transport => "observation transport failed",

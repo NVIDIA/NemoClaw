@@ -9,7 +9,16 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
     let provider = NemoClawProvider::default();
     let mut diagnostics = Diagnostics::default();
     let resources = provider.get_resources(&mut diagnostics).unwrap();
-    for name in ["workspace", "provider", "route", "sandbox"] {
+    for name in [
+        "workspace",
+        "provider",
+        "route",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+        "gateway_storage",
+        "inference_storage",
+    ] {
         assert!(resources.contains_key(name));
     }
     let schema = provider.schema(&mut diagnostics).unwrap();

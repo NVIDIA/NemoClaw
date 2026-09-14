@@ -37,6 +37,7 @@ getrandom = "0.4"
 process-wrap = { version = "10", features = ["tokio1"] }
 tokio-util = "0.7"
 clap = { version = "4", features = ["derive"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
 futures-util = "0.3"
 time = { version = "0.3", features = ["formatting", "parsing"] }

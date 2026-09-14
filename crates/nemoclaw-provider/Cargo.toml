@@ -13,6 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 tf-provider.workspace = true
 tokio.workspace = true
+rustls.workspace = true
 
 [lints]
 workspace = true

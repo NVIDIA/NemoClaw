@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use nemoclaw_sdk::{
     ObservationError,
     config::{Credential, Gateway, TLS},
+    managed::ManagedBackend,
     openshell::{EnvironmentSecrets, OpenShell},
 };
 use serde::{Deserialize, Serialize};
@@ -57,9 +58,15 @@ impl Backend for ConfiguredBackend {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
+        if ManagedBackend::supports(kind) {
+            return ManagedBackend.read(kind, prior, removing).await;
+        }
         self.client()?.read(kind, prior, removing).await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+        if ManagedBackend::supports(kind) {
+            return ManagedBackend.ensure(kind, desired).await;
+        }
         match self.client() {
             Ok(client) => client.ensure(kind, desired).await,
             Err(error) => Mutation::failed(error),
@@ -71,6 +78,9 @@ impl Backend for ConfiguredBackend {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
+        if ManagedBackend::supports(kind) {
+            return ManagedBackend.remove(kind, prior, destroying).await;
+        }
         self.client()?.remove(kind, prior, destroying).await
     }
 }
@@ -174,6 +184,10 @@ impl Provider for NemoClawProvider {
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
         let definitions = [
+            Definition::new("managed_gateway", &["spec", "running"], &["running"]),
+            Definition::new("inference_service", &["spec", "running"], &["running"]),
+            Definition::new("gateway_storage", &["spec"], &[]),
+            Definition::new("inference_storage", &["spec"], &[]),
             Definition::new("workspace", &["name", "owner", "generation"], &[]),
             Definition::new(
                 "provider",
