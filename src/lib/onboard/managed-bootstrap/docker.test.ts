@@ -1227,6 +1227,12 @@ describe("Docker managed bootstrap adapter", () => {
         prepared,
         durablePreparation: durable,
       });
+      await adapter.awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 });
+      vi.mocked(fake.deps.runOpenshell!).mockImplementationOnce((args) => {
+        expect(args).toEqual(["sandbox", "stop", "alpha"]);
+        expect(fake.replacement?.State?.Running).toBe(true);
+        return { status: 0 };
+      });
       await expect(
         adapter.finalizeBootstrap({
           outcome: "rollback",
