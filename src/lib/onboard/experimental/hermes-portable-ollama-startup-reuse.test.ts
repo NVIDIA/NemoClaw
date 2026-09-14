@@ -60,6 +60,20 @@ describe("Portable inference startup reuse", () => {
     expect(h.dependency.rollback).not.toHaveBeenCalled();
   });
 
+  it("reinspects through the original read-only authority after the async boundary (#11574)", async () => {
+    const h = setup();
+    const reinspect = vi.fn(() => ({ kind: "running-current" as const, assertCurrent: vi.fn() }));
+    h.overrides.inspectReadinessRuntime.mockReturnValueOnce({
+      kind: "running-current",
+      assertCurrent: vi.fn(),
+      reinspect,
+    } as never);
+    await expect(h.run()).resolves.toBe("reused");
+    expect(h.overrides.inspectReadinessRuntime).toHaveBeenCalledOnce();
+    expect(reinspect).toHaveBeenCalledOnce();
+    expect(h.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
+  });
+
   it("falls back after stopped (#11574)", async () => {
     const h = setup();
     h.overrides.inspectReadinessRuntime.mockReturnValueOnce({

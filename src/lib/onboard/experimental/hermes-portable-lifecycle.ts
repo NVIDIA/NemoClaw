@@ -1516,39 +1516,45 @@ function retainSuccessfulStartup(
   if (!qualified.hasTransactionAuthority) return;
   const timing = createHermesPortableLifecycleTimingRecorder(undefined);
   const currentness = createHermesPortableCurrentnessTimingRecorder(undefined);
-  retainHermesPortableLifecycleStartup(sandboxName, context, deps, () => {
-    qualified.assertOperatingAuthority();
-    qualified.assertTransactionCurrent();
-    const container = assertCurrentHermesPortableContainer(
-      qualified.receipt,
-      qualified.containerDeps,
-    );
-    if (!container.authority.running || container.status !== "running") return false;
-    if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
-      fail("container state changed after startup");
-    }
-    const live = observeOpenShellIdentity(qualified.receipt, qualified.capture, [
-      "Ready",
-      "Stopped",
-      "Error",
-    ]);
-    if (live.phase !== "Ready") return false;
-    requireRegistry(qualified.receipt, live.liveIdentityFingerprint, deps);
-    proveHermesPortableLivePolicy({
-      gatewayName: qualified.receipt.gatewayName,
-      sandboxName,
-      capture: policyCapture(qualified.capture),
-    });
-    const ready =
-      observeHermesPortableAuthenticatedHealth(
+  retainHermesPortableLifecycleStartup(
+    sandboxName,
+    context,
+    deps,
+    () => {
+      qualified.assertOperatingAuthority();
+      qualified.assertTransactionCurrent();
+      const container = assertCurrentHermesPortableContainer(
         qualified.receipt,
         qualified.containerDeps,
-        container,
-      ) === "ready";
-    assertLifecycleTransactionCurrent(qualified, timing, true, currentness);
-    assertLiveHermesPortableStartupBinding(qualified, deps, timing);
-    return ready;
-  });
+      );
+      if (!container.authority.running || container.status !== "running") return false;
+      if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
+        fail("container state changed after startup");
+      }
+      const live = observeOpenShellIdentity(qualified.receipt, qualified.capture, [
+        "Ready",
+        "Stopped",
+        "Error",
+      ]);
+      if (live.phase !== "Ready") return false;
+      requireRegistry(qualified.receipt, live.liveIdentityFingerprint, deps);
+      proveHermesPortableLivePolicy({
+        gatewayName: qualified.receipt.gatewayName,
+        sandboxName,
+        capture: policyCapture(qualified.capture),
+      });
+      const ready =
+        observeHermesPortableAuthenticatedHealth(
+          qualified.receipt,
+          qualified.containerDeps,
+          container,
+        ) === "ready";
+      assertLifecycleTransactionCurrent(qualified, timing, true, currentness);
+      assertLiveHermesPortableStartupBinding(qualified, deps, timing);
+      return ready;
+    },
+    buildHermesPortableOpenShellEnv(deps.env ?? process.env, qualified.receipt.runtimeAuthority),
+  );
 }
 
 /** Recover the exact receipt-owned container and manifest-owned Hermes startup. */
@@ -1565,6 +1571,9 @@ export function recoverHermesPortableSandboxLifecycle(
       )
     ) {
       retainedTiming.setContainerAction("reused");
+      retainedTiming.increment("authenticatedHealth");
+      retainedTiming.increment("containerInspection");
+      retainedTiming.increment("containerInspection");
       retainedTiming.finish("already-running");
       return { kind: "already-running" };
     }

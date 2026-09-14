@@ -40,6 +40,8 @@ export async function withHermesPortableStartupOperation<T>(
     current: () => {
       const current = now();
       active &&=
+        env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable" &&
+        env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE === "1" &&
         Number.isFinite(current) &&
         current >= previous &&
         current - started < MAX_REUSE_MS &&
