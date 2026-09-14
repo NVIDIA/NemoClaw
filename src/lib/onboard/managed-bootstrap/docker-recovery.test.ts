@@ -802,7 +802,11 @@ describe("Docker managed bootstrap restart recovery", () => {
     });
 
     const restarted = createDockerManagedBootstrapAdapter(fake.deps);
-    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
+    const recovery = await restarted.recoverUnfinishedTransactions();
+    expect(recovery.failures[0]?.sourcePhase, recovery.failures[0]?.detail).toBe(
+      "owner-cleanup-required",
+    );
+    expect(recovery).toMatchObject({
       receipts: [],
       failures: [{ sourcePhase: "owner-cleanup-required", code: "provider-recovery-failed" }],
     });
