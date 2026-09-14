@@ -95,6 +95,12 @@ export function createCliOpenShellGatewayObserver(
         const infoError = gatewayError(info);
         const absentInfo = missing.test(infoText);
         const absentStatus = missing.test(statusText);
+        const selectedGatewayUnreachable =
+          request.runtimeSelection?.gatewayName === name &&
+          statusError?.kind === "transport" &&
+          statusError.reason === "unreachable" &&
+          infoError?.kind === "transport" &&
+          infoError.reason === "unreachable";
         // Only known absence and unreachable responses describe resource state. Other failures are not absence.
         for (const [error, absent, legacy] of [
           [statusError, absentStatus, false],
@@ -121,7 +127,10 @@ export function createCliOpenShellGatewayObserver(
           ((!infoError && named) || unsupported)
         )
           state = "healthy_named";
-        else if (named && statusError?.kind === "transport" && statusError.reason === "unreachable")
+        else if (
+          selectedGatewayUnreachable ||
+          (named && statusError?.kind === "transport" && statusError.reason === "unreachable")
+        )
           state = "named_unreachable";
         else if (activeGateway === name && named) state = "named_unhealthy";
         else if (!statusError && connected && activeGateway && activeGateway !== name)

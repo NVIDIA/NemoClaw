@@ -145,6 +145,32 @@ describe("CLI gateway observation", () => {
     },
   );
 
+  it("recovers an exact selected gateway when both live probes are unreachable", async () => {
+    const unreachable = "Error: client error (Connect): Connection refused";
+    const result = await createCliOpenShellGatewayObserver(
+      captureFor(unreachable, unreachable, 1, 1),
+    ).observeGateway({
+      ...request,
+      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
+    });
+
+    expect(result).toMatchObject({
+      state: "named_unreachable",
+      activeGateway: null,
+      recoveryBlocked: false,
+      unavailable: true,
+    });
+  });
+
+  it("does not infer gateway identity from two unreachable probes without exact selection", async () => {
+    const unreachable = "Error: client error (Connect): Connection refused";
+    const result = await createCliOpenShellGatewayObserver(
+      captureFor(unreachable, unreachable, 1, 1),
+    ).observeGateway(request);
+
+    expect(result).toMatchObject({ state: "observation_failed", recoveryBlocked: true });
+  });
+
   it.each([
     ["authentication failed token=secret", "authentication"],
     ["permission denied", "authentication"],
