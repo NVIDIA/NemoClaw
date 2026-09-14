@@ -58,6 +58,7 @@ import {
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
   isManagedImageLocalInferenceKind,
+  managedImageFailureDetail,
   type ManagedImageLocalInferenceKind,
   resolveManagedImageLocalInferenceRoute,
   withManagedImageLocalInferenceProfile,
@@ -65,8 +66,8 @@ import {
 
 // This executable owns one protected qualification transaction from sandbox
 // creation through exact cleanup. Keep its stateful orchestration and cleanup
-// together so no cross-module return path can bypass rollback; stateless route
-// and profile policy remains in managed-image-protected-runtime-contract.ts.
+// together so no cross-module return path can bypass rollback. Stateless policy
+// and diagnostics remain in managed-image-protected-runtime-contract.ts.
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -110,12 +111,6 @@ export function protectedManagedStateRootDriverConfig(
 
 function compactText(value = ""): string {
   return String(value).replace(/\s+/gu, " ").trim();
-}
-
-function redactProtectedGpuProof(value: string): string {
-  return String(value)
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer <REDACTED>")
-    .replace(/\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))=([^\s]*)/giu, "$1=<REDACTED>");
 }
 
 export type ManagedImageOpenShellE2eInputs = {
@@ -1195,7 +1190,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       ? createDirectSandboxGpuVerifier({
           runOpenshell: onboard.runOpenshell,
           compactText,
-          redact: redactProtectedGpuProof,
+          redact: managedImageFailureDetail,
         })
       : () => ({
           status: "unverified" as const,
@@ -1537,8 +1532,8 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch(() => {
-    console.error("Managed-image OpenShell E2E failed; inspect the redacted evidence artifacts.");
+  run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch((error: unknown) => {
+    console.error(`Managed-image OpenShell E2E failed: ${managedImageFailureDetail(error)}`);
     process.exitCode = 1;
   });
 }

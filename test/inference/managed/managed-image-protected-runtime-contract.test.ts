@@ -13,6 +13,7 @@ import {
   MANAGED_IMAGE_LOCAL_INFERENCE_KINDS,
   MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX,
   managedImageProtectedSandboxName,
+  managedImageFailureDetail,
   PROTECTED_MANAGED_IMAGE_AGENTS,
   resolveManagedImageLocalInferenceRoute,
   withManagedImageLocalInferenceProfile,
@@ -176,6 +177,15 @@ describe("protected managed-image runtime contract", () => {
       "could not read managed OpenClaw startup logs (status=1, spawnError=false)",
     );
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(secret);
+    const diagnostic = managedImageFailureDetail(
+      new Error(
+        `startup failed: ${secret} https://user:password@example.test ${"x".repeat(8_000)}`,
+      ),
+      { NVIDIA_API_KEY: secret },
+    );
+    expect(diagnostic).toContain("Error: startup failed:");
+    expect(diagnostic).not.toMatch(/json-api-key-secret|user:password/);
+    expect(diagnostic).toHaveLength(8_000);
   });
 
   it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
