@@ -39,7 +39,7 @@ tokio-util = "0.7"
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
 futures-util = "0.3"
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 bollard = { version = "0.21.1", default-features = false, features = ["pipe"] }
 tar = "0.4"
 rustix = { version = "1", features = ["fs"] }

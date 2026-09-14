@@ -187,7 +187,7 @@ fn read_archive(bytes: &[u8], limit: usize) -> Result<Vec<u8>, Error> {
     }
     Ok(output)
 }
-fn archive(files: &[(&str, &[u8], u32)]) -> Result<Vec<u8>, Error> {
+pub(crate) fn archive(files: &[(&str, &[u8], u32)]) -> Result<Vec<u8>, Error> {
     let mut builder = tar::Builder::new(Vec::new());
     for (name, bytes, mode) in files {
         let mut header = tar::Header::new_gnu();
