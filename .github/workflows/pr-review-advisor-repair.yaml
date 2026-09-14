@@ -39,10 +39,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: advisor-repair-${{ inputs.pr_number }}
-  cancel-in-progress: false
-
 env:
   PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
 
@@ -337,6 +333,9 @@ jobs:
   claim:
     name: Claim the exact one-shot attempt
     needs: select
+    concurrency:
+      group: advisor-repair-claim-${{ inputs.pr_number }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -544,6 +543,9 @@ jobs:
       - validate
       - reviewed-dependency
     if: ${{ needs.validate.result == 'success' && inputs.repair_publish && vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true' }}
+    concurrency:
+      group: advisor-repair-publish-${{ inputs.pr_number }}
+      cancel-in-progress: false
     environment: advisor-repair-publish
     runs-on: ubuntu-24.04
     timeout-minutes: 15

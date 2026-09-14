@@ -279,4 +279,57 @@ describe("PR Review Advisor trusted validation", () => {
     expect(commandEnvironments).not.toContain("advisor-secret");
     expect(stop).toHaveBeenCalledOnce();
   });
+
+  it("reports candidate and validation cleanup failures together (#10791)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-cleanup-validation-"));
+    temporaryDirectories.push(root);
+    const candidateDirectory = path.join(root, "workspace", "repo");
+    const sdkArtifactDirectory = path.join(root, "sdk");
+    fs.mkdirSync(candidateDirectory, { recursive: true });
+    fs.mkdirSync(sdkArtifactDirectory);
+    const sandboxName = "advisor-repair-validation-789-1";
+    const run = vi.fn<OpenShellTools["run"]>((command, arguments_) => {
+      switch (`${command}:${arguments_[0] ?? ""}:${arguments_[1] ?? ""}`) {
+        case "which:openshell-sandbox:":
+          return "/trusted/bin/openshell-sandbox";
+        case "openshell:sandbox:list":
+          return `${sandboxName}\n`;
+        case "openshell:sandbox:exec":
+          throw new Error("candidate validation failed");
+        case "openshell:sandbox:delete":
+          throw new Error("sandbox delete failed");
+        default:
+          return "";
+      }
+    });
+    const tools: OpenShellTools = {
+      run,
+      runAsync: () => ({ cancel: () => {}, completion: Promise.resolve() }),
+      start: () => async () => undefined,
+      wait: async () => {},
+    };
+
+    await expect(
+      runRepairValidationInSandbox(
+        {
+          candidateDirectory,
+          commands: repairValidationPlan(selection("b".repeat(40))),
+          env: {
+            GITHUB_RUN_ID: "789",
+            HOME: root,
+            OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
+            PATH: "/usr/bin",
+            PI_IMAGE: "example.invalid/pi@sha256:" + "b".repeat(64),
+            RUNNER_TEMP: root,
+            SANDBOX_NAME: sandboxName,
+          },
+          sdkArtifactDirectory,
+          trustedCheckout: "/trusted",
+        },
+        { prepareDependencies: async () => undefined, tools },
+      ),
+    ).rejects.toThrow(
+      `candidate validation failed; validation sandbox ${sandboxName} cleanup failed: Failed to delete OpenShell sandbox ${sandboxName}: sandbox delete failed`,
+    );
+  });
 });

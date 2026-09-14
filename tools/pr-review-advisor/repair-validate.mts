@@ -28,6 +28,12 @@ import {
 
 type RepairValidationResult = Array<{ command: string; exitCode: number }>;
 
+function boundedDiagnostic(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error))
+    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .slice(0, 1_000);
+}
+
 export type RepairValidationExecutor = (
   commands: readonly RepairValidationCommand[],
   candidateDirectory: string,
@@ -120,18 +126,27 @@ export async function runRepairValidationInSandbox(
     primaryError = error;
     throw error;
   } finally {
-    let cleanupError: unknown;
+    const cleanupDiagnostics: string[] = [];
     try {
       deleteOpenShellSandbox(input.env, sandboxName, tools);
     } catch (error) {
-      cleanupError = error;
+      cleanupDiagnostics.push(
+        `validation sandbox ${sandboxName} cleanup failed: ${boundedDiagnostic(error)}`,
+      );
     }
     try {
       await gateway.stop();
     } catch (error) {
-      cleanupError ??= error;
+      cleanupDiagnostics.push(
+        `validation gateway for ${sandboxName} cleanup failed: ${boundedDiagnostic(error)}`,
+      );
     }
-    if (primaryError === undefined && cleanupError !== undefined) throw cleanupError;
+    if (cleanupDiagnostics.length > 0) {
+      const cleanupMessage = cleanupDiagnostics.join("; ");
+      if (primaryError !== undefined)
+        throw new Error(`${boundedDiagnostic(primaryError)}; ${cleanupMessage}`);
+      throw new Error(cleanupMessage);
+    }
   }
 }
 

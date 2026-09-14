@@ -57,6 +57,13 @@ from `main` with the exact same-repository PR number, PR head and base commits, 
 run ID, and a nonempty JSON array of finding IDs. Set `repository_egress_authorized` only after
 authorizing the bounded repository context to cross the existing Advisor model boundary.
 
+Phase 1 is owned by NemoClaw CI maintainers under the accepted
+[issue #10791 maintainer decision](https://github.com/NVIDIA/NemoClaw/issues/10791#issuecomment-5502299277)
+and its recorded amendments. That decision defines the manual-only lifecycle, same-repository
+compatibility boundary, eligible repair classes, one-shot ownership, credential separation,
+protected publication, exact-new-head validation, bounded evidence, and required staging proof.
+Automatic repair remains outside the approved scope.
+
 The selected PR must be open, non-draft, based on `main`, and owned by this repository. Both the
 actor and triggering actor must have maintain or admin permission. The workflow accepts only P0 or
 P1 findings from the trusted documentation, reduction, and verification repair classes. Security

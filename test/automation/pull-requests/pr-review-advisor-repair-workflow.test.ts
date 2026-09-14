@@ -8,6 +8,7 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e
 type RepairWorkflow = {
   on: Record<string, unknown>;
   permissions: Record<string, string>;
+  concurrency?: WorkflowJob["concurrency"];
   jobs: Record<string, WorkflowJob>;
 };
 
@@ -59,6 +60,11 @@ describe("manual PR Review Advisor repair workflow", () => {
 
     expect(claim.permissions).toEqual({ checks: "write", contents: "read" });
     expect(claim.needs).toBe("select");
+    expect(workflow.concurrency).toBeUndefined();
+    expect(claim.concurrency).toEqual({
+      group: "advisor-repair-claim-${{ inputs.pr_number }}",
+      "cancel-in-progress": false,
+    });
     expect(serialized(claim)).toContain("external_id");
     expect(serialized(claim)).toContain("conclusion=neutral");
     expect(serialized(claim)).not.toMatch(/secrets[.]|OPENAI_API_KEY/u);
@@ -96,6 +102,10 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(serialized(validate)).toContain("repair-validate.mts");
 
     expect(publish.environment).toBe("advisor-repair-publish");
+    expect(publish.concurrency).toEqual({
+      group: "advisor-repair-publish-${{ inputs.pr_number }}",
+      "cancel-in-progress": false,
+    });
     expect(publish.permissions).toEqual({
       actions: "read",
       contents: "write",
