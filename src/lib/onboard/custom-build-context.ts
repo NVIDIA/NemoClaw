@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
 import fs from "node:fs";
+import path from "node:path";
 
 export const CUSTOM_BUILD_CONTEXT_WARN_BYTES = 100_000_000;
 
@@ -55,10 +55,6 @@ function isIgnoredCustomBuildContextName(name: string): boolean {
     lowerName.endsWith("_rsa") ||
     (lowerName.startsWith("service-account") && lowerName.endsWith(".json"))
   );
-}
-
-export function shouldIncludeCustomBuildContextPath(src: string): boolean {
-  return !isIgnoredCustomBuildContextName(path.basename(src));
 }
 
 export function isInsideIgnoredCustomBuildContextPath(src: string): boolean {

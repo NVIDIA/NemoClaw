@@ -7,7 +7,6 @@ import fs from "node:fs";
 import {
   buildContainerizedDockerDriverGatewayLaunch,
   logContainerizedDockerDriverGatewayLaunch,
-  prepareContainerizedDockerDriverGatewayLaunch,
   shouldUseContainerizedGateway,
 } from "./docker-driver-gateway-compat";
 import {
@@ -199,10 +198,6 @@ export function buildDockerDriverGatewayLaunch(
     baseEnv,
     reason: compat.reason,
   });
-}
-
-export function prepareDockerDriverGatewayLaunch(launch: DockerDriverGatewayLaunch): void {
-  prepareContainerizedDockerDriverGatewayLaunch(launch);
 }
 
 export function buildDockerDriverGatewayRuntimeIdentity(

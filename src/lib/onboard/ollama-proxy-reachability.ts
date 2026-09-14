@@ -17,7 +17,6 @@ import {
   DEFAULT_PROBE_NETWORK,
   formatHostServiceUnreachableMessage,
   type HostServiceReachabilityOptions,
-  type HostServiceReachabilityReason,
   type HostServiceReachabilityResult,
   __test as hostServiceTest,
   probeHostServiceSandboxReachability,
@@ -26,7 +25,6 @@ import {
 export const DEFAULT_OLLAMA_PROBE_NETWORK = DEFAULT_PROBE_NETWORK;
 const OLLAMA_SERVICE_LABEL = "Ollama auth proxy";
 
-export type OllamaProxyReachabilityReason = HostServiceReachabilityReason;
 export type OllamaProxyReachabilityResult = HostServiceReachabilityResult;
 export type OllamaProxyReachabilityOptions = Partial<HostServiceReachabilityOptions>;
 

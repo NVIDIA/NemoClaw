@@ -15,7 +15,6 @@ import {
   ONBOARD_MACHINE_TERMINAL_STATE_IDS,
   type OnboardMachineStateId,
   type OnboardNonTerminalMachineStateId,
-  type OnboardTerminalMachineStateId,
 } from "./definition";
 
 export const ONBOARD_MACHINE_STATES = ONBOARD_MACHINE_STATE_IDS;
@@ -23,8 +22,6 @@ export const ONBOARD_MACHINE_STATES = ONBOARD_MACHINE_STATE_IDS;
 export type OnboardMachineState = OnboardMachineStateId;
 
 export const ONBOARD_TERMINAL_MACHINE_STATES = ONBOARD_MACHINE_TERMINAL_STATE_IDS;
-
-export type OnboardTerminalMachineState = OnboardTerminalMachineStateId;
 
 export type OnboardNonTerminalMachineState = OnboardNonTerminalMachineStateId;
 

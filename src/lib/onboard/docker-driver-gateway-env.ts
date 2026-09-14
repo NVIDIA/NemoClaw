@@ -612,15 +612,6 @@ export function writeDockerGatewayDebEnvOverride(
   return true;
 }
 
-export function writeDockerGatewayDebEnvOverrideOrThrow(
-  getOverride: () => Record<string, string>,
-  opts: Parameters<typeof hasOpenShellGatewayUserService>[0] = {},
-): void {
-  if (!writeDockerGatewayDebEnvOverride(getOverride, opts)) {
-    throw new Error("OpenShell gateway user service env file is not available");
-  }
-}
-
 export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   optionsWithEnv: PackageManagedDockerDriverGatewayWithEnvOverrideOptions,
 ): Promise<boolean> {

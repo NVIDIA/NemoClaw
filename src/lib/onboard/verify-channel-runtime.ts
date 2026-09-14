@@ -10,13 +10,11 @@
  */
 
 import type { AgentDefinition } from "../agent/defs";
-import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import {
   probeChannelRuntimeStatus,
   type ChannelRuntimeStatusDeps,
   type RuntimeChannelStatus,
 } from "../channel-runtime-status";
-import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
 export interface ChannelRuntimeProbeDeps {
   /**
@@ -50,23 +48,4 @@ export function buildChannelRuntimeProbe(
       configFilePath,
       executeSandboxCommand: deps.executeSandboxCommand,
     });
-}
-
-/**
- * Onboard-specific convenience wrapper: binds the sandbox name so the
- * call site in `onboard.ts` is a single line and the entrypoint stays
- * within its size budget. Pre-fills `executeSandboxCommand` with the
- * SSH-based exec helper onboarding already uses for verification probes.
- */
-export function buildOnboardChannelRuntimeProbe(
-  agent: AgentDefinition | null,
-  sandboxName: string,
-  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
-): (() => Promise<RuntimeChannelStatus | null>) | undefined {
-  return (
-    buildChannelRuntimeProbe(agent, {
-      executeSandboxCommand: (script: string) =>
-        executeSandboxCommandForVerification(sandboxName, script, commandExecutor),
-    }) ?? undefined
-  );
 }

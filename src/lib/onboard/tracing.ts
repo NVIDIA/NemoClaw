@@ -109,31 +109,6 @@ export function withSandboxPhaseTrace<T>(
   );
 }
 
-export function withSandboxCreateStreamTrace<T>(
-  attrs: {
-    sandboxName: string;
-    provider: string;
-    model: string;
-    timeoutSeconds: number;
-    fromDockerfile: boolean;
-    gpuEnabled: boolean;
-  },
-  fn: TraceFn<T>,
-): T {
-  return trace.withTraceSpan(
-    "nemoclaw.sandbox.create_stream",
-    {
-      sandbox_name: attrs.sandboxName,
-      provider: attrs.provider,
-      model: attrs.model,
-      timeout_seconds: attrs.timeoutSeconds,
-      from_dockerfile: attrs.fromDockerfile,
-      gpu_enabled: attrs.gpuEnabled,
-    },
-    fn,
-  );
-}
-
 export function withSandboxReadinessTrace<T>(
   sandboxName: string,
   attrs: Record<string, unknown>,

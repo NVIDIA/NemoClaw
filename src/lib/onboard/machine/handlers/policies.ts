@@ -11,11 +11,6 @@ import {
 import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
-export interface PolicyPresetEntry {
-  name: string;
-  [key: string]: unknown;
-}
-
 export interface ActiveSandboxPolicyState {
   messaging?: { plan: SandboxMessagingPlan } | null;
 }

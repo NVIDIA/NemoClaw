@@ -65,9 +65,6 @@ export type SandboxCreatedOnboardFlowContext<Context extends OnboardFlowContext>
   provider: string;
 };
 
-export type FinalOnboardFlowContext<Context extends OnboardFlowContext> =
-  SandboxCreatedOnboardFlowContext<Context>;
-
 export interface OnboardFlowPhaseResult<Context extends OnboardFlowContext = OnboardFlowContext> {
   context: Context;
   result: OnboardStateHandlerResult;

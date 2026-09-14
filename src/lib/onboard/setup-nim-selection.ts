@@ -216,14 +216,6 @@ type ProviderChoice = {
   key: string;
 };
 
-export function requireProviderChoice<T extends ProviderChoice>(selected: T | undefined): T {
-  if (!selected) {
-    console.error("  No provider was selected.");
-    process.exit(1);
-  }
-  return selected;
-}
-
 type RemoteProviderConfig = {
   label: string;
   endpointUrl: string;

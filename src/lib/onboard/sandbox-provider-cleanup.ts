@@ -83,8 +83,6 @@ export const SANDBOX_PROVIDER_SUFFIXES = [
   ]),
 ] as readonly string[];
 
-export type SandboxProviderSuffix = string;
-
 /** Deletes registrations after sandbox removal. Failures can leave stale registrations. */
 export async function deleteSandboxProviderRegistrations(
   sandboxName: string,
