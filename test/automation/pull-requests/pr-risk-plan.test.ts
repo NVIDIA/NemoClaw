@@ -142,7 +142,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(24);
+    expect(first.version).toBe(25);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -1104,6 +1104,18 @@ describe("Brev Launchable recommendations", () => {
     ["image-declared gateway", "test/e2e/fixtures/full-e2e-gateway.ts"],
     ["platform gateway ownership", "src/lib/onboard/gateway-management.ts"],
     ["gateway naming", "src/lib/onboard/gateway-binding/identity.ts"],
+    ["new gateway helper", "src/lib/onboard/gateway-binding/endpoint-authority.ts"],
+    ["nested gateway helper", "src/lib/onboard/gateway-binding/runtime/endpoint.ts"],
+    ["launch health", "src/lib/actions/sandbox/launch-readiness/health.ts"],
+    [
+      "OpenClaw pairing",
+      "src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.ts",
+    ],
+    ["new launch helper", "src/lib/actions/sandbox/launch-readiness/session/observe.ts"],
+    ["scenario inference", "test/e2e/live/full-e2e-inference-probe.ts"],
+    ["scenario workload evidence", "test/e2e/live/full-e2e-workload-evidence.ts"],
+    ["new scenario helper", "test/e2e/live/full-e2e/recovery/observe.ts"],
+    ["new scenario fixture", "test/e2e/fixtures/full-e2e-image-receipt.ts"],
     ["listener identity", "src/lib/adapters/openshell/forward-service.ts"],
     ["listener reachability", "src/lib/adapters/openshell/local-forward-listener.ts"],
     ["forward recovery", "src/lib/actions/sandbox/forward-recovery.ts"],
@@ -1132,6 +1144,18 @@ describe("Brev Launchable recommendations", () => {
     "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts",
     "src/lib/onboard/hermes-dashboard.ts",
     "src/lib/onboard/ssh-forward-hint.ts",
+    "src/lib/onboard/gateway-binding/identity.test.ts",
+    "src/lib/onboard/gateway-binding/__tests__/identity.ts",
+    "src/lib/onboard/gateway-binding/README.md",
+    "src/lib/actions/sandbox/launch-readiness/health.spec.ts",
+    "src/lib/actions/sandbox/launch-readiness/tests/observe.ts",
+    "src/lib/actions/sandbox/launch-readiness/notes.txt",
+    "src/lib/onboard/gateway-binding-hermes/identity.ts",
+    "src/lib/actions/sandbox/launch-readiness-hermes/health.ts",
+    "test/e2e/live/full-e2e-notes.md",
+    "test/e2e/live/full-e2e/README.txt",
+    "test/e2e/support/full-e2e-inference-probe.test.ts",
+    "test/e2e/live/full-e2eish.ts",
   ])("does not recommend Brev for an adjacent change in %s", (file) => {
     const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: [file] });
     expect(riskPlanRequiredJobIds(result)).not.toContain("staging-brev-launchable");
