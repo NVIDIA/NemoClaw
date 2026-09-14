@@ -435,7 +435,15 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
         stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
       })
       .mockReturnValueOnce({ ...inventory, output: "credential-canary" });
-    expect(() => open()).toThrow(/Legacy config is unreadable; inventory=unknown/);
+    let thrown: unknown;
+    try {
+      open();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/Legacy config is unreadable; inventory=unknown/);
+    expect((thrown as Error).message).not.toContain("credential-canary");
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
   });
 
