@@ -607,6 +607,9 @@ startGateway(null).catch((error) => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.mts"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "node_modules"))).toBe(false);
     } finally {

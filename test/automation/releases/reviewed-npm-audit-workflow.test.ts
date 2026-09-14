@@ -321,6 +321,10 @@ describe("trusted npm audit workflow (#5896)", () => {
     expect(cacheBucketStep.run).toContain(
       "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
     );
+    expect(cacheBucketStep.run).toContain(
+      "const identity = parseReviewedNpmIdentityConfig(configSource);",
+    );
+    expect(cacheBucketStep.run).toContain("...identity");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
   });
@@ -470,11 +474,7 @@ describe("trusted npm audit workflow (#5896)", () => {
       const receiptOptions = {
         artifactDirectory: root,
         graphId: "temporary-graph",
-        reviewedNpmIdentity: {
-          npmArchiveSha256: "0".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "10.9.4",
-        },
+        reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -1328,11 +1328,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         directory: "/materialized",
         exceptionFile: "/exceptions.json",
         packageSpec: "nemoclaw@0.0.0",
-        reviewedNpmIdentity: {
-          npmArchiveSha256: "a".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "10.9.4",
-        },
+        reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
         threshold: "high",
       },
       {
@@ -1344,14 +1340,11 @@ describe("trusted npm audit workflow (#5896)", () => {
             graph: "nemoclaw-cli",
             provenance: {
               label: "NemoClaw CLI locked production graph",
-              npmVersion: "10.9.4",
+              npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
+              npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
               packageSpecs: ["nemoclaw@0.0.0"],
             },
-            reviewedNpmIdentity: {
-              npmArchiveSha256: "a".repeat(64),
-              npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-              npmVersion: "10.9.4",
-            },
+            reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
             reportFile: path.join("/artifacts", "source-graph.json"),
             resultFile: path.join("/artifacts", "source-graph-policy.json"),
             threshold: "high",
