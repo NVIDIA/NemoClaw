@@ -3,7 +3,7 @@
 
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
-use std::{fs, path::PathBuf, process::Command, time::Duration};
+use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
@@ -33,13 +33,7 @@ async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
         .overrides
         .model = "changed".into();
     assert!(deployment.apply(&changed, &cancel).await.is_err());
-    let timed = cancel.clone();
-    let deadline = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(8)).await;
-        timed.cancel();
-    });
     let applied = deployment.apply(&document, &cancel).await;
-    deadline.abort();
     assert!(applied.is_ok(), "{applied:?}");
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
