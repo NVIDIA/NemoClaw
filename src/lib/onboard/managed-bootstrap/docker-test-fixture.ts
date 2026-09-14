@@ -578,23 +578,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
         : result;
     }),
     runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
-    runOpenshell: vi.fn((args) => {
-      if (args[0] === "sandbox" && (args[1] === "start" || args[1] === "stop")) {
-        const target = [original, replacement].find(
-          (value) =>
-            value !== null &&
-            String(value.Name ?? "").replace(/^\/+/u, "") === `openshell-${String(args[2] ?? "")}`,
-        );
-        if (target?.State) {
-          target.State = {
-            ...target.State,
-            Running: args[1] === "start",
-            Restarting: false,
-          };
-        }
-      }
-      return ok();
-    }),
+    runOpenshell: vi.fn(() => ok()),
     now: () => new Date("2026-07-31T12:30:00.000Z"),
   };
   return {

@@ -2531,7 +2531,7 @@ export function createDockerManagedBootstrapAdapter(
     assertTransactionReplacement(journal, replacement);
     if (
       dockerContainerName(replacement) !== journal.originalName ||
-      (!isStableRunning(replacement) && !isExplicitlyStopped(replacement)) ||
+      !isStableRunning(replacement) ||
       normalizeDockerManagedBootstrapLaunchSpec(replacement).hash !== journal.replacementSpecHash
     ) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -2539,39 +2539,6 @@ export function createDockerManagedBootstrapAdapter(
         runtimeId: journal.replacementRuntimeId,
         detail: "the committed replacement does not match its durable runtime authority",
       });
-    }
-    const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
-    if (isStableRunning(replacement)) {
-      runRequiredOpenShellLifecycleCommand(
-        deps,
-        ["sandbox", "stop", journal.sandbox.sandboxName],
-        supervisorReconnectTimeoutSecs,
-      );
-      const stopped = deps.dockerStop(journal.replacementRuntimeId, {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
-      });
-      const stoppedReplacement = inspectTransactionRuntime(
-        journal,
-        journal.replacementRuntimeId,
-        deps,
-      );
-      if (!stoppedReplacement) {
-        throw new ManagedBootstrapCommitStateIndeterminateError({
-          bootstrapIdentity: journal.bootstrapIdentity,
-          runtimeId: journal.replacementRuntimeId,
-          detail: "the exact committed replacement disappeared during recovered final handoff",
-        });
-      }
-      assertTransactionReplacement(journal, stoppedReplacement);
-      if (!isExplicitlyStopped(stoppedReplacement)) {
-        throw new ManagedBootstrapDurableCommitCleanupPendingError({
-          bootstrapIdentity: journal.bootstrapIdentity,
-          cleanupRuntimeId: journal.replacementRuntimeId,
-          detail: `${commandDetail(stopped) || "Docker stop did not complete"}; the exact replacement was not explicitly stopped`,
-        });
-      }
     }
     const sharedTransaction = recoveredManagedSharedStateTransaction(journal);
     const sharedStatus = probeDockerManagedStartupSharedState(
@@ -2632,6 +2599,7 @@ export function createDockerManagedBootstrapAdapter(
         detail: "exact rollback-backup absence was not durable after restart recovery",
       });
     }
+    const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
     runRequiredOpenShellLifecycleCommand(
       deps,
       ["sandbox", "start", journal.sandbox.sandboxName],
@@ -3342,52 +3310,12 @@ export function createDockerManagedBootstrapAdapter(
         detail: "the exact committed replacement lost its authoritative workload name",
       });
     }
-    const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
-    if (isStableRunning(replacement)) {
-      runRequiredOpenShellLifecycleCommand(
-        deps,
-        ["sandbox", "stop", handle.sandbox.sandboxName],
-        supervisorReconnectTimeoutSecs,
-      );
-      const stopped = deps.dockerStop(transaction.replacementRuntimeId, {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+    if (!isStableRunning(replacement)) {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: receipt.bootstrapIdentity,
+        cleanupRuntimeId: transaction.replacementRuntimeId,
+        detail: supervisorReconnectFailureDetail(transaction.replacementRuntimeId, deps),
       });
-      const stoppedReplacement = inspectTransactionRuntime(
-        transaction,
-        transaction.replacementRuntimeId,
-        deps,
-      );
-      if (!stoppedReplacement) {
-        throw new ManagedBootstrapCommitStateIndeterminateError({
-          bootstrapIdentity: transaction.bootstrapIdentity,
-          runtimeId: transaction.replacementRuntimeId,
-          detail: "the exact committed replacement disappeared during final handoff",
-        });
-      }
-      assertTransactionReplacement(transaction, stoppedReplacement);
-      if (dockerContainerName(stoppedReplacement) !== transaction.originalName) {
-        throw new ManagedBootstrapCommitStateIndeterminateError({
-          bootstrapIdentity: transaction.bootstrapIdentity,
-          runtimeId: transaction.replacementRuntimeId,
-          detail:
-            "the exact committed replacement lost its authoritative workload name during final handoff",
-        });
-      }
-      try {
-        assertExplicitlyStopped(stoppedReplacement, "committed replacement final handoff");
-      } catch (error) {
-        throw new ManagedBootstrapDurableCommitCleanupPendingError({
-          bootstrapIdentity: receipt.bootstrapIdentity,
-          cleanupRuntimeId: transaction.replacementRuntimeId,
-          detail: `${commandDetail(stopped) || "Docker stop did not complete"}; ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        });
-      }
-    } else {
-      assertExplicitlyStopped(replacement, "committed replacement final handoff recovery");
     }
 
     const original = inspectTransactionRuntime(transaction, transaction.originalRuntimeId, deps);
@@ -3426,12 +3354,14 @@ export function createDockerManagedBootstrapAdapter(
       }
     }
 
-    const originalAbsence = probeExactDockerContainerAbsence(transaction.originalRuntimeId, deps);
-    runRequiredOpenShellLifecycleCommand(
-      deps,
-      ["sandbox", "start", handle.sandbox.sandboxName],
-      supervisorReconnectTimeoutSecs,
-    );
+    if (probeExactDockerContainerAbsence(transaction.originalRuntimeId, deps) !== "absent") {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: receipt.bootstrapIdentity,
+        cleanupRuntimeId: transaction.originalRuntimeId,
+        detail: "exact rollback-backup absence was not durable before OpenShell handoff",
+      });
+    }
+    const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
     if (
       !(await waitForRequiredOpenShellSupervisorReconnect(
         handle.sandbox.sandboxName,
@@ -3443,13 +3373,6 @@ export function createDockerManagedBootstrapAdapter(
         bootstrapIdentity: receipt.bootstrapIdentity,
         cleanupRuntimeId: transaction.replacementRuntimeId,
         detail: supervisorReconnectFailureDetail(transaction.replacementRuntimeId, deps),
-      });
-    }
-    if (originalAbsence !== "absent") {
-      throw new ManagedBootstrapDurableCommitCleanupPendingError({
-        bootstrapIdentity: receipt.bootstrapIdentity,
-        cleanupRuntimeId: transaction.originalRuntimeId,
-        detail: "exact rollback-backup absence was not durable before OpenShell handoff",
       });
     }
     const connectedReplacement = inspectTransactionRuntime(
