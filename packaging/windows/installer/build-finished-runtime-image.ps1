@@ -70,8 +70,14 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $compressionInherited) {
         throw 'The runtime image NTFS root could not enable inherited compression.'
     }
-    & (Join-Path $env:SystemRoot 'System32\robocopy.exe') $RuntimeRoot $mount /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "Runtime image population failed with status $LASTEXITCODE." }
+    $copyLog = [IO.Path]::ChangeExtension($ReceiptPath, '.robocopy.log')
+    & (Join-Path $env:SystemRoot 'System32\robocopy.exe') $RuntimeRoot $mount /E /COPY:DT /DCOPY:DT /R:0 /W:0 /NP "/LOG:$copyLog" | Out-Null
+    $copyStatus = $LASTEXITCODE
+    $receipt['population'] = @{ status = $copyStatus; log = [IO.Path]::GetFileName($copyLog) }
+    if ($copyStatus -ge 8) {
+        $detail = ((Get-Content -LiteralPath $copyLog -Tail 40) -join ' | ')
+        throw "Runtime image population failed with status ${copyStatus}: $detail"
+    }
     if ((Get-FileHash -LiteralPath (Join-Path $mount 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant() -ne
         (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()) {
         throw 'The mounted runtime manifest differs after image population.'
