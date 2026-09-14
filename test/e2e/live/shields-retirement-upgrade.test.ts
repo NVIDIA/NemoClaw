@@ -350,6 +350,21 @@ test.skipIf(process.platform !== "linux")(
       50 * 60_000,
       { NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1" },
     );
+    await bash(
+      host,
+      `set +e
+command -v lsof
+openshell status -g nemoclaw
+openshell gateway info -g nemoclaw
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+sudo -n lsof -nP -iTCP:8080 -sTCP:LISTEN
+systemctl --user show nemoclaw-openshell-gateway.service --property=MainPID,ActiveState,SubState
+for pid in $(lsof -ti :8080 -sTCP:LISTEN); do
+  ps -p "$pid" -o pid=,uid=,comm=
+  readlink "/proc/$pid/exe"
+done`,
+      { artifactName: "gateway-after-upgrade", timeoutMs: 60_000 },
+    );
     expectExitZero(upgrade, "candidate managed upgrade of retired Shields sandbox");
 
     progress.phase("verify user data runtime usability and legacy-state retirement");
