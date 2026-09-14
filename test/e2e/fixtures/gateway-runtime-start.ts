@@ -27,7 +27,7 @@ export async function initializeGatewayForCleanup(
       ].join("\n"),
       gatewayName,
     ],
-    { cwd: REPO_ROOT, ...options },
+    { ...options, cwd: REPO_ROOT },
   );
   assertExitZero(result, `initialize cleanup gateway ${gatewayName}`);
 }

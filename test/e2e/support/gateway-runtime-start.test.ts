@@ -10,6 +10,7 @@ import {
   buildGatewayRuntimeStartScript,
   initializeGatewayForCleanup,
 } from "../fixtures/gateway-runtime-start.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 describe("Gateway restart subprocess", () => {
   test.for(["success", "missing", "failure"] as const)(
@@ -79,8 +80,13 @@ describe("Gateway restart subprocess", () => {
       );
       const env = { HOME: root, OPENSHELL_GATEWAY: "nemoclaw-8090" };
       const host = {
-        command: async (command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+        command: async (
+          command: string,
+          args: string[],
+          options: { env?: NodeJS.ProcessEnv; cwd?: string },
+        ) => {
           expect(options.env).toEqual(env);
+          expect(options.cwd).toBe(REPO_ROOT);
           const result = spawnSync(command, args, {
             cwd: root,
             env: options.env,
@@ -99,7 +105,7 @@ describe("Gateway restart subprocess", () => {
           };
         },
       };
-      const setup = initializeGatewayForCleanup(host, "nemoclaw-8090", { env });
+      const setup = initializeGatewayForCleanup(host, "nemoclaw-8090", { env, cwd: root });
       await expect(
         setup.then(
           () => null,
