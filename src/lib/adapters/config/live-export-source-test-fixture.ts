@@ -4,7 +4,6 @@
 import { createHash } from "node:crypto";
 
 import { EXPORTED_OLLAMA_MODEL } from "../../config/model";
-import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
@@ -158,7 +157,7 @@ export function ollamaSource(model = EXPORTED_OLLAMA_MODEL) {
     provider: "ollama-local",
     model,
     endpointUrl: "http://host.openshell.internal:11440/v1",
-    credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+    credentialEnv: null,
     workload: {
       ...entry.workload,
       encodedProfile: built.encodedProfile,
