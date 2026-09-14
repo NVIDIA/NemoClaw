@@ -284,6 +284,7 @@ Deep Agents Code normally creates the `/sandbox/.deepagents/agent/` paths below 
 | `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |
 | `/sandbox/.deepagents/skills/` | Legacy NemoClaw skill-upload state. Deep Agents Code does not load skills from this path, and `$$nemoclaw <name> skill install` leaves it untouched. |
 | `/sandbox/.deepagents/agent/skills/` | Canonical writable user-skill root declared by the Deep Agents Code integration. The agent owns discovery and activation; NemoClaw preserves this agent state in snapshots. |
+| `/sandbox/.deepagents/hooks.json` | User-authored native hook configuration. NemoClaw preserves it in snapshots; review its executable commands before restoring it into another workspace. |
 | `/sandbox/.deepagents/.mcp.json` | Agent-native MCP configuration. NemoClaw-managed entries contain OpenShell credential placeholders and are read directly during status, migration, and rebuild. The snapshot flow treats this file as credential-bearing and restores managed entries through its bounded handoff rather than the general state archive. |
 | `/sandbox/.deepagents/.state/auth.json` | Upstream auth state. The managed launchers refuse to start when this file contains credentials. |
 | `/sandbox/.deepagents/.state/chatgpt-auth.json` | Upstream ChatGPT auth state. The managed launchers refuse to start when this file exists. |
@@ -306,11 +307,12 @@ The Deep Agents manifest declares these durable directories:
 /sandbox/.deepagents/agent/skills/
 ```
 
-It also declares `/sandbox/.deepagents/config.toml` as a durable top-level state file with key-level ownership.
+It also declares `/sandbox/.deepagents/config.toml` and `/sandbox/.deepagents/hooks.json` as durable top-level state files.
+`config.toml` uses key-level ownership, while `hooks.json` is restored byte-for-byte after the snapshot safety checks.
 The target sandbox's current Deep Agents manifest defines this ownership policy, so a snapshot cannot weaken it.
 
 NemoClaw keeps the newly generated inference route headers and the `models` and `update` tables authoritative during rebuild.
-On a NemoClaw-managed image, only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences can be restored from the previous file.
+On a NemoClaw-managed image, the allowlisted UI and thread preferences, validated native interpreter settings, and native `startup.mode` can be restored from the previous file.
 
 Runtime-controlled, unknown, executable, and security-sensitive backup keys are dropped on that managed path.
 A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema.

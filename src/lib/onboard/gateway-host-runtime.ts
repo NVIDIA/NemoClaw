@@ -15,6 +15,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { waitForPort } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
 import {
@@ -49,11 +50,16 @@ import type { PortProbeResult } from "./preflight";
 /** `systemctl is-active` is a local query; anything slower than this is wedged. */
 const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
 
-function restartTrustedPackagedGateway(): void {
+function restartTrustedPackagedGateway(owner: GatewayOwner): void {
   const result = startOpenShellGatewayUserService();
   if (!result.attempted || !result.started) {
     const detail = result.reason ? `: ${result.reason}` : "";
     throw new Error(`OpenShell packaged gateway restart after install failed${detail}`);
+  }
+  // Type=simple can be active before binding. The caller still validates
+  // gateway ownership and protocol readiness after the port becomes reachable.
+  if (!waitForPort(owner.gatewayPort, 30)) {
+    throw new Error("OpenShell packaged gateway did not bind its port after install.");
   }
 }
 
