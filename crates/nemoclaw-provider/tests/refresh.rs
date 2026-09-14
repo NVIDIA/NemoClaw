@@ -112,3 +112,81 @@ async fn incomplete_mutation_results_fail_without_overwriting_established_identi
     assert!(!diagnostics.errors.is_empty());
     assert_eq!(result.0, original);
 }
+
+struct ExitedAfterStart;
+#[async_trait]
+impl Backend for ExitedAfterStart {
+    async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
+        unreachable!()
+    }
+    async fn ensure(&self, _: &str, desired: &Row) -> Mutation {
+        let mut row = desired.clone();
+        row.insert("id".into(), "established-container".into());
+        row.insert("running".into(), "false".into());
+        Mutation::complete(row)
+    }
+    async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+        unreachable!()
+    }
+}
+#[tokio::test]
+async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
+    let resource = ResourceAdapter::new(
+        Definition::new("inference_service", &["spec", "running"], &["running"]),
+        Arc::new(ExitedAfterStart),
+    );
+    let mut diagnostics = Diagnostics::default();
+    let configured = State::from([
+        ("spec".into(), Value::Value("pinned-spec".into())),
+        ("running".into(), Value::Null),
+        ("id".into(), Value::Null),
+    ]);
+    let (planned, _) = resource
+        .plan_create(
+            &mut diagnostics,
+            configured.clone(),
+            configured.clone(),
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(planned["running"], Value::Unknown));
+    let (created, _) = resource
+        .create(
+            &mut diagnostics,
+            planned,
+            configured.clone(),
+            Value::Null,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    assert!(diagnostics.errors.is_empty());
+    assert_eq!(created["id"], Value::Value("established-container".into()));
+    assert_eq!(created["running"], Value::Value("false".into()));
+    let (planned, _, replacements) = resource
+        .plan_update(
+            &mut diagnostics,
+            created.clone(),
+            created.clone(),
+            configured.clone(),
+            Value::Null,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    assert!(replacements.is_empty());
+    let (restarted, _) = resource
+        .update(
+            &mut diagnostics,
+            created.clone(),
+            planned,
+            configured,
+            Value::Null,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    assert!(diagnostics.errors.is_empty());
+    assert_eq!(restarted, created);
+}

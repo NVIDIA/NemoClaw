@@ -29,3 +29,28 @@ fn unknown_id_reuses_state_and_only_immutable_fields_require_replacement() {
     let (_, replacements) = plan_update(&definition, &prior, proposed);
     assert_eq!(replacements, vec!["name"]);
 }
+
+#[test]
+fn stopped_managed_process_plans_a_restart_without_promising_readiness_or_replacement() {
+    for kind in ["managed_gateway", "inference_service"] {
+        let definition = Definition::new(kind, &["spec", "running"], &["running"]);
+        for running in ["true", "false"] {
+            let prior = BTreeMap::from([
+                ("id".into(), Value::Value("durable".into())),
+                ("spec".into(), Value::Value("pinned".into())),
+                ("running".into(), Value::Value(running.into())),
+            ]);
+            let (planned, replacements) = plan_update(&definition, &prior, prior.clone());
+            assert_eq!(planned["id"], prior["id"]);
+            assert!(replacements.is_empty());
+            assert_eq!(
+                planned["running"],
+                if running == "false" {
+                    Value::Unknown
+                } else {
+                    prior["running"].clone()
+                }
+            );
+        }
+    }
+}

@@ -25,11 +25,20 @@ impl ResourceAdapter {
             destroying: Arc::new(AtomicBool::new(false)),
         }
     }
+    fn observed_running(&self) -> bool {
+        matches!(
+            self.definition.kind,
+            "managed_gateway" | "inference_service"
+        )
+    }
     fn row(&self, state: &State, creating: bool) -> Result<Row, ObservationError> {
         state
             .iter()
             .map(|(k, v)| match v {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
+                Value::Unknown | Value::Null if k == "running" && self.observed_running() => {
+                    Ok((k.clone(), String::new()))
+                }
                 Value::Null if optional(k) => Ok((k.clone(), String::new())),
                 Value::Unknown | Value::Null if creating && k == "id" => {
                     Ok((k.clone(), String::new()))
@@ -47,7 +56,7 @@ impl ResourceAdapter {
                 return Err(ObservationError::Incomplete);
             }
         }
-        for field in ["id", "name", "workspace"] {
+        for field in ["id", "name", "workspace", "spec"] {
             if let Some(expected) = prior.get(field)
                 && !expected.is_empty()
                 && observed.get(field) != Some(expected)
@@ -126,7 +135,9 @@ impl Resource for ResourceAdapter {
                     name.into(),
                     Attribute {
                         attr_type: AttributeType::String,
-                        constraint: if name == "id" {
+                        constraint: if name == "id"
+                            || (name == "running" && self.observed_running())
+                        {
                             AttributeConstraint::Computed
                         } else if optional(name) {
                             AttributeConstraint::OptionalComputed
@@ -188,6 +199,9 @@ impl Resource for ResourceAdapter {
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty)> {
         proposed.insert("id".into(), Value::Unknown);
+        if self.observed_running() {
+            proposed.insert("running".into(), Value::Unknown);
+        }
         for field in &self.definition.fields {
             if optional(field)
                 && matches!(

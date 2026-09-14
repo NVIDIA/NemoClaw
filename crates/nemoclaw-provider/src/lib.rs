@@ -41,6 +41,17 @@ pub fn plan_update(
     {
         proposed.insert("id".into(), id.clone());
     }
+    if matches!(definition.kind, "managed_gateway" | "inference_service") {
+        match prior.get("running") {
+            Some(Value::Value(value)) if value == "false" => {
+                proposed.insert("running".into(), Value::Unknown);
+            }
+            Some(value) => {
+                proposed.insert("running".into(), value.clone());
+            }
+            None => {}
+        }
+    }
     let replacements = definition
         .fields
         .iter()
