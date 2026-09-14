@@ -37,6 +37,7 @@ type ProbeMode =
   | "ahead-core";
 
 interface ProbeOptions {
+  launchMarkerPath?: string;
   slice: SliceName;
   mode?: ProbeMode;
   policyTier?: "balanced" | "restricted";
@@ -183,7 +184,11 @@ async function runSliceProbe(
   options: ProbeOptions,
   context: Pick<TestContext, "signal" | "onTestFinished">,
 ) {
-  const scenario = { mode: options.mode ?? "fresh", slice: options.slice };
+  const scenario = {
+    launchMarkerPath: options.launchMarkerPath,
+    mode: options.mode ?? "fresh",
+    slice: options.slice,
+  };
   const tmpDir = fs.mkdtempSync(
     path.join(
       options.workspaceRoot ?? os.tmpdir(),
@@ -244,6 +249,7 @@ async function runSliceProbe(
       scriptPath,
       `
 const scenario = ${JSON.stringify(scenario)};
+scenario.launchMarkerPath && require("node:fs").writeFileSync(scenario.launchMarkerPath, "launched");
 if (scenario.mode === "active-cancellation") {
   const activeCloseReadyPath = require("node:path").join(process.env.HOME, "active-close-hold.ready");
   const activeCloseReleasePath = require("node:path").join(process.env.HOME, "active-close-hold.release");
@@ -754,17 +760,19 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
 
   it("removes its workspace when cancelled before child launch", async (context) => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fsm-cleanup-"));
+    const launchMarkerPath = path.join(workspaceRoot, "child-launched");
     const controller = new AbortController();
     const reason = new Error("fixture test cancelled");
     controller.abort(reason);
     try {
       await assert.rejects(
         runSliceProbe(
-          { slice: "initial", workspaceRoot },
+          { launchMarkerPath, slice: "initial", workspaceRoot },
           { signal: controller.signal, onTestFinished: context.onTestFinished },
         ),
         (error: unknown) => error === reason,
       );
+      assert.equal(fs.existsSync(launchMarkerPath), false);
       assert.deepEqual(fs.readdirSync(workspaceRoot), []);
     } finally {
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
