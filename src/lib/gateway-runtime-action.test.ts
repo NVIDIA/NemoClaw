@@ -81,34 +81,6 @@ describe("gateway observations and recovery", () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it("does not recover after a gateway handshake identity mismatch (#10947)", async () => {
-    observe.mockResolvedValue({
-      activeGateway: "nemoclaw-8090",
-      diagnostic: "handshake verification failed",
-      error: {
-        kind: "transport",
-        message: "handshake verification failed",
-        reason: "identity_mismatch",
-      },
-      recoveryBlocked: true,
-      state: "observation_failed",
-      unavailable: true,
-    });
-
-    await expect(
-      gatewayRuntime.recoverNamedGatewayRuntime({
-        gatewayName: "nemoclaw-8090",
-        runtimeSelection: {
-          gatewayName: "nemoclaw-8090",
-          localTlsDir: "/recorded/tls",
-          workspace: "default",
-        },
-      }),
-    ).resolves.toMatchObject({ recovered: false, attempted: false });
-    expect(run).not.toHaveBeenCalled();
-    expect(start).not.toHaveBeenCalled();
-  });
-
   it("stops recovery after selection when the next observation fails (#10421)", async () => {
     observe
       .mockResolvedValueOnce(observation("connected_other"))

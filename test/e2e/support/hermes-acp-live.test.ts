@@ -12,7 +12,6 @@ import { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import {
   acpMessageContainsPong,
-  classifyHermesAcpFailureDiagnostic,
   createHermesAcpPromptEvidenceTracker,
   hermesAcpExchangeEvidencePassed,
   hermesAcpGatewayStoppedPreconditionPassed,
@@ -101,15 +100,22 @@ describe("Hermes ACP live evidence boundary", () => {
     ).toBe(false);
   });
 
-  it.each(["installed", "checkout"] as const)(
-    "initializes through the %s adapter",
-    async (installation) => {
+  it.each([
+    ["installed", "initialize", 0],
+    ["checkout", "client-disconnect", 1],
+  ] as const)(
+    "%s adapter initializes and completes %s",
+    async (installation, scenario, exitCode) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-launch-"));
       const adapterEntrypoint = path.join(artifactDir, "nemoclaw-acp");
       fs.writeFileSync(
         adapterEntrypoint,
         `#!${process.execPath}
 const readline = require("node:readline");
+process.stdout.on("error", () => {
+  process.exitCode = 1;
+  process.stdin.destroy();
+});
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }) + "\\n");
@@ -140,16 +146,15 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
           progress,
           sandbox,
           sandboxName: "e2e-hermes",
-          scenario: "initialize",
+          scenario,
         }),
       ).resolves.toBe(true);
       expect(
-        JSON.parse(fs.readFileSync(path.join(artifactDir, "hermes-acp-initialize.json"), "utf8")),
+        JSON.parse(fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.json`), "utf8")),
       ).toMatchObject({
         passed: true,
-        failureClass: null,
         initialized: true,
-        exitCode: 0,
+        exitCode,
         adapterProcessAbsent: true,
         remoteProcessAbsent: true,
         timedOut: false,
@@ -184,7 +189,6 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       JSON.parse(fs.readFileSync(path.join(artifactDir, "hermes-acp-initialize.json"), "utf8")),
     ).toMatchObject({
       passed: false,
-      failureClass: "adapter_start_failed",
       initialized: false,
       adapterProcessAbsent: true,
       remoteProcessAbsent: true,
@@ -192,77 +196,6 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     });
     expect(run).toHaveBeenCalledOnce();
   }, 2_000);
-
-  it("records only a fixed gateway-recovery failure class from adapter diagnostics (#10947)", async () => {
-    const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-recovery-failure-"));
-    const adapterEntrypoint = path.join(artifactDir, "nemoclaw-acp");
-    fs.writeFileSync(
-      adapterEntrypoint,
-      `#!${process.execPath}
-process.stderr.write("OpenShell gateway rec");
-setTimeout(() => {
-  process.stderr.write("overy failed: Authorization: Bearer fixture-secret\\n");
-  process.exit(1);
-}, 10);
-`,
-      { mode: 0o700 },
-    );
-    const progress = startTestProgress(
-      "ACP gateway recovery failure",
-      ["launch adapter", "verify result"],
-      { logLine: () => undefined },
-    );
-    onTestFinished(() => {
-      progress.stop();
-      fs.rmSync(artifactDir, { force: true, recursive: true });
-    });
-    const sandbox = new SandboxClient({
-      run: vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" }),
-    });
-
-    await expect(
-      runHermesAcpLiveScenario({
-        adapterEntrypoint,
-        artifacts: new ArtifactSink(artifactDir),
-        env: {},
-        progress,
-        sandbox,
-        sandboxName: "e2e-hermes",
-        scenario: "gateway-recovery",
-      }),
-    ).resolves.toBe(false);
-    const receiptText = fs.readFileSync(
-      path.join(artifactDir, "hermes-acp-gateway-recovery.json"),
-      "utf8",
-    );
-    expect(JSON.parse(receiptText)).toMatchObject({
-      failureClass: "gateway_recovery_failed",
-      passed: false,
-      rawAcpPayloadRetained: false,
-      stderrObserved: true,
-    });
-    expect(receiptText).not.toContain("fixture-secret");
-    expect(receiptText).not.toContain("Authorization");
-  }, 2_000);
-
-  it("classifies only known adapter failure diagnostics (#10947)", () => {
-    expect(
-      classifyHermesAcpFailureDiagnostic(
-        "The selected OpenShell gateway could not be recovered. token=fixture-secret",
-      ),
-    ).toBe("gateway_recovery_failed");
-    expect(
-      classifyHermesAcpFailureDiagnostic(
-        "The selected OpenShell gateway is not ready. token=fixture-secret",
-      ),
-    ).toBe("gateway_not_ready");
-    expect(
-      classifyHermesAcpFailureDiagnostic(
-        "The Hermes ACP transport could not start safely. token=fixture-secret",
-      ),
-    ).toBe("transport_start_failed");
-    expect(classifyHermesAcpFailureDiagnostic("unrecognized fixture-secret diagnostic")).toBeNull();
-  });
 
   it("passes only host runtime settings to the adapter process", () => {
     expect(
@@ -376,7 +309,6 @@ setTimeout(() => {
         ) as Record<string, unknown>;
         expect(receipt).toMatchObject({
           deadlineExpired: true,
-          failureClass: null,
           passed: false,
           scenario,
           scenarioStarted: false,

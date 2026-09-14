@@ -185,9 +185,11 @@ describe("docker-driver-gateway-service", () => {
     const home = "/home/nvidia";
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
     const gatewayBin = `${home}/.local/bin/openshell-gateway`;
+    const env = { HOME: home };
+    const spawnSyncImpl = systemdSpawn(events, servicePath, gatewayBin);
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "systemctl",
-      env: { HOME: home },
+      env,
       existsSync: (candidate) => candidate === servicePath,
       home,
       lstatSync: nonSymlinkStat,
@@ -195,7 +197,7 @@ describe("docker-driver-gateway-service", () => {
       preparePortForServiceStart: () => events.push("prepare-port"),
       prepareServiceEnv: () => events.push("prepare-env"),
       readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-      spawnSyncImpl: systemdSpawn(events, servicePath, gatewayBin),
+      spawnSyncImpl,
       validatePortOwnerForServiceStart: () => events.push("validate-port"),
     });
 
@@ -216,6 +218,20 @@ describe("docker-driver-gateway-service", () => {
       "restart nemoclaw-openshell-gateway",
       "is-active --quiet nemoclaw-openshell-gateway",
     ]);
+    const runtimeDir = `/run/user/${process.getuid!()}`;
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "systemctl",
+      ["--user", "restart", "nemoclaw-openshell-gateway"],
+      expect.objectContaining({
+        env: {
+          ...env,
+          LC_ALL: "C",
+          XDG_RUNTIME_DIR: runtimeDir,
+          DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtimeDir}/bus`,
+        },
+      }),
+    );
+    expect(env).toEqual({ HOME: home });
   });
 
   it("trusts a NemoClaw systemd unit using an absolute XDG bin home (#6903)", () => {
@@ -223,16 +239,23 @@ describe("docker-driver-gateway-service", () => {
     const xdgBinHome = "/opt/nvidia/user-bin";
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
     const gatewayBin = `${xdgBinHome}/openshell-gateway`;
+    const env = {
+      HOME: home,
+      XDG_BIN_HOME: xdgBinHome,
+      XDG_RUNTIME_DIR: "/run/user/configured",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/configured/custom-bus",
+    };
+    const spawnSyncImpl = systemdSpawn([], servicePath, gatewayBin);
 
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "systemctl",
-      env: { HOME: home, XDG_BIN_HOME: xdgBinHome },
+      env,
       existsSync: (candidate) => candidate === servicePath,
       home,
       lstatSync: nonSymlinkStat,
       platform: "linux",
       readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-      spawnSyncImpl: systemdSpawn([], servicePath, gatewayBin),
+      spawnSyncImpl,
     });
 
     expect(result).toMatchObject({
@@ -240,6 +263,11 @@ describe("docker-driver-gateway-service", () => {
       serviceName: "nemoclaw-openshell-gateway",
       started: true,
     });
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "systemctl",
+      ["--user", "restart", "nemoclaw-openshell-gateway"],
+      expect.objectContaining({ env: { ...env, LC_ALL: "C" } }),
+    );
   });
 
   it("identifies the active trusted NemoClaw systemd gateway process (#6903)", () => {
@@ -427,6 +455,7 @@ describe("docker-driver-gateway-service", () => {
         standaloneFallbackBlocked,
         started: false,
       });
+      expect(result.reason).toContain(detail);
     },
   );
 

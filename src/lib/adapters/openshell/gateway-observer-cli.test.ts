@@ -146,7 +146,10 @@ describe("CLI gateway observation", () => {
     ["unexpected failure secret", "command"],
   ])("blocks recovery and redacts %s", async (output, kind) => {
     const capture = captureFor(connected, output, 0, 1);
-    const result = await createCliOpenShellGatewayObserver(capture).observeGateway(request);
+    const result = await createCliOpenShellGatewayObserver(capture).observeGateway({
+      ...request,
+      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
+    });
     expect(result).toMatchObject({
       state: "observation_failed",
       recoveryBlocked: true,
