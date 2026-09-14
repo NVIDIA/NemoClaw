@@ -90,15 +90,15 @@ class PartitionControls(unittest.TestCase):
                 self.root, self.inventory, self.base / "diagnostics"
             )
         removed = {row["path"] for row in result["files"]}
-        self.assertEqual(len(removed), 15)
+        self.assertEqual(len(removed), 18)
         self.assertFalse((self.root / "hermes-agent/.github").exists())
         self.assertFalse((self.root / "hermes-agent/website").exists())
         self.assertTrue((self.root / "THIRD-PARTY-LICENSES.tar.gz").is_file())
-        self.assertTrue((self.root / "ffmpeg/bin/ffmpeg.exe").is_file())
-        self.assertTrue((self.root / "ffmpeg/bin/ffprobe.exe").is_file())
+        self.assertFalse((self.root / "ffmpeg/bin/ffmpeg.exe").exists())
+        self.assertFalse((self.root / "ffmpeg/bin/ffprobe.exe").exists())
         self.assertFalse((self.root / "ffmpeg/bin/ffplay.exe").exists())
-        self.assertTrue((self.root / "ffmpeg/LICENSE").is_file())
-        self.assertEqual(result["installedLicenseArchive"]["content"]["files"], 2)
+        self.assertFalse((self.root / "ffmpeg/LICENSE").exists())
+        self.assertEqual(result["installedLicenseArchive"]["content"]["files"], 3)
         for row in result["archives"]:
             path = self.base / "diagnostics" / row["file"]
             self.assertEqual(

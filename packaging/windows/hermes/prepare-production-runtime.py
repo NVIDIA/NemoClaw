@@ -23,10 +23,7 @@ PROJECT_TREES = (
     "hermes-agent/evals/",
 )
 WINDOWS_UNUSED_TREES = (
-    "ffmpeg/bin/ffplay.exe",
-    "ffmpeg/doc/",
-    "ffmpeg/presets/",
-    "ffmpeg/README.txt",
+    "ffmpeg/",
     "git/clangarm64/share/doc/",
     "hermes-agent/plugins/platforms/photon/sidecar/",
     "hermes-agent/website/",
