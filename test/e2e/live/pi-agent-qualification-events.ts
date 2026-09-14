@@ -130,6 +130,21 @@ export function qualifyPiReadTask(
   expectedPath: string,
   expectedText: string,
 ): PiReadTaskProof {
+  const replies = events.flatMap((event, index) => {
+    if (event.type !== "message_end") return [];
+    const text = assistantText(event.message);
+    return text === null ? [] : [{ index, text }];
+  });
+  if (replies.length === 0) {
+    const assistantErrors = events.flatMap((event) => {
+      if (event.type !== "message_end") return [];
+      const error = assistantError(event.message);
+      return error === null ? [] : [error];
+    });
+    if (assistantErrors.length > 0) {
+      throw new PiInferenceFailure(`Pi inference failed: ${assistantErrors.at(-1)}`);
+    }
+  }
   const starts = events.flatMap((event, index) =>
     event.type === "tool_execution_start" ? [{ event, index }] : [],
   );
@@ -158,24 +173,7 @@ export function qualifyPiReadTask(
   ) {
     throw new Error("Pi read tool call did not complete successfully");
   }
-  const replies = events.flatMap((event, index) => {
-    if (event.type !== "message_end") return [];
-    const text = assistantText(event.message);
-    return text === null ? [] : [{ index, text }];
-  });
   const reply = replies[0];
-  if (replies.length === 0) {
-    const assistantErrors = events.flatMap((event, index) => {
-      if (event.type !== "message_end" || index <= completion!.index) return [];
-      const error = assistantError(event.message);
-      return error === null ? [] : [error];
-    });
-    if (assistantErrors.length > 0) {
-      throw new PiInferenceFailure(
-        `Pi inference failed after the read completed: ${assistantErrors.at(-1)}`,
-      );
-    }
-  }
   if (replies.length !== 1 || !reply || reply.index <= completion!.index) {
     throw new Error("Pi task must return exactly one assistant response after the read completed");
   }

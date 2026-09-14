@@ -11,8 +11,10 @@ import {
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 import {
+  classifyPiReadTaskAttempt,
   isTransientPiInferenceFailure,
   parsePiJsonEvents,
   PiInferenceFailure,
@@ -51,6 +53,18 @@ function eventStream(overrides: Record<string, unknown> = {}): string {
 
 function events(...values: Record<string, unknown>[]): string {
   return values.map((event) => JSON.stringify(event)).join("\n");
+}
+
+function failedProbe(): ShellProbeResult {
+  return {
+    command: ["pi"],
+    exitCode: 1,
+    signal: null,
+    timedOut: false,
+    stdout: "",
+    stderr: "",
+    artifacts: { stdout: "", stderr: "", result: "" },
+  };
 }
 
 describe("Pi qualification event oracle", () => {
@@ -137,12 +151,39 @@ describe("Pi qualification event oracle", () => {
         failure = error;
       }
       expect(failure).toBeInstanceOf(PiInferenceFailure);
-      expect((failure as Error).message).toBe(
-        `Pi inference failed after the read completed: ${errorMessage}`,
-      );
+      expect((failure as Error).message).toBe(`Pi inference failed: ${errorMessage}`);
       expect(isTransientPiInferenceFailure(failure)).toBe(true);
     },
   );
+
+  it("retries a transient provider error before the read tool starts", () => {
+    const eventValues = parsePiJsonEvents(
+      events(
+        { type: "agent_start" },
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [],
+            stopReason: "error",
+            errorMessage: "HTTP 503: Service Unavailable",
+          },
+        },
+        { type: "agent_end", messages: [], willRetry: false },
+      ),
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(eventValues, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(
+      classifyPiReadTaskAttempt({ failure, proof: undefined, result: failedProbe() }, undefined),
+    ).toEqual({ outcome: "failed", failureClass: "transient-external" });
+  });
 
   it("accepts a valid Pi response after an earlier provider error", () => {
     const providerError = {
@@ -166,7 +207,7 @@ describe("Pi qualification event oracle", () => {
     (errorMessage) => {
       expect(
         isTransientPiInferenceFailure(
-          new PiInferenceFailure(`Pi inference failed after the read completed: ${errorMessage}`),
+          new PiInferenceFailure(`Pi inference failed: ${errorMessage}`),
         ),
       ).toBe(false);
     },
