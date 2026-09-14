@@ -3486,6 +3486,25 @@ async function executePlan(
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
 ): Promise<{ ok: boolean; scopedToSelectedGateway: boolean }> {
+  const selectedIsDefault =
+    path.resolve(paths.nemoclawStateDir) ===
+    path.resolve(path.dirname(paths.managedSwapMarkerPath));
+  if (
+    !recoverAbandonedInterruptedUninstallBeforeClassification(
+      paths,
+      runtime,
+      stateRootPreservationEntries(
+        paths,
+        preserveUnderStateDir,
+        portableStatePreservationEntries(portableRuntimeCleanup, portableRetirementEntries),
+        [],
+        selectedIsDefault,
+        scopedToSelectedGateway,
+      ),
+    )
+  ) {
+    return { ok: false, scopedToSelectedGateway };
+  }
   const preparedOpenShellCleanup = prepareOpenShellCleanup(
     paths,
     options,
@@ -3552,7 +3571,7 @@ async function executePlan(
         ok: false,
         scopedToSelectedGateway:
           scopedToSelectedGateway ||
-          inspectOtherGatewayEnvironments(paths, runtime).otherGatewayEnvironmentsRemain,
+          inspectInterruptedCleanupSiblings(paths, runtime).otherGatewayEnvironmentsRemain,
       };
     }
     throw error;
@@ -3588,6 +3607,24 @@ function stateRootPreservationEntries(
   ];
 }
 
+function portableStatePreservationEntries(
+  portableRuntimeCleanup: boolean,
+  portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
+): string[] {
+  return portableRuntimeCleanup
+    ? [
+        "portable-demo-lifecycle",
+        "sandboxes.json",
+        "sandboxes.json.lock",
+        "portable-inference",
+        "state",
+        HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
+        ...PORTABLE_RETIREMENT_STATE_ENTRIES,
+        ...portableRetirementEntries.stateRoot,
+      ]
+    : [];
+}
+
 function removeStateRootBeforeFinalCleanup(
   disposition: OpenShellCleanupDisposition,
   paths: UninstallPaths,
@@ -3600,12 +3637,7 @@ function removeStateRootBeforeFinalCleanup(
   );
 }
 
-const INTERRUPTED_UNINSTALL_STAGING_DIR = ".nemoclaw-uninstall-staging";
-
-interface InterruptedUninstallStagingPaths {
-  parent: string;
-  root: string;
-}
+const INTERRUPTED_UNINSTALL_STAGING_PREFIX = ".nemoclaw-uninstall-staging-";
 
 function interruptedUninstallStagingTrustFailure(stat: fs.Stats): string | null {
   if (stat.isSymbolicLink() || !stat.isDirectory()) return "it is not a regular directory";
@@ -3615,35 +3647,21 @@ function interruptedUninstallStagingTrustFailure(stat: fs.Stats): string | null 
   return null;
 }
 
-function interruptedUninstallStagingPaths(
-  paths: UninstallPaths,
-  runtime: UninstallRuntime,
-): InterruptedUninstallStagingPaths {
-  const parent = path.join(
-    path.resolve(runtime.env.HOME || os.homedir()),
-    INTERRUPTED_UNINSTALL_STAGING_DIR,
+function interruptedUninstallStagingRoot(paths: UninstallPaths, runtime: UninstallRuntime): string {
+  const home = fs.realpathSync(path.resolve(runtime.env.HOME || os.homedir()));
+  const stagingRoot = path.join(
+    home,
+    `${INTERRUPTED_UNINSTALL_STAGING_PREFIX}${String(GATEWAY_PORT)}`,
   );
   const sharedStateRoot = path.resolve(path.dirname(paths.managedSwapMarkerPath));
-  const relativeToSharedRoot = path.relative(sharedStateRoot, parent);
+  const relativeToSharedRoot = path.relative(sharedStateRoot, stagingRoot);
   if (
     relativeToSharedRoot === "" ||
     (!relativeToSharedRoot.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeToSharedRoot))
   ) {
-    throw new Error("the interrupted-uninstall staging directory overlaps shared gateway state");
+    throw new Error("the interrupted-uninstall staging root overlaps shared gateway state");
   }
-  try {
-    fs.mkdirSync(parent, { mode: 0o700 });
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
-  }
-  const stat = fs.lstatSync(parent);
-  const trustFailure = interruptedUninstallStagingTrustFailure(stat);
-  if (trustFailure) {
-    throw new Error(
-      `the interrupted-uninstall staging path is not trusted because ${trustFailure}`,
-    );
-  }
-  return { parent, root: path.join(parent, String(GATEWAY_PORT)) };
+  return stagingRoot;
 }
 
 function recoverAbandonedInterruptedUninstallState(
@@ -3672,6 +3690,44 @@ function recoverAbandonedInterruptedUninstallState(
   const presentPreservedEntries = preservedEntries.filter((entry) =>
     pathEntryExists(path.join(stagingRoot, entry), runtime),
   );
+  if (presentPreservedEntries.length > 0) {
+    try {
+      assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), paths.nemoclawStateDir);
+      let destinationStat: fs.Stats | null;
+      try {
+        destinationStat = fs.lstatSync(paths.nemoclawStateDir);
+      } catch (error) {
+        if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+        destinationStat = null;
+      }
+      if (destinationStat) {
+        const trustFailure = interruptedUninstallStagingTrustFailure(destinationStat);
+        if (trustFailure) {
+          throw new Error(`the selected recovery state is not trusted because ${trustFailure}`);
+        }
+        const preservedTopLevelEntries = new Set(
+          preservedEntries.map((entry) => entry.split(path.sep)[0]!),
+        );
+        const unexpectedEntries = fs
+          .readdirSync(paths.nemoclawStateDir)
+          .filter((entry) => !preservedTopLevelEntries.has(entry));
+        if (unexpectedEntries.length > 0) {
+          runtime.warn(
+            `Unable to recover preserved state because newer selected state exists at ${paths.nemoclawStateDir}. Cleanup stopped with abandoned state at ${stagingRoot}.`,
+          );
+          return false;
+        }
+      } else {
+        fs.mkdirSync(paths.nemoclawStateDir, { mode: 0o700, recursive: true });
+      }
+      assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), paths.nemoclawStateDir);
+    } catch (error) {
+      runtime.warn(
+        `Unable to prepare selected state for interrupted-uninstall recovery: ${formatError(error)}. Cleanup stopped with abandoned state at ${stagingRoot}.`,
+      );
+      return false;
+    }
+  }
   for (const entry of presentPreservedEntries) {
     const source = path.join(stagingRoot, entry);
     const destination = path.join(paths.nemoclawStateDir, entry);
@@ -3706,6 +3762,55 @@ function recoverAbandonedInterruptedUninstallState(
   return true;
 }
 
+function recoverAbandonedInterruptedUninstallBeforeClassification(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  preservedEntries: readonly string[],
+): boolean {
+  let stagingRoot: string;
+  try {
+    stagingRoot = interruptedUninstallStagingRoot(paths, runtime);
+    fs.lstatSync(stagingRoot);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return true;
+    runtime.warn(
+      `Unable to inspect interrupted-uninstall recovery state before cleanup: ${formatError(error)}. The selected state was preserved.`,
+    );
+    return false;
+  }
+
+  let migrationLock: GatewayStateMigrationLockHandle;
+  try {
+    migrationLock = acquireGatewayStateMigrationLock(runtime.env.HOME || os.homedir());
+  } catch (error) {
+    runtime.warn(
+      `Unable to fence host gateway state during interrupted-uninstall recovery; it was preserved: ${formatError(error)}. Wait for the active state operation to finish, then rerun uninstall.`,
+    );
+    return false;
+  }
+
+  let recovered = false;
+  let released = true;
+  try {
+    recovered = recoverAbandonedInterruptedUninstallState(
+      stagingRoot,
+      paths,
+      preservedEntries,
+      runtime,
+    );
+  } finally {
+    try {
+      releaseGatewayStateMigrationLock(migrationLock);
+    } catch (error) {
+      released = false;
+      runtime.warn(
+        `Unable to release the host gateway-state recovery fence safely: ${formatError(error)}. Cleanup stopped before classification.`,
+      );
+    }
+  }
+  return recovered && released;
+}
+
 function removeInterruptedStateRootAfterFinalCleanup(
   disposition: OpenShellCleanupDisposition,
   paths: UninstallPaths,
@@ -3728,16 +3833,15 @@ function removeInterruptedStateRootAfterFinalCleanup(
   );
   if (!onboardLock) throw new InterruptedPreGatewayStateChangedError();
   assertOnboardStateLockOwned(onboardLock);
-  let staging: InterruptedUninstallStagingPaths;
+  let detachedStateRoot: string;
   try {
-    staging = interruptedUninstallStagingPaths(paths, runtime);
+    detachedStateRoot = interruptedUninstallStagingRoot(paths, runtime);
   } catch (error) {
     runtime.warn(
       `Unable to prepare interrupted-uninstall staging outside gateway state; the selected state was preserved: ${formatError(error)}.`,
     );
     return false;
   }
-  const detachedStateRoot = staging.root;
   if (
     !recoverAbandonedInterruptedUninstallState(detachedStateRoot, paths, preservedEntries, runtime)
   ) {
@@ -3794,11 +3898,6 @@ function removeInterruptedStateRootAfterFinalCleanup(
     );
     return false;
   }
-  try {
-    fs.rmdirSync(staging.parent);
-  } catch {
-    // Another selected gateway may have abandoned state to recover.
-  }
   runtime.log(`Removed ${paths.nemoclawStateDir}`);
   return true;
 }
@@ -3816,7 +3915,7 @@ function refreshInterruptedCleanupScope(
   runtime: UninstallRuntime,
 ): OpenShellCleanupScope {
   if (disposition !== "interrupted-pre-gateway" || scope.scopedToSelectedGateway) return scope;
-  const inspection = inspectOtherGatewayEnvironments(paths, runtime);
+  const inspection = inspectInterruptedCleanupSiblings(paths, runtime);
   if (!inspection.otherGatewayEnvironmentsRemain) return scope;
   runtime.warn(
     "A sibling gateway appeared during interrupted-state cleanup; switching to gateway-scoped cleanup.",
@@ -3855,18 +3954,10 @@ async function executePreparedPlan(
   const branding = runtimeBranding(runtime);
   const preserveSharedOpenShell =
     options.keepOpenShell || externallySupervised || portableRuntimeCleanup;
-  const portableStateEntries = portableRuntimeCleanup
-    ? [
-        "portable-demo-lifecycle",
-        "sandboxes.json",
-        "sandboxes.json.lock",
-        "portable-inference",
-        "state",
-        HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
-        ...PORTABLE_RETIREMENT_STATE_ENTRIES,
-        ...portableRetirementEntries.stateRoot,
-      ]
-    : [];
+  const portableStateEntries = portableStatePreservationEntries(
+    portableRuntimeCleanup,
+    portableRetirementEntries,
+  );
   const serviceKeepMessage = portableRuntimeCleanup
     ? "Keeping shared OpenShell gateway service, configuration, and processes for unrelated sandboxes."
     : "Keeping OpenShell gateway service, configuration, and processes as requested.";

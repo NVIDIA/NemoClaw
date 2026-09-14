@@ -72,6 +72,7 @@ function writeLiveReplacementState(stateRoot: string): void {
 interface RunInterruptedUninstallOptions {
   checkpointPort?: number;
   gatewayNames?: string[];
+  initialStateRoot?: (stateRoot: string) => string;
   onLog?: (message: string) => void;
   prepareState?: (stateRoot: string) => void;
   rmSync?: typeof fs.rmSync;
@@ -86,14 +87,15 @@ async function runInterruptedUninstall(
   vi.resetModules();
   const { runUninstallPlan } = await import("./run-plan");
   const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
-  fs.mkdirSync(stateRoot, { mode: 0o700, recursive: true });
-  writeInterruptedSession(stateRoot, options.checkpointPort ?? port);
+  const initialStateRoot = options.initialStateRoot?.(stateRoot) ?? stateRoot;
+  fs.mkdirSync(initialStateRoot, { mode: 0o700, recursive: true });
+  writeInterruptedSession(initialStateRoot, options.checkpointPort ?? port);
   const errors: string[] = [];
   const logs: string[] = [];
   const calls: string[][] = [];
   const gatewayNames = options.gatewayNames ?? [];
   const onLog = options.onLog ?? (() => undefined);
-  options.prepareState?.(stateRoot);
+  options.prepareState?.(initialStateRoot);
   const outcome = await runUninstallPlan(
     {
       assumeYes: true,
@@ -202,6 +204,7 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
       });
 
       expect(result.outcome.exitCode, result.errors.join("\n")).toBe(0);
+      expect(result.outcome.otherGatewayEnvironmentsRemain).toBe(false);
       expect(siblingAttempts).toBe(1);
       expect(fs.existsSync(migrationLock)).toBe(false);
     } finally {
@@ -284,7 +287,7 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-recreated-state-"));
     const port = 9123;
     const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
-    const detachedRoot = path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port));
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
     const renameSync = fs.renameSync.bind(fs);
     vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
       renameSync(source, destination);
@@ -311,12 +314,16 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
       path.join(process.cwd(), "nemoclaw-uninstall-staging-recovery-"),
     );
     const port = 9123;
-    const detachedRoot = path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port));
-    const backupFile = path.join(detachedRoot, "backups", "workspace.tar");
-    fs.mkdirSync(path.dirname(backupFile), { mode: 0o700, recursive: true });
-    fs.writeFileSync(backupFile, "preserved\n");
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
     try {
-      const result = await runInterruptedUninstall(tmpHome, port);
+      const result = await runInterruptedUninstall(tmpHome, port, {
+        initialStateRoot: () => detachedRoot,
+        prepareState: (initialStateRoot) => {
+          const backupFile = path.join(initialStateRoot, "backups", "workspace.tar");
+          fs.mkdirSync(path.dirname(backupFile), { mode: 0o700, recursive: true });
+          fs.writeFileSync(backupFile, "preserved\n");
+        },
+      });
 
       expect(result.outcome.exitCode, result.errors.join("\n")).toBe(0);
       expect(fs.readFileSync(path.join(result.stateRoot, "backups", "workspace.tar"), "utf8")).toBe(
@@ -331,20 +338,40 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     }
   });
 
-  it.each([
-    [
-      "parent",
-      (tmpHome: string, _port: number) => path.join(tmpHome, ".nemoclaw-uninstall-staging"),
-    ],
-    [
-      "selected gateway root",
-      (tmpHome: string, port: number) =>
-        path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port)),
-    ],
-  ])("preserves selected state when the staging %s is broadly accessible", async (_, target) => {
+  it("does not merge abandoned staging into newer selected state", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-newer-state-"));
+    const port = 9123;
+    const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port, {
+        initialStateRoot: () => detachedRoot,
+        prepareState: (initialStateRoot) => {
+          const backupFile = path.join(initialStateRoot, "backups", "workspace.tar");
+          fs.mkdirSync(path.dirname(backupFile), { mode: 0o700, recursive: true });
+          fs.writeFileSync(backupFile, "preserved\n");
+          writeLiveReplacementState(stateRoot);
+        },
+      });
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(fs.readFileSync(path.join(stateRoot, "new-onboarding-state"), "utf8")).toBe("new\n");
+      expect(fs.existsSync(path.join(stateRoot, "backups"))).toBe(false);
+      expect(fs.readFileSync(path.join(detachedRoot, "backups", "workspace.tar"), "utf8")).toBe(
+        "preserved\n",
+      );
+      expect(result.errors.join("\n")).toContain(
+        "Unable to recover preserved state because newer selected state exists",
+      );
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves selected state when abandoned staging is broadly accessible", async () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-unsafe-staging-"));
     const port = 9123;
-    const stagingPath = target(tmpHome, port);
+    const stagingPath = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
     fs.mkdirSync(stagingPath, { mode: 0o700, recursive: true });
     fs.chmodSync(stagingPath, 0o777);
     try {
@@ -359,10 +386,43 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     }
   });
 
+  it("does not follow a staging-path replacement during detachment", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-stage-swap-"));
+    const port = 9123;
+    const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
+    const replacementTarget = path.join(tmpHome, "replacement-target");
+    fs.mkdirSync(replacementTarget, { mode: 0o700 });
+    const renameSync = fs.renameSync.bind(fs);
+    const replaceThenRename = (source: fs.PathLike, destination: fs.PathLike) => {
+      fs.symlinkSync(replacementTarget, detachedRoot, "dir");
+      return renameSync(source, destination);
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      path.resolve(String(source)) === path.resolve(stateRoot) &&
+      path.resolve(String(destination)) === path.resolve(detachedRoot)
+        ? replaceThenRename(source, destination)
+        : renameSync(source, destination),
+    );
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port);
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(fs.existsSync(stateRoot)).toBe(true);
+      expect(fs.lstatSync(detachedRoot).isSymbolicLink()).toBe(true);
+      expect(fs.readdirSync(replacementTarget)).toEqual([]);
+      expect(result.errors.join("\n")).toContain(
+        "Unable to detach interrupted onboarding state for cleanup; it was preserved",
+      );
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
   it("reports and preserves detached state when recursive removal fails", async () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-detached-rm-"));
     const port = 9123;
-    const detachedRoot = path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port));
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
     const failRemoval: typeof fs.rmSync = () => {
       throw new Error("injected detached-state removal failure");
     };
@@ -394,7 +454,7 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     );
     const port = 9123;
     const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
-    const detachedRoot = path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port));
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
     const restoreSource = path.join(detachedRoot, "backups");
     const restoreDestination = path.join(stateRoot, "backups");
     const renameSync = fs.renameSync.bind(fs);
