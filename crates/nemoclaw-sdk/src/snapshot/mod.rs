@@ -109,7 +109,7 @@ impl Manifest {
         Ok(self.files.iter().map(|file| file.size).sum())
     }
 }
-fn modified(path: &Path, size: u64) -> Result<u64, Error> {
+pub(crate) fn modified(path: &Path, size: u64) -> Result<u64, Error> {
     let metadata = fs::symlink_metadata(path).map_err(|_| failure("snapshot file unavailable"))?;
     if !metadata.is_file() || metadata.len() != size {
         return Err(failure("snapshot file changed or is incomplete"));
