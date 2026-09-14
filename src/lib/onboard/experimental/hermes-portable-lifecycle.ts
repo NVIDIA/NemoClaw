@@ -3,6 +3,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
+import { createOpenShellOperationDeadline } from "../../adapters/openshell/operation-deadline";
 import { TextDecoder } from "node:util";
 
 import {
@@ -246,6 +247,8 @@ type HealthWaitReceipt = {
 };
 
 export interface HermesPortableLifecycleDeps {
+  /** Total startup allowance, including qualification; cleanup retains its own bounded waits. */
+  readonly startupTimeoutMs?: number;
   readonly stateDir?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
@@ -571,12 +574,14 @@ interface QualifiedHermesPortableLifecycle {
   readonly capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
   readonly rawCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
   readonly openShellPhase: string;
+  readonly commandBudget?: (maximumMs: number) => number;
   readonly hasTransactionAuthority: boolean;
   readonly assertTransactionCurrent: () => void;
   readonly assertOperatingAuthority: () => void;
 }
 
 export type HermesPortableRecoveryFailureClass =
+  | "entry-qualification"
   | "container-start"
   | "post-start-authority"
   | "openshell-exec-readiness"
@@ -911,7 +916,10 @@ function qualify(
   deps: HermesPortableLifecycleDeps,
   expected?: HermesPortableReceiptSnapshot,
   acceptedPhases: readonly string[] = ["Ready"],
-  options: { readonly permitSchema5Requalification?: boolean } = {},
+  options: {
+    readonly permitSchema5Requalification?: boolean;
+    readonly commandBudget?: (maximumMs: number) => number;
+  } = {},
   currentnessTiming = createHermesPortableCurrentnessTimingRecorder(deps.currentnessTiming),
 ): QualifiedHermesPortableLifecycle {
   const commandEnv = deps.env ?? process.env;
@@ -955,13 +963,17 @@ function qualify(
         executablePath: receipt.openshellExecutableAuthority.executable.executablePath,
       }
     : buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
-  const rawCapture =
+  const unboundedCapture =
     deps.captureOpenShell ??
     defaultCaptureOpenShell(
       initialCommandAuthority.executablePath,
       commandEnv,
       receipt.runtimeAuthority,
     );
+  const rawCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
+    args,
+    timeoutMs,
+  ) => unboundedCapture(args, options.commandBudget?.(timeoutMs) ?? timeoutMs);
   const capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
     args,
     timeoutMs,
@@ -984,12 +996,21 @@ function qualify(
     sandboxName,
     capture: policyCapture(capture),
   });
-  const baseContainerDeps =
+  const baseContainerDeps: HermesPortableLifecycleContainerDeps =
     typeof deps.container === "function"
       ? deps.container(receipt)
       : (deps.container ?? createContainerDeps(receipt, commandEnv, deps.podmanAuthorityDeps));
+  const rawPodman = baseContainerDeps.rawPodman;
   const containerDeps: HermesPortableLifecycleContainerDeps = {
     ...baseContainerDeps,
+    podman: (args, timeoutMs) =>
+      baseContainerDeps.podman(args, options.commandBudget?.(timeoutMs) ?? timeoutMs),
+    ...(rawPodman
+      ? {
+          rawPodman: (args: readonly string[], timeoutMs: number) =>
+            rawPodman(args, options.commandBudget?.(timeoutMs) ?? timeoutMs),
+        }
+      : {}),
     authenticatedHealth: createAuthenticatedHealthCapture(receipt, capture),
   };
   const container = currentnessTiming.measure("containerInspect", () =>
@@ -1016,6 +1037,7 @@ function qualify(
     capture,
     rawCapture,
     openShellPhase: liveIdentity.phase,
+    commandBudget: options.commandBudget,
     hasTransactionAuthority,
     assertTransactionCurrent,
     assertOperatingAuthority: operatingAuthority.assertCurrent,
@@ -1129,13 +1151,15 @@ function waitFor(
   measureSleep?: (operation: () => void) => void,
   pollIntervalMs = POLL_INTERVAL_MS,
 ): boolean {
-  const now = deps.now ?? Date.now;
+  const now = deps.now ?? (() => performance.now());
   const sleep = deps.sleep ?? defaultSleep;
   const deadline = now() + timeoutMs;
   do {
     const remaining = Math.max(1, deadline - now());
-    if (probe(remaining)) return true;
-    const operation = () => sleep(Math.min(pollIntervalMs, remaining));
+    if (probe(remaining)) return now() < deadline;
+    const afterProbeRemaining = deadline - now();
+    if (afterProbeRemaining <= 0) return false;
+    const operation = () => sleep(Math.min(pollIntervalMs, afterProbeRemaining));
     if (measureSleep) measureSleep(operation);
     else operation();
   } while (now() < deadline);
@@ -1283,7 +1307,9 @@ function refreshLifecycleCurrentness(
 ): QualifiedHermesPortableLifecycle {
   if (!qualified.hasTransactionAuthority) {
     timing.increment("qualification");
-    return qualify(sandboxName, context, deps, qualified.snapshot, acceptedPhases);
+    return qualify(sandboxName, context, deps, qualified.snapshot, acceptedPhases, {
+      commandBudget: qualified.commandBudget,
+    });
   }
   return {
     ...qualified,
@@ -1369,9 +1395,9 @@ function waitForHermesReadiness(
   timing: HermesPortableLifecycleTimingRecorder,
   currentnessTiming: HermesPortableCurrentnessTimingRecorder,
 ): QualifiedHermesPortableLifecycle | null {
-  const now = deps.now ?? Date.now;
+  const now = deps.now ?? (() => performance.now());
   const sleep = deps.sleep ?? defaultSleep;
-  const deadline = now() + STARTUP_TIMEOUT_MS;
+  const deadline = now() + (qualified.commandBudget?.(STARTUP_TIMEOUT_MS) ?? STARTUP_TIMEOUT_MS);
   // Startup creates the credential asynchronously; retain its diagnosis until a valid probe receipt.
   let credentialFileUnavailable = false;
   let lastWaiterCommandFailed = false;
@@ -1386,7 +1412,8 @@ function waitForHermesReadiness(
       ["Ready"],
       currentnessTiming,
     );
-    const remainingMs = Math.max(1, deadline - now());
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) break;
     const commandTimeoutMs = Math.min(HEALTH_WAIT_COMMAND_TIMEOUT_MS, remainingMs);
     const commandReserveMs = Math.min(
       HEALTH_WAIT_COMMAND_RESERVE_MS,
@@ -1435,6 +1462,7 @@ function waitForHermesReadiness(
       ),
     );
   } while (now() < deadline);
+  qualified.commandBudget?.(1);
   if (lastWaiterCommandFailed) {
     fail(
       "managed startup did not pass authenticated health: final health-wait command did not return valid readiness evidence" +
@@ -1475,6 +1503,12 @@ export function recoverHermesPortableSandboxLifecycle(
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps = {},
 ): PortableDemoLifecycleRecoveryResult {
+  // Preserve the existing 60s start + 90s exec + 90s health allowance as one ceiling.
+  const deadline = createOpenShellOperationDeadline(deps.startupTimeoutMs ?? 240_000, deps.now);
+  let startupEnforced = true;
+  let primaryFailureClass: HermesPortableRecoveryFailureClass = "entry-qualification";
+  const commandBudget = (maximumMs: number) =>
+    startupEnforced ? deadline.remaining(maximumMs, primaryFailureClass) : maximumMs;
   const timing = createHermesPortableLifecycleTimingRecorder(deps.recoveryTiming);
   const currentnessTiming = createHermesPortableCurrentnessTimingRecorder(deps.currentnessTiming);
   const inspectionTiming = deps.inspectionTiming
@@ -1505,22 +1539,23 @@ export function recoverHermesPortableSandboxLifecycle(
         instrumentedDeps,
         undefined,
         ["Ready", "Error", "Stopped"],
-        {},
+        { commandBudget },
         currentnessTiming,
       ),
     );
+    commandBudget(1);
   } catch (error) {
     inspectionTiming?.finish();
     currentnessTiming.finish();
     timing.finish("failed");
     throw error;
   }
+  primaryFailureClass = "container-start";
   const wasRunning = qualified.container.authority.running;
   const needsStart = !wasRunning || qualified.openShellPhase === "Stopped";
   timing.setContainerAction(wasRunning ? "reused" : "started");
   let rollbackAuthority = qualified;
   let startedByRecovery = false;
-  let primaryFailureClass: HermesPortableRecoveryFailureClass = "container-start";
   try {
     if (
       qualified.openShellPhase === "Error" ||
@@ -1539,6 +1574,7 @@ export function recoverHermesPortableSandboxLifecycle(
           qualified.assertTransactionCurrent();
         }
         timing.increment("containerStart");
+        // Both retained capture routes apply commandBudget immediately before execution.
         const startResult = timing.measure("containerStart", () =>
           captureRetainedLifecycleCommand(
             qualified,
@@ -1562,6 +1598,8 @@ export function recoverHermesPortableSandboxLifecycle(
           qualified.assertTransactionCurrent();
         }
       } catch (startError) {
+        // Reconcile a possible partial start before cleanup, even when startup time has expired.
+        startupEnforced = false;
         try {
           timing.increment("containerInspection");
           const current = assertCurrentHermesPortableContainer(
@@ -1622,7 +1660,7 @@ export function recoverHermesPortableSandboxLifecycle(
       );
     const execReady = timing.measure("execReady", () =>
       waitFor(
-        EXEC_READY_TIMEOUT_MS,
+        commandBudget(EXEC_READY_TIMEOUT_MS),
         deps,
         (remainingMs) => {
           timing.increment("execReadyAttempt");
@@ -1650,7 +1688,10 @@ export function recoverHermesPortableSandboxLifecycle(
         EXEC_READY_POLL_INTERVAL_MS,
       ),
     );
-    if (!execReady) fail("did not reconnect to the selected OpenShell gateway");
+    if (!execReady) {
+      commandBudget(1);
+      fail("did not reconnect to the selected OpenShell gateway");
+    }
     qualified = timing.measure("preHealthCurrentness", () =>
       refreshLifecycleCurrentness(
         sandboxName,
@@ -1685,6 +1726,8 @@ export function recoverHermesPortableSandboxLifecycle(
         );
       }
       if (initialHealth === "ready") {
+        commandBudget(1);
+        primaryFailureClass = "final-authority";
         timing.increment("qualification");
         timing.measure("finalQualification", () =>
           qualify(
@@ -1693,10 +1736,11 @@ export function recoverHermesPortableSandboxLifecycle(
             instrumentedDeps,
             qualified.snapshot,
             ["Ready"],
-            {},
+            { commandBudget },
             currentnessTiming,
           ),
         );
+        commandBudget(1);
         const result = !needsStart
           ? { kind: "already-running" as const }
           : { kind: "recovered" as const };
@@ -1736,6 +1780,7 @@ export function recoverHermesPortableSandboxLifecycle(
         assertLiveHermesPortableStartupBinding(qualified, deps, timing),
       );
       primaryFailureClass = "startup-launch";
+      commandBudget(1);
       timing.increment("startupLaunch");
       timing.measure("startupLaunch", () =>
         rawLaunch(openshellExecArgs(qualified.receipt, qualified.receipt.startup.argv)),
@@ -1769,7 +1814,7 @@ export function recoverHermesPortableSandboxLifecycle(
           );
         })()
       : waitFor(
-          STARTUP_TIMEOUT_MS,
+          commandBudget(STARTUP_TIMEOUT_MS),
           deps,
           () => {
             qualified = timing.measure("healthPollCurrentness", () =>
@@ -1806,7 +1851,10 @@ export function recoverHermesPortableSandboxLifecycle(
           },
           (operation) => timing.measure("healthPollSleep", operation),
         );
-    if (!recovered) fail("managed startup did not pass authenticated health");
+    if (!recovered) {
+      commandBudget(1);
+      fail("managed startup did not pass authenticated health");
+    }
     primaryFailureClass = "final-authority";
     timing.increment("qualification");
     timing.measure("finalQualification", () =>
@@ -1816,10 +1864,11 @@ export function recoverHermesPortableSandboxLifecycle(
         instrumentedDeps,
         qualified.snapshot,
         ["Ready"],
-        {},
+        { commandBudget },
         currentnessTiming,
       ),
     );
+    commandBudget(1);
     if (!needsStart) {
       inspectionTiming?.finish();
       currentnessTiming.finish();
@@ -1832,6 +1881,7 @@ export function recoverHermesPortableSandboxLifecycle(
     timing.finish("recovered");
     return { kind: "recovered" };
   } catch (error) {
+    startupEnforced = false;
     if (startedByRecovery) {
       try {
         timing.increment("rollback");
