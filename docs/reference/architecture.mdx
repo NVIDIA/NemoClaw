@@ -40,7 +40,7 @@ graph LR
             direction TB
             NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · sandbox setup</small>"]:::nemoclaw
             BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
-            MIGRATE["State Management<br/><small>Migration snapshots<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
+            STATE["State Management<br/><small>Rebuild backups<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
         end
 
         subgraph OPENSHELL["OpenShell"]
@@ -62,7 +62,7 @@ graph LR
 
     NCLI -->|"Orchestrates"| OSCLI
     BP -->|"Defines sandbox<br/>shape + policies"| SANDBOX
-    MIGRATE -->|"Safe state<br/>transfer"| SANDBOX
+    STATE -->|"Backup + restore"| SANDBOX
 
     AGENT -->|"Inference requests<br/><small>no credentials</small>"| GW
     GW -->|"Proxied with<br/>credential injected"| INFERENCE
@@ -282,8 +282,7 @@ nemoclaw/src/blueprint/
 ├── runner.ts                       CLI runner: plan / apply / status / rollback
 ├── ssrf.ts                         SSRF endpoint validation (IP + DNS checks)
 ├── private-networks.ts             Shared private-network block list loader for SSRF checks
-├── snapshot.ts                     Migration snapshot / restore lifecycle
-├── state.ts                        Persistent run state management
+└── state.ts                        Persistent run state management
 ```
 
 ### Blueprint Lifecycle

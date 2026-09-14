@@ -36,19 +36,6 @@ try {
   expectedFailure = String(error?.message).includes("openshell CLI not found");
 }
 if (!expectedFailure) throw new Error("packaged runner did not reach expected OpenShell prerequisite");
-const home = fs.mkdtempSync(path.join(os.tmpdir(), "snapshot-home-"));
-process.env.HOME = home;
-const state = path.join(home, ".openclaw");
-fs.mkdirSync(state, { recursive: true });
-fs.writeFileSync(path.join(state, "openclaw.json"), '{"fixture":true}\n');
-const { createSnapshot, listSnapshots, rollbackFromSnapshot } = await import("/opt/nemoclaw/dist/blueprint/snapshot.js");
-const snapshot = createSnapshot();
-if (!snapshot || listSnapshots().length !== 1) throw new Error("packaged snapshot creation failed");
-fs.writeFileSync(path.join(state, "openclaw.json"), '{"corrupted":true}\n');
-if (!rollbackFromSnapshot(snapshot)) throw new Error("packaged snapshot rollback failed");
-if (JSON.parse(fs.readFileSync(path.join(state, "openclaw.json"), "utf8")).fixture !== true) {
-  throw new Error("snapshot content was not restored");
-}
 `;
 
 const NORMALIZER_HANDOFF_RACE_PROBE = String.raw`from pathlib import Path
