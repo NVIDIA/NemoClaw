@@ -151,7 +151,7 @@ function resolveRenderTemplatesInString(
   if (exact?.[1]) return resolveTemplateReference(exact[1].trim(), context);
 
   let omitted = false;
-  const resolved = value.replace(TEMPLATE_REFERENCE_PATTERN, (_match, reference: string) => {
+  const resolved = value.replace(TEMPLATE_REFERENCE_PATTERN, (match, reference: string) => {
     const replacement = resolveTemplateReference(reference.trim(), context);
     if (replacement === undefined || replacement === null) {
       omitted = true;
