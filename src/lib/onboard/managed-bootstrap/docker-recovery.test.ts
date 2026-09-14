@@ -399,6 +399,9 @@ describe("Docker managed bootstrap restart recovery", () => {
       timeoutSecs: 1,
     });
     expect(fake.journal?.phase).toBe("bootstrap-complete");
+    const startCallsBeforeRecovery = vi
+      .mocked(fake.deps.runOpenshell!)
+      .mock.calls.filter(([args]) => args[0] === "sandbox" && args[1] === "start").length;
 
     const restarted = createDockerManagedBootstrapAdapter(fake.deps);
     await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
@@ -410,13 +413,14 @@ describe("Docker managed bootstrap restart recovery", () => {
     expect(fake.journal).toBeNull();
     expect(fake.sharedState).toBe("none");
     expect(fake.replacement?.State?.Running).toBe(true);
-    expect(vi.mocked(fake.deps.runOpenshell!)).toHaveBeenCalledWith(
-      ["sandbox", "start", "alpha"],
-      expect.any(Object),
-    );
+    expect(
+      vi
+        .mocked(fake.deps.runOpenshell!)
+        .mock.calls.filter(([args]) => args[0] === "sandbox" && args[1] === "start"),
+    ).toHaveLength(startCallsBeforeRecovery);
   });
 
-  it("retains committed recovery state when the OpenShell start handoff fails", async () => {
+  it("retains committed recovery state when the replacement disappears after reconnect", async () => {
     const fake = fixture({ sharedState: "pending" });
     const transaction = await prepareTransaction(fake);
     const replacement = await transaction.adapter.activateBootstrapReplacement({
@@ -431,11 +435,10 @@ describe("Docker managed bootstrap restart recovery", () => {
       replacement,
       timeoutSecs: 1,
     });
-    fake.deps.runOpenshell = vi.fn((args) =>
-      args[1] === "start"
-        ? { status: 1, stderr: "injected OpenShell start failure" }
-        : { status: 0 },
-    );
+    fake.deps.runOpenshell = vi.fn(() => {
+      fake.deps.dockerRm!(NEW_ID, { ignoreError: true, suppressOutput: true });
+      return { status: 0 };
+    });
 
     const restarted = createDockerManagedBootstrapAdapter(fake.deps);
     await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
@@ -443,7 +446,7 @@ describe("Docker managed bootstrap restart recovery", () => {
       failures: [
         {
           sourcePhase: "shared-state-committed",
-          code: "provider-recovery-failed",
+          code: "commit-state-indeterminate",
           retryable: true,
         },
       ],

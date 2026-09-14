@@ -147,11 +147,13 @@ provider to reconcile every identity-addressed record before a new sandbox
 create begins. The Docker provider then resumes the durable phase monotonically:
 staged work rolls back without entering cutover; cutover work follows a proven
 image-owned commit forward or durably authorizes rollback; rollback-authorized
-work completes restore and cleanup; and shared-state-committed work
-completes backup cleanup and commit. Recovery persists an identity-bound
-finalization receipt before removing the active journal, is idempotent across
-another interruption, and enumerates durable identities before loading each
-record so one unreadable transaction does not hide other results. The provider
+work completes restore and cleanup; and shared-state-committed work completes
+backup cleanup, waits for the already-published supervisor, revalidates the
+exact running replacement without starting it again, and commits. Recovery
+persists an identity-bound finalization receipt before removing the active
+journal, is idempotent across another interruption, and enumerates durable
+identities before loading each record so one unreadable transaction does not hide
+other results. The provider
 returns bounded `{ receipts, failures }` evidence; the coordinator validates,
 copies, freezes, and orders both arrays without routing on provider phases or
 failure codes. A failure for the requested sandbox name, or one whose sandbox

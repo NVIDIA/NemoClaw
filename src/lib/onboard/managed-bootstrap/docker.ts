@@ -2600,11 +2600,6 @@ export function createDockerManagedBootstrapAdapter(
       });
     }
     const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
-    runRequiredOpenShellLifecycleCommand(
-      deps,
-      ["sandbox", "start", journal.sandbox.sandboxName],
-      supervisorReconnectTimeoutSecs,
-    );
     if (
       !(await waitForRequiredOpenShellSupervisorReconnect(
         journal.sandbox.sandboxName,
@@ -2616,6 +2611,37 @@ export function createDockerManagedBootstrapAdapter(
         bootstrapIdentity: journal.bootstrapIdentity,
         cleanupRuntimeId: journal.replacementRuntimeId,
         detail: supervisorReconnectFailureDetail(journal.replacementRuntimeId, deps),
+      });
+    }
+    const connectedReplacement = inspectTransactionRuntime(
+      journal,
+      journal.replacementRuntimeId,
+      deps,
+    );
+    if (!connectedReplacement) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "the exact committed replacement disappeared after recovered supervisor reconnect",
+      });
+    }
+    assertTransactionReplacement(journal, connectedReplacement);
+    if (
+      dockerContainerName(connectedReplacement) !== journal.originalName ||
+      !isStableRunning(connectedReplacement)
+    ) {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        cleanupRuntimeId: journal.replacementRuntimeId,
+        detail: supervisorReconnectFailureDetail(journal.replacementRuntimeId, deps),
+      });
+    }
+    const afterHandoff = deps.journalStore.load(journal.bootstrapIdentity);
+    if (!afterHandoff || !sameDockerBootstrapJournal(afterHandoff, journal)) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "durable commit authority changed during recovered supervisor reconnect",
       });
     }
     if (sharedStatus === "committed") {
