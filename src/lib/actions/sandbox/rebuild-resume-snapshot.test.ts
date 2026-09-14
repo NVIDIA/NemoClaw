@@ -60,6 +60,11 @@ vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) =>
   },
 }));
 
+vi.mock("./forward-recovery", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./forward-recovery")>()),
+  teardownSandboxDashboardForward: vi.fn(() => true),
+}));
+
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
 }
@@ -156,8 +161,20 @@ describe("rebuild resume snapshot repair", () => {
         .mockImplementation(resolveGatewayAuthority),
       vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
         recovered: true,
-        before: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
-        after: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
+        before: {
+          state: "healthy_named",
+          activeGateway: null,
+          diagnostic: "",
+          recoveryBlocked: false,
+          unavailable: false,
+        },
+        after: {
+          state: "healthy_named",
+          activeGateway: null,
+          diagnostic: "",
+          recoveryBlocked: false,
+          unavailable: false,
+        },
         attempted: false,
       }),
       vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
@@ -173,6 +190,9 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
       vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
         name: "langchain-deepagents-code",
+        displayName: "Deep Agents Code",
+        configPaths: { dir: "/sandbox/.deepagents" },
+        mcpCapability: { support: "disabled", reason: "not relevant to this fixture" },
       } as never),
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null),
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),

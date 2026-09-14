@@ -840,7 +840,7 @@ describe("stopSandbox Ollama GPU release", () => {
     expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
-  it("ignores a stopped sibling registry row and releases the exclusive model (#10074)", async () => {
+  it("releases the model when OpenShell reports the only sibling as Stopped (#11650)", async () => {
     const unloadOllamaModels = vi.fn(() => successfulUnload());
     const stoppedPeer = sandbox({
       model: "qwen2.5:7b",
@@ -848,11 +848,14 @@ describe("stopSandbox Ollama GPU release", () => {
       provider: "ollama-local",
     });
     const h = harness({
-      discoverActiveOllamaSandboxNames: () => ({
-        ok: true,
-        activeSandboxNames: new Set(),
-        gatewayChecks: [{ activeSandboxes: [], gateway: "nemoclaw" }],
-      }),
+      discoverActiveOllamaSandboxNames: (peers, environment) =>
+        discoverActiveOllamaSandboxNames(peers, environment, {
+          captureSandboxOwnershipPhases: () => ({
+            status: 0,
+            output: "NAME CREATED PHASE\nstopped-peer 2026-09-12 Stopped",
+          }),
+          resolvePersistedSandboxOwnershipGateway: () => "nemoclaw",
+        }),
       listSandboxes: registryOf(ollamaSandbox, stoppedPeer),
       unloadOllamaModels,
     });

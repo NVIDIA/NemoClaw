@@ -86,7 +86,6 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
 const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
 
 const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
-  "debug",
   "inference:get",
   "list",
   "stop",
@@ -96,7 +95,7 @@ const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
   "use",
 ]);
 
-const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status"]);
+const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status", "debug"]);
 
 export type HermesPortableCommandPolicy = {
   readonly helpRequested: boolean;

@@ -113,6 +113,10 @@ class Command(_Generic):
         self.update = update
 
 
+class RemoteException(Exception):
+    pass
+
+
 class BaseModel:
     pass
 
@@ -151,6 +155,8 @@ def _install_stubs() -> None:
         "langchain_core.utils",
         "langchain_core.utils.function_calling",
         "langgraph",
+        "langgraph.pregel",
+        "langgraph.pregel.remote",
         "langgraph.runtime",
         "langgraph.types",
         "pydantic",
@@ -175,6 +181,7 @@ def _install_stubs() -> None:
     modules[
         "langchain_core.utils.function_calling"
     ].convert_to_openai_tool = convert_to_openai_tool
+    modules["langgraph.pregel.remote"].RemoteException = RemoteException
     modules["langgraph.types"].Command = Command
     modules["pydantic"].BaseModel = BaseModel
     modules["pydantic"].Field = Field

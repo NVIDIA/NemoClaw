@@ -4,11 +4,12 @@
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { getAgentBranding } from "../../cli/branding";
 import { waitUntil } from "../../core/wait";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   type AdapterMutationOptions,
   type AdapterRegistrationInspection,
   inspectAdapterRegistrationCommand,
+  restartMcpGatewayThroughSupervisor,
 } from "./mcp-bridge-adapter-inspection";
 import {
   buildHermesMcpStatusCommand,
@@ -28,7 +29,7 @@ const HERMES_MCP_LIFECYCLE_NOT_READY =
   "Hermes gateway is not running under the managed service lifecycle";
 
 export function buildHermesMcpRegisterCommand(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   replaceExisting = false,
   credentialRevision?: McpAttachedCredentialRevision,
 ): string[] {
@@ -41,7 +42,7 @@ export function buildHermesMcpRegisterCommand(
   return [HERMES_MCP_TRANSACTION_HELPER, "add", "--payload", JSON.stringify(payload)];
 }
 
-function buildHermesMcpRemoveCommand(entry: McpBridgeEntry, force = false): string[] {
+function buildHermesMcpRemoveCommand(entry: McpSourceEntry, force = false): string[] {
   const payload = {
     server: entry.server,
     url: entry.url,
@@ -75,7 +76,7 @@ export function buildHermesMcpProbeCommand(): string[] {
 
 export async function inspectHermesAdapterRegistration(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
 ): Promise<AdapterRegistrationInspection> {
@@ -165,7 +166,7 @@ export function assertHermesMcpMutationRuntimeCapability(
 
 function runHermesAdapterCommand(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   command: readonly string[],
   failureMessage: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -226,7 +227,7 @@ function runHermesAdapterCommand(
 
 async function verifyHermesAdapterRegistration(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
 ): Promise<void> {
@@ -245,7 +246,7 @@ async function verifyHermesAdapterRegistration(
 
 export async function registerHermesAdapter(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
@@ -262,9 +263,18 @@ export async function registerHermesAdapter(
   await verifyHermesAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
 }
 
+/** Restart an unchanged Hermes MCP definition through the authenticated host supervisor. */
+export async function reloadHermesGatewayAfterMcpRestart(sandboxName: string): Promise<void> {
+  const result = await restartMcpGatewayThroughSupervisor(sandboxName);
+  if (result.ok) return;
+  throw new McpBridgeError(
+    `Hermes gateway did not reload the current MCP configuration (${result.failureLayer}: ${result.detail}).`,
+  );
+}
+
 export function unregisterHermesAdapter(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): void {

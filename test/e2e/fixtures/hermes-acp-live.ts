@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
+import type { ShellProbeResult } from "./shell-probe.ts";
 import { superviseChild } from "../../helpers/process-supervisor.ts";
 
 const ACP_SCENARIO_TIMEOUT_MS = 3 * 60_000;
@@ -64,6 +65,24 @@ export function hermesAcpLiveHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessE
     if (value !== undefined) result[name] = value;
   }
   return result;
+}
+
+export function hermesAcpGatewayStoppedPreconditionPassed(result: ShellProbeResult): boolean {
+  const text = `${result.stdout}\n${result.stderr}`;
+  if (result.exitCode === 0) {
+    return (
+      !result.timedOut &&
+      result.signal === null &&
+      /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(result.stdout)
+    );
+  }
+  return (
+    !result.timedOut &&
+    result.signal === null &&
+    /client error \(Connect\)/iu.test(text) &&
+    /tcp connect error/iu.test(text) &&
+    /Connection refused \(os error (?:61|111)\)/iu.test(text)
+  );
 }
 
 export function isAcpResponse(message: unknown, id: number): message is JsonObject {
@@ -385,9 +404,14 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   if (scenarioValid && options.scenario === "cancel") {
     signalAdapter(child, "SIGTERM");
   } else if (scenarioValid && options.scenario === "client-disconnect") {
-    input.end();
     child.stdout?.destroy();
     child.stderr?.destroy();
+    scenarioValid = await writeRequest(input, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/new",
+      params: { cwd: "/sandbox", mcpServers: [] },
+    });
   } else if (scenarioValid && options.scenario === "gateway-restart") {
     if (!options.restartGateway) {
       scenarioValid = false;
@@ -465,6 +489,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   const passed =
     !result.timedOut &&
     !result.spawnError &&
+    !result.cleanupError &&
     exitValid &&
     initialized &&
     scenarioValid &&

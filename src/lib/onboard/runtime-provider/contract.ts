@@ -166,7 +166,11 @@ export interface RuntimeProviderGatewayHostRuntime {
     sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
     usesHostGatewayRoute(): boolean;
-    run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;
+    run(
+      args: readonly string[],
+      timeoutMs: number,
+      options?: { maxOutputBytes: number; environment?: Record<string, string> },
+    ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
 }

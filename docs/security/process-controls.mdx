@@ -16,31 +16,32 @@ Refer to the [Process Controls](https://docs.nvidia.com/openshell/latest/securit
 
 ## Capability Drops
 
-The entrypoint drops dangerous Linux capabilities from the bounding set at startup using `capsh`.
-This limits what capabilities any child process (gateway, sandbox, agent) can ever acquire.
+Under full enforcement, OpenShell clears the child bounding set before starting the agent.
+The OpenClaw and Hermes entrypoints check their calling process's effective, permitted, inheritable, ambient, and bounding capability sets.
+When all five sets are present and empty, startup skips the duplicate `capsh` drop.
+Other states retain the legacy fallback, which can attempt `capsh` once when it is available and the process has `CAP_SETPCAP`.
 
 The managed images install `setpriv` from `util-linux` and require it when the entrypoint switches from root to the `sandbox` and `gateway` users.
 When `CAP_SETPCAP` is available, the same `setpriv` operation removes the remaining privilege-separation capabilities from the child process at the same time as the user change.
 
-The initial entrypoint drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
+The fallback drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
 When the additional `setpriv` bounding-set drop runs, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
 
-The extra bounding-set capability drop is best effort.
-If `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and retains the runtime-provided bounding set.
-The entrypoint still uses `setpriv` to change the user, group, and supplementary groups without the extra bounding-set drop.
+For root-to-user transitions, the extra bounding-set capability drop is best effort.
+If `capsh` or `CAP_SETPCAP` is unavailable, the root entrypoint logs a warning and uses `setpriv` without the extra bounding-set drop.
 
 When a root entrypoint must change identity, it fails closed if `setpriv` is unavailable instead of starting an agent service as root.
 
 To make the drop fail-closed instead of best-effort, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment.
-The agent then refuses to start unless it verifies that the agent process tree's bounding set is free of dangerous capabilities.
+The agent then refuses to start unless the entrypoint verifies that its bounding set is free of the listed dangerous capabilities.
+This strict-mode gate checks the bounding set only; it does not require all five capability sets to be empty.
 
 It does not boot on a host whose bounding set still holds them, typically one that cannot perform the drop because `CAP_SETPCAP` or `capsh` is missing and the container runtime did not provide a clean bounding set.
 
 This is opt-in because such hosts are common, including many cloud VMs, Docker Desktop, and WSL.
 Leaving it unset preserves the best-effort default.
 
-The check covers the agent process tree only.
-The container runtime spawns a `$$nemoclaw connect` shell outside that tree, so the check does not affect it (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
+This startup check does not inspect fresh exec or connect processes.
 
 <AgentOnly variant="openclaw">
 For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose.
@@ -49,9 +50,9 @@ Refer to [Review Sandbox Hardening](../../manage-sandboxes/configure-sandboxes/r
 
 | Aspect | Detail |
 |---|---|
-| Default | The entrypoint drops dangerous capabilities at startup using `capsh`, then requires `setpriv` for user step-down. When `CAP_SETPCAP` is unavailable, the user step-down continues without the extra privilege-separation bounding-set drop and logs a warning. |
-| What you can change | When launching with `docker run` directly, pass `--cap-drop=ALL --cap-add=NET_BIND_SERVICE` for stricter enforcement. In the standard NemoClaw onboarding flow, the entrypoint handles capability dropping automatically. |
-| Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. If `capsh` cannot run or `CAP_SETPCAP` is unavailable, the container retains more of the runtime-provided capability set. |
+| Default | OpenShell full enforcement clears the child bounding set. OpenClaw and Hermes skip the duplicate drop only after observing five empty capability sets. Root-to-user transitions still require `setpriv`. |
+| What you can change | When launching with `docker run` directly, pass `--cap-drop=ALL --cap-add=NET_BIND_SERVICE` for stricter enforcement. Set `NEMOCLAW_REQUIRE_CAP_DROP=1` to require verification of the dangerous bounding capabilities. |
+| Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. Without strict mode, the fallback warns and continues when dangerous bounding capabilities remain or cannot be verified. |
 | Recommendation | Run on an image that includes `capsh` and `setpriv` (NemoClaw-managed images include them). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
 
 <AgentOnly variant="openclaw">
@@ -180,7 +181,8 @@ A missing, malformed, symlinked, writable, unreadable, or incorrectly owned capa
 Ambient `NEMOCLAW_DCODE_AUTO_APPROVAL*` values cannot enable the capability.
 
 When a thread activates auto-approval, the TUI shows the upstream active-state indicator and prints a warning.
-NemoClaw clears that active state for a new process, `/clear`, `/force-clear`, a thread switch or resume, and an agent switch.
+Deep Agents Code preserves its native approval state across `/clear`, `/force-clear`, thread switch or resume, and agent switch operations.
+A new process uses the native startup mode, while NemoClaw forces Manual when the sandbox capability is `disabled`.
 The host-side `status` command reports only the configured capability because it does not attest to the current state of a specific TUI thread.
 
 | Aspect | Detail |

@@ -718,11 +718,11 @@ function legacyForwardEnvironment(hosted: HostedInferenceConfig): NodeJS.Process
   };
 }
 
-async function runLegacyForwardMigration(
+async function runLegacyForwardRefusal(
   host: HostCliClient,
   hosted: HostedInferenceConfig,
 ): Promise<void> {
-  const migrationEnv = legacyForwardEnvironment(hosted);
+  const legacyEnv = legacyForwardEnvironment(hosted);
   const stopAndRelease = await host.command(
     "bash",
     [
@@ -758,7 +758,7 @@ printf 'DIRECT_FORWARD_RELEASED=%s\n' "$dashboard_port"`,
     ],
     {
       artifactName: "legacy-forward-stop-direct-service",
-      env: migrationEnv,
+      env: legacyEnv,
       redactionValues: [hosted.apiKey],
       timeoutMs: 5 * 60_000,
     },
@@ -770,14 +770,14 @@ printf 'DIRECT_FORWARD_RELEASED=%s\n' "$dashboard_port"`,
     ["sandbox", "start", "-g", "nemoclaw", LEGACY_FORWARD_SANDBOX],
     {
       artifactName: "legacy-forward-start-sandbox-workload",
-      env: migrationEnv,
+      env: legacyEnv,
       redactionValues: [hosted.apiKey],
       timeoutMs: 120_000,
     },
   );
   expect(startWorkload.exitCode, resultText(startWorkload)).toBe(0);
 
-  const migrate = await host.command(
+  const refusal = await host.command(
     "bash",
     [
       "-lc",
@@ -845,13 +845,6 @@ forward_is_running() {
   '
 }
 
-forward_is_absent() {
-  awk -v sandbox="$1" -v port="$2" '
-    $1 == sandbox && $3 == port && tolower($0) ~ /(running|active)/ { found = 1 }
-    END { exit(found ? 1 : 0) }
-  '
-}
-
 wait_for_ready
 "$openshell" forward start --background "$dashboard_port" "$sandbox_name" --gateway "$gateway"
 "$openshell" forward start --background "$unregistered_port" "$sandbox_name" --gateway "$gateway"
@@ -863,23 +856,28 @@ wait_for_reachable "$dashboard_port"
 wait_for_reachable "$unregistered_port"
 printf 'LEGACY_FORWARDS_SEEDED=%s,%s\n' "$dashboard_port" "$unregistered_port"
 
-"$nemoclaw" "$sandbox_name" recover
-migrated="$("$openshell" forward list --gateway "$gateway")"
-printf '%s\n' "$migrated"
-printf '%s\n' "$migrated" | forward_is_absent "$sandbox_name" "$dashboard_port"
-printf '%s\n' "$migrated" | forward_is_running "$sandbox_name" "$unregistered_port"
+recovery_status=0
+recovery_output="$("$nemoclaw" "$sandbox_name" recover 2>&1)" || recovery_status=$?
+printf '%s\n' "$recovery_output"
+(( recovery_status != 0 ))
+printf '%s\n' "$recovery_output" | grep -F "Host port $dashboard_port"
+preserved="$("$openshell" forward list --gateway "$gateway")"
+printf '%s\n' "$preserved"
+printf '%s\n' "$preserved" | forward_is_running "$sandbox_name" "$dashboard_port"
+printf '%s\n' "$preserved" | forward_is_running "$sandbox_name" "$unregistered_port"
 wait_for_reachable "$dashboard_port"
 wait_for_reachable "$unregistered_port"
-printf 'LEGACY_REGISTERED_REMOVED=%s\n' "$dashboard_port"
+printf 'LEGACY_REGISTERED_PRESERVED=%s\n' "$dashboard_port"
 printf 'UNREGISTERED_FORWARD_PRESERVED=%s\n' "$unregistered_port"
-printf 'FORWARD_SERVICE_REACHABLE=%s\n' "$dashboard_port"
+printf 'RECOVERY_REFUSED_UNVERIFIED_LISTENER=%s\n' "$dashboard_port"
 
+"$openshell" forward stop "$dashboard_port" "$sandbox_name" --gateway "$gateway"
 "$openshell" forward stop "$unregistered_port" "$sandbox_name" --gateway "$gateway"
+wait_for_free "$dashboard_port"
 wait_for_free "$unregistered_port"
 "$nemoclaw" "$sandbox_name" stop
-wait_for_free "$dashboard_port"
-printf 'MIGRATED_FORWARD_RELEASED=%s\n' "$dashboard_port"`,
-      "legacy-forward-migrate-and-stop",
+printf 'LEGACY_FORWARDS_RELEASED=%s,%s\n' "$dashboard_port" "$unregistered_port"`,
+      "legacy-forward-refuse-and-clean-up",
       host.commandPath,
       host.openshellCommandPath,
       LEGACY_FORWARD_SANDBOX,
@@ -888,97 +886,97 @@ printf 'MIGRATED_FORWARD_RELEASED=%s\n' "$dashboard_port"`,
       "nemoclaw",
     ],
     {
-      artifactName: "legacy-forward-migrate-and-verify",
-      env: migrationEnv,
+      artifactName: "legacy-forward-refuse-and-verify",
+      env: legacyEnv,
       redactionValues: [hosted.apiKey],
       timeoutMs: 15 * 60_000,
     },
   );
-  expect(migrate.exitCode, resultText(migrate)).toBe(0);
+  expect(refusal.exitCode, resultText(refusal)).toBe(0);
 }
 
 test(
-  "migrates only the registered legacy dashboard forward to the direct ForwardTcp service",
+  "refuses legacy dashboard forwards whose ownership cannot be proved",
   {
     timeout: testTimeout(45 * 60_000),
     meta: {
       e2ePhases: [
-        "onboard the legacy migration sandbox",
-        "seed, migrate, and release the legacy dashboard forward",
+        "onboard the legacy forward sandbox",
+        "seed, refuse, and release the legacy dashboard forwards",
       ],
     },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
     const hosted = requireHostedInferenceConfig(secrets);
-    const migrationEnv = legacyForwardEnvironment(hosted);
+    const legacyEnv = legacyForwardEnvironment(hosted);
 
     await artifacts.target.declare({
       id: "sandbox-operations",
-      boundary: "real-openshell-legacy-forward-to-direct-forwardtcp-service",
+      boundary: "real-openshell-legacy-forward-fail-closed-recovery",
       sandboxName: LEGACY_FORWARD_SANDBOX,
       dashboardPort: LEGACY_DASHBOARD_PORT,
       contracts: [
         "a real tracked openshell forward start --background entry owns the registered dashboard port",
-        "normal NemoClaw recovery removes that exact legacy entry and launches ForwardTcp service",
-        "an unregistered legacy forward for the same sandbox is preserved",
-        "stopping the migrated sandbox releases the ForwardTcp service port naturally",
+        "normal NemoClaw recovery refuses the registered legacy listener without stopping or adopting it",
+        "an unregistered legacy forward for the same sandbox is also preserved",
+        "explicit test cleanup releases both legacy forward ports",
         "terminal cleanup removes every sandbox, forward, listener, and gateway created by the test",
       ],
     });
 
     await runtimeProvider.requireAvailable({
       artifactName: "legacy-forward-prereq-runtime-provider-info",
-      scenarioLabel: "legacy forward migration",
+      scenarioLabel: "legacy forward fail-closed recovery",
     });
     await host.bestEffortCleanupSandbox(LEGACY_FORWARD_SANDBOX, {
       artifactName: "legacy-forward-precleanup-nemoclaw-sandbox",
-      env: migrationEnv,
+      env: legacyEnv,
     });
     await sandbox
       .cleanupSandbox(LEGACY_FORWARD_SANDBOX, {
         artifactName: "legacy-forward-precleanup-openshell-sandbox",
-        env: migrationEnv,
+        env: legacyEnv,
         timeoutMs: 120_000,
       })
       .catch(() => undefined);
     await host
       .cleanupForward(LEGACY_DASHBOARD_PORT, {
         artifactName: "legacy-forward-precleanup-dashboard-forward",
-        env: migrationEnv,
+        env: legacyEnv,
       })
       .catch(() => undefined);
     await host
       .cleanupForward(LEGACY_UNREGISTERED_PORT, {
         artifactName: "legacy-forward-precleanup-unregistered-forward",
-        env: migrationEnv,
+        env: legacyEnv,
       })
       .catch(() => undefined);
 
     cleanup.trackGateway(host, "nemoclaw", {
-      env: migrationEnv,
+      env: legacyEnv,
       redactionValues: [hosted.apiKey],
       timeoutMs: 5 * 60_000,
     });
     cleanup.trackDisposable(`delete OpenShell sandbox ${LEGACY_FORWARD_SANDBOX}`, () =>
       sandbox.cleanupSandbox(LEGACY_FORWARD_SANDBOX, {
         artifactName: "legacy-forward-cleanup-openshell-sandbox",
-        env: migrationEnv,
+        env: legacyEnv,
         redactionValues: [hosted.apiKey],
         timeoutMs: 120_000,
       }),
     );
     cleanup.trackForward(host, LEGACY_DASHBOARD_PORT, {
       artifactName: "legacy-forward-cleanup-dashboard-forward",
-      env: migrationEnv,
+      env: legacyEnv,
       timeoutMs: 60_000,
     });
     cleanup.trackForward(host, LEGACY_UNREGISTERED_PORT, {
       artifactName: "legacy-forward-cleanup-unregistered-forward",
-      env: migrationEnv,
+      env: legacyEnv,
       timeoutMs: 60_000,
     });
 
-    progress.phase("onboard the legacy migration sandbox");
+    progress.phase("onboard the legacy forward sandbox");
     await onboardSandbox(
       host,
       cleanup,
@@ -988,17 +986,17 @@ test(
       { NEMOCLAW_DASHBOARD_PORT: String(LEGACY_DASHBOARD_PORT) },
     );
 
-    progress.phase("seed, migrate, and release the legacy dashboard forward");
-    await runLegacyForwardMigration(host, hosted);
+    progress.phase("seed, refuse, and release the legacy dashboard forwards");
+    await runLegacyForwardRefusal(host, hosted);
 
     await artifacts.target.complete({
       id: "sandbox-operations",
       status: "passed",
       registeredLegacyForwardSeeded: true,
-      registeredLegacyForwardRemoved: true,
+      recoveryRefusedUnverifiedListener: true,
+      registeredLegacyForwardPreserved: true,
       unregisteredLegacyForwardPreserved: true,
-      forwardTcpServiceReachable: true,
-      migratedSandboxPortReleasedAfterStop: true,
+      legacyForwardPortsReleasedByExplicitCleanup: true,
     });
   },
 );
