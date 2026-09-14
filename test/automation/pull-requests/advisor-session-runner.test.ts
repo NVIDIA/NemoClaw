@@ -336,6 +336,13 @@ function analysisTurn(name: string): AdvisorPromptTurn {
   };
 }
 
+function evidenceAnalysisTurn(name: string, evidencePath: string): AdvisorPromptTurn {
+  return {
+    ...analysisTurn(name),
+    requiredReadOneOfPaths: [evidencePath],
+  };
+}
+
 function submitTurn(name: string): AdvisorPromptTurn {
   return {
     ...turn(name, '{"submit":true}'),
@@ -434,6 +441,27 @@ describe("advisor session runner", () => {
     expect(transport.configure).toHaveBeenCalledOnce();
     expect(transport.configure.mock.invocationCallOrder[0]).toBeLessThan(
       sdk.createAgentSession.mock.invocationCallOrder[0] as number,
+    );
+  });
+
+  it("shows and reads required specialist evidence before analysis (#10791)", async () => {
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-evidence-"));
+    tempDirs.push(evidenceDir);
+    const evidenceFile = path.join(evidenceDir, "specialist.diff");
+    fs.writeFileSync(evidenceFile, "diff evidence");
+    const evidencePath = fs.realpathSync(evidenceFile);
+    const result = await run([evidenceAnalysisTurn("review-evidence", evidencePath)], undefined, [
+      evidenceDir,
+    ]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.prompts[0]).toContain(
+      `Required files:\n- ${evidencePath}\nRead at least one exact path above with \`read\` before writing analysis.`,
+    );
+    expect(sdk.state.readContents).toEqual(["diff evidence"]);
+    expect(result.raw.indexOf("tool_end read ok")).toBeLessThan(
+      result.raw.indexOf("analysis for Review review-evidence"),
     );
   });
 
