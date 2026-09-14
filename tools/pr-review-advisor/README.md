@@ -86,7 +86,9 @@ The workflow then:
    --no-audit --no-fund`, `npm run check:diff`, and `npm run test:changed`. A documentation repair
    also runs `npm run docs`.
 4. Optionally publishes one verified commit with a compare-and-swap update after rechecking that the
-   PR head, discussion, and review state have not changed.
+   PR head, discussion, and review state have not changed. Inside the protected job, an explicit
+   publication authorization binds the protected workflow run, exact selection, re-read state, and
+   prepared commit; the publisher verifies that binding before the ref update.
 
 If the resolver cannot produce a safe patch, it restores all edits and records a bounded `blocked`
 proposal; validation and publication stay unavailable for that outcome. The resolve job retains its
@@ -97,7 +99,10 @@ variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`, and approval for the protected
 `advisor-repair-publish` environment. Only the protected publisher receives `contents: write`; it
 receives neither the model secret nor the untrusted model workspace. Leave `repair_publish` false to
 generate and validate an artifact without updating the PR branch, while remembering that the run
-still consumes its one-shot claim.
+still consumes its one-shot claim. The source head is guarded atomically by the compare-and-swap;
+GitHub cannot atomically lock review discussion while updating a Git ref, so discussion and review
+authorization is bound to the re-read snapshot. Any mismatch detected after selection stops
+publication and requires a newly approved attempt.
 
 ## Author and agent follow-up
 

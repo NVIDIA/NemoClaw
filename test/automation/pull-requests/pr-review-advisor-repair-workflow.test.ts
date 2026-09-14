@@ -114,6 +114,8 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(serialized(publish)).not.toMatch(/secrets[.]|OPENAI_API_KEY/u);
     expect(serialized(publish)).toContain("needs.validate.outputs.artifact-id");
     expect(serialized(publish)).toContain("repair-publish.mts");
+    expect(serialized(publish)).toContain('repair-publish.mts\\\" authorize');
+    expect(serialized(publish)).toContain("publication-authorization.json");
   });
 
   it.each(checkoutCases)("keeps checkout %s/%i inert (#10791)", (_jobName, _index, checkout) => {

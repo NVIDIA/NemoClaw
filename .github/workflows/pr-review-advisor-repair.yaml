@@ -623,9 +623,20 @@ jobs:
             '{pull:$pull[0], comments:$comments[0], reviewComments:$reviewComments[0]}' \
             >"$output/state.json"
 
+      - name: Bind protected approval to the exact repair and live state
+        env:
+          AUTHORIZATION_FILE: ${{ runner.temp }}/live-state/publication-authorization.json
+          GITHUB_TOKEN: ${{ github.token }}
+          PREPARED_SHA: ${{ steps.prepare.outputs.prepared-sha }}
+          REVIEWS_FILE: ${{ runner.temp }}/live-state/reviews.json
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+          STATE_FILE: ${{ runner.temp }}/live-state/state.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-publish.mts" authorize
+
       - id: publish
         name: Compare-and-swap the verified commit onto the PR branch
         env:
+          AUTHORIZATION_FILE: ${{ runner.temp }}/live-state/publication-authorization.json
           GITHUB_TOKEN: ${{ github.token }}
           PREPARED_SHA: ${{ steps.prepare.outputs.prepared-sha }}
           REVIEWS_FILE: ${{ runner.temp }}/live-state/reviews.json
