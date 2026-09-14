@@ -118,19 +118,30 @@ describe("managed-image staging QA workflow", () => {
     const dockerfile = "agents/langchain-deepagents-code/Dockerfile.base";
     const packageBuilder = "scripts/security/build-native-security-packages.sh";
     const requirements = "agents/langchain-deepagents-code/requirements.lock";
-    const npmBundler = "scripts/lib/bundled-npm-package.mts";
+    const npmSupportFiles = [
+      "ci/reviewed-npm-audit.json",
+      "scripts/lib/bundled-npm-package.mts",
+      "scripts/lib/patch-bundled-npm-ip-address.mts",
+      "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/lib/reviewed-npm-identity.mts",
+      "scripts/patch-bundled-npm-brace-expansion.mts",
+      "scripts/patch-bundled-npm-tar.mts",
+      "scripts/upgrade-bundled-npm.mts",
+    ];
     const perlPatch = "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch";
     try {
       writeOverlayFixture(candidateRoot, dockerfile, "candidate Dockerfile\n");
       writeOverlayFixture(candidateRoot, packageBuilder, "exit 42\n");
       writeOverlayFixture(candidateRoot, requirements, "candidate requirements\n");
-      writeOverlayFixture(candidateRoot, npmBundler, "candidate npm bundler\n");
       writeOverlayFixture(candidateRoot, perlPatch, "candidate Perl patch\n");
       writeOverlayFixture(stagingRoot, dockerfile, "staging Dockerfile\n");
       writeOverlayFixture(stagingRoot, packageBuilder, "exit 41\n");
       writeOverlayFixture(stagingRoot, requirements, "staging requirements\n");
-      writeOverlayFixture(stagingRoot, npmBundler, "staging npm bundler\n");
       writeOverlayFixture(stagingRoot, perlPatch, "staging Perl patch\n");
+      npmSupportFiles.forEach((supportFile) => {
+        writeOverlayFixture(candidateRoot, supportFile, "candidate npm support\n");
+        writeOverlayFixture(stagingRoot, supportFile, "staging npm support\n");
+      });
       const summary = path.join(overlayFixture, "summary.md");
       const result = spawnSync("bash", ["-c", overlaySource], {
         encoding: "utf-8",
