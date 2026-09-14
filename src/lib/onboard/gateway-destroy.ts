@@ -4,7 +4,6 @@
 import { createCliOpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle-cli";
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
 import type { GatewayOwner } from "./gateway-ownership";
-import type { Buffer } from "node:buffer";
 
 import { GATEWAY_PORT } from "../core/ports";
 import { listSandboxes as listRegisteredSandboxes } from "../state/registry";

@@ -7,10 +7,7 @@ import path from "node:path";
 
 import { dockerContainerInspectFormat } from "../adapters/docker";
 import { getGatewayClusterContainerName } from "../adapters/openshell/gateway-drift";
-import {
-  type OpenShellRuntimeSelection,
-  withSelectedOpenShellCommandOptions,
-} from "../adapters/openshell/command-argv";
+import { type OpenShellRuntimeSelection } from "../adapters/openshell/command-argv";
 import { getGatewayHttpEndpoint } from "../core/gateway-address";
 import {
   BEDROCK_RUNTIME_ADAPTER_PORT,
@@ -169,7 +166,6 @@ async function startTargetGatewayForRecovery(
   { gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number },
   deps: GatewayRecoveryDeps,
   runtimeSelection?: OpenShellRuntimeSelection,
-  output?: GatewayRecoveryOutput,
 ): Promise<void> {
   const request = { target: { kind: "named" as const, gatewayName }, runtimeSelection };
   const selected = await deps.lifecycle.selectGateway(request);
@@ -283,5 +279,5 @@ export async function startGatewayForRecovery(
         `Re-run with NEMOCLAW_GATEWAY_PORT=${target.gatewayPort} so the docker-driver setup can restamp the runtime marker, registration, and sandbox bridge.`,
     );
   }
-  return startTargetGatewayForRecovery(target, deps, options.runtimeSelection, options.output);
+  return startTargetGatewayForRecovery(target, deps, options.runtimeSelection);
 }

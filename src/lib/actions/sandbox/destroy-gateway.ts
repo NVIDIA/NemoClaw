@@ -7,10 +7,7 @@ import path from "node:path";
 import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
 import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
 import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
-import {
-  OPENSHELL_HEAVY_TIMEOUT_MS,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-} from "../../adapters/openshell/timeouts";
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,

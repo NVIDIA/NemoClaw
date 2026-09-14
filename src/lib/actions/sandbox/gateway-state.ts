@@ -61,9 +61,7 @@ import {
   captureResolvedOpenshell,
   getOpenshellBinary,
   getStatusProbeTimeoutMs,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-  runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { D, G, R } from "../../cli/terminal-style";
 import {

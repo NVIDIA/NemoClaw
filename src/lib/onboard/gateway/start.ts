@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
-import {
-  type OpenShellRuntimeSelection,
-  withSelectedOpenShellCommandOptions,
-} from "../../adapters/openshell/command-argv";
+import { type OpenShellRuntimeSelection } from "../../adapters/openshell/command-argv";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import type { GatewayRecoveryOutput } from "../gateway-recovery";
 import { normalizeGatewayStartError } from "../gateway-start-failure";
