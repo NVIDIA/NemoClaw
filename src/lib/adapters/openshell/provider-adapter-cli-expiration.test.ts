@@ -80,6 +80,61 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
     );
   });
 
+  it("finds a requested provider beyond the first inventory page", async () => {
+    const page = Array.from({ length: 1000 }, (_, index) => ({ name: `other-${index}` }));
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0, PROVIDER_GET_OUTPUT))
+      .mockReturnValueOnce(captured(0, JSON.stringify(page)))
+      .mockReturnValueOnce(
+        captured(
+          0,
+          JSON.stringify([
+            { name: "search-prod", credential_expires_at_ms: { TAVILY_API_KEY: 1000 } },
+          ]),
+        ),
+      );
+    const result = await createCliOpenShellProviderAdapter({ run }).getProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+      includeCredentialExpirations: true,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      value: { credentialExpiresAtMs: { TAVILY_API_KEY: 1000 } },
+    });
+    expect(run.mock.calls[2][0]).toEqual([
+      "provider",
+      "list",
+      "--limit",
+      "1000",
+      "--offset",
+      "1000",
+      "--output",
+      "json",
+    ]);
+  });
+
+  it("stops at the bounded inventory limit when the provider cannot be found", async () => {
+    const page = Array.from({ length: 1000 }, (_, index) => ({ name: `other-${index}` }));
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValue(captured(0, JSON.stringify(page)))
+      .mockReturnValueOnce(captured(0, PROVIDER_GET_OUTPUT));
+    const result = await createCliOpenShellProviderAdapter({ run }).getProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+      includeCredentialExpirations: true,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        message: "Provider credential expiration lookup exceeded the bounded inventory limit.",
+      },
+    });
+    expect(run).toHaveBeenCalledTimes(11);
+  });
+
   it.each([
     [
       "duplicate target",

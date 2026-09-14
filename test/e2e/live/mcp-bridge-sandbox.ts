@@ -14,7 +14,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
 
-export type McpDnsRebindingAdapter = "mcporter" | "hermes-config" | "deepagents-config";
+export type McpDnsRebindingAdapter = "openclaw-config" | "hermes-config" | "deepagents-config";
 
 export type CapturedManagedMcpPolicy = {
   networkPolicies: Record<string, McpNetworkPolicy>;
@@ -192,7 +192,7 @@ export function buildMcpDnsRebindingProbeScript(
   const quotedCurl = curlArgs.map(shellQuote).join(" ");
   const runtimeCommand = (() => {
     switch (adapter) {
-      case "mcporter": {
+      case "openclaw-config": {
         const runner =
           'const { spawnSync } = require("node:child_process"); const result = spawnSync(process.argv[1], process.argv.slice(2), { stdio: "inherit" }); process.exit(result.status ?? 1);';
         return `nemoclaw-start node -e ${shellQuote(runner)} ${quotedCurl}`;

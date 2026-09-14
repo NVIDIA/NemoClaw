@@ -132,7 +132,7 @@ export function parseCliOpenShellProviderMetadata(
 export function parseCliOpenShellProviderCredentialExpirations(
   output: string,
   providerName: string,
-): Readonly<Record<string, number>> | null {
+): Readonly<Record<string, number>> | null | undefined {
   if (
     !isValidCliOpenShellProviderIdentifier(providerName) ||
     Buffer.byteLength(output, "utf8") > MAX_PROVIDER_INVENTORY_OUTPUT_BYTES
@@ -156,6 +156,10 @@ export function parseCliOpenShellProviderCredentialExpirations(
       return null;
     }
     if (record.name === providerName) matchingProviders.push(record);
+  }
+  // A full page without the target permits the adapter to request the next page.
+  if (matchingProviders.length === 0 && parsed.length === MAX_PROVIDER_INVENTORY_ENTRIES) {
+    return undefined;
   }
   if (matchingProviders.length !== 1) return null;
 

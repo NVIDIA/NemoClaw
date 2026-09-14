@@ -596,35 +596,46 @@ export function createCliOpenShellProviderAdapter(
     }
     if (!request.includeCredentialExpirations) return success(metadata);
 
-    const inventory = invoke(
-      [
-        "provider",
-        "list",
-        "--limit",
-        String(PROVIDER_INVENTORY_LIMIT),
-        "--offset",
-        "0",
-        "--output",
-        "json",
-      ],
-      request,
-      undefined,
-      2,
-      true,
-      PROVIDER_INVENTORY_DIAGNOSTIC_LIMIT,
-    );
-    const inventoryError = commandError(inventory);
-    if (inventoryError) return failure(inventoryError);
-    const credentialExpiresAtMs = parseCliOpenShellProviderCredentialExpirations(
-      commandStdout(inventory),
-      request.providerName,
-    );
-    return credentialExpiresAtMs
-      ? success({ ...metadata, credentialExpiresAtMs })
-      : failure({
-          kind: "schema",
-          message: "OpenShell returned invalid provider credential expiration metadata.",
-        });
+    for (
+      let offset = 0;
+      offset < 10 * PROVIDER_INVENTORY_LIMIT;
+      offset += PROVIDER_INVENTORY_LIMIT
+    ) {
+      const inventory = invoke(
+        [
+          "provider",
+          "list",
+          "--limit",
+          String(PROVIDER_INVENTORY_LIMIT),
+          "--offset",
+          String(offset),
+          "--output",
+          "json",
+        ],
+        request,
+        undefined,
+        2,
+        true,
+        PROVIDER_INVENTORY_DIAGNOSTIC_LIMIT,
+      );
+      const inventoryError = commandError(inventory);
+      if (inventoryError) return failure(inventoryError);
+      const credentialExpiresAtMs = parseCliOpenShellProviderCredentialExpirations(
+        commandStdout(inventory),
+        request.providerName,
+      );
+      if (credentialExpiresAtMs === undefined) continue;
+      return credentialExpiresAtMs
+        ? success({ ...metadata, credentialExpiresAtMs })
+        : failure({
+            kind: "schema",
+            message: "OpenShell returned invalid provider credential expiration metadata.",
+          });
+    }
+    return failure({
+      kind: "schema",
+      message: "Provider credential expiration lookup exceeded the bounded inventory limit.",
+    });
   };
 
   const updateProvider: OpenShellProviderAdapter["updateProvider"] = async (
