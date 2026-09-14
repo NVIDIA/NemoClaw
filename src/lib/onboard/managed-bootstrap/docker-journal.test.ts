@@ -248,6 +248,9 @@ describe("Docker managed bootstrap journal", () => {
       "bootstrap-complete",
     );
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
+    expect(() =>
+      restarted.transition(IDENTITY, "bootstrap-complete", "shared-state-committed"),
+    ).toThrow("unsupported");
     expect(
       restarted.transition(IDENTITY, "bootstrap-complete", "openshell-handoff-complete").phase,
     ).toBe("openshell-handoff-complete");

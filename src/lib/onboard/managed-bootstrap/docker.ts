@@ -2740,14 +2740,17 @@ export function createDockerManagedBootstrapAdapter(
   };
   const recoverOpenShellHandoff = async (
     journal: DockerBootstrapTransaction,
+    revalidateCompletedHandoff = false,
   ): Promise<DockerBootstrapTransaction> => {
-    if (journal.phase === "openshell-handoff-complete") return journal;
-    if (journal.phase !== "bootstrap-complete") {
+    if (journal.phase !== "bootstrap-complete" && journal.phase !== "openshell-handoff-complete") {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
         runtimeId: journal.replacementRuntimeId,
         detail: `OpenShell publication is invalid from durable journal phase ${journal.phase}`,
       });
+    }
+    if (journal.phase === "openshell-handoff-complete" && !revalidateCompletedHandoff) {
+      return journal;
     }
     const handoff = observeRecoveredOpenShellHandoff(journal.sandbox, deps);
     if (handoff !== "wait") {
@@ -2790,7 +2793,9 @@ export function createDockerManagedBootstrapAdapter(
       });
     }
     assertCompletedCutoverRuntimeState(afterHandoff, deps);
-    return transitionDockerBootstrapJournalDurably(journal, "openshell-handoff-complete", deps);
+    return journal.phase === "openshell-handoff-complete"
+      ? afterHandoff
+      : transitionDockerBootstrapJournalDurably(journal, "openshell-handoff-complete", deps);
   };
   const finishRecoveredBootstrapComplete = async (
     journal: DockerBootstrapTransaction,
@@ -2858,7 +2863,7 @@ export function createDockerManagedBootstrapAdapter(
         detail: "bootstrap completion recovery found an unexpected shared-state receipt",
       });
     }
-    journal = await recoverOpenShellHandoff(journal);
+    journal = await recoverOpenShellHandoff(journal, true);
     if (sharedStatus === "pending") {
       let outcome;
       try {
@@ -3480,37 +3485,6 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       assertExplicitlyStopped(original, "commit rollback backup");
-      const beforeRemove = deps.journalStore.load(transaction.bootstrapIdentity);
-      if (!beforeRemove || !sameDockerBootstrapJournal(beforeRemove, transaction)) {
-        throw new ManagedBootstrapCommitStateIndeterminateError({
-          bootstrapIdentity: transaction.bootstrapIdentity,
-          runtimeId: transaction.originalRuntimeId,
-          detail: "durable commit authority changed before exact rollback-backup removal",
-        });
-      }
-      const removed = deps.dockerRm(transaction.originalRuntimeId, {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-      });
-      if (
-        !hasZeroDockerExitStatus(removed) &&
-        probeExactDockerContainerAbsence(transaction.originalRuntimeId, deps) !== "absent"
-      ) {
-        throw new ManagedBootstrapDurableCommitCleanupPendingError({
-          bootstrapIdentity: receipt.bootstrapIdentity,
-          cleanupRuntimeId: transaction.originalRuntimeId,
-          detail: `${commandDetail(removed) || "Docker removal failed"}; exact backup absence was not proven`,
-        });
-      }
-    }
-
-    if (probeExactDockerContainerAbsence(transaction.originalRuntimeId, deps) !== "absent") {
-      throw new ManagedBootstrapDurableCommitCleanupPendingError({
-        bootstrapIdentity: receipt.bootstrapIdentity,
-        cleanupRuntimeId: transaction.originalRuntimeId,
-        detail: "exact rollback-backup absence was not durable before OpenShell handoff",
-      });
     }
     const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
     if (
@@ -3555,6 +3529,31 @@ export function createDockerManagedBootstrapAdapter(
         bootstrapIdentity: transaction.bootstrapIdentity,
         runtimeId: transaction.replacementRuntimeId,
         detail: "durable commit authority changed during the OpenShell replacement handoff",
+      });
+    }
+
+    if (original) {
+      const removed = deps.dockerRm(transaction.originalRuntimeId, {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
+      if (
+        !hasZeroDockerExitStatus(removed) &&
+        probeExactDockerContainerAbsence(transaction.originalRuntimeId, deps) !== "absent"
+      ) {
+        throw new ManagedBootstrapDurableCommitCleanupPendingError({
+          bootstrapIdentity: receipt.bootstrapIdentity,
+          cleanupRuntimeId: transaction.originalRuntimeId,
+          detail: `${commandDetail(removed) || "Docker removal failed"}; exact backup absence was not proven`,
+        });
+      }
+    }
+    if (probeExactDockerContainerAbsence(transaction.originalRuntimeId, deps) !== "absent") {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: receipt.bootstrapIdentity,
+        cleanupRuntimeId: transaction.originalRuntimeId,
+        detail: "exact rollback-backup absence was not durable after OpenShell handoff",
       });
     }
 

@@ -377,7 +377,7 @@ describe("Docker managed bootstrap adapter", () => {
       .mockReturnValueOnce({ status: 0 })
       .mockImplementationOnce(() => {
         expect(fake.journal?.phase).toBe("shared-state-committed");
-        expect(fake.original).toBeNull();
+        expect(fake.original).toMatchObject({ Id: OLD_ID, State: { Running: false } });
         expect(fake.replacement?.State?.Running).toBe(true);
         return { status: 0 };
       })
@@ -572,9 +572,10 @@ describe("Docker managed bootstrap adapter", () => {
       }),
     ).rejects.toThrow(/supervisor did not reconnect/);
     expect(fake.journal?.phase).toBe("shared-state-committed");
-    expect(fake.original).toBeNull();
+    expect(fake.original).toMatchObject({ Id: OLD_ID, State: { Running: false } });
     expect(fake.replacement).toMatchObject({ Id: NEW_ID, State: { Running: true } });
-    expectEventBefore(fake.events, "journal:shared-state-committed", `rm:${OLD_ID}`);
+    expect(fake.events).toContain("journal:shared-state-committed");
+    expect(fake.events).not.toContain(`rm:${OLD_ID}`);
   });
 
   it("uses the Docker-GPU reconnect minimum instead of the shorter create timeout", async () => {

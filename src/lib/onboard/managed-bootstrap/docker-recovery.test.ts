@@ -600,6 +600,45 @@ describe("Docker managed bootstrap restart recovery", () => {
     ).toHaveLength(startCallsBeforeRecovery);
   });
 
+  it("revalidates an already-recorded handoff before committing shared state", async () => {
+    const fake = fixture({ sharedState: "pending" });
+    const transaction = await prepareTransaction(fake);
+    const replacement = await transaction.adapter.activateBootstrapReplacement({
+      handle: transaction.handle,
+      snapshot: transaction.snapshot,
+      prepared: transaction.prepared,
+      durablePreparation: transaction.durable,
+    });
+    await transaction.adapter.awaitBootstrap({
+      handle: transaction.handle,
+      snapshot: transaction.snapshot,
+      replacement,
+      timeoutSecs: 1,
+    });
+    expect(fake.journal?.phase).toBe("openshell-handoff-complete");
+    fake.deps.runCaptureOpenshell = vi.fn((args) =>
+      args[1] === "list" ? "alpha  Stopped\n" : "Name: alpha\nID: sandbox-alpha\n",
+    );
+    const callsBeforeRecovery = vi.mocked(fake.deps.runOpenshell!).mock.calls.length;
+
+    await expect(
+      createDockerManagedBootstrapAdapter(fake.deps).recoverUnfinishedTransactions(),
+    ).resolves.toMatchObject({
+      receipts: [],
+      failures: [
+        {
+          sourcePhase: "openshell-handoff-complete",
+          code: "commit-state-indeterminate",
+          detail: expect.stringContaining("name-only lifecycle API"),
+        },
+      ],
+    });
+    expect(vi.mocked(fake.deps.runOpenshell!).mock.calls).toHaveLength(callsBeforeRecovery);
+    expect(fake.journal?.phase).toBe("openshell-handoff-complete");
+    expect(fake.original).not.toBeNull();
+    expect(fake.sharedState).toBe("pending");
+  });
+
   it("fails closed for a stopped committed sandbox until an operator starts it", async () => {
     const fake = fixture({
       dockerRemoveFailures: [new Error("injected crash before exact Docker removal")],
@@ -689,15 +728,15 @@ describe("Docker managed bootstrap restart recovery", () => {
       receipts: [],
       failures: [
         {
-          sourcePhase: "shared-state-committed",
+          sourcePhase: "openshell-handoff-complete",
           code: "commit-state-indeterminate",
           retryable: true,
         },
       ],
     });
-    expect(fake.journal?.phase).toBe("shared-state-committed");
+    expect(fake.journal?.phase).toBe("openshell-handoff-complete");
     expect(fake.finalization).toBeNull();
-    expect(fake.sharedState).toBe("committed");
+    expect(fake.sharedState).toBe("pending");
     expect(fake.original?.State?.Running).toBe(false);
   });
 
@@ -732,15 +771,15 @@ describe("Docker managed bootstrap restart recovery", () => {
       receipts: [],
       failures: [
         {
-          sourcePhase: "shared-state-committed",
+          sourcePhase: "openshell-handoff-complete",
           code: "durable-cleanup-pending",
           retryable: true,
         },
       ],
     });
-    expect(fake.journal?.phase).toBe("shared-state-committed");
+    expect(fake.journal?.phase).toBe("openshell-handoff-complete");
     expect(fake.finalization).toBeNull();
-    expect(fake.sharedState).toBe("committed");
+    expect(fake.sharedState).toBe("pending");
   });
 
   it("restores the original when recovered shared-state commit is rejected", async () => {
