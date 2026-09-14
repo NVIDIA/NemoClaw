@@ -4,11 +4,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import type { PodmanExecutableStat } from "../podman/executable-authority";
+import { assert, describe, expect, it, vi } from "vitest";
+import { redactOnboardDiagnosticText } from "../../onboard/diagnostics/redaction";
+import {
+  PodmanExecutablePermissionError,
+  type PodmanExecutableStat,
+} from "../podman/executable-authority";
 import { openshellNotFoundDiagnosticLines, resolveOpenshell } from "./resolve";
 import {
   assertHermesPortableOpenShellExecutableAuthority,
+  assertHermesPortableOpenShellExecutableFileAuthority,
   captureHermesPortableOpenShellExecutableAuthority,
   type HermesPortableOpenShellExecutableAuthorityDeps,
 } from "./resolve-shared";
@@ -190,6 +195,92 @@ describe("lib/resolve-openshell", () => {
 
 describe("Hermes portable OpenShell executable authority", () => {
   const childEnv = { HOME: "/home/test", PATH: "/opt/nemoclaw/bin" };
+
+  it.each(["/opt/nemoclaw/bin", AUTHORITY_BINARY])(
+    "names the writable path %s and its permission remedy before execution (#11717)",
+    (rejectedPath) => {
+      const harness = executableAuthorityHarness();
+      const runVersion = vi.fn(harness.deps.runVersion);
+      let writable = true;
+      const deps = {
+        ...harness.deps,
+        runVersion,
+        lstat: (filePath: string): PodmanExecutableStat => {
+          const stat = harness.deps.lstat?.(filePath);
+          assert(stat, "Executable stat fixture is missing.");
+          return filePath === rejectedPath && writable
+            ? { ...stat, mode: BigInt(stat.mode) | 0o020n }
+            : stat;
+        },
+      };
+      const capture = () =>
+        captureHermesPortableOpenShellExecutableAuthority(
+          AUTHORITY_BINARY,
+          childEnv,
+          childEnv,
+          deps,
+        );
+
+      expect(capture).toThrow(rejectedPath);
+      expect(capture).toThrow("mode 0775");
+      expect(capture).toThrow("Remove group and other write permission");
+      expect(runVersion).not.toHaveBeenCalled();
+
+      writable = false;
+      expect(capture().executable.executablePath).toBe(AUTHORITY_BINARY);
+      expect(runVersion).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not expose unrelated filesystem errors during capture (#11717)", () => {
+    const harness = executableAuthorityHarness();
+    expect(() =>
+      captureHermesPortableOpenShellExecutableAuthority(AUTHORITY_BINARY, childEnv, childEnv, {
+        ...harness.deps,
+        lstat: () => {
+          throw new Error("private filesystem failure detail");
+        },
+      }),
+    ).toThrow(
+      /^Hermes portable OpenShell executable authority could not capture a safe executable generation$/,
+    );
+  });
+
+  it("escapes path controls and preserves onboarding diagnostic redaction (#11717)", () => {
+    const secret = `nvapi-${"a".repeat(60)}`;
+    const failure = new PodmanExecutablePermissionError(`/opt/${secret}/\u001b[31m/bin`, 0o40775n);
+    expect(redactOnboardDiagnosticText(failure.message)).not.toContain(secret);
+    expect(failure.message).not.toContain("\u001b");
+    expect(failure.message).toContain("\\u001b");
+    expect(failure.message).toContain("mode 0775");
+  });
+
+  it.each(["version", "file"])(
+    "retains permission guidance during %s revalidation (#11717)",
+    (kind) => {
+      const harness = executableAuthorityHarness();
+      const authority = captureHermesPortableOpenShellExecutableAuthority(
+        AUTHORITY_BINARY,
+        childEnv,
+        childEnv,
+        harness.deps,
+      );
+      const deps = {
+        ...harness.deps,
+        lstat: (filePath: string): PodmanExecutableStat => {
+          const stat = harness.deps.lstat?.(filePath);
+          assert(stat, "Executable stat fixture is missing.");
+          return filePath === "/opt/nemoclaw/bin" ? { ...stat, mode: 0o40775n } : stat;
+        },
+      };
+      const verify = () =>
+        kind === "version"
+          ? assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, deps)
+          : assertHermesPortableOpenShellExecutableFileAuthority(authority, childEnv, deps);
+      expect(verify).toThrow("executable generation changed after reservation");
+      expect(verify).toThrow("Remove group and other write permission");
+    },
+  );
 
   it("captures and reuses the exact canonical OpenShell 0.0.116 generation (#9211)", () => {
     const harness = executableAuthorityHarness();
