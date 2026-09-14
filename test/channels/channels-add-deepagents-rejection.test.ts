@@ -80,9 +80,7 @@ credentials.prompt = async (msg) => { credentialCalls.prompt.push(msg); return "
 const onboard = require(${d("onboard.js")});
 onboard.isNonInteractive = () => true;
 
-const onboardProviders = require(${d("onboard/providers.js")});
 const providerCalls = [];
-onboardProviders.upsertMessagingProviders = (defs) => { providerCalls.push(...defs); };
 
 const registry = require(${d("state/registry.js")});
 const registryUpdates = [];
@@ -108,6 +106,10 @@ agentDefs.loadAgent = () => ({
 });
 
 const channelModule = require(${d("actions/sandbox/policy-channel.js")});
+const policyChannelDeps = require(${d("actions/sandbox/policy-channel-dependencies.js")});
+policyChannelDeps.policyChannelDependencies.upsertMessagingProviders = (defs) => {
+  providerCalls.push(...defs);
+};
 
 let exitCode = null;
 const originalExit = process.exit;

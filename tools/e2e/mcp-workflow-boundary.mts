@@ -81,11 +81,11 @@ const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window l
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01";
+  "c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
 const STABLE_MCP_INSTALL_CONTENT_SHA256 =
-  "ea6b6f327b759097f0018478f2eef7bbd11eba3a88a3fbb631431f5a48c2611c";
+  "3cfce1666262924082f93257212eadc6f133c60eb705263c715aa9f79c293943";
 const CREDENTIAL_WINDOW_INSTALL_CONTENT_SHA256 =
-  "c2b5483a704eb73784dfc1c466cd13f584c0a91c7696d9723c2b7a9783a0e060";
+  "8fb967344552c39a0c01b2901b6ec7bfa527f248e7d3aaf3edf63fbcc1c376c0";
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -106,6 +106,11 @@ const FORBIDDEN_INFERENCE_SECRETS =
   /ANTHROPIC_API_KEY|AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|COMPATIBLE_(?:ANTHROPIC_)?API_KEY|GITHUB_TOKEN|GH_TOKEN|NVIDIA_(?:INFERENCE_)?API_KEY|OPENAI_API_KEY/;
 
 type UnknownRecord = Record<string, unknown>;
+
+function nodeSetupSecurityBoundary(step: UnknownRecord): UnknownRecord {
+  const { "node-version": _nodeVersion, ...inputs } = asRecord(step.with);
+  return { ...step, with: inputs };
+}
 
 function asRecord(value: unknown): UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -264,9 +269,12 @@ function validateJobIdentity(
       "mcp-bridge must use the trusted execution plan",
     );
   } else {
-    if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
-      errors.push("mcp-bridge-dev must remain default-enabled");
-    }
+    requireEqual(
+      errors,
+      env.E2E_DEFAULT_ENABLED,
+      "0",
+      "mcp-bridge-dev must remain explicit-only after the stable 0.0.116 cutover",
+    );
     requireEqual(
       errors,
       env.NEMOCLAW_OPENSHELL_CHANNEL,
@@ -345,7 +353,8 @@ function validateJobSecurity(
   const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
   if (
     jobName === "mcp-bridge-dev" &&
-    (contentSha256(trustedNodeSetup) !== MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
+    (contentSha256(nodeSetupSecurityBoundary(trustedNodeSetup)) !==
+      MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
       trustedNodeSetupIndex !== checkoutIndex - 1)
   ) {
     errors.push(
@@ -593,7 +602,11 @@ function validateJobExecution(
     }
     if (
       installIndex < 0 ||
-      contentSha256(steps.slice(0, installIndex + 1)) !== MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
+      contentSha256(
+        steps
+          .slice(0, installIndex + 1)
+          .map((step) => (step === trustedNodeSetup ? nodeSetupSecurityBoundary(step) : step)),
+      ) !== MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
     ) {
       errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
     }
@@ -795,8 +808,8 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
   if (!/^actions\/setup-node@[a-f0-9]{40}$/u.test(asString(setup.uses))) {
     errors.push(`${DEV_ARTIFACT_JOB} must use a SHA-pinned Node setup`);
   }
-  if (!hasExactEntries(asRecord(setup.with), { "node-version": 22 })) {
-    errors.push(`${DEV_ARTIFACT_JOB} must use only the reviewed Node version`);
+  if (Object.keys(asRecord(setup.with)).some((key) => key !== "node-version")) {
+    errors.push(`${DEV_ARTIFACT_JOB} must not enable additional Node setup inputs`);
   }
   const resolve = namedStep(job, "Resolve immutable OpenShell dev artifact");
   requireEqual(
@@ -895,7 +908,7 @@ function validateCredentialWindowJob(
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
     E2E_OBSERVABLE_OUTCOME:
-      "Credential expiry rotation detach and rebuild preserve the intended access window",
+      "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
       "Ubuntu managed runtime host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,

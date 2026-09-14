@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --no-warnings --experimental-strip-types
+#!/usr/bin/env -S node --no-warnings
 
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
@@ -28,6 +28,7 @@ import {
 } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
+  MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import type { ProtectedManagedImagePlatform } from "./protected-managed-image-contract.ts";
@@ -131,7 +132,10 @@ function docker(
   return normalized;
 }
 
-function requestFor(agent: ShippedManagedImageAgent, changed = false): ManagedStartupRootApplyRequest {
+function requestFor(
+  agent: ShippedManagedImageAgent,
+  changed = false,
+): ManagedStartupRootApplyRequest {
   return createManagedStartupRootApplyRequest({
     agent,
     encodedProfile: encodeManagedStartupProfile(
@@ -607,6 +611,31 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     ]).stdout;
     if (!config.includes("nvidia/nemotron-3-ultra-550b-a55b")) {
       throw new Error("managed agent configuration does not contain the requested model");
+    }
+    if (input.agent === "openclaw") {
+      const parsed = JSON.parse(config) as {
+        agents?: {
+          defaults?: { heartbeat?: { every?: unknown; isolatedSession?: unknown } };
+        };
+      };
+      if (
+        parsed.agents?.defaults?.heartbeat?.every !==
+          MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY ||
+        parsed.agents?.defaults?.heartbeat?.isolatedSession !== true
+      ) {
+        throw new Error("managed OpenClaw configuration lost the isolated heartbeat settings");
+      }
+      docker([
+        "exec",
+        "--user",
+        "sandbox",
+        "--workdir",
+        "/sandbox/.openclaw",
+        containerId,
+        "sha256sum",
+        "--check",
+        ".config-hash",
+      ]);
     }
     const runtimeEnvironment = docker([
       "exec",

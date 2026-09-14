@@ -6,7 +6,7 @@ export const HERMES_E2E_PHASES = [
   "install and onboard Hermes sandbox",
   "validate sandbox layout, health, and skill activation",
   "restart Hermes gateway and validate supervision",
-  "exercise hosted and inference.local routes",
+  "exercise Hermes ACP lifecycle and inference routes",
   "read logs and validate Hermes configuration integrity",
   "finalize Hermes sandbox resources",
 ] as const;

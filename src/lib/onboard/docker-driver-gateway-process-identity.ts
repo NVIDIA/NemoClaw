@@ -5,6 +5,10 @@ import fs from "node:fs";
 
 import { resolveGatewayName } from "./gateway-binding";
 import {
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
+  NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY,
+} from "./docker-driver-gateway-config";
+import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
 } from "./gateway-process-identity";
@@ -42,6 +46,9 @@ export function readDockerDriverGatewayProcessEnvironment(
     }
   } catch {
     return null;
+  }
+  if (env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] === undefined) {
+    env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY;
   }
   return env;
 }

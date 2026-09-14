@@ -40,5 +40,7 @@ It also broadens Deferred N1x detection and gives N1x managed vLLM a dedicated s
 - DGX Station Express host preparation now ignores NemoClaw and OpenShell agent processes owned by another user for non-root and `sudo` controllers. It still blocks the controller agent processes and keeps direct-root agent checks, vLLM conflicts, and Docker conflicts host-wide.
   Related change: [PR #10689](https://github.com/NVIDIA/NemoClaw/pull/10689).
 - Deferred N1x preview detection now accepts NVIDIA display-class GPUs without requiring one PCI device ID and recognizes OEM DGX Spark FastOS identity.
-  N1x managed vLLM uses a dedicated Qwen3.6 35B NVFP4 serving profile with a physically exercised memory, context, concurrency, and batching envelope; N1x remains Deferred pending complete Express end-to-end validation.
+  v0.0.118 introduced a dedicated N1x Qwen3.6 35B NVFP4 serving profile with its original memory, context, concurrency, and batching envelope physically exercised.
+  For the current limits and validation status, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm#use-n1x-express).
+  N1x remains Deferred pending complete Express end-to-end validation.
   Related changes: [PR #10099](https://github.com/NVIDIA/NemoClaw/pull/10099), [PR #10721](https://github.com/NVIDIA/NemoClaw/pull/10721), and [PR #10625](https://github.com/NVIDIA/NemoClaw/pull/10625).

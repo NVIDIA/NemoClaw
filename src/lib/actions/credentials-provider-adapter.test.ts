@@ -5,10 +5,7 @@ import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import type {
-  OpenShellProviderAdapter,
-  OpenShellProviderError,
-} from "../adapters/openshell/provider-adapter";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
 import { runCredentialsListAction } from "./credentials/list";
@@ -55,7 +52,15 @@ function providerAdapter(
   });
   const detachProvider: OpenShellProviderAdapter["detachProvider"] = async () => ({
     ok: true,
+    value: { changed: true },
   });
+  const attachProvider: OpenShellProviderAdapter["attachProvider"] = async () => ({ ok: true });
+  const listProviderAttachments: OpenShellProviderAdapter["listProviderAttachments"] =
+    async () => ({ ok: true, value: { names: [] } });
+  const configureProviderRefresh: OpenShellProviderAdapter["configureProviderRefresh"] =
+    async () => ({ ok: true });
+  const getProviderRefreshStatus: OpenShellProviderAdapter["getProviderRefreshStatus"] =
+    async () => ({ ok: true, value: { status: "refreshed" } });
   return {
     listProviders: vi.fn(listProviders),
     createProvider: vi.fn(createProvider),
@@ -65,6 +70,10 @@ function providerAdapter(
     inspectProviderProfile: vi.fn(inspectProviderProfile),
     deleteProvider: vi.fn(deleteProvider),
     detachProvider: vi.fn(detachProvider),
+    attachProvider: vi.fn(attachProvider),
+    listProviderAttachments: vi.fn(listProviderAttachments),
+    configureProviderRefresh: vi.fn(configureProviderRefresh),
+    getProviderRefreshStatus: vi.fn(getProviderRefreshStatus),
     ...overrides,
   };
 }
@@ -75,7 +84,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [],
     });
   });
 
@@ -109,6 +117,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       fromExisting: false,
       timeoutMs: 30_000,
     });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
@@ -299,7 +308,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     },
   );
 
-  it("imports the bundled OpenAI profile through the provider adapter (#9806)", async () => {
+  it("does not import a compatibility profile for the OpenAI provider (#11229)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");
     const adapter = providerAdapter();
 
@@ -315,15 +324,11 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
-      timeoutMs: 30_000,
-    });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
-  it("canonicalizes a mixed-case bundled profile through provider creation (#9806)", async () => {
+  it("does not import a compatibility profile for a mixed-case OpenAI type (#11229)", async () => {
     const adapter = providerAdapter();
 
     const result = await runCredentialsAddAction(
@@ -338,11 +343,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
-      timeoutMs: 30_000,
-    });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.inspectProviderProfile).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
       profileType: "openai",
@@ -421,16 +422,17 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
       ok: false,
       error: testCase.createError,
     });
-    const listProviders: OpenShellProviderAdapter["listProviders"] = async () => testCase.inventory;
+    const listProviders = vi
+      .fn<OpenShellProviderAdapter["listProviders"]>()
+      .mockResolvedValue(testCase.inventory);
     const adapter = providerAdapter({
       createProvider: vi.fn(createProvider),
-      listProviders: vi.fn(listProviders),
+      listProviders,
     });
 
     const result = await runCredentialsAddAction(
@@ -452,36 +454,6 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.failureLines).toEqual(expect.arrayContaining(testCase.expectedLines));
     expect(result.failureLines.join("\n")).not.toContain("<sandbox> rebuild");
     expect(forgetExtraProvider).toHaveBeenCalledTimes(testCase.forgetCalls);
-  });
-
-  it("does not create an OpenAI provider after profile import fails (#9806)", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
-      ok: false,
-      error: {
-        kind: "command",
-        reason: "profile_incompatible",
-        message: "The OpenShell provider profile does not match the checked-in boundary.",
-      },
-    });
-    const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
-
-    const result = await runCredentialsAddAction(
-      {
-        provider: "openai-prod",
-        type: "openai",
-        credentials: ["OPENAI_API_KEY"],
-        configPairs: [],
-        fromExisting: false,
-      },
-      { providerAdapter: adapter },
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines).toContain(
-      "  OpenShell provider profile 'openai' does not match NemoClaw's checked-in credential boundary.",
-    );
-    expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
   it("does not create a provider from an incompatible bundled profile (#9806)", async () => {
@@ -513,77 +485,6 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
-
-  it.each([
-    [
-      "authentication",
-      {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the provider operation.",
-      },
-      ["  Restore OpenShell authentication for the selected gateway, then retry."],
-    ],
-    [
-      "unreachable gateway",
-      {
-        kind: "transport",
-        reason: "unreachable",
-        message: "OpenShell could not reach the selected gateway.",
-      },
-      ["  Start the gateway again with `nemoclaw onboard`.", "  Then retry this command."],
-    ],
-    [
-      "timeout",
-      { kind: "timeout", message: "The OpenShell provider operation timed out." },
-      ["  Confirm the selected OpenShell gateway is available, then retry."],
-    ],
-    [
-      "schema mismatch",
-      {
-        kind: "schema",
-        message: "The OpenShell CLI and gateway provider schemas do not match.",
-      },
-      ["  Update OpenShell with scripts/install-openshell.sh, then retry."],
-    ],
-    [
-      "invalid bundled profile",
-      {
-        kind: "validation",
-        message: "The checked-in OpenShell provider profile is invalid or unreadable.",
-      },
-      ["  Restore the bundled provider profile from this NemoClaw release, then retry."],
-    ],
-  ] satisfies ReadonlyArray<readonly [string, OpenShellProviderError, readonly string[]]>)(
-    "gives actionable recovery for a typed %s profile import failure (#9806)",
-    async (_case, error, recoveryLines) => {
-      vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-      const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] =
-        async () => ({
-          ok: false,
-          error,
-        });
-      const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
-
-      const result = await runCredentialsAddAction(
-        {
-          provider: "openai-prod",
-          type: "openai",
-          credentials: ["OPENAI_API_KEY"],
-          configPairs: [],
-          fromExisting: false,
-        },
-        { providerAdapter: adapter },
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(result.failureLines).toEqual([
-        "  Could not import bundled provider profile 'openai'.",
-        ...recoveryLines,
-        `  ${error.message}`,
-      ]);
-      expect(adapter.createProvider).not.toHaveBeenCalled();
-    },
-  );
 
   it("does not create from existing credentials when profile identity is unverified (#9806)", async () => {
     const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] =
@@ -620,23 +521,26 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
-  it("creates from existing credentials when inspected keys do not overlap managed MCP reservations (#9806)", async () => {
-    setGlobalCliActionRuntimeHooksForTest({
-      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
-      recordExtraProvider: () => true,
-      forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [
-        {
-          sandboxName: "hermes",
-          server: "maas-glean",
-          credentialKeys: ["MAAS_GLEAN_TOKEN"],
-        },
-      ],
-    });
+  it("creates from existing credentials when live MCP provider keys do not overlap (#9806)", async () => {
     const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
       async () => ({ ok: true, value: { credentialKeys: ["CUSTOM_TOKEN"] } }),
     );
-    const adapter = providerAdapter({ inspectProviderProfile });
+    const adapter = providerAdapter({
+      inspectProviderProfile,
+      listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
+        ok: true,
+        value: { names: ["hermes-mcp-maas"] },
+      })),
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: true,
+        value: {
+          name: "hermes-mcp-maas",
+          type: "nemoclaw-mcp-v1",
+          credentialKeys: ["MAAS_GLEAN_TOKEN"],
+          configKeys: [],
+        },
+      })),
+    });
 
     const result = await runCredentialsAddAction(
       {
@@ -651,26 +555,31 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(0);
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
+    expect(adapter.listProviders).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
-  it("rejects existing credentials whose inspected key overlaps a managed MCP reservation (#9806)", async () => {
-    setGlobalCliActionRuntimeHooksForTest({
-      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
-      recordExtraProvider: () => true,
-      forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [
-        {
-          sandboxName: "hermes",
-          server: "maas-glean",
-          credentialKeys: ["MAAS_GLEAN_TOKEN"],
-        },
-      ],
-    });
+  it("defers overlapping retained-provider checks until an actual sandbox attachment (#9806)", async () => {
     const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
       async () => ({ ok: true, value: { credentialKeys: ["MAAS_GLEAN_TOKEN"] } }),
     );
-    const adapter = providerAdapter({ inspectProviderProfile });
+    const adapter = providerAdapter({
+      inspectProviderProfile,
+      listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
+        ok: true,
+        value: { names: ["destination-telegram-bridge"] },
+      })),
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: true,
+        value: {
+          name: "destination-telegram-bridge",
+          type: "nemoclaw-mcp-v1",
+          credentialKeys: ["MAAS_GLEAN_TOKEN"],
+          configKeys: [],
+        },
+      })),
+    });
 
     const result = await runCredentialsAddAction(
       {
@@ -683,12 +592,11 @@ describe("credential actions use typed OpenShell provider results", () => {
       { providerAdapter: adapter },
     );
 
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain(
-      "Credential key 'MAAS_GLEAN_TOKEN' is reserved by managed MCP server 'maas-glean' on sandbox 'hermes'",
-    );
+    expect(result.exitCode).toBe(0);
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
-    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.listProviders).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {
@@ -817,7 +725,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime,
       recordExtraProvider: () => true,
       forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [],
     });
     const promptSpy = vi.spyOn(readline, "createInterface").mockImplementation(() => {
       throw new Error("credentials reset prompted for an invalid provider name");
@@ -867,7 +774,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {
       operations.push("detach:alpha");
-      return { ok: true };
+      return { ok: true, value: { changed: true } };
     });
     const adapter = providerAdapter({ deleteProvider, detachProvider });
 
@@ -922,6 +829,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
       ok: true,
+      value: { changed: true },
     }));
     const adapter = providerAdapter({ deleteProvider, detachProvider });
 
@@ -1017,7 +925,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
@@ -1063,7 +970,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
@@ -1082,6 +988,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
       ok: true,
+      value: { changed: true },
     }));
     const adapter = providerAdapter({ deleteProvider, detachProvider });
 
@@ -1108,7 +1015,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
@@ -1169,6 +1075,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
       ok: true,
+      value: { changed: true },
     }));
     const adapter = providerAdapter({ deleteProvider, detachProvider });
 

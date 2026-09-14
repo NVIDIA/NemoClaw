@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { createCliOpenShellSandboxCommandExecutor } from "../../src/lib/adapters/openshell/sandbox-command-cli.ts";
 import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
@@ -52,6 +53,7 @@ import {
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
+  MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
@@ -67,6 +69,7 @@ import {
 // and profile policy remains in managed-image-protected-runtime-contract.ts.
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
@@ -367,12 +370,7 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
 }
 
 export function managedImageOpenShellBasePolicyPath(agent: ShippedManagedImageAgent): string {
-  return path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    ...MANAGED_AGENT_BASE_POLICIES[agent],
-  );
+  return path.resolve(REPOSITORY_ROOT, ...MANAGED_AGENT_BASE_POLICIES[agent]);
 }
 
 export interface ManagedImageCommandResult {
@@ -501,6 +499,63 @@ function managedConfigPath(agent: ShippedManagedImageAgent): string {
   }
 }
 
+export function assertOpenClawHeartbeatStart(
+  containerId: string,
+  env: NodeJS.ProcessEnv,
+  runCommand: ManagedImageCommandRunner = commandResult,
+): void {
+  if (!/^[a-f0-9]{64}$/u.test(containerId)) {
+    throw new Error("OpenClaw heartbeat check requires one exact container ID");
+  }
+  const result = runCommand(["docker", "logs", containerId], env, 15_000);
+  if (result.status !== 0 || result.error) {
+    throw new Error(
+      `could not read managed OpenClaw startup logs (status=${String(result.status)}, spawnError=${String(Boolean(result.error))})`,
+    );
+  }
+  const heartbeatStart = `${result.stdout ?? ""}\n${result.stderr ?? ""}`
+    .split(/\r?\n/u)
+    .find((line) => line.includes("heartbeat: started"));
+  const configuredInterval = /^(\d+)([smh])$/u.exec(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY);
+  const intervalUnitMs = { s: 1_000, m: 60_000, h: 3_600_000 }[
+    configuredInterval?.[2] as "s" | "m" | "h"
+  ];
+  const expectedIntervalMs = configuredInterval
+    ? Number(configuredInterval[1]) * intervalUnitMs
+    : Number.NaN;
+  const observedIntervalMs = /intervalMs["'\s:=]+(\d+)(?:\D|$)/u.exec(heartbeatStart ?? "")?.[1];
+  if (
+    !Number.isSafeInteger(expectedIntervalMs) ||
+    observedIntervalMs !== String(expectedIntervalMs)
+  ) {
+    throw new Error(
+      `managed OpenClaw did not start with the requested ${expectedIntervalMs} ms heartbeat`,
+    );
+  }
+}
+
+export function managedOpenClawHeartbeatProbe(
+  configPath: string = managedConfigPath("openclaw"),
+  nodeExecutable = "/usr/local/bin/node",
+  sha256sumExecutable = "sha256sum",
+): string {
+  const shellQuote = (value: string): string => `'${value.replace(/'/gu, `'\\''`)}'`;
+  const configProbe = [
+    shellQuote(nodeExecutable),
+    "-e",
+    shellQuote(
+      "const fs=require('node:fs');const c=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const h=c?.agents?.defaults?.heartbeat;if(h?.every!==process.argv[2]||h?.isolatedSession!==true)process.exit(1);",
+    ),
+    shellQuote(configPath),
+    shellQuote(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
+  ].join(" ");
+  return [
+    configProbe,
+    `cd ${shellQuote(path.dirname(configPath))}`,
+    `${shellQuote(sha256sumExecutable)} --check .config-hash >/dev/null`,
+  ].join(" && ");
+}
+
 export function managedImageOpenShellProbe(
   agent: ShippedManagedImageAgent,
   model: string = MODEL,
@@ -543,6 +598,14 @@ export function managedImageOpenShellProbe(
       `${agent} managed model configuration`,
       `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
     ),
+    ...(agent === "openclaw"
+      ? [
+          probeStep(
+            "OpenClaw managed isolated heartbeat and configuration hash",
+            managedOpenClawHeartbeatProbe(),
+          ),
+        ]
+      : []),
     probeStep(
       "managed runtime environment must not be a symbolic link",
       "test ! -L /run/nemoclaw/managed-startup-runtime.env",
@@ -784,8 +847,10 @@ function assertProtectedLocalInference(
 export function failureInjectingAdapter(
   onboard: OnboardModule,
   stateRoot: string,
+  commandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT }),
 ): ManagedBootstrapAdapter {
   const adapter = createDockerManagedBootstrapAdapter({
+    commandExecutor,
     runCaptureOpenshell: onboard.runCaptureOpenshell,
     runOpenshell: onboard.runOpenshell,
     sleep: onboard.sleepSeconds,
@@ -1139,6 +1204,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           detail: null,
           at: new Date().toISOString(),
         });
+    const commandExecutor = createCliOpenShellSandboxCommandExecutor({
+      hostCwd: REPOSITORY_ROOT,
+    });
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
       flow = await runSandboxGpuCreateFlow(
@@ -1179,6 +1247,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           ...startupPlan,
         },
         {
+          commandExecutor,
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
           sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),
@@ -1188,7 +1257,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           ...(input.failureInjection
             ? {
                 createManagedBootstrapAdapter: (stateRoot: string) =>
-                  failureInjectingAdapter(onboard!, stateRoot),
+                  failureInjectingAdapter(onboard!, stateRoot, commandExecutor),
               }
             : {}),
         },
@@ -1246,6 +1315,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 
       await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
       ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
+      if (input.agent === "openclaw") {
+        assertOpenClawHeartbeatStart(ownedContainerId, launch.sandboxEnv);
+      }
       if (input.localProvider && !afterLocalInference) {
         assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
       }

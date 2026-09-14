@@ -50,7 +50,7 @@ describe("Hermes portable sandbox endpoint provenance", () => {
 
     expect(calls.skipped).not.toHaveBeenCalledWith("sandbox", "saved");
     expect(createSandbox).toHaveBeenCalledOnce();
-    expect(createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ recreate: false });
+    expect(createSandbox.mock.calls[0]?.at(-2)).toMatchObject({ recreate: false });
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith(
       "sandbox",
@@ -70,7 +70,7 @@ describe("Hermes portable sandbox endpoint provenance", () => {
       hermesPortableLifecycle: true,
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({ endpointSource: null });
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
       expect.objectContaining({ endpointSource: null }),
@@ -88,6 +88,6 @@ describe("Hermes portable sandbox endpoint provenance", () => {
       hostLocalInferenceRouteOnly: false,
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({ endpointSource: null });
   });
 });

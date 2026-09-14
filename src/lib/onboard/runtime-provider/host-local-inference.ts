@@ -292,6 +292,13 @@ export interface HostLocalLlamaCppLifecycleInput {
   readonly plan: LlamaCppGgufCachePlan;
   readonly probeImageReference: string;
   readonly readinessTimeoutSeconds: number;
+  /**
+   * When "host-process", the private bridge loopback health proof runs from
+   * this CLI process instead of a host-network container, for runtimes whose
+   * host-network containers cannot share the distro loopback (Docker Desktop
+   * WSL).
+   */
+  readonly loopbackProbe?: "host-process";
 }
 
 export interface HostLocalLlamaCppLifecycle {

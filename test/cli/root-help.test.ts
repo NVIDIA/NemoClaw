@@ -32,6 +32,8 @@ describe("root help", () => {
     expect(output).toContain("sandbox commands start with a sandbox name");
     expect(output).toContain("nemoclaw status");
     expect(output).toContain("nemoclaw <name> status");
+    expect(output).toContain("nemoclaw doctor");
+    expect(output).toContain("nemoclaw <name> doctor");
   });
 
   it("describes onboard agent selection and the global agent runtime list", () => {

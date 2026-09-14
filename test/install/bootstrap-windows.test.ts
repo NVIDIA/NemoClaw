@@ -335,7 +335,8 @@ Start-DockerDesktop
       expect(parsed.startCalls).toEqual([]);
       expect(
         (parsed.messages as string[]).some(
-          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+          (message) =>
+            message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
         ),
       ).toBe(true);
     },
@@ -367,7 +368,8 @@ $engineReady = Wait-DockerDesktopEngine -TimeoutSeconds 1
       expect(parsed.engineReady).toBe(false);
       expect(
         (parsed.messages as string[]).some(
-          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+          (message) =>
+            message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
         ),
       ).toBe(true);
     },
@@ -397,7 +399,8 @@ Restart-DockerDesktop
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
       expect(
         (parsed.messages as string[]).some(
-          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+          (message) =>
+            message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
         ),
       ).toBe(true);
     },

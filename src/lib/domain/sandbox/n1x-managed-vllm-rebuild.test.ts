@@ -12,7 +12,32 @@ import {
   parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
 } from "../../onboard/runtime-provider/host-local-inference";
-import { isRecordedN1xManagedVllmRebuildEligible } from "./n1x-managed-vllm-rebuild";
+import {
+  isDeferredN1xManagedVllmAcceptanceRoute,
+  isRecordedN1xManagedVllmRebuildEligible,
+} from "./n1x-managed-vllm-rebuild";
+
+describe("Deferred N1x managed-vLLM acceptance route", () => {
+  const accepted = {
+    provider: "vllm-local",
+    model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    endpointUrl: null,
+    endpointSource: null,
+    nimContainer: null,
+    openshellDriver: "docker",
+  };
+
+  it.each([
+    ["the exact route", accepted, true],
+    ["another model", { ...accepted, model: "other" }, false],
+    ["a recorded endpoint", { ...accepted, endpointUrl: "http://localhost:8000/v1" }, false],
+    ["another endpoint source", { ...accepted, endpointSource: "inference-set" }, false],
+    ["a NIM container", { ...accepted, nimContainer: "nemoclaw-nim" }, false],
+    ["another driver", { ...accepted, openshellDriver: "kubernetes" }, false],
+  ])("classifies %s", (_case, route, expected) => {
+    expect(isDeferredN1xManagedVllmAcceptanceRoute(route)).toBe(expected);
+  });
+});
 
 describe("recorded N1x managed-vLLM rebuild eligibility", () => {
   const n1xExpressEntry = {
@@ -39,7 +64,7 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
       sandboxEntry,
       rebuildSelection,
       parseHostLocalInferenceReceipt,
-      vllmPort,
+      { vllmPort },
     );
 
   it.each([
@@ -57,6 +82,27 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
     },
   ])("accepts the v0.0.109 N1x Express selection with a $state (#9292)", ({ sandboxEntry }) => {
     expect(eligible(sandboxEntry)).toBe(true);
+  });
+
+  it("accepts normalized N1x Express intent with a derived endpoint (#10959)", () => {
+    expect(
+      eligible({
+        ...n1xExpressEntry,
+        endpointSource: null,
+        deferredN1xManagedVllmAccepted: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts an explicit preview retry for a normalized legacy record (#10959)", () => {
+    expect(
+      isRecordedN1xManagedVllmRebuildEligible(
+        { ...n1xExpressEntry, endpointSource: null },
+        n1xExpressSelection,
+        parseHostLocalInferenceReceipt,
+        { explicitPreviewIntent: true },
+      ),
+    ).toBe(true);
   });
 
   it("accepts a canonical vLLM receipt on the exact N1x Express selection (#9292)", () => {
@@ -121,6 +167,30 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
     {
       caseName: "different endpoint source",
       sandboxEntry: { ...n1xExpressEntry, endpointSource: "inference-set" },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "normalized source without preview provenance",
+      sandboxEntry: { ...n1xExpressEntry, endpointSource: null },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "normalized source with a recorded endpoint",
+      sandboxEntry: {
+        ...n1xExpressEntry,
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        endpointSource: null,
+        deferredN1xManagedVllmAccepted: true,
+      },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "malformed preview acceptance",
+      sandboxEntry: {
+        ...n1xExpressEntry,
+        endpointSource: null,
+        deferredN1xManagedVllmAccepted: "true",
+      },
       rebuildSelection: n1xExpressSelection,
     },
     {

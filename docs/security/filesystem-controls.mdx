@@ -41,7 +41,9 @@ This directory remains writable so the agent can manage its own config, install 
 NemoClaw does not provide post-provisioning immutability for the OpenClaw config or state tree.
 
 - **DAC permissions (default).**
-  The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly.
+  When the existing process checks verify that the agent and gateway share the sandbox identity, `/sandbox/.openclaw` uses native mode `0700` and `openclaw.json` uses `0600`.
+  Separate gateway identities and unverified layouts retain `2770` (setgid `sandbox:sandbox`) and `0660` so existing shared access continues.
+  Rebuild existing sandboxes after updating NemoClaw to apply these defaults.
 - **Config integrity hash.**
   The image includes a SHA256 hash of `openclaw.json`.
   In mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor.
@@ -53,7 +55,7 @@ NemoClaw does not provide post-provisioning immutability for the OpenClaw config
 
 | Aspect | Detail |
 |---|---|
-| Default | The sandbox keeps `/sandbox/.openclaw` writable (`2770 sandbox:sandbox`), sets `openclaw.json` to `660 sandbox:sandbox`, lets the agent manage state directly, and has the entrypoint place `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. The gateway process does not receive the token through its environment or process arguments. |
+| Default | The sandbox user owns writable config and state, with private permissions for verified same-user launches. The entrypoint places `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. The gateway process does not receive the token through its environment or process arguments. |
 | What you can change | Use supported host commands for managed config changes. Use OpenShell policy to constrain filesystem access outside the writable agent state tree. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | Treat agent config and state as agent-controlled. Keep credentials in OpenShell providers, restrict network policy, and recreate the sandbox from trusted state after suspected compromise. |
@@ -70,13 +72,15 @@ Messaging sessions such as WhatsApp pairing can remain mutable by design so they
 
 The Hermes config and state tree remains mutable after provisioning.
 NemoClaw does not prevent the sandbox identity from changing paths that its Unix permissions allow.
+Hermes startup and restart adopt a stable config snapshot after validating its paths and secret boundary.
+The native `mcp_servers` map in that snapshot is authoritative, including direct edits; there is no separate host-side MCP registry comparison.
 
 | Aspect | Detail |
 |---|---|
 | Default | The Hermes config tree contains NemoClaw-generated config plus mutable runtime state. |
-| What you can change | Use host-side NemoClaw commands for durable model, provider, messaging, and policy changes; inspect files directly only for debugging. |
-| Risk of direct edits | Direct edits to generated config can drift from the host registry and may be lost on rebuild. |
-| Recommendation | For sensitive workloads, keep generated config under NemoClaw control and back up Hermes state before destructive operations. |
+| What you can change | Hermes and the sandbox user can change mutable runtime config. Use host-side NemoClaw commands when you also need OpenShell policy and provider updates. |
+| Risk of direct edits | Invalid config can prevent Hermes from starting. A direct MCP edit cannot by itself create the matching OpenShell policy or credential binding. |
+| Recommendation | Keep credentials in OpenShell providers. Back up Hermes state before destructive operations. |
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -86,18 +90,18 @@ NemoClaw writes `config.toml` during onboarding and rebuilds.
 Direct edits to this file can be overwritten when NemoClaw regenerates the managed inference route.
 
 The managed Deep Agents image deliberately omits raw provider and service credentials from generated configuration.
-Credential-bearing files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are treated as user-managed files and are not included in NemoClaw snapshots.
+Credential-bearing files such as `.deepagents/.env` remain excluded from NemoClaw snapshots. The native `.deepagents/.mcp.json` must contain only supported URLs and OpenShell resolver placeholders for managed entries.
 
-The managed `.deepagents/.nemoclaw-mcp.json` projection contains OpenShell placeholders and is reconstructed from host-side registry state.
+The agent-native `.deepagents/.mcp.json` contains OpenShell placeholders. NemoClaw reads it directly and carries managed entries through bounded lifecycle handoffs rather than reconstructing it from host-side registry state.
 
 The Deep Agents config and state tree remains mutable after provisioning.
 NemoClaw does not prevent the sandbox identity from changing paths that its Unix permissions allow.
 
 | Aspect | Detail |
 |---|---|
-| Default | The Deep Agents config tree contains NemoClaw-generated `config.toml`, managed MCP projection state, and mutable Deep Agents memory and skill state. |
+| Default | The Deep Agents config tree contains NemoClaw-generated `config.toml`, agent-native MCP configuration, and mutable Deep Agents memory and skill state. |
 | What you can change | Use host-side NemoClaw commands for durable model, provider, managed MCP, and policy changes; inspect or edit memory and skills through `dcode` or direct file access when appropriate. |
-| Risk of direct edits | Direct edits to generated config can drift from the host registry and may be lost on rebuild. Storing credentials in `.deepagents/.env` or user `.mcp.json` moves them outside the managed credential boundary. |
+| Risk of direct edits | Direct MCP edits remain authoritative but cannot widen OpenShell policy. Storing credentials in `.deepagents/.env` or literal values in `.mcp.json` moves them outside the managed credential boundary and is rejected by managed lifecycle operations. |
 | Recommendation | Keep generated config under NemoClaw control. Use OpenShell providers and NemoClaw MCP commands for credentials, and back up Deep Agents state before destructive operations. |
 
 </AgentOnly>

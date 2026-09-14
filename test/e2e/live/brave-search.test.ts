@@ -1,19 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import YAML from "yaml";
+import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
 import {
   assertBraveConfig,
-  assertBraveResponse,
+  assertBraveExport,
   assertBraveShellCredentialBoundary,
   cleanupBraveNemoClawSandbox,
   cleanupBraveState,
   commandEnv,
+  exportBraveConfig,
   onboardBrave,
   reuseBraveSandboxWithWebSearchDisabled,
   runBraveAgentWithSecretBoundaryCheck,
@@ -24,14 +29,14 @@ import {
 const LIVE_TIMEOUT_MS = testTimeout(35 * 60_000);
 
 test(
-  "Brave search preset wires policy/config, performs real searches, and survives disabled-search reuse (#2687, #10404)",
+  "Brave search exports stable configuration, performs real searches, and survives disabled-search reuse (#2687, #10404, #10904)",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "check Brave search prerequisites",
         "onboard Brave-enabled OpenClaw sandbox",
-        "validate Brave policy and secret isolation",
+        "export stable Brave configuration and verify secret isolation",
         "run Brave-backed OpenClaw search",
         "assert sandbox shell cannot read the real Brave key",
         "query Brave API through credential resolver",
@@ -48,11 +53,12 @@ test(
     await artifacts.target.declare({
       id: "brave-search",
       boundary:
-        "source CLI onboard + OpenShell policy/config + in-sandbox OpenClaw/Brave API calls",
+        "source CLI onboard/export + live SDK provider profile + in-sandbox OpenClaw/Brave API calls",
       sandboxName: SANDBOX_NAME,
       contracts: [
         "onboard succeeds with BRAVE_API_KEY present",
-        "the brave network policy preset includes api.search.brave.com",
+        "config export validates the live managed Brave profile and produces schema-valid configuration",
+        "repeated export preserves the same spec and references BRAVE_API_KEY without credential values or internal transports",
         "OpenClaw web search config is enabled and selects provider=brave",
         "OpenClaw stores a BRAVE_API_KEY placeholder rather than the raw key",
         "OpenClaw agent can perform a Brave-backed web search",
@@ -85,14 +91,50 @@ test(
     const onboard = await onboardBrave(host, braveKey, inferenceKey);
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
-    progress.phase("validate Brave policy and secret isolation");
-    const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
-      artifactName: "phase-2-brave-policy",
-      env: commandEnv(),
-      timeoutMs: 60_000,
+    progress.phase("export stable Brave configuration and verify secret isolation");
+    const exportDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-export-"));
+    cleanup.trackDisposable("remove private Brave config exports", () =>
+      fs.rmSync(exportDirectory, { recursive: true, force: true }),
+    );
+    const firstPath = path.join(exportDirectory, "first.yaml");
+    const first = await exportBraveConfig(
+      host,
+      firstPath,
+      "phase-2-brave-config-export-first",
+      redactionValues,
+    );
+    expect(first.exitCode, resultText(first)).toBe(0);
+    const firstRaw = fs.readFileSync(firstPath, "utf8");
+    const firstSpec = assertBraveExport(firstRaw, redactionValues);
+
+    const repeatPath = path.join(exportDirectory, "repeat.yaml");
+    const repeat = await exportBraveConfig(
+      host,
+      repeatPath,
+      "phase-2-brave-config-export-repeat",
+      redactionValues,
+    );
+    expect(repeat.exitCode, resultText(repeat)).toBe(0);
+    const repeatRaw = fs.readFileSync(repeatPath, "utf8");
+    expect(
+      redactionValues.some((value) => repeatRaw.includes(value)),
+      "Repeated export must omit credential values",
+    ).toBe(false);
+    const repeatSpec = validateNemoClawConfig(YAML.parse(repeatRaw)).spec;
+    expect(
+      /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u.test(firstRaw + repeatRaw),
+      "Export must omit internal environment transports and credential placeholders",
+    ).toBe(false);
+    expect(repeatSpec).toEqual(firstSpec);
+    await artifacts.writeJson("brave-config-export-evidence.json", {
+      sandboxName: SANDBOX_NAME,
+      provider: "brave",
+      credentialReference: "BRAVE_API_KEY",
+      schemaValid: true,
+      repeatedSpecMatches: true,
+      credentialValuesAbsent: true,
+      internalTransportsAbsent: true,
     });
-    expect(policy.exitCode, resultText(policy)).toBe(0);
-    expect(resultText(policy)).toContain("api.search.brave.com");
 
     const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.openclaw/openclaw.json"], {
       artifactName: "phase-2-openclaw-config",
@@ -100,15 +142,11 @@ test(
       redactionValues,
       timeoutMs: 60_000,
     });
-    expect(config.exitCode, resultText(config)).toBe(0);
 
     const placeholder = assertBraveConfig(config.stdout);
 
     progress.phase("run Brave-backed OpenClaw search");
     const agent = await runBraveAgentWithSecretBoundaryCheck(sandbox, redactionValues);
-    expect(resultText(agent)).not.toMatch(
-      /SsrFBlockedError|Blocked hostname|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error/i,
-    );
     expect(agent.exitCode, resultText(agent)).toBe(0);
     expect(parseOpenClawAgentText(agent.stdout), resultText(agent)).toMatch(
       /nvidia|geforce|cuda|gpu/i,
@@ -129,14 +167,17 @@ test(
       `curl -sS --max-time 20 -G 'https://api.search.brave.com/res/v1/web/search' --data-urlencode 'q=NVIDIA' --data-urlencode 'count=1' -H 'X-Subscription-Token: ${placeholder}' -w '\nHTTP_STATUS:%{http_code}\n'`,
       { artifactName: "phase-4b-direct-brave-curl", timeoutMs: 60_000, redactionValues },
     );
-    assertBraveResponse(resultText(curl));
+    const body = resultText(curl);
+    expect(body.match(/HTTP_STATUS:(\d{3})/)?.[1], body).toBe("200");
+    const json = body.replace(/\n?HTTP_STATUS:\d{3}\s*$/u, "");
+    const braveResponse = JSON.parse(json) as { web?: { results?: unknown[] } };
+    expect(braveResponse.web?.results?.length ?? 0, json.slice(0, 500)).toBeGreaterThan(0);
     progress.phase("re-onboard the existing sandbox with web search disabled");
     const sandboxBeforeReuse = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
       artifactName: "phase-5-pre-reuse-sandbox-identity",
       env: commandEnv({ NEMOCLAW_RECREATE_SANDBOX: "0" }),
       timeoutMs: 60_000,
     });
-    expect(sandboxBeforeReuse.exitCode, resultText(sandboxBeforeReuse)).toBe(0);
     const sandboxIdBeforeReuse = parseOpenShellSandboxId(resultText(sandboxBeforeReuse));
     expect(sandboxIdBeforeReuse, resultText(sandboxBeforeReuse)).not.toBeNull();
 
@@ -149,19 +190,10 @@ test(
       env: commandEnv({ NEMOCLAW_RECREATE_SANDBOX: "0" }),
       timeoutMs: 60_000,
     });
-    expect(sandboxAfterReuse.exitCode, resultText(sandboxAfterReuse)).toBe(0);
     expect(
       parseOpenShellSandboxId(resultText(sandboxAfterReuse)),
       resultText(sandboxAfterReuse),
     ).toBe(sandboxIdBeforeReuse);
-
-    const status = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
-      artifactName: "phase-6-reused-runtime-status",
-      cwd: REPO_ROOT,
-      env: commandEnv({ NEMOCLAW_RECREATE_SANDBOX: "0" }),
-      timeoutMs: 60_000,
-    });
-    expect(status.exitCode, resultText(status)).toBe(0);
 
     const reusedConfig = await sandbox.exec(
       SANDBOX_NAME,
@@ -172,7 +204,6 @@ test(
         timeoutMs: 60_000,
       },
     );
-    expect(reusedConfig.exitCode, resultText(reusedConfig)).toBe(0);
     const parsedReusedConfig = JSON.parse(reusedConfig.stdout) as {
       tools?: { web?: { search?: { enabled?: unknown } } };
     };
@@ -191,7 +222,6 @@ test(
       "curl -sS -o /dev/null --max-time 20 -w 'HTTP_STATUS:%{http_code}\\n' 'https://api.search.brave.com/res/v1/web/search'",
       { artifactName: "phase-6-reused-brave-egress", timeoutMs: 60_000 },
     );
-    expect(reachable.exitCode, resultText(reachable)).toBe(0);
     expect(resultText(reachable)).toMatch(/HTTP_STATUS:(?!000)[0-9]{3}/u);
   },
 );

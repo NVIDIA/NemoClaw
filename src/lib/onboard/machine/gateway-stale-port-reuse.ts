@@ -48,6 +48,7 @@ export interface HealthyPortReuseInput {
   gatewayName: string;
   gatewayReuseState: GatewayReuseState;
   externallySupervised: boolean;
+  managedGatewayObservationAuthoritative?: boolean;
   portCheckOptions: CheckPortOpts | undefined;
   supportsLifecycleCommands: boolean;
   destroyGateway: () => boolean;
@@ -79,6 +80,9 @@ export async function applyHealthyPortReuse(
   // The explicit entry kind is authoritative: a dashboard entry can have the
   // same numeric port and must still retain normal conflict handling.
   if (input.externallySupervised) return kind === "gateway" ? "continue" : null;
+  if (input.managedGatewayObservationAuthoritative) {
+    return kind === "gateway" && input.gatewayReuseState === "healthy" ? "continue" : null;
+  }
   if (input.gatewayReuseState !== "healthy") return null;
   // Only probe the container when lifecycle commands are advertised — for
   // package-managed gateways without lifecycle commands the openshell-cluster-*

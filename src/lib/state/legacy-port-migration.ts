@@ -67,6 +67,27 @@ export interface LegacyPortMigrationResult {
   warnings: string[];
 }
 
+/** Read-only collision check used before deciding whether public argv needs migration. */
+export function hasMigratableLegacySandbox(
+  sandboxName: string,
+  options: { gatewayPort?: number; home?: string } = {},
+): boolean {
+  const gatewayPort = options.gatewayPort ?? GATEWAY_PORT;
+  if (gatewayPort === DEFAULT_GATEWAY_PORT) return false;
+  const home = path.resolve(options.home || resolveHome());
+  const sharedRoot = nemoclawStateRoot(home, DEFAULT_GATEWAY_PORT);
+  const pendingIntent = readMigrationIntent(home, sharedRoot);
+  if (
+    pendingIntent?.metadata.gatewayPort === gatewayPort &&
+    pendingIntent.metadata.selectedSandboxNames.includes(sandboxName)
+  ) {
+    return true;
+  }
+  const legacyRegistry = readGatewayRegistryFile(home, path.join(sharedRoot, "sandboxes.json"));
+  const entry = legacyRegistry?.sandboxes[sandboxName];
+  return entry ? registryEntryGatewayPort(entry) === gatewayPort : false;
+}
+
 interface LegacyPortMigrationIntentMetadata {
   version: typeof MIGRATION_INTENT_VERSION;
   gatewayPort: number;
@@ -491,10 +512,9 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
   }
   if (
     selectedRecovery === null &&
-    readRetainedRecoveryDocument(
-      home,
-      retainedSandboxRecoveryFile(sharedRoot),
-    )?.unresolved.some((record) => record.gatewayPort === gatewayPort)
+    readRetainedRecoveryDocument(home, retainedSandboxRecoveryFile(sharedRoot))?.unresolved.some(
+      (record) => record.gatewayPort === gatewayPort,
+    )
   ) {
     throw migrationError(
       "published migration intent predates retained recovery partitioning; retained recovery remains safely in the shared root",
@@ -638,17 +658,9 @@ function applyMigrationIntent(
   }
 
   if (intent.selectedRecovery && intent.remainingRecovery) {
-    writeJsonAtomic(
-      home,
-      retainedSandboxRecoveryFile(selectedRoot),
-      intent.selectedRecovery,
-    );
+    writeJsonAtomic(home, retainedSandboxRecoveryFile(selectedRoot), intent.selectedRecovery);
     if (intent.remainingRecovery.unresolved.length > 0) {
-      writeJsonAtomic(
-        home,
-        retainedSandboxRecoveryFile(sharedRoot),
-        intent.remainingRecovery,
-      );
+      writeJsonAtomic(home, retainedSandboxRecoveryFile(sharedRoot), intent.remainingRecovery);
     } else {
       removeRetainedRecoveryFile(home, retainedSandboxRecoveryFile(sharedRoot));
     }
@@ -747,7 +759,7 @@ function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[])
     const activeLock = path.join(stateRoot, "onboard.lock");
     if (lstatNoFollow(home, activeLock)) {
       throw migrationError(
-        `onboarding lock ${activeLock} is present; finish or stop that run before migrating state`,
+        `onboarding lock ${activeLock} is present; confirm that no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${activeLock} and retry; migration will not remove it automatically`,
       );
     }
   }
@@ -866,9 +878,7 @@ export function migrateLegacyPortState(
     const remainingRecoveryRecords =
       recovery?.unresolved.filter((record) => record.gatewayPort !== gatewayPort) ?? [];
     const selectedRecovery =
-      selectedRecoveryRecords.length > 0
-        ? retainedRecoveryDocument(selectedRecoveryRecords)
-        : null;
+      selectedRecoveryRecords.length > 0 ? retainedRecoveryDocument(selectedRecoveryRecords) : null;
     const remainingRecovery = selectedRecovery
       ? retainedRecoveryDocument(remainingRecoveryRecords)
       : null;
@@ -909,11 +919,7 @@ export function migrateLegacyPortState(
       }
     }
     if (selectedRecovery) {
-      preflightMovePath(
-        home,
-        legacyRecoveryFile,
-        retainedSandboxRecoveryFile(selectedRoot),
-      );
+      preflightMovePath(home, legacyRecoveryFile, retainedSandboxRecoveryFile(selectedRoot));
     }
 
     registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));

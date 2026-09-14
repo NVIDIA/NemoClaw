@@ -49,12 +49,14 @@ export const MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS = [
   "google_chat",
 ] as const;
 
-// Hermes v0.19.0 also packages platform plugins and built-in adapters that are
+// Hermes v0.20.6 also packages platform plugins and built-in adapters that are
 // not yet supported by NemoClaw's messaging manifests. A neutral managed image
 // must explicitly disable the complete installed surface, while keeping this
 // list separate from the supported/activatable contract above.
 export const MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS = [
+  "a2a",
   "bluebubbles",
+  "buzz",
   "dingtalk",
   "discord",
   "email",
@@ -150,7 +152,7 @@ type HermesManagedConfigBase = Record<string, unknown> & {
   };
 };
 
-export type HermesManagedConfig = HermesManagedConfigBase & HermesManagedRouting;
+export type HermesManagedConfig = HermesManagedConfigBase & Partial<HermesManagedRouting>;
 
 export type HermesManagedPolicyV1 = {
   schema_version: typeof HERMES_MANAGED_POLICY_SCHEMA_VERSION;
@@ -273,13 +275,14 @@ export function buildHermesManagedPolicy(
     platforms,
   };
 
-  applyHermesManagedRoute(config, {
-    model: settings.model,
-    baseUrl: settings.baseUrl,
-    upstreamProvider: settings.upstreamProvider,
-    inferenceApi: settings.inferenceApi,
-    contextWindow: settings.contextWindow,
-  });
+  if (settings.model !== null)
+    applyHermesManagedRoute(config, {
+      model: settings.model,
+      baseUrl: settings.baseUrl,
+      upstreamProvider: settings.upstreamProvider,
+      inferenceApi: settings.inferenceApi,
+      contextWindow: settings.contextWindow,
+    });
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);
   if (managedToolGatewayPresets.length > 0) {

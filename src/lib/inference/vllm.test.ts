@@ -84,7 +84,6 @@ import {
   buildVllmRunArgs,
   detectVllmProfile,
   installVllm,
-  isNemoClawManagedVllmRunning,
   NEMOCLAW_VLLM_CONTAINER_NAME,
   NEMOCLAW_VLLM_MANAGED_LABEL,
   pullImage,

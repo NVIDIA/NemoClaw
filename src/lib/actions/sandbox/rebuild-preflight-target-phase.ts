@@ -42,10 +42,6 @@ import {
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
-import {
-  getMcpPreparationRuntimeSelection,
-  mcpRebuildRequiresRuntimeSelection,
-} from "./rebuild-mcp-phase";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
 import {
@@ -55,6 +51,7 @@ import {
 } from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
+  hasValidDeferredN1xManagedVllmReplacementAuthority,
   hydrateMessagingConfigForRebuild,
   preflightAuthoritativeOnboardRuntime,
   preflightRebuildTargetRuntime,
@@ -62,7 +59,7 @@ import {
   prepareRebuildTargetConfig,
   type RebuildTargetConfig,
   stageRebuildHermesDashboardConfig,
-  stageRecordedManagedVllmIntent,
+  stageRecordedDeferredN1xIntent,
 } from "./rebuild-target-preflight";
 
 /** Upper bound on how long a minted provider-recovery receipt stays valid. */
@@ -97,21 +94,6 @@ export interface RebuildPreparedTarget {
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   preparedImage: PreparedRebuildImage | null;
   routePreflightReceipt: RebuildRoutePreflightReceipt;
-}
-
-/** Freeze the MCP-bearing rebuild on the recorded OpenShell target before live probes. */
-export function resolveRebuildMcpRuntimeSelection(
-  sandboxEntry: RebuildSandboxEntry,
-  bail: RebuildBail,
-): OpenShellRuntimeSelection | undefined {
-  if (!mcpRebuildRequiresRuntimeSelection(sandboxEntry)) return undefined;
-  try {
-    return getMcpPreparationRuntimeSelection(sandboxEntry);
-  } catch (error) {
-    return bail(
-      `Could not bind MCP rebuild preflight to the recorded OpenShell target: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
 }
 
 /** Pin read-only rebuild probes without selecting, starting, or repairing a gateway. */
@@ -200,8 +182,7 @@ export async function prepareRebuildTargetPreflights(args: {
     log,
     bail,
   } = args;
-  const mcpRuntimeSelection =
-    frozenMcpRuntimeSelection ?? resolveRebuildMcpRuntimeSelection(sandboxEntry, bail);
+  const mcpRuntimeSelection = frozenMcpRuntimeSelection;
   hydrateMessagingConfigForRebuild(sandboxName, log);
   pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
 
@@ -230,6 +211,9 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
+  if (registry.hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
+    recreateOptions.allowLegacyDgxStationQualification = true;
+  }
   if (mcpRuntimeSelection) recreateOptions.runtimeSelection = mcpRuntimeSelection;
   let managedWorkloadRebuildCatalog: Awaited<
     ReturnType<typeof prepareManagedWorkloadRebuildHandoff>
@@ -267,7 +251,12 @@ export async function prepareRebuildTargetPreflights(args: {
   recreateOptions.observabilityEnabled =
     requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
   recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
-  stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, resumeConfig);
+  stageRecordedDeferredN1xIntent(recreateOptions, sandboxEntry, resumeConfig);
+  if (
+    !hasValidDeferredN1xManagedVllmReplacementAuthority(recreateOptions, sandboxEntry, resumeConfig)
+  ) {
+    return bail("Deferred N1x managed-vLLM replacement authority is invalid.");
+  }
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,

@@ -58,16 +58,12 @@ describe("managed vLLM GPU provider selection", () => {
 
     await expect(setupNim(null)).rejects.toThrow("vLLM is already running on localhost:18000");
     expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm",
-      ),
+      expect.stringContaining("Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm"),
     );
     expect(abortNonInteractive).toHaveBeenCalledWith(
       expect.stringContaining("only if no other gateway or distributed deployment uses it"),
     );
-    expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_VLLM_PORT"),
-    );
+    expect(abortNonInteractive).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_PORT"));
     expect(handleVllmSelection).not.toHaveBeenCalled();
   });
 
@@ -96,16 +92,12 @@ describe("managed vLLM GPU provider selection", () => {
 
     await expect(setupNim(null)).rejects.toThrow("vLLM is already running on localhost:18000");
     expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm",
-      ),
+      expect.stringContaining("Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm"),
     );
     expect(abortNonInteractive).toHaveBeenCalledWith(
       expect.stringContaining("only if no other gateway or distributed deployment uses it"),
     );
-    expect(abortNonInteractive).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_VLLM_PORT"),
-    );
+    expect(abortNonInteractive).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_PORT"));
     expect(installVllm).not.toHaveBeenCalled();
   });
 

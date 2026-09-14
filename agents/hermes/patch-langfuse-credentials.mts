@@ -7,7 +7,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 /**
- * Patch the Langfuse validator bundled with pinned Hermes v2026.7.20 / 0.19.0.
+ * Patch the Langfuse validator bundled with pinned Hermes v2026.8.27 / 0.20.6.
  *
  * Hermes rejects OpenShell resolver placeholders before the Langfuse SDK can
  * turn them into outbound authentication headers. NemoClaw keeps the real
@@ -58,10 +58,10 @@ _LANGFUSE_OPENSHELL_KEYS: Dict[str, str] = {
     if value.startswith(expected):
         return None
     openshell_key = _LANGFUSE_OPENSHELL_KEYS.get(env_name)
-    # Keep the revision bound aligned with NemoClaw's OpenShell credential
+    # Keep the generation bound aligned with NemoClaw's OpenShell credential
     # observation contract in mcp-bridge-provider-readiness.ts.
     if openshell_key and re.fullmatch(
-        rf"openshell:resolve:env:(?:v[0-9]{{1,20}}_)?{re.escape(openshell_key)}",
+        rf"openshell:resolve:env:(?:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_)?{re.escape(openshell_key)}",
         value,
     ):
         return None
@@ -113,20 +113,20 @@ def _get_langfuse() -> Optional[Langfuse]:
   {
     name: "HTTPS base URL gate",
     old: `\
-    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
 `,
     patched: `\
-    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-    base_url_issue = _validate_langfuse_base_url(base_url)
-    if base_url_issue:
-        logger.warning(
-            "Langfuse plugin: invalid base URL, traces will NOT be emitted (%s).",
-            base_url_issue,
-        )
-        _LANGFUSE_CLIENT = _INIT_FAILED
-        return None
-    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+        base_url_issue = _validate_langfuse_base_url(base_url)
+        if base_url_issue:
+            logger.warning(
+                "Langfuse plugin: invalid base URL, traces will NOT be emitted (%s).",
+                base_url_issue,
+            )
+            _LANGFUSE_CLIENT = _INIT_FAILED
+            return None
+        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
 `,
   },
 ] as const;

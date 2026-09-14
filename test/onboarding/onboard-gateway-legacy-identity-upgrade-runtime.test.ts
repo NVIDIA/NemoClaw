@@ -18,7 +18,10 @@ import {
 } from "../../src/lib/onboard/docker-driver-gateway-cutover";
 import { reapHostGatewayBeforeLaunchOrFail } from "../../src/lib/onboard/docker-driver-gateway-prelaunch";
 import { createDockerDriverGatewayRuntimeHelpers } from "../../src/lib/onboard/docker-driver-gateway-runtime";
-import { resolveGatewayName, resolveGatewayStateDirName } from "../../src/lib/onboard/gateway-binding";
+import {
+  resolveGatewayName,
+  resolveGatewayStateDirName,
+} from "../../src/lib/onboard/gateway-binding";
 import { buildOwnedHostGatewayArgv0 } from "../../src/lib/onboard/gateway-process-identity";
 import { stopHostGatewayProcesses } from "../../src/lib/onboard/host-gateway-process";
 
