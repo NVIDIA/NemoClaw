@@ -31,6 +31,10 @@ Use this path when you operate `llama-server` and want NemoClaw to register its 
 The server must satisfy all of these requirements:
 
 - Listen over HTTP on `127.0.0.1:8081` and expose its OpenAI-compatible API under `/v1`.
+- Remain reachable from the OpenShell Docker bridge at `host.openshell.internal:8081`.
+  A loopback-only Docker publish (`-p 127.0.0.1:8081:8081`) or a `127.0.0.1`-only host bind is not enough.
+  Publish the port on the Docker gateway IP as well (`-p <gateway-ip>:8081:8081`), or bind `0.0.0.0:8081`.
+  Onboarding probes the sandbox hop after the host fingerprint and stops when it fails.
 - Require the same native bearer key supplied through `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`.
 - Expose bounded native llama.cpp evidence through `/v1/models`, `/health`, `/props`, and either `/metrics` or the native metrics-not-supported response.
 - Report a stable, non-path served model alias.

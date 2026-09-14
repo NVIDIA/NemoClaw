@@ -39,6 +39,11 @@ function deps(overrides: Partial<LlamaCppSelectionDeps> = {}): LlamaCppSelection
     exitProcess: (code) => {
       throw new Error(`exit ${code}`);
     },
+    probeSandboxReachability: async () => ({
+      ok: true,
+      reason: "ok" as const,
+      networkName: "openshell",
+    }),
     ...overrides,
   };
 }
@@ -204,5 +209,59 @@ describe("createLlamaCppSelectionHandler", () => {
     expect(current.model).toBe("team/model-alias");
     expect(current.nimContainer).toBeNull();
     expect(current).not.toHaveProperty("vllmModelIdentity");
+  });
+
+  it("exits non-interactively when the sandbox bridge hop times out (#11626)", async () => {
+    const error = vi.fn();
+    const handler = createLlamaCppSelectionHandler(
+      deps({
+        isNonInteractive: () => true,
+        error,
+        probeSandboxReachability: async () => ({
+          ok: false,
+          reason: "tcp_failed",
+          networkName: "openshell",
+          subnet: "172.18.0.0/16",
+          gatewayIp: "172.18.0.1",
+        }),
+      }),
+    );
+
+    await expect(handler(state(), null, null)).rejects.toThrow("exit 1");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("127.0.0.1:8081:8081"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("172.18.0.1:8081:8081"));
+  });
+
+  it("returns to provider selection when the sandbox bridge hop times out interactively (#11626)", async () => {
+    const error = vi.fn();
+    const handler = createLlamaCppSelectionHandler(
+      deps({
+        error,
+        probeSandboxReachability: async () => ({
+          ok: false,
+          reason: "tcp_failed",
+          networkName: "openshell",
+          gatewayIp: "172.18.0.1",
+        }),
+      }),
+    );
+
+    await expect(handler(state(), null, null)).resolves.toBe("retry-selection");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("host.openshell.internal:8081"));
+  });
+
+  it("still attaches when the sandbox probe cannot run (#11626)", async () => {
+    const handler = createLlamaCppSelectionHandler(
+      deps({
+        probeSandboxReachability: async () => ({
+          ok: false,
+          reason: "probe_unavailable",
+          networkName: "openshell",
+          detail: "Runtime network not found",
+        }),
+      }),
+    );
+
+    await expect(handler(state(), null, null)).resolves.toBe("selected");
   });
 });
