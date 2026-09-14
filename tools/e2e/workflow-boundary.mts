@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type WorkflowExecutionSelection,
+  workflowExecutionSelection,
+  reconcileWorkflowExecutionDiscovery,
+} from "./target-inventory.mts";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -17,7 +22,6 @@ import {
   validateHermesDashboardWorkflow,
 } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
-import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
   HERMES_TIMEOUT_CONTRACTS,
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
@@ -38,12 +42,6 @@ import {
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
-import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
-import {
-  type E2eExecutionRow,
-  validateE2eExecutionRows,
-  validateE2eExecutionMetadata,
-} from "./execution-coverage.mts";
 import {
   E2E_RUNTIME_AGNOSTIC,
   E2E_GATEWAY_RUNTIMES as SUPPORTED_E2E_GATEWAY_RUNTIMES,
@@ -135,32 +133,14 @@ type WorkflowStep = WorkflowRecord & {
   with?: WorkflowRecord;
 };
 
-export interface FreeStandingJobsInventory {
-  allowedJobs: string[];
-  workflowJobs: string[];
-  explicitOnlyJobs: string[];
-  freeStandingTargets: string[];
-  targetToJob: Map<string, string>;
-  liveTestToJobs: Map<string, string[]>;
-  coverageRows: E2eExecutionRow[];
-  gatewayRuntimesByJob: Map<string, E2eGatewayRuntimeSupport>;
-  gatewayRuntimesByCoverageRow: Map<string, E2eGatewayRuntimeSupport>;
-}
-
-export interface FocusedE2eJob {
-  id: string;
-  matchedFiles: string[];
-}
+export type FreeStandingJobsInventory = Omit<
+  WorkflowExecutionSelection,
+  "coverageRows" | "gatewayRuntimesByCoverageRow"
+>;
 
 export interface StagingBrevLaunchableDispatchEvaluation {
   runLaunchableE2e: boolean;
 }
-
-type CachedFreeStandingJobsInventory = {
-  mtimeMs: number;
-  size: number;
-  inventory: FreeStandingJobsInventory;
-};
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -169,21 +149,8 @@ const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
 const GATEWAY_RUNTIMES_MARKER = "E2E_GATEWAY_RUNTIMES";
-const AGENT_RUNTIME_MARKER = "E2E_AGENT_RUNTIME";
-const OUTCOME_MARKER = "E2E_OBSERVABLE_OUTCOME";
-const ENVIRONMENT_MARKER = "E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT";
-const UNRESOLVED_MARKER = "E2E_UNRESOLVED_REASON";
-const COVERAGE_MATRIX_KEYS = [
-  "agent_runtime",
-  "observable_outcome",
-  "environment_or_inference_endpoint",
-  "unresolved_reason",
-  "coverage_variant",
-] as const;
-const COVERAGE_GATEWAY_RUNTIMES_KEY = "gateway_runtimes";
 const STAGING_BREV_JOB_ID = "staging-brev-launchable";
 const STAGING_BREV_IDENTITY_JOB_ID = "staging-brev-launchable-identity";
-const STAGING_BREV_JOB_IDS = new Set([STAGING_BREV_JOB_ID, STAGING_BREV_IDENTITY_JOB_ID]);
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
@@ -456,10 +423,6 @@ function addMapValue(map: Map<string, string[]>, key: string, value: string): vo
   map.set(key, values);
 }
 
-function cloneStringArrayMap(map: ReadonlyMap<string, readonly string[]>): Map<string, string[]> {
-  return new Map([...map].map(([key, values]) => [key, [...values]]));
-}
-
 function findDuplicates(values: readonly string[]): string[] {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
@@ -483,77 +446,6 @@ function gatewayRuntimeSupport(value: unknown): E2eGatewayRuntimeSupport | undef
     : undefined;
 }
 
-function scenarioCoverageCandidates(
-  matrix: WorkflowRecord,
-  jobGatewayRuntimes: E2eGatewayRuntimeSupport,
-): WorkflowRecord[] {
-  if (!Array.isArray(matrix.scenario) || jobGatewayRuntimes === E2E_RUNTIME_AGNOSTIC) return [];
-  const scenarios = matrix.scenario.map(stringValue).filter(Boolean);
-  if (scenarios.length !== matrix.scenario.length || new Set(scenarios).size !== scenarios.length) {
-    return [];
-  }
-  const exclusions = Array.isArray(matrix.exclude) ? matrix.exclude.map(asRecord) : [];
-  return scenarios.map((scenario) => ({
-    coverage_variant: scenario,
-    gateway_runtimes: jobGatewayRuntimes
-      .filter(
-        (runtime) =>
-          !exclusions.some(
-            (entry) => entry.scenario === scenario && entry.runtime_provider === runtime,
-          ),
-      )
-      .join(","),
-  }));
-}
-
-function workflowCoverageRows(
-  jobId: string,
-  job: WorkflowRecord,
-  jobGatewayRuntimes: E2eGatewayRuntimeSupport,
-): Array<{ row: E2eExecutionRow; gatewayRuntimes: E2eGatewayRuntimeSupport }> {
-  const env = asRecord(job.env);
-  const matrix = asRecord(asRecord(job.strategy).matrix);
-  const includes = Array.isArray(matrix.include)
-    ? matrix.include
-        .map(asRecord)
-        .filter((entry) => COVERAGE_MATRIX_KEYS.some((key) => Object.hasOwn(entry, key)))
-    : [];
-  const hasEnvironmentMetadata = [
-    AGENT_RUNTIME_MARKER,
-    OUTCOME_MARKER,
-    ENVIRONMENT_MARKER,
-    UNRESOLVED_MARKER,
-  ].some((key) => Object.hasOwn(env, key));
-  if (!hasEnvironmentMetadata && includes.length === 0) return [];
-
-  const scenarioCandidates = scenarioCoverageCandidates(matrix, jobGatewayRuntimes);
-  const candidates =
-    includes.length > 0 ? includes : scenarioCandidates.length > 0 ? scenarioCandidates : [{}];
-  return candidates.map((entry) => {
-    const metadata = validateE2eExecutionMetadata(
-      {
-        agentRuntime: stringValue(entry.agent_runtime || env[AGENT_RUNTIME_MARKER]),
-        observableOutcome: stringValue(entry.observable_outcome || env[OUTCOME_MARKER]),
-        environmentOrInferenceEndpoint: stringValue(
-          entry.environment_or_inference_endpoint || env[ENVIRONMENT_MARKER],
-        ),
-        unresolvedReason: stringValue(entry.unresolved_reason || env[UNRESOLVED_MARKER]),
-      } as Parameters<typeof validateE2eExecutionMetadata>[0],
-      `E2E workflow job ${jobId}`,
-    );
-    return {
-      row: {
-        id: jobId,
-        variant: stringValue(entry.coverage_variant),
-        source: STAGING_BREV_JOB_IDS.has(jobId) ? "staging" : "retained-workflow",
-        ...metadata,
-      },
-      gatewayRuntimes:
-        gatewayRuntimeSupport(entry[COVERAGE_GATEWAY_RUNTIMES_KEY]) ?? jobGatewayRuntimes,
-    };
-  });
-}
-
 function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   errors: string[];
   inventory: FreeStandingJobsInventory;
@@ -565,9 +457,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   const freeStandingTargets: string[] = [];
   const targetToJob = new Map<string, string>();
   const liveTestToJobs = new Map<string, string[]>();
-  const coverageRows: E2eExecutionRow[] = [];
   const gatewayRuntimesByJob = new Map<string, E2eGatewayRuntimeSupport>();
-  const gatewayRuntimesByCoverageRow = new Map<string, E2eGatewayRuntimeSupport>();
 
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob);
@@ -599,17 +489,6 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       errors.push(`${jobId} job ${GATEWAY_RUNTIMES_MARKER} is invalid`);
     } else {
       gatewayRuntimesByJob.set(jobId, gatewayRuntimes);
-      try {
-        for (const declaration of workflowCoverageRows(jobId, job, gatewayRuntimes)) {
-          coverageRows.push(declaration.row);
-          gatewayRuntimesByCoverageRow.set(
-            `${declaration.row.id}:${declaration.row.variant}`,
-            declaration.gatewayRuntimes,
-          );
-        }
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : String(error));
-      }
     }
     for (const file of collectLiveTestFiles(rawJob)) addMapValue(liveTestToJobs, file, jobId);
     if (Object.hasOwn(env, FREE_STANDING_DEFAULT_ENABLED_MARKER)) {
@@ -658,22 +537,6 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   for (const duplicate of findDuplicates(freeStandingTargets)) {
     errors.push(`free-standing workflow metadata repeats target id: ${duplicate}`);
   }
-  for (const jobId of workflowJobs) {
-    if (jobId !== SHARED_E2E_JOB_ID && !coverageRows.some((row) => row.id === jobId)) {
-      errors.push(`${jobId} job requires execution coverage metadata`);
-    }
-  }
-  if (
-    Object.hasOwn(jobs, STAGING_BREV_JOB_ID) &&
-    !coverageRows.some((row) => row.source === "staging")
-  ) {
-    errors.push(`${STAGING_BREV_JOB_ID} job requires execution coverage metadata`);
-  }
-  try {
-    validateE2eExecutionRows(coverageRows);
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : String(error));
-  }
 
   return {
     errors,
@@ -683,9 +546,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       explicitOnlyJobs,
       freeStandingTargets,
       targetToJob,
-      coverageRows,
       gatewayRuntimesByJob,
-      gatewayRuntimesByCoverageRow,
       liveTestToJobs: new Map(
         [...liveTestToJobs]
           .sort(([left], [right]) => left.localeCompare(right))
@@ -698,103 +559,8 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   };
 }
 
-const freeStandingJobsInventoryCache = new Map<string, CachedFreeStandingJobsInventory>();
-
 function readWorkflowRecord(workflowPath: string): WorkflowRecord {
   return asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
-}
-
-function cloneFreeStandingJobsInventory(
-  inventory: FreeStandingJobsInventory,
-): FreeStandingJobsInventory {
-  return {
-    allowedJobs: [...inventory.allowedJobs],
-    workflowJobs: [...inventory.workflowJobs],
-    explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    freeStandingTargets: [...inventory.freeStandingTargets],
-    targetToJob: new Map(inventory.targetToJob),
-    coverageRows: inventory.coverageRows.map((row) => ({ ...row })),
-    gatewayRuntimesByJob: new Map(
-      [...inventory.gatewayRuntimesByJob].map(([job, runtimes]) => [
-        job,
-        runtimes === E2E_RUNTIME_AGNOSTIC ? runtimes : [...runtimes],
-      ]),
-    ),
-    gatewayRuntimesByCoverageRow: new Map(
-      [...inventory.gatewayRuntimesByCoverageRow].map(([key, runtimes]) => [
-        key,
-        runtimes === E2E_RUNTIME_AGNOSTIC ? runtimes : [...runtimes],
-      ]),
-    ),
-    liveTestToJobs: cloneStringArrayMap(inventory.liveTestToJobs),
-  };
-}
-
-export function validateFreeStandingWorkflowInventory(
-  workflowPath = DEFAULT_E2E_WORKFLOW_PATH,
-): string[] {
-  const workflow = readWorkflowRecord(workflowPath);
-  return deriveFreeStandingJobsInventoryFromJobs(asRecord(workflow.jobs)).errors;
-}
-
-export function readFreeStandingJobsInventory(
-  workflowPath = DEFAULT_E2E_WORKFLOW_PATH,
-): FreeStandingJobsInventory {
-  const stats = statSync(workflowPath);
-  const cached = freeStandingJobsInventoryCache.get(workflowPath);
-  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
-    return cloneFreeStandingJobsInventory(cached.inventory);
-  }
-
-  const workflow = readWorkflowRecord(workflowPath);
-  const { errors, inventory } = deriveFreeStandingJobsInventoryFromJobs(asRecord(workflow.jobs));
-  if (errors.length > 0) {
-    throw new Error(`Invalid free-standing workflow inventory:\n${errors.join("\n")}`);
-  }
-  freeStandingJobsInventoryCache.set(workflowPath, {
-    mtimeMs: stats.mtimeMs,
-    size: stats.size,
-    inventory: cloneFreeStandingJobsInventory(inventory),
-  });
-  return inventory;
-}
-
-const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
-  "src/lib/actions/sandbox/auto-pair-approval.ts",
-  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
-  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
-]);
-const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
-  ...HERMES_ACP_E2E_OWNING_PATHS.map((file) => [file, ["hermes-e2e"]] as const),
-  ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
-  ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
-  ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
-  ["test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts", ["openclaw-plugin-runtime-exdev"]],
-  [
-    "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-    ["openclaw-plugin-runtime-exdev"],
-  ],
-]);
-
-export function focusedE2eJobsForChangedFiles(
-  changedFiles: readonly string[],
-  inventory: FreeStandingJobsInventory = readFreeStandingJobsInventory(),
-): FocusedE2eJob[] {
-  const matchedFilesByJob = new Map<string, string[]>();
-  for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
-    for (const job of inventory.liveTestToJobs.get(file) ?? []) {
-      addMapValue(matchedFilesByJob, job, file);
-    }
-    for (const job of LIVE_E2E_OWNING_FILE_JOBS.get(file) ?? []) {
-      if (inventory.allowedJobs.includes(job)) addMapValue(matchedFilesByJob, job, file);
-    }
-    if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
-      addMapValue(matchedFilesByJob, "snapshot-commands", file);
-    }
-  }
-  return [...matchedFilesByJob]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([id, matchedFiles]) => ({ id, matchedFiles }));
 }
 
 export interface WorkflowDispatchSelectorEvaluation {
@@ -840,16 +606,14 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   jobs?: string;
   targets?: string;
 }): WorkflowDispatchSelectorEvaluation {
-  const inventory = readFreeStandingJobsInventory();
+  const inventory = workflowExecutionSelection();
   const freeStandingJobIds = inventory.allowedJobs;
   const freeStandingTargetToJob = inventory.targetToJob;
   const jobs = input.jobs ?? "";
   const targets = input.targets ?? "";
   const errors: string[] = [];
   const jobsMatchSelectorPattern = !jobs || SELECTOR_PATTERN.test(jobs);
-  const normalizedJobs = jobsMatchSelectorPattern
-    ? normalizeE2eSelectorIds(splitSelector(jobs))
-    : [];
+  const normalizedJobs = jobsMatchSelectorPattern ? [...new Set(splitSelector(jobs))] : [];
 
   if (targets && !SELECTOR_PATTERN.test(targets)) {
     errors.push("Invalid target input");
@@ -887,7 +651,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
 
   const selectedFreeStandingJobs = new Set(normalizedJobs);
   const registryTargets: string[] = [];
-  for (const target of normalizeE2eSelectorIds(splitSelector(targets))) {
+  for (const target of new Set(splitSelector(targets))) {
     const job = freeStandingTargetToJob.get(target);
     if (job) selectedFreeStandingJobs.add(target);
     else registryTargets.push(target);
@@ -967,24 +731,6 @@ function requireRunContains(
   if (!step) return;
   if (!stringValue(step.run).includes(expected)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must include ${expected}`);
-  }
-}
-
-function requireRunFragmentBefore(
-  errors: string[],
-  step: WorkflowStep | undefined,
-  before: string,
-  after: string,
-): void {
-  if (!step) return;
-  const run = stringValue(step.run);
-  const beforeIndex = run.indexOf(before);
-  const afterIndex = run.indexOf(after);
-  if (beforeIndex === -1 || afterIndex === -1) return;
-  if (beforeIndex > afterIndex) {
-    errors.push(
-      `step '${step.name ?? "<unnamed>"}' run script must include ${before} before ${after}`,
-    );
   }
 }
 
@@ -1152,22 +898,6 @@ function validateLargerRunnerRouting(
         "only the trusted larger-runner routing step may consume E2E_LARGER_RUNNER_LABEL",
       );
     }
-  }
-}
-
-function requireUploadPathContains(errors: string[], uploadPath: string, expected: string): void {
-  if (!uploadPath.includes(expected)) {
-    errors.push(`artifact upload path must include ${expected}`);
-  }
-}
-
-function requireUploadPathDoesNotContain(
-  errors: string[],
-  uploadPath: string,
-  forbidden: string,
-): void {
-  if (uploadPath.includes(forbidden)) {
-    errors.push(`artifact upload path must not include ${forbidden}`);
   }
 }
 
@@ -1611,12 +1341,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
   }
 
-  const imageJobNames = [
-    "live",
-    ...e2eJobNames.filter((jobName) => !NO_IMAGE_E2E_JOBS.has(jobName)),
-  ];
-  const liveSteps = asSteps(asRecord(jobs.live).steps);
-  const canonicalAuth = namedStep(liveSteps, DOCKER_HUB_AUTH_STEP);
+  const imageJobNames = e2eJobNames.filter((jobName) => !NO_IMAGE_E2E_JOBS.has(jobName));
+  const authContractSteps = asSteps(asRecord(jobs["openshell-gateway-auth-contract"]).steps);
+  const canonicalAuth = namedStep(authContractSteps, DOCKER_HUB_AUTH_STEP);
   requireCanonicalDockerHubAuthRun(errors, canonicalAuth);
 
   for (const jobName of imageJobNames) {
@@ -2230,10 +1957,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     E2E_GATEWAY_RUNTIMES: "agnostic",
     E2E_JOB: "1",
     INSTANCE_NAME: "nclaw-identity-${{ github.run_id }}-${{ github.run_attempt }}",
-    E2E_AGENT_RUNTIME: "none",
-    E2E_OBSERVABLE_OUTCOME:
-      "The staging image boots, passes the SSH access probe, and matches the baked runtime identity",
-    E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable host; no inference endpoint",
   };
   if (!isDeepStrictEqual(jobEnv, expectedJobEnv)) {
     errors.push(`${jobName} job environment must match its reviewed identity-only contract`);
@@ -2780,7 +2503,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateJetsonDispatchBoundary(workflow));
   const { errors: inventoryErrors, inventory: freeStandingInventory } =
     deriveFreeStandingJobsInventoryFromJobs(jobs);
-  errors.push(...inventoryErrors);
+  errors.push(...inventoryErrors, ...reconcileWorkflowExecutionDiscovery(freeStandingInventory));
   validateFreeStandingInventoryBoundary(errors, jobs, freeStandingInventory);
   validateDockerHubAuthBoundary(errors, jobs);
   const generateMatrix = asRecord(jobs["generate-matrix"]);
@@ -2839,10 +2562,10 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets.name !== "${{ matrix.label }}") {
     errors.push("live job name must expose the semantic matrix label");
   }
-  if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
+  if (asRecord(liveTargets.with).runner !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
-  if (liveTargets["timeout-minutes"] !== "${{ matrix.timeout_minutes }}") {
+  if (asRecord(liveTargets.with).timeout_minutes !== "${{ matrix.timeout_minutes }}") {
     errors.push("live job timeout must come from the typed target matrix");
   }
   if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
@@ -2860,300 +2583,48 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("live matrix.include must come from generate-matrix output");
   }
 
-  const jobEnv = asRecord(liveTargets.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("live job must set NEMOCLAW_RUN_LIVE_E2E=1");
+  const typedInputs = asRecord(liveTargets.with);
+  if (liveTargets.uses !== "./.github/workflows/e2e-standard-profile.yaml") {
+    errors.push("live job must use the standard E2E profile");
   }
-  validateHostedCompatibleInferenceFlag(errors, "live", jobEnv);
-  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/live")) {
-    errors.push("live job must write artifacts under e2e-artifacts/live");
+  for (const [name, expected] of Object.entries({
+    target_id: "${{ matrix.id }}",
+    catalogue_id: "${{ matrix.id }}",
+    execution_id: "${{ matrix.execution_id }}",
+    coverage_variant: "${{ matrix.coverage_variant }}",
+    runtime_provider: "${{ matrix.runtime_provider }}",
+    test_file: "test/e2e/live/registry-targets.test.ts",
+    openshell_sdk_artifact_name: "",
+    restore_cli: true,
+    install_mode: "none",
+    install_non_interactive: false,
+    cloudflared: false,
+    host_preparation: "none",
+    runner_comparison: false,
+    compatible_api_key: false,
+    github_token: false,
+    candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
+    candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+    checkout_sha: "${{ inputs.checkout_sha }}",
+    risk_signal_correlation_id: "${{ inputs.correlation_id }}",
+    shard: "default",
+    artifact_layout: "target-shard",
+    host_packages:
+      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && 'expect' || '' }}",
+  })) {
+    if (typedInputs[name] !== expected) errors.push(`live job must preserve typed input ${name}`);
   }
-  if (stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("${{ matrix.id }}")) {
-    errors.push("live job E2E_ARTIFACT_DIR must be the Vitest artifact parent");
-  }
-  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
-    errors.push("live job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  requireEnvDoesNotExposeSecret(errors, "live job", jobEnv, "NVIDIA_INFERENCE_API_KEY");
-
-  const steps = asSteps(liveTargets.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    if (step.name !== "Run live E2E tests") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-        asRecord(step.env),
-        "NVIDIA_INFERENCE_API_KEY",
-      );
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("live job missing checkout step");
-  requireFullShaAction(errors, checkout, "checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("checkout step must set persist-credentials=false");
-  }
-
-  const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
-  const dcodeDockerTargetIf =
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
-  const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
-  const configureTraceEnv = asRecord(configureTrace?.env);
-  if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live trace setup step must pass matrix.id through TARGET_ID env");
-  }
-  if (configureTrace?.["if"] !== undefined) {
-    errors.push("live trace setup step must run before live E2E tests without an if condition");
-  }
-  if (stringValue(jobEnv.NEMOCLAW_TRACE_DIR).length > 0) {
-    errors.push("live job must not set NEMOCLAW_TRACE_DIR at job scope");
-  }
-  requireRunContains(errors, configureTrace, "NEMOCLAW_TRACE_DIR=%s");
-  requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
-  requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
-
-  const dcodeHostDependencies = requireStep(
-    errors,
-    steps,
-    "Install Deep Agents Code TUI host dependencies",
-  );
-  validateHostDependencyActionStep(
-    errors,
-    "live",
-    steps,
-    "Install Deep Agents Code TUI host dependencies",
-    ["expect"],
-  );
-  if (dcodeHostDependencies?.if !== dcodeTargetIf) {
-    errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
-  }
-
-  const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
-  if (
-    dcodeHostDependencies &&
-    prepareWorkspace &&
-    steps.indexOf(dcodeHostDependencies) >= steps.indexOf(prepareWorkspace)
-  ) {
-    errors.push("live DCode TUI host dependencies must be installed before workspace prep");
-  }
-
-  const dcodeProfileImportGate = requireStep(
-    errors,
-    steps,
-    "Verify DCode profile import gate rejects missing base dependencies",
-  );
-  if (
-    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "NEMOCLAW_DCODE_PROFILE_GATE_BASE_IMAGE")
-  ) {
-    errors.push(
-      "live DCode profile import gate must build the reviewed repository base without an override",
-    );
-  }
-  if (dcodeProfileImportGate?.["if"] !== dcodeDockerTargetIf) {
-    errors.push("live DCode profile import gate must be scoped to the typed DCode target");
-  }
-  if (dcodeProfileImportGate?.shell !== "bash") {
-    errors.push("live DCode profile import gate must use bash");
+  if (asRecord(liveTargets.secrets).NVIDIA_INFERENCE_API_KEY !== GUARDED_LIVE_E2E_INFERENCE_KEY) {
+    errors.push("live job must preserve the guarded inference credential");
   }
   if (
-    stringValue(dcodeProfileImportGate?.run).trim() !==
-    "bash scripts/check-dcode-profile-import-gate.sh"
+    !isDeepStrictEqual(Object.keys(asRecord(liveTargets.secrets)).sort(), [
+      "DOCKERHUB_TOKEN",
+      "DOCKERHUB_USERNAME",
+      "NVIDIA_INFERENCE_API_KEY",
+    ])
   ) {
-    errors.push("live DCode profile import gate must run the reviewed negative-build script");
-  }
-  const dcodeGateIndex = dcodeProfileImportGate
-    ? steps.indexOf(dcodeProfileImportGate)
-    : steps.length;
-  const routesDcodeBuildsThroughBuildx = steps.slice(0, dcodeGateIndex).some((step) => {
-    const stepCanRunForDcode =
-      step["if"] === undefined ||
-      step["if"] === dcodeTargetIf ||
-      step["if"] === dcodeDockerTargetIf;
-    const run = stringValue(step.run);
-    return (
-      stepCanRunForDcode &&
-      (stringValue(step.uses).startsWith("docker/setup-buildx-action@") ||
-        /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
-        /docker\s+buildx\s+use(?:\s|$)/u.test(run))
-    );
-  });
-  if (
-    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
-    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "BUILDX_BUILDER") ||
-    routesDcodeBuildsThroughBuildx
-  ) {
-    errors.push(
-      "live DCode profile import gate must keep its local image chain on the Docker engine",
-    );
-  }
-
-  const runVitest = requireStep(errors, steps, "Run live E2E tests");
-  if (
-    prepareWorkspace &&
-    dcodeProfileImportGate &&
-    steps.indexOf(prepareWorkspace) >= steps.indexOf(dcodeProfileImportGate)
-  ) {
-    errors.push("live DCode profile import gate must run after workspace prep");
-  }
-  if (
-    dcodeProfileImportGate &&
-    runVitest &&
-    steps.indexOf(dcodeProfileImportGate) >= steps.indexOf(runVitest)
-  ) {
-    errors.push("live DCode profile import gate must run before live E2E tests");
-  }
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.E2E_TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live E2E step must bind risk-signal identity to matrix.id");
-  }
-  if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live E2E step must pass matrix.id through TARGET_ID env");
-  }
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_LIVE_E2E_INFERENCE_KEY) {
-    errors.push(
-      "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main run or an authorized NVIDIA-owned PR dispatch",
-    );
-  }
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
-  requireRunContains(errors, runVitest, '"^${TARGET_ID}:"');
-
-  const sanitizeTrace = requireStep(errors, steps, "Build trusted live E2E timing summary");
-  const sanitizeTraceEnv = asRecord(sanitizeTrace?.env);
-  if (sanitizeTrace?.["if"] !== "always()") {
-    errors.push("live trace sanitizer must always run");
-  }
-  if (sanitizeTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live trace sanitizer must pass matrix.id through TARGET_ID env");
-  }
-  requireRunContains(errors, sanitizeTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
-  requireRunContains(
-    errors,
-    sanitizeTrace,
-    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
-  );
-  requireRunContains(errors, sanitizeTrace, "scripts/e2e/sanitize-trace-timing.py");
-  requireRunFragmentBefore(
-    errors,
-    sanitizeTrace,
-    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"',
-    "python3 scripts/e2e/sanitize-trace-timing.py",
-  );
-  requireRunFragmentBefore(
-    errors,
-    sanitizeTrace,
-    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
-    "python3 scripts/e2e/sanitize-trace-timing.py",
-  );
-  requireRunContains(errors, sanitizeTrace, '"${NEMOCLAW_TRACE_DIR}"');
-  requireRunContains(errors, sanitizeTrace, '"${E2E_ARTIFACT_DIR}/${TARGET_ID}"');
-
-  const deleteTrace = requireStep(errors, steps, "Delete raw live E2E traces");
-  const deleteTraceEnv = asRecord(deleteTrace?.env);
-  if (deleteTrace?.["if"] !== "always()") {
-    errors.push("live raw trace cleanup must always run");
-  }
-  if (deleteTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live raw trace cleanup must pass matrix.id through TARGET_ID env");
-  }
-  requireRunContains(errors, deleteTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
-  requireRunContains(errors, deleteTrace, '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]');
-  requireRunContains(errors, deleteTrace, 'rm -rf -- "${NEMOCLAW_TRACE_DIR}"');
-
-  const configureTraceIndex = steps.indexOf(configureTrace as WorkflowStep);
-  const runVitestIndex = steps.indexOf(runVitest as WorkflowStep);
-  const sanitizeTraceIndex = steps.indexOf(sanitizeTrace as WorkflowStep);
-  const deleteTraceIndex = steps.indexOf(deleteTrace as WorkflowStep);
-  const prepareWorkspaceIndex = steps.indexOf(prepareWorkspace as WorkflowStep);
-  if (
-    configureTraceIndex === -1 ||
-    prepareWorkspaceIndex === -1 ||
-    runVitestIndex === -1 ||
-    sanitizeTraceIndex === -1 ||
-    deleteTraceIndex === -1 ||
-    !(
-      configureTraceIndex < prepareWorkspaceIndex &&
-      prepareWorkspaceIndex < runVitestIndex &&
-      runVitestIndex < sanitizeTraceIndex &&
-      sanitizeTraceIndex < deleteTraceIndex
-    )
-  ) {
-    errors.push(
-      "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
-    );
-  }
-
-  const summary = requireStep(errors, steps, "Summarize artifacts");
-  const summaryEnv = asRecord(summary?.env);
-  if (summaryEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("summary step must pass matrix.id through TARGET_ID env");
-  }
-  if (summaryEnv.TARGET_LABEL !== "${{ matrix.label }}") {
-    errors.push("summary step must pass matrix.label through TARGET_LABEL env");
-  }
-  requireRunContains(errors, summary, "run-plan.json");
-  requireRunContains(
-    errors,
-    summary,
-    'Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["TARGET_ID"]',
-  );
-  requireRunContains(errors, summary, "| Target | Manifest | Expected state | Suites | Phases |");
-  requireRunContains(errors, summary, "TARGET_ID");
-
-  const upload = requireStep(errors, steps, "Upload E2E artifacts");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-${{ matrix.execution_id }}") {
-    errors.push("artifact upload name must include matrix.execution_id");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
-  );
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/target.json");
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/target-result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/test-progress.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
-  );
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/risk-signal.json");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");
-  requireUploadPathDoesNotContain(errors, uploadPath, "nemoclaw-e2e-traces");
-  requireUploadPathDoesNotContain(errors, uploadPath, "NEMOCLAW_TRACE_DIR");
-  for (const line of uploadPath.split("\n")) {
-    if (line.trim() === "e2e-artifacts/live/${{ matrix.id }}/") {
-      errors.push("artifact upload path must not list the whole matrix artifact directory");
-    }
+    errors.push("live job must pass only Docker Hub and inference credentials");
   }
 
   const cloudOnboardSteps = asSteps(asRecord(jobs["cloud-onboard"]).steps);
@@ -3302,11 +2773,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/report-e2e-results.mts")
       ) {
         errors.push("report-to-pr report helper checkout must sparse-checkout the report helper");
-      }
-      if (
-        !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/selector-aliases.mts")
-      ) {
-        errors.push("report-to-pr report helper checkout must sparse-checkout selector aliases");
       }
       const reportStepIndex = reportSteps.findIndex(
         (step) => asRecord(step).name === "Post E2E target results to PR",
