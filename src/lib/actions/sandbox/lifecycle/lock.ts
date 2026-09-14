@@ -13,6 +13,7 @@ import {
   withCurrentPortableHostFence,
 } from "../../../state/portable-uninstall-retirement";
 import { resolveHermesPortableLifecycleLockOptions } from "../../../onboard/experimental/portable-lifecycle-lock";
+import { withHermesPortableStartupOperation } from "../../../onboard/experimental/hermes-portable-startup-operation";
 
 function resolveLifecycleLockOptions(
   sandboxName: string,
@@ -31,9 +32,11 @@ export async function withSandboxLifecycleLock<T>(
 ): Promise<T> {
   return await withCurrentPortableHostFence(async () => {
     const resolved = resolveLifecycleLockOptions(sandboxName, options);
+    const scoped = () =>
+      withHermesPortableStartupOperation(sandboxName, resolved.stateDir, operation);
     return Object.keys(resolved).length === 0
-      ? await withMcpLifecycleLock(sandboxName, operation)
-      : await withMcpLifecycleLock(sandboxName, operation, resolved);
+      ? await withMcpLifecycleLock(sandboxName, scoped)
+      : await withMcpLifecycleLock(sandboxName, scoped, resolved);
   });
 }
 
