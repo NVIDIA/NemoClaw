@@ -571,6 +571,9 @@ function describeHermesPortableForwardRecoveryFailure(
   failure: HermesPortableForwardRecoveryFailure,
   context?: HermesPortableForwardRecoveryContext,
 ): string {
+  if (failure === "restoration-unproved" && context) {
+    return `${describeHermesPortableForwardRecoveryFailure(failure)} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
+  }
   switch (context?.cause) {
     case "port-occupied":
       return `Recorded host port ${String(context.port)} is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.`;
