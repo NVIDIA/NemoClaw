@@ -182,6 +182,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       const baseEnv = { ...process.env };
       delete baseEnv.NEMOCLAW_DASHBOARD_PORT;
       delete baseEnv.CHAT_UI_URL;
+      delete baseEnv.OPENCLAW_GATEWAY_URL;
       const script = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",

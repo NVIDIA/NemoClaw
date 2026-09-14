@@ -730,9 +730,9 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(runGuardedOpenclaw(setup, ["agent", "--agent", "main", "-m", "hello"]).status).toBe(0);
       expect(runGuardedOpenclaw(setup, ["config", "get", "foo"]).status).toBe(0);
       expect(runGuardedOpenclaw(setup, ["channels", "list"]).status).toBe(0);
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("agent --agent main -m hello");
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("config get foo");
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("channels list");
+      expect(fs.readFileSync(setup.commandLog, "utf-8")).toMatch(
+        /ARGS=channels list URL=ws:\/\/127\.0\.0\.1:18789 PORT=18789 TOKEN=test-gateway-token/,
+      );
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }

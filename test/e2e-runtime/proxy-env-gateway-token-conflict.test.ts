@@ -96,7 +96,7 @@ function runReconcile(scenario: Scenario): {
   const sourceAndPrint = [
     `. ${shellQuote(envFile)}`,
     "_nemoclaw_test_source_status=$?",
-    `case "$_nemoclaw_test_source_status" in 0) /usr/bin/printf 'TOKEN=[%s] PRIVATE=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}" ;; *) /usr/bin/false ;; esac`,
+    `case "$_nemoclaw_test_source_status" in 0) /usr/bin/printf 'TOKEN=[%s] PRIVATE=[%s] URL=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}" "\${OPENCLAW_GATEWAY_URL-<UNSET>}" ;; *) /usr/bin/false ;; esac`,
   ];
   const commands = scenario.repeatSources
     ? [...setup, ...sourceAndPrint, ...sourceAndPrint]
@@ -179,6 +179,7 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
     });
     expect(status).toBe(0);
     expect(stdout).toContain(`TOKEN=[${REAL_TOKEN}] PRIVATE=[CALLER-SENTINEL]`);
+    expect(stdout).toContain("URL=[<UNSET>]");
     expect(stderr).toBe("");
   });
 
@@ -189,6 +190,7 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
     });
     expect(status).toBe(0);
     expect(stdout).toContain("TOKEN=[]");
+    expect(stdout).toContain("URL=[wss://remote.example.test]");
     expect(stderr).toBe("");
   });
 

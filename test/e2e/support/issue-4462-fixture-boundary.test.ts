@@ -180,7 +180,7 @@ describe("scope-upgrade approval live fixture", () => {
   it("refuses removed private gateway aliases at the connect-shell boundary", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-connect-"));
     const cli = path.join(root, "nemoclaw");
-    fs.writeFileSync(cli, "#!/bin/sh\nexec /bin/bash\n", { mode: 0o755 });
+    fs.writeFileSync(cli, "#!/bin/sh\nexec /bin/bash -s\n", { mode: 0o755 });
     try {
       const result = spawnSync("bash", ["-c", adminApprovalConnectScript(cli, "alpha", "cron")], {
         encoding: "utf8",

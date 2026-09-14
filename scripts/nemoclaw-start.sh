@@ -3884,7 +3884,13 @@ openclaw() {
       # later cannot inherit the token, and use an absolute executable so an
       # imported `command` function cannot intercept the decision.
       case "${OPENCLAW_GATEWAY_URL:-}" in
-        "") /usr/bin/env openclaw "$@" ;;
+        *@*) /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@" ;;
+        "" | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
+          wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
+          ws://localhost | ws://localhost:* | ws://localhost/* | \
+          wss://localhost | wss://localhost:* | wss://localhost/* | \
+          "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
+          "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*) /usr/bin/env openclaw "$@" ;;
         *) /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@" ;;
       esac
       local _nemoclaw_oc_status=$?
