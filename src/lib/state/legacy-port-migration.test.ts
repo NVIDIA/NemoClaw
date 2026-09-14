@@ -445,6 +445,75 @@ describe("legacy non-default gateway state migration", () => {
     },
   );
 
+  it("attempts every lock release after a successful migration", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selectedRegistry = path.join(shared, "gateways", "9123", "sandboxes.json");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+
+    const selectedRegistryLock = `${selectedRegistry}.lock`;
+    const renameSync = fs.renameSync.bind(fs);
+    const failSelectedRelease = (): never => {
+      throw new Error("injected selected lock release failure");
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === selectedRegistryLock &&
+      String(destination).startsWith(`${selectedRegistryLock}.quarantine.`)
+        ? failSelectedRelease()
+        : renameSync(source, destination),
+    );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(/changed ownership/);
+    expect(fs.existsSync(selectedRegistryLock)).toBe(true);
+    expect(fs.existsSync(`${legacyRegistry}.lock`)).toBe(false);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+  });
+
+  it("preserves a migration failure while attempting every lock release", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selectedRegistry = path.join(shared, "gateways", "9123", "sandboxes.json");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    const backupSource = path.join(shared, "rebuild-backups", "port-box");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(backupSource, "snapshot", "manifest.json"), {});
+
+    const selectedRegistryLock = `${selectedRegistry}.lock`;
+    const renameSync = fs.renameSync.bind(fs);
+    const failBody = (): never => {
+      throw new Error("injected migration body failure");
+    };
+    const failSelectedRelease = (): never => {
+      throw new Error("injected selected lock release failure");
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === backupSource
+        ? failBody()
+        : String(source) === selectedRegistryLock &&
+            String(destination).startsWith(`${selectedRegistryLock}.quarantine.`)
+          ? failSelectedRelease()
+          : renameSync(source, destination),
+    );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /injected migration body failure/,
+    );
+    expect(fs.existsSync(selectedRegistryLock)).toBe(true);
+    expect(fs.existsSync(`${legacyRegistry}.lock`)).toBe(false);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+  });
+
   it("partitions provable rows and recovery without a session but leaves credentials", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");

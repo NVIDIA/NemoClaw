@@ -1065,6 +1065,7 @@ export function migrateLegacyPortState(
 
   const lock = acquireDirectoryLock(home, migrationLock);
   const registryLocks: ProcessBoundLockHandle[] = [];
+  let migrationFailed = false;
   try {
     // Onboard writers recheck the migration lock after claiming onboard.lock.
     // Checking both roots while this lock is held closes the opposite side of
@@ -1192,10 +1193,24 @@ export function migrateLegacyPortState(
       selectedRegistryFile,
       intent,
     );
+  } catch (error) {
+    migrationFailed = true;
+    throw error;
   } finally {
+    let releaseFailed = false;
+    let firstReleaseError: unknown;
+    const attemptRelease = (release: () => void): void => {
+      try {
+        release();
+      } catch (error) {
+        if (!releaseFailed) firstReleaseError = error;
+        releaseFailed = true;
+      }
+    };
     for (const registryLock of registryLocks.reverse()) {
-      releaseProcessBoundLock(registryLock);
+      attemptRelease(() => releaseProcessBoundLock(registryLock));
     }
-    releaseDirectoryLock(lock);
+    attemptRelease(() => releaseDirectoryLock(lock));
+    if (!migrationFailed && releaseFailed) throw firstReleaseError;
   }
 }
