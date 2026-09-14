@@ -2161,11 +2161,11 @@ Hermes and OpenAI-compatible-only agents use the endpoint's `/v1/chat/completion
 
 Fix the streaming layer on the endpoint or gateway, or onboard with a different Anthropic-compatible endpoint. The official Anthropic provider does not run this check and is not affected. If an OpenClaw sandbox created by an older release fails at runtime with an empty final response on an Anthropic-compatible endpoint, re-run `$$nemoclaw onboard` so the streaming check can diagnose the endpoint. If the endpoint serves a reasoning-only model, set `NEMOCLAW_REASONING=true` to skip the streaming sequence and forced tool-call checks. Streaming or native tool-call defects then surface at runtime instead of during onboarding.
 
-### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
+### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not disable pairing
 
-This is expected behavior. `NEMOCLAW_DISABLE_DEVICE_AUTH` is a build-time setting used when NemoClaw creates the sandbox image. Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
+This is expected behavior. OpenClaw 2026.9.1 retired the device-auth bypass. NemoClaw accepts `NEMOCLAW_DISABLE_DEVICE_AUTH` and its provenance input only while managed Dockerfile callers transition, but it does not emit an OpenClaw device-auth bypass key. Changing the input before or after a build does not skip device pairing.
 
-If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration. For the security trade-offs, refer to [Security Best Practices](../security/best-practices).
+Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/gateway-authentication-controls).
 
 ### `openclaw.json` is empty after changing inference
 

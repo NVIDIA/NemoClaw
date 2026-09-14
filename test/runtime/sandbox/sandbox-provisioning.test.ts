@@ -133,6 +133,7 @@ function runOpenclawRepairLayoutCase(legacy: boolean) {
   if (legacy) {
     fs.mkdirSync(path.join(dataDir, "extensions"), { recursive: true });
     fs.writeFileSync(path.join(dataDir, "extensions", "legacy-plugin.json"), "{}\n");
+    fs.writeFileSync(path.join(dataDir, ".legacy-state"), "preserved\n");
   }
 
   const cleanup = runLoggedDockerShell(rewrite(cleanupBlock), tmp, functionDefs);
@@ -834,6 +835,9 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     expect(legacy.permission.result.status).toBe(0);
     expect(legacy.markerExistsAfterCleanup).toBe(true);
     expect(legacy.markerExistsAfterPermission).toBe(false);
+    expect(legacy.filesAfterCleanup).toEqual(
+      expect.arrayContaining([".legacy-state", "extensions/legacy-plugin.json"]),
+    );
     expect(legacy.cleanup.calls.split("\n").filter(Boolean)).toEqual(
       expect.arrayContaining([`find ${legacy.openclawDir} -type l -print`]),
     );

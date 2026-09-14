@@ -1777,7 +1777,7 @@ RUN set -eu; \
     fi; \
     if [ -d "$data_dir" ]; then \
         legacy_layout=1; \
-        for entry in "$data_dir"/*; do \
+        for entry in "$data_dir"/* "$data_dir"/.[!.]* "$data_dir"/..?*; do \
             [ -e "$entry" ] || [ -L "$entry" ] || continue; \
             if [ -L "$entry" ]; then \
                 echo "ERROR: refusing legacy layout cleanup because $entry is a symlink" >&2; \
