@@ -21,6 +21,7 @@ import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
+import { parseOpenShellMainProcessSpecEnvValue } from "../../onboard/docker-startup-command-env";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
 import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
@@ -138,11 +139,24 @@ function inspectContainer(containerId: string): DockerContainerInspect {
 }
 
 function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
-  const prefix = "OPENSHELL_SANDBOX_COMMAND=";
-  const values = (inspect.Config?.Env ?? [])
-    .filter((entry) => entry.startsWith(prefix))
-    .map((entry) => entry.slice(prefix.length));
-  return values.length === 1 && values[0] === LEGACY_OPENSHELL_KEEPALIVE;
+  const legacyPrefix = "OPENSHELL_SANDBOX_COMMAND=";
+  const specPrefix = "OPENSHELL_MAIN_PROCESS_SPEC=";
+  const values = (inspect.Config?.Env ?? []).filter(
+    (entry) => entry.startsWith(legacyPrefix) || entry.startsWith(specPrefix),
+  );
+  if (values.length !== 1) return false;
+  const value = values[0]!;
+  if (value.startsWith(legacyPrefix)) {
+    return value.slice(legacyPrefix.length) === LEGACY_OPENSHELL_KEEPALIVE;
+  }
+  try {
+    const spec = parseOpenShellMainProcessSpecEnvValue(value.slice(specPrefix.length));
+    return (
+      spec.command.length === 2 && spec.command[0] === "sleep" && spec.command[1] === "infinity"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function reconstructSupervisorLaunchCommand(

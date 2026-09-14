@@ -130,6 +130,31 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.recreate).not.toHaveBeenCalled();
   });
 
+  it("recovers the exact OpenShell main-process keepalive spec", () => {
+    const deps = baseDeps({
+      inspectContainer: vi.fn(() => ({
+        Config: {
+          Env: [
+            'OPENSHELL_MAIN_PROCESS_SPEC={"version":1,"command":["sleep","infinity"],"tty":false}',
+          ],
+        },
+      })),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).not.toBeNull();
+    expect(deps.recreate).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    'OPENSHELL_MAIN_PROCESS_SPEC={"version":1,"command":["sleep","elsewhere"],"tty":false}',
+    "OPENSHELL_MAIN_PROCESS_SPEC=not-json",
+  ])("refuses an unauthorized main-process keepalive spec [case %#]", (entry) => {
+    const deps = baseDeps({ inspectContainer: vi.fn(() => ({ Config: { Env: [entry] } })) });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(deps.recreate).not.toHaveBeenCalled();
+  });
+
   it("refuses recreation when the pinned container no longer proves supervisor absence", () => {
     const deps = baseDeps({ confirmMissingSupervisor: vi.fn(() => false) });
 
