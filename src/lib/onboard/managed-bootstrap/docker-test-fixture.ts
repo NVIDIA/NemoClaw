@@ -64,6 +64,7 @@ export type DockerFixtureAcknowledgement =
   | "journal:cutover"
   | "journal:completion"
   | "journal:bootstrap-complete"
+  | "journal:openshell-handoff-complete"
   | "journal:owner-cleanup-required"
   | "journal:remove"
   | "journal:rollback-authorized"
@@ -577,7 +578,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
         ? { status: 1, stderr: "lost rm acknowledgement" }
         : result;
     }),
-    runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
+    runCaptureOpenshell: vi.fn((args) =>
+      args[1] === "list"
+        ? "alpha  Ready\n"
+        : `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`,
+    ),
     runOpenshell: vi.fn(() => ok()),
     now: () => new Date("2026-07-31T12:30:00.000Z"),
   };

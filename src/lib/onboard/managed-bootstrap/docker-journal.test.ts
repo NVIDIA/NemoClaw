@@ -249,7 +249,10 @@ describe("Docker managed bootstrap journal", () => {
     );
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
     expect(
-      restarted.transition(IDENTITY, "bootstrap-complete", "shared-state-committed").phase,
+      restarted.transition(IDENTITY, "bootstrap-complete", "openshell-handoff-complete").phase,
+    ).toBe("openshell-handoff-complete");
+    expect(
+      restarted.transition(IDENTITY, "openshell-handoff-complete", "shared-state-committed").phase,
     ).toBe("shared-state-committed");
     store.remove(IDENTITY, ["shared-state-committed"]);
     expect(store.load(IDENTITY)).toBeNull();

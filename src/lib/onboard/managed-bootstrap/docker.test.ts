@@ -364,6 +364,7 @@ describe("Docker managed bootstrap adapter", () => {
         "journal:cutover",
         "journal:completion",
         "journal:bootstrap-complete",
+        "journal:openshell-handoff-complete",
         "journal:remove",
         "journal:shared-state-committed",
       ],
@@ -426,7 +427,7 @@ describe("Docker managed bootstrap adapter", () => {
       replacement,
       timeoutSecs: 1,
     });
-    expect(fake.journal?.phase).toBe("bootstrap-complete");
+    expect(fake.journal?.phase).toBe("openshell-handoff-complete");
     const reorderedCommitReceipt = {
       completedAt: commitReceipt.completedAt,
       transactionPending: commitReceipt.transactionPending,
@@ -549,7 +550,7 @@ describe("Docker managed bootstrap adapter", () => {
       replacement,
       timeoutSecs: 1,
     });
-    expect(fake.journal?.phase).toBe("bootstrap-complete");
+    expect(fake.journal?.phase).toBe("openshell-handoff-complete");
     expect(fake.original).toMatchObject({
       Id: OLD_ID,
       State: { Running: false },

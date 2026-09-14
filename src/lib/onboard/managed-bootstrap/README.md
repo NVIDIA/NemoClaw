@@ -88,7 +88,8 @@ publishes `rollback-authorized` before replacement deletion; pre-cutover
 staged cleanup removes only the prepared replacement without that journal
 transition. The stopped runtimes exchange names, the provider starts the exact
 replacement by full runtime ID, and OpenShell publishes its supervisor as ready
-before commit. The replacement then remains running through finalization. Commit
+before commit. The adapter then records `openshell-handoff-complete` before shared
+state can commit. The replacement remains running through finalization. Commit
 publishes `shared-state-committed` before backup deletion and proves that the same
 replacement supervisor remains connected. Cleanup is bound to full runtime IDs.
 Commit or rollback is claimed
@@ -146,10 +147,13 @@ create-lifecycle startup uses unfinished-record enumeration to ask the selected
 provider to reconcile every identity-addressed record before a new sandbox
 create begins. The Docker provider then resumes the durable phase monotonically:
 staged work rolls back without entering cutover; cutover work follows a proven
-image-owned commit forward or durably authorizes rollback; rollback-authorized
-work completes restore and cleanup; and shared-state-committed work completes
-backup cleanup, waits for the already-published supervisor, revalidates the
-exact running replacement without starting it again, and commits. Recovery
+image-owned commit forward or durably authorizes rollback; bootstrap-complete
+work validates the durable sandbox ID, reads its phase without starting it,
+publishes only a stopped supervisor, and records `openshell-handoff-complete`;
+rollback-authorized work completes restore and cleanup; and
+shared-state-committed work completes backup cleanup, waits for the
+already-published supervisor, revalidates the exact running replacement without
+starting it again, and commits. Recovery
 persists an identity-bound finalization receipt before removing the active
 journal, is idempotent across another interruption, and enumerates durable
 identities before loading each record so one unreadable transaction does not hide

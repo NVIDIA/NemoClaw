@@ -15,6 +15,7 @@ import {
   dockerRun as defaultDockerRun,
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
+import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
 import {
   captureDockerContainerFailureEvidence,
@@ -300,6 +301,35 @@ async function waitForRequiredOpenShellSupervisorReconnect(
     sleep: deps.sleep,
     errorPhaseDebouncePolls: deps.errorPhaseDebouncePolls,
   });
+}
+
+function observeRecoveredOpenShellHandoff(
+  sandbox: ManagedBootstrapSandboxIdentity,
+  deps: ResolvedDeps,
+): "start-required" | "wait" | "unknown" {
+  if (!deps.runCaptureOpenshell) return "unknown";
+  try {
+    const sandboxId = parseOpenShellSandboxId(
+      deps.runCaptureOpenshell(["sandbox", "get", sandbox.sandboxName], {
+        ignoreError: false,
+        ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
+        suppressOutput: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      }),
+    );
+    if (sandboxId !== sandbox.sandboxId) return "unknown";
+    const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+      ignoreError: false,
+      ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
+      suppressOutput: true,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
+    const entry = parseLiveSandboxEntries(list).find(({ name }) => name === sandbox.sandboxName);
+    if (!entry?.phase) return "unknown";
+    return entry.phase === "Stopped" ? "start-required" : "wait";
+  } catch {
+    return "unknown";
+  }
 }
 
 function supervisorReconnectFailureDetail(runtimeId: string, deps: ResolvedDeps): string {
@@ -1832,6 +1862,7 @@ function transitionDockerBootstrapJournalDurably(
     | "rollback-authorized"
     | "owner-cleanup-required"
     | "bootstrap-complete"
+    | "openshell-handoff-complete"
     | "shared-state-committed",
   deps: ResolvedDeps,
 ): DockerBootstrapTransaction {
@@ -2269,7 +2300,11 @@ export function createDockerManagedBootstrapAdapter(
   ): never => {
     try {
       let activeJournal = journal;
-      if (journal.phase === "cutover" || journal.phase === "bootstrap-complete") {
+      if (
+        journal.phase === "cutover" ||
+        journal.phase === "bootstrap-complete" ||
+        journal.phase === "openshell-handoff-complete"
+      ) {
         const current = deps.journalStore.load(journal.bootstrapIdentity);
         if (!current || !sameDockerBootstrapJournal(current, journal)) {
           throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -2677,15 +2712,69 @@ export function createDockerManagedBootstrapAdapter(
     removeDockerBootstrapJournalDurably(journal, deps);
     return recoveredReceipt(journal, sourcePhase, finalization);
   };
+  const recoverOpenShellHandoff = async (
+    journal: DockerBootstrapTransaction,
+  ): Promise<DockerBootstrapTransaction> => {
+    if (journal.phase === "openshell-handoff-complete") return journal;
+    if (journal.phase !== "bootstrap-complete") {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: `OpenShell publication is invalid from durable journal phase ${journal.phase}`,
+      });
+    }
+    const handoff = observeRecoveredOpenShellHandoff(journal.sandbox, deps);
+    if (handoff === "unknown") {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "OpenShell publication state could not be proven without a read-only sandbox phase",
+      });
+    }
+    const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
+    if (handoff === "start-required") {
+      runRequiredOpenShellLifecycleCommand(
+        deps,
+        ["sandbox", "start", journal.sandbox.sandboxName],
+        supervisorReconnectTimeoutSecs,
+      );
+    }
+    if (
+      !(await waitForRequiredOpenShellSupervisorReconnect(
+        journal.sandbox.sandboxName,
+        supervisorReconnectTimeoutSecs,
+        deps,
+      ))
+    ) {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        cleanupRuntimeId: journal.replacementRuntimeId,
+        detail: supervisorReconnectFailureDetail(journal.replacementRuntimeId, deps),
+      });
+    }
+    const afterHandoff = deps.journalStore.load(journal.bootstrapIdentity);
+    if (!afterHandoff || !sameDockerBootstrapJournal(afterHandoff, journal)) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "durable authority changed during recovered OpenShell publication",
+      });
+    }
+    assertCompletedCutoverRuntimeState(afterHandoff, deps);
+    return transitionDockerBootstrapJournalDurably(journal, "openshell-handoff-complete", deps);
+  };
   const finishRecoveredBootstrapComplete = async (
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
   ): Promise<ManagedBootstrapRecoveryReceipt> => {
-    if (journal.phase !== "bootstrap-complete" || journal.commitReceipt === null) {
+    if (
+      (journal.phase !== "bootstrap-complete" && journal.phase !== "openshell-handoff-complete") ||
+      journal.commitReceipt === null
+    ) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
         runtimeId: journal.replacementRuntimeId,
-        detail: "bootstrap completion recovery requires its exact completion receipt and fence",
+        detail: "OpenShell handoff recovery requires its exact completion receipt and fence",
       });
     }
     const replacement = inspectTransactionRuntime(journal, journal.replacementRuntimeId, deps);
@@ -2740,6 +2829,7 @@ export function createDockerManagedBootstrapAdapter(
         detail: "bootstrap completion recovery found an unexpected shared-state receipt",
       });
     }
+    journal = await recoverOpenShellHandoff(journal);
     if (sharedStatus === "pending") {
       let outcome;
       try {
@@ -2826,6 +2916,7 @@ export function createDockerManagedBootstrapAdapter(
     if (
       journal.phase !== "cutover" &&
       journal.phase !== "bootstrap-complete" &&
+      journal.phase !== "openshell-handoff-complete" &&
       journal.phase !== "rollback-authorized"
     ) {
       return finishRecoveredCommit(journal, sourcePhase);
@@ -2880,6 +2971,9 @@ export function createDockerManagedBootstrapAdapter(
             deps,
           );
           return finishRecoveredBootstrapComplete(completed, sourcePhase);
+        }
+        if (journal.phase === "bootstrap-complete") {
+          return finishRecoveredBootstrapComplete(journal, sourcePhase);
         }
         activeJournal = transitionDockerBootstrapJournalDurably(
           journal,
@@ -3101,6 +3195,7 @@ export function createDockerManagedBootstrapAdapter(
     if (
       journal.phase !== "cutover" &&
       journal.phase !== "bootstrap-complete" &&
+      journal.phase !== "openshell-handoff-complete" &&
       journal.phase !== "rollback-authorized"
     ) {
       throw new ManagedBootstrapDurableCommitCleanupPendingError({
@@ -3201,6 +3296,7 @@ export function createDockerManagedBootstrapAdapter(
               deps,
             );
           }
+          activeJournal = await recoverOpenShellHandoff(activeJournal);
           const committedJournal = transitionDockerBootstrapJournalDurably(
             activeJournal,
             "shared-state-committed",
@@ -3566,7 +3662,15 @@ export function createDockerManagedBootstrapAdapter(
       );
     }
 
-    if (journal.phase === "cutover" || journal.phase === "bootstrap-complete") {
+    if (
+      journal.phase === "cutover" ||
+      journal.phase === "bootstrap-complete" ||
+      journal.phase === "openshell-handoff-complete"
+    ) {
+      if (journal.phase === "cutover") {
+        journal = transitionDockerBootstrapJournalDurably(journal, "bootstrap-complete", deps);
+      }
+      journal = await recoverOpenShellHandoff(journal);
       if (completion.transactionPending && sharedStatus === "none") {
         throw new Error(
           "Managed bootstrap image completion lost its shared-state receipt before the durable commit fence.",
@@ -3658,7 +3762,8 @@ export function createDockerManagedBootstrapAdapter(
             receipts.push(
               await (journal.phase === "shared-state-committed"
                 ? finishRecoveredCommit(journal, sourcePhase)
-                : journal.phase === "bootstrap-complete"
+                : journal.phase === "bootstrap-complete" ||
+                    journal.phase === "openshell-handoff-complete"
                   ? finishRecoveredBootstrapComplete(journal, sourcePhase)
                   : finishRecoveredRollbackPhase(journal, sourcePhase)),
             );
@@ -4389,7 +4494,17 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       assertCompletedCutoverRuntimeState(afterHandoffJournal, deps);
-      return bootstrapCompleteJournal.commitReceipt;
+      const handoffCompleteJournal = transitionDockerBootstrapJournalDurably(
+        bootstrapCompleteJournal,
+        "openshell-handoff-complete",
+        deps,
+      );
+      if (handoffCompleteJournal.commitReceipt === null) {
+        throw new Error(
+          "Managed bootstrap Docker completion receipt disappeared at the OpenShell handoff fence.",
+        );
+      }
+      return handoffCompleteJournal.commitReceipt;
     },
 
     finalizeBootstrap,
