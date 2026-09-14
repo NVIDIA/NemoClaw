@@ -55,6 +55,8 @@ Enforce both limits at the container runtime when that residual risk matters to 
 
 OpenShell owns capability enforcement for managed entrypoints, exec processes, and connect shells.
 The OpenClaw and Hermes entrypoints do not maintain a second capability drop, verification, sentinel, or fallback layer.
+A direct container runtime that explicitly overrides the image user to `root` retains the existing `capsh` compatibility drop and `NEMOCLAW_REQUIRE_CAP_DROP=1` fail-closed option.
+OpenShell-managed launches do not call that path.
 The managed images install `setpriv` from `util-linux` and require it for the switch from root to the `sandbox` and `gateway` users.
 When `CAP_SETPCAP` is available, the same `setpriv` operation also removes the remaining privilege-separation capabilities from the child process bounding set.
 

@@ -241,6 +241,13 @@ else
   install -d -m 700 /tmp/.gnupg
 fi
 
+# OpenShell 0.0.116 starts managed workloads as the non-root image user and
+# owns their capability enforcement. Retain the compatibility drop only for a
+# direct container runtime that explicitly overrides the image user to root.
+if [ "$(id -u)" -eq 0 ]; then
+  drop_capabilities /usr/local/bin/nemoclaw-start "$@"
+fi
+
 NEMOCLAW_CMD=("$@")
 
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Force this

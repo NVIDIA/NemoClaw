@@ -21,6 +21,10 @@ OpenShell owns capability enforcement for managed agent processes.
 The OpenClaw and Hermes entrypoints do not inspect, drop, record, or reconcile Linux capabilities.
 This keeps one enforcement owner for the entrypoint, later exec processes, and connect shells.
 
+A direct container runtime can explicitly override the image user to `root`.
+That compatibility path retains the existing `capsh` bounding-set drop and supports `NEMOCLAW_REQUIRE_CAP_DROP=1` for fail-closed verification.
+It is not used by OpenShell-managed launches and is not a substitute for container-runtime capability configuration.
+
 The managed images install `setpriv` from `util-linux` and require it when the entrypoint switches from root to the `sandbox` and `gateway` users.
 When `CAP_SETPCAP` is available, the same `setpriv` operation removes the remaining privilege-separation capabilities from the child process at the same time as the user change.
 That direct root-to-user transition is separate from managed OpenShell enforcement and removes `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill` from the child bounding set when the runtime permits it.
@@ -38,7 +42,7 @@ Refer to [Review Sandbox Hardening](../../manage-sandboxes/configure-sandboxes/r
 | Aspect | Detail |
 |---|---|
 | Default | OpenShell owns capability enforcement for managed processes. Root-to-user transitions outside that topology still require `setpriv`. |
-| What you can change | Select the required OpenShell enforcement posture. When launching with `docker run` directly, pass `--cap-drop=ALL` at the container runtime. |
+| What you can change | Select the required OpenShell enforcement posture. When launching with `docker run` directly, pass `--cap-drop=ALL` at the container runtime. `NEMOCLAW_REQUIRE_CAP_DROP=1` keeps the retained direct-root compatibility check fail closed. |
 | Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. |
 | Recommendation | Keep OpenShell enforcement enabled. For direct containers, make the container runtime the capability owner and pass `--cap-drop=ALL`. |
 

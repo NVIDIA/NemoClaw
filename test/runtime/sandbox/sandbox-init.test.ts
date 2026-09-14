@@ -347,6 +347,37 @@ EOF
     });
   });
 
+  describe("direct-root capability fallback", () => {
+    const QA_CAPBND = "00000004a82c35fb";
+
+    it("reads and decodes the direct-root bounding set", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "nemoclaw-cap-bnd-"));
+      const status = join(workDir, "status");
+      writeFileSync(status, `Name:\tbash\nCapBnd:\t${QA_CAPBND}\n`);
+      try {
+        const { stdout } = runWithLib(
+          `cap_bnd="$(read_capability_bounding_set ${JSON.stringify(status)})"
+           printf '%s:%s\n' "$cap_bnd" "$(dangerous_caps_in_capbnd "$cap_bnd")"`,
+        );
+        expect(stdout).toBe(
+          `${QA_CAPBND}:cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service`,
+        );
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
+
+    it("fails closed when a direct-root drop cannot run", () => {
+      const { stderr } = runWithLib(
+        `read_capability_bounding_set() { printf '%s\n' ${QA_CAPBND}; }
+         command() { [ "$*" = '-v capsh' ] && return 1; builtin command "$@"; }
+         NEMOCLAW_REQUIRE_CAP_DROP=1 drop_capabilities /bin/true`,
+        { expectFail: true },
+      );
+      expect(stderr).toContain("Refusing to start sandbox: dangerous caps remain");
+    });
+  });
+
   describe("harden_resource_limits", () => {
     it("sources the shared init without resolving a PATH-controlled dirname", () => {
       const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-path-"));
