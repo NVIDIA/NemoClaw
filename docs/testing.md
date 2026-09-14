@@ -105,3 +105,13 @@ Use a dedicated immutable bundle copy for a long live run. Rebuilding `dist`
 replaces development artifacts and is not safe while an operation still uses
 that directory. [Agent fixture instructions](agents.md) cover native messaging
 and Fabric's offline harness qualification.
+
+The optional `fabric_live` test accepts absolute
+`NEMOCLAW_LIVE_FABRIC_CONFIG`, `NEMOCLAW_LIVE_FABRIC_STATE`, and
+`NEMOCLAW_TEST_BUNDLE` paths. Use a dedicated UID and state directory with an
+external gateway and inference endpoint. It applies the deployment, checks
+unchanged apply and export/reapply, exercises the native agent/Fabric SDK, and
+destroys its owned registrations and sandbox. It retains JSON evidence and the
+workspace. The hosted Fabric runtime must keep its identity throughout native
+access and reconciliation. This test makes a real model request; ordinary apply
+does not inject a Fabric conversation.
