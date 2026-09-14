@@ -358,21 +358,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
       : {}),
     ...(options.workload ? { workload: options.workload } : {}),
-    ...(options.mcpServers?.length
-      ? {
-          mcp: {
-            bridges: Object.fromEntries(
-              options.mcpServers.map((server) => [
-                server,
-                {
-                  server,
-                  ...(options.mcpAddState ? { addState: options.mcpAddState } : {}),
-                },
-              ]),
-            ),
-          },
-        }
-      : {}),
     ...options.registryEntryOverrides,
   } as SandboxEntry;
   let registryEntryPresent = options.registryEntryPresent !== false;

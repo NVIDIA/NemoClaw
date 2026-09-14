@@ -15,9 +15,11 @@
  * focuses on the entry-point behaviour and SecretStore delegation.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -243,6 +245,31 @@ describe("fixture redaction entry point", () => {
     expect(out).toContain("<REDACTED>");
     expect(out).not.toContain(explicit);
     expect(out).not.toContain(canonical);
+
+    // Truncating before redaction would expose this opaque secret's suffix.
+    const cliSecret = "opaque".repeat(4000) + explicit;
+    const cli = spawnSync(
+      process.execPath,
+      ["--no-warnings", fileURLToPath(new URL("../fixtures/redaction.ts", import.meta.url))],
+      {
+        env: { COMPATIBLE_API_KEY: cliSecret },
+        input: `${"diagnostic\n".repeat(2000)}\x1b[31m${cliSecret}\x1b[0m\n${canonical}\nDCODE_EXIT:0\n`,
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    const notice = "[truncated; last 16 KiB of redacted output]\n";
+    expect(cli.error).toBeUndefined();
+    expect(cli.status).toBe(0);
+    expect(cli.stderr).toBe("");
+    expect(cli.stdout).toContain("[REDACTED]");
+    expect(cli.stdout).toContain("<REDACTED>");
+    expect(cli.stdout).not.toContain(explicit);
+    expect(cli.stdout).not.toContain(canonical);
+    expect(cli.stdout).not.toContain("\x1b");
+    expect(cli.stdout.startsWith(notice)).toBe(true);
+    expect(Buffer.byteLength(cli.stdout)).toBeLessThanOrEqual(16 * 1024 + notice.length + 1);
+    expect(cli.stdout).toMatch(/\nDCODE_EXIT:0\n\n?$/);
   });
 
   it("returns redacted MCP tunnel URLs exactly as ShellProbe exposes them", async () => {

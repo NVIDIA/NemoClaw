@@ -451,9 +451,15 @@ function runSystemctlUser(
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
 ) {
+  const env: NodeJS.ProcessEnv = { ...opts.env, LC_ALL: "C" };
+  if (typeof process.getuid === "function") {
+    const runtimeDir = env.XDG_RUNTIME_DIR?.trim() || `/run/user/${String(process.getuid())}`;
+    env.XDG_RUNTIME_DIR = runtimeDir;
+    env.DBUS_SESSION_BUS_ADDRESS ||= `unix:path=${runtimeDir}/bus`;
+  }
   return runCommand("systemctl", ["--user", ...args], {
     ...opts,
-    env: { ...opts.env, LC_ALL: "C" },
+    env,
   });
 }
 

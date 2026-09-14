@@ -50,7 +50,10 @@ describe("showSandboxStatus flow", () => {
       const report = await harness.getSandboxStatusReport("alpha");
 
       expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-        `Portable lifecycle phase: ${phase}`,
+        `Saved Portable lifecycle phase: ${phase}`,
+      );
+      expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+        "Runtime and agent health: not probed",
       );
       expect(report).toMatchObject({
         schemaVersion: 1,
@@ -139,7 +142,7 @@ describe("showSandboxStatus flow", () => {
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Portable lifecycle phase: active",
+      "Saved Portable lifecycle phase: active",
     );
     expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();

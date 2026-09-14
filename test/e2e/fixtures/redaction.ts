@@ -30,7 +30,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
+import { pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 const REDACTED = "<REDACTED>";
 const EXPLICIT_REDACTED = "[REDACTED]";
@@ -364,4 +367,17 @@ export function fixtureEnvAllowlistSnapshot(): {
     keys: [...FIXTURE_ENV_ALLOWLIST].sort(),
     prefixes: [...FIXTURE_ENV_PREFIXES],
   };
+}
+
+// Shell checks use the same redaction boundary for bounded diagnostic excerpts.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const output = Buffer.from(
+    redactString(stripVTControlCharacters(readFileSync(0, "utf8")), [
+      process.env.COMPATIBLE_API_KEY ?? "",
+    ]),
+  );
+  const limit = 16 * 1024;
+  if (output.length > limit) console.log("[truncated; last 16 KiB of redacted output]");
+  process.stdout.write(output.subarray(-limit));
+  if (output.length > 0) console.log();
 }

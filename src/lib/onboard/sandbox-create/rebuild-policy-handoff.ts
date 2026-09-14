@@ -11,12 +11,42 @@ import {
 } from "../../adapters/openshell/policy-boundary";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
+import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
 const REBUILD_POLICY_HANDOFF_PREFIX = "nemoclaw-rebuild-policy-handoff";
 
 type PolicyMapping = Record<string, unknown>;
+
+export function parseRebuildPolicyProviderNames(policyDocument: string): string[] {
+  const providers = new Set<string>();
+  const parsed = parseAndValidateSandboxPolicy(policyDocument) as {
+    network_policies?: Record<string, { endpoints?: unknown[] }>;
+  };
+  for (const policy of Object.values(parsed.network_policies ?? {})) {
+    for (const endpoint of Array.isArray(policy?.endpoints) ? policy.endpoints : []) {
+      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+      const value = endpoint as {
+        protocol?: unknown;
+        credential_binding?: { provider?: unknown };
+      };
+      const provider = value.credential_binding?.provider;
+      if (value.protocol === "mcp" && typeof provider === "string" && provider) {
+        providers.add(provider);
+      }
+    }
+  }
+  return [...providers];
+}
+
+export function readValidatedRebuildPolicySource(policySourcePath: string): {
+  readonly document: string;
+  readonly providers: readonly string[];
+} {
+  const document = fs.readFileSync(policySourcePath, "utf8");
+  return { document, providers: parseRebuildPolicyProviderNames(document) };
+}
 
 function authorizedCredentialBindingProviders(
   source: string,
@@ -286,13 +316,14 @@ export function mergeReplacementPolicyAccess(
 export function materializeRebuildPolicyHandoff(input: {
   readonly sandboxName?: string;
   readonly livePolicyPath: string;
+  readonly livePolicySource?: string;
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
   readonly removedNetworkPolicyKeys?: readonly string[];
   readonly requiredNetworkPolicySources?: readonly string[];
   readonly authorizedCredentialBindingProviders?: readonly string[];
 }): InitialSandboxPolicy {
-  const liveSource = fs.readFileSync(input.livePolicyPath, "utf8");
+  const liveSource = input.livePolicySource ?? fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =
     input.replacementPolicy.sourceBytes?.toString("utf8") ??
     fs.readFileSync(input.replacementPolicy.policyPath, "utf8");
@@ -304,7 +335,7 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicySources,
     input.sandboxName,
   );
-  if (!merged.changed) {
+  if (!merged.changed && input.livePolicySource === undefined) {
     return {
       ...input.replacementPolicy,
       policyPath: input.livePolicyPath,

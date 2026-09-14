@@ -46,6 +46,7 @@ function createChildScript(): { markerPath: string; script: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-group-"));
   startedDirs.push(dir);
   const markerPath = path.join(dir, "pids.json");
+  const pendingMarkerPath = path.join(dir, "pids.pending.json");
   const script = `
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
@@ -53,9 +54,10 @@ const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]
   stdio: "ignore",
 });
 fs.writeFileSync(
-  ${JSON.stringify(markerPath)},
+  ${JSON.stringify(pendingMarkerPath)},
   JSON.stringify({ child: process.pid, grandchild: grandchild.pid }),
 );
+fs.renameSync(${JSON.stringify(pendingMarkerPath)}, ${JSON.stringify(markerPath)});
 setInterval(() => {}, 1000);
 `;
   return { markerPath, script };

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -39,6 +40,26 @@ describe("focused staging Brev Launchable lane", () => {
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
     });
+  });
+
+  it("preserves multiline output through the delayed readiness log fixture", () => {
+    const { bin, env, workDir } = fixture({ delayWorkspaceSshLog: true });
+    const laneLog = path.join(workDir, "lane.log");
+    const input = [
+      "Waiting up to 1 seconds for workspace SSH access",
+      "Readiness diagnostic detail",
+      "Readiness classification detail",
+    ].join("\n");
+
+    const result = spawnSync(path.join(bin, "tee"), ["-a", laneLog], {
+      encoding: "utf8",
+      env,
+      input,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(input);
+    expect(fs.readFileSync(laneLog, "utf8")).toBe(input);
   });
 
   it("retains real guest ShellProbe evidence through Vitest and SSH capture (#9851)", () => {
@@ -1106,6 +1127,31 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     const output = emittedOutput(result, workDir);
     expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("reports readiness diagnostics when the initial budget expires while logging", () => {
+    const { calls, env, state, workDir } = fixture({
+      brevExecStatus: 0,
+      delayWorkspaceSshLog: true,
+      sshAliasQueryStatus: 42,
+      sshProbeStatus: 0,
+      sshReadyAfter: Number.MAX_SAFE_INTEGER,
+    });
+    const result = run({ ...env, BREV_SSH_TIMEOUT_SECONDS: "1" });
+    expect(result.status).not.toBe(0);
+    const output = emittedOutput(result, workDir);
+    expect(output).toContain("Readiness Brev refresh last failure: none");
+    expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
+    expect(output).toContain("Readiness Brev refresh: not run before the readiness deadline");
+    expect(output).toContain("Readiness classification: direct SSH recovered during diagnostics");
+    expect(output).not.toContain("Readiness classification: Brev refresh/configuration failure");
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).not.toContain("timeout 1s brev refresh");
+    expect(commands).not.toContain("ssh readiness attempt");
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",

@@ -212,8 +212,6 @@ test.skipIf(process.platform !== "linux")(
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
     progress.phase("clear prior fixture state");
-
-    progress.phase("clear prior fixture state");
     await artifacts.writeJson("release-and-candidate-contract.json", {
       release: RELEASE_TAG,
       candidateCli: CANDIDATE_CLI,
@@ -315,8 +313,6 @@ test.skipIf(process.platform !== "linux")(
     );
     expectExitZero(shieldsStatus, "released shields status");
     expect(resultText(shieldsStatus)).toContain("Shields: UP (lockdown active)");
-
-    progress.phase("switch the host to the candidate CLI");
 
     progress.phase("detect legacy posture and fail closed before mutation");
     const detected = await candidateNemoclaw(host, ["list"], "candidate-retirement-notice");

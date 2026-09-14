@@ -18,7 +18,7 @@
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import {
   createMcpProviderAdapterBoundary,
@@ -27,7 +27,6 @@ import {
   type McpProviderInspectionRuntimeSelection,
   type McpProviderInspection,
   providerMatchesCredential,
-  providerMatchesManagedCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider-inspection";
 import {
@@ -233,7 +232,7 @@ export async function upsertMcpProvider(
  * sidecar a post-policy generation to synchronize.
  */
 export async function refreshMcpProviderEnvironment(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   providerAdapter?: OpenShellProviderAdapter,
 ): Promise<McpProviderInspection> {
@@ -273,97 +272,4 @@ export async function refreshMcpProviderEnvironment(
     );
   }
   return after;
-}
-
-async function inspectMcpProviderForDeletion(
-  entry: McpBridgeEntry,
-  options: {
-    allowLegacyGeneric?: boolean;
-    allowMissing?: boolean;
-    bestEffort?: boolean;
-    runtimeSelection: McpProviderInspectionRuntimeSelection;
-    providerAdapter?: OpenShellProviderAdapter;
-  },
-): Promise<McpProviderInspection | null> {
-  if (!entry.providerName) return null;
-  try {
-    assertPersistedAuthenticatedBridgeEntry(entry);
-    if (!entry.providerId) {
-      throw new McpBridgeError(
-        `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing to delete same-name provider '${entry.providerName}'.`,
-      );
-    }
-    const inspection = await inspectMcpProvider(
-      entry.providerName,
-      options.runtimeSelection,
-      options.providerAdapter,
-    );
-    if (inspection.exists === false) {
-      if (options.allowMissing) return inspection;
-      throw new McpBridgeError(
-        `OpenShell provider '${entry.providerName}' disappeared before delete.`,
-      );
-    }
-    if (
-      !providerMatchesManagedCredential(inspection, entry.env[0], entry.providerId, {
-        allowLegacyGeneric: options.allowLegacyGeneric,
-      })
-    ) {
-      throw new McpBridgeError(
-        `OpenShell provider '${entry.providerName}' changed before delete. ${providerShapeDetail(inspection, entry.env[0], entry.providerId)} Refusing to mutate it.`,
-      );
-    }
-    return inspection;
-  } catch (error) {
-    if (options.bestEffort) return null;
-    throw error;
-  }
-}
-
-export async function deleteProvider(
-  entry: McpBridgeEntry,
-  options: {
-    allowLegacyGeneric?: boolean;
-    allowMissing?: boolean;
-    bestEffort?: boolean;
-    runtimeSelection: McpProviderInspectionRuntimeSelection;
-    providerAdapter?: OpenShellProviderAdapter;
-  },
-): Promise<void> {
-  if (!entry.providerName) return;
-  const boundary = createMcpProviderAdapterBoundary(
-    options.runtimeSelection,
-    options.providerAdapter,
-  );
-  const inspection = await inspectMcpProviderForDeletion(entry, {
-    ...options,
-    providerAdapter: boundary.adapter,
-  });
-  if (!inspection?.exists || !inspection.id || !inspection.resourceVersion) return;
-  const result = await boundary.adapter.deleteProvider({
-    providerName: entry.providerName,
-    target: boundary.target,
-  });
-  if (!result.ok) {
-    if (
-      options.allowMissing &&
-      result.error.kind === "command" &&
-      result.error.reason === "not_found"
-    )
-      return;
-    if (options.bestEffort) return;
-    throw new McpBridgeError(
-      result.error.message || `Failed to delete MCP provider '${entry.providerName}'.`,
-    );
-  }
-  const after = await inspectMcpProvider(
-    entry.providerName,
-    options.runtimeSelection,
-    boundary.adapter,
-  );
-  if (after.exists !== false && !options.bestEffort) {
-    throw new McpBridgeError(
-      after.error ?? `OpenShell provider '${entry.providerName}' still exists after delete.`,
-    );
-  }
 }

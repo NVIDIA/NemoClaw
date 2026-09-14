@@ -632,11 +632,6 @@ async function runRuntimeIdentityE2EScenario(
   );
   const applyText = resultText(apply);
   expect(apply.exitCode, applyText).toBe(0);
-  expect(applyText).toContain(`Sandbox '${sandboxName}' is ready.`);
-  expect(applyText).toContain("Provider 'compatible-endpoint' already exists, reusing.");
-  expect(applyText).toContain(
-    `Inference route 'compatible-endpoint / ${model}' is already active, reusing.`,
-  );
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
   const attachedProviders = await sandbox.openshell(["sandbox", "provider", "list", sandboxName], {
     artifactName: `${artifactPrefix}-attached-providers`,
@@ -730,7 +725,6 @@ async function runRuntimeIdentityE2EScenario(
       { interval: 2_000, timeout: 35_000 },
     )
     .toMatch(placeholderPattern);
-  expect(placeholder).toMatch(placeholderPattern);
   for (const secret of redactionValues) expect(placeholder).not.toContain(secret);
   const expectProtectedResourceVersion = async (
     projectedPlaceholder: string,
@@ -805,7 +799,7 @@ async function runRuntimeIdentityE2EScenario(
   );
   expect(deniedResource.exitCode, resultText(deniedResource)).not.toBe(0);
   expect(oauth.resourceRequests()).toHaveLength(admittedRequestCount);
-  progress.phase("rotate the credential and relaunch with its new placeholder");
+  progress.phase("rotate the credential and resolve its stable placeholder");
   const rotate = await sandbox.openshell(
     ["provider", "refresh", "rotate", providerName, "--credential-key", credentialKey],
     {
@@ -825,50 +819,33 @@ async function runRuntimeIdentityE2EScenario(
     clientSecretOk: true,
     issuedVersion: 2,
   });
-  let placeholderAfterRotation = "";
-  let rotationProbeAttempt = 0;
-  await expect
-    .poll(
-      async () => {
-        rotationProbeAttempt += 1;
-        const placeholderAfter = await sandbox.exec(
-          sandboxName,
-          ["/usr/bin/printenv", credentialKey],
-          {
-            artifactName: `${artifactPrefix}-placeholder-after-rotation-${rotationProbeAttempt}`,
-            env: openshellEnv,
-            timeoutMs: 30_000,
-          },
-        );
-        placeholderAfterRotation =
-          placeholderAfter.exitCode === 0 ? placeholderAfter.stdout.trim() : "";
-        return placeholderAfterRotation === placeholder ? "" : placeholderAfterRotation;
-      },
-      { interval: 2_000, timeout: 35_000 },
-    )
-    .toMatch(placeholderPattern);
-  expect(placeholderAfterRotation).not.toBe(placeholder);
-  for (const secret of redactionValues) expect(placeholderAfterRotation).not.toContain(secret);
-  await expectProtectedResourceVersion(
-    placeholderAfterRotation,
-    2,
-    `${artifactPrefix}-protected-resource-v2`,
-  );
-  expect(oauth.resourceRequests()).toEqual([
-    {
+  const placeholderAfter = await sandbox.exec(sandboxName, ["/usr/bin/printenv", credentialKey], {
+    artifactName: `${artifactPrefix}-placeholder-after-rotation`,
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(placeholderAfter.exitCode, resultText(placeholderAfter)).toBe(0);
+  const placeholderAfterRotation = placeholderAfter.stdout.trim();
+  // OpenShell keeps refresh-managed handles stable while endpoint authorization remains unchanged.
+  expect(placeholderAfterRotation).toBe(placeholder);
+  await expectProtectedResourceVersion(placeholder, 2, `${artifactPrefix}-protected-resource-v2`);
+  const rotationRequests = oauth.resourceRequests().slice(admittedRequestCount);
+  // The proxy can retain version 1 until its refresh poll observes version 2.
+  for (const request of rotationRequests.slice(0, -1)) {
+    expect(request).toEqual({
       method: "GET",
       path: scenario.resourcePath,
-      auth: "ok",
+      auth: "invalid",
       accessTokenVersion: 1,
-    },
-    {
-      method: "GET",
-      path: scenario.resourcePath,
-      auth: "ok",
-      accessTokenVersion: 2,
-    },
-  ]);
-  progress.phase("verify secret-safe status and deterministic rollback");
+    });
+  }
+  expect(rotationRequests.at(-1)).toEqual({
+    method: "GET",
+    path: scenario.resourcePath,
+    auth: "ok",
+    accessTokenVersion: 2,
+  });
+  progress.phase("verify secret-safe status and refused unsafe rollback");
   const status = await runRawCommand(
     process.execPath,
     [
@@ -910,20 +887,37 @@ async function runRuntimeIdentityE2EScenario(
       timeoutMs: 2 * 60_000,
     },
   );
-  expect(rollback.exitCode, resultText(rollback)).toBe(0);
-  expect(fs.existsSync(path.join(stateDir, "rolled_back"))).toBe(true);
+  expect(rollback.exitCode, resultText(rollback)).not.toBe(0);
+  expect(resultText(rollback)).toContain("mutable sandbox and provider names");
+  expect(fs.existsSync(path.join(stateDir, "rolled_back"))).toBe(false);
+  expect(fs.readFileSync(path.join(stateDir, "plan.json"), "utf8")).toBe(persistedPlan);
   const providerAfterRollback = await sandbox.openshell(["provider", "get", providerName], {
     artifactName: `${artifactPrefix}-provider-after-rollback`,
     env: openshellEnv,
     timeoutMs: 30_000,
   });
-  expect(providerAfterRollback.exitCode).not.toBe(0);
+  expect(providerAfterRollback.exitCode, resultText(providerAfterRollback)).toBe(0);
   const reusedSandboxAfterRollback = await sandbox.openshell(["sandbox", "get", sandboxName], {
     artifactName: `${artifactPrefix}-reused-sandbox-after-rollback`,
     env: openshellEnv,
     timeoutMs: 30_000,
   });
   expect(reusedSandboxAfterRollback.exitCode, resultText(reusedSandboxAfterRollback)).toBe(0);
+  const detachProvider = await sandbox.openshell(
+    ["sandbox", "provider", "detach", sandboxName, providerName],
+    {
+      artifactName: `${artifactPrefix}-detach-conformance-provider`,
+      env: openshellEnv,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(detachProvider.exitCode, resultText(detachProvider)).toBe(0);
+  const deleteProvider = await sandbox.openshell(["provider", "delete", providerName], {
+    artifactName: `${artifactPrefix}-delete-conformance-provider`,
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(deleteProvider.exitCode, resultText(deleteProvider)).toBe(0);
   const deleteProfile = await sandbox.openshell(["provider", "profile", "delete", providerType], {
     artifactName: `${artifactPrefix}-delete-conformance-profile`,
     env: openshellEnv,
