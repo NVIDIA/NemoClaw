@@ -9,6 +9,15 @@ import {
 } from "../../inference/llama-cpp";
 import type { SetupNimSelectionState } from "../setup-nim-flow";
 import { createLlamaCppSelectionHandler, type LlamaCppSelectionDeps } from "./index";
+import { probeLlamaCppSandboxReachability } from "./sandbox-reachability";
+
+vi.mock("./sandbox-reachability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./sandbox-reachability")>();
+  return {
+    ...actual,
+    probeLlamaCppSandboxReachability: vi.fn(actual.probeLlamaCppSandboxReachability),
+  };
+});
 
 /** Create a fresh provider-selection state for each scenario. */
 function state(): SetupNimSelectionState {
@@ -52,6 +61,7 @@ describe("createLlamaCppSelectionHandler", () => {
   afterEach(() => {
     resetCompatibleEndpointContextWindowAutoState();
     vi.unstubAllEnvs();
+    vi.mocked(probeLlamaCppSandboxReachability).mockReset();
   });
 
   it("preserves an explicit context window (#11527)", async () => {
@@ -263,5 +273,26 @@ describe("createLlamaCppSelectionHandler", () => {
     );
 
     await expect(handler(state(), null, null)).resolves.toBe("selected");
+  });
+
+  it("uses the default sandbox probe when the caller does not inject one (#11626)", async () => {
+    vi.mocked(probeLlamaCppSandboxReachability).mockResolvedValue({
+      ok: false,
+      reason: "tcp_failed",
+      networkName: "openshell",
+      gatewayIp: "172.18.0.1",
+    });
+    const error = vi.fn();
+    const handler = createLlamaCppSelectionHandler({
+      ...deps({
+        isNonInteractive: () => true,
+        error,
+      }),
+      probeSandboxReachability: undefined,
+    });
+
+    await expect(handler(state(), null, null)).rejects.toThrow("exit 1");
+    expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("host.openshell.internal:8081"));
   });
 });

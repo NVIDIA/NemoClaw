@@ -11,14 +11,13 @@
  */
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp";
-import { cliName } from "../branding";
 import {
+  formatHostServiceUnreachableMessage,
   probeHostServiceSandboxReachability,
   type HostServiceReachabilityOptions,
   type HostServiceReachabilityResult,
 } from "../host-service-reachability";
 
-const HOST_INTERNAL_NAME = "host.openshell.internal";
 const SERVICE_LABEL = "llama.cpp server";
 
 export type LlamaCppSandboxReachabilityResult = HostServiceReachabilityResult;
@@ -41,24 +40,14 @@ export function formatLlamaCppSandboxUnreachableMessage(
     result.gatewayIp === undefined
       ? `-p 127.0.0.1:${port}:${port} -p <docker-gateway-ip>:${port}:${port}`
       : `-p 127.0.0.1:${port}:${port} -p ${result.gatewayIp}:${port}:${port}`;
-  const ufw =
-    result.subnet && result.gatewayIp
-      ? `      sudo ufw allow from ${result.subnet} to ${result.gatewayIp} port ${port} proto tcp`
-      : result.subnet
-        ? `      sudo ufw allow from ${result.subnet} to any port ${port} proto tcp`
-        : [
-            `      SUBNET=$(docker network inspect ${result.networkName} --format '{{(index .IPAM.Config 0).Subnet}}')`,
-            `      sudo ufw allow from "$SUBNET" to any port ${port} proto tcp`,
-          ].join("\n");
-  return [
-    `  ✗ Sandbox containers cannot reach the ${SERVICE_LABEL} at ${HOST_INTERNAL_NAME}:${port}.`,
-    `    Host-side 127.0.0.1:${port} passed. The sandbox route uses the OpenShell Docker bridge IP.`,
-    `    A loopback-only Docker publish (-p 127.0.0.1:${port}:${port}) or a 127.0.0.1-only host bind can make this sandbox route unreachable.`,
-    "    Publish the port on the Docker gateway IP as well, for example:",
-    `      docker run ... ${gatewayBind} ...`,
-    "    Binding 0.0.0.0 also works and exposes the port more widely.",
-    "    If a host firewall blocks the OpenShell Docker bridge:",
-    ufw,
-    `    Then rerun \`${cliName()} onboard\`.`,
-  ].join("\n");
+  return formatHostServiceUnreachableMessage(result, {
+    serviceLabel: SERVICE_LABEL,
+    port,
+    extraLines: [
+      `    Host-side 127.0.0.1:${port} passed. The sandbox route uses the OpenShell Docker bridge IP.`,
+      `    A loopback-only Docker publish (-p 127.0.0.1:${port}:${port}) or a 127.0.0.1-only host bind can make this sandbox route unreachable.`,
+      "    Publish the port on the Docker gateway IP as well, for example:",
+      `      docker run ... ${gatewayBind} ...`,
+    ],
+  });
 }
