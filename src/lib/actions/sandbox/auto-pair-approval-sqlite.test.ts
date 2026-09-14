@@ -122,8 +122,10 @@ describe("auto-pair approval SQLite compatibility", () => {
       expect(script).not.toBe(originalScript);
       expect(script).toContain(JSON.stringify(bindingCheckpoint));
       fs.writeFileSync(path.join(tmpDir, "openclaw"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+      const scriptPath = path.join(tmpDir, "auto-pair-approval.sh");
+      fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync("sh", ["-c", script], {
+      const result = spawnSync("sh", [scriptPath], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -213,8 +215,10 @@ describe("auto-pair approval SQLite compatibility", () => {
       expect(script).not.toBe(originalScript);
       expect(script).toContain(JSON.stringify(bindingCheckpoint));
       fs.writeFileSync(path.join(tmpDir, "openclaw"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+      const scriptPath = path.join(tmpDir, "auto-pair-approval.sh");
+      fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync("sh", ["-c", script], {
+      const result = spawnSync("sh", [scriptPath], {
         encoding: "utf-8",
         env: {
           ...process.env,
