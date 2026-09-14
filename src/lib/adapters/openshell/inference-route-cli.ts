@@ -153,8 +153,9 @@ function routeError(
 
 function parseRoute(output: string): OpenShellInferenceRouteResult {
   const lines = output.split(/\r?\n/u);
+  const hasInferenceSection = lines.some((line) => /^(?:Gateway )?Inference:\s*$/iu.test(line));
   let sectionCount = 0;
-  let inInferenceSection = false;
+  let inInferenceSection = !hasInferenceSection;
   let provider: string | null = null;
   let model: string | null = null;
   let unconfigured = false;
@@ -176,7 +177,7 @@ function parseRoute(output: string): OpenShellInferenceRouteResult {
     if (modelMatch) model = model === null ? modelMatch[1].trim() : "";
     if (/^Not configured$/iu.test(trimmed)) unconfigured = true;
   }
-  if (sectionCount !== 1 || (unconfigured && (provider !== null || model !== null))) {
+  if (sectionCount > 1 || (unconfigured && (provider !== null || model !== null))) {
     return failure({
       kind: "schema",
       reason: "malformed_output",

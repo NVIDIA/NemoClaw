@@ -66,6 +66,23 @@ describe("CLI inference route observation", () => {
     );
   });
 
+  it("accepts the legacy direct provider and model output shape", async () => {
+    const capture = vi.fn().mockResolvedValue({
+      status: 0,
+      output: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
+    });
+
+    await expect(
+      createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute(namedRequest),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { provider: "ollama-local", model: "qwen3-vl:4b" },
+      },
+    });
+  });
+
   it.each(["Gateway inference:\n\n  Not configured", "Inference:\n\n  Not configured"])(
     "returns a typed unconfigured route from %s",
     async (output) => {
