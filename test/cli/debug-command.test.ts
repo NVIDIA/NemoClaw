@@ -18,7 +18,10 @@ import {
 
 vi.setConfig({ maxConcurrency: 4 });
 
-function writeSandboxListStub(home: string, liveSandboxNames: readonly string[]): string {
+function createSandboxListStubEnv(
+  home: string,
+  liveSandboxNames: readonly string[],
+): Record<string, string> {
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   fs.writeFileSync(
@@ -34,7 +37,11 @@ function writeSandboxListStub(home: string, liveSandboxNames: readonly string[])
     ].join("\n"),
     { mode: 0o755 },
   );
-  return localBin;
+  return {
+    HOME: home,
+    NEMOCLAW_OPENSHELL_BIN: "",
+    PATH: `${localBin}:${process.env.PATH || ""}`,
+  };
 }
 
 describe.concurrent("CLI debug command", () => {
@@ -192,14 +199,10 @@ describe.concurrent("CLI debug command", () => {
       // serves.
       const home = resources.temporaryDirectory("nemoclaw-cli-debug-stale-");
       writeSandboxRegistry(home, "stale-box");
-      const localBin = writeSandboxListStub(home, []);
       const tarball = path.join(home, "out.tar.gz");
       const r = await runWithEnvAsync(
         `debug --sandbox stale-box --output ${tarball} 2>&1`,
-        {
-          HOME: home,
-          PATH: `${localBin}:${process.env.PATH || ""}`,
-        },
+        createSandboxListStubEnv(home, []),
         30000,
       );
       expect(r.code).not.toBe(0);
@@ -221,10 +224,9 @@ describe.concurrent("CLI debug command", () => {
     async ({ resources }) => {
       const home = resources.temporaryDirectory("nemoclaw-cli-stale-");
       writeSandboxRegistry(home, "ghost");
-      const localBin = writeSandboxListStub(home, []);
       const r = await runWithEnvAsync(
         "debug --quick 2>&1",
-        { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        createSandboxListStubEnv(home, []),
         30000,
       );
       expect(r.code).not.toBe(0);
@@ -258,10 +260,9 @@ describe.concurrent("CLI debug command", () => {
       );
       // Fake openshell so the live-list check sees `mybox`. Without this the
       // host's real openshell (or absence thereof) decides the assertion.
-      const localBin = writeSandboxListStub(home, ["mybox"]);
       const r = await runWithEnvAsync(
         "debug --quick --sandbox mybox 2>&1",
-        { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        createSandboxListStubEnv(home, ["mybox"]),
         30000,
       );
       expect(r.code).toBe(0);
