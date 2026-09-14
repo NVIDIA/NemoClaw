@@ -201,21 +201,34 @@ describe("sandbox registry normalization", () => {
     );
   });
 
-  it("round-trips only valid Deferred N1x preview acceptance (#10959)", async () => {
-    const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
-    registry.registerSandbox({
-      name: "preview",
-      provider: "vllm-local",
-      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
-      endpointUrl: null,
-      endpointSource: null,
-      openshellDriver: "docker",
-      deferredN1xManagedVllmAccepted: true,
-    });
-    vi.resetModules();
-    const reloadedRegistry = await import("./registry");
+  it.each([
+    null,
+    "http://host.openshell.internal:8000/v1",
+    "http://host.openshell.internal:18000/v1",
+  ])(
+    "round-trips valid Deferred N1x preview acceptance with endpoint %s (#11510)",
+    async (endpointUrl) => {
+      const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+      registry.registerSandbox({
+        name: "preview",
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl,
+        endpointSource: null,
+        openshellDriver: "docker",
+        deferredN1xManagedVllmAccepted: true,
+      });
+      vi.resetModules();
+      const reloadedRegistry = await import("./registry");
 
-    expect(reloadedRegistry.getSandbox("preview")?.deferredN1xManagedVllmAccepted).toBe(true);
+      expect(reloadedRegistry.getSandbox("preview")).toMatchObject({
+        endpointUrl,
+        deferredN1xManagedVllmAccepted: true,
+      });
+    },
+  );
+
+  it("rejects malformed Deferred N1x preview acceptance (#10959)", async () => {
     const malformed = await loadRegistryWith({
       malformed: {
         name: "malformed",
