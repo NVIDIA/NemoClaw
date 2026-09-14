@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   connectSandbox: vi.fn(),
   restoreSandboxStartupState: vi.fn(),
+  waitForManagedGatewaySupervisor: vi.fn(),
   getSessionAgent: vi.fn(),
   inspectPortableAgentReceiptDisposition: vi.fn(),
   prepareHermesCronRestoreRecovery: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("../../../onboard/experimental/portable-agent-lifecycle", () => ({
 vi.mock("../connect", () => ({
   connectSandbox: mocks.connectSandbox,
   restoreSandboxStartupState: mocks.restoreSandboxStartupState,
+  waitForManagedGatewaySupervisor: mocks.waitForManagedGatewaySupervisor,
 }));
 
 vi.mock("../rebuild-hermes-post-restore", () => ({
@@ -49,6 +51,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
       wasRunning: true,
       recovered: false,
     });
+    mocks.waitForManagedGatewaySupervisor.mockReturnValue(true);
     mocks.inspectPortableAgentReceiptDisposition.mockReturnValue({ kind: "absent" });
     mocks.prepareHermesCronRestoreRecovery.mockReturnValue("not-required");
     mocks.recoverHermesCronRestore.mockReturnValue("not-required");
@@ -159,6 +162,24 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
       "supervisor reconstruction failed",
     );
     expect(mocks.connectSandbox).not.toHaveBeenCalled();
+  });
+
+  it("settles a recreated supervisor before readiness", async () => {
+    mocks.getSessionAgent.mockReturnValue({ name: "openclaw" });
+    mocks.restoreSandboxStartupState
+      .mockResolvedValueOnce({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+      })
+      .mockResolvedValueOnce({ checked: true, wasRunning: true, recovered: true });
+
+    await recoverSandboxWithHermesCronRestore("alpha");
+
+    expect(mocks.waitForManagedGatewaySupervisor).toHaveBeenCalledWith("alpha");
+    expect(mocks.restoreSandboxStartupState).toHaveBeenCalledTimes(2);
+    expect(mocks.connectSandbox).toHaveBeenCalledOnce();
   });
 
   it.each([
