@@ -12,11 +12,37 @@ const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
   .filter(Boolean)
   .join(" ");
+const harnessConcurrency = 4;
 const harnessTimeoutMs = 60_000;
 
 function describeConcurrentProbeSuite(name: string, factory: () => void): void {
   describe.concurrent(name, { timeout: harnessTimeoutMs }, factory);
 }
+
+function createHarnessLimiter(
+  concurrency: number,
+): <Result>(run: () => Promise<Result>) => Promise<Result> {
+  const lanes = Array.from({ length: concurrency }, () => Promise.resolve());
+  let nextLane = 0;
+
+  return async <Result>(run: () => Promise<Result>): Promise<Result> => {
+    const lane = nextLane;
+    nextLane = (nextLane + 1) % concurrency;
+    const previous = lanes[lane];
+    let release!: () => void;
+    lanes[lane] = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  };
+}
+
+const limitHarness = createHarnessLimiter(harnessConcurrency);
 
 function createTempHome(prefix: string, root = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(root, prefix));
@@ -231,18 +257,46 @@ ${body}
   process.exit(1);
 });
 `;
-    const result = await runOnboardProcessAsync(["-e", script], {
-      cwd: process.cwd(),
-      env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
-      timeoutMs: harnessTimeoutMs,
-      context,
-    });
+    const result = await limitHarness(() =>
+      runOnboardProcessAsync(["-e", script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+        timeoutMs: harnessTimeoutMs,
+        context,
+      }),
+    );
     expect(result.status, `harness failed: ${result.stderr}`).toBe(0);
     return { status: result.status, stdout: result.stdout };
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
 }
+
+describe("MCP status harness concurrency", () => {
+  it("limits concurrent child launches to four", async () => {
+    const limit = createHarnessLimiter(harnessConcurrency);
+    let active = 0;
+    let maxActive = 0;
+    let releaseAll!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const runs = Array.from({ length: harnessConcurrency + 1 }, () =>
+      limit(async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await release;
+        active -= 1;
+      }),
+    );
+
+    await expect.poll(() => active).toBe(harnessConcurrency);
+    expect(maxActive).toBe(harnessConcurrency);
+    releaseAll();
+    await Promise.all(runs);
+    expect(maxActive).toBe(harnessConcurrency);
+  });
+});
 
 describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe", () => {
   it("removes its home when cancelled before child launch", async (context) => {
