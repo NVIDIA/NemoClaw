@@ -54,14 +54,20 @@ function readCurrentOpenClawConfig(
   executeCommand?: StateRestoreRemoteCommandExecutor,
 ): Buffer | null {
   const command = buildOpenClawConfigReadCommand(dir, specPath);
-  const result = executeCommand
-    ? executeCommand(command, { timeoutMs: 120000, maxOutputBytes: 256 * 1024 * 1024 })
-    : spawnSync("ssh", [...(sshArgs ?? []), command], {
-        ...(env ? { env } : {}),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 120000,
-        maxBuffer: 256 * 1024 * 1024,
-      });
+  let result;
+  try {
+    result = executeCommand
+      ? executeCommand(command, { timeoutMs: 120000, maxOutputBytes: 256 * 1024 * 1024 })
+      : spawnSync("ssh", [...(sshArgs ?? []), command], {
+          ...(env ? { env } : {}),
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 120000,
+          maxBuffer: 256 * 1024 * 1024,
+        });
+  } catch {
+    log(`WARNING: state file current read ${specPath} could not execute`);
+    return null;
+  }
   if (result.status === 0 && !result.error && !result.signal) return result.stdout;
   if (result.status !== 2) {
     const detail =

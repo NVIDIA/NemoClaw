@@ -206,6 +206,10 @@ describe("managed snapshot restore authority", () => {
       restoredFiles: ["openclaw.json"],
     });
     expect(validateBeforeMutation).toHaveBeenCalledOnce();
+    const commands = executeCommand.mock.calls.map(([command]) => command);
+    expect(commands.findIndex((command) => command.includes('cat -- "$src"'))).toBeLessThan(
+      commands.findIndex((command) => command.includes("rm -rf")),
+    );
     expect(executeCommand.mock.calls.some(([command]) => command.includes("rm -rf"))).toBe(true);
     expect(
       executeCommand.mock.calls.some(

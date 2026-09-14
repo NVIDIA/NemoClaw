@@ -17,6 +17,12 @@ export interface StateFileRestoreSpec {
   strategy: "copy" | "sqlite_backup";
 }
 
+export type PreparedStateFileRestore = {
+  readonly command: string;
+  readonly input: Buffer;
+  readonly path: string;
+};
+
 const SQLITE_RESTORE_PY = [
   "import sqlite3, sys",
   "src, dst = sys.argv[1], sys.argv[2]",
@@ -138,7 +144,7 @@ export function buildStateFileRestoreCommand(
   return steps.join("; ");
 }
 
-export function restoreStateFile(
+export function prepareStateFileRestore(
   sshArgs: readonly string[] | undefined,
   dir: string,
   spec: StateFileRestoreSpec,
@@ -150,9 +156,9 @@ export function restoreStateFile(
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   env?: NodeJS.ProcessEnv,
   executeCommand?: StateRestoreRemoteCommandExecutor,
-): boolean {
+): PreparedStateFileRestore | null {
   const localPath = path.join(backupPath, spec.path);
-  if (!existsSync(localPath)) return true;
+  if (!existsSync(localPath)) return null;
 
   const backupContents = readFileSync(localPath);
   log(`Restoring state file ${spec.path} (${spec.strategy})`);
@@ -187,7 +193,18 @@ export function restoreStateFile(
     command = buildStateFileRestoreCommand(dir, spec, false);
     input = backupContents;
   }
-  if (input === null) return false;
+  if (input === null) return null;
+  return { command, input, path: spec.path };
+}
+
+export function executePreparedStateFileRestore(
+  sshArgs: readonly string[] | undefined,
+  prepared: PreparedStateFileRestore,
+  log: (message: string) => void,
+  env?: NodeJS.ProcessEnv,
+  executeCommand?: StateRestoreRemoteCommandExecutor,
+): boolean {
+  const { command, input } = prepared;
 
   const result = executeCommand
     ? executeCommand(command, { input, timeoutMs: 120000 })
@@ -204,6 +221,38 @@ export function restoreStateFile(
     (result.stderr?.toString() || "").trim() ||
     result.error?.message ||
     (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
-  log(`FAILED: state file restore ${spec.path}: ${detail.substring(0, 200)}`);
+  log(`FAILED: state file restore ${prepared.path}: ${detail.substring(0, 200)}`);
   return false;
+}
+
+export function restoreStateFile(
+  sshArgs: readonly string[] | undefined,
+  dir: string,
+  spec: StateFileRestoreSpec,
+  backupPath: string,
+  ownership: StateFileRestoreOwnership | undefined,
+  allowCustomImageWholeStateFileRestore: boolean,
+  log: (message: string) => void,
+  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  env?: NodeJS.ProcessEnv,
+  executeCommand?: StateRestoreRemoteCommandExecutor,
+): boolean {
+  if (!existsSync(path.join(backupPath, spec.path))) return true;
+  const prepared = prepareStateFileRestore(
+    sshArgs,
+    dir,
+    spec,
+    backupPath,
+    ownership,
+    allowCustomImageWholeStateFileRestore,
+    log,
+    freshImagePluginInstalls,
+    previousImagePluginInstalls,
+    env,
+    executeCommand,
+  );
+  return prepared
+    ? executePreparedStateFileRestore(sshArgs, prepared, log, env, executeCommand)
+    : false;
 }

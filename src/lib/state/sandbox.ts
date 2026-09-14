@@ -90,7 +90,11 @@ import type {
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure, type StateRestoreRemoteCommandExecutor } from "./ssh-transport.js";
-import { restoreStateFile } from "./state-file-restore.js";
+import {
+  executePreparedStateFileRestore,
+  prepareStateFileRestore,
+  type PreparedStateFileRestore,
+} from "./state-file-restore.js";
 import { nemoclawStateRoot } from "./state-root.js";
 import { runTarListing, type TarArchiveSource } from "./tar-listing.js";
 
@@ -2796,6 +2800,40 @@ function restoreSandboxStateInternal(
       restoreTar = tarResult.stdout;
     }
 
+    const preparedStateFiles: PreparedStateFileRestore[] = [];
+    for (const spec of localFiles) {
+      const targetStateFile = targetStateFiles.get(spec.path);
+      if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
+      let prepared: PreparedStateFileRestore | null = null;
+      try {
+        prepared = prepareStateFileRestore(
+          sshCommandArgs,
+          dir,
+          spec,
+          backupPath,
+          targetStateFile.restore,
+          options.allowCustomImageWholeStateFileRestore === true,
+          _log,
+          configFreshOpenClawImagePluginInstalls,
+          previousOpenClawImagePluginInstalls,
+          selectedSshEnv,
+          executeCommand,
+        );
+      } catch {
+        _log(`FAILED: state file restore preflight ${spec.path} could not execute`);
+      }
+      if (!prepared) {
+        return {
+          success: false,
+          restoredDirs,
+          failedDirs,
+          restoredFiles,
+          failedFiles: localFiles.map((file) => file.path),
+        };
+      }
+      preparedStateFiles.push(prepared);
+    }
+
     const mutationAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
     if (mutationAuthorityError) {
       return failRestoreContract(mutationAuthorityError);
@@ -2882,27 +2920,19 @@ function restoreSandboxStateInternal(
       }
     }
 
-    for (const spec of localFiles) {
-      const targetStateFile = targetStateFiles.get(spec.path);
-      if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
+    for (const prepared of preparedStateFiles) {
       if (
-        restoreStateFile(
+        executePreparedStateFileRestore(
           sshCommandArgs,
-          dir,
-          spec,
-          backupPath,
-          targetStateFile.restore,
-          options.allowCustomImageWholeStateFileRestore === true,
+          prepared,
           _log,
-          configFreshOpenClawImagePluginInstalls,
-          previousOpenClawImagePluginInstalls,
           selectedSshEnv,
           executeCommand,
         )
       ) {
-        restoredFiles.push(spec.path);
+        restoredFiles.push(prepared.path);
       } else {
-        failedFiles.push(spec.path);
+        failedFiles.push(prepared.path);
       }
     }
   } finally {
