@@ -3575,6 +3575,7 @@ The report works when the registry and runtime are unavailable.
 It contains only the report schema version, sandbox name, agent, saved lifecycle phase, and runtime and agent health values of `not-probed`.
 With `--output`, the archive contains only `portable-lifecycle.json`.
 It excludes raw receipts, credentials, environment data, private paths, and runtime logs.
+It preserves an existing output file if archive creation fails.
 `--quick` produces the same minimal report.
 A malformed selected receipt stops collection before an archive is created.
 While Portable authority remains on the host, NemoClaw blocks non-Portable diagnostic collection.

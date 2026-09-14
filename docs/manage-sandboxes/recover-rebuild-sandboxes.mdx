@@ -102,6 +102,10 @@ Recovery and uninstall use that recorded gateway, including a non-default gatewa
 If one required forward fails after recovery starts another, NemoClaw terminates only forwards started by that recovery attempt.
 It preserves existing forwards and exits nonzero when it cannot prove cleanup.
 
+When the saved OpenShell phase is `Stopped`, `recover` reconciles it through OpenShell even if the receipt-owned container is already running.
+It does not mutate a saved `Error` state or a `Ready` state with a non-running container.
+Preserve the startup diagnostics and resolve the reported OpenShell state before you retry.
+
 ### Recover Portable Published Ollama
 
 When an active Portable Hermes sandbox uses `ollama-local` and a published receipt-owned Ollama runner, use one of these commands to recover it:
