@@ -80,8 +80,11 @@ class PartitionControls(unittest.TestCase):
                 self.root, self.inventory, self.base / "diagnostics"
             )
         removed = {row["path"] for row in result["files"]}
-        self.assertEqual(len(removed), 8)
+        self.assertEqual(len(removed), 9)
         self.assertFalse((self.root / "hermes-agent/.github").exists())
+        self.assertFalse((self.root / "hermes-agent/website").exists())
+        self.assertTrue((self.root / "THIRD-PARTY-LICENSES.tar.gz").is_file())
+        self.assertEqual(result["installedLicenseArchive"]["content"]["files"], 0)
         for row in result["archives"]:
             path = self.base / "diagnostics" / row["file"]
             self.assertEqual(

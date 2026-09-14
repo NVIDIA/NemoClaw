@@ -22,6 +22,12 @@ PROJECT_TREES = (
     "hermes-agent/scripts/ci/",
     "hermes-agent/evals/",
 )
+WINDOWS_UNUSED_TREES = (
+    "hermes-agent/plugins/platforms/photon/sidecar/",
+    "hermes-agent/website/",
+    "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/pip",
+    "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/setuptools",
+)
 DECLARATIONS = (".d.ts", ".d.mts", ".d.cts")
 # Git 2.54 help opens generated HTML/man/info; these are their build inputs.
 GIT_DOCUMENTATION_SOURCE = "git/clangarm64/share/doc/git-doc/"
@@ -117,8 +123,13 @@ def make_plan(payload, protected=()):
         tree = next(
             (prefix for prefix in PROJECT_TREES if path.startswith(prefix)), None
         )
+        unused = next(
+            (prefix for prefix in WINDOWS_UNUSED_TREES if path.startswith(prefix)), None
+        )
         reason = (
-            "unused-bundled-browser"
+            "windows-unused-runtime"
+            if unused
+            else "unused-bundled-browser"
             if path.startswith("browsers/")
             else "declaration"
             if path.endswith(DECLARATIONS)
@@ -139,7 +150,7 @@ def make_plan(payload, protected=()):
             or parts[-1] in METADATA
             or any(p.endswith((".dist-info", ".egg-info")) for p in parts[:-1])
         )
-        if reason and not retain:
+        if reason and (not retain or unused):
             if path in protected:
                 raise ValueError(
                     "Generated metadata references a removal candidate: " + path
@@ -246,17 +257,38 @@ def partition_copy(root, payload, diagnostics, protected=()):
         checked_bytes(root, row)
     for row in plan["files"]:
         (root / row["path"]).unlink()
+    license_rows = [
+        row
+        for row in plan["files"]
+        if LICENSE.search(relative(row["path"]).name)
+        or any(p.lower() in ("licenses", "license", "legal") for p in relative(row["path"]).parts[:-1])
+    ]
+    license_archive = root / "THIRD-PARTY-LICENSES.tar.gz"
+    with license_archive.open("xb") as destination:
+        with gzip.GzipFile(fileobj=destination, mode="wb", filename="", mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w") as archive:
+                for row in license_rows:
+                    with tarfile.open(diagnostics / (row["group"] + ".tar.gz"), "r:gz") as prior:
+                        data = prior.extractfile(row["path"]).read()
+                    info = tarfile.TarInfo(row["path"])
+                    info.size, info.mode, info.mtime = len(data), 0o644, 0
+                    archive.addfile(info, io.BytesIO(data))
     removed_directories = []
     for name in sorted(
         payload.get("directories", []),
         key=lambda p: len(relative(p).parts),
         reverse=True,
     ):
-        if any((name + "/").startswith(prefix) for prefix in PROJECT_TREES):
-            path = root / name
-            if path.is_dir() and not any(path.iterdir()):
-                path.rmdir()
-                removed_directories.append(name)
+        path = root / name
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+            removed_directories.append(name)
+    plan["installedLicenseArchive"] = {
+        "file": license_archive.name,
+        "bytes": license_archive.stat().st_size,
+        "sha256": sha256(license_archive.read_bytes()),
+        "content": totals(license_rows),
+    }
     plan["removedEmptyProjectDirectories"] = removed_directories
     plan["archives"] = archives
     return plan
