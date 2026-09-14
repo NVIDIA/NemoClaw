@@ -51,13 +51,10 @@ describe("gateway lifecycle late binding", () => {
     const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const existsSyncSpy = vi.spyOn(fs, "existsSync").mockImplementation((candidate) => {
       const filePath = String(candidate);
-      if (
+      return !(
         filePath.endsWith("/systemd/user/openshell-gateway.service") ||
         filePath.endsWith("/.config/systemd/user/nemoclaw-openshell-gateway.service")
-      ) {
-        return false;
-      }
-      return originalExistsSync(candidate);
+      ) && originalExistsSync(candidate);
     });
     const managedFallbackSpy = vi
       .spyOn(dockerDriverGatewayCutover, "runDockerDriverGatewayManagedFallback")
