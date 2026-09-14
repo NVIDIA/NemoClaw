@@ -211,6 +211,32 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
+  it("requires the reviewed OpenShell SDK for live config export", () => {
+    const missingNeed = wfErrors((workflow) => {
+      workflow.jobs["hermes-e2e"].needs = ["base-image-publication", "generate-matrix"];
+    }, validateE2eWorkflowBoundary);
+    const wrongArtifact = wfErrors((workflow) => {
+      step(workflow.jobs["hermes-e2e"], "Download reviewed OpenShell SDK archive").with.name =
+        "unreviewed-sdk";
+    }, validateE2eWorkflowBoundary);
+    const unsafeInstall = wfErrors((workflow) => {
+      step(
+        workflow.jobs["hermes-e2e"],
+        "Install reviewed OpenShell SDK archive without package credentials",
+      ).run = "npm ci";
+    }, validateE2eWorkflowBoundary);
+
+    expect(missingNeed).toContain(
+      "hermes-e2e job must depend on publication, generate-matrix validation, and reviewed SDK packaging",
+    );
+    expect(wrongArtifact).toContain(
+      "hermes-e2e job must download the run-scoped reviewed SDK archive",
+    );
+    expect(unsafeInstall).toContain(
+      "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
+    );
+  });
+
   const hermesTimeoutBoundaries = HERMES_TIMEOUT_CONTRACTS.map(
     ({ innerTest, innerTimeoutMinutes, jobName, jobTimeoutMinutes }) => ({
       jobName,

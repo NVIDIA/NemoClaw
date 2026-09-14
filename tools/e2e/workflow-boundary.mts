@@ -50,7 +50,10 @@ import {
   type E2eGatewayRuntime,
   type E2eGatewayRuntimeSupport,
 } from "./gateway-runtime.mts";
-import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
+import {
+  SDK_INSTALL_SCRIPT,
+  validateStandardProfileWorkflowBoundary,
+} from "./standard-profile-workflow-boundary.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
@@ -1742,8 +1745,16 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     return;
   }
 
-  if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
-    errors.push("hermes-e2e job must depend on publication and generate-matrix validation");
+  if (
+    !isDeepStrictEqual(job.needs, [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "hermes-e2e job must depend on publication, generate-matrix validation, and reviewed SDK packaging",
+    );
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
     errors.push("hermes-e2e job must use validated hermes_selected output");
@@ -1800,6 +1811,41 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   requireFullShaAction(errors, checkout, "hermes-e2e checkout");
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("hermes-e2e checkout step must set persist-credentials=false");
+  }
+  const sdkDownload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Download reviewed OpenShell SDK archive",
+  );
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("hermes-e2e job must download the run-scoped reviewed SDK archive");
+  }
+  const sdkInstall = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install reviewed OpenShell SDK archive without package credentials",
+  );
+  if (
+    !isDeepStrictEqual(sdkInstall, {
+      name: "Install reviewed OpenShell SDK archive without package credentials",
+      shell: "bash",
+      run: SDK_INSTALL_SCRIPT,
+    })
+  ) {
+    errors.push(
+      "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
+    );
   }
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);

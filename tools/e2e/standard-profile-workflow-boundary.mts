@@ -85,7 +85,7 @@ const PROFILE_JOBS = {
   },
 } as const;
 
-const SDK_INSTALL_SCRIPT = [
+export const SDK_INSTALL_SCRIPT = [
   "set -euo pipefail",
   "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print | sort)",
   'test "${#archives[@]}" -ge 1',
