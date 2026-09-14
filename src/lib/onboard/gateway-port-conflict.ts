@@ -14,7 +14,6 @@ export interface GatewayPortConflictDeps {
   getGatewayPortCheckOptions: () => CheckPortOpts;
   isDockerDriverGatewayPortListener: DockerGatewayPortListenerClassifier;
   exitProcess?: (code: number) => void;
-  serviceHints?: string[];
   writeError?: (line: string) => void;
 }
 
@@ -51,7 +50,6 @@ export async function failFastOnForeignGatewayPortConflict({
   getGatewayPortCheckOptions,
   isDockerDriverGatewayPortListener,
   exitProcess = (code) => process.exit(code),
-  serviceHints = [],
   writeError,
 }: GatewayPortConflictDeps): Promise<void> {
   // External ownership was resolved and bound by the caller before reaching
@@ -72,7 +70,6 @@ export async function failFastOnForeignGatewayPortConflict({
       label: "OpenShell gateway",
       envVar: "NEMOCLAW_GATEWAY_PORT",
       portCheck,
-      serviceHints,
     },
     writeError,
   );

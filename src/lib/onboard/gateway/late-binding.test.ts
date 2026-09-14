@@ -10,6 +10,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../docker-driver-gateway-config";
+import * as dockerDriverGatewayCutover from "../docker-driver-gateway-cutover";
 import * as dockerDriverGatewayLaunch from "../docker-driver-gateway-launch";
 import * as gatewayBinding from "../gateway-binding";
 import {
@@ -40,6 +41,135 @@ describe("gateway lifecycle late binding", () => {
     expect(
       resolveDockerDriverGatewayRuntimeMarkerEndpoint({}, () => "https://127.0.0.1:8080"),
     ).toBe("https://127.0.0.1:8080");
+  });
+
+  it("threads the selected port into failed standalone recovery (#11720)", async () => {
+    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
+    const stateDir = path.join(root, "gateway");
+    const lines: string[] = [];
+    const originalExistsSync = fs.existsSync.bind(fs);
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const existsSyncSpy = vi.spyOn(fs, "existsSync").mockImplementation((candidate) => {
+      const filePath = String(candidate);
+      if (
+        filePath.endsWith("/systemd/user/openshell-gateway.service") ||
+        filePath.endsWith("/.config/systemd/user/nemoclaw-openshell-gateway.service")
+      ) {
+        return false;
+      }
+      return originalExistsSync(candidate);
+    });
+    const managedFallbackSpy = vi
+      .spyOn(dockerDriverGatewayCutover, "runDockerDriverGatewayManagedFallback")
+      .mockResolvedValue("launch");
+    const runtimeIdentitySpy = vi
+      .spyOn(dockerDriverGatewayLaunch, "buildDockerDriverGatewayRuntimeIdentity")
+      .mockReturnValue({
+        launch: {
+          command: "/opt/openshell/openshell-gateway",
+          args: [],
+          argv0: "openshell-gateway[nemoclaw=nemoclaw-9777;port=9777]",
+          env: {},
+          mode: "host",
+          processGatewayBin: "/opt/openshell/openshell-gateway",
+        },
+        desiredEnv: {},
+        driftGatewayBin: "/opt/openshell/openshell-gateway",
+        identityGatewayBin: "/opt/openshell/openshell-gateway",
+      });
+    const prepareSpy = vi
+      .spyOn(dockerDriverGatewayLaunch, "prepareAndLogDockerDriverGatewayLaunch")
+      .mockImplementation(() => undefined);
+    const spawnSpy = vi
+      .spyOn(dockerDriverGatewayLaunch, "spawnDockerDriverGateway")
+      .mockImplementation((_launch, logFd) => {
+        fs.writeSync(
+          logFd,
+          "migration 6 was previously applied and is missing in the resolved migrations\n",
+        );
+        fs.closeSync(logFd);
+        return {
+          pid: 4321,
+          once: vi.fn(),
+          unref: vi.fn(),
+        } as unknown as ReturnType<
+          typeof dockerDriverGatewayLaunch.spawnDockerDriverGateway
+        >;
+      });
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "");
+
+    try {
+      const start = createDockerDriverGatewayStart({
+        SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
+        checkGatewayPortAvailable: async () => ({ ok: true }),
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        createGatewayServicePortOwnership: () => ({
+          portListenerScan: { complete: true, pids: [], unverifiedPids: [] },
+          preparePort: vi.fn(),
+          reportUntrustedGatewayPort: (message) => {
+            throw new Error(message);
+          },
+          validatePortOwner: vi.fn(),
+        }),
+        dockerDriverGatewayEnv: {} as typeof import("../docker-driver-gateway-env"),
+        envInt: () => 0,
+        gatewayBinding: {
+          resolveGatewayCompatContainerName: () => "openshell-gateway-test",
+          resolveGatewayStateDirForPort: () => stateDir,
+        } as unknown as typeof gatewayBinding,
+        gatewayName: () => "nemoclaw-9777",
+        gatewayPort: () => 9777,
+        getDockerDriverGatewayEndpoint: () => "https://127.0.0.1:9777",
+        getDockerDriverGatewayEnv: () => ({}),
+        getDockerDriverGatewayPid: () => null,
+        getDockerDriverGatewayPortListenerScan: () => ({
+          complete: true,
+          pids: [],
+          unverifiedPids: [],
+        }),
+        getDockerDriverGatewayRuntimeDrift: () => null,
+        getDockerDriverGatewayStateDir: () => stateDir,
+        getInstalledOpenshellVersion: () => "0.0.0",
+        isDockerDriverGatewayHttpReady: async () => false,
+        isDockerDriverGatewayProcessAlive: () => false,
+        isDockerDriverGatewayStateInUse: () => true,
+        isGatewayHealthy: () => false,
+        isGatewayTcpReady: async () => false,
+        isPidAlive: () => true,
+        logDockerDriverGatewayRestart: vi.fn(),
+        registerDockerDriverGatewayEndpoint: () => false,
+        rememberDockerDriverGatewayPid: vi.fn(),
+        resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
+        resolveOpenShellSandboxBinary: () => null,
+        runCaptureOpenshell: () => "",
+        sleepSeconds: vi.fn(),
+      });
+
+      await expect(
+        start.startDockerDriverGateway({
+          exitOnFailure: false,
+          output: {
+            error: (message) => lines.push(message),
+            log: vi.fn(),
+            step: vi.fn(),
+            warn: vi.fn(),
+          },
+        }),
+      ).rejects.toThrow(/failed to start within/);
+
+      expect(lines.join("\n")).toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
+      expect(lines.join("\n")).not.toContain("sudo lsof -iTCP -sTCP:LISTEN -P -n");
+    } finally {
+      spawnSpy.mockRestore();
+      prepareSpy.mockRestore();
+      runtimeIdentitySpy.mockRestore();
+      managedFallbackSpy.mockRestore();
+      existsSyncSpy.mockRestore();
+      platformSpy.mockRestore();
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { force: true, recursive: true });
+    }
   });
 
   it("uses the current binding for select, add, and health commands", () => {

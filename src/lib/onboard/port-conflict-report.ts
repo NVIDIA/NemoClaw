@@ -9,11 +9,10 @@ export interface PortConflictReportInput {
   label: string;
   envVar: string;
   portCheck: PortProbeResult;
-  serviceHints?: string[];
 }
 
 export function formatPortConflictReport(input: PortConflictReportInput): string[] {
-  const { port, label, envVar, portCheck, serviceHints = [] } = input;
+  const { port, label, envVar, portCheck } = input;
   const lines = [
     "",
     failLine(`Port ${port} is not available.`),
@@ -35,7 +34,6 @@ export function formatPortConflictReport(input: PortConflictReportInput): string
       "     Stop it through its service manager when one owns it, then recheck the port;",
       "     an inactive service reports success without releasing it.",
       "     Otherwise signal only the PID from that fresh check.",
-      ...serviceHints,
     );
   } else {
     lines.push(

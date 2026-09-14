@@ -51,7 +51,6 @@ describe("port conflict report", () => {
         pid: 1234,
         reason: "lsof reports python3 (PID 1234) listening on port 8080",
       },
-      serviceHints: ["       systemctl --user stop openclaw-gateway.service"],
     }).join("\n");
 
     expect(report).toContain(`  ${RED("✗ Port 8080 is not available.")}`);
@@ -59,6 +58,8 @@ describe("port conflict report", () => {
     expect(report).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
     expect(report).toContain("signal only the PID from that fresh check");
     expect(report).not.toContain("sudo kill 1234");
+    expect(report).not.toContain("systemctl --user stop openclaw-gateway.service");
+    expect(report).not.toContain("launchctl unload");
     expect(report).toContain("NEMOCLAW_GATEWAY_PORT=<port> nemoclaw onboard");
   });
 
@@ -73,7 +74,6 @@ describe("port conflict report", () => {
         pid: 1234,
         reason: "lsof reports openshell-gateway (PID 1234) listening on port 8080",
       },
-      serviceHints: ["       systemctl --user stop nemoclaw-openshell-gateway.service"],
     }).join("\n");
 
     expect(report).toContain("when one owns it, then recheck the port");

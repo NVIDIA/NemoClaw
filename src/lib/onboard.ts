@@ -329,10 +329,8 @@ const portableRetirementAuthority: typeof import("./onboard/portable-retirement-
 const {
   registerIncompleteOnboardExitHandlerForSession,
 }: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
-const {
-  getFutureShellPathHint,
-  getPortConflictServiceHints,
-}: typeof import("./onboard/remediation") = require("./onboard/remediation");
+const { getFutureShellPathHint }: typeof import("./onboard/remediation") =
+  require("./onboard/remediation");
 const resumeConfig: typeof import("./onboard/resume-config") = require("./onboard/resume-config");
 const {
   getRequestedModelHint,
@@ -3406,7 +3404,6 @@ module.exports = {
   clearAgentScopedResumeState: runtimeControlFlow.clearAgentScopedResumeState,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
-  getPortConflictServiceHints,
   classifyValidationFailure,
   isSandboxReady,
   isLoopbackHostname,
