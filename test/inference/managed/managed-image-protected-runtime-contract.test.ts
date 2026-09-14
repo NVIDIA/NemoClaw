@@ -167,7 +167,7 @@ describe("protected managed-image runtime contract", () => {
       const failed = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
       expect(failed.status).toBe(1);
       expect(failed.stdout).toBe("");
-      expect(failed.stderr).toBe("heartbeat-evidence-unavailable");
+      expect(failed.stderr).toBe("heartbeat-evidence-unavailable:parse:SyntaxError");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -195,7 +195,11 @@ describe("protected managed-image runtime contract", () => {
       const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
       expect(result.status).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toBe("heartbeat-evidence-unavailable");
+      expect(result.stderr).toBe(
+        subsystem === "gateway/other"
+          ? "heartbeat-evidence-unavailable:parse:invalid"
+          : "heartbeat-evidence-unavailable:open:ELOOP",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -228,7 +232,7 @@ describe("protected managed-image runtime contract", () => {
         const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
         expect(result.status).toBe(1);
         expect(result.stdout).toBe("");
-        expect(result.stderr).toBe("heartbeat-evidence-unavailable");
+        expect(result.stderr).toBe("heartbeat-evidence-unavailable:parse:invalid");
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -282,6 +286,14 @@ describe("protected managed-image runtime contract", () => {
       "managed OpenClaw structured heartbeat evidence unavailable",
     );
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(secret);
+    runCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "heartbeat-evidence-unavailable:list:EACCES",
+    });
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+      "(list: EACCES)",
+    );
     const diagnostic = managedImageFailureDetail(
       new Error(
         `startup failed: ${secret} https://user:password@example.test ${"x".repeat(8_000)}`,
