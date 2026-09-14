@@ -16,7 +16,7 @@ const routing: typeof import("./sandbox-gateway-routing") = requireSource(
 describe("sandbox gateway routing helpers", () => {
   let adapters: ReturnType<typeof gatewayAdaptersForTest>;
   beforeEach(() => {
-    adapters = gatewayAdaptersForTest();
+    adapters = gatewayAdaptersForTest({ endpointBinding: "match" });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       gatewayName: "nemoclaw-8090",
@@ -34,6 +34,7 @@ describe("sandbox gateway routing helpers", () => {
     await expect(routing.probeGatewayRunning("alpha")).resolves.toBe(true);
     expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledExactlyOnceWith({
       target: { kind: "named", gatewayName: "nemoclaw-8090" },
+      expectedGatewayPort: 8090,
     });
   });
 
@@ -49,6 +50,22 @@ describe("sandbox gateway routing helpers", () => {
     await expect(routing.probeGatewayRunning("alpha")).resolves.toBe(false);
     expect(adapters.lifecycle.selectGateway).not.toHaveBeenCalled();
   });
+
+  it.each(["unknown", "mismatch"] as const)(
+    "rejects %s endpoint binding before snapshot routing",
+    async (endpointBinding) => {
+      adapters.observer.observeGatewayReuse.mockResolvedValue({
+        healthy: true,
+        namedMetadata: true,
+        gatewayReuseState: "healthy",
+        shouldSelect: false,
+        endpoints: [],
+        endpointBinding,
+      });
+      await expect(routing.probeGatewayRunning("alpha")).resolves.toBe(false);
+      expect(adapters.lifecycle.selectGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it("awaits selection of the persisted gateway before sandbox commands", async () => {
     await expect(routing.selectSandboxGatewayIfRegistered("alpha")).resolves.toBe(true);

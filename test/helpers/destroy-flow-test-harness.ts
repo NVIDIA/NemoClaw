@@ -82,6 +82,7 @@ export type DestroyHarness = {
 };
 
 type DestroyHarnessOptions = {
+  callThroughGatewaySelection?: boolean;
   agent?: "openclaw" | "hermes";
   deleteError?: Error;
   deleteOutput?: string;
@@ -581,9 +582,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       defaultIdentityResult;
     return result as ReturnType<typeof dockerRun.dockerRun>;
   });
-  const selectGatewaySpy = vi
-    .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")
-    .mockImplementation(async () => undefined);
+  const selectGatewaySpy = vi.spyOn(destroyGateway, "selectGatewayForSandboxDestroy");
+  if (!options.callThroughGatewaySelection)
+    selectGatewaySpy.mockImplementation(async () => undefined);
   const resolveGatewayRuntimeProviderIdSpy = vi
     .spyOn(destroyGateway, "resolveGatewayCleanupRuntimeProviderId")
     .mockImplementation(

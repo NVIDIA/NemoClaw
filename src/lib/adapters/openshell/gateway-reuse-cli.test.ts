@@ -52,6 +52,22 @@ describe("gateway reuse CLI observation", () => {
       [undefined, undefined, undefined],
     );
   });
+  it("uses the supplied read-only child environment without inventing workspace authority", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: healthy });
+    const environment = { HOME: "/readiness", OPENSHELL_GATEWAY: "nemoclaw" };
+    const observed = await createCliOpenShellGatewayReuseObserver(
+      capture,
+      environment,
+    ).observeGatewayReuse({ target, expectedGatewayPort: 8080 });
+    expect(observed).toMatchObject({ healthy: true, endpointBinding: "match" });
+    expect(capture.mock.calls.map(([, options]) => options.env)).toEqual([
+      environment,
+      environment,
+      environment,
+    ]);
+    expect(capture.mock.calls.every(([, options]) => options.replaceEnv === true)).toBe(true);
+  });
   it("preserves registration after a status authentication failure", async () => {
     const capture = vi
       .fn()
@@ -69,6 +85,23 @@ describe("gateway reuse CLI observation", () => {
       error: { kind: "authentication" },
     });
     expect(JSON.stringify(observed)).not.toContain("secret-token");
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+  it("stops immediately when the named metadata probe times out", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, output: healthy })
+      .mockResolvedValueOnce({
+        status: null,
+        output: "",
+        error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }),
+      });
+    const observed = await createCliOpenShellGatewayReuseObserver(capture).observeGatewayReuse({
+      target,
+      timeoutMs: 100,
+    });
+    expect(observed.error?.kind).toBe("timeout");
+    expect(capture).toHaveBeenCalledTimes(2);
   });
   it("blocks recovery when unreachable status has no named metadata", async () => {
     const capture = vi

@@ -1513,18 +1513,12 @@ export async function startPackageManagedDockerDriverGateway({
   const waitOptions = createGatewayHealthWaitOptions(pollCount, pollInterval, now, (ms) =>
     sleepSecondsImpl(ms / 1000),
   );
-  let lastReadiness = { cliHealthy: false, grpcHealthy: false, registered: false };
-  let registrationAttempt: Promise<boolean> | undefined;
+  const registered = waitOptions !== null && (await registerDockerDriverGatewayEndpoint());
+  let lastReadiness = { cliHealthy: false, grpcHealthy: false, registered };
   const healthy =
+    registered &&
     waitOptions !== null &&
     (await waitUntilAsync(async () => {
-      const registered = await (registrationAttempt ??= Promise.resolve(
-        registerDockerDriverGatewayEndpoint(),
-      ));
-      if (!registered) {
-        lastReadiness = { cliHealthy: false, grpcHealthy: false, registered };
-        return false;
-      }
       const observation = await observer.observeGatewayReuse({
         target: { kind: "named", gatewayName },
       });

@@ -11,6 +11,8 @@ import {
   defaultRun,
   defaultRunDocker,
   createUninstallProviderAdapter,
+  createUninstallGatewayLifecycle,
+  createUninstallGatewayReuseObserver,
   type RunResult,
 } from "../../adapters/uninstall/commands";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
@@ -63,6 +65,7 @@ import {
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import type { GatewayTeardownAuthorityResolver } from "../../onboard/gateway-teardown-authority";
 import {
+  type GatewayCleanupRuntime,
   portableGatewayIsReachable,
   removeGatewayRegistration,
   collectLiveOpenShellGatewayNames,
@@ -136,6 +139,8 @@ export interface UninstallRunOptions {
 }
 
 export interface UninstallRunDeps {
+  gatewayLifecycle?: GatewayCleanupRuntime["gatewayLifecycle"];
+  gatewayReuseObserver?: GatewayCleanupRuntime["gatewayReuseObserver"];
   backupAllBeforeUninstall?: (sandboxNames: readonly string[]) => Promise<void>;
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
@@ -497,6 +502,8 @@ function removeFileWithOptionalSudo(target: string, deps: UninstallRuntime): voi
 }
 
 interface UninstallRuntime {
+  gatewayLifecycle: GatewayCleanupRuntime["gatewayLifecycle"];
+  gatewayReuseObserver: GatewayCleanupRuntime["gatewayReuseObserver"];
   commandExists: (command: string) => boolean;
   env: NodeJS.ProcessEnv;
   error: (message: string) => void;
@@ -542,7 +549,11 @@ interface UninstallRuntime {
 
 function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
   const env = { ...process.env, ...(deps.env ?? {}) };
+  const run = deps.run ?? defaultRun;
   return {
+    gatewayLifecycle: deps.gatewayLifecycle ?? createUninstallGatewayLifecycle(run, env),
+    gatewayReuseObserver:
+      deps.gatewayReuseObserver ?? createUninstallGatewayReuseObserver(run, env),
     commandExists: deps.commandExists ?? ((command) => defaultCommandExists(command, env)),
     env,
     error: deps.error ?? ((message) => console.error(message)),

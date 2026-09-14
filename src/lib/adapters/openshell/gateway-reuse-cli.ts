@@ -37,6 +37,7 @@ function failed(error: OpenShellSandboxError): OpenShellGatewayReuseObservation 
 
 export function createCliOpenShellGatewayReuseObserver(
   capture: CaptureOpenShellCommand,
+  environment?: NodeJS.ProcessEnv,
 ): OpenShellGatewayReuseObserver {
   return {
     async observeGatewayReuse(request) {
@@ -54,9 +55,19 @@ export function createCliOpenShellGatewayReuseObserver(
         });
       }
       try {
-        if (!request.runtimeSelection) assertNoOpenShellGatewayEndpointOverride();
+        if (!request.runtimeSelection) assertNoOpenShellGatewayEndpointOverride(environment);
         const opts = withSelectedOpenShellCommandOptions(
           {
+            ...(environment
+              ? {
+                  env: Object.fromEntries(
+                    Object.entries(environment).filter(
+                      (entry): entry is [string, string] => entry[1] !== undefined,
+                    ),
+                  ),
+                  replaceEnv: true as const,
+                }
+              : {}),
             ignoreError: true,
             includeStderr: true,
             includeStreams: true,
@@ -64,11 +75,13 @@ export function createCliOpenShellGatewayReuseObserver(
           } as const,
           request.runtimeSelection,
         );
-        const status = await capture(["status", "-g", name], opts);
-        const named = await capture(["gateway", "info", "-g", name], opts);
-        const active = await capture(["gateway", "info"], opts);
-        const outputs = [status.output, named.output, active.output];
-        for (const result of [status, named, active]) {
+        const outputs: string[] = [];
+        for (const args of [
+          ["status", "-g", name],
+          ["gateway", "info", "-g", name],
+          ["gateway", "info"],
+        ]) {
+          const result = await capture(args, opts);
           const error = classifyCliOpenShellCommandError(
             /^\s*Error:/im.test(result.output) && result.status === 0
               ? { ...result, status: 1 }
@@ -83,10 +96,12 @@ export function createCliOpenShellGatewayReuseObserver(
             )
           )
             return failed(error);
+          outputs.push(result.output);
         }
-        const namedMetadata = hasStaleGateway(named.output, name);
-        const healthy = isGatewayHealthy(status.output, named.output, active.output, name);
-        const reuse = getGatewayReuseState(status.output, named.output, active.output, name, name);
+        const [statusOutput = "", namedOutput = "", activeOutput = ""] = outputs;
+        const namedMetadata = hasStaleGateway(namedOutput, name);
+        const healthy = isGatewayHealthy(statusOutput, namedOutput, activeOutput, name);
+        const reuse = getGatewayReuseState(statusOutput, namedOutput, activeOutput, name, name);
         // A selected name cannot authorize recovery without its named metadata.
         if (reuse === "stale" && !namedMetadata)
           return failed({
@@ -120,9 +135,9 @@ export function createCliOpenShellGatewayReuseObserver(
           healthy,
           namedMetadata,
           shouldSelect: shouldSelectNamedGatewayForReuse(
-            status.output,
-            named.output,
-            active.output,
+            statusOutput,
+            namedOutput,
+            activeOutput,
             name,
           ),
           endpoints,

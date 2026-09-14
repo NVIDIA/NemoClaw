@@ -99,7 +99,6 @@ describe("applyPreflightGatewayCleanup", () => {
   }) {
     const log = vi.fn();
     const warn = vi.fn();
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const stopAllDashboardForwards = vi.fn();
     const destroyGateway = vi.fn(() => true);
     const destroyGatewayForReuse = vi.fn<
@@ -121,14 +120,12 @@ describe("applyPreflightGatewayCleanup", () => {
         dashboardPort: 8081,
         log,
         warn,
-        runOpenshell,
         stopAllDashboardForwards,
         destroyGateway,
         destroyGatewayForReuse,
       },
       log,
       warn,
-      runOpenshell,
       stopAllDashboardForwards,
       destroyGateway,
       destroyGatewayForReuse,
@@ -146,7 +143,6 @@ describe("applyPreflightGatewayCleanup", () => {
     expect(ctx.log).not.toHaveBeenCalled();
     expect(ctx.destroyGateway).not.toHaveBeenCalled();
     expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
-    expect(ctx.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("performs no destroy for an externally supervised gateway on the legacy path (#6576)", async () => {
@@ -161,7 +157,6 @@ describe("applyPreflightGatewayCleanup", () => {
     expect(next).toBe("stale");
     expect(ctx.destroyGateway).not.toHaveBeenCalled();
     expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
-    expect(ctx.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("prints the deferral warning without ANSI when NO_COLOR is set", async () => {
@@ -181,7 +176,6 @@ describe("applyPreflightGatewayCleanup", () => {
     expect(next).toBe("missing");
     expect(ctx.log).toHaveBeenCalledWith("  Cleaning up previous NemoClaw session...");
     expect(ctx.stopAllDashboardForwards).toHaveBeenCalledOnce();
-    expect(ctx.runOpenshell).not.toHaveBeenCalled();
     expect(ctx.destroyGatewayForReuse).toHaveBeenCalledTimes(1);
     expect(ctx.destroyGateway).toHaveBeenCalledTimes(1);
   });
@@ -196,7 +190,6 @@ describe("applyPreflightGatewayCleanup", () => {
       expect(ctx.warn).not.toHaveBeenCalled();
       expect(ctx.destroyGateway).not.toHaveBeenCalled();
       expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
-      expect(ctx.runOpenshell).not.toHaveBeenCalled();
     },
   );
 });

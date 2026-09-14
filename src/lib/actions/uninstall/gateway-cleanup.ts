@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
-import { createCliOpenShellGatewayReuseObserver } from "../../adapters/openshell/gateway-reuse-cli";
-import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
+import type { OpenShellGatewayReuseObserver } from "../../adapters/openshell/gateway-reuse";
+import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
 import {
   removeGatewayRegistrationThroughAdapter,
   resolveGatewayTeardownAuthority,
@@ -16,11 +16,8 @@ export { resolveGatewayTeardownAuthority };
 export interface GatewayCleanupRuntime {
   commandExists(command: string): boolean;
   env: NodeJS.ProcessEnv;
-  run(
-    command: string,
-    args: string[],
-    options?: SpawnSyncOptions,
-  ): { status: number | null; stdout: string; stderr: string };
+  gatewayLifecycle: OpenShellGatewayLifecycle;
+  gatewayReuseObserver: OpenShellGatewayReuseObserver;
   runDocker(args: string[], options?: SpawnSyncOptions): { status: number | null };
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
   log(message: string): void;
@@ -31,11 +28,9 @@ export async function portableGatewayIsReachable(
   runtime: GatewayCleanupRuntime,
   gatewayName: string,
 ): Promise<boolean> {
-  const observer = createCliOpenShellGatewayReuseObserver((args, options) => {
-    const result = runtime.run("openshell", args, { ...options, env: runtime.env });
-    return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
+  const observed = await runtime.gatewayReuseObserver.observeGatewayReuse({
+    target: { kind: "named", gatewayName },
   });
-  const observed = await observer.observeGatewayReuse({ target: { kind: "named", gatewayName } });
   return !observed.error && observed.healthy && observed.namedMetadata;
 }
 
@@ -45,13 +40,10 @@ export async function removeGatewayRegistration(
   allowLegacyDestroy: boolean,
   gatewayPort: number,
 ): Promise<boolean> {
-  const lifecycle = createCliOpenShellGatewayLifecycleFromRunner((args, options) =>
-    runtime.run("openshell", args, { ...options, env: runtime.env }),
-  );
   const outcome = await removeGatewayRegistrationThroughAdapter({
     gatewayName: gatewayLabel,
     allowLegacyDestroy,
-    lifecycle,
+    lifecycle: runtime.gatewayLifecycle,
     revalidateAuthority: () =>
       runtime.resolveGatewayTeardownAuthority(
         {
@@ -102,10 +94,7 @@ export async function collectLiveOpenShellGatewayNames(
   gatewayName: string,
 ): Promise<Set<string> | null> {
   if (!runtime.commandExists("openshell")) return null;
-  const lifecycle = createCliOpenShellGatewayLifecycleFromRunner((args, options) =>
-    runtime.run("openshell", args, { ...options, env: runtime.env }),
-  );
-  const result = await lifecycle.listGateways({
+  const result = await runtime.gatewayLifecycle.listGateways({
     target: { kind: "named", gatewayName },
   });
   return result.ok ? new Set(result.names) : null;

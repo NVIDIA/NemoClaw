@@ -235,6 +235,7 @@ describe("onboard helpers", () => {
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
+printf 'No gateway configured\n'
 exit 1
 `,
         { mode: 0o755 },

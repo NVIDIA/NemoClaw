@@ -785,6 +785,10 @@ export function printGatewayLifecycleHint(
     writer(observation.error.message);
     return;
   }
+  if (observation?.state === "observation_failed") {
+    writer(observation.diagnostic || "OpenShell gateway observation failed.");
+    return;
+  }
   // The gateway-side gRPC reply `sandbox has no spec` is returned when the
   // active OpenShell gateway does not know about the sandbox — which on a
   // multi-instance host typically means a sibling NemoClaw gateway (the one

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as crossPort from "../../state/registry/cross-port";
+import * as runtime from "../../adapters/openshell/runtime";
 import { selectSandboxOwningGateway } from "./gateway-select";
 
 describe("selectSandboxOwningGateway", () => {
@@ -28,6 +29,19 @@ describe("selectSandboxOwningGateway", () => {
     expect(selectGateway).toHaveBeenCalledExactlyOnceWith({
       target: { kind: "named", gatewayName },
     });
+  });
+  it("preserves the CLI availability diagnostic before selection", async () => {
+    vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry: { name: "alpha", gatewayPort: 8080 },
+      gatewayPort: 8080,
+      registryFile: "/test/sandboxes.json",
+    });
+    vi.spyOn(runtime, "getOpenshellBinary").mockImplementation(() => {
+      throw new Error("openshell CLI not found. Install OpenShell before using sandbox commands.");
+    });
+    const capture = vi.spyOn(runtime, "captureResolvedOpenshell");
+    await expect(selectSandboxOwningGateway("alpha")).rejects.toThrow("openshell CLI not found");
+    expect(capture).not.toHaveBeenCalled();
   });
   it("does not change selection for an unregistered sandbox", async () => {
     vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue(null);

@@ -152,13 +152,18 @@ export async function preparePreflightGatewayAuthority(
     });
   }
 
+  if (externallySupervised) {
+    return {
+      externallySupervised,
+      gatewayReuseState: "missing",
+      managedGatewayObservationAuthoritative,
+    };
+  }
   const observedSnapshot = await deps.getGatewayReuseSnapshot();
-  const gatewayReuseState = externallySupervised
-    ? observedSnapshot.gatewayReuseState
-    : managedGatewayObservationAuthoritative
-      ? (await deps.selectNamedGatewayForReuseIfNeeded(observedSnapshot)).gatewayReuseState
-      : await deps.refreshDockerDriverGatewayReuseState(
-          (await deps.selectNamedGatewayForReuseIfNeeded(observedSnapshot)).gatewayReuseState,
-        );
+  const gatewayReuseState = managedGatewayObservationAuthoritative
+    ? (await deps.selectNamedGatewayForReuseIfNeeded(observedSnapshot)).gatewayReuseState
+    : await deps.refreshDockerDriverGatewayReuseState(
+        (await deps.selectNamedGatewayForReuseIfNeeded(observedSnapshot)).gatewayReuseState,
+      );
   return { externallySupervised, gatewayReuseState, managedGatewayObservationAuthoritative };
 }

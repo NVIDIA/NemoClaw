@@ -3,7 +3,7 @@
 
 import { createCliOpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle-cli";
 import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
-import { captureResolvedOpenshell } from "../../adapters/openshell/runtime";
+import { captureResolvedOpenshell, getOpenshellBinary } from "../../adapters/openshell/runtime";
 import { getKnownSandboxTargetGatewayName } from "./gateway-target";
 
 export type GatewaySelectResult =
@@ -13,18 +13,17 @@ export type GatewaySelectResult =
 
 export async function selectNamedGateway(
   gatewayName: string,
-  lifecycle: Pick<OpenShellGatewayLifecycle, "selectGateway"> = createCliOpenShellGatewayLifecycle(
-    captureResolvedOpenshell,
-  ),
+  lifecycle?: Pick<OpenShellGatewayLifecycle, "selectGateway">,
 ) {
-  return lifecycle.selectGateway({ target: { kind: "named", gatewayName } });
+  if (!lifecycle) getOpenshellBinary();
+  const selectedLifecycle =
+    lifecycle ?? createCliOpenShellGatewayLifecycle(captureResolvedOpenshell);
+  return selectedLifecycle.selectGateway({ target: { kind: "named", gatewayName } });
 }
 
 export async function selectSandboxOwningGateway(
   sandboxName: string,
-  lifecycle: Pick<OpenShellGatewayLifecycle, "selectGateway"> = createCliOpenShellGatewayLifecycle(
-    captureResolvedOpenshell,
-  ),
+  lifecycle?: Pick<OpenShellGatewayLifecycle, "selectGateway">,
 ): Promise<GatewaySelectResult> {
   const gatewayName = getKnownSandboxTargetGatewayName(sandboxName);
   if (!gatewayName) return { outcome: "unregistered", gatewayName: null };

@@ -24,7 +24,6 @@ export interface PreflightGatewaySequenceDeps {
   getGatewayLocalEndpoint(): string;
   stopDashboardForward(): void;
   stopAllDashboardForwards(): void;
-  runOpenshell?(args: string[], options: { ignoreError: true }): unknown;
   getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
   exitProcess(code: number): never;
   destroyGateway(): boolean | Promise<boolean>;

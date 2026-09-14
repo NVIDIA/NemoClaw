@@ -513,6 +513,44 @@ describe("docker-driver-gateway-service", () => {
     });
   });
 
+  it("stops immediately after one failed registration without polling or retrying", async () => {
+    const adapters = gatewayAdaptersForTest();
+    const register = vi.fn(async () => false);
+    const sleepSeconds = vi.fn();
+    const ready = vi.fn(async () => true);
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        observer: adapters.observer,
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        healthPollCount: 30,
+        healthPollInterval: 2,
+        isDockerDriverGatewayReady: ready,
+        output: { error: vi.fn(), log: vi.fn(), warn: vi.fn() },
+        registerDockerDriverGatewayEndpoint: register,
+        skipSandboxBridgeReachability: false,
+        sleepSeconds,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          started: true,
+          manager: "homebrew",
+        }),
+        stopOpenShellGatewayUserService: () => ({
+          attempted: true,
+          stopped: true,
+          standaloneFallbackAllowed: false,
+        }),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("remains lifecycle authority");
+    expect(register).toHaveBeenCalledOnce();
+    expect(sleepSeconds).not.toHaveBeenCalled();
+    expect(ready).not.toHaveBeenCalled();
+    expect(adapters.observer.observeGatewayReuse).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "systemd",

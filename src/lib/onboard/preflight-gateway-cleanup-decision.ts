@@ -33,7 +33,6 @@ export interface PreflightGatewayCleanupDeps {
   dashboardPort?: number;
   log: (line: string) => void;
   warn: (line: string) => void;
-  runOpenshell?: (args: string[], options: { ignoreError: true }) => unknown;
   stopAllDashboardForwards?: () => void;
   destroyGateway: () => boolean | Promise<boolean>;
   destroyGatewayForReuse: (

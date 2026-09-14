@@ -23,11 +23,22 @@ import * as registry from "../../state/registry";
  * Docker/VM-driver sandboxes do not expose the legacy cluster container, so
  * verify gateway health through OpenShell metadata instead.
  */
-export async function probeGatewayMetadataHealth(gatewayName: string): Promise<boolean> {
+export async function probeGatewayMetadataHealth(
+  gatewayName: string,
+  gatewayPort: number,
+): Promise<boolean> {
   const observation = await createCliOpenShellGatewayReuseObserver(
     captureResolvedOpenshell,
-  ).observeGatewayReuse({ target: { kind: "named", gatewayName } });
-  return !observation.error && observation.healthy && observation.namedMetadata;
+  ).observeGatewayReuse({
+    target: { kind: "named", gatewayName },
+    expectedGatewayPort: gatewayPort,
+  });
+  return (
+    !observation.error &&
+    observation.healthy &&
+    observation.namedMetadata &&
+    observation.endpointBinding === "match"
+  );
 }
 
 export function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
@@ -47,7 +58,7 @@ export async function probeGatewayRunning(sandboxName?: string): Promise<boolean
   const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
   const gatewayName = entry ? resolveSandboxGatewayName(entry) : resolveGatewayName(GATEWAY_PORT);
   if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
-    return probeGatewayMetadataHealth(gatewayName);
+    return probeGatewayMetadataHealth(gatewayName, entry?.gatewayPort ?? GATEWAY_PORT);
   }
   const container = `openshell-cluster-${gatewayName}`;
   const result = dockerInspect(

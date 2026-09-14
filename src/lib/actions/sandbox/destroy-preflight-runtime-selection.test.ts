@@ -6,7 +6,6 @@ import {
   createDestroyHarness,
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
-import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
 
 describe("destroy preflight runtime selection", () => {
   afterEach(() => {
@@ -23,7 +22,7 @@ describe("destroy preflight runtime selection", () => {
       workspace: "default",
       localTlsDir: "/authority/tls",
     };
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({ callThroughGatewaySelection: true });
     const preflight = await harness.prepareSandboxDestroy("alpha", {
       operationRuntimeSelection: runtimeSelection,
     });
@@ -34,11 +33,6 @@ describe("destroy preflight runtime selection", () => {
       expect.anything(),
       runtimeSelection,
     );
-    const lifecycle = harness.selectGatewaySpy.mock.calls[0]?.[2] as OpenShellGatewayLifecycle;
-    await lifecycle.selectGateway({
-      target: { kind: "named", gatewayName: "nemoclaw-19080" },
-      runtimeSelection,
-    });
     const frozenOptions = {
       replaceEnv: true,
       env: expect.objectContaining({

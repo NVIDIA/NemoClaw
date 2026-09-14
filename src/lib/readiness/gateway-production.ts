@@ -330,7 +330,7 @@ async function observeReuseState(
         ? { error: Object.assign(new Error("Gateway probe timed out"), { code: "ETIMEDOUT" }) }
         : {}),
     };
-  });
+  }, env);
   const observed = await observer.observeGatewayReuse({
     target: { kind: "named", gatewayName },
     expectedGatewayPort: gatewayPort,

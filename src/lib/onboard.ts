@@ -1157,6 +1157,7 @@ async function preflight(
     managedGatewayObservationAuthoritative,
   } = await preflightGateway.prepareGatewayAuthority();
   let reuseState = initialGatewayReuseState;
+  const supportsLifecycleCommands = await supportsLifecycle(gatewayLifecycleAdapter, GATEWAY_NAME);
 
   // Docker-backed gateways use one legacy reuse and cleanup sequence because
   // OpenShell metadata can outlive a manually removed container (#2020).
@@ -1164,7 +1165,7 @@ async function preflight(
   reuseState = await runPreflightGatewaySequence({
     gatewayReuseState: reuseState,
     externallySupervised: gatewayExternallySupervised,
-    supportsLifecycleCommands: await supportsLifecycle(gatewayLifecycleAdapter, GATEWAY_NAME),
+    supportsLifecycleCommands,
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
     managedGatewayObservationAuthoritative,
     gatewayName: GATEWAY_NAME,
@@ -1222,7 +1223,7 @@ async function preflight(
         externallySupervised: gatewayExternallySupervised,
         managedGatewayObservationAuthoritative,
         portCheckOptions,
-        supportsLifecycleCommands: await supportsLifecycle(gatewayLifecycleAdapter, GATEWAY_NAME),
+        supportsLifecycleCommands,
         destroyGateway,
         checkPortAvailable,
         verifyGatewayContainerRunning,

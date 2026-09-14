@@ -125,15 +125,15 @@ describe("rebuild gateway drift preflight", () => {
       unavailable: true,
     };
     getNamedGatewayLifecycleStateSpy.mockResolvedValue(observation);
-    const hint = vi
-      .spyOn(gatewayState, "printGatewayLifecycleHint")
-      .mockImplementation(() => undefined);
     const wrongGateway = vi.spyOn(gatewayState, "printWrongGatewayActiveGuidance");
 
     await expect(
       resolveRebuildLiveState("alpha", makeSandboxEntry(), vi.fn(), bail),
     ).rejects.toThrow("(observation_failed)");
-    expect(hint).toHaveBeenCalledWith(observation, "alpha", console.error);
+    expect(errorSpy).toHaveBeenCalledWith(observation.diagnostic);
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "currently active OpenShell gateway",
+    );
     expect(wrongGateway).not.toHaveBeenCalled();
   });
 
