@@ -16,6 +16,7 @@ import * as gatewayBinding from "../gateway-binding";
 import {
   createDockerDriverGatewayStart,
   resolveDockerDriverGatewayRuntimeMarkerEndpoint,
+  resolveSelectedGatewayServiceStopCommand,
 } from "./docker-driver-start";
 import { createGatewayRecoveryOrchestration } from "./recovery";
 import { createGatewayRegistration } from "./registration";
@@ -43,21 +44,21 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
-  it("threads the selected port into failed standalone recovery (#11720)", async () => {
+  it("withholds a stop command when the active service uses another state (#11720)", async () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
     const lines: string[] = [];
-    const originalExistsSync = fs.existsSync.bind(fs);
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    const existsSyncSpy = vi.spyOn(fs, "existsSync").mockImplementation((candidate) => {
-      const filePath = String(candidate);
-      return (
-        !(
-          filePath.endsWith("/systemd/user/openshell-gateway.service") ||
-          filePath.endsWith("/.config/systemd/user/nemoclaw-openshell-gateway.service")
-        ) && originalExistsSync(candidate)
-      );
-    });
+    const stateInUse = vi.fn(() => true);
+    const serviceTarget = vi.fn(() => ({
+      executablePath: "/opt/openshell/openshell-gateway",
+      pid: 5444,
+      stopCommand: "systemctl --user stop openshell-gateway",
+    }));
+    const usesSelectedState = vi.fn(() => false);
+    const checkGatewayPortAvailable = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValue({ ok: false, pid: 5444, process: "openshell-gateway" });
     const managedFallbackSpy = vi
       .spyOn(dockerDriverGatewayCutover, "runDockerDriverGatewayManagedFallback")
       .mockResolvedValue("launch");
@@ -99,7 +100,7 @@ describe("gateway lifecycle late binding", () => {
     try {
       const start = createDockerDriverGatewayStart({
         SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
-        checkGatewayPortAvailable: async () => ({ ok: true }),
+        checkGatewayPortAvailable,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         createGatewayServicePortOwnership: () => ({
           portListenerScan: { complete: true, pids: [], unverifiedPids: [] },
@@ -127,10 +128,13 @@ describe("gateway lifecycle late binding", () => {
         }),
         getDockerDriverGatewayRuntimeDrift: () => null,
         getDockerDriverGatewayStateDir: () => stateDir,
+        getGatewayPortListenerRawScan: () => ({ complete: true, pids: [5444] }),
+        getTrustedActiveOpenShellGatewayUserServiceStopTarget: serviceTarget,
         getInstalledOpenshellVersion: () => "0.0.0",
         isDockerDriverGatewayHttpReady: async () => false,
         isDockerDriverGatewayProcessAlive: () => false,
-        isDockerDriverGatewayStateInUse: () => true,
+        isDockerDriverGatewayPidUsingSelectedState: usesSelectedState,
+        isDockerDriverGatewayStateInUse: stateInUse,
         isGatewayHealthy: () => false,
         isGatewayTcpReady: async () => false,
         isPidAlive: () => true,
@@ -157,16 +161,39 @@ describe("gateway lifecycle late binding", () => {
 
       expect(lines.join("\n")).toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
       expect(lines.join("\n")).not.toContain("sudo lsof -iTCP -sTCP:LISTEN -P -n");
+      expect(lines.join("\n")).not.toContain("systemctl --user stop openshell-gateway");
+      expect(serviceTarget).toHaveBeenCalledOnce();
+      expect(usesSelectedState).toHaveBeenCalledWith(5444);
+      expect(stateInUse).toHaveBeenCalledOnce();
     } finally {
       spawnSpy.mockRestore();
       prepareSpy.mockRestore();
       runtimeIdentitySpy.mockRestore();
       managedFallbackSpy.mockRestore();
-      existsSyncSpy.mockRestore();
-      platformSpy.mockRestore();
       vi.unstubAllEnvs();
       fs.rmSync(root, { force: true, recursive: true });
     }
+  });
+
+  it("returns a stop command when one stable service owns the selected port and state", async () => {
+    const serviceTarget = {
+      executablePath: "/opt/openshell/openshell-gateway",
+      pid: 5444,
+      stopCommand: "systemctl --user stop openshell-gateway",
+    };
+
+    await expect(
+      resolveSelectedGatewayServiceStopCommand({
+        checkGatewayPortAvailable: async () => ({
+          ok: false,
+          pid: serviceTarget.pid,
+          process: "openshell-gateway",
+        }),
+        getGatewayPortListenerRawScan: () => ({ complete: true, pids: [serviceTarget.pid] }),
+        getTrustedActiveOpenShellGatewayUserServiceStopTarget: () => serviceTarget,
+        isDockerDriverGatewayPidUsingSelectedState: () => true,
+      }),
+    ).resolves.toBe(serviceTarget.stopCommand);
   });
 
   it("uses the current binding for select, add, and health commands", () => {
@@ -420,9 +447,11 @@ describe("gateway lifecycle late binding", () => {
       }),
       getDockerDriverGatewayRuntimeDrift: () => null,
       getDockerDriverGatewayStateDir: () => stateDir,
+      getGatewayPortListenerRawScan: () => ({ complete: true, pids: [] }),
       getInstalledOpenshellVersion: () => "0.0.0",
       isDockerDriverGatewayHttpReady: async () => true,
       isDockerDriverGatewayProcessAlive: () => false,
+      isDockerDriverGatewayPidUsingSelectedState: () => false,
       isDockerDriverGatewayStateInUse: () => false,
       isGatewayHealthy: () => true,
       isGatewayTcpReady: async () => true,

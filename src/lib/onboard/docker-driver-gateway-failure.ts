@@ -13,7 +13,6 @@ import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
-import { getOpenShellGatewayServiceStopCommand } from "./docker-driver-gateway-service";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { printDockerDaemonRecovery } from "./gateway-start-failure";
 import {
@@ -30,7 +29,7 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
   launchLogOffset: number;
   /** Identity-aware selected-state ownership probe supplied by the onboarding runtime. */
   isGatewayStateInUse?: () => boolean;
-  /** Resolve the service-manager stop command, or null for a standalone gateway. */
+  /** Return a stop command only after the caller proves selected port and state ownership. */
   resolveGatewayStopCommand?: () => string | null;
   printError?: (message?: string) => void;
 };
@@ -51,11 +50,11 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
 /**
  * Print the incompatible-database diagnosis and its state-move recovery.
  *
- * An engaged managed service is stopped before onboarding retries, but service
- * activity does not prove that no other gateway process uses the selected
- * state. The retry re-evaluates ownership before it can offer the state move.
- * Standalone gateways receive the move only after the runtime confirms that no
- * matching gateway process still uses the selected state (#8797, #11720).
+ * A managed service is stopped before onboarding retries only when it owns the
+ * selected port and state. The retry re-evaluates ownership before it can
+ * offer the state move. Standalone gateways receive the move only after the
+ * runtime confirms that no matching gateway process still uses the selected
+ * state (#8797, #11720).
  */
 function printIncompatibleGatewayDatabaseRecovery(
   logPath: string,
@@ -77,11 +76,11 @@ function printIncompatibleGatewayDatabaseRecovery(
   const stopCommand = resolveGatewayStopCommand();
   if (stopCommand) {
     printError(
-      "  Stop the engaged gateway service, then run onboarding again so NemoClaw can verify that no gateway process still uses the selected state:",
+      "  Stop the selected gateway service, then run onboarding again so NemoClaw can verify that no gateway process still uses the selected state:",
     );
     printError(`    ${stopCommand} && ${recoveryCommand}`);
     printError(
-      "  Service activity alone does not prove that the service owns every process using this gateway state.",
+      "  The stop command applies only to the verified listener. Onboarding checks all gateway processes again before it offers a state move.",
     );
     noteOnboardResumeHintShown();
     return;
@@ -139,7 +138,7 @@ export function reportDockerDriverGatewayStartFailure(
     launchLogOffset,
     isGatewayStateInUse,
     printError = console.error,
-    resolveGatewayStopCommand = getOpenShellGatewayServiceStopCommand,
+    resolveGatewayStopCommand = () => null,
   }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
   const logBytes = fs.existsSync(logPath) ? fs.readFileSync(logPath) : Buffer.alloc(0);

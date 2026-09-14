@@ -819,6 +819,12 @@ export function getOpenShellGatewayServiceStopCommand(
   const service = resolveOpenShellGatewayUserService(opts);
   if (!service) return null;
   if (!isOpenShellGatewayUserServiceEngaged(service, opts)) return null;
+  return getOpenShellGatewayServiceStopCommandForTarget(service);
+}
+
+function getOpenShellGatewayServiceStopCommandForTarget(
+  service: OpenShellGatewayUserServiceTarget,
+): string {
   const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
   return `${prefix} ${service.serviceName}`;
 }
@@ -1049,6 +1055,11 @@ export interface TrustedActiveOpenShellGatewayUserServiceIdentity {
   executablePath: string | null;
 }
 
+export interface TrustedActiveOpenShellGatewayUserServiceStopTarget extends TrustedActiveOpenShellGatewayUserServiceIdentity {
+  /** Stop command for the same service target that supplied this process identity. */
+  stopCommand: string;
+}
+
 const OPENSHELL_HOMEBREW_SERVICE_LABELS = [
   `sh.brew.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
   `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
@@ -1084,9 +1095,9 @@ function getActiveHomebrewGatewayServiceIdentity(
   return identities.length === 1 ? identities[0] : null;
 }
 
-export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
+export function getTrustedActiveOpenShellGatewayUserServiceStopTarget(
   opts: OpenShellGatewayUserServiceOptions = {},
-): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
+): TrustedActiveOpenShellGatewayUserServiceStopTarget | null {
   const platform = opts.platform ?? process.platform;
   if (platform !== "linux" && platform !== "darwin") return null;
   const env = opts.env ?? process.env;
@@ -1102,11 +1113,17 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   if (!service) return null;
   if (service.manager === "homebrew") {
     if (!commandExists("launchctl")) return null;
-    return getActiveHomebrewGatewayServiceIdentity(service, {
+    const identity = getActiveHomebrewGatewayServiceIdentity(service, {
       env,
       existsSync: opts.existsSync ?? fs.existsSync,
       spawnSyncImpl,
     });
+    return identity
+      ? {
+          ...identity,
+          stopCommand: getOpenShellGatewayServiceStopCommandForTarget(service),
+        }
+      : null;
   }
   if (!commandExists("systemctl")) return null;
   const result = runSystemctlUser(
@@ -1134,8 +1151,19 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   }
   const mainPid = Number(properties.MainPID);
   return Number.isSafeInteger(mainPid) && mainPid > 0
-    ? { pid: mainPid, executablePath: identity.execStartPath }
+    ? {
+        pid: mainPid,
+        executablePath: identity.execStartPath,
+        stopCommand: getOpenShellGatewayServiceStopCommandForTarget(service),
+      }
     : null;
+}
+
+export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
+  const target = getTrustedActiveOpenShellGatewayUserServiceStopTarget(opts);
+  return target ? { pid: target.pid, executablePath: target.executablePath } : null;
 }
 
 export function getTrustedActiveOpenShellGatewayUserServicePid(

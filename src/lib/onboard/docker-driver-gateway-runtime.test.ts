@@ -289,7 +289,6 @@ describe("docker-driver gateway runtime helpers", () => {
     const gatewayBin = path.join(stateDir, "openshell-gateway");
     try {
       withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
-        const namespace = gatewayIdForStateDir(stateDir);
         const runCapture = vi.fn((args: string[]) =>
           args.join(" ") === `ps -p ${String(replacementPid)} -o args=` ? gatewayBin : "",
         );
@@ -323,10 +322,88 @@ describe("docker-driver gateway runtime helpers", () => {
           candidate === replacementCmdline
             ? `${gatewayBin}\0`
             : candidate === replacementEnvironment
-              ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`
+              ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=default\0OPENSHELL_DB_URL=sqlite:${path.join(stateDir, "openshell.db")}\0`
               : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
 
         expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("matches one live process to the selected gateway state namespace (#11720)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
+    const pid = 98_762;
+    try {
+      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
+        const { helpers } = makeHelpers();
+        vi.spyOn(process, "kill").mockImplementation(() => true);
+        const originalExistsSync = fs.existsSync.bind(fs);
+        const originalReadFileSync = fs.readFileSync.bind(fs);
+        const processEnvironment = `/proc/${String(pid)}/environ`;
+        vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
+          candidate === processEnvironment
+            ? true
+            : originalExistsSync(candidate)) as typeof fs.existsSync);
+        vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
+          candidate === processEnvironment
+            ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${gatewayIdForStateDir(stateDir)}\0`
+            : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
+
+        expect(helpers.isDockerDriverGatewayPidUsingSelectedState(pid)).toBe(true);
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a live process from another gateway state namespace (#11720)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
+    const pid = 98_763;
+    try {
+      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
+        const { helpers } = makeHelpers();
+        vi.spyOn(process, "kill").mockImplementation(() => true);
+        const originalExistsSync = fs.existsSync.bind(fs);
+        const originalReadFileSync = fs.readFileSync.bind(fs);
+        const processEnvironment = `/proc/${String(pid)}/environ`;
+        vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
+          candidate === processEnvironment
+            ? true
+            : originalExistsSync(candidate)) as typeof fs.existsSync);
+        vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
+          candidate === processEnvironment
+            ? "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=another-gateway\0"
+            : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
+
+        expect(helpers.isDockerDriverGatewayPidUsingSelectedState(pid)).toBe(false);
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("matches legacy state through its selected database path (#11720)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
+    const pid = 98_764;
+    try {
+      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
+        const { helpers } = makeHelpers();
+        vi.spyOn(process, "kill").mockImplementation(() => true);
+        const originalExistsSync = fs.existsSync.bind(fs);
+        const originalReadFileSync = fs.readFileSync.bind(fs);
+        const processEnvironment = `/proc/${String(pid)}/environ`;
+        vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
+          candidate === processEnvironment
+            ? true
+            : originalExistsSync(candidate)) as typeof fs.existsSync);
+        vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
+          candidate === processEnvironment
+            ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=default\0OPENSHELL_DB_URL=sqlite:${path.join(stateDir, "openshell.db")}\0`
+            : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
+
+        expect(helpers.isDockerDriverGatewayPidUsingSelectedState(pid)).toBe(true);
       });
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });

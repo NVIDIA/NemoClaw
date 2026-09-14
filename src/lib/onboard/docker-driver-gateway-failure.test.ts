@@ -166,7 +166,6 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
         exitOnFailure: false,
         isGatewayStateInUse: () => false,
         launchLogOffset: 0,
-        resolveGatewayStopCommand: () => null,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("cannot use the existing gateway database");
@@ -252,7 +251,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       expect(joined).toContain(
         "systemctl --user stop nemoclaw-openshell-gateway && nemoclaw onboard --resume",
       );
-      expect(joined).toContain("Service activity alone does not prove");
+      expect(joined).toContain("Onboarding checks all gateway processes again");
       expect(joined).not.toContain(`mkdir -m 700 '${dir}.incompatible'`);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

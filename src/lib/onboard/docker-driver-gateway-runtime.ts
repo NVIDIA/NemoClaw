@@ -157,6 +157,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     opts?: { requireDockerDriverEnv?: boolean },
   ): boolean;
   isDockerDriverGatewayProcessAlive(): boolean;
+  isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean;
   isDockerDriverGatewayStateInUse(): boolean;
   isPidAlive(pid: number): boolean;
   rememberDockerDriverGatewayPid(pid: number): void;
@@ -508,11 +509,35 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     const command = deps
       .runCapture(["ps", "eww", "-p", String(pid), "-o", "command="], { ignoreError: true })
       .trim();
-    const prefix = `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=`;
-    const value = command.split(/\s+/).find((token) => token.startsWith(prefix));
-    return value
-      ? { [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: value.slice(prefix.length) }
-      : null;
+    const processEnv: Record<string, string> = {};
+    for (const key of [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV, "OPENSHELL_DB_URL"] as const) {
+      const prefix = `${key}=`;
+      const value = command.split(/\s+/).find((token) => token.startsWith(prefix));
+      if (value) processEnv[key] = value.slice(prefix.length);
+    }
+    return Object.keys(processEnv).length > 0 ? processEnv : null;
+  }
+
+  function processEnvironmentUsesSelectedState(
+    processEnv: Readonly<Record<string, string>>,
+  ): boolean {
+    const stateDir = getDockerDriverGatewayStateDir();
+    const selectedNamespace = gatewayIdForStateDir(stateDir);
+    const namespace = processEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
+    const databaseUrl = processEnv.OPENSHELL_DB_URL;
+    const selectedDatabaseUrl = `sqlite:${path.join(stateDir, "openshell.db")}`;
+    if (databaseUrl !== undefined && databaseUrl !== selectedDatabaseUrl) return false;
+    if (namespace === selectedNamespace) return true;
+    return (
+      (namespace === undefined || namespace === "default") && databaseUrl === selectedDatabaseUrl
+    );
+  }
+
+  /** Prove that one live process uses the runtime namespace for the selected state directory. */
+  function isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean {
+    if (!isPidAlive(pid)) return false;
+    const processEnv = readProcessEnv(pid) ?? readProcessEnvironmentFromPs(pid);
+    return processEnv ? processEnvironmentUsesSelectedState(processEnv) : false;
   }
 
   /**
@@ -526,7 +551,6 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     const scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
     if (scan.timedOut || (scan.exitCode !== 0 && scan.exitCode !== 1)) return true;
     if (scan.exitCode === 1) return false;
-    const selectedNamespace = gatewayIdForStateDir(getDockerDriverGatewayStateDir());
     const gatewayBin = resolveOpenShellGatewayBinary();
     const lines = scan.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
     if (lines.length === 0) return true;
@@ -540,7 +564,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       }
       const processEnv = readProcessEnv(pid) ?? readProcessEnvironmentFromPs(pid);
       if (!processEnv) return true;
-      if (processEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === selectedNamespace) return true;
+      if (processEnvironmentUsesSelectedState(processEnv)) return true;
     }
     return false;
   }
@@ -607,6 +631,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     isDockerDriverGatewayPortListener,
     isDockerDriverGatewayProcess,
     isDockerDriverGatewayProcessAlive,
+    isDockerDriverGatewayPidUsingSelectedState,
     isDockerDriverGatewayStateInUse,
     isPidAlive,
     rememberDockerDriverGatewayPid,

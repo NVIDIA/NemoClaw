@@ -19,6 +19,10 @@ import {
 } from "../docker-driver-gateway-prelaunch";
 import { waitForStandaloneDockerDriverGateway } from "../docker-driver-gateway-readiness";
 import * as dockerDriverGatewayRuntimeMarker from "../docker-driver-gateway-runtime-marker";
+import {
+  getTrustedActiveOpenShellGatewayUserServiceStopTarget,
+  type TrustedActiveOpenShellGatewayUserServiceStopTarget,
+} from "../docker-driver-gateway-service";
 import * as gatewayStateLifecycleLock from "./state-lifecycle-lock";
 import { formatGatewayHealthWaitLimit } from "../gateway-health-wait";
 import { verifySandboxBridgeGatewayReachableOrExit } from "../gateway-sandbox-reachability";
@@ -47,9 +51,12 @@ export interface DockerDriverGatewayStartDeps {
   getDockerDriverGatewayPortListenerScan: GatewayRuntimeHelpers["getDockerDriverGatewayPortListenerScan"];
   getDockerDriverGatewayRuntimeDrift: GatewayRuntimeHelpers["getDockerDriverGatewayRuntimeDrift"];
   getDockerDriverGatewayStateDir: GatewayRuntimeHelpers["getDockerDriverGatewayStateDir"];
+  getGatewayPortListenerRawScan: GatewayRuntimeHelpers["getGatewayPortListenerRawScan"];
+  getTrustedActiveOpenShellGatewayUserServiceStopTarget?: typeof getTrustedActiveOpenShellGatewayUserServiceStopTarget;
   getInstalledOpenshellVersion: typeof import("../openshell-version").getInstalledOpenshellVersion;
   isDockerDriverGatewayHttpReady: DynamicGatewayHelpers["isDockerDriverGatewayHttpReady"];
   isDockerDriverGatewayProcessAlive: GatewayRuntimeHelpers["isDockerDriverGatewayProcessAlive"];
+  isDockerDriverGatewayPidUsingSelectedState: GatewayRuntimeHelpers["isDockerDriverGatewayPidUsingSelectedState"];
   isDockerDriverGatewayStateInUse: GatewayRuntimeHelpers["isDockerDriverGatewayStateInUse"];
   isGatewayHealthy(status: string, namedInfo: string, activeInfo: string): boolean;
   isGatewayTcpReady: DynamicGatewayHelpers["isGatewayTcpReady"];
@@ -85,6 +92,52 @@ export function resolveDockerDriverGatewayRuntimeMarkerEndpoint(
   fallback: () => string,
 ): string {
   return desiredEnv.OPENSHELL_GRPC_ENDPOINT?.trim() || fallback();
+}
+
+function gatewayServiceStopTargetsMatch(
+  first: TrustedActiveOpenShellGatewayUserServiceStopTarget,
+  second: TrustedActiveOpenShellGatewayUserServiceStopTarget | null,
+): boolean {
+  return (
+    second !== null &&
+    second.pid === first.pid &&
+    second.executablePath === first.executablePath &&
+    second.stopCommand === first.stopCommand
+  );
+}
+
+/** Return a stop command only when one stable service owns the selected port and state. */
+export async function resolveSelectedGatewayServiceStopCommand(
+  deps: Pick<
+    DockerDriverGatewayStartDeps,
+    | "checkGatewayPortAvailable"
+    | "getGatewayPortListenerRawScan"
+    | "getTrustedActiveOpenShellGatewayUserServiceStopTarget"
+    | "isDockerDriverGatewayPidUsingSelectedState"
+  >,
+): Promise<string | null> {
+  const resolveServiceTarget =
+    deps.getTrustedActiveOpenShellGatewayUserServiceStopTarget ??
+    getTrustedActiveOpenShellGatewayUserServiceStopTarget;
+  try {
+    const serviceBefore = resolveServiceTarget();
+    if (!serviceBefore) return null;
+    const listenerScan = deps.getGatewayPortListenerRawScan(await deps.checkGatewayPortAvailable());
+    if (
+      !listenerScan.complete ||
+      listenerScan.pids.length !== 1 ||
+      listenerScan.pids[0] !== serviceBefore.pid ||
+      !deps.isDockerDriverGatewayPidUsingSelectedState(serviceBefore.pid)
+    ) {
+      return null;
+    }
+    const serviceAfter = resolveServiceTarget();
+    return gatewayServiceStopTargetsMatch(serviceBefore, serviceAfter)
+      ? serviceBefore.stopCommand
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createDockerDriverGatewayStart(
@@ -352,11 +405,13 @@ export function createDockerDriverGatewayStart(
         (output?.log ?? console.log)("  ✓ Docker-driver gateway is healthy");
         return;
       }
+      const gatewayServiceStopCommand = await resolveSelectedGatewayServiceStopCommand(deps);
       reportDockerDriverGatewayStartFailure(logPath, childExit, {
         exitOnFailure,
         gatewayPort: deps.gatewayPort(),
         isGatewayStateInUse: deps.isDockerDriverGatewayStateInUse,
         launchLogOffset: log.startOffset,
+        resolveGatewayStopCommand: () => gatewayServiceStopCommand,
         ...(output ? { printError: (message?: string) => output.error(message ?? "") } : {}),
       });
       if (startup === "exited") {

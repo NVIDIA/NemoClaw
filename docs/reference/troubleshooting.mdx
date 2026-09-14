@@ -591,9 +591,13 @@ The diagnosis always prints the database path. When an unused archive path is av
   sandboxes on the selected gateway can require re-onboarding and credential entry.
 </Warning>
 
-When NemoClaw finds an engaged managed service, the recovery stops that service and retries onboarding. The stop command names the upstream OpenShell package unit, the NemoClaw user service, or the Homebrew formula selected for this host. Service activity does not prove that the service owns every process that uses the selected state. The onboarding retry resolves the service again before it can offer a state move.
+When NemoClaw proves that one managed service owns the selected port and state, the recovery stops that service and retries onboarding.
+The stop command names the upstream OpenShell package unit, the NemoClaw user service, or the Homebrew formula selected for this host.
+If the listener, state namespace, or service identity does not match, NemoClaw prints no stop command and uses the standalone ownership checks.
+The onboarding retry resolves ownership again before it can offer a state move.
 
-When no managed service is engaged, the gateway runtime checks the recorded process and scans current gateway process identities for the runtime namespace tied to the selected state directory. It withholds the move unless that scan establishes that no gateway process uses the state.
+When no managed service owns the selected port and state, the gateway runtime checks the recorded process and scans current gateway process identities for the selected state directory.
+It withholds the move unless that scan establishes that no gateway process uses the state.
 
 When NemoClaw prints a stop-and-retry command, run that command first. Do not move the state unless the retry prints a state-move command.
 

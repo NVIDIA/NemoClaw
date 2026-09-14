@@ -13,6 +13,7 @@ import {
   getOpenShellGatewayUserServicePaths,
   getOpenShellUserConfigHome,
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
+  getTrustedActiveOpenShellGatewayUserServiceStopTarget,
   getTrustedActiveOpenShellGatewayUserServicePid,
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
@@ -281,6 +282,36 @@ describe("docker-driver-gateway-service", () => {
       ],
       expect.any(Object),
     );
+  });
+
+  it("binds a trusted active systemd identity to its stop command (#11720)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const gatewayBin = `${home}/.local/bin/openshell-gateway`;
+
+    expect(
+      getTrustedActiveOpenShellGatewayUserServiceStopTarget({
+        commandExists: (command) => command === "systemctl",
+        env: { HOME: home },
+        existsSync: (candidate) => candidate === servicePath,
+        home,
+        lstatSync: nonSymlinkStat,
+        platform: "linux",
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl: () =>
+          spawnResult(
+            0,
+            "",
+            [trustedShowOutput(servicePath, gatewayBin), "ActiveState=active", "MainPID=4242"].join(
+              "\n",
+            ),
+          ),
+      }),
+    ).toEqual({
+      executablePath: gatewayBin,
+      pid: 4242,
+      stopCommand: "systemctl --user stop nemoclaw-openshell-gateway",
+    });
   });
 
   it("does not trust an inactive or foreign systemd gateway process (#6903)", () => {
