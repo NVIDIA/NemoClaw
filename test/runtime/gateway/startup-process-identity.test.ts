@@ -158,6 +158,7 @@ misplaced_start = b"bash\0/tmp/evil.sh\0/usr/local/bin/nemoclaw-start\0"
 empty_argument_spoof = b"bash\0\0/usr/local/bin/nemoclaw-start\0"
 proof = {
     "remapped": scenario([(412, "424242", entrypoint, "trusted")]),
+    "remapped_command": scenario([(412, "424242", entrypoint_with_command, "trusted")]),
     "stale": scenario([(412, "999999", entrypoint, "trusted")]),
     "spoof": scenario([(412, "424242", spoof, "trusted")]),
     "nonroot": scenario([(412, "424242", entrypoint, "trusted", 1000)]),
@@ -184,6 +185,14 @@ proof.update({
     ]),
     "openshell_supervised_direct_command": supervised_scenario([
         (412, "424242", direct_entrypoint_with_command, 1000, 412, 1),
+    ]),
+    "openshell_supervisor_with_retained_command": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+        (413, "525252", b"bash\0/usr/local/bin/nemoclaw-start\0node\0-e\0retained-probe\0", 1000, 413, 1),
+    ]),
+    "openshell_supervisor_with_retained_direct_command": supervised_scenario([
+        (412, "424242", direct_entrypoint, 1000, 412, 1),
+        (413, "525252", b"/usr/local/bin/nemoclaw-start\0node\0-e\0retained-probe\0", 1000, 413, 1),
     ]),
     "openshell_noncanonical_bash": supervised_scenario([
         (412, "424242", noncanonical_bash, 1000, 412, 1),
@@ -307,6 +316,7 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
     } = runIdentityHarness(guardPath);
     expect(proof).toEqual({
       remapped: true,
+      remapped_command: true,
       stale: false,
       spoof: false,
       nonroot: false,
@@ -316,6 +326,8 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       bounded: false,
       openshell_supervised: true,
       openshell_supervised_direct: true,
+      openshell_supervisor_with_retained_command: name === "OpenClaw",
+      openshell_supervisor_with_retained_direct_command: name === "OpenClaw",
       openshell_landlock_all_namespaces_denied: true,
       openshell_landlock_supervisor_namespace_denied: true,
       openshell_wrong_supervisor: false,
@@ -339,14 +351,14 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
   });
 });
 
-describe.each(GUARDS)("%s exact startup argv", (_name, guardPath) => {
+describe.each(GUARDS)("%s exact startup argv", (name, guardPath) => {
   it("rejects a trusted script path smuggled in an unrelated argv (#6565)", () => {
     const proof = runIdentityHarness(guardPath);
 
     expect(proof.openshell_argv_spoof).toBe(false);
     expect(proof.openshell_nested_argv_spoof).toBe(false);
-    expect(proof.openshell_supervised_command).toBe(true);
-    expect(proof.openshell_supervised_direct_command).toBe(true);
+    expect(proof.openshell_supervised_command).toBe(name === "Hermes");
+    expect(proof.openshell_supervised_direct_command).toBe(name === "Hermes");
     expect(proof.openshell_noncanonical_bash).toBe(false);
     expect(proof.openshell_misplaced_start).toBe(false);
     expect(proof.openshell_empty_argument_spoof).toBe(false);

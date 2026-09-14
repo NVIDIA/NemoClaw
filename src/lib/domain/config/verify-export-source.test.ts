@@ -33,7 +33,6 @@ import { type NemoClawConfig } from "../../config/model";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type { ObservedExportSnapshot } from "./export-evidence";
 import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
 import { buildChain } from "../../dashboard/contract";
 
@@ -729,7 +728,6 @@ describe("config export source verification (#10938)", () => {
         observabilityEnabled: true,
         webSearchEnabled: true,
         messaging: { configured: {} } as never,
-        mcp: { bridges: {} } as never,
         openclawImagePluginInstalls: [{ id: "secondary" }] as never,
         hostLocalInferenceReceipt: "receipt",
       }),
@@ -745,7 +743,6 @@ describe("config export source verification (#10938)", () => {
         "spec.sandboxes[].observability",
         "spec.sandboxes[].integrations.webSearch",
         "spec.sandboxes[].integrations.messaging",
-        "spec.sandboxes[].integrations.mcp",
         "spec.sandboxes[].agents.secondary",
         "spec.sandboxes[].agents[0].type",
         "spec.inferenceProviders",

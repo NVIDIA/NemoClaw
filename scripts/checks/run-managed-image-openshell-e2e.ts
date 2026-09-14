@@ -53,6 +53,7 @@ import {
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
+  MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
@@ -498,6 +499,119 @@ function managedConfigPath(agent: ShippedManagedImageAgent): string {
   }
 }
 
+class ManagedHeartbeatEvidenceError extends Error {
+  constructor(
+    readonly failure: "unavailable" | "interval-mismatch",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export function managedOpenClawHeartbeatLogProbe(): string {
+  return `
+const fs = require("node:fs");
+const path = require("node:path");
+try {
+  let interval;
+  const roots = ["/tmp/openclaw", "/tmp/openclaw-" + process.getuid()];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    if (!fs.lstatSync(root).isDirectory()) throw new Error();
+    for (const name of fs.readdirSync(root).filter(name => /^openclaw(?:-\\d{4}-\\d{2}-\\d{2})?\\.log$/.test(name)).sort()) {
+      const fd = fs.openSync(path.join(root, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile() || stat.size > 8 * 1024 * 1024) throw new Error();
+        for (const line of fs.readFileSync(fd, "utf8").split("\\n").filter(Boolean)) {
+          const record = JSON.parse(line);
+          if (record["2"] !== "heartbeat: started") continue;
+          const subsystem = JSON.parse(record["0"]);
+          if (subsystem.subsystem !== "gateway/heartbeat") continue;
+          const value = record["1"]?.intervalMs;
+          if (!Number.isSafeInteger(value) || value <= 0) throw new Error();
+          if (interval !== undefined && interval !== value) throw new Error();
+          interval = value;
+        }
+      } finally { fs.closeSync(fd); }
+    }
+  }
+  if (interval === undefined) throw new Error();
+  process.stdout.write("heartbeat-interval-ms=" + interval);
+} catch { process.stderr.write("heartbeat-evidence-unavailable"); process.exitCode = 1; }
+`;
+}
+
+export function assertOpenClawHeartbeatStart(
+  containerId: string,
+  env: NodeJS.ProcessEnv,
+  runCommand: ManagedImageCommandRunner = commandResult,
+): void {
+  if (!/^[a-f0-9]{64}$/u.test(containerId)) {
+    throw new Error("OpenClaw heartbeat check requires one exact container ID");
+  }
+  const result = runCommand(
+    [
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "node",
+      "-e",
+      managedOpenClawHeartbeatLogProbe(),
+    ],
+    env,
+    15_000,
+  );
+  if (result.status !== 0 || result.error) {
+    throw new ManagedHeartbeatEvidenceError(
+      "unavailable",
+      "managed OpenClaw structured heartbeat evidence unavailable",
+    );
+  }
+  const heartbeatStart = String(result.stdout ?? "").trim();
+  const configuredInterval = /^(\d+)([smh])$/u.exec(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY);
+  const intervalUnitMs = { s: 1_000, m: 60_000, h: 3_600_000 }[
+    configuredInterval?.[2] as "s" | "m" | "h"
+  ];
+  const expectedIntervalMs = configuredInterval
+    ? Number(configuredInterval[1]) * intervalUnitMs
+    : Number.NaN;
+  const observedIntervalMs = /^heartbeat-interval-ms=(\d+)$/u.exec(heartbeatStart)?.[1];
+  if (
+    !Number.isSafeInteger(expectedIntervalMs) ||
+    observedIntervalMs !== String(expectedIntervalMs)
+  ) {
+    throw new ManagedHeartbeatEvidenceError(
+      "interval-mismatch",
+      `managed OpenClaw did not start with the requested ${expectedIntervalMs} ms heartbeat`,
+    );
+  }
+}
+
+export function managedOpenClawHeartbeatProbe(
+  configPath: string = managedConfigPath("openclaw"),
+  nodeExecutable = "/usr/local/bin/node",
+  sha256sumExecutable = "sha256sum",
+): string {
+  const shellQuote = (value: string): string => `'${value.replace(/'/gu, `'\\''`)}'`;
+  const configProbe = [
+    shellQuote(nodeExecutable),
+    "-e",
+    shellQuote(
+      "const fs=require('node:fs');const c=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const h=c?.agents?.defaults?.heartbeat;if(h?.every!==process.argv[2]||h?.isolatedSession!==true)process.exit(1);",
+    ),
+    shellQuote(configPath),
+    shellQuote(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
+  ].join(" ");
+  return [
+    configProbe,
+    `cd ${shellQuote(path.dirname(configPath))}`,
+    `${shellQuote(sha256sumExecutable)} --check .config-hash >/dev/null`,
+  ].join(" && ");
+}
+
 export function managedImageOpenShellProbe(
   agent: ShippedManagedImageAgent,
   model: string = MODEL,
@@ -540,6 +654,14 @@ export function managedImageOpenShellProbe(
       `${agent} managed model configuration`,
       `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
     ),
+    ...(agent === "openclaw"
+      ? [
+          probeStep(
+            "OpenClaw managed isolated heartbeat and configuration hash",
+            managedOpenClawHeartbeatProbe(),
+          ),
+        ]
+      : []),
     probeStep(
       "managed runtime environment must not be a symbolic link",
       "test ! -L /run/nemoclaw/managed-startup-runtime.env",
@@ -1249,6 +1371,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 
       await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
       ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
+      if (input.agent === "openclaw") {
+        assertOpenClawHeartbeatStart(ownedContainerId, launch.sandboxEnv);
+      }
       if (input.localProvider && !afterLocalInference) {
         assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
       }
@@ -1468,8 +1593,12 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch(() => {
-    console.error("Managed-image OpenShell E2E failed; inspect the redacted evidence artifacts.");
+  run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch((error: unknown) => {
+    console.error(
+      error instanceof ManagedHeartbeatEvidenceError
+        ? `Managed-image OpenClaw heartbeat evidence: ${error.failure}`
+        : "Managed-image OpenShell E2E failed; inspect the redacted evidence artifacts.",
+    );
     process.exitCode = 1;
   });
 }

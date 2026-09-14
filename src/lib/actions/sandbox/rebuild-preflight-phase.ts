@@ -10,8 +10,11 @@ import {
   type HermesCronRestorePlan,
   validateHermesCronRestoreBackup,
 } from "../../state/rebuild/hermes-cron-restore-backup";
-import { readRebuildPolicyHandoff, type RebuildManifest } from "../../state/sandbox";
-import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
+import {
+  readRebuildMcpHandoff,
+  readRebuildPolicyHandoff,
+  type RebuildManifest,
+} from "../../state/sandbox";
 import {
   preflightRebuildCredentials,
   type RebuildBail,
@@ -53,7 +56,6 @@ import {
 import {
   pinRebuildTargetGatewayForReadiness,
   prepareRebuildTargetPreflights,
-  resolveRebuildMcpRuntimeSelection,
 } from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
@@ -142,24 +144,6 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
-  // #6376: refuse a stuck MCP destroy transaction up front — before backup,
-  // image prep, or the old-sandbox delete. The only MCP marker check used to
-  // live inside the destroy phase, which runs AFTER the backup phase, so a
-  // stuck sandbox paid destructive/backup cost before the guard fired. Moving
-  // it here fails closed before any destructive work; the guard's message is
-  // phase-aware (prepared -> non-destructive `mcp remove --force`; pending ->
-  // finish the destroy).
-  try {
-    assertMcpDestroyNotPending(sandboxEntry);
-  } catch (error) {
-    printRebuildPreflightFailure(
-      "a pending MCP destroy transaction blocks rebuild.",
-      "Resolve the pending MCP state before retrying rebuild.",
-      error instanceof Error ? error.message : String(error),
-      bail,
-    );
-    return null;
-  }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
@@ -206,7 +190,9 @@ export async function runRebuildPreflightPhase(
     return null;
   }
   const agentName = getRebuildAgentDisplayName(sandboxName);
-  const mcpRuntimeSelection = resolveRebuildMcpRuntimeSelection(sandboxEntry, bail);
+  const mcpRuntimeSelection = recoveryManifest
+    ? (readRebuildMcpHandoff(recoveryManifest)?.runtimeSelection ?? undefined)
+    : undefined;
   if (mcpRuntimeSelection) {
     pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
   }

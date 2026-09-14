@@ -551,14 +551,40 @@ describe("PR review advisor OpenShell wrapper", () => {
     },
   );
 
-  it("permits only the pinned image login files required by stable OpenShell exec", () => {
-    const policy = YAML.parse(
+  it("keeps a real Node entrypoint alive while it waits for OpenShell termination (#10791)", () => {
+    const moduleUrl = new URL("../../../tools/pr-review-advisor/openshell.mts", import.meta.url)
+      .href;
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--input-type=module",
+        "--eval",
+        `import { waitForAdvisorSandboxTermination } from ${JSON.stringify(moduleUrl)}; await waitForAdvisorSandboxTermination();`,
+      ],
+      { encoding: "utf8", killSignal: "SIGTERM", timeout: 1_000 },
+    );
+
+    expect(child.error).toMatchObject({ code: "ETIMEDOUT" });
+    expect(child.status).toBe(0);
+    expect(child.signal).toBeNull();
+    expect(child.stderr).toBe("");
+  });
+
+  it("permits only the pinned image login files in managed review policies (#10947)", () => {
+    const advisorPolicy = YAML.parse(
       fs.readFileSync("tools/pr-review-advisor/openshell-policy.yaml", "utf8"),
     ) as {
       filesystem_policy: { read_only: string[]; read_write: string[] };
     };
+    const postMergePolicy = YAML.parse(
+      fs.readFileSync("tools/post-merge-docs/review-policy.yaml", "utf8"),
+    ) as {
+      filesystem_policy: { read_only: string[]; read_write: string[] };
+    };
+    const loginFiles = ["/sandbox/.bashrc", "/sandbox/.profile"];
 
-    expect(policy.filesystem_policy).toEqual({
+    expect(advisorPolicy.filesystem_policy).toEqual({
       include_workdir: false,
       read_only: [
         "/usr/bin",
@@ -574,6 +600,12 @@ describe("PR review advisor OpenShell wrapper", () => {
       ],
       read_write: ["/dev", "/sandbox/pr-review-advisor-runtime"],
     });
+    expect(
+      advisorPolicy.filesystem_policy.read_only.filter((entry) => entry.startsWith("/sandbox/.")),
+    ).toEqual(loginFiles);
+    expect(
+      postMergePolicy.filesystem_policy.read_only.filter((entry) => entry.startsWith("/sandbox/.")),
+    ).toEqual(loginFiles);
   });
 
   it.each([
@@ -1207,6 +1239,18 @@ describe("PR review advisor OpenShell wrapper", () => {
         "HEAD",
       ]),
     );
+    expect(runArgs).not.toContain("--no-login-shell");
+    const commandBoundaryIndex = runArgs.indexOf("--");
+    expect(runArgs.slice(commandBoundaryIndex)).toEqual([
+      "--",
+      "/usr/bin/node",
+      "--no-warnings",
+      "/advisor/tools/pr-review-advisor/run-specialist.mts",
+      "--base",
+      "target/base",
+      "--head",
+      "HEAD",
+    ]);
     expect(runArgs.join("\n")).not.toContain("github-host-secret");
     expect(runArgs.join("\n")).not.toContain("model-host-secret");
     expect(runArgs.join("\n")).not.toContain("advisor-host-secret");

@@ -22,6 +22,7 @@ export const DEFAULT_HOSTED_INFERENCE_BASE_URL = "https://inference-api.nvidia.c
 export const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 
 const PORTABLE_DESCRIPTOR_VALIDITY_MS = 60 * 60_000;
+const CREDENTIAL_ENV_NAME = /^[A-Z][A-Z0-9_]{0,127}$/u;
 
 export interface HostedInferenceSecrets {
   required(name: string): string;
@@ -48,6 +49,16 @@ export interface HostedInferenceModelsProbe {
   args: string[];
   command: "bash";
   env: NodeJS.ProcessEnv;
+}
+
+export function hostedInferenceCredentialReferencePattern(credentialEnv: string): RegExp {
+  if (!CREDENTIAL_ENV_NAME.test(credentialEnv)) {
+    throw new Error(`invalid hosted inference credential environment name: ${credentialEnv}`);
+  }
+  return new RegExp(
+    `^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?${credentialEnv}$`,
+    "u",
+  );
 }
 
 function currentEffectiveUid(): number {

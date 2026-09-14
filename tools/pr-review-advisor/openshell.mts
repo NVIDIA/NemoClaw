@@ -14,7 +14,6 @@ import {
   startOwnedOpenShellInference,
   type OwnedOpenShellInference,
   createOpenShellSandbox,
-  credentialFreeEnvironment,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
   downloadOpenShellPath,
@@ -586,7 +585,11 @@ export function waitForAdvisorSandboxTermination(
   signals: AdvisorSandboxSignals = process,
 ): Promise<void> {
   return new Promise((resolve) => {
+    // Signal listeners and an unresolved promise do not keep Node running when
+    // no active handles remain. Own one handle until OpenShell terminates PID 1.
+    const keepAlive = setInterval(() => undefined, 60_000);
     const finish = () => {
+      clearInterval(keepAlive);
       signals.removeListener("SIGTERM", finish);
       signals.removeListener("SIGINT", finish);
       resolve();

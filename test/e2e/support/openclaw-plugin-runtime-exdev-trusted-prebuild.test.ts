@@ -47,7 +47,7 @@ function canonicalListenerProbe(commandLine: string) {
   return vi
     .fn()
     .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
-    .mockReturnValueOnce({ status: 0, stdout: `p4321\nftxt\nn${process.execPath}\n` })
+    .mockReturnValueOnce({ status: 0, stdout: `${process.execPath}\n/mach_kernel\n` })
     .mockReturnValueOnce({ status: 0, stdout: commandLine })
     .mockReturnValueOnce({ status: 0, stdout: "4321\n" });
 }
@@ -336,6 +336,7 @@ describe("trusted EXDEV immutable image handoff", () => {
     );
     const target: ForwardServiceTarget = {
       executable: String(environment.NEMOCLAW_OPENSHELL_BIN),
+      gatewayEndpoint: "https://127.0.0.1:8080",
       gatewayName: "nemoclaw",
       localHost: "127.0.0.1",
       localPort: 18_789,
