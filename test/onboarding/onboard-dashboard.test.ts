@@ -8,6 +8,11 @@ import type { AgentDefinition } from "../../src/lib/agent/defs";
 import { loadAgent } from "../../src/lib/agent/defs";
 import { printDashboardUi } from "../../src/lib/agent/onboard";
 import type {
+  OpenShellSandboxTransferExecutor,
+  OpenShellSandboxTransferOutcome,
+  OpenShellSandboxTransferRequest,
+} from "../../src/lib/adapters/openshell/sandbox-transfer";
+import type {
   OnboardDashboardDeps,
   OnboardDashboardHelpers,
 } from "../../src/lib/onboard/dashboard";
@@ -19,27 +24,30 @@ const { createOnboardDashboardHelpers } = require("../../src/lib/onboard/dashboa
   createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
 };
 
-function createTokenDownloadRunOpenshell() {
-  return vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-    if (args.join(" ").startsWith("sandbox download ")) {
-      const destDir = args[4];
-      fs.mkdirSync(destDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(destDir, "openclaw.json"),
-        JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
-      );
-    }
-    return { status: 0 };
-  });
+function createTokenDownloadTransferExecutor(
+  outcome: OpenShellSandboxTransferOutcome = { kind: "completed", exitCode: 0 },
+): OpenShellSandboxTransferExecutor {
+  return {
+    run: vi.fn(async (request) => {
+      if (outcome.kind === "completed" && outcome.exitCode === 0) {
+        fs.mkdirSync(request.destination, { recursive: true });
+        fs.writeFileSync(
+          path.join(request.destination, "openclaw.json"),
+          JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
+        );
+      }
+      return { outcome, wasInterrupted: () => false, release: vi.fn() };
+    }),
+  };
 }
 
-function captureReadySummary(
+async function captureReadySummary(
   agent: AgentDefinition | null,
   { sandboxName, cliName }: { sandboxName: string; cliName: string },
-): string {
+): Promise<string> {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const helpers = createOnboardDashboardHelpers({
-    runOpenshell: createTokenDownloadRunOpenshell(),
+    runOpenshell: vi.fn(() => ({ status: 0 })),
     runCaptureOpenshell: vi.fn(() => ""),
     runCapture: vi.fn(() => ""),
     openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
@@ -52,12 +60,13 @@ function captureReadySummary(
     isWsl: () => false,
     redact: (value: unknown) => String(value),
     sleep: vi.fn(),
+    sandboxTransferExecutor: createTokenDownloadTransferExecutor(),
     printAgentDashboardUi: vi.fn(),
     listSandboxes: () => ({ sandboxes: [] }),
   });
 
   try {
-    helpers.printDashboard(sandboxName, "gpt-oss:20b", "ollama", null, agent);
+    await helpers.printDashboard(sandboxName, "gpt-oss:20b", "ollama", null, agent);
     return logSpy.mock.calls.map(([line]) => String(line)).join("\n");
   } finally {
     logSpy.mockRestore();
@@ -65,6 +74,81 @@ function captureReadySummary(
 }
 
 describe("onboard dashboard helpers", () => {
+  function createTokenHelpers(sandboxTransferExecutor: OpenShellSandboxTransferExecutor) {
+    return createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      sandboxTransferExecutor,
+      printAgentDashboardUi: vi.fn(),
+    });
+  }
+
+  it("downloads the gateway token through the selected gateway and cleans up custody", async () => {
+    let transferRequest: OpenShellSandboxTransferRequest | undefined;
+    const release = vi.fn(() => {
+      expect(fs.existsSync(transferRequest?.destination ?? "")).toBe(false);
+    });
+    const executor: OpenShellSandboxTransferExecutor = {
+      run: vi.fn(async (request) => {
+        transferRequest = request;
+        fs.mkdirSync(request.destination, { recursive: true });
+        fs.writeFileSync(
+          path.join(request.destination, "openclaw.json"),
+          JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
+        );
+        return {
+          outcome: { kind: "completed" as const, exitCode: 0 },
+          wasInterrupted: () => false,
+          release,
+        };
+      }),
+    };
+    const helpers = createTokenHelpers(executor);
+
+    await expect(helpers.fetchGatewayAuthTokenFromSandbox("alpha")).resolves.toBe("secret-token");
+    expect(transferRequest).toMatchObject({
+      direction: "download",
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      source: "/sandbox/.openclaw/openclaw.json",
+      output: "suppress",
+    });
+    expect(transferRequest?.destination.endsWith(path.sep)).toBe(true);
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("returns null and cleans up a partial download after transfer failure", async () => {
+    let destination = "";
+    const release = vi.fn(() => {
+      expect(fs.existsSync(destination)).toBe(false);
+    });
+    const executor: OpenShellSandboxTransferExecutor = {
+      run: vi.fn(async (request) => {
+        destination = request.destination;
+        fs.mkdirSync(destination, { recursive: true });
+        fs.writeFileSync(path.join(destination, "partial"), "credential fragment");
+        return {
+          outcome: { kind: "completed" as const, exitCode: 1 },
+          wasInterrupted: () => false,
+          release,
+        };
+      }),
+    };
+    const helpers = createTokenHelpers(executor);
+
+    await expect(helpers.fetchGatewayAuthTokenFromSandbox("alpha")).resolves.toBeNull();
+    expect(vi.mocked(executor.run).mock.calls[0]?.[0].target).toEqual({ kind: "selected" });
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it("builds a remotely bound Hermes verification chain with its allocated API port", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const getSandbox = vi.fn(() => ({ hermesApiPort: 8643 }));
@@ -234,11 +318,11 @@ describe("onboard dashboard helpers", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("prints the dashboard-url command instead of raw gateway-token guidance", () => {
+  it("prints the dashboard-url command instead of raw gateway-token guidance", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));
     const shouldShowNimLine = vi.fn(() => false);
-    const runOpenshell = createTokenDownloadRunOpenshell();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
@@ -253,13 +337,14 @@ describe("onboard dashboard helpers", () => {
       isWsl: () => false,
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
+      sandboxTransferExecutor: createTokenDownloadTransferExecutor(),
       printAgentDashboardUi: vi.fn(),
       listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";
     try {
-      helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
+      await helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
       output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
     } finally {
       logSpy.mockRestore();
@@ -279,9 +364,9 @@ describe("onboard dashboard helpers", () => {
     expect(nimStatus).toHaveBeenCalledWith("my-gpt-claw");
   });
 
-  it("shows the loopback dashboard URL with a WSL host-IP fallback under WSL", () => {
+  it("shows the loopback dashboard URL with a WSL host-IP fallback under WSL", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const runOpenshell = createTokenDownloadRunOpenshell();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
@@ -296,13 +381,14 @@ describe("onboard dashboard helpers", () => {
       isWsl: () => true,
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
+      sandboxTransferExecutor: createTokenDownloadTransferExecutor(),
       printAgentDashboardUi: vi.fn(),
       listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";
     try {
-      helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
+      await helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
       output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
     } finally {
       logSpy.mockRestore();
@@ -316,8 +402,8 @@ describe("onboard dashboard helpers", () => {
     expect(output).not.toMatch(/secret[-_]?token/);
   });
 
-  it("gives the agent dashboard both primary and port-rewritten WSL fallback URLs", () => {
-    const runOpenshell = createTokenDownloadRunOpenshell();
+  it("gives the agent dashboard both primary and port-rewritten WSL fallback URLs", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const printAgentDashboardUi = vi.fn();
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
@@ -333,12 +419,13 @@ describe("onboard dashboard helpers", () => {
       isWsl: () => true,
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
+      sandboxTransferExecutor: createTokenDownloadTransferExecutor(),
       printAgentDashboardUi,
       listSandboxes: () => ({ sandboxes: [] }),
     });
     const agent = { dashboard: { auth: "url_token" } } as never;
 
-    helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, agent);
+    await helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, agent);
 
     const [, , , agentDeps] = printAgentDashboardUi.mock.calls[0];
     const urls: string[] = agentDeps.buildControlUiUrls("secret-token", 8642);
@@ -365,7 +452,7 @@ describe("onboard dashboard helpers", () => {
     ],
   ])(
     "prints the effective Hermes dashboard URL selected by %s (#6277)",
-    (_source, port, configurePort) => {
+    async (_source, port, configurePort) => {
       const previousChatUiUrl = process.env.CHAT_UI_URL;
       const previousDashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT;
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -391,7 +478,13 @@ describe("onboard dashboard helpers", () => {
       try {
         process.env.CHAT_UI_URL = `http://127.0.0.1:${String(port)}`;
         configurePort();
-        helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, loadAgent("hermes"));
+        await helpers.printDashboard(
+          "my-hermes",
+          "gpt-oss:20b",
+          "ollama",
+          null,
+          loadAgent("hermes"),
+        );
         output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
       } finally {
         previousChatUiUrl === undefined
@@ -411,7 +504,7 @@ describe("onboard dashboard helpers", () => {
     },
   );
 
-  it("prints a token-free browser URL when the dashboard token is unavailable", () => {
+  it("prints a token-free browser URL when the dashboard token is unavailable", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const note = vi.fn();
     const helpers = createOnboardDashboardHelpers({
@@ -428,13 +521,17 @@ describe("onboard dashboard helpers", () => {
       isWsl: () => false,
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
+      sandboxTransferExecutor: createTokenDownloadTransferExecutor({
+        kind: "failed",
+        reason: "invocation",
+      }),
       printAgentDashboardUi: vi.fn(),
       listSandboxes: () => ({ sandboxes: [] }),
     });
 
     let output = "";
     try {
-      helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
+      await helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
       output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
     } finally {
       logSpy.mockRestore();
@@ -449,8 +546,11 @@ describe("onboard dashboard helpers", () => {
     expect(output).toContain("then run the configured interactive agent command");
   });
 
-  it("offers launch first and keeps connect in the OpenClaw ready summary (#6006)", () => {
-    const output = captureReadySummary(null, { sandboxName: "my-gpt-claw", cliName: "nemoclaw" });
+  it("offers launch first and keeps connect in the OpenClaw ready summary (#6006)", async () => {
+    const output = await captureReadySummary(null, {
+      sandboxName: "my-gpt-claw",
+      cliName: "nemoclaw",
+    });
 
     expect(output).toContain(
       [
@@ -467,8 +567,8 @@ describe("onboard dashboard helpers", () => {
     );
   });
 
-  it("prints the Hermes interactive command instead of the OpenClaw TUI (#6006)", () => {
-    const output = captureReadySummary(loadAgent("hermes"), {
+  it("prints the Hermes interactive command instead of the OpenClaw TUI (#6006)", async () => {
+    const output = await captureReadySummary(loadAgent("hermes"), {
       sandboxName: "my-hermes",
       cliName: "nemohermes",
     });
@@ -486,8 +586,8 @@ describe("onboard dashboard helpers", () => {
     expect(output).not.toContain("openclaw tui");
   });
 
-  it("prints the Deep Agents Code interactive command in the ready summary (#6006)", () => {
-    const output = captureReadySummary(loadAgent("langchain-deepagents-code"), {
+  it("prints the Deep Agents Code interactive command in the ready summary (#6006)", async () => {
+    const output = await captureReadySummary(loadAgent("langchain-deepagents-code"), {
       sandboxName: "my-dcode",
       cliName: "nemoclaw",
     });

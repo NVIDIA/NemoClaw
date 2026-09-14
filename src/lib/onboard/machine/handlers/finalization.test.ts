@@ -79,7 +79,7 @@ function createDeps(
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
     verifyWebSearch: vi.fn(async () => true),
-    dashboard: vi.fn(),
+    dashboard: vi.fn(async () => undefined),
     isHealthy: vi.fn(() => true),
     reportReadiness: vi.fn(),
     createExternalComponentActivationProof: vi.fn(() => activationProof),

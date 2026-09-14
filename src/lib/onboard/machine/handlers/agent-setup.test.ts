@@ -19,7 +19,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       session.steps[stepName].status = "skipped";
       return session;
     }),
-    openclawReady: vi.fn(() => false),
+    openclawReady: vi.fn(async () => false),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -126,7 +126,7 @@ describe("handleAgentSetupState", () => {
   });
 
   it("skips OpenClaw setup on resume when OpenClaw is ready", async () => {
-    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
+    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
 
     const result = await handleAgentSetupState({ ...baseOptions(deps), resume: true });
 
@@ -171,7 +171,7 @@ describe("handleAgentSetupState", () => {
   });
 
   it("delegates shared OpenClaw configuration before ready-resume completion", async () => {
-    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
+    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
     const revalidateSandboxIdentity = vi.fn();
 
     await handleAgentSetupState({
@@ -212,7 +212,7 @@ describe("handleAgentSetupState", () => {
       },
     );
     const { deps, calls } = createDeps({
-      isOpenclawReady: vi.fn(() => true),
+      isOpenclawReady: vi.fn(async () => true),
       configureOpenclawSandbox,
     });
     const revalidationSteps = new Map([
