@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
 import { shellQuote } from "../fixtures/clients/command.ts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
@@ -56,6 +60,56 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor and use a digest pin; got ${fixture.sandboxBaseImageRef}`,
     );
   }
+}
+
+/** Retain bounded handoff metadata, never policy or manifest contents. */
+export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<string, unknown>[] } {
+  const backups: Record<string, unknown>[] = [];
+  try {
+    for (const name of fs.readdirSync(root).sort().slice(-3)) {
+      const report: Record<string, unknown> = {};
+      backups.push(report);
+      try {
+        const directory = path.join(root, name);
+        const payload = fs.readFileSync(path.join(directory, "rebuild-manifest.json"), "utf8");
+        const handoff = JSON.parse(payload).rebuildPolicyHandoff;
+        report.handoffPresent = handoff !== null && typeof handoff === "object";
+        if (!report.handoffPresent) continue;
+        const valid =
+          typeof handoff.sha256 === "string" &&
+          /^[a-f0-9]{64}$/.test(handoff.sha256) &&
+          handoff.file === `rebuild-policy-handoff.${handoff.sha256}.yaml`;
+        report.handoffFileValid = valid;
+        report.retired = handoff.retired === true;
+        if (!valid) continue;
+        const descriptor = fs.openSync(
+          path.join(directory, handoff.file),
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+        );
+        try {
+          const info = fs.fstatSync(descriptor);
+          Object.assign(report, {
+            regular: info.isFile(),
+            mode: `0o${(info.mode & 0o777).toString(8)}`,
+            ownedByCurrentUser: info.uid === process.getuid?.(),
+            linkCount: info.nlink,
+            size: info.size,
+          });
+          if (info.isFile() && info.size <= 8 * 1024 * 1024)
+            report.digestMatches =
+              createHash("sha256").update(fs.readFileSync(descriptor)).digest("hex") ===
+              handoff.sha256;
+        } finally {
+          fs.closeSync(descriptor);
+        }
+      } catch (error) {
+        report.errorCode = (error as NodeJS.ErrnoException).code ?? "invalid-metadata";
+      }
+    }
+  } catch (error) {
+    backups.push({ errorCode: (error as NodeJS.ErrnoException).code ?? "unreadable-backups" });
+  }
+  return { backups };
 }
 
 /** Collect both read-only probes without replacing an installer failure. */

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -16,6 +17,7 @@ import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
   captureGatewayUpgradeProbeEvidence,
+  gatewayUpgradeBackupEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
@@ -108,6 +110,49 @@ describe("OpenShell gateway upgrade boundary", () => {
       ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
     ]);
   });
+
+  it.each([
+    { mode: 0o600, tampered: false, expectedMode: "0o600", matches: true },
+    { mode: 0o644, tampered: true, expectedMode: "0o644", matches: false },
+  ])(
+    "reports handoff integrity without exposing policy content ($expectedMode)",
+    async ({ mode, tampered, expectedMode, matches }) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-handoff-probe-"));
+      try {
+        const backup = path.join(home, ".nemoclaw", "rebuild-backups", "alpha", "2026-09-14");
+        fs.mkdirSync(backup, { recursive: true });
+        const content = "policy-secret-canary";
+        const sha256 = createHash("sha256").update(content).digest("hex");
+        const file = `rebuild-policy-handoff.${sha256}.yaml`;
+        fs.writeFileSync(path.join(backup, file), tampered ? "changed-secret-canary" : content, {
+          mode,
+        });
+        fs.writeFileSync(
+          path.join(backup, "rebuild-manifest.json"),
+          JSON.stringify({ rebuildPolicyHandoff: { file, sha256 }, unrelatedSecret: content }),
+        );
+        const result = gatewayUpgradeBackupEvidence(path.dirname(backup));
+        expect(result).toEqual({
+          backups: [
+            {
+              handoffPresent: true,
+              handoffFileValid: true,
+              retired: false,
+              regular: true,
+              mode: expectedMode,
+              ownedByCurrentUser: true,
+              linkCount: 1,
+              size: expect.any(Number),
+              digestMatches: matches,
+            },
+          ],
+        });
+        expect(JSON.stringify(result)).not.toContain("secret-canary");
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("freshens only the retryable old fixture install", () => {
     expect(oldGatewayUpgradeInstallerArgs("old-install.sh")).toEqual([
