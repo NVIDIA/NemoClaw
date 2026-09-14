@@ -35,6 +35,12 @@ function patchResult(): DockerGpuPatchResult {
 }
 
 function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
+  const restoreCommandExecutor = vi.fn(() => ({
+    status: 0,
+    signal: null,
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.alloc(0),
+  }));
   return {
     getSandbox: vi.fn(() => ({
       name: "alpha",
@@ -83,6 +89,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       backupPath: "/tmp/rebuild-backups/alpha/recovery",
       contentSha256: "snapshot-content-sha256",
     })),
+    createRestoreCommandExecutor: vi.fn(() => restoreCommandExecutor),
     restoreState: vi.fn((_name, _path, options) => {
       options?.validateBeforeMutation?.();
       return {
@@ -641,8 +648,12 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("re-proves managed health after state restore and before commit", async () => {
+  it("proves restored OpenClaw config integrity before commit and restarts after handoff", async () => {
     const order: string[] = [];
+    const restoreCommandExecutor = vi.fn(() => {
+      order.push("probe-restored-config");
+      return { status: 0, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    });
     const deps = baseDeps({
       restoreState: vi.fn(() => {
         order.push("restore-state");
@@ -654,10 +665,7 @@ describe("relaunchManagedSupervisorSession", () => {
           failedFiles: [],
         };
       }),
-      confirmRestoredManagedGateway: vi.fn(() => {
-        order.push("probe-restored-gateway");
-        return true;
-      }),
+      createRestoreCommandExecutor: vi.fn(() => restoreCommandExecutor),
       restartRestoredManagedGateway: vi.fn(() => {
         order.push("restart-restored-gateway");
         return true;
@@ -676,11 +684,14 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     expect(order).toEqual([
       "restore-state",
-      "probe-restored-gateway",
+      "probe-restored-config",
       "commit-container",
       "restart-restored-gateway",
     ]);
-    expect(deps.confirmRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
+    expect(restoreCommandExecutor).toHaveBeenCalledWith(
+      expect.stringContaining("openclaw-config-guard.py preflight-restart"),
+      { timeoutMs: 300_000 },
+    );
     expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
@@ -715,7 +726,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("rolls back when managed health fails after state restore", async () => {
+  it("rolls back when restored OpenClaw config integrity fails before commit", async () => {
     const order: string[] = [];
     const deps = baseDeps({
       restoreState: vi.fn(() => {
@@ -728,10 +739,12 @@ describe("relaunchManagedSupervisorSession", () => {
           failedFiles: [],
         };
       }),
-      confirmRestoredManagedGateway: vi.fn(() => {
-        order.push("probe-restored-gateway");
-        return false;
-      }),
+      createRestoreCommandExecutor: vi.fn(() =>
+        vi.fn(() => {
+          order.push("probe-restored-config");
+          return { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+        }),
+      ),
       finalize: vi.fn(async ({ supervisorReady }) => {
         order.push(supervisorReady ? "commit-container" : "rollback-container");
         return supervisorReady
@@ -747,7 +760,7 @@ describe("relaunchManagedSupervisorSession", () => {
       stateRestored: false,
       stateBackupRemoved: true,
     });
-    expect(order).toEqual(["restore-state", "probe-restored-gateway", "rollback-container"]);
+    expect(order).toEqual(["restore-state", "probe-restored-config", "rollback-container"]);
     expect(deps.restartRestoredManagedGateway).not.toHaveBeenCalled();
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ newContainerId: "new-container-id" }),

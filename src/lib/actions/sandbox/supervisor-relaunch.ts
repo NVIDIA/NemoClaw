@@ -174,6 +174,20 @@ export function createPinnedSandboxUserRestoreCommandExecutor(
     );
 }
 
+function restoredStatePrecommitReady(
+  persistedAgent: string,
+  containerId: string,
+  executeRestoreCommand: StateRestoreRemoteCommandExecutor,
+  confirmManagedGateway: ((containerId: string) => boolean) | undefined,
+): boolean {
+  if (persistedAgent !== "openclaw") return confirmManagedGateway?.(containerId) === true;
+  const configGuard = executeRestoreCommand(
+    "/usr/bin/python3 -I /usr/local/lib/nemoclaw/openclaw-config-guard.py preflight-restart --config-dir /sandbox/.openclaw",
+    { timeoutMs: 300_000 },
+  );
+  return configGuard.status === 0 && configGuard.signal === null && configGuard.error === undefined;
+}
+
 function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
   const legacyPrefix = "OPENSHELL_SANDBOX_COMMAND=";
   const specPrefix = "OPENSHELL_MAIN_PROCESS_SPEC=";
@@ -273,6 +287,7 @@ export function relaunchManagedSupervisorSession(
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
   const entry = getSandbox(sandboxName);
   if (!entry) return null;
+  const persistedAgent = entry.agent ?? "openclaw";
   const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
   if (!usesLegacyManagedGatewayRecovery(entry)) return null;
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
@@ -413,10 +428,12 @@ export function relaunchManagedSupervisorSession(
         return finalizeFailure();
       }
       let stateRestored = false;
+      let restoreCommandExecutor: StateRestoreRemoteCommandExecutor | null = null;
       try {
+        restoreCommandExecutor = createRestoreCommandExecutor(sandboxName, result.newContainerId);
         stateRestored = restoreState(sandboxName, backupManifest.backupPath, {
           authority: restoreAuthority,
-          executeCommand: createRestoreCommandExecutor(sandboxName, result.newContainerId),
+          executeCommand: restoreCommandExecutor,
           validateBeforeMutation: () => {
             const selected = resolveContainer(sandboxName, driver, result.newContainerId);
             if (!sameContainerId(selected, result.newContainerId)) {
@@ -430,10 +447,15 @@ export function relaunchManagedSupervisorSession(
       if (!stateRestored) {
         return finalizeFailure();
       }
+      if (!restoreCommandExecutor) return finalizeFailure();
       let restoredManagedGatewayReady = false;
       try {
-        restoredManagedGatewayReady =
-          confirmRestoredManagedGateway?.(result.newContainerId) === true;
+        restoredManagedGatewayReady = restoredStatePrecommitReady(
+          persistedAgent,
+          result.newContainerId,
+          restoreCommandExecutor,
+          confirmRestoredManagedGateway,
+        );
       } catch {
         restoredManagedGatewayReady = false;
       }

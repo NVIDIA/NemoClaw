@@ -155,6 +155,14 @@ function composedRelaunchTransaction(
             backupPath: "/tmp/rebuild-backups/recovery-box/recovery",
             contentSha256: "snapshot-content-sha256",
           })),
+          createRestoreCommandExecutor: vi.fn(() =>
+            vi.fn(() => ({
+              status: 0,
+              signal: null,
+              stdout: Buffer.alloc(0),
+              stderr: Buffer.alloc(0),
+            })),
+          ),
           restoreState: vi.fn(() => {
             order.push("restore-state");
             return {
@@ -752,7 +760,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         "the restored managed gateway did not pass its post-handoff restart and health check. NemoClaw did not start the primary dashboard/API host forward",
     });
     expect(order).toEqual(["restore-state", "commit-container", "post-restore-restart"]);
-    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(5);
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ replacementAlreadyRunning: true, supervisorReady: true }),
