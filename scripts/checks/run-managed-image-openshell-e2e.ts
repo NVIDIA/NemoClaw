@@ -494,15 +494,6 @@ function managedConfigPath(agent: ShippedManagedImageAgent): string {
   }
 }
 
-class ManagedHeartbeatEvidenceError extends Error {
-  constructor(
-    readonly failure: "unavailable" | "interval-mismatch",
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
 export function managedOpenClawHeartbeatLogProbe(): string {
   return `
 const fs = require("node:fs");
@@ -515,7 +506,11 @@ try {
     if (!fs.existsSync(root)) continue;
     if (!fs.lstatSync(root).isDirectory()) throw new Error();
     operation = "list";
-    for (const name of fs.readdirSync(root).filter(name => /^openclaw(?:-\\d{4}-\\d{2}-\\d{2})?\\.log$/.test(name)).sort()) {
+    // OpenClaw falls back to its uid directory when the preferred directory is inaccessible.
+    let names;
+    try { names = fs.readdirSync(root); }
+    catch (error) { if (error?.code === "EACCES") continue; throw error; }
+    for (const name of names.filter(name => /^openclaw(?:-\\d{4}-\\d{2}-\\d{2})?\\.log$/.test(name)).sort()) {
       operation = "open";
       const fd = fs.openSync(path.join(root, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
       try {
@@ -572,8 +567,7 @@ export function assertOpenClawHeartbeatStart(
       /^heartbeat-evidence-unavailable:(discover|list|open|parse):(EACCES|EPERM|ENOENT|ELOOP|SyntaxError|invalid)$/u.exec(
         String(result.stderr ?? ""),
       );
-    throw new ManagedHeartbeatEvidenceError(
-      "unavailable",
+    throw new Error(
       `managed OpenClaw structured heartbeat evidence unavailable${detail ? ` (${detail[1]}: ${detail[2]})` : ""}`,
     );
   }
@@ -590,8 +584,7 @@ export function assertOpenClawHeartbeatStart(
     !Number.isSafeInteger(expectedIntervalMs) ||
     observedIntervalMs !== String(expectedIntervalMs)
   ) {
-    throw new ManagedHeartbeatEvidenceError(
-      "interval-mismatch",
+    throw new Error(
       `managed OpenClaw did not start with the requested ${expectedIntervalMs} ms heartbeat`,
     );
   }

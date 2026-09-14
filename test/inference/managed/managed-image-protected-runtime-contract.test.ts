@@ -147,6 +147,7 @@ describe("protected managed-image runtime contract", () => {
   it("reads the structured heartbeat interval without exporting log credentials", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-log-"));
     try {
+      fs.mkdirSync(path.join(root, "unreadable"), { mode: 0 });
       const log = path.join(root, "openclaw-2026-09-13.log");
       fs.writeFileSync(
         log,
@@ -157,7 +158,7 @@ describe("protected managed-image runtime contract", () => {
         }) + "\n",
       );
       const probe = managedOpenClawHeartbeatLogProbe()
-        .replace('"/tmp/openclaw"', JSON.stringify(root))
+        .replace('"/tmp/openclaw"', JSON.stringify(path.join(root, "unreadable")))
         .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
       const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
       expect(result.status).toBe(0);
@@ -169,6 +170,7 @@ describe("protected managed-image runtime contract", () => {
       expect(failed.stdout).toBe("");
       expect(failed.stderr).toBe("heartbeat-evidence-unavailable:parse:SyntaxError");
     } finally {
+      fs.chmodSync(path.join(root, "unreadable"), 0o700);
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
