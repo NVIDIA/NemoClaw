@@ -395,7 +395,7 @@ function verifyOpenClawExplicitGatewayConnectEnvironment(
       "-c",
       '. /tmp/nemoclaw-proxy-env.sh; printf "URL=%s TOKEN=%s INSECURE=%s\\n" "${OPENCLAW_GATEWAY_URL-unset}" "${OPENCLAW_GATEWAY_TOKEN-unset}" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"',
     ]).stdout.trim();
-    if (connected !== `URL=${gatewayUrl} TOKEN= INSECURE=unset`) {
+    if (connected !== `URL=${gatewayUrl} TOKEN=unset INSECURE=unset`) {
       throw new Error(`explicit gateway connect environment was unsafe: ${connected}`);
     }
   } finally {
