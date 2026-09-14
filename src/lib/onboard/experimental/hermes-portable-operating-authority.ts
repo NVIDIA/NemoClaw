@@ -209,7 +209,8 @@ export function qualifyHermesPortableOperatingAuthority(
     const retained = startupAuthorities
       .get(startupOperation)
       ?.find(
-        (entry) => isDeepStrictEqual(entry.snapshot, identity) && isDeepStrictEqual(entry.env, env),
+        (entry) =>
+          isDeepStrictEqual(entry.snapshot, identity) && isDeepStrictEqual(entry.env, { ...env }),
       );
     if (retained) {
       retained.authority.assertCurrent();
