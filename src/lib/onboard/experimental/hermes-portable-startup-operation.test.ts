@@ -43,6 +43,23 @@ describe("Portable startup evidence lifetime", () => {
               },
               env,
             );
+            const otherState = path.join(stateDir, "other");
+            await withMcpLifecycleLock(
+              "alpha",
+              () =>
+                withHermesPortableStartupOperation(
+                  "alpha",
+                  otherState,
+                  () => {
+                    const other = currentHermesPortableStartupOperation("alpha");
+                    expect(other).toBeDefined();
+                    expect(other).not.toBe(first);
+                  },
+                  env,
+                ),
+              { stateDir: otherState },
+            );
+            expect(currentHermesPortableStartupOperation("alpha")).toBe(first);
             return first;
           },
           env,
