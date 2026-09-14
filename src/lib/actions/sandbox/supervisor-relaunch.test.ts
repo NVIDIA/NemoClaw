@@ -557,11 +557,13 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
+    expect(relaunch?.retainedDockerBackupId).toBe("old-container-id");
     expect(await relaunch?.finalize(true)).toMatchObject({
       backupRemoved: true,
       rolledBack: false,
       stateRestored: true,
     });
+    expect(relaunch?.retainedDockerBackupId).toBeUndefined();
     expect(order).toEqual(["restore-state", "restart-restored-gateway", "commit-container"]);
     expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith(
       "new-container-id",

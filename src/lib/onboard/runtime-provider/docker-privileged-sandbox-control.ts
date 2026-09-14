@@ -78,10 +78,13 @@ function findDirectSandboxContainer(
       { cause: error },
     );
   }
-  if (
-    retainedDockerBackupId &&
-    output.split(/\r?\n/u).some((line) => line.trim().startsWith(`${retainedDockerBackupId}\t`))
-  ) {
+  if (retainedDockerBackupId !== undefined) {
+    const backups = output
+      .split(/\r?\n/u)
+      .filter((line) => line.trim().startsWith(`${retainedDockerBackupId}\t`));
+    if (backups.length !== 1) {
+      throw new PinnedSandboxResourceIdentityChangedError(sandboxName);
+    }
     const state = dockerCapture(
       [
         "inspect",

@@ -399,7 +399,7 @@ export function relaunchManagedSupervisorSession(
           : {}),
       };
     };
-    return {
+    const relaunch: ManagedSupervisorRelaunch = {
       containerId: result.newContainerId,
       retainedDockerBackupId: result.oldContainerId,
       finalize(supervisorReady) {
@@ -411,11 +411,16 @@ export function relaunchManagedSupervisorSession(
           }
           return completion.promise;
         }
-        const promise = Promise.resolve().then(() => finalizeTransaction(supervisorReady));
+        const promise = Promise.resolve().then(async () => {
+          const finalized = await finalizeTransaction(supervisorReady);
+          if (finalized.backupRemoved) delete relaunch.retainedDockerBackupId;
+          return finalized;
+        });
         completion = { supervisorReady, promise };
         return promise;
       },
     };
+    return relaunch;
   } catch (error) {
     if (pendingStateBackupPath) {
       try {

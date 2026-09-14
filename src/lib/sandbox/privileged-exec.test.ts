@@ -1013,16 +1013,13 @@ describe("privileged sandbox exec routing", () => {
     );
   });
 
-  it("refuses privileged execution when the pinned container identity changed", () => {
+  it("refuses privileged execution when the retained rollback identity is missing", () => {
     const backupId = "b".repeat(64);
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
-        dockerCapture: (args) =>
-          args[0] === "inspect"
-            ? `${backupId} exited false false false`
-            : `${"c".repeat(64)}\topenshell-alpha\n${backupId}\topenshell-alpha-nemoclaw-gpu-backup-123\n`,
+        dockerCapture: () => `${"a".repeat(64)}\topenshell-alpha\n`,
       },
       ({ isPinnedSandboxContainerIdentityChangedError, privilegedSandboxExecArgv }) => {
         let refusal: unknown;
