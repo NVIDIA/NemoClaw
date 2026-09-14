@@ -1,0 +1,15 @@
+{
+  "platform": "linux_arm64",
+  "image": "nc-prototype-qwen38@sha256:e04d4c5ad8b514eaf9fe10c530f69366a9bf999d880afa78854ef5e88e333efa",
+  "metadata": {
+    "nemoclaw-spark": "39756b9ac03065fe1840084f9e47aeee156c7727ceb7e0de464a6e87a9371d41",
+    "rust": "1.98.1",
+    "sourceVersion": "0.1.0-dev.4dc50f4fa0449a4d",
+    "supervisor-source.tar.gz": "1dd4cd4061794bff2ce8e449ae300c1c90720b7b740f88fb5c6c3e105d4656e7"
+  },
+  "validation": {
+    "independent_offline_archive_rebuild": "identical supervisor SHA256 in a different source directory",
+    "packed_preparation_fixtures": 5,
+    "scope": "artifact and preparation fixtures; complete live inference qualification is separate"
+  }
+}
