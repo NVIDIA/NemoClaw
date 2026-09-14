@@ -265,6 +265,35 @@ describe("CLI gateway observation", () => {
     });
   });
 
+  it.each([
+    [
+      "status",
+      "Gateway: foreign\nclient error (Connect): Connection refused",
+      "Connection refused",
+    ],
+    [
+      "metadata",
+      "Connection refused",
+      "Gateway: foreign\nclient error (Connect): Connection refused",
+    ],
+  ])(
+    "blocks frozen-gateway recovery for a conflicting %s identity (#10947)",
+    async (_, status, metadata) => {
+      const capture = captureFor(status, metadata, 1, 1);
+
+      const result = await createCliOpenShellGatewayObserver(capture).observeGateway({
+        ...request,
+        runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
+      });
+
+      expect(result).toMatchObject({
+        recoveryBlocked: true,
+        state: "observation_failed",
+        unavailable: true,
+      });
+    },
+  );
+
   it("blocks a refused connection when gateway authority is ambient (#10947)", async () => {
     const refused = "client error (Connect): Connection refused";
     const capture = captureFor(refused, refused, 1, 1);

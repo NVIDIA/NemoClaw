@@ -85,7 +85,8 @@ export function createCliOpenShellGatewayObserver(
         const statusText = stripOpenShellCliAnsi(status.output);
         const infoText = stripOpenShellCliAnsi(info.output);
         const activeGateway = gatewayName(statusText);
-        const named = gatewayName(infoText) === name;
+        const namedGateway = gatewayName(infoText);
+        const named = namedGateway === name;
         const connected = /^\s*Status:\s*Connected\b/im.test(statusText);
         const unsupported = /^\s*gateway info is not supported by this gateway version\s*$/i.test(
           infoText,
@@ -97,6 +98,8 @@ export function createCliOpenShellGatewayObserver(
         const absentStatus = missing.test(statusText);
         const selectedRuntimeUnavailable =
           request.runtimeSelection !== undefined &&
+          (activeGateway === null || activeGateway === name) &&
+          (namedGateway === null || namedGateway === name) &&
           statusError?.kind === "transport" &&
           statusError.reason === "unreachable" &&
           infoError?.kind === "transport" &&
