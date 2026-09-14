@@ -240,6 +240,48 @@ describe("Hermes Portable schema-8 operation authority", () => {
     },
   );
 
+  it("retains default file proofs for verification-only authority without sharing its qualifier (#11574)", async () => {
+    const durable = snapshot();
+    const env = {
+      ...environment(),
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: "1",
+    };
+    vi.spyOn(podmanAdapter, "capturePodmanSocketAuthority").mockReturnValue(socket("99"));
+    vi.spyOn(openshellAdapter, "captureHermesPortableOpenShellExecutableAuthority").mockReturnValue(
+      durable.receipt.openshellExecutableAuthority,
+    );
+    vi.spyOn(
+      openshellAdapter,
+      "assertHermesPortableOpenShellExecutableFileAuthority",
+    ).mockReturnValue("/usr/bin/openshell");
+    const captureFile = vi
+      .spyOn(podmanAuthority, "captureHermesPortablePodmanExecutableFileAuthority")
+      .mockReturnValue(durable.receipt.podmanExecutableAuthority);
+    const assertFiles = vi.fn();
+    vi.spyOn(fileProof, "createHermesPortableOperatingFileProof").mockReturnValue(assertFiles);
+    await withMcpLifecycleLock(
+      "alpha",
+      () =>
+        withHermesPortableStartupOperation(
+          "alpha",
+          root,
+          () => {
+            const deps = { env, capturePodmanExecutableAuthority: captureFile };
+            const first = qualifyHermesPortableOperatingAuthority(durable, deps);
+            first.assertTransactionCurrent();
+            const next = qualifyHermesPortableOperatingAuthority(durable, deps);
+            next.assertTransactionCurrent();
+            expect(next).not.toBe(first);
+            expect(captureFile).toHaveBeenCalledTimes(2);
+            expect(assertFiles).toHaveBeenCalledTimes(2);
+          },
+          env,
+        ),
+      { stateDir: root },
+    );
+  });
+
   it("keeps schema-7 authority durable unless requalification is explicit (#10423)", () => {
     const durable = snapshot(false);
     const captureSocketAuthority = vi.fn(() => socket("99"));
@@ -405,35 +447,55 @@ describe("Hermes Portable schema-8 operation authority", () => {
     expect(authority.assertCurrent).not.toThrow();
   });
 
-  it("checks transaction identity without repeating executable behavior probes (#10423)", () => {
-    const openshell = {
-      version: "0.0.116" as const,
-      executable: executable("/usr/bin/openshell", "b".repeat(64)),
-    };
-    const podman = {
-      version: "5.7.0" as const,
-      executable: executable("/usr/bin/podman", "c".repeat(64)),
-    };
-    const captureOpenShellExecutableAuthority = vi.fn(() => openshell);
-    const capturePodmanExecutableAuthority = vi.fn(() => podman);
-    const assertOpenShellExecutableFileAuthority = vi.fn(() => "/usr/bin/openshell");
-    const capturePodmanExecutableFileAuthority = vi.fn(() => podman);
-    const authority = qualifyHermesPortableOperatingAuthority(snapshot(), {
-      env: environment(),
-      captureSocketAuthority: () => socket("99"),
-      captureOpenShellExecutableAuthority,
-      capturePodmanExecutableAuthority,
-      assertOpenShellExecutableFileAuthority,
-      capturePodmanExecutableFileAuthority,
-    });
+  it.each(["0", "1"])(
+    "preserves custom file verifiers with startup reuse=%s (#11574)",
+    async (gate) => {
+      const openshell = {
+        version: "0.0.116" as const,
+        executable: executable("/usr/bin/openshell", "b".repeat(64)),
+      };
+      const podman = {
+        version: "5.7.0" as const,
+        executable: executable("/usr/bin/podman", "c".repeat(64)),
+      };
+      const captureOpenShellExecutableAuthority = vi.fn(() => openshell);
+      const capturePodmanExecutableAuthority = vi.fn(() => podman);
+      const assertOpenShellExecutableFileAuthority = vi.fn(() => "/usr/bin/openshell");
+      const capturePodmanExecutableFileAuthority = vi.fn(() => podman);
+      const env = {
+        ...environment(),
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+        NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: gate,
+      };
+      await withMcpLifecycleLock(
+        "alpha",
+        () =>
+          withHermesPortableStartupOperation(
+            "alpha",
+            root,
+            () => {
+              const authority = qualifyHermesPortableOperatingAuthority(snapshot(), {
+                env,
+                captureSocketAuthority: () => socket("99"),
+                captureOpenShellExecutableAuthority,
+                capturePodmanExecutableAuthority,
+                assertOpenShellExecutableFileAuthority,
+                capturePodmanExecutableFileAuthority,
+              });
 
-    authority.assertTransactionCurrent();
+              authority.assertTransactionCurrent();
+            },
+            env,
+          ),
+        { stateDir: root },
+      );
 
-    expect(captureOpenShellExecutableAuthority).toHaveBeenCalledOnce();
-    expect(capturePodmanExecutableAuthority).toHaveBeenCalledOnce();
-    expect(assertOpenShellExecutableFileAuthority).toHaveBeenCalledOnce();
-    expect(capturePodmanExecutableFileAuthority).toHaveBeenCalledOnce();
-  });
+      expect(captureOpenShellExecutableAuthority).toHaveBeenCalledOnce();
+      expect(capturePodmanExecutableAuthority).toHaveBeenCalledOnce();
+      expect(assertOpenShellExecutableFileAuthority).toHaveBeenCalledOnce();
+      expect(capturePodmanExecutableFileAuthority).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(["openshell", "podman"] as const)(
     "rejects %s executable semantic drift before an operation begins (#10423)",
