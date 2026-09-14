@@ -10,6 +10,7 @@ const MAX_PROVIDER_KEYS = 32;
 const MAX_PROVIDER_KEY_LENGTH = 128;
 const MAX_PROVIDER_INVENTORY_ENTRIES = 1_000;
 const MAX_PROVIDER_INVENTORY_OUTPUT_BYTES = 4 * 1024 * 1024;
+const MAX_ECMASCRIPT_TIMESTAMP_MS = 8_640_000_000_000_000;
 const SAFE_PROVIDER_IDENTIFIER = /^[A-Za-z0-9._:-]+$/;
 const SAFE_PROVIDER_KEY = /^[A-Z_][A-Z0-9_]*$/;
 const ANSI_OSC_PATTERN = /\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/gu;
@@ -178,7 +179,8 @@ export function parseCliOpenShellProviderCredentialExpirations(
       !SAFE_PROVIDER_KEY.test(credentialKey) ||
       typeof expiresAtMs !== "number" ||
       !Number.isSafeInteger(expiresAtMs) ||
-      expiresAtMs < 0
+      expiresAtMs < 0 ||
+      expiresAtMs > MAX_ECMASCRIPT_TIMESTAMP_MS
     ) {
       return null;
     }

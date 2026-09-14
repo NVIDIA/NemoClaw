@@ -259,6 +259,25 @@ async function rebuildSandboxUnlocked(
       );
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
+      const recoveryCleanupRequired = recoveryManifest
+        ? isRebuildRecoveryCleanupOnly({
+            sandboxName,
+            agentName: rebuildAgent,
+            backupManifest: recoveryManifest,
+          }) ||
+          recoveryManifest.rebuildPolicyHandoff?.retired === true ||
+          recoveryManifest.rebuildMcpHandoff?.retired === true ||
+          recoveryManifest.hermesOperatorConfigHandoff?.retired === true
+        : false;
+      if (
+        recoveryManifest &&
+        !recoveryCleanupRequired &&
+        recoveryManifest.rebuildMcpHandoff === undefined
+      ) {
+        return bail(
+          "The retained rebuild MCP recovery observation is unavailable. The original sandbox was not deleted.",
+        );
+      }
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
       const retainedMcpHandoff = recoveryManifest ? readRebuildMcpHandoff(recoveryManifest) : null;
       if (
@@ -393,20 +412,7 @@ async function rebuildSandboxUnlocked(
       // marker is removed. A missing handoff with a retained marker means the
       // handoff cleanup completed but marker cleanup did not. Resume only that
       // cleanup against the already accepted replacement.
-      const recoveryCleanupOnly = recoveryManifest
-        ? isRebuildRecoveryCleanupOnly({
-            sandboxName,
-            agentName: rebuildAgent,
-            backupManifest: recoveryManifest,
-          })
-        : false;
-      if (
-        recoveryManifest &&
-        (recoveryCleanupOnly ||
-          recoveryManifest.rebuildPolicyHandoff?.retired === true ||
-          recoveryManifest.rebuildMcpHandoff?.retired === true ||
-          recoveryManifest.hermesOperatorConfigHandoff?.retired === true)
-      ) {
+      if (recoveryManifest && recoveryCleanupRequired) {
         const cleanupManifest = recoveryManifest;
         const cleanupJournal = openRecreateJournal();
         if (!cleanupJournal) return;
@@ -760,7 +766,7 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         validateAfterMcpPreparation: async (preparation) => {
-          if (backup.backupManifest && preparation.entries.length > 0) {
+          if (backup.backupManifest) {
             try {
               writeRebuildMcpHandoff(
                 backup.backupManifest,

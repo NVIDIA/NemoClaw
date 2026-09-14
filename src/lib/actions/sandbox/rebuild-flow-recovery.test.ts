@@ -437,6 +437,25 @@ describe("rebuildSandbox flow: recovery", () => {
     );
   });
 
+  it("rejects prepared recovery without an MCP observation before deletion", async () => {
+    const recoveryManifest = makePreparedRecoveryManifest();
+    delete (recoveryManifest as Partial<typeof recoveryManifest>).rebuildMcpHandoff;
+    const harness = createRebuildFlowHarness({
+      preDeleteLatestManifest: recoveryManifest,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).rejects.toThrow("MCP recovery observation is unavailable");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps the requested disclosure mode in a zero-MCP prepared-recovery retry", async () => {
     const harness = createRebuildFlowHarness({
       defaultSandbox: "alpha",

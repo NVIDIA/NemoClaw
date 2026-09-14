@@ -155,6 +155,15 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
         { name: "search-prod", credential_expires_at_ms: { TAVILY_API_KEY: "1000" } },
       ]),
     ],
+    [
+      "out-of-range expiry timestamp",
+      JSON.stringify([
+        {
+          name: "search-prod",
+          credential_expires_at_ms: { TAVILY_API_KEY: Number.MAX_SAFE_INTEGER },
+        },
+      ]),
+    ],
   ])("rejects %s in expiration inventory (#10394)", async (_case, inventory) => {
     const run = vi
       .fn<RunProviderCommand>()

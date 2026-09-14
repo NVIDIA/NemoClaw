@@ -994,7 +994,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const mcpSourceEntries = overrides.mcpPreparation?.entries ?? [];
   vi.spyOn(mcpBridgeProviderInspection, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
     {
-      gatewayName: "nemoclaw",
+      gatewayName: String(currentSandboxEntry.gatewayName ?? "nemoclaw"),
       workspace: "default",
     },
   );

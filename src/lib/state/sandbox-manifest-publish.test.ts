@@ -321,6 +321,17 @@ describe("bounded rebuild MCP handoff", () => {
     expect(withHandoff).not.toHaveProperty("rebuildMcpHandoff");
   });
 
+  it("persists an explicit empty MCP observation for recovery", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-mcp-handoff-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+
+    const withHandoff = writeRebuildMcpHandoff(published, [], runtimeSelection);
+
+    expect(readRebuildMcpHandoff(withHandoff)).toEqual({ entries: [], runtimeSelection });
+  });
+
   it("rejects fields that could persist credential material", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-invalid-"));
     tempDirs.push(backupPath);

@@ -3053,7 +3053,7 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-After restore, the command restores Deep Agents manifest-defined state, regenerates `/sandbox/.deepagents/config.toml`, and writes the agent-native `/sandbox/.deepagents/.mcp.json` from the bounded source handoff while preserving unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded `inference.local` route is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. If those checks fail after backup, NemoClaw restores the previous MCP state and keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+After restore, the command restores Deep Agents manifest-defined state, regenerates `/sandbox/.deepagents/config.toml`, and writes the agent-native `/sandbox/.deepagents/.mcp.json` from the bounded source handoff while preserving unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded `inference.local` route is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
 
 </AgentOnly>
 

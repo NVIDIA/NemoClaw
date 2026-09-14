@@ -248,7 +248,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
   it.each([
     ["has no expiration map", undefined],
     ["is absent from another credential's expiration map", { OTHER_API_KEY: 1_000 }],
-    ["has a future expiration", { NVIDIA_INFERENCE_API_KEY: Number.MAX_SAFE_INTEGER }],
+    ["has a future expiration", { NVIDIA_INFERENCE_API_KEY: 8_640_000_000_000_000 }],
   ])(
     "continues when the selected provider credential %s (#10394)",
     async (_case, expirationMap) => {
