@@ -53,6 +53,7 @@ export interface HermesPortableOpenShellExecutableAuthorityDeps extends PodmanEx
   readonly runVersion?: (executable: string, env: NodeJS.ProcessEnv) => VersionResult;
 }
 
+/** Preserve permission remedies while keeping unrelated filesystem failures opaque. */
 function failExecutableAuthority(message: string, cause?: unknown): never {
   const detail = cause instanceof PodmanExecutablePermissionError ? `: ${cause.message}` : "";
   throw new Error(`Hermes portable OpenShell executable authority ${message}${detail}`);

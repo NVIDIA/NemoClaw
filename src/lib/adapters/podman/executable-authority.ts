@@ -14,7 +14,7 @@ export class PodmanExecutablePermissionError extends Error {
     const displayPath = JSON.stringify(rejectedPath);
     const permissions = (mode & 0o7777n).toString(8).padStart(4, "0");
     super(
-      `Executable path ${displayPath} has mode ${permissions} and is writable by another user or group. ` +
+      `Executable path ${displayPath} has mode ${permissions} and is writable by another user or group.\n` +
         "Remove group and other write permission from this path, then retry.",
     );
     this.name = "PodmanExecutablePermissionError";
@@ -141,6 +141,7 @@ function canonicalExecutablePath(
   return executablePath;
 }
 
+/** Reject unsafe files before retaining metadata for replacement checks. */
 function immutableMetadata(
   stat: PodmanExecutableStat,
   uid: number,
@@ -192,6 +193,7 @@ function sameMetadata(
   );
 }
 
+/** Require every parent directory to remain controlled by root or the current user. */
 function captureDirectoryChain(
   executablePath: string,
   uid: number,
@@ -252,6 +254,7 @@ function sameDirectoryChain(
   );
 }
 
+/** Check metadata twice to reject observable replacement without reading executable bytes. */
 function capturePodmanExecutableMetadataAuthority(
   executablePath: string,
   deps: PodmanExecutableAuthorityDeps = {},
@@ -309,6 +312,7 @@ function sameExecutableMetadataAuthority(
   );
 }
 
+/** Bind executable bytes to a stable, trusted path before permitting execution. */
 export function capturePodmanExecutableAuthority(
   executablePath: string,
   deps: PodmanExecutableAuthorityDeps = {},

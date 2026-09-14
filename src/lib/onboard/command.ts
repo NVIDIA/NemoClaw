@@ -536,6 +536,7 @@ function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string)
   return 1;
 }
 
+/** Preserve cancellation and failure behavior without exposing secrets through CLI errors. */
 function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
   const cancellationCode = promptCancellationCode(error);
   if (cancellationCode === "SIGINT") {
@@ -574,7 +575,13 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
   // print a clear message and exit non-zero instead of either crashing with
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
-  if (cancellationCode !== "EOF") throw error;
+  if (cancellationCode !== "EOF") {
+    if (error instanceof Error) {
+      error.message = error.message.split("\n").map(redactOnboardDiagnosticText).join("\n");
+      error.stack = error.stack?.split("\n").map(redactOnboardDiagnosticText).join("\n");
+    }
+    throw error;
+  }
   return reportOnboardCommandError(deps, "  Installation cancelled");
 }
 

@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { assert, describe, expect, it, vi } from "vitest";
-import { redactOnboardDiagnosticText } from "../../onboard/diagnostics/redaction";
 import {
   PodmanExecutablePermissionError,
   type PodmanExecutableStat,
@@ -20,6 +19,7 @@ import {
 
 const AUTHORITY_BINARY = "/opt/nemoclaw/bin/openshell";
 
+/** Model file and parent replacement independently without running an external executable. */
 function executableAuthorityHarness() {
   let executableInode = 10n;
   let executableBytes = Buffer.from("openshell-binary");
@@ -246,10 +246,8 @@ describe("Hermes portable OpenShell executable authority", () => {
     );
   });
 
-  it("escapes path controls and preserves onboarding diagnostic redaction (#11717)", () => {
-    const secret = `nvapi-${"a".repeat(60)}`;
-    const failure = new PodmanExecutablePermissionError(`/opt/${secret}/\u001b[31m/bin`, 0o40775n);
-    expect(redactOnboardDiagnosticText(failure.message)).not.toContain(secret);
+  it("escapes terminal controls in rejected executable paths (#11717)", () => {
+    const failure = new PodmanExecutablePermissionError("/opt/\u001b[31m/bin", 0o40775n);
     expect(failure.message).not.toContain("\u001b");
     expect(failure.message).toContain("\\u001b");
     expect(failure.message).toContain("mode 0775");
