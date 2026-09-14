@@ -1,0 +1,91 @@
+{
+  "platform": "linux_arm64",
+  "referenceRevision": "b549ccd43e6102b72aa9c65ee17abfe3c429fc0b",
+  "bundle": "0.1.0-dev.e03ca87f041304c3",
+  "runs": [
+    {
+      "harness": "deepagents",
+      "proof": {
+        "deployment": "c7c44e06-21d6-4cec-b6a1-89d376e6de58",
+        "destroyed": true,
+        "exportReapply": true,
+        "harness": "deepagents",
+        "hostedRuntimePreserved": true,
+        "nativeResponse": true,
+        "passed": true,
+        "resourceBindings": {
+          "nemoclaw_provider.inference": "0fc00c77-cb8b-45f6-9f41-038c4431ffb7",
+          "nemoclaw_route.primary": "a2dc6a7e-11ca-43c8-8b3e-3dc2f28c64b2/primary",
+          "nemoclaw_sandbox.agent": "6ace4921-cac9-48b0-bd46-29cd8e77323d",
+          "nemoclaw_workspace.deployment": "a2dc6a7e-11ca-43c8-8b3e-3dc2f28c64b2"
+        },
+        "runtimeId": "runtime-1789426881311-53-2",
+        "unchangedApply": true
+      },
+      "status": "succeeded",
+      "response": "\n\nFOUR",
+      "inference": "Qwen3.8 Flash Next / vLLM / Spark GPU",
+      "retainedEvidence": ".local/rust-fabric-live/deepagents/state"
+    },
+    {
+      "harness": "hermes",
+      "proof": {
+        "deployment": "3c3ae903-5b5f-4b44-8b26-06f17ee741ce",
+        "destroyed": true,
+        "exportReapply": true,
+        "harness": "hermes",
+        "hostedRuntimePreserved": true,
+        "nativeResponse": true,
+        "passed": true,
+        "resourceBindings": {
+          "nemoclaw_provider.inference": "8c007f9d-1ac4-4c17-904a-70cb28cbedf9",
+          "nemoclaw_route.primary": "7c602103-e7a7-4019-852a-44a68a6bdffa/primary",
+          "nemoclaw_sandbox.agent": "c5e5b9bf-75ca-4c9f-8164-c8f26fc01dc1",
+          "nemoclaw_workspace.deployment": "7c602103-e7a7-4019-852a-44a68a6bdffa"
+        },
+        "runtimeId": "runtime-1789427827222-53-2",
+        "unchangedApply": true
+      },
+      "status": "succeeded",
+      "response": "FOUR",
+      "inference": "Ollama 0.34.0 / Qwen3 1.7B / CPU",
+      "retainedEvidence": ".local/rust-fabric-live/hermes/state"
+    },
+    {
+      "harness": "openclaw",
+      "proof": {
+        "deployment": "b1aebf4f-89ca-4a8a-b7a6-a8acd7a014b5",
+        "destroyed": true,
+        "exportReapply": true,
+        "harness": "openclaw",
+        "hostedRuntimePreserved": true,
+        "nativeResponse": true,
+        "passed": true,
+        "resourceBindings": {
+          "nemoclaw_provider.inference": "3f6c16ce-e395-46ff-8550-1f4e266620d6",
+          "nemoclaw_route.primary": "8116644a-67f0-468d-9e5a-ac4f747b4464/primary",
+          "nemoclaw_sandbox.agent": "8af06d68-1cb9-4d04-a573-d781e7d704c4",
+          "nemoclaw_workspace.deployment": "8116644a-67f0-468d-9e5a-ac4f747b4464"
+        },
+        "runtimeId": "runtime-1789427525132-53-2",
+        "unchangedApply": true
+      },
+      "status": "ok",
+      "response": "FOUR",
+      "inference": "Qwen3.8 Flash Next / vLLM / Spark GPU",
+      "retainedEvidence": ".local/rust-fabric-live/openclaw/state"
+    }
+  ],
+  "passed": true,
+  "failedQualification": {
+    "harness": "hermes",
+    "backend": "Spark Qwen3.8 with 32768 context tokens",
+    "result": "Hermes rejects context below 64000 at startup; established resource identities retained. Explicit destroy removed owned children and retained workspace. Separate diagnostic sandbox captured native exception and was destroyed.",
+    "evidence": ".local/hermes-startup-error.txt"
+  },
+  "limits": [
+    "Fabric SDK run creates a separate runtime; the hosted runtime identity was checked before and after, not used as an invocation API.",
+    "Hermes success is a short response on Ollama, not qualification of a 64K context window. Ollama uses its default CPU context setting.",
+    "No external messages, paid APIs, automatic invocation retries, or conversation recovery after process death."
+  ]
+}

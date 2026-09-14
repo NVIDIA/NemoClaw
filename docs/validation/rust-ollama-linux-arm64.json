@@ -1,0 +1,79 @@
+{
+  "platform": "linux_arm64",
+  "referenceRevision": "b549ccd43e6102b72aa9c65ee17abfe3c429fc0b",
+  "bundle": "0.1.0-dev.e03ca87f041304c3",
+  "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
+  "compute": "CPU; no GPU device requested",
+  "model": "qwen3:1.7b",
+  "modelDigest": "8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7",
+  "initialApply": {
+    "outcome": "succeeded",
+    "changes": [
+      {
+        "resource": "nemoclaw_ollama.service",
+        "actions": [
+          "create"
+        ]
+      },
+      {
+        "resource": "nemoclaw_ollama_model.inference",
+        "actions": [
+          "create"
+        ]
+      },
+      {
+        "resource": "nemoclaw_provider.inference",
+        "actions": [
+          "create"
+        ]
+      },
+      {
+        "resource": "nemoclaw_route.primary",
+        "actions": [
+          "create"
+        ]
+      },
+      {
+        "resource": "nemoclaw_sandbox.agent",
+        "actions": [
+          "create"
+        ]
+      },
+      {
+        "resource": "nemoclaw_workspace.deployment",
+        "actions": [
+          "create"
+        ]
+      }
+    ]
+  },
+  "unchangedApply": {
+    "outcome": "succeeded",
+    "changes": []
+  },
+  "exportReapply": {
+    "outcome": "succeeded",
+    "changes": []
+  },
+  "bindings": {
+    "nemoclaw_ollama.service": "9003d825-ec2b-414b-a043-d70389061d6d/617015d3f21ff91858d33f0044f3f405f0438019d4d818d5bbe8ba461508cd56/2026-09-14T16:15:11-07:00",
+    "nemoclaw_ollama_model.inference": "9003d825-ec2b-414b-a043-d70389061d6d/617015d3f21ff91858d33f0044f3f405f0438019d4d818d5bbe8ba461508cd56/2026-09-14T16:15:11-07:00/model",
+    "nemoclaw_provider.inference": "4da3c6af-1cc6-4c85-9b6e-0b847e5be7ce",
+    "nemoclaw_route.primary": "e2c2bf8f-f768-45b7-8759-7b7c4bf11cdc/primary",
+    "nemoclaw_sandbox.agent": "4ce33656-4ae0-4a37-902b-328649f3bba3",
+    "nemoclaw_workspace.deployment": "e2c2bf8f-f768-45b7-8759-7b7c4bf11cdc"
+  },
+  "localEvidence": ".local/rust-managed-ollama-live",
+  "passed": true,
+  "limits": [
+    "Combined Ollama process/storage destroy remains unsupported.",
+    "Model names remain mutable, as in the Go boundary; the observed content digest is retained in resource state.",
+    "No long-context accuracy or tool-use claim."
+  ],
+  "setupCorrection": "Initial fixture selected host networking, which ignores published port bindings. Interrupted it, stopped only its owned container, retained its state, and used the managed gateway bridge for this run.",
+  "cleanup": {
+    "sandbox": "stopped through OpenShell",
+    "ollama": "stopped; container, model volume and state retained",
+    "initialIncorrectNetworkAttempt": "stopped; empty model volume and failed state retained"
+  }
+}

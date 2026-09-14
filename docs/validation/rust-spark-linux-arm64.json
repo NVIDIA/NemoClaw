@@ -290,5 +290,21 @@
     "Model downloads were fresh; no Go model volume was copied.",
     "Preparation interruption and pressure boundaries use deterministic fixtures; host memory was not deliberately exhausted.",
     "The corrected image reused independently verified existing model/preparation data."
-  ]
+  ],
+  "finalCliApplyAfterFabricExperiments": {
+    "outcome": "succeeded",
+    "changes": [],
+    "agentResponse": "FOUR"
+  },
+  "finalHostSampling": {
+    "count": 2518,
+    "first": "2026-09-14T22:37:42.950306+00:00",
+    "last": "2026-09-14T23:19:41.288398+00:00",
+    "minimumAvailableBytes": 24556118016,
+    "minimumFreeBytes": 1334333440,
+    "freeGreaterThanAvailableSamples": 0,
+    "sha256": "e89c8227439446d08d5795bddd5f08681a727f9e49ffc347b5cd35a617b97dee",
+    "localEvidence": ".local/rust-spark-host-memory.jsonl",
+    "limits": "Sampling started after the earlier ambiguous supervisor stop; it cannot establish that stop's cause."
+  }
 }
