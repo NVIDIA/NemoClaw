@@ -118,7 +118,7 @@ it.each([
     expect(add.status, add.stderr).toBe(0);
     const result = spawnSync(
       path.resolve("node_modules/.bin/prek"),
-      ["run", "oxlint-adapters-type-aware", "--files", file],
+      ["run", "oxlint-type-aware", "--files", file],
       { cwd: root, encoding: "utf8" },
     );
     expect(result.status, result.stdout + result.stderr).toBe(rule ? 1 : 0);
@@ -130,9 +130,9 @@ it.each([
 });
 
 it.each([
-  { hook: "oxlint-adapters-type-aware", file: "src/lib/adapters/example.ts" },
-  { hook: "oxlint-type-aware", file: "nemoclaw/src/example.ts" },
-])("runs repository checks after $hook fixes source", ({ hook, file }) => {
+  { scope: "adapter", file: "src/lib/adapters/example.ts" },
+  { scope: "plugin", file: "nemoclaw/src/example.ts" },
+])("runs repository checks after $scope fixes", ({ file }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lint-order-"));
   try {
     fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
@@ -153,7 +153,7 @@ it.each([
     };
     const hooks = config.repos
       .flatMap((repo) => repo.hooks)
-      .filter(({ id }) => id === hook || id === "repository-checks");
+      .filter(({ id }) => id === "oxlint-type-aware" || id === "repository-checks");
     const observer = hooks.find(({ id }) => id === "repository-checks")!;
     observer.entry = `node -e "require('node:fs').copyFileSync(process.argv[1], 'observed.ts')" ${file}`;
     config.repos = [{ repo: "local", hooks }];

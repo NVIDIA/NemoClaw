@@ -7,14 +7,15 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
+import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
 const INSTALLER_SOURCE = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
-const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const STATION_REVISION = "a".repeat(40);
 const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
+/** Isolate Docker setup from top-level installer state for older macOS Bash versions. */
 function extractShellFunctionBefore(name: string, nextName: string): string {
   const start = INSTALLER_SOURCE.indexOf(`${name}() {`);
   const end = INSTALLER_SOURCE.indexOf(`\n${nextName}() {`, start);
@@ -35,6 +36,7 @@ type EnsureDockerOutcome = {
   sgProvider: string | null;
 };
 
+/** Model Docker-group activation with controlled host commands and a recording sg stub. */
 function runEnsureDocker(
   env: Record<string, string>,
   installerArgs: string[],
@@ -151,31 +153,92 @@ function runEnsureDocker(
   }
 }
 
-function runSourcedInstaller(body: string) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-resume-mode-"));
+/** Keep sourced scenarios on the shared process boundary with bounded execution and cleanup. */
+function runSourcedInstaller(body: string, extraEnv: Record<string, string> = {}) {
+  const run = runInstallerSourcedBody(body, { extraEnv, timeoutMs: 10_000 });
   try {
-    const result = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
-      {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-        env: {
-          HOME: home,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        },
-        timeout: 10_000,
-        killSignal: "SIGKILL",
-      },
-    );
-    return { result, output: `${result.stdout}${result.stderr}` };
+    return { result: run.result, output: run.output };
   } finally {
-    fs.rmSync(home, { recursive: true, force: true });
+    run.remove();
   }
 }
 
 describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec", () => {
+  it.each([
+    ["an unset", undefined],
+    ["an empty", ""],
+    ["a non-default", "remote-context"],
+  ] as const)(
+    "preserves %s Docker context through the installer group re-execution",
+    (_label, context) => {
+      const { result, output } = runSourcedInstaller(
+        `
+cat >"$HOME/sg" <<'SG'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "docker" && "$2" == "-c" ]] || exit 91
+printf 'GROUP_REEXEC\\n'
+exec bash --noprofile --norc -c "$3"
+SG
+cat >"$HOME/cli" <<'CLI'
+#!/usr/bin/env bash
+printf 'CLI_CONTEXT_SET=%s\\nCLI_CONTEXT=%s\\nCLI_DOCKER_HOST_SET=%s\\nCLI_ARGS=%s\\n' \
+  "\${DOCKER_CONTEXT+x}" "\${DOCKER_CONTEXT-}" "\${DOCKER_HOST+x}" "$*"
+CLI
+cat >"$HOME/staged-install.sh" <<'INSTALLER'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$INSTALLER_UNDER_TEST" >/dev/null
+uname() { printf 'Linux\\n'; }
+is_wsl_host() { return 1; }
+docker() { [[ "\${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" == "1" ]]; }
+podman() { printf '/run/user/1000/podman/podman.sock\\n'; }
+systemctl() { :; }
+sudo() { :; }
+id() {
+  case "$1" in
+    -u) printf '1000\\n' ;;
+    -un) printf 'testuser\\n' ;;
+    -nG)
+      if [[ "\${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" == "1" ]]; then
+        printf 'testuser docker\\n'
+      else
+        printf 'testuser\\n'
+      fi
+      ;;
+    *) return 99 ;;
+  esac
+}
+detect_express_platform() { :; }
+print_banner() { :; }
+preflight_usage_notice_prompt() { :; }
+ensure_openshell_build_deps() { :; }
+install_nemoclaw_before_onboarding() { _CLI_PATH="$HOME/cli"; }
+run_installer_host_preflight() { return 0; }
+show_usage_notice() { :; }
+restore_onboard_forward_after_post_checks() { return 0; }
+print_done() { :; }
+NEMOCLAW_INSTALLER_STAGED="$0"
+main "$@"
+INSTALLER
+chmod 700 "$HOME/sg" "$HOME/cli" "$HOME/staged-install.sh"
+export PATH="$HOME:$PATH"
+export NEMOCLAW_AGENT=hermes
+exec bash "$HOME/staged-install.sh" --non-interactive --yes-i-accept-third-party-software --experimental-profile portable
+`,
+        context === undefined ? {} : { DOCKER_CONTEXT: context },
+      );
+
+      expect(result.status, output).toBe(0);
+      expect(output.match(/^GROUP_REEXEC$/gm)).toHaveLength(1);
+      expect(output.match(/^CLI_CONTEXT_SET=/gm)).toHaveLength(1);
+      expect(output).toContain(`CLI_CONTEXT_SET=${context === undefined ? "" : "x"}\n`);
+      expect(output).toContain(`CLI_CONTEXT=${context ?? ""}\n`);
+      expect(output).toContain("CLI_DOCKER_HOST_SET=\n");
+      expect(output).toContain("CLI_ARGS=onboard --experimental-profile portable");
+    },
+  );
+
   it("re-execs through 'sg docker' instead of exiting 0 when NEMOCLAW_NON_INTERACTIVE=1", () => {
     // Repro of #4414: on a clean Ubuntu VM, the non-interactive curl|bash
     // installer adds the user to the docker group, then exits and asks the

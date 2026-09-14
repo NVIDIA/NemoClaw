@@ -11,13 +11,20 @@ import {
   createAuditReceipt,
   LEGACY_NPM_AUDIT_RECEIPT_DEADLINE,
   parseAndVerifyAuditReceipt,
+  reviewedLockedGraphSha256s,
   sha256,
 } from "../../../scripts/lib/npm-audit-receipt.mts";
 
 const NOW = new Date("2026-09-04T00:00:00.000Z");
-const inputs = {
-  graphId: "mcporter-runtime",
+const reviewedNpmIdentity = {
+  npmArchiveSha256: "0".repeat(64),
+  npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
   npmVersion: "10.9.4",
+};
+const inputs = {
+  approvedPackageLockSha256s: [sha256("lock")],
+  graphId: "mcporter-runtime",
+  reviewedNpmIdentity,
   exceptionPolicy: '{"schemaVersion":1,"exceptions":[]}\n',
   severityThreshold: "high",
   packageJson: "package",
@@ -27,16 +34,16 @@ const inputs = {
   registryOrigin: "https://registry.yarnpkg.com",
   now: NOW,
 } as const;
-function receipt(createdAt = NOW) {
+function receipt(createdAt = NOW, packageLock: string | Buffer = inputs.packageLock) {
   return createAuditReceipt({
     acceptedAdvisoryIds: ["GHSA-b", "GHSA-a"],
     blockingAdvisoryIds: [],
     createdAt,
     exceptionPolicySha256: sha256(inputs.exceptionPolicy),
     graphId: inputs.graphId,
-    npmVersion: inputs.npmVersion,
+    reviewedNpmIdentity,
     packageJson: inputs.packageJson,
-    packageLock: inputs.packageLock,
+    packageLock,
     rawResponse:
       '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}',
     registryOrigin: inputs.registryOrigin,
@@ -44,7 +51,67 @@ function receipt(createdAt = NOW) {
   });
 }
 
-describe("reviewed npm audit receipt", () => {
+const reviewedConfig = {
+  lockedGraphs: [
+    {
+      id: inputs.graphId,
+      integrity: "sha512-primary",
+      label: "mcporter primary",
+      lockSha256: "a".repeat(64),
+      packageSpec: "mcporter@1.0.0",
+      replacement: {
+        integrity: "sha512-replacement",
+        label: "mcporter replacement",
+        lockSha256: "b".repeat(64),
+        packageSpec: "mcporter@1.0.1",
+        tarballUrl: "https://registry.npmjs.org/mcporter/-/mcporter-1.0.1.tgz",
+      },
+      tarballUrl: "https://registry.npmjs.org/mcporter/-/mcporter-1.0.0.tgz",
+    },
+  ],
+};
+
+function reviewedDigests(config: unknown): readonly string[] {
+  return reviewedLockedGraphSha256s(JSON.stringify(config), inputs.graphId);
+}
+
+describe("npm audit receipt", () => {
+  it("accepts only lock digests reviewed for the selected graph", () => {
+    expect(reviewedDigests(reviewedConfig)).toEqual(["a".repeat(64), "b".repeat(64)]);
+
+    const unapprovedLock = "unapproved lock";
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt(NOW, unapprovedLock)), {
+        ...inputs,
+        packageLock: unapprovedLock,
+      }),
+    ).toThrow(/not a reviewed lock digest/);
+  });
+
+  it.each([
+    ["a missing field", { ...reviewedConfig.lockedGraphs[0]!.replacement, label: "" }],
+    [
+      "a duplicate package specification",
+      {
+        ...reviewedConfig.lockedGraphs[0]!.replacement,
+        packageSpec: reviewedConfig.lockedGraphs[0]!.packageSpec,
+      },
+    ],
+    [
+      "a different package name",
+      {
+        ...reviewedConfig.lockedGraphs[0]!.replacement,
+        packageSpec: "different-package@1.0.1",
+      },
+    ],
+  ])("rejects a replacement identity with %s", (_case, replacement) => {
+    expect(() =>
+      reviewedDigests({
+        lockedGraphs: [{ ...reviewedConfig.lockedGraphs[0], replacement }],
+      }),
+    ).toThrow();
+  });
+
   it("canonically binds all receipt inputs and verifies a fresh passing result", () => {
     const parsed = parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), inputs);
     expect(parsed.acceptedAdvisoryIds).toEqual(["GHSA-a", "GHSA-b"]);
@@ -54,6 +121,7 @@ describe("reviewed npm audit receipt", () => {
       "--omit=dev",
       "--json",
     ]);
+    expect(parsed).toMatchObject(reviewedNpmIdentity);
     expect(new Date(parsed.expiresAt).getTime() - NOW.getTime()).toBeLessThan(12 * 60 * 60 * 1000);
   });
 
@@ -69,16 +137,61 @@ describe("reviewed npm audit receipt", () => {
     expect(
       parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
         ...inputs,
-        allowLegacyNpmjsReceipt: true,
+        allowLegacyReceipt: true,
       }).registryOrigin,
     ).toBe("https://registry.npmjs.org/");
     expect(() =>
       parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
         ...inputs,
-        allowLegacyNpmjsReceipt: true,
+        allowLegacyReceipt: true,
         now: new Date(LEGACY_NPM_AUDIT_RECEIPT_DEADLINE),
       }),
     ).toThrow(/allowed contract/);
+  });
+
+  it("accepts a version-only schema only through the bounded legacy transition", () => {
+    const {
+      npmArchiveSha256: _npmArchiveSha256,
+      npmIntegrity: _npmIntegrity,
+      ...versionOnly
+    } = receipt();
+    const legacy = {
+      ...versionOnly,
+      argv: ["audit", "--omit=dev", "--json"],
+      registryOrigin: "https://registry.npmjs.org/",
+      schemaVersion: 1,
+    } as const;
+    expect(() => parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), inputs)).toThrow(
+      /version-only receipt schema/,
+    );
+    expect(
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
+        ...inputs,
+        allowLegacyReceipt: true,
+      }).schemaVersion,
+    ).toBe(1);
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
+        ...inputs,
+        allowLegacyReceipt: true,
+        now: new Date(LEGACY_NPM_AUDIT_RECEIPT_DEADLINE),
+      }),
+    ).toThrow(/version-only receipt schema/);
+  });
+
+  it.each([
+    [
+      "SHA-512 SRI",
+      { ...reviewedNpmIdentity, npmIntegrity: `sha512-${Buffer.alloc(64, 1).toString("base64")}` },
+    ],
+    ["archive SHA-256", { ...reviewedNpmIdentity, npmArchiveSha256: "1".repeat(64) }],
+  ] as const)("rejects a receipt when the expected npm %s changes", (_field, changedIdentity) => {
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), {
+        ...inputs,
+        reviewedNpmIdentity: changedIdentity,
+      }),
+    ).toThrow(/receipt identity/);
   });
 
   it("rejects a receipt whose registry identity differs from its audit command", () => {
@@ -152,6 +265,12 @@ describe("reviewed npm audit receipt", () => {
         packageLock: "changed",
       }),
     ).toThrow(/packageLockSha256/);
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), {
+        ...inputs,
+        rawResponse: `${inputs.rawResponse}\n`,
+      }),
+    ).toThrow(/rawResponseSha256/);
   });
 
   it.each([
@@ -173,7 +292,19 @@ describe("reviewed npm audit receipt", () => {
         fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
         fs.writeFileSync(
           path.join(root, "reviewed-npm-audit.json"),
-          JSON.stringify({ npmVersion: inputs.npmVersion }),
+          JSON.stringify({
+            ...reviewedNpmIdentity,
+            lockedGraphs: [
+              {
+                id: inputs.graphId,
+                integrity: "sha512-fixture",
+                label: "mcporter fixture",
+                lockSha256: sha256(inputs.packageLock),
+                packageSpec: "mcporter@1.0.0",
+                tarballUrl: "https://registry.npmjs.org/mcporter/-/mcporter-1.0.0.tgz",
+              },
+            ],
+          }),
         );
         const auditReceipt = legacy
           ? {
@@ -203,7 +334,7 @@ describe("reviewed npm audit receipt", () => {
           registry,
           "--threshold",
           inputs.severityThreshold,
-          ...(legacy ? ["--legacy-npmjs", "true"] : []),
+          ...(legacy ? ["--legacy-audit", "true"] : []),
         ];
         const result = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
         expect(result.status, result.stderr).toBe(0);
@@ -231,7 +362,7 @@ describe("reviewed npm audit receipt", () => {
       fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
       fs.writeFileSync(
         path.join(root, "reviewed-npm-audit.json"),
-        JSON.stringify({ npmVersion: inputs.npmVersion }),
+        JSON.stringify(reviewedNpmIdentity),
       );
       fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(receipt(new Date())));
 

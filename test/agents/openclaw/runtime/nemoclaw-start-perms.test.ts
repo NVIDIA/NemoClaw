@@ -5,7 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(
   import.meta.dirname,
@@ -23,7 +23,16 @@ const NORMALIZER_SCRIPT = path.join(
   "normalize_mutable_config_perms.py",
 );
 const startSource = fs.readFileSync(START_SCRIPT, "utf-8");
-const normalizerSource = fs.readFileSync(NORMALIZER_SCRIPT, "utf-8");
+const normalizerSource = fs
+  .readFileSync(NORMALIZER_SCRIPT, "utf-8")
+  .replace(
+    'if __name__ == "__main__":',
+    'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
+  );
+const normalizerFixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-normalizer-"));
+const normalizerFixture = path.join(normalizerFixtureRoot, "normalizer.py");
+fs.writeFileSync(normalizerFixture, normalizerSource);
+afterAll(() => fs.rmSync(normalizerFixtureRoot, { recursive: true, force: true }));
 
 function extractShellFunction(name: string): string {
   const match = startSource.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
@@ -54,7 +63,10 @@ function replaceRequired(source: string, target: string, replacement: string): s
 }
 
 const oneShotFunction = extractShellFunction("run_oneshot_command");
-const resolveNormalizerFunction = extractShellFunction("resolve_mutable_config_normalizer");
+const resolveNormalizerFunction = extractShellFunction("resolve_mutable_config_normalizer").replace(
+  'local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"',
+  `local normalizer=${JSON.stringify(normalizerFixture)}`,
+);
 const configGuardFunction = extractShellFunction("run_openclaw_config_guard");
 const canRunPrivilegedPermissionFixture =
   process.platform === "linux" &&
@@ -271,39 +283,63 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
   });
 
-  it("restores a real mutable config tree and preserves child exit status (#6047)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-perms-"));
-    const configDir = path.join(root, ".openclaw");
-    fs.mkdirSync(configDir);
-    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
-    fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
+  it.each([
+    [0o2770, 0o660, 0o660],
+    [0o700, 0o600, 0o644],
+  ])(
+    "keeps owner-selected modes and command status across one-shot and connect cleanup [case %#]",
+    (directoryMode, fileMode, agentFileMode) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-perms-"));
+      const configDir = path.join(root, ".openclaw");
+      const normalizerPath = path.join(root, "normalizer.py");
+      fs.writeFileSync(
+        normalizerPath,
+        normalizerSource.replace(
+          "lambda: (0o2770, 0o660)",
+          `lambda: (${directoryMode}, ${fileMode})`,
+        ),
+      );
+      fs.mkdirSync(configDir);
+      fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+      fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
+      fs.writeFileSync(path.join(configDir, "agent-state"), "agent data\n", { mode: 0o644 });
 
-    const normalizeFunction = replaceRequired(
-      extractShellFunction("normalize_mutable_config_perms"),
-      'local config_dir="/sandbox/.openclaw"',
-      `local config_dir=${JSON.stringify(configDir)}`,
-    );
-    const script = [
-      "set -euo pipefail",
-      resolveNormalizerFunction,
-      normalizeFunction,
-      oneShotFunction,
-      "rc=0",
-      `run_oneshot_command bash -c 'chmod 700 "$1"; chmod 600 "$1/openclaw.json" "$1/.config-hash"; exit 42' bash ${JSON.stringify(configDir)} || rc=$?`,
-      'printf "rc=%s\\n" "$rc"',
-    ].join("\n");
+      const normalizeFunction = replaceRequired(
+        extractShellFunction("normalize_mutable_config_perms"),
+        'local config_dir="/sandbox/.openclaw"',
+        `local config_dir=${JSON.stringify(configDir)}`,
+      );
+      const script = [
+        "set -euo pipefail",
+        resolveNormalizerFunction.replaceAll(normalizerFixture, normalizerPath),
+        normalizeFunction,
+        oneShotFunction,
+        extractShellFunction("_nemoclaw_restore_mutable_config_perms")
+          .replaceAll("/sandbox/.openclaw", configDir)
+          .replaceAll("/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py", normalizerPath),
+        "rc=0",
+        `run_oneshot_command bash -c 'chmod 700 "$1"; chmod 600 "$1/openclaw.json" "$1/.config-hash"; exit 42' bash ${JSON.stringify(configDir)} || rc=$?`,
+        'printf "rc=%s\\n" "$rc"',
+        `rm ${JSON.stringify(path.join(configDir, ".config-hash"))}`,
+        "_nemoclaw_restore_mutable_config_perms",
+      ].join("\n");
 
-    try {
-      const result = runBash(script);
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain("rc=42");
-      expect(mode(configDir)).toBe(0o2770);
-      expect(mode(path.join(configDir, "openclaw.json"))).toBe(0o660);
-      expect(mode(path.join(configDir, ".config-hash"))).toBe(0o660);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+      try {
+        const result = runBash(script);
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("rc=42");
+        expect(mode(configDir)).toBe(directoryMode);
+        expect(mode(path.join(configDir, "openclaw.json"))).toBe(fileMode);
+        expect(mode(path.join(configDir, ".config-hash"))).toBe(fileMode);
+        expect(mode(path.join(configDir, "agent-state"))).toBe(agentFileMode);
+        expect(fs.readFileSync(path.join(configDir, ".config-hash"), "utf-8")).toMatch(
+          /^[0-9a-f]{64}  openclaw\.json\n$/,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each(["TERM", "INT"] as const)(
     "forwards TERM and INT to the direct child, reaps it, and still runs cleanup [case %#] (#6047)",
@@ -485,8 +521,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     );
     const script = [
       "set -euo pipefail",
-      `export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=${JSON.stringify(normalizerPath)}`,
-      resolveNormalizerFunction,
+      resolveNormalizerFunction.replaceAll(normalizerFixture, normalizerPath),
       normalizeFunction,
       "rc=0",
       "normalize_mutable_config_perms || rc=$?",

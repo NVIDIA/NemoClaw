@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
+
 import {
   hasRequiredOpenshellMessagingFeatures,
   REQUIRED_OPENSHELL_MCP_FEATURES,
@@ -375,6 +377,85 @@ describe("trusted EXDEV OpenShell wrapper", () => {
     }
   });
 
+  it.each([
+    {
+      operation: "create",
+      expectedBinary: "wrapper",
+      args: ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+      expectedArgs: [
+        "sandbox",
+        "create",
+        "--driver-config-json",
+        DRIVER_CONFIG_JSON,
+        "--from",
+        IMAGE_ID,
+        "--name",
+        "demo",
+      ],
+    },
+    {
+      operation: "forward",
+      expectedBinary: "canonical",
+      args: ["--gateway", "nemoclaw", "--workspace", "default", "forward", "service", "demo"],
+      expectedArgs: [
+        "--gateway",
+        "nemoclaw",
+        "--workspace",
+        "default",
+        "forward",
+        "service",
+        "demo",
+      ],
+    },
+    {
+      operation: "list",
+      expectedBinary: "canonical",
+      args: ["sandbox", "list"],
+      expectedArgs: ["sandbox", "list"],
+    },
+  ] as const)(
+    "uses the image wrapper only for sandbox creation: $operation",
+    ({ args, expectedArgs, expectedBinary }) => {
+      const fixture = createWrapperFixture();
+      try {
+        fixture.wrapper.selectImage({
+          imageId: IMAGE_ID,
+          imageRef: trustedExdevImageRef("create-only"),
+        });
+        const executable = resolveOpenshell({
+          env: withOpenShellDriverConfigWrapperEnv({}, fixture.wrapper, fixture.components),
+        });
+        expect(executable).toBe(fixture.components.cli);
+        const probe = `
+const { spawn } = require("node:child_process");
+const child = spawn(process.argv[1], process.argv.slice(2));
+let stdout = "";
+child.stdout.on("data", (data) => { stdout += data; });
+child.stderr.pipe(process.stderr);
+child.on("close", (status) => {
+  process.stdout.write(JSON.stringify({ executable: child.spawnfile, args: stdout.trimEnd().split("\\n") }));
+  process.exit(status ?? 1);
+});
+`;
+        const result = spawnSync(
+          process.execPath,
+          ["--require", fixture.wrapper.createPreloadPath, "-e", probe, executable!, ...args],
+          { encoding: "utf8", timeout: 30_000 },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        const observed = JSON.parse(result.stdout);
+        expect(observed).toEqual({
+          executable: { wrapper: fixture.wrapper.executable, canonical: fixture.components.cli }[
+            expectedBinary
+          ],
+          args: expectedArgs,
+        });
+      } finally {
+        fixture.remove();
+      }
+    },
+  );
+
   it("rejects missing and untrusted selected image refs", () => {
     const fixture = createWrapperFixture();
     try {
@@ -570,7 +651,7 @@ describe("trusted EXDEV OpenShell wrapper", () => {
         ),
       ).toMatchObject({
         PATH: `${fixture.wrapper.directory}${path.delimiter}/usr/bin`,
-        NEMOCLAW_OPENSHELL_BIN: fixture.wrapper.executable,
+        NEMOCLAW_OPENSHELL_BIN: fixture.components.cli,
         NEMOCLAW_OPENSHELL_GATEWAY_BIN: fixture.components.gateway,
         NEMOCLAW_OPENSHELL_SANDBOX_BIN: fixture.components.sandbox,
       });

@@ -143,8 +143,8 @@ describe("nemoclaw-start safe tmp file creation", () => {
         "-c",
         [
           "set -euo pipefail",
-          `id() { test \"\${1:-}\" = -u && printf '%s' ${JSON.stringify(uid)}; }`,
-          `_nemoclaw_safe_create_tmp_file() { printf '%s|%s\\n' \"$#\" \"$*\"; }`,
+          `id() { test "\${1:-}" = -u && printf '%s' ${JSON.stringify(uid)}; }`,
+          `_nemoclaw_safe_create_tmp_file() { printf '%s|%s\\n' "$#" "$*"; }`,
           prepareAutoPairLog,
           "prepare_auto_pair_log",
         ].join("\n"),

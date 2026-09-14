@@ -12,6 +12,7 @@ import {
   assertExitZero,
   type CommandRunner,
   GatewayClient,
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
   HostCliClient,
   ProviderClient,
   SandboxClient,
@@ -22,6 +23,9 @@ import {
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/index.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { ShellProbe } from "../fixtures/shell-probe.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -101,6 +105,10 @@ async function recordedPairingWait(): Promise<string[]> {
 }
 
 describe("E2E fixture clients", () => {
+  it("keeps historical rebuild sandboxes alive until the rebuild owns their lifecycle", () => {
+    expect(HISTORICAL_SANDBOX_MAIN_PROCESS).toEqual(["sleep", "infinity"]);
+  });
+
   it.each([
     "a2345678901234567890",
     "e2e--sandbox",
@@ -115,6 +123,44 @@ describe("E2E fixture clients", () => {
       /sandbox name is invalid for fixture client/,
     );
   });
+
+  it.each([
+    { stdin: undefined, expectedTimeout: false, expectedOutput: "EOF" },
+    { stdin: "open-pipe" as const, expectedTimeout: true, expectedOutput: "" },
+    { stdin: { text: "" }, expectedTimeout: false, expectedOutput: "EOF" },
+    { stdin: { text: "PRIVATE_INPUT" }, expectedTimeout: false, expectedOutput: "[REDACTED]EOF" },
+  ])(
+    "keeps the configured host command's input open only when requested ($stdin)",
+    async ({ stdin, expectedTimeout, expectedOutput }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-host-stdin-"));
+      const progress = startTestProgress("host stdin", ["run configured command", "verify input"], {
+        logLine: () => undefined,
+      });
+      try {
+        const probe = new ShellProbe({
+          artifacts: new ArtifactSink(tmp),
+          progress,
+          redact: (text) => text,
+          signal: new AbortController().signal,
+        });
+        const host = new HostCliClient(probe, { cliPath: process.execPath });
+        progress.phase("run configured command");
+        const result = await host.nemoclaw(
+          [
+            "-e",
+            "process.stdin.on('data', data => process.stdout.write(data)); process.stdin.on('end', () => console.log('EOF'));",
+          ],
+          { stdin, timeoutMs: 2_000, persistArtifacts: false, redactionValues: ["PRIVATE_INPUT"] },
+        );
+        progress.phase("verify input");
+        expect(result.timedOut).toBe(expectedTimeout);
+        expect(result.stdout.trim()).toBe(expectedOutput);
+      } finally {
+        progress.stop();
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("host client runs the configured NemoClaw CLI", async () => {
     const runner = new FakeRunner();
@@ -236,16 +282,34 @@ describe("E2E fixture clients", () => {
       runner.enqueue({ stdout: "/opt/openshell\n" });
       runner.enqueue({
         stdout:
-          "/usr/local/bin/openshell --gateway nemoclaw --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+          "/usr/local/bin/openshell --gateway nemoclaw --gateway-endpoint https://127.0.0.1:8080 --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
       });
       runner.enqueue({ stdout: "4321\n" });
       const host = new HostCliClient(runner);
 
       await expect(host.inspectOpenShellForwardListener("18789", "alpha")).resolves.toMatchObject({
         valid: expected,
+        ...(expected ? { pid: 4321 } : {}),
       });
     },
   );
+
+  it("rejects a wrapper as the owner of a canonical OpenShell listener", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "4321\n" });
+    runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
+    runner.enqueue({ stdout: "/opt/openshell\n" });
+    runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
+    runner.enqueue({
+      stdout:
+        "/tmp/openshell-wrapper --gateway nemoclaw --gateway-endpoint https://127.0.0.1:8080 --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+    });
+    runner.enqueue({ stdout: "4321\n" });
+
+    await expect(
+      new HostCliClient(runner).inspectOpenShellForwardListener("18789", "alpha"),
+    ).resolves.toMatchObject({ valid: false });
+  });
 
   it("composes installation, OpenShell resolution, and launch in authority order", async () => {
     const runner = new FakeRunner();
@@ -322,13 +386,16 @@ describe("E2E fixture clients", () => {
     );
   });
 
-  it("host client removes a current OpenShell gateway registration", async () => {
+  it("host client removes a current OpenShell gateway with the caller environment", async () => {
     const runner = new FakeRunner();
     const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
 
-    await host.cleanupGatewayRegistration("nemoclaw");
+    await host.cleanupGatewayRegistration("nemoclaw", {
+      env: { HOME: "/tmp/cloud-onboard-home" },
+    });
 
     expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
+    expect(runner.calls[0]?.options?.env).toEqual({ HOME: "/tmp/cloud-onboard-home" });
   });
 
   it("host client falls back to the legacy gateway destroy verb", async () => {

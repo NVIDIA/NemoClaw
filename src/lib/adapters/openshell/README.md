@@ -19,6 +19,13 @@ Production access to the raw client and generated messages must stay inside this
 `sdk.ts` is shared with sandbox execution. It retains the existing managed state-root check,
 explicit loopback gateway, and bounded local mTLS file reads. No second credential loader is needed.
 
+`sdk-import.mts` keeps the SDK's public entry points behind native ESM imports when
+the CLI compiles to CommonJS. Both connection and policy serialization use this
+lazy boundary because the reviewed SDK exposes import-only package conditions.
+The bridge has no top-level await, so the supported Node runtime can load its
+emitted `.mjs` from CommonJS. Compiled package tests cover both consumers with an
+import-only SDK fixture; SDK installation and gateway qualification remain separate.
+
 The read interfaces require an explicit gateway, workspace, and abort signal. Only a confirmed
 not-found response returns `null`. Other failures use the existing sandbox error categories and
 fixed messages. There is no CLI fallback after an SDK failure. Resource versions stay decimal
@@ -40,9 +47,13 @@ cannot use this derivation.
 
 Consumers can request `profileContract: "brave"` or `"openai"` to qualify a managed profile.
 The reader resolves `raw.getProviderProfile` at the provider's `profileWorkspace` through the
-same gateway. Normal onboarding imports the checked-in profile in the `default` workspace.
+same gateway. Brave onboarding imports its checked-in profile in the `default` workspace.
 User profiles must have a nonzero revision and a scope matching their binding; builtin profiles
 must have global binding, empty scope, and revision zero. Matching the profile name is insufficient.
+
+The pinned OpenAI provider type can also exist without a profile. A confirmed not-found read at
+its global or same-workspace binding returns `managedProfile: null`. Ollama export accepts that
+evidence; managed vLLM still requires a qualified profile. Other read failures remain terminal.
 
 Qualification requires the checked-in credential declaration, endpoint rules, binary allowlist,
 and inference capability. Brave permits its single header credential and search endpoint;

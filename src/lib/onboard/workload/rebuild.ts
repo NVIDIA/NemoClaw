@@ -293,7 +293,7 @@ export function managedWorkloadRebuildProfileEnvironment(
     if (reasoning !== null) result.NEMOCLAW_REASONING = String(reasoning);
     const reasoningEffort = overrides.openClawReasoningEffort ?? previous.tuning.reasoningEffort;
     if (reasoningEffort !== null) result.NEMOCLAW_REASONING_EFFORT = reasoningEffort;
-    if (previous.inference.inputModalities !== null) {
+    if (previous.inference?.inputModalities != null) {
       result.NEMOCLAW_INFERENCE_INPUTS = previous.inference.inputModalities.join(",");
     }
     result.NEMOCLAW_AGENT_TIMEOUT = String(config.agentTimeoutSeconds);

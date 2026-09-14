@@ -16,11 +16,7 @@ import { REPOSITORY_ROOT } from "../../../core/repository-root";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../../messaging/provider-profile";
 import { isValidName, isValidProviderName } from "../../../name-validation";
-import { reportsExactProviderNotFound } from "../../../adapters/openshell/provider-diagnostic-cli";
-import {
-  matchesGatewayCredentialOnlyProviderBinding,
-  parseGatewayProviderMetadata,
-} from "../../../onboard/gateway-provider-metadata";
+import { matchesGatewayCredentialOnlyProviderBinding } from "../../../onboard/gateway-provider-metadata";
 import type { ManagedStartupProfile } from "../../../onboard/managed-startup/profile";
 import { normalizeRuntimeProviderIdentity } from "../../../onboard/runtime-provider/registry";
 import { deleteProviderWithRecovery } from "../../../onboard/sandbox-provider-cleanup";
@@ -33,7 +29,6 @@ import {
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 
-const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 export const MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS = 30_000;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 const PROVIDER_TYPE_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/u;
@@ -148,58 +143,10 @@ function fail(message: string, cause?: unknown): never {
   );
 }
 
-function commandStreamText(value: string | Buffer | null | undefined): string {
-  return Buffer.isBuffer(value) ? value.toString("utf8") : (value ?? "");
-}
-
 type ProviderInspection =
   | { readonly kind: "collision" }
   | { readonly kind: "exact" }
   | { readonly kind: "missing" };
-
-/**
- * TODO(#9806, Slice 8): retire this raw-runner bridge when cleanup inspection and deletion use
- * the typed provider adapter. Exit when both cleanup call sites below use typed get/delete
- * operations and this helper has no callers.
- */
-function inspectProviderForCleanup(
-  binding: ManagedCloneProviderBinding,
-  runOpenshell: ManagedCloneProviderRunner,
-): ProviderInspection {
-  const result = runOpenshell(["provider", "get", binding.providerName], {
-    ignoreError: true,
-    maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
-    stdio: ["ignore", "pipe", "pipe"],
-    suppressOutput: true,
-    timeout: PROVIDER_PROBE_TIMEOUT_MS,
-  });
-  if (result.error || result.signal || result.status !== 0) {
-    const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
-    if (
-      !result.error &&
-      !result.signal &&
-      result.status === 1 &&
-      reportsExactProviderNotFound(output, binding.providerName, PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
-    ) {
-      return { kind: "missing" };
-    }
-    fail(
-      `could not prove whether provider '${binding.providerName}' exists; ` +
-        "refusing destination mutation",
-    );
-  }
-
-  const metadata = parseGatewayProviderMetadata(
-    `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`,
-  );
-  return matchesGatewayCredentialOnlyProviderBinding(metadata, {
-    name: binding.providerName,
-    type: binding.providerType,
-    credentialKey: binding.providerEnvKey,
-  })
-    ? { kind: "exact" }
-    : { kind: "collision" };
-}
 
 async function inspectProvider(
   binding: ManagedCloneProviderBinding,
@@ -655,7 +602,11 @@ export async function provisionManagedCloneProviderTransaction(
     return issueReceipt(prepared, confirmed);
   } catch (cause) {
     const partialReceipt = issueReceipt(prepared, confirmed);
-    const rollback = cleanupManagedCloneProviderTransaction(partialReceipt, input.runOpenshell);
+    const rollback = await cleanupManagedCloneProviderTransaction(
+      partialReceipt,
+      input.runOpenshell,
+      providerAdapter,
+    );
     const detail = cause instanceof Error ? cause.message : String(cause);
     throw new ManagedCloneProviderTransactionError(detail, {
       cause,
@@ -670,10 +621,11 @@ export async function provisionManagedCloneProviderTransaction(
  * receipt. Once a name is cleaned, the ledger never re-inspects it, preventing
  * a repeated cleanup from deleting a later same-name provider.
  */
-export function cleanupManagedCloneProviderTransaction(
+export async function cleanupManagedCloneProviderTransaction(
   receipt: ManagedCloneProviderTransactionReceipt,
   runOpenshell: ManagedCloneProviderRunner,
-): ManagedCloneProviderCleanupResult {
+  providerAdapter: OpenShellProviderAdapter = createManagedProviderAdapter(runOpenshell),
+): Promise<ManagedCloneProviderCleanupResult> {
   if (!issuedReceipts.has(receipt)) {
     fail("cleanup requires the exact process-local ownership receipt");
   }
@@ -695,7 +647,7 @@ export function cleanupManagedCloneProviderTransaction(
     }
     let inspection: ProviderInspection;
     try {
-      inspection = inspectProviderForCleanup(provider.binding, runOpenshell);
+      inspection = await inspectProvider(provider.binding, providerAdapter);
     } catch {
       outcomes.push({ providerName, outcome: "inspection-failed" });
       continue;
@@ -709,8 +661,8 @@ export function cleanupManagedCloneProviderTransaction(
       outcomes.push({ providerName, outcome: "drift-preserved" });
       continue;
     }
-    const deletion = deleteProviderWithRecovery(providerName, {
-      runOpenshell,
+    const deletion = await deleteProviderWithRecovery(providerName, {
+      providerAdapter,
       allowedSandboxes: [receipt.destinationSandboxName],
     });
     if (!deletion.ok) {
@@ -718,7 +670,7 @@ export function cleanupManagedCloneProviderTransaction(
       continue;
     }
     try {
-      if (inspectProviderForCleanup(provider.binding, runOpenshell).kind !== "missing") {
+      if ((await inspectProvider(provider.binding, providerAdapter)).kind !== "missing") {
         outcomes.push({ providerName, outcome: "delete-failed" });
         continue;
       }

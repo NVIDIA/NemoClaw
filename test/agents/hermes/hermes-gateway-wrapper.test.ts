@@ -21,7 +21,7 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-policy.ts";
-import { buildOpenshellExecArgs } from "../../../src/lib/actions/sandbox/exec.ts";
+import { buildCliOpenShellSandboxExecArgs } from "../../../src/lib/adapters/openshell/sandbox-command-cli";
 import { canRun, runWrapper, VALIDATOR, WRAPPER } from "../../helpers/hermes-wrapper-harness.ts";
 
 function runUnmodifiedWrapperWithTrustedPython(
@@ -1022,8 +1022,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     }
   });
 
-  it("composes the openshell dispatch argv built by buildOpenshellExecArgs with the wrapper so `nemoclaw <name> exec -- hermes config show` masks Model api_key (#5981)", () => {
-    const dispatchArgv = buildOpenshellExecArgs("hermes-sandbox", ["hermes", "config", "show"]);
+  it("composes the openshell dispatch argv built by the CLI adapter with the wrapper so `nemoclaw <name> exec -- hermes config show` masks Model api_key (#5981)", () => {
+    const dispatchArgv = buildCliOpenShellSandboxExecArgs({
+      sandboxName: "hermes-sandbox",
+      target: { kind: "selected" },
+      command: ["hermes", "config", "show"],
+    });
     expect(dispatchArgv).toEqual([
       "sandbox",
       "exec",

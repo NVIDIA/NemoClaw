@@ -4,7 +4,7 @@
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import type { MutableConfigRepairResult } from "../../sandbox/mutable-config-perms";
-import type { SyncOpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
+import type { OpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
 import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
@@ -51,7 +51,8 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
-  mcp?: SandboxEntry["mcp"];
+  /** Legacy test input consumed only by the source-inspection mock. */
+  mcp?: { bridges?: Record<string, import("./mcp-bridge-contracts").McpSourceEntry> };
 };
 export { type DcodeProbeState, dcodeProbeOutput } from "./dcode-probe-test-fixture";
 
@@ -149,8 +150,8 @@ export const loadAgentMock = vi.fn((name: string) => ({
 export const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
 >((args) => defaultOpenshellResponses(args));
-export const readSandboxPolicyMock = vi.fn<SyncOpenShellSandboxPolicyReader["readSandboxPolicy"]>(
-  () => ({
+export const readSandboxPolicyMock = vi.fn<OpenShellSandboxPolicyReader["readSandboxPolicy"]>(
+  async () => ({
     ok: true,
     value: {
       document: "version: 1\nnetwork_policies: {}\n",
@@ -198,7 +199,7 @@ export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
-export const restoreDeepAgentsManagedMcpProjectionMock = vi.fn();
+export const restoreDeepAgentsNativeMcpConfigMock = vi.fn();
 export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
   gatewayName: "nemoclaw-8091",
   workspace: "default",
@@ -246,7 +247,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 
 vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
+  cliOpenShellSandboxPolicyReader: {
     inspectSandboxPolicy: vi.fn(),
     readSandboxPolicy: readSandboxPolicyMock,
     readSandboxPolicyRevision: vi.fn(),
@@ -365,12 +366,19 @@ vi.mock("./restore-gateway-pairing", () => ({
 
 vi.mock("./mcp-bridge-adapter-deepagents-registration", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-adapter-deepagents-registration")>()),
-  restoreDeepAgentsManagedMcpProjection: restoreDeepAgentsManagedMcpProjectionMock,
+  restoreDeepAgentsNativeMcpConfig: restoreDeepAgentsNativeMcpConfigMock,
 }));
 
 vi.mock("./mcp-bridge-provider-inspection", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-provider-inspection")>()),
   getMcpProviderInspectionRuntimeSelection: getMcpProviderInspectionRuntimeSelectionMock,
+}));
+
+vi.mock("./mcp-bridge-source", () => ({
+  inspectAgentMcpSources: (sandbox: SandboxRecord) => ({
+    native: sandbox.mcp?.bridges ?? {},
+    legacy: {},
+  }),
 }));
 
 export function resetSnapshotRestoreMocks(): void {
@@ -388,7 +396,7 @@ export function resetSnapshotRestoreMocks(): void {
   });
   lifecycleMock.events.length = 0;
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
-  readSandboxPolicyMock.mockReturnValue({
+  readSandboxPolicyMock.mockResolvedValue({
     ok: true,
     value: {
       document: "version: 1\nnetwork_policies: {}\n",
@@ -432,7 +440,7 @@ export function resetSnapshotRestoreMocks(): void {
     failedDirs: [],
     failedFiles: [],
   });
-  restoreDeepAgentsManagedMcpProjectionMock.mockReset();
+  restoreDeepAgentsNativeMcpConfigMock.mockReset();
   getMcpProviderInspectionRuntimeSelectionMock.mockClear();
   streamSandboxCreateMock.mockImplementation(async () => ({
     status: 0,

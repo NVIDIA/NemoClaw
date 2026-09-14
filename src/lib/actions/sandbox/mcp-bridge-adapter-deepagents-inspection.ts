@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import {
@@ -10,13 +10,13 @@ import {
 } from "./mcp-bridge-adapter-inspection";
 import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
-export function inspectDeepAgentsAdapterRegistration(
+export async function inspectDeepAgentsAdapterRegistration(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
-): AdapterRegistrationInspection {
-  return inspectAdapterRegistrationCommand(
+): Promise<AdapterRegistrationInspection> {
+  return await inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildDeepAgentsMcpStatusCommand(entry, credentialRevision),

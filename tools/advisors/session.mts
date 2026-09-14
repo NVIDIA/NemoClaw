@@ -485,6 +485,15 @@ export async function runReadOnlyAdvisor(
       return;
     }
     if (event.type === "auto_retry_start") {
+      if (isAdvisorBudgetExceededError(event.errorMessage)) {
+        currentTurnError = normalizeProviderError(event.errorMessage);
+        raw.append(
+          `[${options.logPrefix}] retry_cancel terminal=budget_exceeded: ${event.errorMessage}\n`,
+        );
+        options.logProgress("Advisor provider budget exhausted; cancelling retries");
+        queueMicrotask(() => session.abortRetry());
+        return;
+      }
       currentTurnError = undefined;
       raw.append(
         `[${options.logPrefix}] retry ${event.attempt}/${event.maxAttempts} delay_ms=${event.delayMs}: ${event.errorMessage}\n`,
@@ -498,8 +507,10 @@ export async function runReadOnlyAdvisor(
       if (event.success) {
         currentTurnError = undefined;
       } else if (event.finalError) {
-        currentTurnError = undefined;
-        captureTurnError("assistant_retry_exhausted", event.finalError);
+        if (!isAdvisorBudgetExceededError(currentTurnError)) {
+          currentTurnError = undefined;
+          captureTurnError("assistant_retry_exhausted", event.finalError);
+        }
       }
       raw.append(
         `[${options.logPrefix}] retry_end success=${event.success} attempts=${event.attempt}\n`,
@@ -570,6 +581,10 @@ export async function runReadOnlyAdvisor(
           };
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
           const initialFlow = currentTurnFlow;
+          // A configured assistant-text repair is a separate, tool-disabled continuation. Preserve
+          // the original flow for terminal-submit validation so the harness's own repair prose is
+          // not mistaken for model activity after a successful submit.
+          let terminalSubmitValidationFlow = initialFlow;
           if (
             repairableAssistantText(turn, initialFlow, tools, successfulToolNames, currentTurnError)
           ) {
@@ -620,7 +635,6 @@ export async function runReadOnlyAdvisor(
             tools,
             currentTurnError,
           );
-          let terminalSubmitValidationFlow = currentTurnFlow;
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
             currentTurnFlow,
@@ -764,6 +778,14 @@ function normalizeProviderError(message: string | undefined): string | undefined
   if (!message) return undefined;
   const normalized = message.trim().replace(/\s+/g, " ");
   return normalized || undefined;
+}
+
+export function isAdvisorBudgetExceededError(message: string | undefined): boolean {
+  const normalized = normalizeProviderError(message)?.toLowerCase();
+  return Boolean(
+    normalized &&
+    (normalized.includes("budget_exceeded") || normalized.includes("budget has been exceeded")),
+  );
 }
 
 function errorText(error: unknown): string {

@@ -58,6 +58,7 @@ export type DestroyHarness = {
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
+  runSandboxProviderPreDeleteCleanupSpy: MockInstance;
   selectGatewaySpy: MockInstance;
   sessionState: Session;
   setDockerIdentityResult: (result: {
@@ -357,21 +358,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
       : {}),
     ...(options.workload ? { workload: options.workload } : {}),
-    ...(options.mcpServers?.length
-      ? {
-          mcp: {
-            bridges: Object.fromEntries(
-              options.mcpServers.map((server) => [
-                server,
-                {
-                  server,
-                  ...(options.mcpAddState ? { addState: options.mcpAddState } : {}),
-                },
-              ]),
-            ),
-          },
-        }
-      : {}),
     ...options.registryEntryOverrides,
   } as SandboxEntry;
   let registryEntryPresent = options.registryEntryPresent !== false;
@@ -620,10 +606,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       providerIdentity: options.runtimeProviderIdentityProof,
     });
   }
-  vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(() => {
-    events.push("detach");
-    return { detached: options.detachedProviders ?? [], failures: [] };
-  });
+  const runSandboxProviderPreDeleteCleanupSpy = vi
+    .spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup")
+    .mockImplementation(async () => {
+      await Promise.resolve();
+      events.push("detach");
+      return { detached: options.detachedProviders ?? [], failures: [] };
+    });
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
@@ -712,6 +701,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     errorSpy,
     events,
     executeSandboxDestroySpy,
+    runSandboxProviderPreDeleteCleanupSpy,
     enforceRemovedImmutabilityMigrationBoundarySpy,
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,

@@ -346,10 +346,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
         .replaceAll("/tmp/nemoclaw-whatsapp-qr-compact.js", preloadPath)
         .replaceAll("/tmp/nemoclaw-messaging-connect-preloads.list", connectPreloadsPath);
 
-      const wrapperLines = [
-        "#!/usr/bin/env bash",
-        `export PATH=${JSON.stringify(binDir)}:\"$PATH\"`,
-      ];
+      const wrapperLines = ["#!/usr/bin/env bash", `export PATH=${JSON.stringify(binDir)}:"$PATH"`];
       if (opts.gatewayUrl !== undefined) {
         wrapperLines.push(`export OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.gatewayUrl)}`);
       } else {

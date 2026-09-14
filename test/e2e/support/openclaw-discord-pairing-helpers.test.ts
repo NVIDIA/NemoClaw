@@ -28,6 +28,7 @@ import {
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
 } from "../live/openclaw-pairing-helpers.ts";
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
+import { waitForDiscordGatewayPort as waitForPort } from "./fixtures/discord-gateway-port";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const REVISIONED_DISCORD_PLACEHOLDER = "openshell:resolve:env:v2_DISCORD_BOT_TOKEN";
@@ -71,18 +72,6 @@ function encodeClientText(payload: string): Buffer {
     .find(({ max }) => body.length <= max)
     ?.encode(body.length);
   return Buffer.concat([header ?? Buffer.alloc(0), mask, masked]);
-}
-
-async function waitForPort(portFile: string): Promise<number> {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    try {
-      return Number(fs.readFileSync(portFile, "utf8").trim());
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-  throw new Error("fake Discord Gateway did not write a port file");
 }
 
 async function sendDiscordIdentify(port: number, token: string): Promise<void> {
@@ -415,6 +404,19 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     );
     expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
     expect(result.stderr).not.toContain("xapp-raw-slack-token");
+  });
+
+  it("waits for a complete Discord gateway port file", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-port-publication-"));
+    const portFile = path.join(tmp, "port");
+    try {
+      fs.writeFileSync(portFile, "");
+      const observed = waitForPort(portFile);
+      fs.writeFileSync(portFile, "43210\n");
+      await expect(observed).resolves.toBe(43210);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {

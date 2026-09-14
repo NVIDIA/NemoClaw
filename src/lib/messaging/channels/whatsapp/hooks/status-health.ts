@@ -349,7 +349,7 @@ function hermesConfiguredSessionPathCommand(): string {
     "import json",
     "from pathlib import Path",
     "import yaml",
-    `config = yaml.safe_load(Path(${JSON.stringify(HERMES_CONFIG_PATH)}).read_text(encoding=\"utf-8\"))`,
+    `config = yaml.safe_load(Path(${JSON.stringify(HERMES_CONFIG_PATH)}).read_text(encoding="utf-8"))`,
     "def child(value, key):",
     "    return value.get(key) if isinstance(value, dict) else None",
     "node = config",

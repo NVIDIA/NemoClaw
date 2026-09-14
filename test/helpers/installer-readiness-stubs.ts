@@ -13,6 +13,9 @@ export function writeNodeStub(fakeBin: string): void {
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
+if [ "$1" = "-" ]; then
+  exec ${JSON.stringify(process.execPath)} "$@"
+fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi

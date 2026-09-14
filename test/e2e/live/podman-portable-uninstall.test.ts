@@ -63,7 +63,9 @@ function sandboxCreateArgs(): string[] {
     "--",
     "/bin/sh",
     "-lc",
-    "true",
+    // OpenShell v0.0.116 treats canonical main-process exit as a terminal
+    // sandbox error. The uninstall proof requires a live owned sandbox.
+    "exec sleep infinity",
   ];
 }
 

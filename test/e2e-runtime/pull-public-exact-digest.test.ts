@@ -67,7 +67,7 @@ if [ "$SCENARIO" = "terminal-layer-depth" ]; then
   exit 1
 fi
 if [ "$SCENARIO" = "modern-transient-then-success" ] && [ "$count" -eq 1 ]; then
-  echo "Error response from daemon: failed to resolve reference \"$EXPECTED_REFERENCE\": $EXPECTED_REFERENCE: not found" >&2
+  echo "Error response from daemon: failed to resolve reference "$EXPECTED_REFERENCE": $EXPECTED_REFERENCE: not found" >&2
   exit 44
 fi
 if [ "$SCENARIO" = "permanent-status-one" ]; then
@@ -112,11 +112,12 @@ echo "pulled $EXPECTED_REFERENCE"
       [
         "-c",
         `set -euo pipefail
-SECONDS=0
+# Use a nonzero origin so deadline simulation must measure elapsed time.
+SECONDS=5
 sleep() {
   printf '%s\\n' "$1" >>"$SLEEP_LOG"
   if [ "$SCENARIO" = "deadline-exhausted" ]; then
-    SECONDS=1800
+    SECONDS=$((started_at + 1800))
   elif [ "$SCENARIO" = "late-success" ]; then
     SECONDS=$((SECONDS + $1))
   else

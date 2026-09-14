@@ -106,7 +106,11 @@ On Linux, the set includes the rootless Docker socket at `/run/user/<UID>/docker
 If the probe times out or cannot start, NemoClaw keeps the selected authority. `host probe` reports `host.docker.probe_inconclusive`; onboarding reports the `docker_probe_inconclusive` advisory with a command to verify that authority.
 When it selects a fallback socket, NemoClaw clears the unreachable `DOCKER_CONTEXT` so later Docker commands use the selected `DOCKER_HOST`.
 A mixed set of reachable Docker and Podman fallbacks, or a fallback with an unknown server identity, produces no automatic `DOCKER_HOST` override.
+When two reachable fallbacks identify as different engines, onboarding reports the blocking `docker_authority_conflict` advisory.
+The advisory names both sockets and their engines and provides a `DOCKER_HOST` command for the Docker socket.
 A reachable Podman endpoint remains classified as Podman and does not satisfy the standard Docker runtime requirement.
+For native rootless Podman on a qualified Linux host, set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding.
+Review the [native Podman requirements](./platform-support#deployment-paths) before selecting that path.
 
 The Docker storage capabilities separate the current host configuration from NemoClaw's supported remediation path.
 

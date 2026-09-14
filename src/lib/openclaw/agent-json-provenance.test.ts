@@ -51,7 +51,7 @@ describe("parseOpenClawJsonDocuments", () => {
     expect(openClawUnframedJsonText(`progress\r\n${response}\r\ntrailing`)).toBe(
       "progress\r\n\n\r\ntrailing",
     );
-    expect(openClawUnframedJsonText(`${response}\n{\"name\":\"read\"`)).toContain('{"name":"read"');
+    expect(openClawUnframedJsonText(`${response}\n{"name":"read"`)).toContain('{"name":"read"');
   });
 
   it("fails closed in linear time for a long incomplete brace-rich stream", () => {

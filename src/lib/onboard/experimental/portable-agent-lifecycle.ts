@@ -35,7 +35,21 @@ import {
   type PortableDemoLifecycleRecoveryResult,
   type PortableDemoLifecycleStopResult,
 } from "./portable-demo-lifecycle";
+import { resolveHermesPortableLifecycleLockOptions } from "./portable-lifecycle-lock";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
+
+export { defaultPortableDemoStateDir };
+
+/** Resolve the shared lifecycle-lock root for a retained Hermes portable sandbox. */
+export function hermesPortableLifecycleLockOptions(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  hasReceiptCandidate: typeof hasHermesPortableReceiptCandidate = hasHermesPortableReceiptCandidate,
+): { readonly stateDir: string } | undefined {
+  return resolveHermesPortableLifecycleLockOptions(sandboxName, env, (name, environment) =>
+    hasReceiptCandidate(name, defaultPortableDemoStateDir(environment)),
+  );
+}
 
 export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPortableLifecycleDeps;
 export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult & {
@@ -72,7 +86,6 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
 const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
 
 const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
-  "debug",
   "inference:get",
   "list",
   "stop",
@@ -82,7 +95,7 @@ const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
   "use",
 ]);
 
-const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status"]);
+const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status", "debug"]);
 
 export type HermesPortableCommandPolicy = {
   readonly helpRequested: boolean;

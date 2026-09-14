@@ -133,12 +133,6 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
         return {
           applies: true,
           ok: true,
-          dirMode: "2770",
-          dirOwner: "sandbox:sandbox",
-          fileMode: "660",
-          fileOwner: "sandbox:sandbox",
-          configDir: "/sandbox/.openclaw",
-          configFile: "openclaw.json",
           issues: [],
         };
       },
@@ -202,12 +196,6 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
             inspectMutableConfigPerms: () => ({
               applies: true,
               ok: true,
-              dirMode: "2770",
-              dirOwner: "sandbox:sandbox",
-              fileMode: "660",
-              fileOwner: "sandbox:sandbox",
-              configDir: "/sandbox/.openclaw",
-              configFile: "openclaw.json",
               issues: [],
             }),
             repairMutableConfigPerms: () => {

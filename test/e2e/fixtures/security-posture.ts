@@ -913,8 +913,8 @@ grep -q 'cannot modify config inside the sandbox' /tmp/nemoclaw-security-guard-p
 log=/tmp/nemoclaw-start.log
 test -f "$log" || { echo MISSING_START_LOG; exit 1; }
 grep -qi '${launchPattern}' "$log" || { echo MISSING_GATEWAY_LAUNCH_MARKER; exit 1; }
-if grep -E 'mktemp:.*(/sandbox/\.\.(bashrc|profile)\.tmp|/sandbox/\.nemoclaw.*tmp)|Permission denied.*(/sandbox/\.bashrc|/sandbox/\.profile)' "$log"; then
-  echo START_LOG_HAS_RC_WRITE_FAILURE
+if grep -E 'mktemp:.*(/sandbox/\.\.(bashrc|profile)\.tmp|/sandbox/\.nemoclaw.*tmp)|Permission denied.*(/sandbox/\.bashrc|/sandbox/\.profile)|\[SECURITY( WARNING)?\].*(capsh|CAP_SETPCAP)' "$log"; then
+  echo START_LOG_HAS_SECURITY_FAILURE
   exit 1
 fi
 tail -n 20 "$log"

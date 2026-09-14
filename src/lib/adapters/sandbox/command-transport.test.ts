@@ -1,30 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { spawnSync } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../openshell/sandbox-command";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
-
-const mocks = vi.hoisted(() => ({
-  createTempSshConfig: vi.fn(),
-  resolveOpenshellSandboxSshHost: vi.fn(),
-  spawnSync: vi.fn(),
-}));
-
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, spawnSync: mocks.spawnSync };
-});
-
-vi.mock("../../sandbox/temp-ssh-config", () => ({
-  createTempSshConfig: mocks.createTempSshConfig,
-}));
-
-vi.mock("../openshell/sandbox-ssh-host", () => ({
-  resolveOpenshellSandboxSshHost: mocks.resolveOpenshellSandboxSshHost,
-}));
 
 import {
   type CommandTransportDependencies,
@@ -32,32 +12,20 @@ import {
   executeSandboxExecCommandTransport,
 } from "./command-transport";
 
-function spawnResult(
-  stdout: string,
-  overrides: Partial<ReturnType<typeof spawnSync>> = {},
-): ReturnType<typeof spawnSync> {
-  return {
-    error: undefined,
-    output: [],
-    pid: 1234,
-    signal: null,
-    status: 0,
-    stderr: "",
-    stdout,
-    ...overrides,
-  } as ReturnType<typeof spawnSync>;
-}
-
 function createDependencies(
   overrides: Partial<CommandTransportDependencies> = {},
 ): CommandTransportDependencies {
   return {
     buildSandboxExecMarkedCommand: vi.fn((command: string) => `marked:${command}`),
     buildSubprocessEnv: vi.fn(() => ({ PATH: "/usr/bin" })),
-    captureSandboxSshConfig: vi.fn(() => ({
-      output: "Host openshell-alpha.default\n  HostName 127.0.0.1\n",
-      status: 0,
-    })),
+    sshExecutor: {
+      run: vi.fn(async () => ({
+        kind: "completed" as const,
+        exitCode: 0,
+        stdout: "ok\n",
+        stderr: "",
+      })),
+    },
     executePrivilegedSandboxCommand: vi.fn(() => ({
       status: 0,
       stdout: "fallback-output",
@@ -72,7 +40,6 @@ function createDependencies(
       })),
     } as OpenShellSandboxBufferedCommandExecutor,
     isDirectSandboxFallbackUnavailableError: vi.fn(() => false),
-    openshellProbeTimeoutMs: 5000,
     ...overrides,
   };
 }
@@ -82,65 +49,46 @@ describe("sandbox command transport", () => {
     vi.resetAllMocks();
   });
 
-  it("resolves SSH state and cleans the temporary config after the command", () => {
-    const events: string[] = [];
-    const deps = createDependencies({
-      buildSubprocessEnv: vi.fn(() => {
-        events.push("environment");
-        return { PATH: "/usr/bin" };
-      }),
-      captureSandboxSshConfig: vi.fn(() => {
-        events.push("config");
-        return {
-          output: "Host openshell-alpha.default\n  HostName 127.0.0.1\n",
-          status: 0,
-        };
-      }),
-    });
-    mocks.resolveOpenshellSandboxSshHost.mockImplementation(() => {
-      events.push("host");
-      return "openshell-alpha.default";
-    });
-    mocks.createTempSshConfig.mockImplementation(() => {
-      events.push("temp");
-      return {
-        cleanup: () => events.push("cleanup"),
-        dir: "/tmp/nemoclaw-ssh-test",
-        file: "/tmp/nemoclaw-ssh-test/ssh_config",
-      };
-    });
-    mocks.spawnSync.mockImplementation(() => {
-      events.push("spawn");
-      return spawnResult("ok\n");
-    });
-
-    expect(executeSandboxCommandTransport(deps, "alpha", "id")).toEqual({
-      status: 0,
-      stderr: "",
-      stdout: "ok",
-    });
-    expect(events).toEqual(["config", "host", "temp", "environment", "spawn", "cleanup"]);
-  });
-
-  it("uses the caller's bounded SSH command timeout", () => {
+  it("passes the recorded gateway, environment, and command timeout to typed SSH", async () => {
     const deps = createDependencies();
-    mocks.resolveOpenshellSandboxSshHost.mockReturnValue("openshell-alpha.default");
-    mocks.createTempSshConfig.mockReturnValue({
-      cleanup: vi.fn(),
-      dir: "/tmp/nemoclaw-ssh-test",
-      file: "/tmp/nemoclaw-ssh-test/ssh_config",
+    const runtimeEnv = { PATH: "/pinned/bin" };
+    expect(
+      await executeSandboxCommandTransport(deps, "alpha", "openclaw doctor --fix", 300_000, {
+        gatewayName: "recorded-gateway",
+        runtimeEnv,
+      }),
+    ).toEqual({ status: 0, stdout: "ok", stderr: "" });
+    expect(deps.sshExecutor?.run).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      target: namedOpenShellGateway("recorded-gateway"),
+      command: "openclaw doctor --fix",
+      environment: runtimeEnv,
+      timeoutMilliseconds: 300_000,
     });
-    mocks.spawnSync.mockReturnValue(spawnResult("ok\n"));
-
-    expect(executeSandboxCommandTransport(deps, "alpha", "openclaw doctor --fix", 300_000)).toEqual(
-      {
-        status: 0,
-        stderr: "",
-        stdout: "ok",
-      },
-    );
-    expect(mocks.spawnSync.mock.calls[0]?.[2]).toMatchObject({ timeout: 300_000 });
   });
+
+  it.each([
+    { result: { kind: "failed", reason: "configuration" }, expected: null },
+    {
+      result: { kind: "completed", exitCode: 9, stdout: " out\n", stderr: " err\n" },
+      expected: { status: 9, stdout: "out", stderr: "err" },
+    },
+    {
+      result: {
+        kind: "failed",
+        reason: "transport",
+        command: { exitCode: 255, stdout: " out\n", stderr: " err\n" },
+      },
+      expected: { status: 255, stdout: "out", stderr: "err" },
+    },
+  ] as const)(
+    "preserves the SSH command outcome $result without a Docker fallback",
+    async ({ result, expected }) => {
+      const deps = createDependencies({ sshExecutor: { run: vi.fn(async () => result) } });
+      expect(await executeSandboxCommandTransport(deps, "alpha", "id")).toEqual(expected);
+      expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+    },
+  );
 
   it("pins OpenShell exec to the requested gateway (#9834)", async () => {
     const deps = createDependencies();

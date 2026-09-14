@@ -3,17 +3,7 @@
 
 import type { OpenShellGatewayTarget, OpenShellSandboxResult } from "./sandbox-observer";
 import type { OpenShellRuntimeSelection } from "./runtime-selection";
-import type {
-  OpenShellPolicyInspection,
-  OpenShellSandboxPolicyRead,
-  OpenShellSandboxPolicySetSubmission,
-} from "./policy-boundary";
-
-export type {
-  OpenShellSandboxPolicyRead,
-  OpenShellSandboxPolicySetOutcome,
-  OpenShellSandboxPolicySetSubmission,
-} from "./policy-boundary";
+import type { OpenShellPolicyInspection } from "./policy-boundary";
 
 export type OpenShellSandboxPolicyScope = "base" | "effective";
 
@@ -25,7 +15,7 @@ type OpenShellSandboxPolicyRequest = Readonly<{
 }>;
 
 export type SetOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest &
-  Readonly<{ policyPath: string }>;
+  Readonly<{ document: string }>;
 
 export type ReadOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest &
   Readonly<{ scope: OpenShellSandboxPolicyScope }>;
@@ -40,34 +30,43 @@ export type OpenShellSandboxPolicyRevisionRead = Readonly<{
   revision: number;
 }>;
 
-type PolicyResult<Async extends boolean, Value> = Async extends true
-  ? Promise<OpenShellSandboxResult<Value>>
-  : OpenShellSandboxResult<Value>;
+export type OpenShellSandboxPolicyRead = Readonly<{
+  document: string;
+  appliedRevision: number | null;
+  metadata?: readonly Readonly<{
+    field: "Version" | "Active" | "Hash" | "Status" | "Created" | "Loaded" | "Updated";
+    value: string;
+  }>[];
+}>;
 
-interface OpenShellSandboxPolicyReaderContract<Async extends boolean> {
-  readSandboxPolicy: (
+// Keep exit-status compatibility for existing policy commands.
+export type {
+  OpenShellSandboxPolicySetOutcome,
+  OpenShellSandboxPolicySetSubmission,
+} from "./policy-boundary";
+import type { OpenShellSandboxPolicySetSubmission } from "./policy-boundary";
+
+export interface OpenShellSandboxPolicyReader {
+  readSandboxPolicy(
     request: ReadOpenShellSandboxPolicyRequest,
-  ) => PolicyResult<Async, OpenShellSandboxPolicyRead>;
-  inspectSandboxPolicy: (
+  ): Promise<OpenShellSandboxResult<OpenShellSandboxPolicyRead>>;
+  inspectSandboxPolicy(
     request: InspectOpenShellSandboxPolicyRequest,
-  ) => PolicyResult<Async, OpenShellPolicyInspection>;
-  readSandboxPolicyRevision: (
+  ): Promise<OpenShellSandboxResult<OpenShellPolicyInspection>>;
+  readSandboxPolicyRevision(
     request: ReadOpenShellSandboxPolicyRevisionRequest,
-  ) => PolicyResult<Async, OpenShellSandboxPolicyRevisionRead>;
+  ): Promise<OpenShellSandboxResult<OpenShellSandboxPolicyRevisionRead>>;
 }
 
-export type OpenShellSandboxPolicyReader = OpenShellSandboxPolicyReaderContract<true>;
-
-export type SyncOpenShellSandboxPolicyReader = OpenShellSandboxPolicyReaderContract<false>;
-
-interface OpenShellSandboxPolicyWriterContract<Async extends boolean> {
-  setSandboxPolicy: (
+export interface OpenShellSandboxPolicyWriter {
+  setSandboxPolicy(
     request: SetOpenShellSandboxPolicyRequest,
-  ) => Async extends true
-    ? Promise<OpenShellSandboxPolicySetSubmission>
-    : OpenShellSandboxPolicySetSubmission;
+  ): Promise<OpenShellSandboxPolicySetSubmission>;
 }
 
-export type OpenShellSandboxPolicyWriter = OpenShellSandboxPolicyWriterContract<true>;
-
-export type SyncOpenShellSandboxPolicyWriter = OpenShellSandboxPolicyWriterContract<false>;
+/** Transitional reader for portable lifecycle consumers tracked in #11479. */
+export interface SyncOpenShellSandboxPolicyReader {
+  readSandboxPolicy(
+    request: ReadOpenShellSandboxPolicyRequest,
+  ): OpenShellSandboxResult<OpenShellSandboxPolicyRead>;
+}
