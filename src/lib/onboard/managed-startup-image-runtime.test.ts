@@ -49,7 +49,6 @@ import {
 import {
   encodeManagedStartupProfile,
   fingerprintManagedStartupProfile,
-  MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
   type ManagedStartupProfile,

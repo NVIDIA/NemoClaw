@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   assertDeepAgentsMcpMutationRuntimeCapability,
   inspectDeepAgentsAdapterRegistration,
@@ -12,6 +12,7 @@ import {
 import {
   assertHermesMcpMutationRuntimeCapability,
   inspectHermesAdapterRegistration,
+  reloadHermesGatewayAfterMcpRestart,
   registerHermesAdapter,
   unregisterHermesAdapter,
 } from "./mcp-bridge-adapter-hermes";
@@ -22,6 +23,7 @@ import type {
 } from "./mcp-bridge-adapter-inspection";
 import {
   inspectOpenClawAdapterRegistration,
+  reloadOpenClawGatewayAfterMcpMutation as reloadOpenClawGateway,
   registerOpenClawAdapter,
   unregisterOpenClawAdapter,
 } from "./mcp-bridge-adapter-openclaw";
@@ -50,32 +52,34 @@ export {
   type AdapterRegistrationInspection,
   parseAdapterRegistrationInspection,
 } from "./mcp-bridge-adapter-inspection";
-export {
-  buildOpenClawMcporterRegisterCommand,
-  buildOpenClawMcporterRemoveCommand,
-  MCPORTER_VERSION,
-} from "./mcp-bridge-adapter-openclaw";
+export { MCPORTER_VERSION } from "./mcp-bridge-adapter-openclaw";
 export {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
-  buildOpenClawMcporterInspectCommand,
+  buildOpenClawMcpInspectCommand,
   DEFAULT_OPENCLAW_CONFIG_DIR,
   DEEPAGENTS_MCP_CONFIG_PATH,
-  mcporterHeadersMatchExpected,
-  openClawMcporterRoot,
+  openClawHeadersMatchExpected,
+  openClawConfigDir,
 } from "./mcp-bridge-adapter-status";
 
 export async function inspectAgentAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): Promise<AdapterRegistrationInspection> {
   switch (adapter) {
-    case "mcporter":
-      return await inspectOpenClawAdapterRegistration(sandboxName, entry, runtimeSelection);
+    case "openclaw-config":
+      return inspectOpenClawAdapterRegistration(sandboxName, entry, runtimeSelection);
     case "hermes-config":
-      return await inspectHermesAdapterRegistration(sandboxName, entry, runtimeSelection);
+      return await inspectHermesAdapterRegistration(
+        sandboxName,
+        entry,
+        runtimeSelection,
+        credentialRevision,
+      );
     case "deepagents-config":
       return await inspectDeepAgentsAdapterRegistration(sandboxName, entry, runtimeSelection);
   }
@@ -93,7 +97,7 @@ export async function assertAgentMcpMutationRuntimeCapability(
     case "hermes-config":
       assertHermesMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
       return;
-    case "mcporter":
+    case "openclaw-config":
       return;
   }
 }
@@ -115,10 +119,19 @@ export async function assertAgentMcpTeardownRuntimeCapability(
   }
 }
 
+export async function reloadOpenClawGatewayAfterMcpMutation(
+  sandboxName: string,
+  adapters: readonly AgentMcpAdapter[],
+): Promise<void> {
+  if (adapters.includes("openclaw-config")) await reloadOpenClawGateway(sandboxName);
+}
+
+export { reloadHermesGatewayAfterMcpRestart };
+
 export async function registerAgentAdapter(
   sandboxName: string,
   adapter: AgentMcpAdapter,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   options: {
@@ -128,7 +141,7 @@ export async function registerAgentAdapter(
   } = {},
 ): Promise<void> {
   switch (adapter) {
-    case "mcporter":
+    case "openclaw-config":
       await registerOpenClawAdapter(
         sandboxName,
         entry,
@@ -166,7 +179,7 @@ export async function registerAgentAdapter(
 export async function registerAgentAdapterAtCurrentCredentialRevision(
   sandboxName: string,
   adapter: AgentMcpAdapter,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string>,
   initialCredentialRevision: McpAttachedCredentialRevision,
@@ -234,13 +247,13 @@ export async function registerAgentAdapterAtCurrentCredentialRevision(
 export async function unregisterAgentAdapter(
   sandboxName: string,
   adapter: AgentMcpAdapter,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): Promise<AdapterRemovalOutcome> {
   switch (adapter) {
-    case "mcporter":
-      await unregisterOpenClawAdapter(sandboxName, entry, runtimeSelection, options);
+    case "openclaw-config":
+      unregisterOpenClawAdapter(sandboxName, entry, runtimeSelection, options);
       return "removed";
     case "hermes-config":
       unregisterHermesAdapter(sandboxName, entry, runtimeSelection, options);

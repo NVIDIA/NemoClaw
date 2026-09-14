@@ -63,7 +63,8 @@ advisory_e2e_names='["E2E / PR Gate","E2E / PR Gate / Rollup","E2E / PR Gate Coo
 ci_failing_checks=$(printf '%s' "$raw" | jq -c --argjson advisory "$advisory_e2e_names" '[
   (.statusCheckRollup // [])[]
   | (.name // .context // "(unknown)") as $name
-  | select(($advisory | index($name)) == null)
+  | (.workflowName // "") as $workflow
+  | select(($advisory | index($name)) == null or $workflow != "E2E / PR Gate Controller")
   | if .state != null then
       (.state | ascii_upcase) as $state
       | select($state != "SUCCESS" and $state != "PENDING" and $state != "EXPECTED")
@@ -79,7 +80,8 @@ ci_failing_checks=$(printf '%s' "$raw" | jq -c --argjson advisory "$advisory_e2e
 ci_pending_checks=$(printf '%s' "$raw" | jq -c --argjson advisory "$advisory_e2e_names" '[
   (.statusCheckRollup // [])[]
   | (.name // .context // "(unknown)") as $name
-  | select(($advisory | index($name)) == null)
+  | (.workflowName // "") as $workflow
+  | select(($advisory | index($name)) == null or $workflow != "E2E / PR Gate Controller")
   | if .state != null then
       (.state | ascii_upcase) as $state
       | select($state == "PENDING" or $state == "EXPECTED" or $state == "")

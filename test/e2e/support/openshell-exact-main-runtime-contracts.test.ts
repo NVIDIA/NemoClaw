@@ -83,6 +83,101 @@ function completeRuleset(): Record<string, unknown> {
 }
 
 describe("OpenShell exact-main policy, nft, and process-identity proof helpers", () => {
+  it.each([
+    {
+      label: "stop fails",
+      failure: "stop",
+      operations: ["stop"],
+      dockerOperations: ["ps", "exec"],
+      message: "stop exact-main OpenShell sandbox container failed",
+    },
+    {
+      label: "start fails",
+      failure: "start",
+      operations: ["stop", "start"],
+      dockerOperations: ["ps", "exec"],
+      message: "start exact-main OpenShell sandbox container failed",
+    },
+    {
+      label: "restart completes",
+      failure: null,
+      operations: ["stop", "start"],
+      dockerOperations: ["ps", "exec", "ps"],
+      message: "inspect restarted container",
+    },
+  ])(
+    "restores the policy when $label",
+    async ({ failure, operations, dockerOperations, message }) => {
+      vi.stubEnv("NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF", "1");
+      const basePolicy = "version: 1\nnetwork_policies: {}\n";
+      const setPolicy = vi.spyOn(policy, "setPolicyDocument").mockResolvedValue(true);
+      const success = (stdout: string) => ({
+        artifacts: { result: "", stderr: "", stdout: "" },
+        command: [],
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        stdout,
+        timedOut: false,
+      });
+      const status = (version: number, state: string) =>
+        success(
+          JSON.stringify({
+            active_version: version,
+            config_revision: version,
+            hash: `sha256:policy-${version}`,
+            policy_source: "sandbox",
+            sandbox: "exact-main-proof",
+            status: state,
+            version,
+          }),
+        );
+      const openshell = vi.fn();
+      [
+        success(basePolicy),
+        status(1, "effective"),
+        status(2, "effective"),
+        status(2, "loaded"),
+        ...operations.map((operation) => ({
+          ...success(""),
+          exitCode: failure === operation ? 1 : 0,
+          stderr: failure === operation ? "lifecycle failed" : "",
+        })),
+        success(basePolicy),
+      ].forEach((result) => openshell.mockResolvedValueOnce(result));
+      const command = vi
+        .fn()
+        .mockResolvedValueOnce(success("a".repeat(64)))
+        .mockResolvedValueOnce(success(JSON.stringify(completeRuleset())))
+        .mockRejectedValueOnce(new Error("inspect restarted container"));
+
+      try {
+        await expect(
+          assertExactMainPolicyNftAndIdentityContracts({
+            artifacts: {} as never,
+            cleanup: { add: vi.fn() } as never,
+            host: { command } as never,
+            mcpUrl: "https://mcp.example.test/mcp",
+            sandbox: { openshell } as never,
+            sandboxName: "exact-main-proof",
+          }),
+        ).rejects.toThrow(message);
+        expect(openshell.mock.calls.slice(4, -1).map(([args]) => args)).toEqual(
+          operations.map((operation) => ["sandbox", operation, "exact-main-proof"]),
+        );
+        expect(command.mock.calls.map(([, args]) => args[0])).toEqual(dockerOperations);
+        expect(setPolicy).toHaveBeenLastCalledWith(
+          "exact-main-proof",
+          basePolicy.trim(),
+          expect.objectContaining({ operation: "restore the exact-main policy proof" }),
+        );
+      } finally {
+        setPolicy.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("applies and restores the identity proof through live OpenShell policy authority", async () => {
     vi.stubEnv("NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF", "1");
     const basePolicy = "version: 1\nnetwork_policies: {}\n";

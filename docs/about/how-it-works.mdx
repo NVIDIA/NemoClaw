@@ -107,7 +107,7 @@ NemoClaw separates host orchestration, agent-specific behavior, and sandbox defi
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-- The _Deep Agents integration layer_ writes managed runtime configuration under `/sandbox/.deepagents`. It includes `config.toml`, managed MCP projection state, and the inference route used by `dcode`.
+- The _Deep Agents integration layer_ writes managed runtime configuration under `/sandbox/.deepagents`. It includes `config.toml`, the agent-native `.mcp.json`, and the inference route used by `dcode`.
 
 </AgentOnly>
 - The _blueprint_ is a versioned YAML package with the sandbox image, agent manifest, network policy, inference profile, and supporting assets.
