@@ -173,6 +173,14 @@ function resolveTransferTarget(sandboxName: string): OpenShellSandboxTransferReq
   return gatewayName ? { kind: "named", gatewayName } : { kind: "selected" };
 }
 
+function scopeSandboxCommandToTarget(
+  args: string[],
+  target: OpenShellSandboxTransferRequest["target"],
+): string[] {
+  if (target.kind === "selected") return args;
+  return [...args.slice(0, 2), "-g", target.gatewayName, ...args.slice(2)];
+}
+
 export async function exportSandboxSessions(
   opts: SessionsExportOptions,
 ): Promise<SessionsExportResult> {
@@ -221,7 +229,13 @@ async function exportSandboxSessionsUnlocked(
     sessionIds: resolvedSessionIds,
     files: resolvedFiles,
     sessions,
-  } = resolveSelectedFiles(opts.sandboxName, agent, trimmedKeys, opts.includeTrajectory ?? false);
+  } = resolveSelectedFiles(
+    opts.sandboxName,
+    target,
+    agent,
+    trimmedKeys,
+    opts.includeTrajectory ?? false,
+  );
 
   if (resolvedFiles.length === 0) {
     throw new Error(`Refusing to export: agent '${agent}' has no sessions to bundle.`);
@@ -251,16 +265,19 @@ async function exportSandboxSessionsUnlocked(
       // finally cleanup below would never run and the staged session JSONL
       // would survive in the in-sandbox staging directory.
       const tarResult = runOpenshell(
-        [
-          "sandbox",
-          "exec",
-          "--name",
-          opts.sandboxName,
-          "--",
-          "sh",
-          "-c",
-          buildShellInvocation(tarArgv, tarballRemote),
-        ],
+        scopeSandboxCommandToTarget(
+          [
+            "sandbox",
+            "exec",
+            "--name",
+            opts.sandboxName,
+            "--",
+            "sh",
+            "-c",
+            buildShellInvocation(tarArgv, tarballRemote),
+          ],
+          target,
+        ),
         { ignoreError: true, stdio: "inherit" },
       );
       if (tarResult.status !== 0) {
@@ -294,6 +311,7 @@ async function exportSandboxSessionsUnlocked(
       // JSONL behind in the in-sandbox staging directory.
       removeRemoteStagingArtifact({
         sandboxName: opts.sandboxName,
+        target,
         remotePath: tarballRemote,
         artifactLabel: "staging tarball",
         retainedDataNote: "The tarball may still contain session JSONL with pasted secrets",
@@ -441,7 +459,10 @@ async function exportHermesSessions(
 
   try {
     const exportResult = runOpenshell(
-      ["sandbox", "exec", "--name", opts.sandboxName, "--", "sh", "-c", shellCommand],
+      scopeSandboxCommandToTarget(
+        ["sandbox", "exec", "--name", opts.sandboxName, "--", "sh", "-c", shellCommand],
+        target,
+      ),
       { ignoreError: true, stdio: "inherit" },
     );
     if (exportResult.status !== 0) {
@@ -474,6 +495,7 @@ async function exportHermesSessions(
     // primary error still propagates once the `finally` block returns.
     removeRemoteStagingArtifact({
       sandboxName: opts.sandboxName,
+      target,
       remotePath: stagingRemote,
       artifactLabel: "staging file",
       retainedDataNote: "The file may still contain a session JSONL with pasted secrets",
@@ -582,12 +604,16 @@ function hardenPermissions(target: string): void {
 // supplies the wording for the artefact it staged.
 function removeRemoteStagingArtifact(input: {
   sandboxName: string;
+  target: OpenShellSandboxTransferRequest["target"];
   remotePath: string;
   artifactLabel: string;
   retainedDataNote: string;
 }): void {
   const remoteCleanup = runOpenshell(
-    ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
+    scopeSandboxCommandToTarget(
+      ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
+      input.target,
+    ),
     { ignoreError: true, stdio: "ignore" },
   );
   if (remoteCleanup.status !== 0) {
@@ -664,11 +690,12 @@ function enforceAgentScope(agent: string, keys: readonly string[]): void {
 
 function resolveSelectedFiles(
   sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
   agent: string,
   keys: readonly string[],
   includeTrajectory: boolean,
 ): { sessionIds: string[]; files: string[]; sessions: SessionIndexEntry[] } {
-  const index = readSessionIndex(sandboxName, agent);
+  const index = readSessionIndex(sandboxName, target, agent);
   const byKey = new Map<string, string>();
   for (const entry of index) byKey.set(entry.key, entry.sessionId);
 
@@ -721,21 +748,28 @@ function normaliseToCanonical(agent: string, key: string): string {
   return `agent:${agent}:${key}`;
 }
 
-function readSessionIndex(sandboxName: string, agent: string): SessionIndexEntry[] {
+function readSessionIndex(
+  sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
+  agent: string,
+): SessionIndexEntry[] {
   const result = captureOpenshell(
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--",
-      "openclaw",
-      "sessions",
-      "list",
-      "--agent",
-      agent,
-      "--json",
-    ],
+    scopeSandboxCommandToTarget(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--",
+        "openclaw",
+        "sessions",
+        "list",
+        "--agent",
+        agent,
+        "--json",
+      ],
+      target,
+    ),
     { ignoreError: true },
   );
   if (result.status !== 0) {

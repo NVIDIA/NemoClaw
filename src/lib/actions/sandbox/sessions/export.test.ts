@@ -105,6 +105,10 @@ function makeRun(status: number) {
   return { status, stdout: "", stderr: "" };
 }
 
+function shellCommand(args: string[]): string {
+  return args[args.indexOf("-c") + 1] ?? "";
+}
+
 function makeTransferCompletion(
   outcome: OpenShellSandboxTransferCompletion["outcome"] = { kind: "completed", exitCode: 0 },
   interrupted = false,
@@ -183,10 +187,10 @@ describe("exportSandboxSessions warm-up filtering", () => {
     });
 
     const tarCall = runMock.mock.calls[0]?.[0] as string[];
-    const shellCommand = tarCall[7] as string;
+    const command = shellCommand(tarCall);
     expect(result.resolvedSessionIds).toEqual(["sid-real"]);
-    expect(shellCommand).toMatch(/-- \.\/sid-real\.jsonl/);
-    expect(shellCommand).not.toContain(WARMUP_SESSION_ID_PREFIX);
+    expect(command).toMatch(/-- \.\/sid-real\.jsonl/);
+    expect(command).not.toContain(WARMUP_SESSION_ID_PREFIX);
   });
 
   it("refuses export-all when only the onboard warm-up session remains (#5511)", async () => {
@@ -265,6 +269,15 @@ describe("exportSandboxSessions", () => {
 
       expect(captureMock).toHaveBeenCalledTimes(1);
       const captureCall = captureMock.mock.calls[0]?.[0] as string[];
+      expect(captureCall.slice(0, 7)).toEqual([
+        "sandbox",
+        "exec",
+        "-g",
+        "gateway-alpha",
+        "--name",
+        "alpha",
+        "--",
+      ]);
       expect(captureCall).toContain("openclaw");
       expect(captureCall).toContain("sessions");
       expect(captureCall).toContain("list");
@@ -272,18 +285,26 @@ describe("exportSandboxSessions", () => {
       expect(captureCall).toContain("main");
 
       const tarCall = runMock.mock.calls[0]?.[0] as string[];
-      expect(tarCall.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "alpha", "--", "sh", "-c"]);
-      const shellCommand = tarCall[7] as string;
+      expect(tarCall.slice(0, 7)).toEqual([
+        "sandbox",
+        "exec",
+        "-g",
+        "gateway-alpha",
+        "--name",
+        "alpha",
+        "--",
+      ]);
+      const command = shellCommand(tarCall);
       // Staging directory inside /sandbox keeps openshell's workspace check happy
       // and the umask + chmod chain seals the staging tarball to owner-only.
-      expect(shellCommand).toMatch(
+      expect(command).toMatch(
         /^umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && tar -czf \/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz/,
       );
-      expect(shellCommand).toMatch(/-- \.\/sid-a\.jsonl \.\/sid-b\.jsonl/);
-      expect(shellCommand).toMatch(
+      expect(command).toMatch(/-- \.\/sid-a\.jsonl \.\/sid-b\.jsonl/);
+      expect(command).toMatch(
         /&& chmod 600 \/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz$/,
       );
-      expect(shellCommand).not.toMatch(/sid-a\.trajectory\.jsonl/);
+      expect(command).not.toMatch(/sid-a\.trajectory\.jsonl/);
 
       const downloadCall = transferRunMock.mock.calls[0]?.[0];
       expect(downloadCall).toMatchObject({
@@ -295,6 +316,9 @@ describe("exportSandboxSessions", () => {
       expect(downloadCall.source).toMatch(
         /^\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz$/,
       );
+      expect(runMock.mock.calls.at(-1)?.[0]).toEqual(
+        expect.arrayContaining(["sandbox", "exec", "-g", "gateway-alpha", "rm", "-f"]),
+      );
 
       expect(result.selectedKeys).toBe("all");
       expect(result.resolvedSessionIds).toEqual(["sid-a", "sid-b"]);
@@ -302,6 +326,26 @@ describe("exportSandboxSessions", () => {
       expect(result.hostDest).toBe(expectedHostDest);
       expect(result.bundleBytes).toBe(42);
     } finally {
+      chmodSpy.mockRestore();
+    }
+  });
+
+  it("uses the selected gateway for every operation when the sandbox has no recorded gateway", async () => {
+    getKnownGatewayMock.mockReturnValue(null);
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    const chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => {});
+
+    try {
+      await exportSandboxSessions({ sandboxName: "alpha", out: "./sessions-alpha" });
+      expect(captureMock.mock.calls[0]?.[0]).not.toContain("-g");
+      expect(transferRunMock.mock.calls[0]?.[0]).toMatchObject({
+        target: { kind: "selected" },
+      });
+    } finally {
+      mkdirSpy.mockRestore();
       chmodSpy.mockRestore();
     }
   });
@@ -510,9 +554,9 @@ describe("exportSandboxSessions", () => {
     });
 
     const tarCall = runMock.mock.calls[0]?.[0] as string[];
-    const shellCommand = tarCall[7] as string;
-    expect(shellCommand).toMatch(/-- \.\/sid-2\.jsonl \.\/sid-2\.trajectory\.jsonl/);
-    expect(shellCommand).not.toMatch(/sid-1\.jsonl/);
+    const command = shellCommand(tarCall);
+    expect(command).toMatch(/-- \.\/sid-2\.jsonl \.\/sid-2\.trajectory\.jsonl/);
+    expect(command).not.toMatch(/sid-1\.jsonl/);
     expect(result.selectedKeys).toEqual(["agent:main:telegram:t-1"]);
     expect(result.resolvedFiles).toEqual(["sid-2.jsonl", "sid-2.trajectory.jsonl"]);
   });
@@ -534,7 +578,7 @@ describe("exportSandboxSessions", () => {
     expect(captureCall).toContain("--agent");
     expect(captureCall).toContain("work");
     const tarCall = runMock.mock.calls[0]?.[0] as string[];
-    expect(tarCall[7]).toMatch(/sid-9\.jsonl/);
+    expect(shellCommand(tarCall)).toMatch(/sid-9\.jsonl/);
   });
 
   it("preserves OpenClaw export output when its agent id is hermes", async () => {
@@ -914,9 +958,17 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
     expect(captureMock).not.toHaveBeenCalled();
 
     const execCall = runMock.mock.calls[0]?.[0] as string[];
-    expect(execCall.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "alpha", "--", "sh", "-c"]);
-    const shellCommand = execCall[7] as string;
-    expect(shellCommand).toMatch(
+    expect(execCall.slice(0, 7)).toEqual([
+      "sandbox",
+      "exec",
+      "-g",
+      "gateway-alpha",
+      "--name",
+      "alpha",
+      "--",
+    ]);
+    const command = shellCommand(execCall);
+    expect(command).toMatch(
       /^umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && hermes sessions export \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl && chmod 600 \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl$/,
     );
 
@@ -935,6 +987,9 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
     expect(hostStagingPath).not.toBe("./sessions-alpha.jsonl");
 
     const cleanupCall = runMock.mock.calls.at(-1);
+    expect(cleanupCall?.[0]).toEqual(
+      expect.arrayContaining(["sandbox", "exec", "-g", "gateway-alpha", "rm", "-f"]),
+    );
     expect(cleanupCall?.[0]).toContain("rm");
     expect(cleanupCall?.[0]).toContain("-f");
 
@@ -980,7 +1035,7 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
 
     expect(runMock).toHaveBeenCalledTimes(2);
     const execCall = runMock.mock.calls[0]?.[0] as string[];
-    expect(execCall.slice(0, 3)).toEqual(["sandbox", "exec", "--name"]);
+    expect(execCall.slice(0, 5)).toEqual(["sandbox", "exec", "-g", "gateway-alpha", "--name"]);
     const cleanupCall = runMock.mock.calls[1]?.[0] as string[];
     expect(cleanupCall).toContain("rm");
     expect(cleanupCall).toContain("-f");
@@ -1058,8 +1113,8 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
 
     expect(captureMock).not.toHaveBeenCalled();
     const execCall = runMock.mock.calls[0]?.[0] as string[];
-    const shellCommand = execCall[7] as string;
-    expect(shellCommand).toContain("hermes sessions export");
+    const command = shellCommand(execCall);
+    expect(command).toContain("hermes sessions export");
     expect(result.agent).toBe("hermes");
     expect(result.format).toBe("jsonl");
   });
