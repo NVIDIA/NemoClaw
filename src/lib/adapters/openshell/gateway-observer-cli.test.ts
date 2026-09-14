@@ -58,6 +58,16 @@ describe("CLI gateway observation", () => {
       "Gateway 'nemoclaw-8090' is unreachable.",
     ],
     [
+      "Error: client error (Connect): Connection refused",
+      info,
+      1,
+      0,
+      "named_unreachable",
+      true,
+      null,
+      "Gateway 'nemoclaw-8090' is unreachable.",
+    ],
+    [
       "Gateway: nemoclaw-8090\nStatus: Disconnected",
       info,
       0,
