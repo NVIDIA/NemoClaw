@@ -28,6 +28,54 @@ function runBash(lines: string[]): SpawnSyncReturns<string> {
 describe("nemoclaw-start shared-state topology (#7280)", () => {
   const source = fs.readFileSync(START_SCRIPT, "utf-8");
 
+  it("pins SQLite temporary files inside owner-only OpenClaw state for OpenShell", () => {
+    const block = sourceBlock(
+      source,
+      "prepare_openshell_sqlite_tmpdir() {",
+      "# ── Main ─────────────────────────────────────────────────────────",
+    );
+    const tmp = fs.mkdtempSync(path.join(process.cwd(), ".tmp-openclaw-sqlite-"));
+    const sqliteTmp = path.join(tmp, "state", "tmp");
+    try {
+      const result = runBash([
+        'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%u" ]; then id -u; else command stat "$@"; fi; }',
+        block,
+        `prepare_openshell_sqlite_tmpdir ${JSON.stringify(sqliteTmp)}`,
+        'printf "%s\\n" "$SQLITE_TMPDIR"',
+      ]);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe(sqliteTmp);
+      expect(fs.statSync(sqliteTmp).mode & 0o777).toBe(0o700);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlinked SQLite temporary directory", () => {
+    const block = sourceBlock(
+      source,
+      "prepare_openshell_sqlite_tmpdir() {",
+      "# ── Main ─────────────────────────────────────────────────────────",
+    );
+    const tmp = fs.mkdtempSync(path.join(process.cwd(), ".tmp-openclaw-sqlite-"));
+    const outside = path.join(tmp, "outside");
+    const sqliteTmp = path.join(tmp, "sqlite-tmp");
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, sqliteTmp);
+    try {
+      const result = runBash([
+        block,
+        `prepare_openshell_sqlite_tmpdir ${JSON.stringify(sqliteTmp)}`,
+      ]);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Refusing unsafe OpenClaw SQLite temporary directory");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { expected: "1", initial: "caller-disabled", uid: 0 },
     { expected: "unset", initial: "1", uid: 1000 },
@@ -39,6 +87,7 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
     );
     const result = runBash([
       `id() { if [ "\${1:-}" = "-u" ]; then printf ${JSON.stringify(String(uid))}; else command id "$@"; fi; }`,
+      "prepare_openshell_sqlite_tmpdir() { :; }",
       `export NEMOCLAW_OPENCLAW_SHARED_STATE=${JSON.stringify(initial)}`,
       block,
       'printf "%s\\n" "${NEMOCLAW_OPENCLAW_SHARED_STATE:-unset}"',

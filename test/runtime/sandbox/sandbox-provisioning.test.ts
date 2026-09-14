@@ -821,7 +821,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       "wechat",
       "workspace",
     ]);
-    expect(modern.filesAfterCleanup).toEqual(["exec-approvals.json"]);
+    expect(modern.filesAfterCleanup).toEqual([]);
     expect(modern.cleanup.calls.split("\n").filter(Boolean)).not.toEqual(
       expect.arrayContaining([expect.stringMatching(/^find /)]),
     );
@@ -883,7 +883,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       expect(layout.result.status).toBe(0);
       const openclawDir = path.join(sandboxRoot, ".openclaw");
       expect(fs.statSync(openclawDir).isDirectory()).toBe(true);
-      expect(fs.statSync(path.join(openclawDir, "exec-approvals.json")).isFile()).toBe(true);
+      expect(fs.existsSync(path.join(openclawDir, "exec-approvals.json"))).toBe(false);
       expect(fs.existsSync(path.join(openclawDir, "update-check.json"))).toBe(false);
       ["credentials", "devices", "identity", "logs", "state", "telegram"].forEach((dir) => {
         const stateDir = path.join(openclawDir, dir);
@@ -893,9 +893,6 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         expect(fs.statSync(stateDir).mode & 0o2000).toBe(0o2000);
       });
       expect(fs.existsSync(path.join(sandboxRoot, ".openclaw-data"))).toBe(false);
-      expect(fs.lstatSync(path.join(openclawDir, "exec-approvals.json")).isSymbolicLink()).toBe(
-        false,
-      );
       expect(layout.calls).toContain(`chown -R sandbox:sandbox ${openclawDir}`);
 
       const rc = runDockerShell(

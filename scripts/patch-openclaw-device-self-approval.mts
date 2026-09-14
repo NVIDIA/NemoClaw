@@ -54,6 +54,7 @@ const CLI_SCOPE_MARKER = "nemoclaw: reach gateway for bounded same-device scope 
 const CLI_RETRY_MARKER = "nemoclaw: keep bounded device auth fail closed";
 const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before live pairing list";
 const CLI_SETTLEMENT_LIST_MARKER = "nemoclaw: use stored device auth for pairing settlement list";
+const CLI_BOOTSTRAP_AUTH_STORE_MARKER = "nemoclaw: persist canonical CLI bootstrap credential";
 const CLI_PAIRED_TOKEN_MARKER = "nemoclaw: preflight bounded paired token before live pairing list";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
@@ -71,10 +72,13 @@ const CLI_APPLIED_MARKERS = [
   CLI_RETRY_MARKER,
   CLI_LIST_MARKER,
   CLI_SETTLEMENT_LIST_MARKER,
+  CLI_BOOTSTRAP_AUTH_STORE_MARKER,
   CLI_PAIRED_TOKEN_MARKER,
 ] as const;
 const AUTH_SCOPE_UPGRADE_MARKER =
   "nemoclaw: route bounded CLI device-token scope upgrade into pairing";
+const AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER =
+  "nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher";
 const HANDLER_MARKER = "nemoclaw: bounded same-device scope approval";
 const STATE_MARKER = "nemoclaw: validate bounded self-approval inside pairing lock";
 const STATE_TRANSACTION_MARKER = "nemoclaw: recover bounded self-approval state transaction";
@@ -580,9 +584,11 @@ const CLI_CALL_GATEWAY_SQLITE_REPLACEMENT = [
   "\tscopes: callOpts?.scopes,",
   `\tuseStoredDeviceAuth: callOpts?.useStoredDeviceAuth, // ${CLI_MARKER} (#4462)`,
   "\trequiredStoredDeviceAuthScopes: callOpts?.requiredStoredDeviceAuthScopes,",
-  '\tsharedStateMode: "read-only"',
+  `\tsharedStateMode: process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1" ? void 0 : "read-only" // ${CLI_BOOTSTRAP_AUTH_STORE_MARKER} (#9844)`,
   "});",
 ].join("\n");
+const CLI_BOOTSTRAP_AUTH_STORE_TARGET = '\tsharedStateMode: "read-only"';
+const CLI_BOOTSTRAP_AUTH_STORE_REPLACEMENT = `\tsharedStateMode: process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1" ? void 0 : "read-only" // ${CLI_BOOTSTRAP_AUTH_STORE_MARKER} (#9844)`;
 
 const CLI_LIST_SIGNATURE_TARGET = "async function listPairingWithFallback(opts) {";
 const CLI_LIST_SIGNATURE_LEGACY_REPLACEMENT =
@@ -837,6 +843,31 @@ const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = [
   "\t\t\t\tnemoclawScopeUpgradeScopes.every((scope) => scope && nemoclawAllowedUpgradeScopes.has(scope));",
   `\t\t\treturn nemoclawCliScopeUpgrade ? { ...nemoclawTokenCheck, ok: true } : nemoclawTokenCheck; // ${AUTH_SCOPE_UPGRADE_MARKER} (#4462)`,
   "\t\t}",
+].join("\n");
+
+const AUTH_INLINE_APPROVAL_TARGET =
+  "\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;";
+const AUTH_INLINE_APPROVAL_REPLACEMENT = [
+  "\t\t\tconst nemoclawExistingScopes = normalizeSortedUniqueTrimmedStringList(existingPairedDevice ? resolvePairedAccessScopes(existingPairedDevice) : []);",
+  "\t\t\tconst nemoclawRequestedScopes = normalizeSortedUniqueTrimmedStringList(scopes);",
+  '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+  "\t\t\tconst nemoclawDeferSilentCliScopeUpgrade =",
+  '\t\t\t\treason === "scope-upgrade" &&',
+  "\t\t\t\tpairing.request.isRepair === true &&",
+  "\t\t\t\tpairing.request.silent === true &&",
+  "\t\t\t\tplan.allowSilentLocalPairing === true &&",
+  '\t\t\t\t(authMethod === "device-token" || authMethod === "token") &&',
+  "\t\t\t\tconnectParams.client.id === GATEWAY_CLIENT_IDS.CLI &&",
+  "\t\t\t\tconnectParams.client.mode === GATEWAY_CLIENT_MODES.CLI &&",
+  '\t\t\t\trole === "operator" &&',
+  "\t\t\t\texistingPairedDevice?.publicKey === devicePublicKey &&",
+  "\t\t\t\tnemoclawExistingScopes.length === 1 &&",
+  '\t\t\t\tnemoclawExistingScopes[0] === "operator.pairing" &&',
+  "\t\t\t\tArray.isArray(scopes) &&",
+  "\t\t\t\tnemoclawRequestedScopes.length > 0 &&",
+  "\t\t\t\tnemoclawRequestedScopes.length === scopes.length &&",
+  "\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope));",
+  `\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true && !nemoclawDeferSilentCliScopeUpgrade; // ${AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER} (#9844)`,
 ].join("\n");
 
 const HANDLER_HELPER = [
@@ -1807,16 +1838,26 @@ const BASE_FILE_SPECS: FileSpec[] = [
       );
     },
     patch(source, file) {
+      const sqliteLayout = source.includes("callGatewayFromCliWithTransport");
       const appliedMarkerCounts = CLI_APPLIED_MARKERS.map((marker) =>
         countOccurrences(source, marker),
       );
       if (appliedMarkerCounts.some((count) => count > 0)) {
         const settlementMarkerIndex = CLI_APPLIED_MARKERS.indexOf(CLI_SETTLEMENT_LIST_MARKER);
+        const bootstrapMarkerIndex = CLI_APPLIED_MARKERS.indexOf(CLI_BOOTSTRAP_AUTH_STORE_MARKER);
         const settlementMarkerCount = appliedMarkerCounts[settlementMarkerIndex];
+        const bootstrapMarkerCount = appliedMarkerCounts[bootstrapMarkerIndex];
         const priorMarkerCounts = appliedMarkerCounts.filter(
-          (_count, index) => index !== settlementMarkerIndex,
+          (_count, index) => index !== settlementMarkerIndex && index !== bootstrapMarkerIndex,
         );
-        if (priorMarkerCounts.every((count) => count === 1) && settlementMarkerCount! <= 1) {
+        const bootstrapMarkersValid = sqliteLayout
+          ? bootstrapMarkerCount! <= 1
+          : bootstrapMarkerCount === 0;
+        if (
+          priorMarkerCounts.every((count) => count === 1) &&
+          settlementMarkerCount! <= 1 &&
+          bootstrapMarkersValid
+        ) {
           let upgradedSource = source;
           let changed = false;
           const legacyModeLine =
@@ -1845,6 +1886,18 @@ const BASE_FILE_SPECS: FileSpec[] = [
             upgradedSource = result.source;
             changed = true;
           }
+          if (sqliteLayout && bootstrapMarkerCount === 0) {
+            const result = replaceExactlyOnce(
+              upgradedSource,
+              CLI_BOOTSTRAP_AUTH_STORE_TARGET,
+              CLI_BOOTSTRAP_AUTH_STORE_REPLACEMENT,
+              "devices CLI bootstrap credential persistence target",
+              file,
+            );
+            if (result.error) return { source, status: "no-match", error: result.error };
+            upgradedSource = result.source;
+            changed = true;
+          }
           return {
             source: upgradedSource,
             status: changed ? "would-apply" : "already-applied",
@@ -1856,7 +1909,7 @@ const BASE_FILE_SPECS: FileSpec[] = [
           error: `devices CLI approval runtime in ${file}: partial or duplicate patch markers (${appliedMarkerCounts.join(", ")})`,
         };
       }
-      if (source.includes("callGatewayFromCliWithTransport")) {
+      if (sqliteLayout) {
         return patchCurrentDevicesCli(source, file);
       }
       let result = replaceExactlyOnce(
@@ -1949,7 +2002,11 @@ const BASE_FILE_SPECS: FileSpec[] = [
     selector(source) {
       return source.includes(AUTH_DEVICE_TOKEN_SQLITE_TARGET) ||
         source.includes(AUTH_SCOPE_UPGRADE_MARKER)
-        ? source.includes("connectParams.client.id") && source.includes("verifyDeviceToken")
+        ? source.includes("connectParams.client.id") &&
+            source.includes("verifyDeviceToken") &&
+            (source.includes(AUTH_INLINE_APPROVAL_TARGET) ||
+              source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER) ||
+              !source.includes("pairing.request.silent"))
         : source.includes("async function resolveConnectAuthDecisionCore(params)") &&
             source.includes("const authDecision = await resolveConnectAuthDecision({") &&
             source.includes("verifyDeviceToken: async") &&
@@ -1957,23 +2014,45 @@ const BASE_FILE_SPECS: FileSpec[] = [
               source.includes(AUTH_SCOPE_UPGRADE_MARKER));
     },
     patch(source, file) {
-      if (source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
-        return { source, status: "already-applied" };
-      }
-      if (source.includes(AUTH_DEVICE_TOKEN_SQLITE_TARGET)) {
-        const result = replaceExactlyOnce(
-          source,
+      let result: ReplacementResult = { source };
+      let changed = false;
+      const sqliteLayout =
+        result.source.includes(AUTH_DEVICE_TOKEN_SQLITE_TARGET) ||
+        result.source.includes(AUTH_INLINE_APPROVAL_TARGET) ||
+        result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER);
+      if (!result.source.includes(AUTH_SCOPE_UPGRADE_MARKER) && sqliteLayout) {
+        result = replaceExactlyOnce(
+          result.source,
           AUTH_DEVICE_TOKEN_SQLITE_TARGET,
           AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT,
           "SQLite gateway device-token scope-upgrade target",
           file,
         );
-        return result.error
-          ? { source, status: "no-match", error: result.error }
-          : { source: result.source, status: "would-apply" };
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
       }
-      let result = replaceExactlyOnce(
-        source,
+      if (sqliteLayout && !result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER)) {
+        result = replaceExactlyOnce(
+          result.source,
+          AUTH_INLINE_APPROVAL_TARGET,
+          AUTH_INLINE_APPROVAL_REPLACEMENT,
+          "SQLite gateway deferred silent scope-upgrade target",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
+      }
+      if (sqliteLayout) {
+        return {
+          source: result.source,
+          status: changed ? "would-apply" : "already-applied",
+        };
+      }
+      if (result.source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
+        return { source, status: "already-applied" };
+      }
+      result = replaceExactlyOnce(
+        result.source,
         AUTH_DECISION_CALL_TARGET,
         AUTH_DECISION_CALL_REPLACEMENT,
         "gateway auth decision CLI identity target",

@@ -238,6 +238,9 @@ REQUIRED_ROLES = ['operator']
 PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
 TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
+ADMIN_REQUEST_SCOPES = ['operator.admin', 'operator.pairing', 'operator.write']
+ADMIN_PAIRED_TOKEN_SCOPES = ['operator.admin', 'operator.pairing', 'operator.read', 'operator.write']
+ADMIN_AUTH_TOKEN_SCOPES = ['operator.admin', 'operator.read', 'operator.write']
 ALLOW_CANONICAL_PENDING = ${mode === "ordinary-settlement" || mode === "repair-settlement" ? "True" : "False"}
 ORDINARY_SETTLEMENT = ${mode === "ordinary-settlement" ? "True" : "False"}
 REPORT_CANONICAL_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
@@ -741,12 +744,24 @@ try:
         if normalized_roles(device) is None:
             reject()
 
-    settled = (
+    baseline_settled = (
         exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
         and exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
         and exact_string_set(paired_operator.get('scopes'), TOKEN_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), TOKEN_SCOPES)
     )
+    # An explicitly approved operator.admin upgrade survives an OpenShell
+    # rebuild in the canonical OpenClaw state volume. Recognize that one exact,
+    # already-settled shape as healthy state. This observer never approves or
+    # expands scopes; pending admin requests remain rejected by the approval
+    # policy above.
+    admin_settled = (
+        exact_string_set(paired_device.get('scopes'), ADMIN_REQUEST_SCOPES)
+        and exact_string_set(paired_device.get('approvedScopes'), ADMIN_REQUEST_SCOPES)
+        and exact_string_set(paired_operator.get('scopes'), ADMIN_PAIRED_TOKEN_SCOPES)
+        and exact_string_set(auth_operator.get('scopes'), ADMIN_AUTH_TOKEN_SCOPES)
+    )
+    settled = baseline_settled or admin_settled
     pairing_only = (
         exact_string_set(paired_device.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(paired_device.get('approvedScopes'), PAIRING_ONLY_SCOPES)
@@ -770,6 +785,9 @@ try:
         : "if not settled:\n        reject()"
     }
 
+    projected_request_scopes = ADMIN_REQUEST_SCOPES if admin_settled else REQUEST_SCOPES
+    projected_paired_token_scopes = ADMIN_PAIRED_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
+    projected_auth_token_scopes = ADMIN_AUTH_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
     projection = {
         'deviceIdentitySha256': device_identity_sha256,
         # Bind only the allowlisted security projection. Token values, unknown
@@ -781,18 +799,18 @@ try:
             'clientId': 'cli',
             'clientMode': 'cli',
             'roles': REQUIRED_ROLES,
-            'pairedRequestScopes': REQUEST_SCOPES,
-            'approvedRequestScopes': REQUEST_SCOPES,
+            'pairedRequestScopes': projected_request_scopes,
+            'approvedRequestScopes': projected_request_scopes,
             'pairedToken': {
                 'active': True,
                 'role': 'operator',
-                'scopes': TOKEN_SCOPES,
+                'scopes': projected_paired_token_scopes,
             },
             'clientAuth': {
                 'deviceId': device_id,
                 'matchesPairedToken': True,
                 'role': 'operator',
-                'scopes': TOKEN_SCOPES,
+                'scopes': projected_auth_token_scopes,
                 'version': 1,
             },
             'relevantPending': False,

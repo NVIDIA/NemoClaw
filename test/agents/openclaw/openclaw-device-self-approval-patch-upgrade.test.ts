@@ -93,6 +93,44 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
     }
   });
 
+  it("adds watcher deferral to an earlier patched current gateway runtime (#9844)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-defer-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "message-handler-fixture.js");
+      const source = fs.readFileSync(file, "utf8");
+      const start = source.indexOf("\t\t\tconst nemoclawExistingScopes");
+      const marker = source.indexOf(
+        "nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher",
+        start,
+      );
+      const end = source.indexOf("\n", marker);
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(marker).toBeGreaterThan(start);
+      expect(end).toBeGreaterThan(marker);
+      fs.writeFileSync(
+        file,
+        `${source.slice(0, start)}\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;${source.slice(end)}`,
+      );
+
+      const upgrade = runPatch(dist);
+      expect(upgrade.status, `${upgrade.stdout}${upgrade.stderr}`).toBe(0);
+      const upgraded = fs.readFileSync(file, "utf8");
+      expect(
+        upgraded.match(/nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher/gu),
+      ).toHaveLength(1);
+      expect(
+        upgraded.match(/nemoclaw: route bounded CLI device-token scope upgrade into pairing/gu),
+      ).toHaveLength(1);
+      expect(runPatch(dist).status).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("migrates the restored-clone mode from the force flag", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-clone-mode-upgrade-"));
     const dist = path.join(tmp, "dist");

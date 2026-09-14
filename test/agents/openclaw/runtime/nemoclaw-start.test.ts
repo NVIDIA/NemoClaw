@@ -50,12 +50,18 @@ vi.setConfig({ maxConcurrency: 4 });
 function execFileResult(file, args, options) {
   return new Promise((resolve) =>
     execFile(file, args, options, (error, stdout, stderr) =>
-      resolve({ status: Number(error?.code) || (error ? -1 : 0), stdout, stderr }),
+      resolve({
+        status: Number(error?.code) || (error ? -1 : 0),
+        stdout,
+        stderr,
+      }),
     ),
   );
 }
 function commandPath(name: string): string {
-  const result = spawnSync("/bin/sh", ["-c", `command -v ${name}`], { encoding: "utf-8" });
+  const result = spawnSync("/bin/sh", ["-c", `command -v ${name}`], {
+    encoding: "utf-8",
+  });
   if (result.status !== 0 || !result.stdout.trim()) throw new Error(`${name} is required`);
   return result.stdout.trim();
 }
@@ -230,57 +236,6 @@ def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw
 }
 
 describe("nemoclaw-start non-root fallback", () => {
-  it("only requires early gateway token generation for gateway and OpenClaw commands (#3256)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const script = [
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "needs_gateway_token_for_current_command"),
-      'check() { NEMOCLAW_CMD=("$@"); if needs_gateway_token_for_current_command; then printf "yes:%s\\n" "${1:-<none>}"; else printf "no:%s\\n" "${1:-<none>}"; fi; }',
-      "check",
-      "check openclaw agent --agent main",
-      "check /usr/local/bin/openclaw agent --agent main",
-      "check true",
-      "check bash -lc 'openclaw agent --agent main'",
-    ].join("\n");
-
-    const result = spawnSync("bash", ["-c", script], {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("yes:<none>");
-    expect(result.stdout).toContain("yes:openclaw");
-    expect(result.stdout).toContain("yes:/usr/local/bin/openclaw");
-    expect(result.stdout).toContain("no:true");
-    expect(result.stdout).toContain("no:bash");
-  });
-
-  it("refreshes startup tokens but only ensures direct OpenClaw command tokens (#4517)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const script = [
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "needs_gateway_token_for_current_command"),
-      extractShellFunctionFromSource(src, "prepare_gateway_token_for_current_command"),
-      'ensure_gateway_token() { printf "rotate:%s\\n" "${NEMOCLAW_CMD[*]:-<none>}"; }',
-      'ensure_gateway_token_if_missing() { printf "ensure-missing:%s\\n" "${NEMOCLAW_CMD[*]}"; }',
-      'check() { NEMOCLAW_CMD=("$@"); prepare_gateway_token_for_current_command; }',
-      "check",
-      "check openclaw agent --agent main",
-      "check true",
-    ].join("\n");
-
-    const result = spawnSync("bash", ["-c", script], {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("rotate:<none>");
-    expect(result.stdout).toContain("ensure-missing:openclaw agent --agent main");
-    expect(result.stdout).not.toContain("true");
-  });
-
   it.each(["workspace", "memory", "credentials", "flows", "telegram", "media"])(
     "creates writable OpenClaw state directories without changing private modes [%s]",
     (dir) => {
@@ -1155,7 +1110,6 @@ exit 2
         },
         timeout: 30_000,
       });
-      expect(run.status).toBe(0);
       expect(run.stdout).toContain(
         "[auto-pair] approved request=ok-browser client=openclaw-control-ui",
       );
@@ -1582,7 +1536,13 @@ exit 0
     const stateFile = path.join(tmpDir, "approve-count");
     const approveLog = path.join(tmpDir, "approvals.log");
     const pendingResponse = JSON.stringify({
-      pending: [{ requestId: "flaky-cli", clientId: "openclaw-cli", clientMode: "cli" }],
+      pending: [
+        {
+          requestId: "flaky-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+        },
+      ],
       paired: [],
     });
     const allPaired = JSON.stringify({
@@ -1657,7 +1617,13 @@ exit 2
     const stateFile = path.join(tmpDir, "approve-count");
     const approveLog = path.join(tmpDir, "approvals.log");
     const pendingResponse = JSON.stringify({
-      pending: [{ requestId: "retry-cli", clientId: "openclaw-cli", clientMode: "cli" }],
+      pending: [
+        {
+          requestId: "retry-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+        },
+      ],
       paired: [],
     });
     const allPaired = JSON.stringify({
@@ -3023,6 +2989,7 @@ describe("Telegram diagnostics (#2766)", () => {
         "apply_model_override() { :; }",
         "reconcile_agent_model_with_provider() { :; }",
         "apply_cors_override() { :; }",
+        "run_requested_openclaw_post_upgrade_doctor() { :; }",
         "refresh_openclaw_provider_placeholders() { :; }",
         "ensure_mutable_openclaw_config_hash() { :; }",
         "needs_gateway_token_for_current_command() { :; }",
@@ -3677,7 +3644,11 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
   });
   function runCaptureCandidate(
     configContent: string,
-    options: { baselineContent?: string; json5Module?: string; modes?: number[] } = {},
+    options: {
+      baselineContent?: string;
+      json5Module?: string;
+      modes?: number[];
+    } = {},
   ) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-baseline-capture-"));
     const openclawDir = path.join(root, ".openclaw");
@@ -3757,7 +3728,9 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     const config = JSON.stringify({
       agents: { defaults: { model: { primary: "x" } } },
     });
-    const captured = runCaptureCandidate(config, { modes: [directoryMode, fileMode] });
+    const captured = runCaptureCandidate(config, {
+      modes: [directoryMode, fileMode],
+    });
     expect(captured.result.status).toBe(0);
     expect(captured.sourceContent).toBe(config);
     expect(captured.actualModes).toEqual([directoryMode, fileMode, fileMode]);

@@ -1898,9 +1898,9 @@ RUN set -eu; \
         || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
     [ ! -e "$exec_approvals" ] || [ "$(stat -c '%h' "$exec_approvals")" = "1" ] \
         || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
-    touch "$exec_approvals"; \
-    chown sandbox:sandbox "$exec_approvals"; \
-    chmod 660 "$exec_approvals"; \
+    [ ! -e "$exec_approvals" ] || [ ! -s "$exec_approvals" ] \
+        || { echo "ERROR: refusing populated legacy OpenClaw exec approvals: $exec_approvals" >&2; exit 1; }; \
+    rm -f "$exec_approvals"; \
     for file in \
         "$config_dir/state/openclaw.sqlite" \
         "$config_dir/state/openclaw.sqlite-wal" \

@@ -49,7 +49,48 @@ function createPluginIndexDatabase(dbPath: string, records: unknown): void {
   execFileSync("python3", ["-c", CREATE_PLUGIN_INDEX_SQLITE_PY, dbPath, JSON.stringify(records)]);
 }
 
+const CREATE_MACHINE_STATE_SQLITE_PY = [
+  "import json, sqlite3, sys",
+  "conn = sqlite3.connect(sys.argv[1])",
+  "conn.execute('CREATE TABLE config_machine_state (state_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at_ms INTEGER NOT NULL) STRICT')",
+  "value = json.loads(sys.argv[2])",
+  "if value is not None: conn.execute('INSERT INTO config_machine_state VALUES (?, ?, ?)', ('plugins.installedIndex', json.dumps(value), 1))",
+  "conn.commit()",
+  "conn.close()",
+].join("\n");
+
+function createMachineStateDatabase(dbPath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  execFileSync("python3", ["-c", CREATE_MACHINE_STATE_SQLITE_PY, dbPath, JSON.stringify(value)]);
+}
+
 describe("buildFreshOpenClawPluginIndexSqliteReadCommand", () => {
+  it("reads the canonical OpenClaw 2026.9.1 machine-state install index", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-index-"));
+    try {
+      const dbPath = path.join(root, "state", "openclaw.sqlite");
+      const records = { weather: install(`${OPENCLAW_DIR}/extensions/weather`) };
+      createMachineStateDatabase(dbPath, {
+        revision: 1,
+        index: { version: 1, installRecords: records },
+      });
+      writeOpenClawConfig(root, ["/opt/weather"]);
+
+      const stdout = execFileSync(
+        "bash",
+        ["-c", buildFreshOpenClawPluginIndexSqliteReadCommand(root)],
+        { encoding: "utf8" },
+      );
+      expect(JSON.parse(stdout)).toEqual({
+        version: 1,
+        installRecords: records,
+        loadPaths: ["/opt/weather"],
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reads canonical install records from the OpenClaw SQLite index", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-index-"));
     try {
@@ -77,6 +118,45 @@ describe("buildFreshOpenClawPluginIndexSqliteReadCommand", () => {
       expect(() =>
         execFileSync("bash", ["-c", buildFreshOpenClawPluginIndexSqliteReadCommand(root)]),
       ).toThrow();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fall back to the old table when the machine-state row is absent", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-index-"));
+    try {
+      const dbPath = path.join(root, "state", "openclaw.sqlite");
+      createMachineStateDatabase(dbPath, null);
+      createPluginIndexDatabase(dbPath, {
+        stale: install(`${OPENCLAW_DIR}/extensions/stale`),
+      });
+      writeOpenClawConfig(root);
+
+      const result = spawnSync("bash", [
+        "-c",
+        buildFreshOpenClawPluginIndexSqliteReadCommand(root),
+      ]);
+      expect(result.status).toBe(12);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for a malformed machine-state install index", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-index-"));
+    try {
+      createMachineStateDatabase(path.join(root, "state", "openclaw.sqlite"), {
+        revision: 1,
+        index: { version: 1 },
+      });
+      writeOpenClawConfig(root);
+
+      const result = spawnSync("bash", [
+        "-c",
+        buildFreshOpenClawPluginIndexSqliteReadCommand(root),
+      ]);
+      expect(result.status).toBe(12);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -72,9 +72,18 @@ const OPENCLAW_PLUGIN_INDEX_SQLITE_PY = [
   "try:",
   '    conn.execute("PRAGMA query_only=ON")',
   '    conn.execute("PRAGMA busy_timeout=30000")',
-  "    row = conn.execute(\"SELECT install_records_json FROM installed_plugin_index WHERE index_key = 'installed-plugin-index'\").fetchone()",
-  "    if not row or not row[0]: raise SystemExit(12)",
-  "    records = json.loads(row[0])",
+  "    tables = {row[0] for row in conn.execute(\"SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('config_machine_state', 'installed_plugin_index')\")}",
+  "    if 'config_machine_state' in tables:",
+  "        row = conn.execute(\"SELECT value_json FROM config_machine_state WHERE state_key = 'plugins.installedIndex'\").fetchone()",
+  "        if not row or not row[0]: raise SystemExit(12)",
+  "        persisted = json.loads(row[0])",
+  "        index = persisted.get('index') if isinstance(persisted, dict) else None",
+  "        if not isinstance(index, dict) or index.get('version') != 1 or 'installRecords' not in index: raise SystemExit(12)",
+  "        records = index['installRecords']",
+  "    else:",
+  "        row = conn.execute(\"SELECT install_records_json FROM installed_plugin_index WHERE index_key = 'installed-plugin-index'\").fetchone()",
+  "        if not row or not row[0]: raise SystemExit(12)",
+  "        records = json.loads(row[0])",
   "    with open(sys.argv[2], 'r', encoding='utf-8') as config_file: config = json.load(config_file)",
   "    plugins = config.get('plugins') if isinstance(config, dict) else None",
   "    load = plugins.get('load') if isinstance(plugins, dict) else None",
@@ -139,7 +148,8 @@ function readFreshOpenClawPluginInstallIndex(
   sandboxName: string,
   dir: string,
 ): ReturnType<typeof spawnSync> {
-  // OpenClaw 2026.6.10 moved install records into its shared SQLite state.
+  // OpenClaw 2026.6.10 moved install records into its shared SQLite state;
+  // 2026.9.1 moved the canonical index to config_machine_state.
   // Fall back only when that database is absent so a corrupt/incomplete
   // canonical index cannot be masked by stale legacy JSON.
   const sqliteResult = spawnSync(

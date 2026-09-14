@@ -8,11 +8,11 @@ import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import * as sandboxVersion from "../../sandbox/version";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
-import * as processRecovery from "./process-recovery";
 import * as rebuildConfigHash from "./rebuild-config-hash";
 import * as rebuildHermesPostRestore from "./rebuild-hermes-post-restore";
 import * as rebuildMcp from "./rebuild-mcp-phase";
 import * as rebuildMessaging from "./rebuild-messaging-phase";
+import * as processRecovery from "./process-recovery";
 import {
   printHermesOperatorConfigRestoreReport,
   runRebuildPostRestorePhase,
@@ -46,9 +46,9 @@ describe("rebuild post-restore phase", () => {
           runtime: { kind: runtimeKindByAgent[agentName] },
         }) as never,
     );
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockImplementation(async () => {
+    vi.spyOn(processRecovery, "runOpenClawPostRestoreDoctor").mockImplementation(async () => {
       order.push("doctor");
-      return { status: 0, stdout: "", stderr: "" };
+      return { ok: true };
     });
     vi.spyOn(sessionModels, "reconcileStalePinnedSessionModelsAfterRebuild").mockImplementation(
       async () => {
@@ -171,11 +171,9 @@ describe("rebuild post-restore phase", () => {
       "host-forward",
       "config-hash-final",
     ]);
-    expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledExactlyOnceWith(
+    expect(processRecovery.runOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
       "alpha",
-      "openclaw doctor --fix",
-      300_000,
-      { localDockerFallbackPolicy: "never" },
+      undefined,
     );
   });
 
@@ -254,11 +252,9 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledWith(
+    expect(processRecovery.runOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
       "alpha",
-      "openclaw doctor --fix",
-      300_000,
-      { localDockerFallbackPolicy: "never", runtimeSelection },
+      runtimeSelection,
     );
     expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).toHaveBeenCalledWith(
       "alpha",
@@ -305,7 +301,11 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("does not record a final hash without trusted doctor completion (#9946)", async () => {
-    vi.mocked(processRecovery.executeSandboxExecCommand).mockResolvedValue(null);
+    vi.mocked(processRecovery.runOpenClawPostRestoreDoctor).mockResolvedValue({
+      ok: false,
+      stage: "restart",
+      detail: "completion unverified",
+    });
     const args = input();
 
     await runRebuildPostRestorePhase(args);
@@ -317,10 +317,10 @@ describe("rebuild post-restore phase", () => {
     expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
     expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith(
-      "OpenClaw post-upgrade structure repair completion was not verified after rebuild.",
+      "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).toContain("Post-upgrade structure repair completion was not verified");
+    expect(output).toContain("Post-upgrade structure repair failed during sandbox restart");
     expect(output).not.toContain("rebuilt successfully");
   });
 
@@ -341,11 +341,11 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("rebuilt successfully");
   });
 
-  it("stops before later writes when doctor exits nonzero (#9946)", async () => {
-    vi.mocked(processRecovery.executeSandboxExecCommand).mockResolvedValue({
-      status: 255,
-      stdout: "",
-      stderr: "",
+  it("stops before later writes when the doctor restart fails (#9946)", async () => {
+    vi.mocked(processRecovery.runOpenClawPostRestoreDoctor).mockResolvedValue({
+      ok: false,
+      stage: "restart",
+      detail: "sensitive doctor output",
     });
     const args = input();
 
@@ -366,7 +366,8 @@ describe("rebuild post-restore phase", () => {
       "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).toContain("Post-upgrade structure repair failed (doctor returned 255)");
+    expect(output).toContain("Post-upgrade structure repair failed during sandbox restart");
+    expect(output).not.toContain("sensitive doctor output");
     expect(output).not.toContain("rebuilt successfully");
   });
 
@@ -391,9 +392,9 @@ describe("rebuild post-restore phase", () => {
 
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {
     let configHashValid = true;
-    vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(async () => {
+    vi.mocked(processRecovery.runOpenClawPostRestoreDoctor).mockImplementation(async () => {
       configHashValid = false;
-      return { status: 0, stdout: "sensitive doctor output", stderr: "" };
+      return { ok: true };
     });
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -439,7 +440,7 @@ describe("rebuild post-restore phase", () => {
 
     expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
-    expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
+    expect(processRecovery.runOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
     expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
   });

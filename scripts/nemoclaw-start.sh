@@ -440,8 +440,52 @@ emit_startup_error() {
   fi
 }
 
-# Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
+_read_configured_gateway_port() {
+  local node_bin config_path="${1:-/sandbox/.openclaw/openclaw.json}"
+  node_bin="$(command -v node 2>/dev/null)" || return 1
+  "$node_bin" - "$config_path" <<'NODEPORT'
+const fs = require("fs");
+const path = process.argv[2];
+
+function parseConfig(text) {
+  try {
+    return JSON.parse(text);
+  } catch (jsonError) {
+    try {
+      return require("/opt/nemoclaw/node_modules/json5").parse(text);
+    } catch {
+      throw jsonError;
+    }
+  }
+}
+
+try {
+  const port = parseConfig(fs.readFileSync(path, "utf8"))?.gateway?.port;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) process.exit(1);
+  process.stdout.write(String(port));
+} catch {
+  process.exit(1);
+}
+NODEPORT
+}
+
+# Validate the selected dashboard port (same behavior as ports.js: fail fast).
 _DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
+_DASHBOARD_PORT_SOURCE="NEMOCLAW_DASHBOARD_PORT"
+# OpenShell exec sessions inherit the live gateway port from the runtime shell
+# environment, but do not replay the sandbox-create-only NEMOCLAW_DASHBOARD_PORT.
+# Preserve an inherited port for one-shot commands. Direct OpenShell exec does
+# not always import the runtime shell environment, so fall back to the port in
+# the already-running gateway's config before using the baked default.
+if [ -z "$_DASHBOARD_PORT_RAW" ] && [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
+  if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
+    _DASHBOARD_PORT_RAW="$OPENCLAW_GATEWAY_PORT"
+    _DASHBOARD_PORT_SOURCE="OPENCLAW_GATEWAY_PORT"
+  elif _CONFIGURED_GATEWAY_PORT="$(_read_configured_gateway_port)"; then
+    _DASHBOARD_PORT_RAW="$_CONFIGURED_GATEWAY_PORT"
+    _DASHBOARD_PORT_SOURCE="openclaw.json gateway.port"
+  fi
+fi
 if [ -z "$_DASHBOARD_PORT_RAW" ]; then
   if _CHAT_UI_PORT="$(_chat_ui_url_port)"; then
     _DASHBOARD_PORT="$_CHAT_UI_PORT"
@@ -460,7 +504,7 @@ else
     _DASHBOARD_PORT_VALID=0
   fi
   if [ "$_DASHBOARD_PORT_VALID" -ne 1 ]; then
-    emit_startup_error "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535"
+    emit_startup_error "[SECURITY] Invalid ${_DASHBOARD_PORT_SOURCE}='${_DASHBOARD_PORT_RAW}' — must be an integer between 1024 and 65535"
     exit 1
   fi
 fi
@@ -3013,6 +3057,12 @@ def canonical_cli_baseline_settled(paired, pending):
         local_device_id, local_public_key = _local_device_identity()
     except (OSError, ValueError, RuntimeError, binascii.Error, sqlite3.Error):
         return False
+    baseline_request_scopes = {'operator.pairing', 'operator.write'}
+    baseline_token_scopes = {'operator.pairing', 'operator.read', 'operator.write'}
+    admin_request_scopes = {'operator.admin', 'operator.pairing', 'operator.write'}
+    admin_token_scopes = {
+        'operator.admin', 'operator.pairing', 'operator.read', 'operator.write',
+    }
     candidates = [
         device for device in paired
         if isinstance(device, dict)
@@ -3022,13 +3072,29 @@ def canonical_cli_baseline_settled(paired, pending):
         and device.get('clientMode') == 'cli'
         and device.get('role') == 'operator'
         and exact_string_set(device.get('roles'), {'operator'})
-        and exact_string_set(device.get('scopes'), {'operator.pairing', 'operator.write'})
-        and exact_string_set(device.get('approvedScopes'), {'operator.pairing', 'operator.write'})
+        and (
+            (
+                exact_string_set(device.get('scopes'), baseline_request_scopes)
+                and exact_string_set(device.get('approvedScopes'), baseline_request_scopes)
+            )
+            or (
+                # An explicit admin approval can persist across a rebuild.
+                # Recognizing its exact settled shape only controls polling;
+                # the watcher still never approves operator.admin requests.
+                exact_string_set(device.get('scopes'), admin_request_scopes)
+                and exact_string_set(device.get('approvedScopes'), admin_request_scopes)
+            )
+        )
     ]
     if len(candidates) != 1:
         return False
     device = candidates[0]
     device_id = str(device.get('deviceId', '') or '').strip()
+    expected_token_scopes = (
+        admin_token_scopes
+        if exact_string_set(device.get('scopes'), admin_request_scopes)
+        else baseline_token_scopes
+    )
     tokens = device.get('tokens')
     operator = tokens.get('operator') if isinstance(tokens, dict) and set(tokens) == {'operator'} else None
     if (
@@ -3036,10 +3102,7 @@ def canonical_cli_baseline_settled(paired, pending):
         or not isinstance(operator, dict)
         or operator.get('role') != 'operator'
         or operator.get('revokedAtMs') is not None
-        or not exact_string_set(
-            operator.get('scopes'),
-            {'operator.pairing', 'operator.read', 'operator.write'},
-        )
+        or not exact_string_set(operator.get('scopes'), expected_token_scopes)
     ):
         return False
     return not any(
@@ -5757,6 +5820,75 @@ handle_openclaw_gateway_control_request() {
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
 
+# OpenShell confines newly-created SQLite temporary files more narrowly than
+# ordinary container execution. FTS5 schema initialization otherwise falls
+# back to a denied host temporary directory and reports the misleading error
+# "unable to open database file". Keep only SQLite's temporary files inside
+# the agent-owned OpenClaw state tree; do not redirect unrelated process temp
+# files.
+prepare_openshell_sqlite_tmpdir() {
+  local sqlite_tmpdir="${1:-/sandbox/.openclaw/tmp}"
+  if [ -L "$sqlite_tmpdir" ] || { [ -e "$sqlite_tmpdir" ] && [ ! -d "$sqlite_tmpdir" ]; }; then
+    echo "[SECURITY] Refusing unsafe OpenClaw SQLite temporary directory: $sqlite_tmpdir" >&2
+    return 1
+  fi
+  mkdir -p "$sqlite_tmpdir" || return 1
+  if [ "$(stat -c '%u' "$sqlite_tmpdir" 2>/dev/null)" != "$(id -u)" ]; then
+    echo "[SECURITY] OpenClaw SQLite temporary directory is not owned by the runtime user: $sqlite_tmpdir" >&2
+    return 1
+  fi
+  chmod 700 "$sqlite_tmpdir" || return 1
+  export SQLITE_TMPDIR="$sqlite_tmpdir"
+}
+
+run_requested_openclaw_post_upgrade_doctor() {
+  local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
+  local expected="nemoclaw-openclaw-post-upgrade-doctor-v1"
+  local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
+
+  if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+    return 0
+  fi
+  [ -f "$marker" ] && [ ! -L "$marker" ] || {
+    echo "[SECURITY] Refusing unsafe post-upgrade doctor marker" >&2
+    return 1
+  }
+  marker_metadata="$(stat -c '%u %a %h' "$marker" 2>/dev/null)" || return 1
+  read -r marker_owner marker_mode marker_links <<EOF
+$marker_metadata
+EOF
+  [ "$marker_owner" = "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
+    && [ "$marker_mode" = "600" ] \
+    && [ "$marker_links" = "1" ] || {
+    echo "[SECURITY] Refusing untrusted post-upgrade doctor marker" >&2
+    return 1
+  }
+  {
+    IFS= read -r marker_value || return 1
+    if IFS= read -r extra || [ -n "$extra" ]; then
+      return 1
+    fi
+  } <"$marker" || return 1
+  [ "$marker_value" = "$expected" ] || {
+    echo "[SECURITY] Refusing invalid post-upgrade doctor marker" >&2
+    return 1
+  }
+
+  echo "[setup] running requested OpenClaw post-upgrade doctor before gateway launch" >&2
+  if [ "$(id -u)" -eq 0 ]; then
+    "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" \
+      "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
+  else
+    "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
+  fi
+  # Doctor may restore OpenClaw's owner-only defaults. Reapply NemoClaw's
+  # topology-aware mutable modes before the root topology launches its
+  # separate gateway user, and keep the request retryable if that fails.
+  normalize_mutable_config_perms || return 1
+  rm -f -- "$marker" || return 1
+  echo "[setup] OpenClaw post-upgrade doctor completed" >&2
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # OpenClaw 2026.9.1 enforces owner-only SQLite and models-file modes on every
@@ -5768,6 +5900,7 @@ if [ "$(id -u)" -eq 0 ]; then
   export NEMOCLAW_OPENCLAW_SHARED_STATE=1
 else
   unset NEMOCLAW_OPENCLAW_SHARED_STATE
+  prepare_openshell_sqlite_tmpdir || exit 1
 fi
 
 # Begin the root PID 1 readiness lease before any startup path reads or mutates
@@ -5835,6 +5968,7 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 
   configure_messaging_channels
+  run_requested_openclaw_post_upgrade_doctor || exit 1
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
   write_openclaw_config_baseline
@@ -5963,6 +6097,7 @@ apply_model_override
 reconcile_agent_model_with_provider
 apply_cors_override
 configure_messaging_channels
+run_requested_openclaw_post_upgrade_doctor || exit 1
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash
 prepare_gateway_token_for_current_command

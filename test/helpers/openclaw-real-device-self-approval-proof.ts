@@ -2323,8 +2323,10 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   const sources = readDistSources(options.dist);
   for (const marker of [
     "nemoclaw: force device identity for loopback pairing bootstrap",
+    "nemoclaw: persist canonical CLI bootstrap credential",
     "nemoclaw: reach gateway for bounded same-device scope approval",
     "nemoclaw: route bounded CLI device-token scope upgrade into pairing",
+    "nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher",
     "nemoclaw: bounded same-device scope approval",
     "nemoclaw: validate bounded self-approval inside pairing lock",
     'CLI: "cli"',

@@ -642,6 +642,7 @@ async function resolveConnectAuthDecisionCore(params) {
   }
   return finish();
 }
+
 async function resolveConnectAuthDecision(params) { return resolveConnectAuthDecisionCore(params); }
 async function connect(connectParams, verifyDeviceToken) {
   const role = connectParams.role;
@@ -665,6 +666,45 @@ async function connect(connectParams, verifyDeviceToken) {
     verifyDeviceToken: async (paramsLocal) => await verifyDeviceToken(paramsLocal)
   });
   return authDecision;
+}
+`);
+}
+
+function gatewayAuthSqliteFixture(): string {
+  return compiledIndent(`
+const GATEWAY_CLIENT_IDS = { CLI: "cli" };
+const GATEWAY_CLIENT_MODES = { CLI: "cli" };
+const connectParams = { client: { id: "cli", mode: "cli" } };
+const clientId = connectParams.client.id;
+async function verifyDeviceToken() { return { ok: false, reason: "scope-mismatch" }; }
+const authDeps = {
+    async verifyDeviceToken(paramsLocal) {
+      return await verifyDeviceToken({
+        ...paramsLocal,
+        requiredSharedGatewaySessionGeneration: getRequiredSharedGatewaySessionGeneration?.()
+      });
+    }
+};
+function getRequiredSharedGatewaySessionGeneration() { return 1; }
+function normalizeSortedUniqueTrimmedStringList(values) {
+  return [...new Set((values ?? []).map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean))].sort();
+}
+function resolvePairedAccessScopes(device) { return device?.scopes ?? []; }
+function shouldAttemptInlineApproval(input) {
+  const {
+    authMethod,
+    connectParams,
+    devicePublicKey,
+    existingPairedDevice,
+    pairing,
+    plan,
+    reason,
+    role,
+    scopes,
+    trustedProxyApprovalScopes,
+  } = input;
+      const inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;
+  return inlineApprovalAttempted;
 }
 `);
 }
@@ -901,7 +941,7 @@ export function writeFixtureDist(dist: string): void {
 export function writeCurrentGatewayCallFixtureDist(dist: string): void {
   fs.writeFileSync(path.join(dist, "call-current-fixture.js"), currentGatewayCallFixture());
   fs.writeFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), cliFixture());
-  fs.writeFileSync(path.join(dist, "message-handler-fixture.js"), gatewayAuthFixture());
+  fs.writeFileSync(path.join(dist, "message-handler-fixture.js"), gatewayAuthSqliteFixture());
   fs.writeFileSync(path.join(dist, "devices-fixture.js"), handlerFixture());
   fs.writeFileSync(path.join(dist, "device-pairing-fixture.js"), stateFixture());
 }

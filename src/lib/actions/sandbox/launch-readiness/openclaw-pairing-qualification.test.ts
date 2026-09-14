@@ -37,7 +37,10 @@ const PYTHON3_AVAILABLE =
   spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0;
 const OPENSSL_ED25519_AVAILABLE =
   spawnSync("/usr/bin/openssl", ["pkey", "-pubout", "-outform", "DER"], {
-    input: generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }),
+    input: generateKeyPairSync("ed25519").privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    }),
     stdio: ["pipe", "ignore", "ignore"],
   }).status === 0;
 type PairedFixture = Record<
@@ -51,7 +54,9 @@ type PairedFixture = Record<
     [key: string]: unknown;
   }
 >;
-type AuthFixture = { tokens: { operator: { token: string; scopes: string[] } } };
+type AuthFixture = {
+  tokens: { operator: { token: string; scopes: string[] } };
+};
 const POLICY = `
 ALLOWED_CLIENTS = {'cli', 'openclaw-cli', 'openclaw-control-ui'}
 ALLOWED_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
@@ -83,6 +88,9 @@ function writeSqlitePairingState(
     privateKeyPem: string;
     token?: string;
     scopes?: readonly string[];
+    pairedScopes?: readonly string[];
+    pairedTokenScopes?: readonly string[];
+    authScopes?: readonly string[];
     pending?: Record<string, unknown>[];
     userVersion?: number;
   },
@@ -90,10 +98,15 @@ function writeSqlitePairingState(
   const scopes = fixture.scopes ?? OPENCLAW_PAIRING_REQUIRED_SCOPES;
   const token = fixture.token ?? TOKEN;
   const pairedScopes =
-    scopes.length === 1 ? ["operator.pairing"] : [...OPENCLAW_PAIRING_REQUEST_SCOPES];
+    fixture.pairedScopes ??
+    (scopes.length === 1 ? ["operator.pairing"] : [...OPENCLAW_PAIRING_REQUEST_SCOPES]);
+  const pairedTokenScopes = fixture.pairedTokenScopes ?? scopes;
+  const authScopes = fixture.authScopes ?? scopes;
   const payload = {
     ...fixture,
     pairedScopes,
+    pairedTokenScopes,
+    authScopes,
     scopes,
     token,
     publicKeyPem: publicKeyPem(ED25519_SPKI_PREFIX, Buffer.from(fixture.publicKey, "base64url")),
@@ -204,7 +217,7 @@ operator = {
   'operator': {
     'token': value['token'],
     'role': 'operator',
-    'scopes': value['scopes'],
+    'scopes': value['pairedTokenScopes'],
   },
 }
 connection.execute(
@@ -218,7 +231,7 @@ connection.execute(
 )
 connection.execute(
   'INSERT INTO device_auth_tokens VALUES (?, ?, ?, ?, ?)',
-  (value['deviceId'], 'operator', value['token'], json.dumps(value['scopes']), 1),
+  (value['deviceId'], 'operator', value['token'], json.dumps(value['authScopes']), 1),
 )
 for request in value.get('pending') or []:
   connection.execute(
@@ -257,14 +270,23 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-qualification-"));
     stateDirectory = path.join(root, ".openclaw");
-    fs.mkdirSync(path.join(stateDirectory, "devices"), { mode: 0o2770, recursive: true });
-    fs.mkdirSync(path.join(stateDirectory, "identity"), { mode: 0o2770, recursive: true });
+    fs.mkdirSync(path.join(stateDirectory, "devices"), {
+      mode: 0o2770,
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(stateDirectory, "identity"), {
+      mode: 0o2770,
+      recursive: true,
+    });
     stateDirectory = fs.realpathSync(stateDirectory);
     fs.chmodSync(stateDirectory, 0o2770);
     fs.chmodSync(path.join(stateDirectory, "devices"), 0o2770);
     fs.chmodSync(path.join(stateDirectory, "identity"), 0o2770);
     const keyPair = generateKeyPairSync("ed25519");
-    const publicKeyDer = keyPair.publicKey.export({ type: "spki", format: "der" });
+    const publicKeyDer = keyPair.publicKey.export({
+      type: "spki",
+      format: "der",
+    });
     const publicKeyBytes = publicKeyDer.subarray(ED25519_SPKI_PREFIX.length);
     publicKey = publicKeyBytes.toString("base64url");
     deviceId = createHash("sha256").update(publicKeyBytes).digest("hex");
@@ -399,7 +421,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     const sqliteIt = it.skipIf(!OPENSSL_ED25519_AVAILABLE);
 
     it("rejects a database swapped only while sqlite3.connect reopens its pathname", () => {
-      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+      });
       const databasePath = checkpointSqlitePairingState(stateDirectory);
       const attackerPath = path.join(root, "attacker.sqlite");
       fs.copyFileSync(databasePath, attackerPath);
@@ -439,7 +465,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it("rejects WAL and SHM swapped only while SQLite performs its first read", () => {
-      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+      });
       const databasePath = path.join(stateDirectory, "state", "openclaw.sqlite");
       const walPath = `${databasePath}-wal`;
       const sharedMemoryPath = `${databasePath}-shm`;
@@ -494,7 +524,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     sqliteIt(
       "qualifies committed WAL state without consulting legacy JSON or mutating DB/WAL",
       () => {
-        writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+        writeSqlitePairingState(stateDirectory, {
+          deviceId,
+          publicKey,
+          privateKeyPem,
+        });
         const database = path.join(stateDirectory, "state", "openclaw.sqlite");
         const walProof = spawnSync(
           "python3",
@@ -528,6 +562,24 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       },
     );
 
+    sqliteIt("qualifies the exact persisted admin-upgraded CLI state", () => {
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+        pairedScopes: ["operator.admin", "operator.pairing", "operator.write"],
+        pairedTokenScopes: [
+          "operator.admin",
+          "operator.pairing",
+          "operator.read",
+          "operator.write",
+        ],
+        authScopes: ["operator.admin", "operator.read", "operator.write"],
+      });
+
+      expect(observeSettlement()).toMatchObject({ state: "settled" });
+    });
+
     it("rejects an unsupported authoritative SQLite schema version", () => {
       writeSqlitePairingState(stateDirectory, {
         deviceId,
@@ -542,7 +594,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it("rejects invalid native identity timestamps", () => {
-      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+      });
       updateSqlitePairingState(stateDirectory, "UPDATE device_identities SET created_at_ms = -1");
 
       expect(() => observe()).toThrow("OpenClaw pairing qualification is unavailable");
@@ -563,7 +619,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     sqliteIt("treats an unavailable OpenSSL binary as a terminal qualification failure", () => {
-      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+      });
       const spawnWithoutOpenSsl = (
         _binary: string,
         _args: readonly string[],
@@ -593,7 +653,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it("retries a nonempty WAL without SHM instead of creating the missing sidecar", () => {
-      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+      });
       const sqliteStateDirectory = path.join(stateDirectory, "state");
       const sharedMemoryPath = path.join(sqliteStateDirectory, "openclaw.sqlite-shm");
       fs.rmSync(sharedMemoryPath);
@@ -628,7 +692,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it("rejects an unsafe authoritative SQLite database instead of reading legacy state", () => {
-      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+      });
       fs.chmodSync(path.join(stateDirectory, "state", "openclaw.sqlite"), 0o666);
 
       expect(() => observe()).toThrow("OpenClaw pairing qualification is unavailable");
@@ -1304,7 +1372,10 @@ process.stdout.write("{}\\n");
         () => {
           const pairedPath = path.join(stateDirectory, "devices", "paired.json");
           const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
-          paired.duplicate = { ...paired[deviceId]!, deviceId: "different-device" };
+          paired.duplicate = {
+            ...paired[deviceId]!,
+            deviceId: "different-device",
+          };
           writeJson(pairedPath, paired);
         },
       ],

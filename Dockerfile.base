@@ -332,7 +332,6 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
         /sandbox/.openclaw/state \
         /sandbox/.openclaw/telegram \
         /sandbox/.openclaw/plugin-runtime-deps \
-    && touch /sandbox/.openclaw/exec-approvals.json \
     && chown -R sandbox:sandbox /sandbox/.openclaw \
     && chmod -R g+w /sandbox/.openclaw \
     && find /sandbox/.openclaw -type d -exec chmod g+s {} +
@@ -469,9 +468,9 @@ ENV JITI_FS_CACHE=false
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install OpenClaw CLI + PyYAML.
-# .openclaw is now writable by default, so exec-approvals writes to
-# ~/.openclaw/exec-approvals.json natively — no sed patch needed.
+# Install OpenClaw CLI + PyYAML. OpenClaw 2026.9.1 stores exec approvals in
+# SQLite and treats the former ~/.openclaw/exec-approvals.json as migration
+# state, so new images must not seed that legacy file.
 # Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
 # basename in a fresh directory, local-archive-only install, and cleanup.
 # hadolint ignore=DL3016
