@@ -20,6 +20,7 @@ vi.mock("./gateway-teardown-authority", () => ({
 import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
+import { observeSandboxPresenceOnGateway } from "./sandbox-recreate-probe";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import {
   fingerprintOnboardRecreateTargetIntent,
@@ -341,6 +342,16 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
   });
 
+  it.each([
+    `Error: code: 'Internal error', message: "h2 protocol error"`,
+    `Error: code: 'Permission denied', message: "sandbox has no spec"`,
+    `Error: code: 'Internal error', message: "sandbox has no spec"\nconnection refused`,
+  ])("does not inventory an unrelated or mixed diagnostic [case %#]", (stderr) => {
+    mocks.captureOpenshell.mockReturnValue({ status: 1, output: "", stdout: "", stderr });
+    expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
+    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed when the gateway reports neither a live sandbox nor explicit absence", () => {
     mocks.captureOpenshell.mockReturnValue({
       status: 1,
@@ -358,12 +369,17 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     );
   });
 
-  it("uses structured inventory when a gateway upgrade cannot read the legacy config", () => {
+  it.each([
+    'status: Internal, message: "sandbox has no spec", details: []',
+    `Error: code: 'Internal error', message: "sandbox has no spec"`,
+    `Error:   × code: 'Internal error', message: "sandbox has no spec"\n`,
+    `Error:   × code: 'Internal error',\n  │ message: "sandbox has no spec"\n`,
+  ])("journals retained legacy identity for the OpenShell diagnostic [case %#]", (diagnostic) => {
     const configFailure = {
       status: 1,
       output: "",
       stdout: "",
-      stderr: 'status: Internal, message: "sandbox has no spec", details: []',
+      stderr: diagnostic,
     };
     mocks.captureOpenshell
       .mockReturnValueOnce(configFailure)
@@ -381,6 +397,46 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
       expect.objectContaining({ timeout: 15_000 }),
     );
+  });
+
+  it.each([
+    'status: Internal, message: "sandbox has no spec", details: []',
+    `Error: code: 'Internal error', message: "sandbox has no spec"`,
+  ])("retains recovery state when a config failure cannot prove absence [case %#]", (stderr) => {
+    mocks.captureOpenshell.mockReturnValue({ status: 1, output: "", stdout: "", stderr });
+    expect(() =>
+      observeSandboxPresenceOnGateway({ sandboxName: "alpha", gatewayName: "nemoclaw-9090" }),
+    ).toThrow(/neither a live sandbox nor explicit absence/);
+  });
+
+  it("keeps a retained legacy sandbox present for recovery retirement", () => {
+    mocks.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      })
+      .mockReturnValueOnce(listedPresentProbe("Stopped"));
+    expect(
+      observeSandboxPresenceOnGateway({ sandboxName: "alpha", gatewayName: "nemoclaw-9090" }),
+    ).toBe("present");
+  });
+
+  it.each([
+    { status: 1, stdout: "", stderr: "transport error" },
+    { status: 0, stdout: "malformed-json", stderr: "" },
+  ])("reports inconclusive inventory without exposing its output [case %#]", (inventory) => {
+    mocks.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      })
+      .mockReturnValueOnce({ ...inventory, output: "credential-canary" });
+    expect(() => open()).toThrow(/Legacy config is unreadable; inventory=unknown/);
+    expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
   });
 
   it("does not infer deletion from an empty inventory after a config read fails", () => {

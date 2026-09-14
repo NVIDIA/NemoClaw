@@ -51,8 +51,14 @@ export type SandboxRecreateCapture = typeof captureOpenshell;
  */
 function isSandboxHasNoSpecGatewayOutput(output: string): boolean {
   const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
-  return /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i.test(
-    clean,
+  const structured = clean.replace(/\n\s*│\s*/g, " ");
+  return (
+    /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i.test(
+      clean,
+    ) ||
+    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Internal error["']\s*,\s*message:\s*["']sandbox has no spec["']$/i.test(
+      structured,
+    )
   );
 }
 
@@ -69,7 +75,6 @@ export function isExplicitMissingSandboxGatewayOutput(
   // Miette wraps long OpenShell 0.0.116 diagnostics onto a `│` continuation
   // line. Collapse only that renderer-owned boundary before exact matching.
   const structured = clean.replace(/\n\s*│\s*/g, " ");
-  if (isSandboxHasNoSpecGatewayOutput(clean)) return true;
   // OpenShell can omit the requested name from an owner-scoped lookup.
   // Require both exact structured fields so gateway/provider absence and
   // transport diagnostics remain ambiguous.
@@ -88,6 +93,36 @@ export function isExplicitMissingSandboxGatewayOutput(
   );
 }
 
+/** Resolve a retained legacy identity without treating an unreadable spec as deletion. */
+export function observeLegacySandboxOnGateway(
+  target: SandboxGatewayPresenceTarget,
+  probe: CaptureOpenshellResult,
+  capture: SandboxRecreateCapture,
+  options: Parameters<SandboxRecreateCapture>[1],
+): SandboxRecreateObservation | null {
+  const combined = `${probe.stdout ?? ""}\n${probe.stderr ?? probe.output ?? ""}`.trim();
+  if (
+    probe.error ||
+    probe.signal ||
+    probe.status === null ||
+    probe.status === 0 ||
+    !isSandboxHasNoSpecGatewayOutput(combined)
+  )
+    return null;
+  const gatewayArgs = target.gatewayName ? ["-g", target.gatewayName] : [];
+  const inventory = capture(["sandbox", "list", ...gatewayArgs, "-o", "json"], options);
+  const listed = observeOpenShellSandboxIdentity(target.sandboxName, inventory);
+  if (!inventory.error && !inventory.signal && listed.kind === "present") {
+    return {
+      state: listed.phase === "Ready" || listed.phase === "Running" ? "ready" : "not_ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(listed.id),
+    };
+  }
+  throw new Error(
+    `Cannot journal sandbox '${target.sandboxName}' replacement: gateway '${target.gatewayName}' reported neither a live sandbox nor explicit absence. Legacy config is unreadable; inventory=${listed.kind}, exit=${String(inventory.status)}, interrupted=${Boolean(inventory.error || inventory.signal)}.`,
+  );
+}
+
 /** Observe only whether the named sandbox exists on its recorded gateway. */
 export function observeSandboxPresenceOnGateway(
   target: SandboxGatewayPresenceTarget,
@@ -98,6 +133,13 @@ export function observeSandboxPresenceOnGateway(
     includeStreams: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
+  const legacy = observeLegacySandboxOnGateway(target, probe, captureOpenshell, {
+    ignoreError: true,
+    includeStderr: true,
+    includeStreams: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (legacy) return "present";
   const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
   const failedCleanly =
@@ -141,25 +183,8 @@ export function observeSandboxOnGateway(
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
   const failedCleanly =
     !probe.error && !probe.signal && probe.status !== null && probe.status !== 0;
-  if (failedCleanly && isSandboxHasNoSpecGatewayOutput(combined)) {
-    // `sandbox get` also reads the sandbox config. A gateway upgrade can retain
-    // the sandbox identity before its legacy config can be read. The structured
-    // inventory proves presence without depending on that extra config read.
-    const inventory = capture(
-      ["sandbox", "list", "-g", target.gatewayName, "-o", "json"],
-      captureOptions,
-    );
-    const listed = observeOpenShellSandboxIdentity(target.sandboxName, inventory);
-    if (listed.kind === "present") {
-      return {
-        state: listed.phase === "Ready" || listed.phase === "Running" ? "ready" : "not_ready",
-        liveIdentityFingerprint: fingerprintSandboxRecreateValue(listed.id),
-      };
-    }
-    throw new Error(
-      `Cannot journal sandbox '${target.sandboxName}' replacement: gateway '${target.gatewayName}' reported neither a live sandbox nor explicit absence.`,
-    );
-  }
+  const legacy = observeLegacySandboxOnGateway(target, probe, capture, captureOptions);
+  if (legacy) return legacy;
   if (failedCleanly && isExplicitMissingSandboxGatewayOutput(combined, target.sandboxName)) {
     return { state: "missing", liveIdentityFingerprint: null };
   }
