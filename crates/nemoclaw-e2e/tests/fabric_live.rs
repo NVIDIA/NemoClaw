@@ -214,7 +214,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     } else {
         // This is a one-shot Fabric SDK call, not a conversation injected into
         // the hosted runtime by plan/apply or a new NemoClaw invocation API.
-        exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, &agent.harness].map(String::from).to_vec()).await
+        exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1]) if sys.argv[2]=='deepagents' else configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, &agent.harness].map(String::from).to_vec()).await
     };
     fs::write(directory.join("native-response.json"), &response).unwrap();
     assert!(
