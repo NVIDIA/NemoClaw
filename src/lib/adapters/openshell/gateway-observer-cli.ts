@@ -100,15 +100,6 @@ export function createCliOpenShellGatewayObserver(
         const infoError = gatewayError(info);
         const absentInfo = missing.test(infoText);
         const absentStatus = missing.test(statusText);
-        const selectedRuntimeUnavailable =
-          request.runtimeSelection !== undefined &&
-          (activeGateway === name ||
-            (activeGateway === null && !hasGatewayDeclaration(statusText))) &&
-          (namedGateway === name || (namedGateway === null && !hasGatewayDeclaration(infoText))) &&
-          statusError?.kind === "transport" &&
-          statusError.reason === "unreachable" &&
-          infoError?.kind === "transport" &&
-          infoError.reason === "unreachable";
         // Only known absence and unreachable responses describe resource state. Other failures are not absence.
         for (const [error, absent, legacy] of [
           [statusError, absentStatus, false],
@@ -121,6 +112,20 @@ export function createCliOpenShellGatewayObserver(
           )
             return failed(error, activeGateway);
         }
+        if (
+          request.runtimeSelection &&
+          ((hasGatewayDeclaration(statusText) && activeGateway !== name) ||
+            (hasGatewayDeclaration(infoText) && namedGateway !== name))
+        ) {
+          return failed(
+            {
+              kind: "transport",
+              reason: "identity_mismatch",
+              message: "OpenShell gateway identity does not match the recorded runtime.",
+            },
+            activeGateway,
+          );
+        }
         if (connected && activeGateway === name && absentInfo) {
           return failed(
             { kind: "schema", message: "OpenShell gateway selection and metadata disagree." },
@@ -128,8 +133,7 @@ export function createCliOpenShellGatewayObserver(
           );
         }
         let state: OpenShellGatewayObservation["state"];
-        if (selectedRuntimeUnavailable) state = "named_unreachable";
-        else if (
+        if (
           !statusError &&
           connected &&
           activeGateway === name &&

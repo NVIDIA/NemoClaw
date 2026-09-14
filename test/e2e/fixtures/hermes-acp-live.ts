@@ -406,7 +406,6 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   } else if (scenarioValid && options.scenario === "client-disconnect") {
     child.stdout?.destroy();
     child.stderr?.destroy();
-    // Keep input open so the next response reaches the disconnected output consumer.
     scenarioValid = await writeRequest(input, {
       jsonrpc: "2.0",
       id: 2,

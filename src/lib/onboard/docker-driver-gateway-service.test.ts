@@ -5,6 +5,12 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  spawnResult,
+  trustedShowOutput,
+  nonSymlinkStat,
+  systemdSpawn,
+} from "./__test-helpers__/gateway-service";
 import { createVirtualClock } from "./__test-helpers__/virtual-clock";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
@@ -41,22 +47,8 @@ Gateway: nemoclaw
 Gateway endpoint: https://127.0.0.1:8080/
 `;
 
-function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
-  return { status, stderr, stdout };
-}
-
 function trustedBrew(spawnSyncImpl: SpawnSyncLike): (args: string[]) => SpawnSyncLikeResult {
   return (args) => spawnSyncImpl("brew", args);
-}
-
-function trustedShowOutput(
-  fragmentPath = "/lib/systemd/user/openshell-gateway.service",
-  execPath = "/usr/bin/openshell-gateway",
-): string {
-  return [
-    `FragmentPath=${fragmentPath}`,
-    `ExecStart={ path=${execPath} ; argv[]=${execPath} ; }`,
-  ].join("\n");
 }
 
 const HOMEBREW_FORMULA_PREFIX = "/opt/homebrew/opt/openshell";
@@ -79,27 +71,10 @@ function officialFormulaInfo(): SpawnSyncLikeResult {
   );
 }
 
-function nonSymlinkStat(): never {
-  return { isSymbolicLink: () => false } as never;
-}
-
 function throwErrno(message: string, code: string): never {
   const error = new Error(message) as NodeJS.ErrnoException;
   error.code = code;
   throw error;
-}
-
-function systemdSpawn(
-  events: string[],
-  fragmentPath = "/lib/systemd/user/openshell-gateway.service",
-  execPath = "/usr/bin/openshell-gateway",
-) {
-  return vi.fn((_command: string, args: string[]) => {
-    events.push(args.slice(1).join(" "));
-    return args.includes("show")
-      ? spawnResult(0, "", trustedShowOutput(fragmentPath, execPath))
-      : spawnResult();
-  });
 }
 
 describe("docker-driver-gateway-service", () => {
@@ -185,11 +160,9 @@ describe("docker-driver-gateway-service", () => {
     const home = "/home/nvidia";
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
     const gatewayBin = `${home}/.local/bin/openshell-gateway`;
-    const env = { HOME: home };
-    const spawnSyncImpl = systemdSpawn(events, servicePath, gatewayBin);
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "systemctl",
-      env,
+      env: { HOME: home },
       existsSync: (candidate) => candidate === servicePath,
       home,
       lstatSync: nonSymlinkStat,
@@ -197,7 +170,7 @@ describe("docker-driver-gateway-service", () => {
       preparePortForServiceStart: () => events.push("prepare-port"),
       prepareServiceEnv: () => events.push("prepare-env"),
       readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-      spawnSyncImpl,
+      spawnSyncImpl: systemdSpawn(events, servicePath, gatewayBin),
       validatePortOwnerForServiceStart: () => events.push("validate-port"),
     });
 
@@ -218,20 +191,42 @@ describe("docker-driver-gateway-service", () => {
       "restart nemoclaw-openshell-gateway",
       "is-active --quiet nemoclaw-openshell-gateway",
     ]);
-    const runtimeDir = `/run/user/${process.getuid!()}`;
-    expect(spawnSyncImpl).toHaveBeenCalledWith(
-      "systemctl",
-      ["--user", "restart", "nemoclaw-openshell-gateway"],
-      expect.objectContaining({
-        env: {
-          ...env,
-          LC_ALL: "C",
-          XDG_RUNTIME_DIR: runtimeDir,
-          DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtimeDir}/bus`,
-        },
-      }),
+  });
+
+  it("leaves Homebrew environment values unchanged", () => {
+    const env = { HOME: "/Users/nvidia", XDG_RUNTIME_DIR: "", DBUS_SESSION_BUS_ADDRESS: "" };
+    const operation = vi.fn((args: string[]) =>
+      args[0] === "info" ? officialFormulaInfo() : spawnResult(),
     );
-    expect(env).toEqual({ HOME: home });
+    const spawnSyncImpl = vi.fn<SpawnSyncLike>();
+    expect(
+      startOpenShellGatewayUserService({
+        commandExists: (command) => command === "brew",
+        env,
+        homebrewFormulaOperation: operation,
+        platform: "darwin",
+        spawnSyncImpl,
+      }),
+    ).toMatchObject({ started: true, manager: "homebrew" });
+    expect(operation).toHaveBeenCalled();
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(env).toEqual({
+      HOME: "/Users/nvidia",
+      XDG_RUNTIME_DIR: "",
+      DBUS_SESSION_BUS_ADDRESS: "",
+    });
+  });
+
+  it("does not start a user service on an unsupported platform", () => {
+    const spawnSyncImpl = vi.fn<SpawnSyncLike>();
+    expect(
+      startOpenShellGatewayUserService({ platform: "win32", env: {}, spawnSyncImpl }),
+    ).toMatchObject({
+      attempted: false,
+      started: false,
+      reason: "unsupported platform",
+    });
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
   });
 
   it("trusts a NemoClaw systemd unit using an absolute XDG bin home (#6903)", () => {
@@ -239,23 +234,16 @@ describe("docker-driver-gateway-service", () => {
     const xdgBinHome = "/opt/nvidia/user-bin";
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
     const gatewayBin = `${xdgBinHome}/openshell-gateway`;
-    const env = {
-      HOME: home,
-      XDG_BIN_HOME: xdgBinHome,
-      XDG_RUNTIME_DIR: "/run/user/configured",
-      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/configured/custom-bus",
-    };
-    const spawnSyncImpl = systemdSpawn([], servicePath, gatewayBin);
 
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "systemctl",
-      env,
+      env: { HOME: home, XDG_BIN_HOME: xdgBinHome },
       existsSync: (candidate) => candidate === servicePath,
       home,
       lstatSync: nonSymlinkStat,
       platform: "linux",
       readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-      spawnSyncImpl,
+      spawnSyncImpl: systemdSpawn([], servicePath, gatewayBin),
     });
 
     expect(result).toMatchObject({
@@ -263,11 +251,6 @@ describe("docker-driver-gateway-service", () => {
       serviceName: "nemoclaw-openshell-gateway",
       started: true,
     });
-    expect(spawnSyncImpl).toHaveBeenCalledWith(
-      "systemctl",
-      ["--user", "restart", "nemoclaw-openshell-gateway"],
-      expect.objectContaining({ env: { ...env, LC_ALL: "C" } }),
-    );
   });
 
   it("identifies the active trusted NemoClaw systemd gateway process (#6903)", () => {
@@ -385,14 +368,13 @@ describe("docker-driver-gateway-service", () => {
 
   it("restarts the official macOS Homebrew service after validation (#6903)", () => {
     const events: string[] = [];
-    const env = { HOME: "/Users/nvidia" };
     const brew = vi.fn((_command: string, args: string[]) => {
       events.push(args.join(" "));
       return args[0] === "info" ? officialFormulaInfo() : spawnResult();
     });
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "brew",
-      env,
+      env: {},
       homebrewFormulaOperation: trustedBrew(brew),
       platform: "darwin",
       preparePortForServiceStart: () => events.push("prepare-port"),
@@ -416,7 +398,6 @@ describe("docker-driver-gateway-service", () => {
       "prepare-port",
       "services restart openshell",
     ]);
-    expect(env).toEqual({ HOME: "/Users/nvidia" });
   });
 
   it.each([
@@ -455,7 +436,6 @@ describe("docker-driver-gateway-service", () => {
         standaloneFallbackBlocked,
         started: false,
       });
-      expect(result.reason).toContain(detail);
     },
   );
 

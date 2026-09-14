@@ -82,6 +82,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_I
 
 During the automatic upgrade path, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
 If any sandbox is skipped or fails, the installer exits before it changes the gateway.
+For a failed required pre-upgrade backup, NemoClaw removes the incomplete timestamped backup directory so it cannot appear as a recovery point.
+If that removal fails, the installer reports the retained path; preserve it and do not use it for recovery.
 After backup, the installer requires any existing OpenShell executable it will use to report a version, then compares that version with the supported range declared by the prepared current source.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
 If OpenShell lifecycle commands cannot retire the gateway, the installer can use verified service or PID-file evidence on Linux and macOS.
@@ -93,6 +95,8 @@ If registration removal fails, the installer warns that onboarding will replace 
 If neither fallback can verify and stop the process, the installer stops after backup, preserves every sandbox backup, and reports the failed operation.
 After the automatic path retires an out-of-range gateway, it forces installation of the OpenShell version pinned by the prepared source before sandbox recovery.
 This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement.
+After the installer replaces the packaged gateway, it waits up to 30 seconds for the gateway port to bind before sandbox recovery begins.
+If the gateway does not bind, the installer stops and preserves the backups.
 If the forced installation fails, the installer does not stage a gateway service or start sandbox recovery, preserves the backups, and reports how to retry.
 
 ## Resume a Manually Prepared Upgrade

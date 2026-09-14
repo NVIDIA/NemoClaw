@@ -247,52 +247,33 @@ describe("CLI gateway observation", () => {
     expect(process.env.OPENSHELL_GATEWAY).toBe("foreign");
   });
 
-  it("recovers a refused connection only for the frozen gateway authority (#10947)", async () => {
-    const refused = [
-      "Error:   × client error (Connect)",
-      "  ├─▶ tcp connect error",
-      "  ╰─▶ Connection refused (os error 111)",
-    ].join("\n");
-    const capture = captureFor(refused, refused, 1, 1);
-
-    const result = await createCliOpenShellGatewayObserver(capture).observeGateway({
-      ...request,
-      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
-    });
-
-    expect(result).toMatchObject({
-      activeGateway: null,
-      recoveryBlocked: false,
-      state: "named_unreachable",
-      unavailable: true,
-    });
-  });
-
   it.each([
     [
       "status",
       "Gateway: foreign\nclient error (Connect): Connection refused",
       "Connection refused",
+      1,
+      1,
     ],
-    [
-      "metadata",
-      "Connection refused",
-      "Gateway: foreign\nclient error (Connect): Connection refused",
-    ],
+    ["metadata", "Connection refused", "Gateway: foreign", 1, 0],
     [
       "status with multiple declarations",
-      "Gateway: nemoclaw-8090\nGateway: foreign\nclient error (Connect): Connection refused",
+      "Gateway: nemoclaw-8090\nGateway: foreign",
       "Connection refused",
+      0,
+      1,
     ],
     [
       "metadata with multiple declarations",
       "Connection refused",
       "Gateway: nemoclaw-8090\nGateway: foreign\nclient error (Connect): Connection refused",
+      1,
+      1,
     ],
   ])(
     "blocks frozen-gateway recovery for a conflicting %s identity (#10947)",
-    async (_, status, metadata) => {
-      const capture = captureFor(status, metadata, 1, 1);
+    async (_, status, metadata, statusCode, metadataCode) => {
+      const capture = captureFor(status, metadata, statusCode, metadataCode);
 
       const result = await createCliOpenShellGatewayObserver(capture).observeGateway({
         ...request,
@@ -303,23 +284,10 @@ describe("CLI gateway observation", () => {
         recoveryBlocked: true,
         state: "observation_failed",
         unavailable: true,
+        error: { kind: "transport", reason: "identity_mismatch" },
       });
     },
   );
-
-  it("blocks a refused connection when gateway authority is ambient (#10947)", async () => {
-    const refused = "client error (Connect): Connection refused";
-    const capture = captureFor(refused, refused, 1, 1);
-
-    const result = await createCliOpenShellGatewayObserver(capture).observeGateway(request);
-
-    expect(result).toMatchObject({
-      activeGateway: null,
-      recoveryBlocked: true,
-      state: "observation_failed",
-      unavailable: true,
-    });
-  });
 
   it("rejects mismatched runtime authority without executing a probe", async () => {
     const capture = captureFor(connected, info);
