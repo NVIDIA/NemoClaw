@@ -4,7 +4,10 @@
 use crate::{Backend, Definition, Mutation, Row, State, plan_update};
 use async_trait::async_trait;
 use nemoclaw_sdk::{Binding, Bound, Observation, ObservationError, refresh};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tf_provider::schema::{Attribute, AttributeConstraint, AttributeType, Block, Schema};
 use tf_provider::value::{Value, ValueEmpty};
 use tf_provider::{AttributePath, Diagnostics, Resource};
@@ -12,14 +15,14 @@ use tf_provider::{AttributePath, Diagnostics, Resource};
 pub struct ResourceAdapter {
     definition: Definition,
     backend: Arc<dyn Backend>,
-    pub destroying: bool,
+    pub destroying: Arc<AtomicBool>,
 }
 impl ResourceAdapter {
     pub fn new(definition: Definition, backend: Arc<dyn Backend>) -> Self {
         Self {
             definition,
             backend,
-            destroying: false,
+            destroying: Arc::new(AtomicBool::new(false)),
         }
     }
     fn row(&self, state: &State, creating: bool) -> Result<Row, ObservationError> {
@@ -153,7 +156,11 @@ impl Resource for ResourceAdapter {
         let observation = match self.row(&state, false) {
             Ok(prior) => match self
                 .backend
-                .read(self.definition.kind, &prior, self.destroying)
+                .read(
+                    self.definition.kind,
+                    &prior,
+                    self.destroying.load(Ordering::Acquire),
+                )
                 .await
             {
                 Ok(Some(row)) => self.checked(&prior, row).map(Some),
@@ -226,7 +233,7 @@ impl Resource for ResourceAdapter {
         private: ValueEmpty,
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty)> {
-        if self.destroying {
+        if self.destroying.load(Ordering::Acquire) {
             diags.root_error_short("Creation forbidden during destroy");
             return None;
         }
@@ -250,7 +257,7 @@ impl Resource for ResourceAdapter {
         private: ValueEmpty,
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty)> {
-        if self.destroying {
+        if self.destroying.load(Ordering::Acquire) {
             diags.root_error_short("Update forbidden during destroy");
             return Some((prior, private));
         }
@@ -281,7 +288,11 @@ impl Resource for ResourceAdapter {
         };
         match self
             .backend
-            .remove(self.definition.kind, &row, self.destroying)
+            .remove(
+                self.definition.kind,
+                &row,
+                self.destroying.load(Ordering::Acquire),
+            )
             .await
         {
             Ok(()) => Some(()),

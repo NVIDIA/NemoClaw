@@ -22,3 +22,13 @@ These tests launch a fixture provider built by that crate and use temporary
 files. They create no Docker, OpenShell, or inference resources. The fixture
 provider is not a production bundle component. Runtime bundle and live backend
 qualification remain separate acceptance gates.
+
+Build the production provider and qualify its full OpenShell graph against the
+local gRPC fixture:
+
+```sh
+cargo build -p nemoclaw-provider --bin terraform-provider-nemoclaw
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+  cargo test -p nemoclaw-e2e --test opentofu_openshell -- --ignored
+```
