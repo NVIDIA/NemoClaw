@@ -1458,6 +1458,23 @@ describe("runner", () => {
       expect(stdoutText()).toContain("PROGRESS:100:Apply complete");
     });
 
+    it("fails closed before OpenShell handoff for a DNS-backed HTTPS blueprint endpoint (#10517)", async () => {
+      const blueprint = minimalBlueprint();
+      const components = blueprint.components as {
+        inference: { profiles: { default: { endpoint: string } } };
+      };
+      components.inference.profiles.default.endpoint = "https://profile.example.com/v1";
+      seedBlueprintFile(blueprint);
+      mockedValidateEndpoint.mockResolvedValueOnce({
+        ...resolvedEndpointFor("https://profile.example.com/v1"),
+        dnsResolved: true,
+      });
+
+      await expect(main(["apply", "--profile", "default"])).rejects.toThrow(/DNS-backed HTTPS/);
+      expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://profile.example.com/v1");
+      expect(mockExeca).not.toHaveBeenCalled();
+    });
+
     it("rejects --plan flag (not yet implemented)", async () => {
       await expect(
         main(["apply", "--profile", "default", "--plan", "/tmp/saved-plan.json"]),
