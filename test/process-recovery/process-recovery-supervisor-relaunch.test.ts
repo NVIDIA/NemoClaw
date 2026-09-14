@@ -519,13 +519,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       210000,
       "replacement-container-id",
     );
-    expect(order).toEqual([
-      "openshell-stop",
-      "openshell-start",
-      "restore-state",
-      "post-restore-restart",
-      "commit-container",
-    ]);
+    expect(order).toEqual(["restore-state", "post-restore-restart", "commit-container"]);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -753,13 +747,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       recoveryFailureDetail:
         "Sandbox recovery did not complete; the previous container was restored",
     });
-    expect(order).toEqual([
-      "openshell-stop",
-      "openshell-start",
-      "restore-state",
-      "post-restore-restart",
-      "rollback-container",
-    ]);
+    expect(order).toEqual(["restore-state", "post-restore-restart", "rollback-container"]);
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(

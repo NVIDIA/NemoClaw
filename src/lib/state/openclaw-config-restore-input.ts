@@ -12,6 +12,7 @@ import {
   hasCompleteOpenClawImagePluginProvenance,
   type OpenClawImagePluginInstall,
 } from "./openclaw-plugin-restore.js";
+import type { StateRestoreRemoteCommandExecutor } from "./ssh-transport.js";
 
 export type OpenClawConfigRestoreInputResult =
   | { ok: true; input: Buffer }
@@ -25,7 +26,8 @@ export interface OpenClawConfigRestoreFromSandboxOptions {
   log?: (message: string) => void;
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   specPath: string;
-  sshArgs: readonly string[];
+  sshArgs?: readonly string[];
+  executeCommand?: StateRestoreRemoteCommandExecutor;
 }
 
 function openClawConfigRemotePath(dir: string, specPath: string): string {
@@ -44,19 +46,22 @@ export function buildOpenClawConfigReadCommand(dir: string, specPath: string): s
 }
 
 function readCurrentOpenClawConfig(
-  sshArgs: readonly string[],
+  sshArgs: readonly string[] | undefined,
   dir: string,
   specPath: string,
   log: (message: string) => void,
   env?: NodeJS.ProcessEnv,
+  executeCommand?: StateRestoreRemoteCommandExecutor,
 ): Buffer | null {
   const command = buildOpenClawConfigReadCommand(dir, specPath);
-  const result = spawnSync("ssh", [...sshArgs, command], {
-    ...(env ? { env } : {}),
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 120000,
-    maxBuffer: 256 * 1024 * 1024,
-  });
+  const result = executeCommand
+    ? executeCommand(command, { timeoutMs: 120000, maxOutputBytes: 256 * 1024 * 1024 })
+    : spawnSync("ssh", [...(sshArgs ?? []), command], {
+        ...(env ? { env } : {}),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 120000,
+        maxBuffer: 256 * 1024 * 1024,
+      });
   if (result.status === 0 && !result.error && !result.signal) return result.stdout;
   if (result.status !== 2) {
     const detail =
@@ -100,6 +105,7 @@ export function buildOpenClawConfigRestoreInputFromSandbox({
   previousImagePluginInstalls,
   specPath,
   sshArgs,
+  executeCommand,
 }: OpenClawConfigRestoreFromSandboxOptions): OpenClawConfigRestoreInputResult {
   if ((previousImagePluginInstalls === undefined) !== (freshImagePluginInstalls === undefined)) {
     return {
@@ -121,7 +127,7 @@ export function buildOpenClawConfigRestoreInputFromSandbox({
   }
   return buildOpenClawConfigRestoreInput(
     backupContents,
-    readCurrentOpenClawConfig(sshArgs, dir, specPath, log, env),
+    readCurrentOpenClawConfig(sshArgs, dir, specPath, log, env, executeCommand),
     { freshImagePluginInstalls, previousImagePluginInstalls },
   );
 }

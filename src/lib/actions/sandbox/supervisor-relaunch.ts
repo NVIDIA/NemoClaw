@@ -17,19 +17,20 @@ import {
   type DockerGpuPatchFinalizeOutcome,
   finalizeDockerGpuPatchBackup,
 } from "../../onboard/docker-gpu-patch-finalize";
-import {
-  getDockerGpuSupervisorReconnectTimeoutSecs,
-  waitForOpenShellReplacementReady,
-} from "../../onboard/docker-gpu-supervisor-reconnect";
+import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker-gpu-supervisor-reconnect";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import { parseOpenShellMainProcessSpecEnvValue } from "../../onboard/docker-startup-command-env";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
-import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
+import {
+  executePrivilegedSandboxCommand,
+  resolveDirectSandboxContainer,
+} from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
+import type { StateRestoreRemoteCommandExecutor } from "../../state/ssh-transport";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
 import { backupSandboxStateWithManagedAuthority } from "./snapshot/backup-authority";
 
@@ -68,6 +69,7 @@ export type ManagedSupervisorRelaunchDeps = {
   restartRestoredManagedGateway?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
   captureRestoreAuthority?: typeof sandboxState.captureSnapshotRestoreAuthority;
+  createRestoreCommandExecutor?: typeof createPinnedSandboxUserRestoreCommandExecutor;
   sleep?: (seconds: number) => void;
   restoreState?: typeof sandboxState.restoreSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
@@ -133,63 +135,41 @@ export function recoverRegisteredRuntimeProviderSandbox(
   return provider?.recovery.supported === true ? provider.recovery.recover(entry) : null;
 }
 
-function inspectContainer(
-  containerId: string,
-  timeoutMs = DOCKER_INSPECT_TIMEOUT_MS,
-): DockerContainerInspect {
+function inspectContainer(containerId: string): DockerContainerInspect {
   return parseDockerInspectJson(
     dockerCapture(["inspect", "--type", "container", containerId], {
       ignoreError: true,
-      timeout: Math.max(1, Math.min(DOCKER_INSPECT_TIMEOUT_MS, timeoutMs)),
+      timeout: DOCKER_INSPECT_TIMEOUT_MS,
     }),
   );
 }
 
-async function attachReplacementToOpenShellForRestore(
+export function createPinnedSandboxUserRestoreCommandExecutor(
   sandboxName: string,
   replacementContainerId: string,
-  driver: string | null,
-  resolveContainer: NonNullable<ManagedSupervisorRelaunchDeps["resolveContainer"]>,
-  inspect: NonNullable<ManagedSupervisorRelaunchDeps["inspectContainer"]>,
-  deps: Pick<
-    ManagedSupervisorRelaunchDeps,
-    "commandExecutor" | "runCaptureOpenshell" | "runOpenshell" | "sleep"
-  >,
-): Promise<boolean> {
-  if (!deps.commandExecutor || !deps.runCaptureOpenshell || !deps.runOpenshell) return false;
-  const timeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1) * 1000;
-  const lifecycleOptions = {
-    ignoreError: true,
-    killProcessTreeOnTimeout: true,
-    killSignal: "SIGKILL" as const,
-    suppressOutput: true,
-    timeout: timeoutMs,
-  };
-  try {
-    if (deps.runOpenshell(["sandbox", "stop", sandboxName], lifecycleOptions).status !== 0) {
-      return false;
-    }
-    deps.runOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
-    const deadlineMs = Date.now() + timeoutMs;
-    const acknowledgement = await waitForOpenShellReplacementReady(sandboxName, deadlineMs, {
-      commandExecutor: deps.commandExecutor,
-      runCaptureOpenshell: deps.runCaptureOpenshell,
-      ...(deps.sleep ? { sleep: deps.sleep } : {}),
-      replacementIsExactAndRunning: (remainingMs) => {
-        if (remainingMs <= DOCKER_INSPECT_TIMEOUT_MS + 5000) return false;
-        const selected = resolveContainer(sandboxName, driver, replacementContainerId);
-        if (!sameContainerId(selected, replacementContainerId)) return false;
-        const replacement = inspect(replacementContainerId, remainingMs - 5000);
-        return (
-          sameContainerId(replacement.Id ?? "", replacementContainerId) &&
-          replacement.State?.Running === true
-        );
+  execute: typeof executePrivilegedSandboxCommand = executePrivilegedSandboxCommand,
+): StateRestoreRemoteCommandExecutor {
+  return (command, options) =>
+    execute(
+      sandboxName,
+      [
+        "/usr/bin/setpriv",
+        "--reuid=sandbox",
+        "--regid=sandbox",
+        "--init-groups",
+        "--",
+        "/bin/sh",
+        "-c",
+        command,
+      ],
+      {
+        expectedResourceHandle: replacementContainerId,
+        sanitizeEnvironment: true,
+        timeout: options.timeoutMs,
+        ...(options.input !== undefined ? { input: options.input } : {}),
+        ...(options.maxOutputBytes ? { maxOutputBytes: options.maxOutputBytes } : {}),
       },
-    });
-    return acknowledgement.acknowledged;
-  } catch {
-    return false;
-  }
+    );
 }
 
 function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
@@ -303,6 +283,8 @@ export function relaunchManagedSupervisorSession(
   const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
   const captureRestoreAuthority =
     deps.captureRestoreAuthority ?? sandboxState.captureSnapshotRestoreAuthority;
+  const createRestoreCommandExecutor =
+    deps.createRestoreCommandExecutor ?? createPinnedSandboxUserRestoreCommandExecutor;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
   const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
   const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
@@ -427,22 +409,11 @@ export function relaunchManagedSupervisorSession(
       if (!replacementOwned) {
         return finalizeFailure();
       }
-      if (
-        !(await attachReplacementToOpenShellForRestore(
-          sandboxName,
-          result.newContainerId,
-          driver,
-          resolveContainer,
-          inspect,
-          deps,
-        ))
-      ) {
-        return finalizeFailure();
-      }
       let stateRestored = false;
       try {
         stateRestored = restoreState(sandboxName, backupManifest.backupPath, {
           authority: restoreAuthority,
+          executeCommand: createRestoreCommandExecutor(sandboxName, result.newContainerId),
           validateBeforeMutation: () => {
             const selected = resolveContainer(sandboxName, driver, result.newContainerId);
             if (!sameContainerId(selected, result.newContainerId)) {

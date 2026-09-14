@@ -6,6 +6,7 @@ import type { DockerGpuPatchFinalizeOutcome } from "../../onboard/docker-gpu-pat
 import type { DockerGpuPatchResult } from "../../onboard/docker-gpu-patch";
 import * as registry from "../../state/registry";
 import {
+  createPinnedSandboxUserRestoreCommandExecutor,
   type ManagedSupervisorRelaunchDeps,
   relaunchManagedSupervisorSession,
 } from "./supervisor-relaunch";
@@ -212,20 +213,10 @@ describe("relaunchManagedSupervisorSession", () => {
         backupPath: "/tmp/rebuild-backups/alpha/recovery",
         contentSha256: "snapshot-content-sha256",
       },
+      executeCommand: expect.any(Function),
       validateBeforeMutation: expect.any(Function),
     });
     expect(deps.resolveContainer).toHaveBeenNthCalledWith(3, "alpha", "docker", "new-container-id");
-    expect(deps.resolveContainer).toHaveBeenNthCalledWith(4, "alpha", "docker", "new-container-id");
-    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["sandbox", "stop", "alpha"],
-      expect.objectContaining({ killProcessTreeOnTimeout: true, killSignal: "SIGKILL" }),
-    );
-    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
-      2,
-      ["sandbox", "start", "alpha"],
-      expect.objectContaining({ killProcessTreeOnTimeout: true, killSignal: "SIGKILL" }),
-    );
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
@@ -507,13 +498,49 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("rolls back before restore when the reattached replacement is not running", async () => {
+  it("binds restore commands to the exact replacement and sandbox user", () => {
+    const execute = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: Buffer.from("ok"),
+      stderr: Buffer.alloc(0),
+    }));
+    const restoreCommand = createPinnedSandboxUserRestoreCommandExecutor(
+      "alpha",
+      "new-container-id",
+      execute,
+    );
+    const input = Buffer.from("archive");
+
+    expect(restoreCommand("restore-script", { input, timeoutMs: 1234 })).toMatchObject({
+      status: 0,
+    });
+    expect(execute).toHaveBeenCalledWith(
+      "alpha",
+      [
+        "/usr/bin/setpriv",
+        "--reuid=sandbox",
+        "--regid=sandbox",
+        "--init-groups",
+        "--",
+        "/bin/sh",
+        "-c",
+        "restore-script",
+      ],
+      {
+        expectedResourceHandle: "new-container-id",
+        input,
+        sanitizeEnvironment: true,
+        timeout: 1234,
+      },
+    );
+  });
+
+  it("rolls back before restore when exact restore transport creation fails", async () => {
     const deps = baseDeps({
-      inspectContainer: vi.fn((containerId: string) => ({
-        Id: containerId,
-        State: { Running: containerId === "old-container-id" },
-        Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
-      })),
+      createRestoreCommandExecutor: vi.fn(() => {
+        throw new Error("restore transport unavailable");
+      }),
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
@@ -526,23 +553,6 @@ describe("relaunchManagedSupervisorSession", () => {
       result: expect.objectContaining({ newContainerId: "new-container-id" }),
       supervisorReady: false,
     });
-  });
-
-  it("reconciles a nonzero OpenShell start only through Ready, exec, and exact runtime proof", async () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 0 })
-      .mockReturnValueOnce({ status: 1 });
-    const deps = baseDeps({ runOpenshell });
-    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
-
-    await expect(relaunch?.finalize(true)).resolves.toMatchObject({
-      rolledBack: false,
-      stateRestored: true,
-    });
-    expect(deps.restoreState).toHaveBeenCalledOnce();
-    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledOnce();
-    expect(deps.resolveContainer).toHaveBeenNthCalledWith(3, "alpha", "docker", "new-container-id");
   });
 
   it("runs finalization once for concurrent matching callers", async () => {

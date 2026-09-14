@@ -10,6 +10,7 @@ import { shellQuote } from "../runner.js";
 import { buildOpenClawConfigRestoreInputFromSandbox } from "./openclaw-config-restore-input.js";
 import type { OpenClawImagePluginInstall } from "./openclaw-plugin-restore.js";
 import { buildKeyAllowlistMergeRestoreCommand } from "./state-file-key-merge.js";
+import type { StateRestoreRemoteCommandExecutor } from "./ssh-transport.js";
 
 export interface StateFileRestoreSpec {
   path: string;
@@ -138,7 +139,7 @@ export function buildStateFileRestoreCommand(
 }
 
 export function restoreStateFile(
-  sshArgs: readonly string[],
+  sshArgs: readonly string[] | undefined,
   dir: string,
   spec: StateFileRestoreSpec,
   backupPath: string,
@@ -148,6 +149,7 @@ export function restoreStateFile(
   freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   env?: NodeJS.ProcessEnv,
+  executeCommand?: StateRestoreRemoteCommandExecutor,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
@@ -168,6 +170,7 @@ export function restoreStateFile(
       previousImagePluginInstalls,
       specPath: spec.path,
       sshArgs,
+      executeCommand,
     });
     if (result.ok) {
       input = result.input;
@@ -186,12 +189,14 @@ export function restoreStateFile(
   }
   if (input === null) return false;
 
-  const result = spawnSync("ssh", [...sshArgs, command], {
-    ...(env ? { env } : {}),
-    input,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 120000,
-  });
+  const result = executeCommand
+    ? executeCommand(command, { input, timeoutMs: 120000 })
+    : spawnSync("ssh", [...(sshArgs ?? []), command], {
+        ...(env ? { env } : {}),
+        input,
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 120000,
+      });
 
   if (result.status === 0 && !result.error && !result.signal) return true;
 

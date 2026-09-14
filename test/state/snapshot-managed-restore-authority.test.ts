@@ -165,4 +165,86 @@ describe("managed snapshot restore authority", () => {
       expect(validateBeforeMutation).toHaveBeenCalledOnce();
     },
   );
+
+  it("restores managed state through the caller's exact-runtime command transport", () => {
+    const manifest = writeBackup({
+      ...managedAuthority(),
+      backedUpDirs: ["workspace"],
+      stateDirs: ["workspace"],
+      stateFiles: [{ path: "openclaw.json", strategy: "copy" }],
+    });
+    fs.mkdirSync(path.join(manifest.backupPath, "workspace"));
+    fs.writeFileSync(path.join(manifest.backupPath, "workspace", "memory.md"), "retained\n");
+    fs.writeFileSync(
+      path.join(manifest.backupPath, "openclaw.json"),
+      JSON.stringify({ agents: { defaults: { workspace: "/sandbox/.openclaw/workspace" } } }),
+    );
+    writeOpenClawRegistry();
+    const authority = sandboxState.captureSnapshotRestoreAuthority(manifest.backupPath);
+    expect(authority).not.toBeNull();
+    const executeCommand = vi.fn((command: string, _options: { input?: Buffer }) => ({
+      status: 0,
+      signal: null,
+      stdout: command.includes('cat -- "$src"')
+        ? Buffer.from(
+            `${JSON.stringify({ agents: { defaults: { workspace: "/sandbox/.openclaw/workspace" } } })}\n`,
+          )
+        : Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    }));
+    const validateBeforeMutation = vi.fn();
+
+    expect(
+      sandboxState.restoreSandboxState("alpha", manifest.backupPath, {
+        authority: authority!,
+        executeCommand,
+        validateBeforeMutation,
+      }),
+    ).toMatchObject({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["openclaw.json"],
+    });
+    expect(validateBeforeMutation).toHaveBeenCalledOnce();
+    expect(executeCommand.mock.calls.some(([command]) => command.includes("rm -rf"))).toBe(true);
+    expect(
+      executeCommand.mock.calls.some(
+        ([command, options]) => command.includes("tar --no-same-owner -xf -") && options.input,
+      ),
+    ).toBe(true);
+    expect(
+      executeCommand.mock.calls.some(
+        ([command, options]) => command.includes(".nemoclaw-restore.") && options.input,
+      ),
+    ).toBe(true);
+  });
+
+  it("runs no remote command when managed snapshot content changes after selection", () => {
+    const manifest = writeBackup({
+      ...managedAuthority(),
+      backedUpDirs: ["workspace"],
+      stateDirs: ["workspace"],
+    });
+    const workspace = path.join(manifest.backupPath, "workspace");
+    fs.mkdirSync(workspace);
+    const memory = path.join(workspace, "memory.md");
+    fs.writeFileSync(memory, "selected\n");
+    writeOpenClawRegistry();
+    const authority = sandboxState.captureSnapshotRestoreAuthority(manifest.backupPath);
+    expect(authority).not.toBeNull();
+    fs.writeFileSync(memory, "changed\n");
+    const executeCommand = vi.fn();
+
+    expect(
+      sandboxState.restoreSandboxState("alpha", manifest.backupPath, {
+        authority: authority!,
+        executeCommand,
+        validateBeforeMutation: vi.fn(),
+      }),
+    ).toMatchObject({
+      success: false,
+      error: "Selected snapshot content changed before filesystem mutation",
+    });
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
 });

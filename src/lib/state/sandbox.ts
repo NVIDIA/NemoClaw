@@ -89,7 +89,7 @@ import type {
 } from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
-import { isSshTransportFailure } from "./ssh-transport.js";
+import { isSshTransportFailure, type StateRestoreRemoteCommandExecutor } from "./ssh-transport.js";
 import { restoreStateFile } from "./state-file-restore.js";
 import { nemoclawStateRoot } from "./state-root.js";
 import { runTarListing, type TarArchiveSource } from "./tar-listing.js";
@@ -320,6 +320,8 @@ export interface SnapshotRestoreOptions {
   readonly authority?: SnapshotRestoreAuthority;
   /** Internal provider fence invoked at the same last-safe mutation edge. */
   readonly validateBeforeMutation?: () => void;
+  /** Internal exact-runtime transport for a pre-handoff transactional restore. */
+  readonly executeCommand?: StateRestoreRemoteCommandExecutor;
 }
 
 export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
@@ -341,6 +343,7 @@ interface InternalRestoreOptions {
   runtimeSelection?: OpenShellRuntimeSelection;
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void;
+  executeCommand?: StateRestoreRemoteCommandExecutor;
 }
 
 export interface TarValidationResult {
@@ -2441,6 +2444,7 @@ export function restoreSandboxState(
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
       : {}),
+    ...(options.executeCommand ? { executeCommand: options.executeCommand } : {}),
   });
 }
 
@@ -2464,6 +2468,7 @@ export function restoreRecreatedSandboxState(
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
       : {}),
+    ...(options.executeCommand ? { executeCommand: options.executeCommand } : {}),
   });
 }
 
@@ -2682,21 +2687,43 @@ function restoreSandboxStateInternal(
     };
   }
 
-  _log("Getting SSH config for restore");
-  const sshConfig = getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
-  if (!sshConfig) {
-    _log("FAILED: Could not get SSH config for restore");
-    return {
-      success: false,
-      restoredDirs,
-      failedDirs: [...cleanupStateDirs],
-      restoredFiles,
-      failedFiles: localFiles.map((f) => f.path),
-    };
+  let sshCommandArgs: string[] | undefined;
+  let cleanupRestoreTransport = () => {};
+  if (!options.executeCommand) {
+    _log("Getting SSH config for restore");
+    const sshConfig = getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
+    if (!sshConfig) {
+      _log("FAILED: Could not get SSH config for restore");
+      return {
+        success: false,
+        restoredDirs,
+        failedDirs: [...cleanupStateDirs],
+        restoredFiles,
+        failedFiles: localFiles.map((f) => f.path),
+      };
+    }
+    const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+    sshCommandArgs = sshArgs(tempSshConfig.file, sandboxName);
+    cleanupRestoreTransport = tempSshConfig.cleanup;
   }
-
-  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
-  const configFile = tempSshConfig.file;
+  const executeCommand: StateRestoreRemoteCommandExecutor =
+    options.executeCommand ??
+    ((command, commandOptions) => {
+      const result = spawnSync("ssh", [...(sshCommandArgs ?? []), command], {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+        ...(commandOptions.input ? { input: commandOptions.input } : {}),
+        maxBuffer: commandOptions.maxOutputBytes,
+        stdio: commandOptions.input ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
+        timeout: commandOptions.timeoutMs,
+      });
+      return {
+        status: result.status,
+        signal: result.signal,
+        stdout: Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? ""),
+        stderr: Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? ""),
+        ...(result.error ? { error: result.error } : {}),
+      };
+    });
   const previousOpenClawImagePluginInstalls =
     freshOpenClawImagePluginInstalls !== undefined
       ? manifest.openclawImagePluginInstalls
@@ -2788,11 +2815,7 @@ function restoreSandboxStateInternal(
         staleContentDirs,
       );
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
-      const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
-        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30000,
-      });
+      const rmResult = executeCommand(rmCmd, { timeoutMs: 30000 });
       if (rmResult.status !== 0 || rmResult.error || rmResult.signal) {
         const stderr = (rmResult.stderr?.toString() || "").trim();
         const detail =
@@ -2812,12 +2835,7 @@ function restoreSandboxStateInternal(
 
     if (restoreTar !== undefined) {
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
-      const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
-        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-        input: restoreTar,
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 120000,
-      });
+      const sshResult = executeCommand(extractCmd, { input: restoreTar, timeoutMs: 120000 });
 
       if (sshResult.status === 0) {
         const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
@@ -2828,11 +2846,7 @@ function restoreSandboxStateInternal(
         // are usable by that user.
         const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
         _log(`Best-effort ownership repair: ${chownCmd}`);
-        const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
-          ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 30000,
-        });
+        const chownResult = executeCommand(chownCmd, { timeoutMs: 30000 });
         if (chownResult.error || chownResult.signal) {
           const detail =
             chownResult.error?.message ||
@@ -2849,15 +2863,7 @@ function restoreSandboxStateInternal(
           )
           .join(" && ");
         _log(`Verifying restored state usability: ${usabilityCmd}`);
-        const usabilityResult = spawnSync(
-          "ssh",
-          [...sshArgs(configFile, sandboxName), usabilityCmd],
-          {
-            ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 30000,
-          },
-        );
+        const usabilityResult = executeCommand(usabilityCmd, { timeoutMs: 30000 });
         if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
           restoredDirs.push(...localDirs);
         } else {
@@ -2881,7 +2887,7 @@ function restoreSandboxStateInternal(
       if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
       if (
         restoreStateFile(
-          sshArgs(configFile, sandboxName),
+          sshCommandArgs,
           dir,
           spec,
           backupPath,
@@ -2891,6 +2897,7 @@ function restoreSandboxStateInternal(
           configFreshOpenClawImagePluginInstalls,
           previousOpenClawImagePluginInstalls,
           selectedSshEnv,
+          executeCommand,
         )
       ) {
         restoredFiles.push(spec.path);
@@ -2900,7 +2907,7 @@ function restoreSandboxStateInternal(
     }
   } finally {
     try {
-      tempSshConfig.cleanup();
+      cleanupRestoreTransport();
     } catch {
       /* ignore */
     }
