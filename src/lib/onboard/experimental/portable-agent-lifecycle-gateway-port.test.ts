@@ -79,7 +79,7 @@ describe("portable agent requalification across gateway ports", () => {
     const stateDir = portable.defaultPortableStateDir(process.env);
     fs.mkdirSync(receipt.hermesPortableReceiptDirectory(SANDBOX, stateDir), { recursive: true });
 
-    await expect(() =>
+    await expect(
       lifecycle.requalifyPortableAgentSandboxAuthority(SANDBOX, { readRegistry: () => null }),
     ).rejects.toThrow(/requalification requires the sandbox lifecycle lock/u);
   });
