@@ -19,6 +19,11 @@ import {
 } from "../../onboard/docker-gpu-patch-finalize";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker-gpu-supervisor-reconnect";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
+import {
+  OPENSHELL_MAIN_PROCESS_SPEC_ENV,
+  openshellSandboxCommandEnvValue,
+  parseOpenShellMainProcessSpecEnvValue,
+} from "../../onboard/docker-startup-command-env";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
@@ -30,10 +35,9 @@ import { resolveSandboxDashboardPort } from "./forward-recovery";
 import { backupSandboxStateWithManagedAuthority } from "./snapshot/backup-authority";
 
 /**
- * Compatibility boundary for OpenShell 0.0.71's Docker driver: legacy
- * sandboxes persist `OPENSHELL_SANDBOX_COMMAND=sleep infinity` while
- * `scripts/nemoclaw-start.sh` owns the managed workload as a sibling process.
- * Only that inspected value authorizes this migration. Regression coverage is
+ * Legacy sandboxes persist `sleep infinity` while `scripts/nemoclaw-start.sh`
+ * owns the managed workload as a sibling process. Accept that exact workload
+ * through either OpenShell command transport. Regression coverage is
  * named in `supervisor-relaunch.test.ts` and `gateway-guard-recovery.test.ts`.
  * Remove this path after supported upgrades rebuild every legacy keepalive
  * container with `nemoclaw-start` as its persisted startup command.
@@ -139,9 +143,16 @@ function inspectContainer(containerId: string): DockerContainerInspect {
 
 function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
   const prefix = "OPENSHELL_SANDBOX_COMMAND=";
+  const specPrefix = `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=`;
   const values = (inspect.Config?.Env ?? [])
-    .filter((entry) => entry.startsWith(prefix))
-    .map((entry) => entry.slice(prefix.length));
+    .filter((entry) => entry.startsWith(prefix) || entry.startsWith(specPrefix))
+    .map((entry) =>
+      entry.startsWith(prefix)
+        ? entry.slice(prefix.length)
+        : openshellSandboxCommandEnvValue(
+            parseOpenShellMainProcessSpecEnvValue(entry.slice(specPrefix.length)).command,
+          ),
+    );
   return values.length === 1 && values[0] === LEGACY_OPENSHELL_KEEPALIVE;
 }
 

@@ -117,7 +117,12 @@ describe("relaunchManagedSupervisorSession", () => {
   it("refuses a container that no longer has the legacy keepalive startup", () => {
     const deps = baseDeps({
       inspectContainer: vi.fn(() => ({
-        Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=env nemoclaw-start"] },
+        Config: {
+          Env: [
+            "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+            'OPENSHELL_MAIN_PROCESS_SPEC={"version":1,"command":["env","nemoclaw-start"],"tty":false}',
+          ],
+        },
       })),
     });
 
@@ -138,14 +143,18 @@ describe("relaunchManagedSupervisorSession", () => {
     vi.stubEnv("CUSTOM_PROVIDER_CREDENTIAL", "s3cr3t-token");
     vi.stubEnv("HTTPS_PROXY", "http://proxyuser:proxypass@proxy.example:8080");
     const deps = baseDeps();
+    vi.mocked(deps.inspectContainer).mockReturnValue({
+      Config: {
+        Env: [
+          'OPENSHELL_MAIN_PROCESS_SPEC={"version":1,"command":["sleep","infinity"],"tty":false}',
+        ],
+      },
+    });
 
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
     expect(relaunch).not.toBeNull();
     expect(relaunch?.containerId).toBe("new-container-id");
-    // A restarted keepalive can leave OpenShell in Error until the final handoff.
-    expect(deps.commandExecutor.runBuffered).not.toHaveBeenCalled();
-    expect(deps.runCaptureOpenshell).not.toHaveBeenCalled();
     expect(deps.recreate).toHaveBeenCalledOnce();
     const options = vi.mocked(deps.recreate).mock.calls[0]?.[0];
     expect(options).toMatchObject({

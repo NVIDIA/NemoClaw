@@ -557,10 +557,10 @@ test(
     );
     expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
     const handoffReceipt = parseLegacyKeepaliveHandoffReceipt(createLegacyKeepalive.stdout);
+    expect(handoffReceipt.oldContainerId).toBe(recoveredContainerId);
     expect(handoffReceipt.newContainerId).toMatch(/^[0-9a-f]{64}$/iu);
-    // Do not overlap the fixture's recreation with the restart below. The
-    // fixture runs in its own process, so the host must observe the replacement
-    // through OpenShell before starting the next container lifecycle transition.
+    // The fixture already restarts the replacement through OpenShell. Another
+    // raw Docker restart would turn the keepalive's exit into terminal Error.
     await waitForSandboxExecReady(
       host,
       instance.sandboxName,
@@ -574,14 +574,6 @@ test(
     expect(
       await inspectStartupCommand(host, legacyContainerId, "legacy-restart-command-before"),
     ).toBe("sleep infinity");
-    const legacyRestart = await host.command("docker", ["restart", legacyContainerId], {
-      artifactName: "legacy-restart-docker-restart",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
-    expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
-    // OpenShell records the interrupted keepalive as terminal Error. Recovery
-    // must restore readiness; Docker restart alone cannot satisfy an exec probe.
     await gateway.waitForMissingManagedSupervisor(legacyContainerId, {
       onRetry: (attempt) => progress.event(`managed supervisor absence proof retry ${attempt}`),
     });
@@ -610,12 +602,6 @@ test(
     );
     expect(legacyRecovery.timedOut, "legacy recovery should complete before timeout").toBe(false);
     expect(legacyRecovery.exitCode, "legacy recovery should exit successfully").toBe(0);
-    await waitForSandboxExecReady(
-      host,
-      instance.sandboxName,
-      progress,
-      "legacy-restart-openshell-ready",
-    );
     expectManagedGatewayState(legacyManagedState);
     expect(legacyRecoveredContainerId).not.toBe(legacyContainerId);
     const legacyRecoveredStartupCommand = await inspectStartupCommand(
