@@ -11,7 +11,6 @@ import { writeOpenShell0044PreAuthState } from "../../../test/support/openshell-
 
 import {
   buildDockerDriverGatewayEnv,
-  buildDockerGatewayDebEnvFile,
   configureDockerDriverGatewayExternalComponent,
   startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,

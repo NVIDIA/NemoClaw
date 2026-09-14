@@ -215,7 +215,6 @@ test.skipIf(process.platform !== "linux")(
         "install the released Shields CLI and create a real sandbox",
         "write durable user data and create the released recovery backup",
         "raise and prove Shields are up",
-        "switch the host to the candidate CLI",
         "detect legacy posture and fail closed before mutation",
         "recover through the production managed sandbox upgrade",
         "verify user data runtime usability and legacy-state retirement",
@@ -326,8 +325,6 @@ test.skipIf(process.platform !== "linux")(
     );
     expectExitZero(shieldsStatus, "released shields status");
     expect(resultText(shieldsStatus)).toContain("Shields: UP (lockdown active)");
-
-    progress.phase("switch the host to the candidate CLI");
 
     progress.phase("detect legacy posture and fail closed before mutation");
     const detected = await candidateNemoclaw(host, ["list"], "candidate-retirement-notice");

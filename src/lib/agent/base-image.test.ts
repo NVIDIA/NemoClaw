@@ -275,7 +275,7 @@ describe("agent base image provisioning", () => {
               ? "nemoclaw-hermes-mcp-runtime-ok"
               : "nemoclaw-security-inventory-ok",
         );
-        dockerImageInspectFormatMock.mockImplementation((format: string, imageRef: string) =>
+        dockerImageInspectFormatMock.mockImplementation((format: string, _imageRef: string) =>
           format === "{{json .}}"
             ? JSON.stringify({
                 Id: imageId,

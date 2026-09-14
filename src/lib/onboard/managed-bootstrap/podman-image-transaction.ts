@@ -13,7 +13,6 @@ import { cleanupTempDir, secureTempFile } from "../temp-files";
 import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
   MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
-  MANAGED_BOOTSTRAP_REQUEST_FILE,
   type ManagedBootstrapImageCompletion,
   parseManagedBootstrapImageCompletion,
   serializeManagedBootstrapEnvelopeTar,

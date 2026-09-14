@@ -223,8 +223,6 @@ export function resolveManifestTokenPasteField(
   };
 }
 
-export const tokenPasteHook = createTokenPasteHook();
-
 function logTokenStatus(
   channelId: string,
   output: ChannelHookOutputSpec,

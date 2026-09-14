@@ -16,9 +16,11 @@ describe("sandbox MCP public display layout", () => {
       "nemoclaw <name> mcp status",
       "nemoclaw <name> mcp restart",
       "nemoclaw <name> mcp remove",
+      "nemoclaw <name> mcp migrate",
     ]);
-    expect(PUBLIC_DISPLAY_ENTRIES["sandbox:mcp"]).toHaveLength(6);
+    expect(PUBLIC_DISPLAY_ENTRIES["sandbox:mcp"]).toHaveLength(7);
     expect(PUBLIC_DISPLAY_ENTRIES["sandbox:mcp"]?.map((entry) => entry.group)).toEqual([
+      "MCP Servers",
       "MCP Servers",
       "MCP Servers",
       "MCP Servers",

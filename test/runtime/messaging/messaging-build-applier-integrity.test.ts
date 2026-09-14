@@ -337,9 +337,8 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         );
 
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain(
-          "npm pack @openclaw/slack@2026.7.1 reported unsafe archive filename: ../slack-2026.7.1.tgz",
-        );
+        expect(result.stderr).toContain("Messaging build applier failed.");
+        expect(result.stderr).not.toContain("../slack-2026.7.1.tgz");
         const trace = fs.readFileSync(tracePath, "utf-8");
         expect(trace).toContain("npm|view|@openclaw/slack@2026.7.1|dist.integrity");
         expect(trace).toContain(`npm|pack|${OPENCLAW_SLACK_2026_7_1_TARBALL}|--pack-destination`);

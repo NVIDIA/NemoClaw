@@ -29,7 +29,7 @@ export function createPolicyHandlerDeps(
     prepareResume: vi.fn(
       (
         _sandboxName: string,
-        options: Parameters<
+        _options: Parameters<
           PoliciesStateOptions<
             PolicyTestAgent,
             PolicyTestWebSearchConfig

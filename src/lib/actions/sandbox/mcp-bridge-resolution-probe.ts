@@ -50,7 +50,7 @@
  */
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { observeMcpCredentialRevision } from "./mcp-bridge-provider";
@@ -183,7 +183,7 @@ function curlCommand(url: string, authorization: string, httpMarker: string): st
 }
 
 export function buildCredentialResolutionProbeCommand(
-  entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
+  entry: Pick<McpSourceEntry, "server" | "url" | "env">,
   adapter: AgentMcpAdapter,
   credentialRevision: McpAttachedCredentialRevision,
 ): CredentialResolutionProbeCommand | null {
@@ -230,7 +230,7 @@ export function buildCredentialResolutionProbeCommand(
   };
 }
 
-function redactedProbeText(text: string, entry: Pick<McpBridgeEntry, "env">): string {
+function redactedProbeText(text: string, entry: Pick<McpSourceEntry, "env">): string {
   return redactBridgeSecretsForDisplay(text, entry).trim();
 }
 
@@ -262,7 +262,7 @@ function transportDetail(curlExit: number, stderr: string): string | undefined {
 
 export function classifyCredentialResolutionProbe(
   result: SandboxCommandResult | null,
-  entry: Pick<McpBridgeEntry, "env">,
+  entry: Pick<McpSourceEntry, "env">,
   resultMarker?: string,
 ): CredentialResolutionProbe {
   if (result === null) return { ok: null, detail: "sandbox unreachable" };
@@ -386,14 +386,13 @@ export function credentialResolutionWarning(
 
 export async function probeCredentialResolution(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: CredentialResolutionProbeReadiness,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   observedCredentialRevision?: McpCredentialRevisionObservation,
 ): Promise<CredentialResolutionProbe> {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
-  if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
   const readinessSkipDetail = credentialResolutionReadinessSkipDetail(readiness);
   if (readinessSkipDetail) return { ok: null, detail: readinessSkipDetail };
   // Reject the entry before the fresh credential observation so an unsafe
