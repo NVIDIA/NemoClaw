@@ -48,7 +48,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
-      "test": "recovers the PR-scoped sandbox before claiming model work (#10791)",
+      "test": "owns each repair sandbox within one workflow run attempt (#10791)",
       "category": "security"
     },
     {

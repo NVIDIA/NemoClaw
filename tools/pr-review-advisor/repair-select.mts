@@ -9,10 +9,10 @@ import { parseAdvisorFindingLedger } from "./finding-ledger.mts";
 import {
   assertRepairArtifactDirectory,
   bindRepairSelection,
-  expectedAdvisorRepairArtifactNames,
   positiveInteger,
   readJson,
   repairModelContext,
+  selectAdvisorRepairArtifacts,
   type RepairSelection,
 } from "./repair-contract.mts";
 import { ADVISOR_INTERESTS } from "./specialist-catalog.mts";
@@ -33,19 +33,8 @@ export function selectedAdvisorArtifactIds(
 ): number[] {
   const runId = positiveInteger(request.advisorRun.id, "Advisor run ID");
   const runAttempt = positiveInteger(request.advisorRun.run_attempt, "Advisor run attempt");
-  const names = expectedAdvisorRepairArtifactNames(runId, runAttempt);
-  return names
-    .map((name) => {
-      const matches = request.artifacts.filter((artifact) => artifact.name === name);
-      if (
-        matches.length !== 1 ||
-        matches[0]?.expired !== false ||
-        matches[0]?.workflow_run?.id !== runId
-      ) {
-        throw new Error(`Advisor artifact set is incomplete: ${name}`);
-      }
-      return positiveInteger(matches[0].id, "Advisor artifact ID");
-    })
+  return selectAdvisorRepairArtifacts(request.artifacts, runId, runAttempt)
+    .map(({ id }) => id)
     .sort((left, right) => left - right);
 }
 

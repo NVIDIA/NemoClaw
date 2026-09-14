@@ -184,14 +184,15 @@ describe("PR Review Advisor repair core", () => {
     expect(selectedAdvisorArtifactIds(request)).toEqual(
       request.artifacts.map(({ id }) => id).sort((left, right) => left - right),
     );
-    expect(() =>
-      selectedAdvisorArtifactIds({
-        ...request,
-        artifacts: request.artifacts.map((artifact, index) =>
-          index === 0 ? { ...artifact, expired: true } : artifact,
-        ),
-      }),
-    ).toThrow("Advisor artifact set is incomplete");
+    const invalidArtifacts = request.artifacts.map((artifact, index) =>
+      index === 0 ? { ...artifact, expired: true } : artifact,
+    );
+    expect(() => selectedAdvisorArtifactIds({ ...request, artifacts: invalidArtifacts })).toThrow(
+      "Advisor artifact set is incomplete",
+    );
+    expect(() => bindRepairSelection({ ...request, artifacts: invalidArtifacts })).toThrow(
+      "Advisor artifact set is incomplete",
+    );
     expect(() =>
       bindRepairSelection({
         ...request,

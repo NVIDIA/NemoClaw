@@ -33,7 +33,7 @@ const checkoutCases = Object.entries(workflow.jobs).flatMap(([jobName, job]) =>
 const jobEnvironmentCases = Object.entries(workflow.jobs).map(
   ([jobName, job]) => [jobName, job.env] as const,
 );
-const trustedExecutionJobs = ["select", "recover", "claim", "resolve", "validate", "publish"];
+const trustedExecutionJobs = ["select", "claim", "resolve", "validate", "publish"];
 const trustedToolCases = trustedExecutionJobs.flatMap((jobName) =>
   repairToolSteps(workflow.jobs[jobName]).map((step, index) => [jobName, index, step] as const),
 );
@@ -52,15 +52,13 @@ describe("manual PR Review Advisor repair workflow", () => {
   // source-shape-contract: security -- Model credentials and protected branch-write authority must remain in separate jobs with a credential-free validator between them
   it("separates model access, candidate execution, and protected write authority (#10791)", () => {
     const claim = workflow.jobs.claim;
-    const recover = workflow.jobs.recover;
     const resolve = workflow.jobs.resolve;
+    const reviewedDependency = workflow.jobs["reviewed-dependency"];
     const validate = workflow.jobs.validate;
     const publish = workflow.jobs.publish;
 
-    expect(recover.permissions).toEqual({ contents: "read" });
-    expect(serialized(recover)).not.toMatch(/secrets[.]|OPENAI_API_KEY/u);
     expect(claim.permissions).toEqual({ checks: "write", contents: "read" });
-    expect(claim.needs).toContain("recover");
+    expect(claim.needs).toBe("select");
     expect(serialized(claim)).toContain("external_id");
     expect(serialized(claim)).toContain("conclusion=neutral");
     expect(serialized(claim)).not.toMatch(/secrets[.]|OPENAI_API_KEY/u);
@@ -69,8 +67,32 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(serialized(resolve)).toContain("secrets.PR_REVIEW_ADVISOR_API_KEY");
     expect(serialized(resolve)).not.toContain('"contents":"write"');
 
+    expect(reviewedDependency.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(serialized(reviewedDependency)).toContain("package-openshell-sdk-for-pr.mts");
+    expect(serialized(reviewedDependency)).toContain("NODE_AUTH_TOKEN");
+    expect(serialized(reviewedDependency)).toContain("github.token");
+    expect(serialized(reviewedDependency)).not.toMatch(/PR_REVIEW_ADVISOR_API_KEY|OPENAI_API_KEY/u);
+    expect(workflow.jobs.select.needs).toContain("reviewed-dependency");
+    expect(resolve.needs).toContain("reviewed-dependency");
+    expect(validate.needs).toContain("reviewed-dependency");
+    expect(publish.needs).toContain("reviewed-dependency");
+    expect(workflow.jobs.select.permissions).not.toHaveProperty("packages");
+    expect(resolve.permissions).not.toHaveProperty("packages");
+    expect(validate.permissions).not.toHaveProperty("packages");
+    expect(publish.permissions).not.toHaveProperty("packages");
+    const dependencyConsumers = [workflow.jobs.select, resolve, validate, publish]
+      .map(serialized)
+      .join("\n");
+    expect(
+      dependencyConsumers.match(/needs[.]reviewed-dependency[.]outputs[.]artifact-id/gu),
+    ).toHaveLength(4);
+    expect(dependencyConsumers.match(/ci-install-dependencies[.]sh none/gu)).toHaveLength(4);
+    expect(dependencyConsumers).not.toMatch(/NODE_AUTH_TOKEN[^}]*github[.]token/u);
     expect(validate.permissions).toEqual({ actions: "read", contents: "read" });
-    expect(serialized(validate)).not.toMatch(/secrets[.]|OPENAI_API_KEY/u);
+    expect(serialized(validate)).not.toMatch(
+      /secrets[.]|OPENAI_API_KEY|NODE_AUTH_TOKEN[^}]*github[.]token/u,
+    );
+    expect(serialized(validate)).toContain("needs.reviewed-dependency.outputs.artifact-id");
     expect(serialized(validate)).toContain("repair-validate.mts");
 
     expect(publish.environment).toBe("advisor-repair-publish");
@@ -140,19 +162,19 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(claim).toContain("repair-claim.mts");
   });
 
-  // source-shape-contract: security -- A stable PR-scoped identity lets every dispatch reconcile the same sandbox before the permanent model-attempt claim
-  it("recovers the PR-scoped sandbox before claiming model work (#10791)", () => {
-    const recoverJob = workflow.jobs.recover;
+  // source-shape-contract: security -- Runner-local OpenShell state must never be presented as recoverable by a later ephemeral runner
+  it("owns each repair sandbox within one workflow run attempt (#10791)", () => {
     const resolveJob = workflow.jobs.resolve;
-    const recover = serialized(recoverJob);
     const claim = workflow.jobs.claim;
 
-    expect(recover).toContain('repair-resolve.mts\\" recover');
-    expect(recoverJob.env?.PR_NUMBER).toBe("${{ inputs.pr_number }}");
-    expect(recoverJob.env?.SANDBOX_NAME).toBe("advisor-repair-pr-${{ inputs.pr_number }}");
-    expect(resolveJob.env?.PR_NUMBER).toBe("${{ inputs.pr_number }}");
-    expect(resolveJob.env?.SANDBOX_NAME).toBe("advisor-repair-pr-${{ inputs.pr_number }}");
-    expect(claim.needs).toContain("recover");
+    expect(resolveJob.env?.SANDBOX_NAME).toBe(
+      "advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}",
+    );
+    expect(workflow.jobs.validate.env?.SANDBOX_NAME).toBe(
+      "advisor-repair-validation-${{ github.run_id }}-${{ github.run_attempt }}",
+    );
+    expect(claim.needs).toBe("select");
+    expect(workflow.jobs).not.toHaveProperty("recover");
     expect(serialized(resolveJob)).not.toContain('repair-resolve.mts\\" recover');
   });
 
@@ -211,7 +233,7 @@ describe("manual PR Review Advisor repair workflow", () => {
   );
 
   // source-shape-contract: security -- Job-level repair paths must use a context GitHub permits while compiling the workflow
-  it.each(["recover", "resolve", "validate", "publish"])(
+  it.each(["resolve", "reviewed-dependency", "validate", "publish"])(
     "uses isolated workspace paths for the %s job (#10791)",
     (jobName) => {
       expect(JSON.stringify(workflow.jobs[jobName].env)).toContain("github.workspace");

@@ -49,6 +49,7 @@ env:
 jobs:
   select:
     name: Bind exact Advisor evidence
+    needs: reviewed-dependency
     if: ${{ github.ref == 'refs/heads/main' && inputs.repository_egress_authorized }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -74,15 +75,6 @@ jobs:
           persist-credentials: false
           lfs: false
           submodules: false
-          sparse-checkout: |
-            package.json
-            package-lock.json
-            tools/advisors
-            tools/e2e
-            tools/post-merge-docs
-            tools/pr-merge-conflict-fixer
-            tools/pr-review-advisor
-          sparse-checkout-cone-mode: false
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -91,9 +83,16 @@ jobs:
           cache: npm
           cache-dependency-path: trusted/package-lock.json
 
+      - name: Download the reviewed private dependency
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.reviewed-dependency.outputs.artifact-id }}
+          path: ${{ runner.temp }}/openshell-sdk
+          merge-multiple: true
+
       - name: Install trusted dependencies
         working-directory: ${{ env.TRUSTED_CHECKOUT }}
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: GITHUB_EVENT_NAME=pull_request bash .github/actions/ci-install-dependencies.sh none
 
       - id: collect
         name: Collect exact live and Advisor state
@@ -202,65 +201,12 @@ jobs:
           if-no-files-found: error
           retention-days: 31
 
-  recover:
-    name: Reconcile the PR-scoped repair sandbox
-    needs: select
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    env:
-      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
-      PR_NUMBER: ${{ inputs.pr_number }}
-      SANDBOX_NAME: advisor-repair-pr-${{ inputs.pr_number }}
-      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
-    steps:
-      - name: Checkout trusted recovery code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: NVIDIA/NemoClaw
-          ref: ${{ github.workflow_sha }}
-          path: trusted
-          persist-credentials: false
-          lfs: false
-          submodules: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: trusted/package-lock.json
-
-      - name: Install trusted dependencies
-        working-directory: ${{ env.TRUSTED_CHECKOUT }}
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Install OpenShell without model credentials
-        run: |
-          env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
-            NEMOCLAW_NON_INTERACTIVE=1 \
-            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
-
-      - name: Reconcile the PR-scoped sandbox before claiming model work
-        env:
-          RECONCILIATION_RECEIPT_FILE: ${{ runner.temp }}/reconciliation.json
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" recover
-
-      - name: Upload the retry reconciliation receipt
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: advisor-repair-reconciliation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/reconciliation.json
-          if-no-files-found: warn
-          retention-days: 1
-
   resolve:
     name: Resolve in credential-free OpenShell
     needs:
       - select
       - claim
+      - reviewed-dependency
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
@@ -276,8 +222,7 @@ jobs:
       REPAIR_DOWNLOAD_DIR: ${{ github.workspace }}/.repair/download
       RESOLUTION_WORKDIR: ${{ github.workspace }}/.repair/workspace
       RESOLVER_CONFIG_DIR: ${{ github.workspace }}/.repair/pi-config
-      PR_NUMBER: ${{ inputs.pr_number }}
-      SANDBOX_NAME: advisor-repair-pr-${{ inputs.pr_number }}
+      SANDBOX_NAME: advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}
       SELECTION_DIR: ${{ github.workspace }}/.repair/selection
       SOURCE_REPOSITORY: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
@@ -308,9 +253,16 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Download the reviewed private dependency
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.reviewed-dependency.outputs.artifact-id }}
+          path: ${{ runner.temp }}/openshell-sdk
+          merge-multiple: true
+
       - name: Install trusted dependencies
         working-directory: ${{ env.TRUSTED_CHECKOUT }}
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: GITHUB_EVENT_NAME=pull_request bash .github/actions/ci-install-dependencies.sh none
 
       - name: Download exact repair selection
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -384,9 +336,7 @@ jobs:
 
   claim:
     name: Claim the exact one-shot attempt
-    needs:
-      - select
-      - recover
+    needs: select
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -436,11 +386,68 @@ jobs:
             -f 'output[summary]=This exact head, Advisor run, and finding set has consumed its one model attempt.' \
             >/dev/null
 
+  reviewed-dependency:
+    name: Package the reviewed private dependency
+    if: ${{ github.ref == 'refs/heads/main' && inputs.repository_egress_authorized }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted package verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+          sparse-checkout: |
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node for the reviewed package download
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          registry-url: https://npm.pkg.github.com
+          scope: "@nvidia"
+
+      - name: Download and verify the reviewed OpenShell SDK
+        env:
+          NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        working-directory: ${{ env.TRUSTED_CHECKOUT }}
+        run: node --experimental-strip-types --no-warnings scripts/checks/package-openshell-sdk-for-pr.mts
+
+      - id: upload
+        name: Upload the reviewed dependency without its package credential
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-reviewed-dependency-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openshell-sdk/
+          if-no-files-found: error
+          retention-days: 1
+
   validate:
     name: Validate without credentials or write authority
     needs:
       - select
       - resolve
+      - reviewed-dependency
     if: ${{ needs.resolve.result == 'success' && needs.resolve.outputs.outcome == 'proposed' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -451,6 +458,9 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
     env:
       INPUT_DIR: ${{ github.workspace }}/.repair/input
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
+      SANDBOX_NAME: advisor-repair-validation-${{ github.run_id }}-${{ github.run_attempt }}
       SOURCE_REPOSITORY: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
@@ -480,9 +490,16 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Download the reviewed private dependency
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.reviewed-dependency.outputs.artifact-id }}
+          path: ${{ runner.temp }}/openshell-sdk
+          merge-multiple: true
+
       - name: Install trusted dependencies
         working-directory: ${{ env.TRUSTED_CHECKOUT }}
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: GITHUB_EVENT_NAME=pull_request bash .github/actions/ci-install-dependencies.sh none
 
       - name: Download exact repair inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -498,10 +515,17 @@ jobs:
           path: ${{ env.INPUT_DIR }}/candidate
           merge-multiple: true
 
+      - name: Install OpenShell without candidate or package credentials
+        run: |
+          env -u GITHUB_TOKEN -u GH_TOKEN -u NODE_AUTH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
+
       - name: Reconstruct, test, and seal the candidate
         env:
-          CANDIDATE_DIR: ${{ runner.temp }}/candidate
+          CANDIDATE_DIR: ${{ runner.temp }}/validation-workspace/repo
           OUTPUT_DIR: ${{ runner.temp }}/validated
+          SDK_ARTIFACT_DIR: ${{ runner.temp }}/openshell-sdk
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-validate.mts"
 
       - id: upload
@@ -518,6 +542,7 @@ jobs:
     needs:
       - select
       - validate
+      - reviewed-dependency
     if: ${{ needs.validate.result == 'success' && inputs.repair_publish && vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true' }}
     environment: advisor-repair-publish
     runs-on: ubuntu-24.04
@@ -558,9 +583,16 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Download the reviewed private dependency
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.reviewed-dependency.outputs.artifact-id }}
+          path: ${{ runner.temp }}/openshell-sdk
+          merge-multiple: true
+
       - name: Install trusted dependencies
         working-directory: ${{ env.TRUSTED_CHECKOUT }}
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: GITHUB_EVENT_NAME=pull_request bash .github/actions/ci-install-dependencies.sh none
 
       - name: Download exact selection
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -621,9 +653,9 @@ jobs:
     if: ${{ always() }}
     needs:
       - select
-      - recover
       - claim
       - resolve
+      - reviewed-dependency
       - validate
       - publish
     runs-on: ubuntu-24.04
@@ -634,8 +666,8 @@ jobs:
         env:
           ATTEMPT_KEY: ${{ needs.select.outputs.attempt-key }}
           CLAIM_RESULT: ${{ needs.claim.result }}
+          DEPENDENCY_RESULT: ${{ needs.reviewed-dependency.result }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
-          RECOVER_RESULT: ${{ needs.recover.result }}
           RESOLVE_RESULT: ${{ needs.resolve.result }}
           REPAIR_OUTCOME: ${{ needs.resolve.outputs.outcome }}
           SELECT_RESULT: ${{ needs.select.result }}
@@ -646,10 +678,10 @@ jobs:
             echo
             echo "- Attempt: ${ATTEMPT_KEY:-not selected}"
             echo "- Select: $SELECT_RESULT"
-            echo "- Recover: $RECOVER_RESULT"
             echo "- Claim: $CLAIM_RESULT"
             echo "- Resolve: $RESOLVE_RESULT"
             echo "- Repair outcome: ${REPAIR_OUTCOME:-unavailable}"
+            echo "- Validation dependency: $DEPENDENCY_RESULT"
             echo "- Validate: $VALIDATE_RESULT"
             echo "- Publish: $PUBLISH_RESULT"
           } >>"$GITHUB_STEP_SUMMARY"

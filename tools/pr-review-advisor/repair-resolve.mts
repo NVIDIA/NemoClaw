@@ -27,7 +27,6 @@ import {
   execOpenShellSandbox,
   type OpenShellTools,
   required,
-  startOwnedOpenShellGateway,
 } from "../openshell-agent/runtime.mts";
 import { readBoundedFile } from "../post-merge-docs/contract.mts";
 import {
@@ -52,33 +51,12 @@ export type AdvisorRepairCleanupReceipt = {
   error: string | null;
 };
 
-export type AdvisorRepairReconciliationReceipt = {
-  version: 1;
-  sandboxNames: string[];
-  reconciledSandboxNames: string[];
-  outcome: "success" | "failure";
-  error: string | null;
-};
-
-function writeCleanupReceipt<
-  Receipt extends AdvisorRepairCleanupReceipt | AdvisorRepairReconciliationReceipt,
->(receiptFile: string, receipt: Receipt): Receipt {
+function writeCleanupReceipt(
+  receiptFile: string,
+  receipt: AdvisorRepairCleanupReceipt,
+): AdvisorRepairCleanupReceipt {
   writeFileSync(receiptFile, `${JSON.stringify(receipt)}\n`, { flag: "wx", mode: 0o600 });
   return receipt;
-}
-
-function advisorRepairSandboxIdentity(env: NodeJS.ProcessEnv): {
-  current: string;
-  previous: string[];
-} {
-  const prNumber = required(env.PR_NUMBER, "PR_NUMBER");
-  if (!/^[1-9]\d*$/u.test(prNumber) || prNumber.length > 15)
-    throw new RepairError("Advisor repair PR identity is invalid");
-  const sandboxName = `advisor-repair-pr-${prNumber}`;
-  return {
-    current: sandboxName,
-    previous: [sandboxName],
-  };
 }
 
 const REPAIR_COMMAND_PREFIX = [
@@ -291,68 +269,6 @@ export function createAdvisorRepairSandbox(
     },
     tools,
   );
-}
-
-export function reconcilePreviousAdvisorRepairSandboxes(
-  env: NodeJS.ProcessEnv,
-  receiptFile: string,
-  tools: OpenShellTools = defaultOpenShellTools,
-): AdvisorRepairReconciliationReceipt {
-  const identity = advisorRepairSandboxIdentity(env);
-  if (required(env.SANDBOX_NAME, "SANDBOX_NAME") !== identity.current)
-    throw new RepairError("Advisor repair sandbox identity does not match the pull request");
-  const reconciledSandboxNames: string[] = [];
-  try {
-    for (const sandboxName of identity.previous) {
-      deleteOpenShellSandbox(env, sandboxName, tools);
-      reconciledSandboxNames.push(sandboxName);
-    }
-    return writeCleanupReceipt(receiptFile, {
-      version: 1,
-      sandboxNames: identity.previous,
-      reconciledSandboxNames,
-      outcome: "success",
-      error: null,
-    });
-  } catch (error) {
-    writeCleanupReceipt(receiptFile, {
-      version: 1,
-      sandboxNames: identity.previous,
-      reconciledSandboxNames,
-      outcome: "failure",
-      error: sanitizeDiagnostic(error),
-    });
-    throw error;
-  }
-}
-
-export async function recoverAdvisorRepairSandboxes(
-  env: NodeJS.ProcessEnv,
-  receiptFile: string,
-  tools: OpenShellTools = defaultOpenShellTools,
-): Promise<AdvisorRepairReconciliationReceipt> {
-  const gateway = startOwnedOpenShellGateway(
-    env,
-    { gatewayId: "pr-review-advisor-repair-recovery" },
-    tools,
-  );
-  let primaryError: unknown;
-  try {
-    await gateway.ready;
-    return reconcilePreviousAdvisorRepairSandboxes(env, receiptFile, tools);
-  } catch (error) {
-    primaryError = error;
-    throw error;
-  } finally {
-    try {
-      await gateway.stop();
-    } catch (cleanupError) {
-      if (primaryError === undefined) throw cleanupError;
-      const primary = primaryError instanceof Error ? primaryError.message : String(primaryError);
-      const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-      throw new RepairError(`${primary}; recovery gateway cleanup also failed: ${cleanup}`);
-    }
-  }
 }
 
 export function runAdvisorRepairTask(
@@ -578,13 +494,6 @@ async function main(): Promise<void> {
       return;
     case "create":
       createAdvisorRepairSandbox(process.env);
-      return;
-    case "recover":
-      await recoverAdvisorRepairSandboxes(
-        process.env,
-        required(process.env.RECONCILIATION_RECEIPT_FILE, "RECONCILIATION_RECEIPT_FILE"),
-        defaultOpenShellTools,
-      );
       return;
     case "run":
       runAdvisorRepairTask(process.env);

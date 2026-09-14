@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import {
   assertValidatedRepair,
   attemptKey,
@@ -17,7 +18,10 @@ import {
   type RepairSelection,
   validationReceipt,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
-import { reconstructAndSealRepair } from "../../../tools/pr-review-advisor/repair-validate.mts";
+import {
+  reconstructAndSealRepair,
+  runRepairValidationInSandbox,
+} from "../../../tools/pr-review-advisor/repair-validate.mts";
 import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const temporaryDirectories: string[] = [];
@@ -115,14 +119,25 @@ describe("PR Review Advisor trusted validation", () => {
       "utf8",
     );
     expect(readme).toContain("Normal Advisor review is static analysis only");
-    expect(readme).toContain("Manual repair validation is a separate credential-free boundary");
+    expect(readme).toContain(
+      "Manual repair validation is a separate credential-free OpenShell boundary",
+    );
     expect(readme).toContain("PR-derived tests through `npm run test:changed`");
     expect(readme).toContain("remain disabled by `npm ci --ignore-scripts`");
+    expect(readme).toContain("only the public npm registry is");
+    expect(readme).toContain("runner teardown is the terminal");
+    expect(readme).toContain("normal Advisor review workflow posts advisory comments only");
+    expect(readme).toContain("manual repair publisher can update");
+    const validator = fs.readFileSync(
+      path.join(process.cwd(), "tools/pr-review-advisor/repair-validate.mts"),
+      "utf8",
+    );
+    expect(validator).toContain("repair-validation-policy.yaml");
     expect(readme).toContain("records a bounded `blocked`");
     expect(readme).toContain("sandbox-cleanup receipt independently");
   });
 
-  it("reconstructs, runs a secret-free plan, and seals an immutable receipt (#10791)", () => {
+  it("reconstructs, runs a secret-free plan, and seals an immutable receipt (#10791)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-validation-test-"));
     temporaryDirectories.push(root);
     const source = path.join(root, "source");
@@ -158,39 +173,21 @@ describe("PR Review Advisor trusted validation", () => {
         outcome: "proposed",
       }),
     );
-    vi.stubEnv("GITHUB_TOKEN", "github-secret");
-    vi.stubEnv("OPENAI_API_KEY", "model-secret");
-    const environments: NodeJS.ProcessEnv[] = [];
-
-    const candidate = reconstructAndSealRepair({
+    const executed: string[] = [];
+    const candidate = await reconstructAndSealRepair({
       selection: selected,
       sourceCheckout: source,
       candidateDirectory: validated,
       patchFile,
       proposalFile,
       outputDirectory: output,
-      run: (_executable, _arguments, _workingDirectory, environment) => {
-        environments.push(environment);
-        return 0;
+      execute: async (commands) => {
+        executed.push(...commands.map(({ command }) => command));
+        return commands.map(({ command }) => ({ command, exitCode: 0 }));
       },
     });
 
-    expect(environments).toHaveLength(repairValidationPlan(selected).length);
-    expect(
-      environments.map(({ CI, PATH, GITHUB_TOKEN, OPENAI_API_KEY }) => ({
-        CI,
-        PATH,
-        GITHUB_TOKEN,
-        OPENAI_API_KEY,
-      })),
-    ).toEqual(
-      Array.from({ length: environments.length }, () => ({
-        CI: "true",
-        PATH: process.env.PATH,
-        GITHUB_TOKEN: undefined,
-        OPENAI_API_KEY: undefined,
-      })),
-    );
+    expect(executed).toEqual(repairValidationPlan(selected).map(({ command }) => command));
     const receipt = parseValidationReceipt(readJson(path.join(output, "validation.json")));
     expect(() => assertValidatedRepair(selected, receipt, candidate)).not.toThrow();
     expect(fs.readFileSync(path.join(output, "repair.patch"))).toEqual(fs.readFileSync(patchFile));
@@ -204,5 +201,82 @@ describe("PR Review Advisor trusted validation", () => {
         commands: repairValidationPlan(selected).map(({ command }) => ({ command, exitCode: 0 })),
       }),
     ).toThrow("validation changed");
+  });
+
+  it("executes every candidate command inside credential-free OpenShell (#10791)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-sandbox-validation-"));
+    temporaryDirectories.push(root);
+    const candidateDirectory = path.join(root, "workspace", "repo");
+    const sdkArtifactDirectory = path.join(root, "sdk");
+    fs.mkdirSync(candidateDirectory, { recursive: true });
+    fs.mkdirSync(sdkArtifactDirectory);
+    const sandboxName = "advisor-repair-validation-456-1";
+    const run = vi.fn<OpenShellTools["run"]>((command, arguments_) => {
+      switch (`${command}:${arguments_[0] ?? ""}:${arguments_[1] ?? ""}`) {
+        case "which:openshell-sandbox:":
+          return "/trusted/bin/openshell-sandbox";
+        case "openshell:sandbox:list":
+          return `${sandboxName}\n`;
+        default:
+          return "";
+      }
+    });
+    const stop = vi.fn(async () => undefined);
+    const tools: OpenShellTools = {
+      run,
+      runAsync: () => ({ cancel: () => {}, completion: Promise.resolve() }),
+      start: () => stop,
+      wait: async () => {},
+    };
+    const prepareDependencies = vi.fn(async () => undefined);
+    const selected = selection("a".repeat(40));
+    const plan = repairValidationPlan(selected);
+
+    const result = await runRepairValidationInSandbox(
+      {
+        candidateDirectory,
+        commands: plan,
+        env: {
+          GITHUB_RUN_ID: "456",
+          GITHUB_TOKEN: "github-secret",
+          HOME: root,
+          NODE_AUTH_TOKEN: "package-secret",
+          OPENAI_API_KEY: "model-secret",
+          OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
+          PATH: "/usr/bin",
+          PI_IMAGE: "example.invalid/pi@sha256:" + "a".repeat(64),
+          PR_REVIEW_ADVISOR_API_KEY: "advisor-secret",
+          RUNNER_TEMP: root,
+          SANDBOX_NAME: sandboxName,
+        },
+        sdkArtifactDirectory,
+        trustedCheckout: "/trusted",
+      },
+      { prepareDependencies, tools },
+    );
+
+    expect(result).toEqual(plan.map(({ command }) => ({ command, exitCode: 0 })));
+    expect(prepareDependencies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactDirectory: sdkArtifactDirectory,
+        mode: "artifact",
+        targetRoot: candidateDirectory,
+      }),
+    );
+    const sandboxExecs = run.mock.calls.filter(
+      ([command, arguments_]) =>
+        command === "openshell" && arguments_[0] === "sandbox" && arguments_[1] === "exec",
+    );
+    expect(sandboxExecs).toHaveLength(plan.length);
+    expect(
+      sandboxExecs.map(([, arguments_]) => arguments_[arguments_.lastIndexOf("--") + 1]),
+    ).toEqual(plan.map(({ executable }) => executable));
+    expect(run.mock.calls.some(([command]) => command === "npm")).toBe(false);
+    const commandEnvironments = JSON.stringify(run.mock.calls.map(([, , options]) => options.env));
+    expect(commandEnvironments).not.toContain("github-secret");
+    expect(commandEnvironments).not.toContain("package-secret");
+    expect(commandEnvironments).not.toContain("model-secret");
+    expect(commandEnvironments).not.toContain("advisor-secret");
+    expect(stop).toHaveBeenCalledOnce();
   });
 });

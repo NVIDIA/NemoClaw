@@ -423,6 +423,23 @@ export function expectedAdvisorRepairArtifactNames(runId: number, runAttempt: nu
   ].sort();
 }
 
+export function selectAdvisorRepairArtifacts(
+  artifacts: readonly ArtifactSnapshot[],
+  runId: number,
+  runAttempt: number,
+): Array<{ id: number; name: string }> {
+  return expectedAdvisorRepairArtifactNames(runId, runAttempt).map((name) => {
+    const matches = artifacts.filter((artifact) => artifact.name === name);
+    if (
+      matches.length !== 1 ||
+      matches[0]?.expired !== false ||
+      matches[0]?.workflow_run?.id !== runId
+    )
+      fail(`Advisor artifact set is incomplete: ${name}`);
+    return { id: positiveInteger(matches[0].id, "Advisor artifact ID"), name };
+  });
+}
+
 export function bindRepairSelection(input: {
   repository: string;
   prNumber: number;
@@ -500,19 +517,11 @@ export function bindRepairSelection(input: {
   )
     fail("Advisor run is not the successful trusted workflow revision");
 
-  const artifacts = input.artifacts.map((artifact) => ({
-    id: positiveInteger(artifact.id, "Advisor artifact ID"),
-    name: typeof artifact.name === "string" ? artifact.name : "",
-    expired: artifact.expired,
-    runId: artifact.workflow_run?.id,
-  }));
-  const expected = expectedAdvisorRepairArtifactNames(advisorRunId, advisorRunAttempt);
-  const selectedArtifacts = expected.map((name) => {
-    const matches = artifacts.filter((artifact) => artifact.name === name);
-    if (matches.length !== 1 || matches[0]?.expired !== false || matches[0]?.runId !== advisorRunId)
-      fail(`Advisor artifact set is incomplete: ${name}`);
-    return matches[0];
-  });
+  const selectedArtifacts = selectAdvisorRepairArtifacts(
+    input.artifacts,
+    advisorRunId,
+    advisorRunAttempt,
+  );
   if (new Set(selectedArtifacts.map(({ id }) => id)).size !== selectedArtifacts.length)
     fail("Advisor artifact identities are not unique");
   return selectRepairFindings({
@@ -729,9 +738,9 @@ export type RepairValidationCommand = {
 export function repairValidationPlan(selection: RepairSelection): RepairValidationCommand[] {
   return [
     {
-      command: "npm ci --ignore-scripts --no-audit --no-fund",
+      command: "npm ci --ignore-scripts --prefer-offline --no-audit --no-fund",
       executable: "npm",
-      arguments: ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+      arguments: ["ci", "--ignore-scripts", "--prefer-offline", "--no-audit", "--no-fund"],
     },
     {
       command: "npm run check:diff",

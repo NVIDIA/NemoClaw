@@ -1,97 +1,160 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  createOpenShellSandbox,
+  defaultOpenShellTools,
+  deleteOpenShellSandbox,
+  execOpenShellSandbox,
+  type OpenShellTools,
+  startOwnedOpenShellGateway,
+} from "../openshell-agent/runtime.mts";
+import { prepareCiNpmInstall } from "../../scripts/checks/prepare-ci-npm-install.mts";
 import {
   candidateDigest,
   parseSelection,
   readJson,
   repairValidationPlan,
+  type RepairValidationCommand,
   type RepairSelection,
   type ValidatedCandidate,
   validateRepairPatch,
   validationReceipt,
 } from "./repair-contract.mts";
 
-export type RepairValidationRunner = (
-  executable: string,
-  arguments_: string[],
-  workingDirectory: string,
-  environment: NodeJS.ProcessEnv,
-) => number;
+type RepairValidationResult = Array<{ command: string; exitCode: number }>;
 
-const defaultRunner: RepairValidationRunner = (
-  executable,
-  arguments_,
-  workingDirectory,
-  environment,
-) => {
-  const result = spawnSync(executable, arguments_, {
-    cwd: workingDirectory,
-    env: environment,
-    stdio: "inherit",
+export type RepairValidationExecutor = (
+  commands: readonly RepairValidationCommand[],
+  candidateDirectory: string,
+) => Promise<RepairValidationResult>;
+
+export async function runRepairValidationInSandbox(
+  input: {
+    candidateDirectory: string;
+    commands: readonly RepairValidationCommand[];
+    env: NodeJS.ProcessEnv;
+    sdkArtifactDirectory: string;
+    trustedCheckout: string;
+  },
+  dependencies: {
+    prepareDependencies?: typeof prepareCiNpmInstall;
+    tools?: OpenShellTools;
+  } = {},
+): Promise<RepairValidationResult> {
+  const workspace = path.dirname(input.candidateDirectory);
+  if (path.basename(input.candidateDirectory) !== "repo")
+    throw new Error("repair validation candidate must use the isolated repo workspace");
+  const cacheDirectory = path.join(workspace, "npm-cache");
+  mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 });
+  await (dependencies.prepareDependencies ?? prepareCiNpmInstall)({
+    artifactDirectory: input.sdkArtifactDirectory,
+    cacheDirectory,
+    mode: "artifact",
+    targetRoot: input.candidateDirectory,
   });
-  return result.status ?? 1;
-};
 
-function repairValidationEnvironment(runtimeDirectory: string): NodeJS.ProcessEnv {
-  const homeDirectory = path.join(runtimeDirectory, "home");
-  const temporaryDirectory = path.join(runtimeDirectory, "tmp");
-  const cacheDirectory = path.join(runtimeDirectory, "npm-cache");
-  const configDirectory = path.join(runtimeDirectory, "config");
-  for (const directory of [homeDirectory, temporaryDirectory, cacheDirectory, configDirectory]) {
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const tools = dependencies.tools ?? defaultOpenShellTools;
+  const sandboxName = required(input.env.SANDBOX_NAME, "SANDBOX_NAME");
+  const gateway = startOwnedOpenShellGateway(
+    input.env,
+    {
+      gatewayId: `pr-review-advisor-validation-${required(input.env.GITHUB_RUN_ID, "GITHUB_RUN_ID")}`,
+    },
+    tools,
+  );
+  let primaryError: unknown;
+  try {
+    await gateway.ready;
+    createOpenShellSandbox(
+      input.env,
+      {
+        name: sandboxName,
+        image: required(input.env.PI_IMAGE, "PI_IMAGE"),
+        policyPath: path.join(
+          input.trustedCheckout,
+          "tools",
+          "pr-review-advisor",
+          "repair-validation-policy.yaml",
+        ),
+        uploads: [{ source: workspace, destination: "/sandbox" }],
+        command: [
+          "/bin/sh",
+          "-c",
+          "mkdir -p /sandbox/runtime/home /sandbox/runtime/tmp /sandbox/runtime/config && : > /sandbox/runtime/config/user-npmrc && : > /sandbox/runtime/config/global-npmrc",
+        ],
+      },
+      tools,
+    );
+    const results: RepairValidationResult = [];
+    for (const command of input.commands) {
+      execOpenShellSandbox(
+        input.env,
+        {
+          name: sandboxName,
+          timeoutSeconds: 1_800,
+          workdir: "/sandbox/repo",
+          environment: {
+            CI: "true",
+            HOME: "/sandbox/runtime/home",
+            NPM_CONFIG_CACHE: "/sandbox/npm-cache",
+            NPM_CONFIG_GLOBALCONFIG: "/sandbox/runtime/config/global-npmrc",
+            NPM_CONFIG_USERCONFIG: "/sandbox/runtime/config/user-npmrc",
+            NODE_OPTIONS: "--max-old-space-size=8192",
+            TMPDIR: "/sandbox/runtime/tmp",
+            XDG_CACHE_HOME: "/sandbox/npm-cache",
+            XDG_CONFIG_HOME: "/sandbox/runtime/config",
+          },
+          command: [command.executable, ...command.arguments],
+        },
+        tools,
+      );
+      results.push({ command: command.command, exitCode: 0 });
+    }
+    return results;
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    let cleanupError: unknown;
+    try {
+      deleteOpenShellSandbox(input.env, sandboxName, tools);
+    } catch (error) {
+      cleanupError = error;
+    }
+    try {
+      await gateway.stop();
+    } catch (error) {
+      cleanupError ??= error;
+    }
+    if (primaryError === undefined && cleanupError !== undefined) throw cleanupError;
   }
-  const userConfig = path.join(configDirectory, "npmrc");
-  writeFileSync(userConfig, "", { mode: 0o600 });
-
-  const environment: NodeJS.ProcessEnv = {
-    CI: "true",
-    HOME: homeDirectory,
-    NPM_CONFIG_CACHE: cacheDirectory,
-    NPM_CONFIG_GLOBALCONFIG: userConfig,
-    NPM_CONFIG_USERCONFIG: userConfig,
-    PATH: process.env.PATH,
-    TMPDIR: temporaryDirectory,
-    XDG_CACHE_HOME: cacheDirectory,
-    XDG_CONFIG_HOME: configDirectory,
-  };
-  for (const name of ["LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ"]) {
-    if (process.env[name]) environment[name] = process.env[name];
-  }
-  return environment;
 }
 
-export function validateAndSealRepair(input: {
+export async function validateAndSealRepair(input: {
   selection: RepairSelection;
   candidate: ValidatedCandidate;
   candidateDirectory: string;
   patchFile: string;
   outputDirectory: string;
-  run?: RepairValidationRunner;
-}): void {
-  const commands: Array<{ command: string; exitCode: number }> = [];
-  const runtimeDirectory = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-validation-"));
-  try {
-    const environment = repairValidationEnvironment(runtimeDirectory);
-    for (const command of repairValidationPlan(input.selection)) {
-      const exitCode = (input.run ?? defaultRunner)(
-        command.executable,
-        command.arguments,
-        input.candidateDirectory,
-        environment,
-      );
-      if (exitCode !== 0) throw new Error(`repair validation failed: ${command.command}`);
-      commands.push({ command: command.command, exitCode });
-    }
-  } finally {
-    rmSync(runtimeDirectory, { force: true, recursive: true });
-  }
+  execute?: RepairValidationExecutor;
+}): Promise<void> {
+  const plan = repairValidationPlan(input.selection);
+  const commands = await (
+    input.execute ??
+    ((selectedPlan, candidateDirectory) =>
+      runRepairValidationInSandbox({
+        candidateDirectory,
+        commands: selectedPlan,
+        env: process.env,
+        sdkArtifactDirectory: required(process.env.SDK_ARTIFACT_DIR, "SDK_ARTIFACT_DIR"),
+        trustedCheckout: required(process.env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"),
+      }))
+  )(plan, input.candidateDirectory);
   const receipt = validationReceipt({
     selection: input.selection,
     candidate: input.candidate,
@@ -107,15 +170,15 @@ export function validateAndSealRepair(input: {
   );
 }
 
-export function reconstructAndSealRepair(input: {
+export async function reconstructAndSealRepair(input: {
   selection: RepairSelection;
   sourceCheckout: string;
   candidateDirectory: string;
   patchFile: string;
   proposalFile: string;
   outputDirectory: string;
-  run?: RepairValidationRunner;
-}): ValidatedCandidate {
+  execute?: RepairValidationExecutor;
+}): Promise<ValidatedCandidate> {
   const candidate = validateRepairPatch({
     sourceCheckout: input.sourceCheckout,
     destination: input.candidateDirectory,
@@ -123,13 +186,13 @@ export function reconstructAndSealRepair(input: {
     patchFile: input.patchFile,
     proposalFile: input.proposalFile,
   });
-  validateAndSealRepair({
+  await validateAndSealRepair({
     selection: input.selection,
     candidate,
     candidateDirectory: input.candidateDirectory,
     patchFile: input.patchFile,
     outputDirectory: input.outputDirectory,
-    run: input.run,
+    execute: input.execute,
   });
   return candidate;
 }
@@ -139,7 +202,7 @@ function required(value: string | undefined, name: string): string {
   return value;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const inputDirectory = required(process.env.INPUT_DIR, "INPUT_DIR");
   const candidateArtifactDirectory = path.join(inputDirectory, "candidate");
   const selection = parseSelection(
@@ -147,7 +210,7 @@ function main(): void {
   );
   const candidateDirectory = required(process.env.CANDIDATE_DIR, "CANDIDATE_DIR");
   const patchFile = path.join(candidateArtifactDirectory, "repair.patch");
-  reconstructAndSealRepair({
+  await reconstructAndSealRepair({
     selection,
     sourceCheckout: required(process.env.SOURCE_REPOSITORY, "SOURCE_REPOSITORY"),
     candidateDirectory,
@@ -157,4 +220,9 @@ function main(): void {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
