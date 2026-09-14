@@ -37,7 +37,10 @@ describe("OpenClaw rebuild doctor restart", () => {
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ status: 21, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
-    const capture = vi.fn(() => ({ status: 0, output: "" }));
+    const capture = vi.fn((_args: readonly string[], _options: Record<string, unknown>) => ({
+      status: 0,
+      output: "",
+    }));
     const sleep = vi.fn(async () => undefined);
     const runtimeSelection = {
       gatewayName: "recorded-gateway",
