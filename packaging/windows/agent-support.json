@@ -16,12 +16,12 @@
     {
       "id": "hermes",
       "displayName": "Hermes Agent",
-      "version": "0.19.0",
-      "source": "https://github.com/NousResearch/hermes-agent/tree/3ef6bbd201263d354fd83ec55b3c306ded2eb72a",
+      "version": "0.21.1",
+      "source": "https://github.com/NousResearch/hermes-agent/tree/2237be355906fbe6065ce1815711eee52b2d646e",
       "interface": "Hermes dashboard and native terminal UI",
       "status": "candidate",
       "selectable": true,
-      "limitation": "Candidate uses the shipped Hermes dashboard with native ARM64 ConPTY and a separately tested interactive console. Live messaging accounts and physical N1X inference remain qualification gates."
+      "limitation": "Canonical Nous runtime with native ARM64 ConPTY and host-owned native ARM64 Microsoft Edge CDP. Installed inference, tools, cleanup, and physical N1X validation remain release gates."
     },
     {
       "id": "langchain-deepagents-code",

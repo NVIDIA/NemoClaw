@@ -102,6 +102,67 @@ PYTHON_WORKERS = {
     ),
     "langchain-deepagents-code": ("3.13.13", ["deepagents-turn", "deepagents-console"]),
 }
+AGENT_RUNTIME_CONTRACT = {
+    "openclaw": ("OpenClaw Control UI", ["NemoClaw.Runtime.exe", "openclaw gateway"]),
+    "hermes": ("Hermes dashboard and native terminal UI", ["Microsoft Edge", "Hermes Python", "OpenShell gateway"]),
+    "langchain-deepagents-code": ("Deep Agents Code terminal UI", ["Deep Agents Python", "ConPTY host"]),
+    "pi": ("Pi native terminal UI", ["Pi Node", "ConPTY host"]),
+    "nemocua": ("NemoCUA computer-use runtime", ["NemoCUA Python", "owned visible browser"]),
+}
+
+
+def pe_architecture(path: Path):
+    with path.open("rb") as stream:
+        header = stream.read(4096)
+    if len(header) < 64 or header[:2] != b"MZ":
+        return None
+    offset = int.from_bytes(header[60:64], "little")
+    if offset < 64 or offset > len(header) - 6 or header[offset : offset + 4] != b"PE\0\0":
+        return None
+    return {0xAA64: "arm64", 0x8664: "x64", 0x14C: "x86"}.get(
+        int.from_bytes(header[offset + 4 : offset + 6], "little"), "other"
+    )
+
+
+def selected_agent_audit(agent, source_rows, root, installed_root, bytecode=None):
+    rows = inventory(root)
+    files = [row for row in rows if row["kind"] == "file"]
+    source_files = [row for row in source_rows if row["kind"] == "file"]
+    support = read_json(Path(__file__).parents[1] / "agent-support.json")
+    metadata = next(row for row in support["agents"] if row["id"] == agent)
+    final_paths = [str(PureWindowsPath(installed_root) / row["path"]) for row in rows]
+    longest = max(final_paths, key=len)
+    native = []
+    for row in files:
+        if not row["path"].lower().endswith((".exe", ".dll", ".pyd", ".node")):
+            continue
+        architecture = pe_architecture(root / row["path"])
+        if architecture:
+            native.append({"path": row["path"], "architecture": architecture, "sha256": row["sha256"]})
+    licenses = [
+        {"path": row["path"], "sha256": row["sha256"]}
+        for row in files
+        if re.search(r"(^|[._-])(licen[cs]e|copying|notice|copyright)($|[._-])", Path(row["path"]).name, re.I)
+        or row["path"] == "THIRD-PARTY-LICENSES.tar.gz"
+    ]
+    return {
+        "schemaVersion": 1,
+        "classification": "selected-agent-finished-runtime-audit",
+        "countsScope": "selected runtime before and after production preparation; excludes this audit receipt",
+        "agent": agent,
+        "upstream": {"version": metadata["version"], "source": metadata["source"], "lockSha256": metadata.get("lockSha256")},
+        "interface": AGENT_RUNTIME_CONTRACT[agent][0],
+        "expectedIdleProcesses": AGENT_RUNTIME_CONTRACT[agent][1],
+        "before": {"files": len(source_files), "logicalBytes": sum(row["bytes"] for row in source_files)},
+        "after": {"files": len(files), "logicalBytes": sum(row["bytes"] for row in files)},
+        "removed": {"files": len(source_files) - len(files), "logicalBytes": sum(row["bytes"] for row in source_files) - sum(row["bytes"] for row in files)},
+        "maximumFinalInstalledPath": {"characters": len(longest), "path": longest},
+        "omittedGeneratedBytecode": (bytecode or {}).get("skippedLongPathSourceFiles", 0),
+        "nativeExecutables": native,
+        "retainedLicenses": licenses,
+        "runtimeBytesCopiedPerLaunch": 0,
+        "installedQualification": False,
+    }
 
 
 def python_workers(build_root: Path, agents: dict[str, Path]):
@@ -452,6 +513,20 @@ def prepare_agent(agent: str, root: Path):
                 raise ValueError(
                     "The NemoCUA direct harness lacks exact precompiled bytecode."
                 )
+    if agent == "pi":
+        receipt = read_json(root / "selected-agent-build.json", 1024 * 1024)
+        if (
+            receipt.get("classification") != "finished-selected-node-agent"
+            or receipt.get("agent") != "pi"
+            or receipt.get("upstream")
+            != {"package": "@earendil-works/pi-coding-agent", "version": "0.84.1"}
+            or receipt.get("sourceLockSha256")
+            != "6267ec58e69fc6cd53d3c753f28b0e25c00f4befdcae63e8e4924bee2abf0712"
+            or receipt.get("customerBuildRequired") is not False
+            or receipt.get("runtimeLaunchCopiesRequired") is not False
+            or (root / "package-lock.json").exists()
+        ):
+            raise ValueError("Pi requires its exact finished CI dependency tree.")
     # All links are rejected until the official archive's actual workspace
     # representation is reviewed. Never flatten links or accept curated Hermes.
     result = inventory(root)
@@ -1394,6 +1469,20 @@ def assemble(
                 bytecode = prepare_hermes_bytecode(
                     destination, output.with_name(output.name + "-hermes-bytecode.json")
                 )
+            installed_agent_root = (
+                PureWindowsPath(target_install_root or r"C:\Program Files\NVIDIA\NemoClaw")
+                / "runtimes"
+                / runtime_id
+                / LAYOUT[agent][0]
+            )
+            audit = selected_agent_audit(
+                agent, before, destination, installed_agent_root, bytecode
+            )
+            if audit["maximumFinalInstalledPath"]["characters"] >= 260:
+                raise ValueError(
+                    "A selected-agent final installed path exceeds the Windows limit."
+                )
+            write_json(destination / "nemoclaw-runtime-audit.json", audit)
             records.append(
                 {
                     "agent": agent,
@@ -1405,6 +1494,7 @@ def assemble(
                     "bytesCopiedAtBuild": sum(row.get("bytes", 0) for row in before),
                     "finalMetadataAdaptation": adaptation,
                     **({"pythonBytecodePreparation": bytecode} if bytecode else {}),
+                    "runtimeAudit": audit,
                     "executionQualified": False,
                     "availability": "blocked-canonical-shell"
                     if agent == "hermes"

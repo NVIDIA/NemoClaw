@@ -16,6 +16,7 @@ on:
         options:
           - openclaw
           - hermes
+          - pi
       finished_windows_product_version:
         description: MSI product version for the finished preview (must be newer than the legacy preview)
         required: false
@@ -220,7 +221,7 @@ jobs:
             -NodePath "$work\host\bin\node.exe" -ArtifactDirectory "$work\system-drive-proof"
           if ($LASTEXITCODE -ne 0) { throw 'The exact helper did not pass actual system-root and contained Node proof.' }
       - name: Seal the finished application and selected OpenClaw resources
-        if: ${{ inputs.finished_windows_agent != 'hermes' }}
+        if: ${{ inputs.finished_windows_agent == 'openclaw' }}
         shell: pwsh
         run: |
           $work = "$env:RUNNER_TEMP\finished-windows"
@@ -235,6 +236,32 @@ jobs:
             --node-version 22.23.2 --source-revision $env:GITHUB_SHA --component-identity $component `
             --namespace-receipt "$work\namespace.json" --worker-build "$work\runtime\workers" --executable-build "$work\runtime\executable"
           if ($LASTEXITCODE -ne 0) { throw 'The finished runtime could not be sealed.' }
+      - name: Prepare the locked finished Pi runtime
+        if: ${{ inputs.finished_windows_agent == 'pi' }}
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          & python "$env:GITHUB_WORKSPACE\candidate\packaging\windows\distribution\prepare-selected-node-agent.py" `
+            --agent pi --source-root "$env:GITHUB_WORKSPACE\candidate" `
+            --node "$work\application\node\node.exe" `
+            --npm-cli "$work\application\node\node_modules\npm\bin\npm-cli.js" `
+            --output "$work\pi"
+          if ($LASTEXITCODE -ne 0) { throw 'The locked Pi runtime could not be prepared.' }
+      - name: Seal only the finished Pi runtime
+        if: ${{ inputs.finished_windows_agent == 'pi' }}
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $inputs = @("$work\host\runtime-payload-receipt.json", "$work\pi\selected-agent-build.json", "$work\runtime\workers\build.json", "$work\runtime\executable\build.json")
+          $identityText = ($inputs | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() }) -join "`n"
+          $component = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identityText))).ToLowerInvariant()
+          & python "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\assign_runtime_namespace.py" --receipt "$work\namespace.json" --source-revision $env:GITHUB_SHA --component-identity $component
+          & python "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\assemble_runtime.py" --output "$work\assembled" `
+            --agent "pi=$work\pi" --shared-node "$work\host\bin\node.exe" --node-version 22.23.2 `
+            --source-revision $env:GITHUB_SHA --component-identity $component --namespace-receipt "$work\namespace.json" `
+            --worker-build "$work\runtime\workers" --executable-build "$work\runtime\executable" `
+            --target-install-root "$env:ProgramFiles\NVIDIA\NemoClaw"
+          if ($LASTEXITCODE -ne 0) { throw 'The finished Pi runtime could not be sealed.' }
       - name: Download the exact same-run compatibility component and proof
         if: ${{ inputs.finished_windows_agent == 'hermes' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -512,7 +539,7 @@ jobs:
             -LockPath packaging/windows/hermes/official-runtime.lock.json `
             -OutputDirectory "$env:RUNNER_TEMP\compiled-windows-app\node"
       - name: Restore immutable application build inputs
-        if: ${{ inputs.finished_windows_agent != 'hermes' }}
+        if: ${{ inputs.finished_windows_agent == 'openclaw' }}
         shell: pwsh
         run: |
           python packaging/windows/app/materialize-openclaw-build.py `
@@ -520,7 +547,7 @@ jobs:
             --cache "$env:RUNNER_TEMP\compiled-windows-app\downloads"
           if ($LASTEXITCODE -ne 0) { throw 'Application build inputs failed verification.' }
       - name: Verify Windows native plugin file URL loading
-        if: ${{ inputs.finished_windows_agent != 'hermes' }}
+        if: ${{ inputs.finished_windows_agent == 'openclaw' }}
         shell: pwsh
         run: |
           & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
@@ -536,7 +563,7 @@ jobs:
             --source-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\openclaw"
           if ($LASTEXITCODE -ne 0) { throw 'Installer-owned configured-plugin controls failed.' }
       - name: Compile the OpenClaw application unit
-        if: ${{ inputs.finished_windows_agent != 'hermes' }}
+        if: ${{ inputs.finished_windows_agent == 'openclaw' }}
         shell: pwsh
         run: |
           & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
@@ -547,7 +574,7 @@ jobs:
             --output "$env:RUNNER_TEMP\compiled-windows-app\build"
           if ($LASTEXITCODE -ne 0) { throw 'The Windows application compilation failed.' }
       - name: Execute the compiled application through its CLI and Worker API
-        if: ${{ inputs.finished_windows_agent != 'hermes' }}
+        if: ${{ inputs.finished_windows_agent == 'openclaw' }}
         shell: pwsh
         run: |
           & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
@@ -556,7 +583,7 @@ jobs:
             --output "$env:RUNNER_TEMP\compiled-windows-app\controls"
           if ($LASTEXITCODE -ne 0) { throw 'The compiled Windows application controls failed.' }
       - name: Exercise compiled provider, tools and all packaged onboarding choices
-        if: ${{ inputs.finished_windows_agent != 'hermes' }}
+        if: ${{ inputs.finished_windows_agent == 'openclaw' }}
         shell: pwsh
         run: |
           $work = "$env:RUNNER_TEMP\compiled-windows-app"
@@ -582,7 +609,7 @@ jobs:
             throw 'A packaged onboarding choice did not complete its configured gateway checks.'
           }
       - name: Verify the compiled dashboard and packaged resources in a real browser
-        if: ${{ inputs.finished_windows_agent != 'hermes' }}
+        if: ${{ inputs.finished_windows_agent == 'openclaw' }}
         shell: pwsh
         run: |
           $work = "$env:RUNNER_TEMP\compiled-windows-app"
@@ -599,7 +626,7 @@ jobs:
             --browser-executable $browser
           if ($LASTEXITCODE -ne 0) { throw 'The compiled Windows dashboard or resource control failed.' }
       - name: Prepare only shared compiler and browser-observer tools for Hermes
-        if: ${{ inputs.finished_windows_agent == 'hermes' }}
+        if: ${{ inputs.finished_windows_agent != 'openclaw' }}
         shell: pwsh
         run: |
           python packaging/windows/distribution/prepare-native-build-tools.py `
@@ -618,7 +645,7 @@ jobs:
           SELECTED_AGENT: ${{ inputs.finished_windows_agent || 'openclaw' }}
         run: |
           $work = "$env:RUNNER_TEMP\compiled-windows-app"
-          if ($env:SELECTED_AGENT -ne 'hermes') {
+          if ($env:SELECTED_AGENT -eq 'openclaw') {
             New-Item -ItemType Junction -Path "$work\inputs\tools\node_modules\typescript" `
               -Target "$work\inputs\openclaw\node_modules\typescript" | Out-Null
           }
@@ -658,6 +685,8 @@ jobs:
             ${{ runner.temp }}/compiled-windows-app/node/node.exe
             ${{ runner.temp }}/compiled-windows-app/node/LICENSE
             ${{ runner.temp }}/compiled-windows-app/node/node-input.json
+            ${{ runner.temp }}/compiled-windows-app/node/npm.cmd
+            ${{ runner.temp }}/compiled-windows-app/node/node_modules/npm/
             ${{ runner.temp }}/compiled-windows-app/inputs/tools/node_modules/playwright-core/
             ${{ runner.temp }}/compiled-windows-app/inputs/materialization-receipt.json
           if-no-files-found: error

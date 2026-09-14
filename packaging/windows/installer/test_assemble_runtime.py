@@ -196,7 +196,15 @@ class RuntimeAssembly(unittest.TestCase):
         before = assembler.inventory(self.source)
         result = self.assemble()
         content = self.output / "runtimes" / self.identity["runtimeId"]
-        self.assertEqual(assembler.inventory(content / "openclaw"), before)
+        installed = assembler.inventory(content / "openclaw")
+        self.assertEqual(
+            [row for row in installed if row["path"] != "nemoclaw-runtime-audit.json"],
+            before,
+        )
+        audit = json.loads((content / "openclaw/nemoclaw-runtime-audit.json").read_text())
+        self.assertEqual(audit["agent"], "openclaw")
+        self.assertEqual(audit["runtimeBytesCopiedPerLaunch"], 0)
+        self.assertLess(audit["maximumFinalInstalledPath"]["characters"], 260)
         self.assertEqual(assembler.inventory(self.source), before)
         self.assertFalse((self.output / "bin").exists())
         self.assertFalse(list(content.rglob("node.exe")))
