@@ -107,9 +107,10 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
       : "$p=Get-Process -Id ([int]$env:NEMOCLAW_EDGE_INSPECT_PID) -ErrorAction Stop;[ordered]@{pid=$p.Id;path=$p.Path;creationFiletime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress";
   let result;
   try {
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
     result = await execFileAsync(
       powershell,
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
       {
         env: {
           ...process.env,
