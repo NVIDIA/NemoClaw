@@ -513,12 +513,19 @@ export function createCliOpenShellSandboxSessionExecutor(
               {
                 maxBufferBytes: request.kind === "command" ? request.outputLimitBytes : undefined,
                 stdinIsTty,
+                stdin: request.stdin,
               },
               { spawnChild: spawnSession, signalSource: deps.signalSource },
             )
           : superviseProcessSession(
-              () => spawnSession(binary, args, ["inherit", "inherit", "inherit"]),
+              () =>
+                spawnSession(binary, args, [
+                  request.kind === "command" && request.stdin === false ? "ignore" : "inherit",
+                  "inherit",
+                  "inherit",
+                ]),
               deps.signalSource,
+              { forwardSigint: !stdinIsTty },
             );
       const completion = execution.then((result) => {
         finished = true;

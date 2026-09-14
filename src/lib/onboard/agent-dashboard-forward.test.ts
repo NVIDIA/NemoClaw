@@ -7,26 +7,11 @@ import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
 import {
   assertSandboxForwardsReleased,
   canReuseDashboardForwardForAgent,
-  ownsForwardPort,
 } from "./dashboard-runtime";
-import * as forwardService from "../adapters/openshell/forward-service";
 import * as forwardRecovery from "../actions/sandbox/forward-recovery";
 import * as forwardHealth from "../actions/sandbox/forward-health";
 
 describe("forward ownership during sandbox recreation", () => {
-  it.each(["127.0.0.1", "0.0.0.0"])("recognizes its existing forward on %s", (bind) => {
-    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockImplementation(
-      (target) =>
-        target.localHost === bind &&
-        target.localPort === 8643 &&
-        target.sandboxName === "alpha" &&
-        target.gatewayName === "nemoclaw",
-    );
-    expect(ownsForwardPort("/usr/bin/openshell", "alpha", "nemoclaw", 8643)).toBe(true);
-    expect(ownsForwardPort("/usr/bin/openshell", "sibling", "nemoclaw", 8643)).toBe(false);
-    expect(ownsForwardPort("/usr/bin/openshell", "alpha", "nemoclaw-18080", 8643)).toBe(false);
-  });
-
   it("excludes current reservations while waiting for old forwards to exit", () => {
     const isReachable = vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockImplementation(

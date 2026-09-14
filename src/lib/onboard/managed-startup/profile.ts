@@ -330,7 +330,7 @@ export interface ManagedStartupProfile {
   readonly schemaVersion: typeof MANAGED_STARTUP_PROFILE_SCHEMA_VERSION;
   readonly agent: ManagedStartupAgent;
   readonly agentConfig: ManagedStartupAgentConfig;
-  readonly inference: ManagedStartupInference;
+  readonly inference: ManagedStartupInference | null;
   readonly proxy: ManagedStartupProxy;
   readonly dashboard: ManagedStartupDashboard;
   readonly tools: ManagedStartupTools;
@@ -1965,7 +1965,15 @@ function validateDashboard(
   return { agent, mode: "disabled" };
 }
 
-function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedStartupInference {
+function validateInference(
+  value: unknown,
+  agent: ManagedStartupAgent,
+): ManagedStartupInference | null {
+  if (value === null) {
+    if (agent !== "openclaw" && agent !== "hermes")
+      invalid(`${agent} requires inference configuration`);
+    return null;
+  }
   const inference = requireRecord(value, "inference");
   rejectUnknownKeys(inference, INFERENCE_KEYS, "inference");
   const routeProvider = requireBoundedString(inference.routeProvider, "inference.routeProvider");

@@ -32,6 +32,7 @@ const defaultSignals: ProcessSessionSignals = {
 export async function superviseProcessSession(
   spawnChild: () => ProcessSessionChild,
   signalSource: ProcessSessionSignals = defaultSignals,
+  options: { forwardSigint?: boolean } = {},
 ): Promise<ProcessSessionResult> {
   let child: ProcessSessionChild;
   try {
@@ -45,9 +46,12 @@ export async function superviseProcessSession(
     const forwardTerm = () => {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     };
-    // A terminal Ctrl+C already reaches every member of the foreground process
-    // group. Hold it in the parent without delivering it to the child twice.
-    const holdInt = () => {};
+    // Terminal Ctrl+C already reaches the foreground process group. Only
+    // headless capture opts into forwarding a signal sent to the parent alone.
+    const holdInt = () => {
+      if (options.forwardSigint && child.exitCode === null && child.signalCode === null)
+        child.kill("SIGINT");
+    };
     signalSource.add("SIGTERM", forwardTerm);
     signalSource.add("SIGINT", holdInt);
     child.once("error", (error) => {

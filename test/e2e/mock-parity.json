@@ -24,6 +24,8 @@
     {
       "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
       "fast": [
+        "src/lib/inference/llama-cpp/index.test.ts",
+        "src/lib/onboard/llama-cpp-selection/index.test.ts",
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
         "src/lib/onboard/setup-nim-flow.test.ts",
@@ -113,6 +115,7 @@
     {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "liveSources": [
+        "test/e2e/live/hermes-gpu-startup-integrity.ts",
         "test/e2e/live/hermes-gpu-startup-fallback.ts",
         "test/e2e/live/hermes-gpu-startup-proof.ts"
       ],
@@ -152,16 +155,19 @@
         "test/e2e/live/agent-turn-latency-helpers.ts",
         "test/e2e/live/full-e2e-inference-probe.ts",
         "test/e2e/live/full-e2e-workload-evidence.ts",
-        "test/e2e/live/launch-agent-turn.ts"
+        "test/e2e/live/launch-agent-turn.ts",
+        "test/e2e/live/pr-base-comparison.ts"
       ],
       "fast": [
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/full-e2e-gateway.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
+        "test/e2e/support/pr-base-comparison.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -633,6 +639,7 @@
         "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/mcp-provider-rewrite-probe.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
+        "test/e2e/live/openshell-exact-main-exec.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
       "fast": [
@@ -654,6 +661,7 @@
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
         "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts",
+        "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
         "test/mcp/mcp-bridge-servers.test.ts"
       ]
@@ -851,6 +859,7 @@
       "live": "test/e2e/live/rebuild-openclaw.test.ts",
       "fast": [
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "src/lib/onboard/machine/handlers/finalization.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

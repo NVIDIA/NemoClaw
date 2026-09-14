@@ -2534,44 +2534,6 @@ jobs:
           retention-days: 30
           compression-level: 9
 
-  retired-selector-compatibility:
-    needs: generate-matrix
-    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,') || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/retired-selector-compatibility
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Verify retired selector replacements
-        env:
-          JOBS: ${{ inputs.jobs }}
-          TARGETS: ${{ inputs.targets }}
-        run: npx tsx tools/e2e/retired-selector-compatibility.mts
-
-      - name: Upload retired selector compatibility evidence
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-retired-selector-compatibility
-          path: e2e-artifacts/live/retired-selector-compatibility/
-
   staging-brev-launchable:
     name: Exact staging Brev Launchable
     needs: generate-matrix
@@ -4509,6 +4471,7 @@ jobs:
             --revision "$CHECKOUT_SHA" \
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM" \
+            --runtime-user sandbox \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE" \
@@ -5811,7 +5774,6 @@ jobs:
       &e2e-result-jobs [
         base-image-publication,
         generate-matrix,
-        retired-selector-compatibility,
         staging-brev-launchable,
         staging-brev-launchable-identity,
         live,

@@ -9,10 +9,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
-import {
-  assertLlamaCppGgufCachePlanDigest,
-  type LlamaCppGgufCachePlan,
-} from "../../inference/llama-cpp/gguf-cache-plan";
+import { assertLlamaCppGgufCachePlanDigest } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
   assertLlamaCppVerifiedLocalModelArtifact,
   buildLlamaCppRequestGuardCommandArgv,
@@ -32,7 +29,6 @@ import {
 import {
   type HostLocalCreateJournalExecutionLease,
   type HostLocalCreateJournalRecord,
-  type HostLocalCreateJournalStore,
   normalizeHostLocalCreateJournalRecord,
 } from "./host-local-create-journal";
 import type {
@@ -52,7 +48,6 @@ import {
 import {
   createPersistedEngineAuthority,
   type PersistedEngineAuthority,
-  type PersistedEngineAuthorityStore,
   requirePersistedEngineAuthority,
 } from "./persisted-engine-authority";
 

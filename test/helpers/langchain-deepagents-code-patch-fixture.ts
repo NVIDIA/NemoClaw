@@ -132,6 +132,16 @@ class ProxyError(TransportError):
     pass
 `,
   );
+  writeFixtureFile(tempDir, "langgraph/__init__.py", '"""Test package."""');
+  writeFixtureFile(tempDir, "langgraph/pregel/__init__.py", '"""Test package."""');
+  writeFixtureFile(
+    tempDir,
+    "langgraph/pregel/remote.py",
+    `
+class RemoteException(Exception):
+    pass
+`,
+  );
   writeFixtureFile(tempDir, "langgraph_sdk/__init__.py", '"""Test package."""');
   writeFixtureFile(
     tempDir,

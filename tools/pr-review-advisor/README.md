@@ -23,7 +23,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 3. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
-6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, and shared review-queue context.
+6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, findings ledger, and shared review-queue context.
 7. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
 
 `investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
@@ -40,9 +40,10 @@ The workflow is advisory and must not be configured as an E2E-required status ch
 links to the specialist reviews and does not dispatch or report pass/fail for E2E jobs.
 Model availability must not become the authority
 for whether a pull request can merge.
-For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
-changed-file list and dispatches every selected job after `CI / Pull Request` completes. `E2E / PR
-Gate` does not consume advisor output.
+When a maintainer requires live E2E for a pull request, they run it explicitly through the current
+[E2E workflow](../../.github/workflows/e2e.yaml) and follow the
+[maintainer E2E procedure](../../.agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md). Former PR E2E
+check contexts remain advisory and are ignored by the merge-readiness gate.
 
 On automatic runs, the gate accepts a successful `CI / Pull Request` run whose name ends in
 `gate true`. It uses the source repository, branch, and commit to resolve one open PR through the
@@ -68,9 +69,9 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
-- The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence. The PR E2E controller separately dispatches every listed job without consuming advisor output.
+- The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence, but does not dispatch jobs. Maintainers decide whether to run its recommended E2E coverage through the [separate manual E2E procedure](../../.agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md).
 
-Risk plan version 20 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
+The checked-in risk plan selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
 
 The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
 and checked-in evidence:
@@ -127,7 +128,7 @@ The discovered specialists use the workflow-configured model and share the same 
 
 ## Artifacts
 
-Each specialist artifact contains a Markdown review, Pi's unchanged native JSONL session, and an E2E recommendation receipt. The
+Each specialist artifact contains a Markdown review, Pi's unchanged native JSONL session, E2E recommendations, a findings ledger, and shared review-queue context. See [Review queue evidence](REVIEW-QUEUE.md) for the consumer contract. The
 workflow run also displays each Markdown review as a job summary. Replace `<interest>` with the
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.

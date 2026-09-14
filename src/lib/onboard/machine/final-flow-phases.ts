@@ -143,7 +143,6 @@ export function createFinalOnboardFlowPhases<
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
-      recreateJournalHandoff: context.recreateJournalHandoff,
       externalComponent: context.externalComponent,
       providerless: isProviderlessComponentOnboarding(context),
       deps: finalizationDeps,
@@ -184,7 +183,6 @@ export function createFinalOnboardFlowPhases<
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
-      recreateJournalHandoff: context.recreateJournalHandoff,
       externalComponent: null,
       deps: finalizationDeps,
     });

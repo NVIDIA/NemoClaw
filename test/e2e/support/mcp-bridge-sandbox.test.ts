@@ -149,7 +149,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
 
   it("runs the rebinding request beneath each adapter runtime identity", () => {
     const runtimes = {
-      mcporter: "nemoclaw-start node -e",
+      "openclaw-config": "nemoclaw-start node -e",
       "hermes-config": "/opt/hermes/.venv/bin/python -c",
       "deepagents-config": "/opt/venv/bin/python3 -c",
     } as const;
@@ -290,7 +290,7 @@ network_policies:
     const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
     const setPolicy = vi
       .spyOn(policy, "setPolicyDocument")
-      .mockImplementation((_sandboxName, document, options) => {
+      .mockImplementation(async (_sandboxName, document, options) => {
         currentPolicy = document;
         policyMutations.push({ document, operation: options?.operation });
         return true;

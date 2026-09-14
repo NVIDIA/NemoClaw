@@ -507,6 +507,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
       // Exact #11251 template after immutable stable-channel enforcement.
       "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
+      // Exact #11080 npm 12 bootstrap after the #11251 stable-channel cutover.
+      "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
     ],
     formula: {
       asset: "openshell.rb",

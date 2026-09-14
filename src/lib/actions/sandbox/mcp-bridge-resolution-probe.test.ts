@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
@@ -29,16 +29,15 @@ import {
   probeCredentialResolution,
 } from "./mcp-bridge-resolution-probe";
 
-const baseEntry: McpBridgeEntry = {
+const baseEntry: McpSourceEntry = {
   server: "github",
   agent: "openclaw",
-  adapter: "mcporter",
+  adapter: "openclaw-config",
   url: "https://api.githubcopilot.com/mcp/",
   env: ["GITHUB_TOKEN"],
   providerName: "alpha-mcp-github",
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-github",
-  addedAt: new Date(0).toISOString(),
 };
 
 const readyProbe = {
@@ -299,7 +298,7 @@ describe("MCP credential-resolution probe execution gates", () => {
       const probe = await probeCredentialResolution(
         "alpha",
         baseEntry,
-        "mcporter",
+        "openclaw-config",
         readiness,
         runtimeSelection,
       );
@@ -321,23 +320,11 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("skips without contacting the sandbox while an add transaction is incomplete (#6379)", async () => {
-    const probe = await probeCredentialResolution(
-      "alpha",
-      { ...baseEntry, addState: "preflighted" },
-      "mcporter",
-      readyProbe,
-      runtimeSelection,
-    );
-    expect(probe).toEqual({ ok: null, detail: "add transaction incomplete" });
-    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
-  });
-
   it("skips without contacting the sandbox when the stored URL is unsafe (#6379)", async () => {
     const probe = await probeCredentialResolution(
       "alpha",
       { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
     );
@@ -363,7 +350,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
     );
@@ -395,7 +382,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
       "v12",
@@ -414,7 +401,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
     );

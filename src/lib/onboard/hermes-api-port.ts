@@ -19,6 +19,7 @@ import {
   isPortBoundOnHost,
   type ListSandboxesFn,
   reserveDashboardPort,
+  reservePortAfterOwnedForwardDelete,
 } from "./dashboard-port";
 
 export const HERMES_API_PORT_ENV = "NEMOCLAW_HERMES_API_PORT";
@@ -50,8 +51,8 @@ export interface HermesApiPortReservationInput {
   env: NodeJS.ProcessEnv;
   getSandbox(name: string): HermesApiPortSandboxLookup | null | undefined;
   captureForwardList(): string | null;
-  ownsForward?(port: number): boolean;
   reservePort?(port: number): Promise<DashboardPortReservation>;
+  ownsExistingForward?(port: number): boolean;
   warn(message: string): void;
 }
 
@@ -206,10 +207,10 @@ export async function reserveCreateSandboxHermesApiPort(options: {
   getSandbox?: (name: string) => HermesApiPortSandboxLookup | null | undefined;
   allowRegisteredOverride?: boolean;
   forwardListOutput?: string | null;
-  ownsForward?(port: number): boolean;
   isPortBoundCheck?: (port: number) => boolean;
   registryOccupiedPorts?: ReadonlyMap<string, string>;
   reservePort?: (port: number) => Promise<DashboardPortReservation>;
+  ownsExistingForward?: (port: number) => boolean;
   warn?: (message: string) => void;
 }): Promise<ReservedCreateSandboxHermesApiPortResult> {
   const env = options.env ?? process.env;
@@ -223,8 +224,8 @@ export async function reserveCreateSandboxHermesApiPort(options: {
     effectivePort: number,
   ): Promise<ReservedCreateSandboxHermesApiPortResult> => {
     if (
-      options.ownsForward?.(effectivePort) ||
-      forwardOwners.get(String(effectivePort)) === options.sandboxName
+      forwardOwners.get(String(effectivePort)) === options.sandboxName ||
+      options.ownsExistingForward?.(effectivePort) === true
     ) {
       return { effectivePort, reservation: null };
     }
@@ -274,6 +275,7 @@ export async function reserveCreateSandboxHermesApiPort(options: {
 }
 
 export function createHermesApiPortReservationScope(): HermesApiPortReservationScope {
+  let deferredOwnedForwardPort: number | null = null;
   return {
     current: null,
     effectivePort: null,
@@ -285,16 +287,25 @@ export function createHermesApiPortReservationScope(): HermesApiPortReservationS
         getSandbox: input.getSandbox,
         allowRegisteredOverride: true,
         forwardListOutput: input.captureForwardList(),
-        ownsForward: input.ownsForward,
         reservePort: input.reservePort,
+        ownsExistingForward: input.ownsExistingForward,
         warn: input.warn,
       });
       this.effectivePort = selection.effectivePort;
       this.current = selection.reservation;
+      deferredOwnedForwardPort = selection.reservation === null ? selection.effectivePort : null;
     },
     async rebindAfterOwnedForwardDelete(input) {
-      if (input.agentName !== "hermes" || this.current !== null) return;
-      await this.selectAndReserve({ ...input, captureForwardList: () => "" });
+      if (
+        input.agentName !== "hermes" ||
+        this.current !== null ||
+        deferredOwnedForwardPort === null
+      )
+        return;
+      this.current = await reservePortAfterOwnedForwardDelete(deferredOwnedForwardPort, {
+        reservePort: input.reservePort,
+      });
+      deferredOwnedForwardPort = null;
     },
     async releaseBeforeForward(agentName, port) {
       if (agentName === "hermes" && this.current?.port === port) await this.release();
@@ -302,6 +313,7 @@ export function createHermesApiPortReservationScope(): HermesApiPortReservationS
     async release() {
       const reservation = this.current;
       this.current = null;
+      deferredOwnedForwardPort = null;
       await reservation?.release();
     },
   };

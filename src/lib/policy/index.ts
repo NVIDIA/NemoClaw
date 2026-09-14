@@ -4,7 +4,6 @@
 // Policy preset management — list, load, merge, and apply presets.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { isDeepStrictEqual } from "node:util";
@@ -14,8 +13,8 @@ import {
   openshellNotFoundDiagnosticLines,
   namedOpenShellGateway,
   selectedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
-  syncCliOpenShellSandboxPolicyWriter,
+  cliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyWriter,
   tryResolveOpenshellBinary,
   type OpenShellSandboxPolicySetOutcome,
   type OpenShellSandboxPolicySetSubmission,
@@ -323,8 +322,11 @@ function liveCustomPresetContentFromPolicy(current: string, presetName: string):
     : null;
 }
 
-function liveCustomPresetContent(sandboxName: string, presetName: string): string | null {
-  const current = readCurrentSandboxPolicy(sandboxName);
+async function liveCustomPresetContent(
+  sandboxName: string,
+  presetName: string,
+): Promise<string | null> {
+  const current = await readCurrentSandboxPolicy(sandboxName);
   return current ? liveCustomPresetContentFromPolicy(current, presetName) : null;
 }
 
@@ -396,11 +398,11 @@ function loadAgentPresetContent(
  * Resolve a preset across messaging, central or agent, and live custom sources.
  * Source misses stay silent so callers report only after the composite lookup fails.
  */
-function loadPresetForSandbox(
+async function loadPresetForSandbox(
   sandboxName: string,
   presetName: string,
   options: SandboxPresetLoadOptions = {},
-): string | null {
+): Promise<string | null> {
   let sandboxAgent: string | null = null;
   let configuredMessagingChannels: string[] = [];
   let messagingConfig = options.messagingConfig;
@@ -438,7 +440,7 @@ function loadPresetForSandbox(
   if (isMessagingChannelPolicyPreset(presetName)) return null;
 
   const builtinPresetContent = loadCentralPreset(presetName, { reportMissing: false });
-  if (!builtinPresetContent) return liveCustomPresetContent(sandboxName, presetName);
+  if (!builtinPresetContent) return await liveCustomPresetContent(sandboxName, presetName);
   const resolvedPresetContent =
     loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent;
   return presetName === "outlook" &&
@@ -532,10 +534,10 @@ function filterSetupPolicyPresets<T extends { name: string }>(
   return presets.filter((preset) => setupPolicyPresetSupported(preset.name, options));
 }
 
-function listSetupPolicyPresets(
+async function listSetupPolicyPresets(
   sandboxName: string,
   options: SetupPolicyPresetSupportOptions = {},
-): PresetInfo[] {
+): Promise<PresetInfo[]> {
   let sandboxAgent: string | null = null;
   try {
     sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
@@ -544,7 +546,7 @@ function listSetupPolicyPresets(
   }
   return [
     ...filterSetupPolicyPresets(listPresets({ agent: options.agent ?? sandboxAgent }), options),
-    ...listCustomPresets(sandboxName),
+    ...(await listCustomPresets(sandboxName)),
   ];
 }
 
@@ -615,23 +617,6 @@ function assertOpenshellResolvable(options: { nonFatal?: boolean } = {}): boolea
   process.exit(1);
 }
 
-/** Delete the private temp policy file and its directory, ignoring absence. */
-function tempPolicyRetentionError(tmpDir: string, reason: string): Error {
-  return new Error(
-    `Could not remove the temporary policy directory '${tmpDir}' (${reason}). It still holds ` +
-      "the composed sandbox policy; remove it before retrying.",
-  );
-}
-
-function removeTempPolicyMaterial(tmpDir: string): void {
-  try {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch (error) {
-    throw tempPolicyRetentionError(tmpDir, error instanceof Error ? error.message : String(error));
-  }
-  if (fs.existsSync(tmpDir)) throw tempPolicyRetentionError(tmpDir, "the path still exists");
-}
-
 function policyObservationError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -652,15 +637,15 @@ function requirePolicyObservation<T>(result: OpenShellSandboxResult<T>): T {
   );
 }
 
-function readLivePolicyDocument(
+async function readLivePolicyDocument(
   sandboxName: string,
   gatewayName: string,
   scope: "base" | "effective",
   timeoutMs?: number,
   runtimeSelection?: OpenShellRuntimeSelection,
-): string {
+): Promise<string> {
   return requirePolicyObservation(
-    syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+    await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
       target: namedOpenShellGateway(gatewayName),
       sandboxName,
       scope,
@@ -670,14 +655,14 @@ function readLivePolicyDocument(
   ).document;
 }
 
-function readLivePolicyRevision(
+async function readLivePolicyRevision(
   sandboxName: string,
   gatewayName: string,
   revision: number,
   runtimeSelection?: OpenShellRuntimeSelection,
-): string {
+): Promise<string> {
   return requirePolicyObservation(
-    syncCliOpenShellSandboxPolicyReader.readSandboxPolicyRevision({
+    await cliOpenShellSandboxPolicyReader.readSandboxPolicyRevision({
       target: namedOpenShellGateway(gatewayName),
       sandboxName,
       revision,
@@ -686,12 +671,12 @@ function readLivePolicyRevision(
   ).document;
 }
 
-function inspectLivePolicyBoundary(
+async function inspectLivePolicyBoundary(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): PolicyMutationContext {
+): Promise<PolicyMutationContext> {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   try {
     sandbox = registry.getSandbox(sandboxName);
@@ -729,13 +714,13 @@ function inspectLivePolicyBoundary(
   }
   const target = namedOpenShellGateway(gatewayName);
   const inspection = requirePolicyObservation(
-    syncCliOpenShellSandboxPolicyReader.inspectSandboxPolicy({
+    await cliOpenShellSandboxPolicyReader.inspectSandboxPolicy({
       target,
       sandboxName,
       ...(runtimeSelection ? { runtimeSelection } : {}),
     }),
   );
-  const basePolicyDocument = readLivePolicyDocument(
+  const basePolicyDocument = await readLivePolicyDocument(
     sandboxName,
     gatewayName,
     "base",
@@ -751,48 +736,60 @@ function inspectLivePolicyBoundary(
 }
 
 /** Read the current live policy through the sandbox's recorded gateway binding. */
-export function inspectPolicyMutationContext(
+export async function inspectPolicyMutationContext(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): PolicyMutationContext {
-  return inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName, runtimeSelection);
+): Promise<PolicyMutationContext> {
+  return await inspectLivePolicyBoundary(
+    sandboxName,
+    operation,
+    requestedGatewayName,
+    runtimeSelection,
+  );
 }
 
 /**
  * Read the round-trippable base policy through the sandbox's recorded gateway.
  * Destructive lifecycle callers use this instead of the ambient CLI gateway.
  */
-export function captureRecordedSandboxBasePolicy(
+export async function captureRecordedSandboxBasePolicy(
   sandboxName: string,
   operation: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): string {
-  return inspectLivePolicyBoundary(
-    sandboxName,
-    operation,
-    runtimeSelection?.gatewayName,
-    runtimeSelection,
+): Promise<string> {
+  return (
+    await inspectLivePolicyBoundary(
+      sandboxName,
+      operation,
+      runtimeSelection?.gatewayName,
+      runtimeSelection,
+    )
   ).basePolicyDocument;
 }
 
-function preparePolicyMutationContext(
+async function preparePolicyMutationContext(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): PolicyMutationContext {
-  return inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName, runtimeSelection);
+): Promise<PolicyMutationContext> {
+  return await inspectLivePolicyBoundary(
+    sandboxName,
+    operation,
+    requestedGatewayName,
+    runtimeSelection,
+  );
 }
 
 /** Re-read live state immediately before a policy mutation. */
-export function recheckPolicyMutationContext(
+export async function recheckPolicyMutationContext(
   sandboxName: string,
   operation: string,
   previous: PolicyMutationContext,
-): PolicyMutationContext {
-  const current = inspectPolicyMutationContext(
+): Promise<PolicyMutationContext> {
+  const current = await inspectPolicyMutationContext(
     sandboxName,
     operation,
     previous.gatewayName,
@@ -823,15 +820,15 @@ export function rejectFinalPolicySetSubmission(
 }
 
 /** Confirm a policy submission through authoritative live readback. */
-export function confirmAppliedPolicySetSubmission(
+export async function confirmAppliedPolicySetSubmission(
   submission: OpenShellSandboxPolicySetSubmission,
   sandboxName: string,
   desiredPolicyDocument: string,
   previous: PolicyMutationContext,
   operation: string,
-): void {
+): Promise<void> {
   rejectFinalPolicySetSubmission(submission, operation);
-  verifyAppliedPolicyDocument(sandboxName, desiredPolicyDocument, previous);
+  await verifyAppliedPolicyDocument(sandboxName, desiredPolicyDocument, previous);
 }
 
 function reportPolicyObservationFailure(error: unknown): false {
@@ -839,54 +836,37 @@ function reportPolicyObservationFailure(error: unknown): false {
   return false;
 }
 
-function inspectLivePolicyForMutation(
+async function inspectLivePolicyForMutation(
   sandboxName: string,
   operation: string,
   gatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): PolicyMutationContext | null {
+): Promise<PolicyMutationContext | null> {
   try {
-    return preparePolicyMutationContext(sandboxName, operation, gatewayName, runtimeSelection);
+    return await preparePolicyMutationContext(
+      sandboxName,
+      operation,
+      gatewayName,
+      runtimeSelection,
+    );
   } catch (error) {
     reportPolicyObservationFailure(error);
     return null;
   }
 }
 
-/**
- * Submit a composed policy document through a private temp file and classify
- * what OpenShell did with it.
- *
- * The typed policy writer captures nonzero results instead of ending the
- * process. Owning the temp material here guarantees that it is removed before
- * any caller decides how to handle the classified submission (#9206).
- */
-function submitComposedPolicy(
+async function submitComposedPolicy(
   sandboxName: string,
   policyDocument: string,
   gatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): OpenShellSandboxPolicySetSubmission {
-  // `mkdtempSync` creates nothing when it throws, so only the write and the
-  // submission need the cleanup boundary. Writing inside it keeps a failed or
-  // partial write from leaving the composed policy readable in $TMPDIR.
-  //
-  // A cleanup failure deliberately supersedes whatever the body produced: a
-  // policy document still readable on disk is the condition that must never be
-  // reported as a clean result.
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-  try {
-    const tmpFile = path.join(tmpDir, "policy.yaml");
-    fs.writeFileSync(tmpFile, policyDocument, { encoding: "utf-8", mode: 0o600 });
-    return syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy({
-      target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
-      sandboxName,
-      policyPath: tmpFile,
-      ...(runtimeSelection ? { runtimeSelection } : {}),
-    });
-  } finally {
-    removeTempPolicyMaterial(tmpDir);
-  }
+) {
+  return await cliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
+    sandboxName,
+    document: policyDocument,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  });
 }
 
 /**
@@ -909,12 +889,16 @@ function policySetFailure(
   );
 }
 
-export function verifyAppliedPolicyDocument(
+export async function verifyAppliedPolicyDocument(
   sandboxName: string,
   desiredPolicyDocument: string,
   previous: PolicyMutationContext,
-): void {
-  const readback = inspectPolicyDocumentReadback(sandboxName, desiredPolicyDocument, previous);
+): Promise<void> {
+  const readback = await inspectPolicyDocumentReadback(
+    sandboxName,
+    desiredPolicyDocument,
+    previous,
+  );
   if (readback === "unavailable") {
     throw new PolicyObservationError(
       `NemoClaw applied the sandbox policy for '${sandboxName}', but could not verify the resulting base policy. The policy update is incomplete.`,
@@ -927,14 +911,14 @@ export function verifyAppliedPolicyDocument(
   }
 }
 
-function inspectPolicyDocumentReadback(
+async function inspectPolicyDocumentReadback(
   sandboxName: string,
   desiredPolicyDocument: string,
   previous: PolicyMutationContext,
-): "matched" | "different" | "unavailable" {
+): Promise<"matched" | "different" | "unavailable"> {
   try {
     return policyDocumentsMatch(
-      readLivePolicyDocument(
+      await readLivePolicyDocument(
         sandboxName,
         previous.gatewayName,
         "base",
@@ -1034,7 +1018,7 @@ function rebasePolicyDocumentOntoConcurrentEdit(
  * The submission controls the temp policy file, so the composed policy is already
  * deleted by the time this ends the process for a fatal caller (#9206).
  */
-export function setPolicyDocument(
+export async function setPolicyDocument(
   sandboxName: string,
   policyDocument: string,
   options: {
@@ -1044,13 +1028,13 @@ export function setPolicyDocument(
     context?: PolicyMutationContext;
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
-): boolean {
+): Promise<boolean> {
   const operation = options.operation ?? "set the sandbox policy";
   let context: PolicyMutationContext;
   try {
     context = options.context
-      ? recheckPolicyMutationContext(sandboxName, operation, options.context)
-      : preparePolicyMutationContext(
+      ? await recheckPolicyMutationContext(sandboxName, operation, options.context)
+      : await preparePolicyMutationContext(
           sandboxName,
           operation,
           options.runtimeSelection?.gatewayName ?? options.gatewayName,
@@ -1068,7 +1052,7 @@ export function setPolicyDocument(
   for (let attempt = 1; attempt <= POLICY_RECONCILE_ATTEMPTS; attempt += 1) {
     if (attempt > 1) {
       try {
-        context = recheckPolicyMutationContext(sandboxName, operation, context);
+        context = await recheckPolicyMutationContext(sandboxName, operation, context);
       } catch (error) {
         console.error(`  ${policyObservationError(error)}`);
         if (options.nonFatal) return false;
@@ -1078,7 +1062,7 @@ export function setPolicyDocument(
 
     const originalDocument = context.basePolicyDocument;
     const originalVersion = context.inspection.policyIdentity.activeVersion;
-    const { outcome, status } = submitComposedPolicy(
+    const { outcome, status } = await submitComposedPolicy(
       sandboxName,
       requestedDocument,
       context.gatewayName,
@@ -1092,7 +1076,7 @@ export function setPolicyDocument(
 
     let observed: PolicyMutationContext;
     try {
-      observed = preparePolicyMutationContext(
+      observed = await preparePolicyMutationContext(
         sandboxName,
         operation,
         context.gatewayName,
@@ -1108,7 +1092,7 @@ export function setPolicyDocument(
         console.error(`  ${policyObservationError(error)}`);
       }
       if (options.nonFatal) return false;
-      process.exit(1);
+      process.exit(status || 1);
     }
     const observedDocument = observed.basePolicyDocument;
     const observedVersion = observed.inspection.policyIdentity.activeVersion;
@@ -1134,7 +1118,7 @@ export function setPolicyDocument(
     let externalDocument: string;
     try {
       externalDocument = requestedIsCurrent
-        ? readLivePolicyRevision(
+        ? await readLivePolicyRevision(
             sandboxName,
             context.gatewayName,
             observedVersion - 1,
@@ -1598,13 +1582,13 @@ function openClawNpmExclusionStateError(
 
 export type OpenClawNpmCompatibilityState = "match" | "repair" | "excluded" | "drift";
 
-function getOpenClawNpmCompatibilityState(
+async function getOpenClawNpmCompatibilityState(
   sandboxName: string,
-): OpenClawNpmCompatibilityState | null {
+): Promise<OpenClawNpmCompatibilityState | null> {
   try {
     const baselinePolicyContent = resolveSandboxOpenClawNpmBaseline(sandboxName);
     if (!baselinePolicyContent) return "match";
-    const currentPolicy = readCurrentSandboxPolicy(sandboxName);
+    const currentPolicy = await readCurrentSandboxPolicy(sandboxName);
     if (!currentPolicy) return null;
     const live = inspectLiveBaselineEntry(currentPolicy, OPENCLAW_NPM_BASELINE_KEY);
     if (live.state === "absent") return "excluded";
@@ -1792,7 +1776,7 @@ function removePresetFromPolicy(
  * Remove one built-in or namespaced custom preset from the live OpenShell
  * policy. No local preset attribution is read or written.
  */
-function removePreset(
+async function removePreset(
   sandboxName: string,
   presetName: string,
   options: {
@@ -1800,7 +1784,7 @@ function removePreset(
     presetContent?: string;
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
-): boolean {
+): Promise<boolean> {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
   if (!isValidName(sandboxName)) {
@@ -1818,7 +1802,7 @@ function removePreset(
   }
 
   const operation = `remove policy preset '${presetName}'`;
-  const context = inspectLivePolicyForMutation(
+  const context = await inspectLivePolicyForMutation(
     sandboxName,
     operation,
     options.runtimeSelection?.gatewayName,
@@ -1834,7 +1818,9 @@ function removePreset(
   const customPresetContent = liveCustomPresetContentFromPolicy(currentPolicy, presetName);
   const isCustom = customPresetContent !== null;
   const presetContent =
-    options.presetContent ?? customPresetContent ?? loadPresetForSandbox(sandboxName, presetName);
+    options.presetContent ??
+    customPresetContent ??
+    (await loadPresetForSandbox(sandboxName, presetName));
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -1908,10 +1894,10 @@ function removePreset(
   // $TMPDIR (the cleanup doesn't run on process.exit).
   if (!assertOpenshellResolvable(options)) return false;
   if (
-    !setPolicyDocument(sandboxName, updated, {
+    !(await setPolicyDocument(sandboxName, updated, {
       nonFatal: options.nonFatal,
       context,
-    })
+    }))
   ) {
     return false;
   }
@@ -1925,17 +1911,23 @@ function currentPolicyFromMutationContext(context: PolicyMutationContext): strin
 }
 
 /** Round-trippable live policy body from `--base`, or null when unreadable. */
-function readCurrentSandboxPolicy(
+async function readCurrentSandboxPolicy(
   sandboxName: string,
   gatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): string | null {
+): Promise<string | null> {
   try {
     const selectedGateway =
       gatewayName ?? resolveSandboxGatewayName(registry.getSandbox(sandboxName));
     return (
       parseCurrentPolicyOrEmpty(
-        readLivePolicyDocument(sandboxName, selectedGateway, "base", undefined, runtimeSelection),
+        await readLivePolicyDocument(
+          sandboxName,
+          selectedGateway,
+          "base",
+          undefined,
+          runtimeSelection,
+        ),
       ) || null
     );
   } catch {
@@ -1987,10 +1979,10 @@ function getSandboxBaselineEntryDigest(sandboxName: string, key: string): string
 }
 
 /** Run one mutation against the sandbox's recorded OpenShell gateway. */
-function withRecordedSandboxGateway(
+async function withRecordedSandboxGateway(
   sandboxName: string,
-  operation: (gatewayName: string) => boolean,
-): boolean {
+  operation: (gatewayName: string) => Promise<boolean>,
+): Promise<boolean> {
   assertNoOpenShellGatewayEndpointOverride();
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) {
@@ -2005,15 +1997,15 @@ type RestoreBaselineEntryOptions = {
   expectedTargetDigest?: string | null;
 };
 
-function excludeBaselineEntry(
+async function excludeBaselineEntry(
   sandboxName: string,
   key: string,
   digest: string,
   options: { nonFatal?: boolean } = {},
-): boolean {
-  return withRecordedSandboxGateway(sandboxName, (gatewayName) => {
+): Promise<boolean> {
+  return await withRecordedSandboxGateway(sandboxName, async (gatewayName) => {
     const operation = `exclude baseline policy entry '${key}'`;
-    const context = inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
+    const context = await inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
     if (!context) return false;
     const currentPolicy = currentPolicyFromMutationContext(context);
     if (!currentPolicy) {
@@ -2032,21 +2024,21 @@ function excludeBaselineEntry(
     return (
       removed &&
       assertOpenshellResolvable(options) &&
-      setPolicyDocument(sandboxName, policy, {
+      (await setPolicyDocument(sandboxName, policy, {
         ...options,
         context,
         operation,
-      })
+      }))
     );
   });
 }
 
-function restoreBaselineEntry(
+async function restoreBaselineEntry(
   sandboxName: string,
   key: string,
   options: RestoreBaselineEntryOptions = {},
-): boolean {
-  return withRecordedSandboxGateway(sandboxName, (gatewayName) => {
+): Promise<boolean> {
+  return await withRecordedSandboxGateway(sandboxName, async (gatewayName) => {
     let entry: PolicyObject | null;
     try {
       entry = getSandboxBaselineEntry(sandboxName, key);
@@ -2068,7 +2060,7 @@ function restoreBaselineEntry(
     }
     if (!entry) return true;
     const operation = `restore baseline policy entry '${key}'`;
-    const context = inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
+    const context = await inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
     if (!context) return false;
     const currentPolicy = currentPolicyFromMutationContext(context);
     if (!currentPolicy) {
@@ -2086,11 +2078,11 @@ function restoreBaselineEntry(
     const updated = mergeBaselineEntryIntoPolicy(currentPolicy, key, entry);
     return (
       assertOpenshellResolvable(options) &&
-      setPolicyDocument(sandboxName, updated, {
+      (await setPolicyDocument(sandboxName, updated, {
         ...options,
         context,
         operation,
-      })
+      }))
     );
   });
 }
@@ -2212,7 +2204,7 @@ async function selectForRemoval(
  * `openshell policy set --wait`. Custom preset identity is encoded in the
  * OpenShell rule keys instead of a local registry copy.
  */
-function applyPresetContent(
+async function applyPresetContent(
   sandboxName: string,
   presetName: string,
   presetContent: string,
@@ -2228,7 +2220,7 @@ function applyPresetContent(
     includeMessagingCredentialBindings?: boolean;
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
-): boolean {
+): Promise<boolean> {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
   if (!isValidName(sandboxName)) {
@@ -2309,7 +2301,7 @@ function applyPresetContent(
   const operation = `apply policy preset '${presetName}'`;
   let context: PolicyMutationContext;
   try {
-    context = preparePolicyMutationContext(
+    context = await preparePolicyMutationContext(
       sandboxName,
       operation,
       options.runtimeSelection?.gatewayName,
@@ -2420,10 +2412,10 @@ function applyPresetContent(
 
   if (policyChanged) {
     if (
-      !setPolicyDocument(sandboxName, merged, {
+      !(await setPolicyDocument(sandboxName, merged, {
         nonFatal: options.nonFatal,
         context,
-      })
+      }))
     ) {
       return false;
     }
@@ -2439,12 +2431,12 @@ function applyPresetContent(
  * central preset directory, then delegates to `applyPresetContent`. Returns
  * `false` if the named preset does not exist.
  */
-function applyPreset(
+async function applyPreset(
   sandboxName: string,
   presetName: string,
   options: Record<string, unknown> = {},
-): boolean {
-  const presetContent = loadPresetForSandbox(sandboxName, presetName, {
+): Promise<boolean> {
+  const presetContent = await loadPresetForSandbox(sandboxName, presetName, {
     includeMessagingCredentialBindings: options.includeMessagingCredentialBindings === true,
     messagingConfig: options.messagingConfig as MessagingPolicyConfig | null | undefined,
   });
@@ -2452,7 +2444,7 @@ function applyPreset(
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
   }
-  return applyPresetContent(sandboxName, presetName, presetContent, options);
+  return await applyPresetContent(sandboxName, presetName, presetContent, options);
 }
 
 /**
@@ -2461,7 +2453,7 @@ function applyPreset(
  * presets one-by-one, while avoiding one `openshell policy set --wait` per
  * preset during onboarding.
  */
-function applyPresets(sandboxName: string, presetNames: string[]): boolean {
+async function applyPresets(sandboxName: string, presetNames: string[]): Promise<boolean> {
   if (!isValidName(sandboxName)) {
     throw new Error(
       `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
@@ -2479,7 +2471,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }> = [];
 
   for (const presetName of uniquePresetNames) {
-    const presetContent = loadPresetForSandbox(sandboxName, presetName);
+    const presetContent = await loadPresetForSandbox(sandboxName, presetName);
     if (!presetContent) {
       console.error(`  Cannot load preset: ${presetName}`);
       return false;
@@ -2505,7 +2497,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   const operation = "apply policy presets";
   let context: PolicyMutationContext;
   try {
-    context = preparePolicyMutationContext(sandboxName, operation);
+    context = await preparePolicyMutationContext(sandboxName, operation);
   } catch (error) {
     return reportPolicyObservationFailure(error);
   }
@@ -2590,7 +2582,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     // The shared fatal path preserves OpenShell's status after it removes the
     // temporary policy. Onboarding defers that exit until its recovery state
     // and outer cleanup have finished.
-    setPolicyDocument(sandboxName, merged, {
+    await setPolicyDocument(sandboxName, merged, {
       context,
     });
   }
@@ -2745,12 +2737,12 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
   return { presetName, content };
 }
 
-function getAppliedPresets(sandboxName: string, timeoutMs?: number): string[] {
-  return getGatewayPresets(sandboxName, timeoutMs) ?? [];
+async function getAppliedPresets(sandboxName: string, timeoutMs?: number): Promise<string[]> {
+  return (await getGatewayPresets(sandboxName, timeoutMs)) ?? [];
 }
 
-function listCustomPresets(sandboxName: string): PresetInfo[] {
-  const current = readCurrentSandboxPolicy(sandboxName);
+async function listCustomPresets(sandboxName: string): Promise<PresetInfo[]> {
+  const current = await readCurrentSandboxPolicy(sandboxName);
   if (!current) return [];
   const parsed = YAML.parse(current);
   if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) return [];
@@ -2767,8 +2759,11 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
 }
 
 /** Return whether the live OpenShell key belongs to a namespaced custom preset. */
-function customPresetOwnsNetworkPolicyKey(sandboxName: string, policyKey: string): boolean {
-  const content = readCurrentSandboxPolicy(sandboxName);
+async function customPresetOwnsNetworkPolicyKey(
+  sandboxName: string,
+  policyKey: string,
+): Promise<boolean> {
+  const content = await readCurrentSandboxPolicy(sandboxName);
   if (!content) return false;
   const parsed = YAML.parse(content);
   if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) return false;
@@ -2789,7 +2784,10 @@ function customPresetOwnsNetworkPolicyKey(sandboxName: string, policyKey: string
  * `null` to distinguish "gateway unreachable" from "gateway has no
  * matching presets" (`[]`).
  */
-function getGatewayPresets(sandboxName: string, timeoutMs?: number): string[] | null {
+async function getGatewayPresets(
+  sandboxName: string,
+  timeoutMs?: number,
+): Promise<string[] | null> {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   let gatewayName: string;
   try {
@@ -2800,40 +2798,48 @@ function getGatewayPresets(sandboxName: string, timeoutMs?: number): string[] | 
     return null;
   }
   const sandboxAgent = sandbox.agent ?? null;
+  let document: string;
+  try {
+    document = await readLivePolicyDocument(sandboxName, gatewayName, "effective", timeoutMs);
+  } catch {
+    return null;
+  }
+  const sources: { name: string; content: string | null }[] = [];
+  for (const preset of listPresets({ agent: sandboxAgent })) {
+    sources.push({
+      name: preset.name,
+      content: await loadPresetForSandbox(sandboxName, preset.name),
+    });
+  }
   const builtins = inspectGatewayPresetNames({
-    readPolicy: () => {
-      try {
-        return readLivePolicyDocument(sandboxName, gatewayName, "effective", timeoutMs);
-      } catch {
-        return "";
-      }
-    },
+    readPolicy: () => document,
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
-    sources: () => [
-      ...listPresets({ agent: sandboxAgent }).map((preset) => ({
-        name: preset.name,
-        content: loadPresetForSandbox(sandboxName, preset.name),
-      })),
-    ],
+    sources: () => sources,
   });
   if (builtins === null) return null;
-  return [...new Set([...builtins, ...listCustomPresets(sandboxName).map((entry) => entry.name)])];
+  return [
+    ...new Set([...builtins, ...(await listCustomPresets(sandboxName)).map((entry) => entry.name)]),
+  ];
 }
 
 /**
  * Compare the full network-policy entries in a preset with the live gateway
  * policy. Unlike getGatewayPresets(), this detects same-key policy drift.
  */
-function getPresetContentGatewayState(
+async function getPresetContentGatewayState(
   sandboxName: string,
   presetContent: string,
   policyKey?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): "match" | "absent" | "drift" | null {
+): Promise<"match" | "absent" | "drift" | null> {
+  const document = await readCurrentSandboxPolicy(
+    sandboxName,
+    runtimeSelection?.gatewayName,
+    runtimeSelection,
+  );
   return inspectPresetContentGatewayState({
-    readPolicy: () =>
-      readCurrentSandboxPolicy(sandboxName, runtimeSelection?.gatewayName, runtimeSelection) ?? "",
+    readPolicy: () => document ?? "",
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
     presetContent,
@@ -2841,8 +2847,11 @@ function getPresetContentGatewayState(
   });
 }
 
-function presetContentMatchesGateway(sandboxName: string, presetContent: string): boolean | null {
-  const state = getPresetContentGatewayState(sandboxName, presetContent);
+async function presetContentMatchesGateway(
+  sandboxName: string,
+  presetContent: string,
+): Promise<boolean | null> {
+  const state = await getPresetContentGatewayState(sandboxName, presetContent);
   return state === null ? null : state === "match";
 }
 

@@ -951,7 +951,7 @@ describe("sandbox workload ownership receipt", () => {
     const canonicalProfile = Buffer.from(ENCODED_PROFILE, "base64url").toString("utf8");
     const encodedProfile = Buffer.from(
       canonicalProfile.replace(
-        `"model":${JSON.stringify(profile.inference.model)}`,
+        `"model":${JSON.stringify(profile.inference!.model)}`,
         `"model":"nvapi-${"a".repeat(32)}"`,
       ),
       "utf8",

@@ -624,6 +624,7 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
         ...(serviceLabel === "sh.brew.openshell"
           ? [`print gui/${process.getuid?.()}/${otherServiceLabel}`]
           : []),
+        `print ${serviceDomain}`,
         `bootout ${serviceDomain}`,
         `print ${serviceDomain}`,
       ]);
@@ -661,6 +662,7 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
       expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
         `print ${currentDomain}`,
         `print gui/${process.getuid?.()}/${legacyLabel}`,
+        `print ${currentDomain}`,
         `bootout ${currentDomain}`,
         `print ${currentDomain}`,
       ]);

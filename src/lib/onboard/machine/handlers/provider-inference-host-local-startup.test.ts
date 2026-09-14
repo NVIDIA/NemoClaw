@@ -7,7 +7,6 @@ import { llamaCppHostLocalInferenceReceipt } from "../../../../../test/helpers/h
 import { createSession } from "../../../state/onboard-session";
 import type { HostLocalInferenceReceipt } from "../../runtime-provider/host-local-inference";
 import type {
-  HostLocalInferenceApplication,
   HostLocalInferenceStartupSelection,
   HostLocalInferenceStartupSelectionInput,
 } from "../../runtime-provider/host-local-inference-routing";
