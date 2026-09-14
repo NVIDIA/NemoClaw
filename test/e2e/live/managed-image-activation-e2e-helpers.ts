@@ -22,7 +22,6 @@ import {
   outputContainsSandbox,
   resultText,
   type SandboxClient,
-  type TrustedSandboxShellScript,
   trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -41,9 +40,6 @@ const MODEL = "nemoclaw-managed-activation-model";
 const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
-const OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS = 60;
-const OPENCLAW_POST_RESTART_READY_TIMEOUT_MS =
-  (OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS + 10) * 1_000;
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
@@ -196,34 +192,6 @@ function agentTurnCommand(agent: ShippedManagedImageAgent, sessionId: string): s
   }
 }
 
-export function managedActivationPostRestartAgentTurnScript(
-  agent: ShippedManagedImageAgent,
-  phase: "before" | "after",
-  command: readonly string[],
-): TrustedSandboxShellScript | null {
-  if (agent !== "openclaw" || phase !== "after") return null;
-
-  return trustedSandboxShellScript(`
-deadline=$(( $(date +%s) + ${OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS} ))
-last_status=000
-while [ "$(date +%s)" -lt "$deadline" ]; do
-  last_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 2 http://127.0.0.1:18789/health || true)"
-  case "$last_status" in
-    200|401) break ;;
-  esac
-  sleep 2
-done
-case "$last_status" in
-  200|401) ;;
-  *)
-    printf 'OpenClaw gateway did not become ready after OpenShell restart (last HTTP status: %s)\n' "$last_status" >&2
-    exit 1
-    ;;
-esac
-exec ${command.map((argument) => shellQuote(argument)).join(" ")}
-`);
-}
-
 function registryDocument(): {
   sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
 } {
@@ -253,21 +221,47 @@ async function runAgentTurn(
   phase: "before" | "after",
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const command = agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`);
-  const postRestartScript = managedActivationPostRestartAgentTurnScript(agent, phase, command);
-  const options = {
-    artifactName: `${agent}-agent-turn-${phase}-restart`,
-    env,
-    redactionValues: [API_KEY],
-    timeoutMs:
-      AGENT_TIMEOUT_MS + (postRestartScript === null ? 0 : OPENCLAW_POST_RESTART_READY_TIMEOUT_MS),
-  };
-  const result =
-    postRestartScript === null
-      ? await sandbox.exec(sandboxName, command, options)
-      : await sandbox.execShell(sandboxName, postRestartScript, options);
-  expect(result.exitCode, resultText(result)).toBe(0);
-  expect(resultText(result)).toMatch(/\bPONG\b/iu);
+  const result = await sandbox.exec(
+    sandboxName,
+    agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`),
+    {
+      artifactName: `${agent}-agent-turn-${phase}-restart`,
+      env,
+      redactionValues: [API_KEY],
+      timeoutMs: AGENT_TIMEOUT_MS,
+    },
+  );
+  expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
+    true,
+  );
+}
+
+export function managedOpenClawSubagentCommand(sessionId: string): string[] {
+  return agentTurnCommand("openclaw", sessionId).map((value) =>
+    value === "Reply with exactly one word: PONG"
+      ? "NEMOCLAW_MANAGED_SUBAGENT: use sessions_spawn once with task 'Reply with exactly one word: PONG', wait for its result, then reply PONG"
+      : value,
+  );
+}
+
+async function runOpenClawSubagentTurn(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const result = await sandbox.exec(
+    sandboxName,
+    managedOpenClawSubagentCommand(`managed-openclaw-subagent-${Date.now()}`),
+    {
+      artifactName: "openclaw-native-loopback-subagent",
+      env,
+      redactionValues: [API_KEY],
+      timeoutMs: AGENT_TIMEOUT_MS,
+    },
+  );
+  expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
+    true,
+  );
 }
 
 async function preclean(
@@ -501,6 +495,7 @@ async function qualifyAgent(
   await host.expectStatus(sandboxName, { env, timeoutMs: 120_000 });
   await sandbox.expectListed(sandboxName, { env });
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
+  if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   const marker = `managed-activation-${agent}-${Date.now()}`;
   const writeMarker = await sandbox.execShell(
     sandboxName,
@@ -569,6 +564,15 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     publicHost: "host.openshell.internal",
     requireAuth: true,
     requireAuthModels: true,
+    requestCanaryMarker: "NEMOCLAW_MANAGED_SUBAGENT",
+    toolCallOnCanary: {
+      name: "sessions_spawn",
+      arguments: JSON.stringify({
+        task: "Reply with exactly one word: PONG",
+        mode: "run",
+        cleanup: "delete",
+      }),
+    },
   });
   cleanup.trackDisposable("close managed activation inference responder", async () => {
     await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
@@ -593,9 +597,11 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
   expect(chatRequests.length).toBeGreaterThanOrEqual(SHIPPED_MANAGED_IMAGE_AGENTS.length * 2);
-  expect(chatRequests.every((request) => request.auth === "ok" && request.model === MODEL)).toBe(
-    true,
-  );
+  expect(
+    chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
+      chatRequests.some((request) => request.requestCanaryPresent === true) &&
+      chatRequests.some((request) => request.toolResultPresent === true),
+  ).toBe(true);
   await artifacts.writeText("docker-argv.log", trace);
   await artifacts.writeJson("managed-image-activation-summary.json", {
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,

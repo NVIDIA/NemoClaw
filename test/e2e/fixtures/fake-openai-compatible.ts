@@ -25,6 +25,7 @@ export interface FakeOpenAiCompatibleRequest {
   readonly forbiddenMarkerMatches?: number;
   /** Presence only; the configured non-secret canary is never persisted. */
   readonly requestCanaryPresent?: boolean;
+  readonly toolResultPresent?: boolean;
 }
 
 export interface FakeOpenAiCompatibleServer {
@@ -52,6 +53,7 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly requireAuth?: boolean;
   readonly requireAuthModels?: boolean;
   readonly responseText?: string;
+  readonly toolCallOnCanary?: { readonly name: string; readonly arguments: string };
 }
 
 function readPort(portFile: string): number | null {
@@ -196,6 +198,9 @@ export async function startFakeOpenAiCompatibleServer(
           NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH: options.requireAuth ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS: options.requireAuthModels ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT: options.responseText ?? options.chatContent ?? "ok",
+          NEMOCLAW_FAKE_OPENAI_TOOL_CALL_ON_CANARY: JSON.stringify(
+            options.toolCallOnCanary ?? null,
+          ),
         },
         stdio: "ignore",
       },

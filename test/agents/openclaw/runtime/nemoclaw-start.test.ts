@@ -425,8 +425,8 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("http://127.0.0.1:18790/");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
-    expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
-    expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).not.toContain("NEMOCLAW_OPENCLAW_GATEWAY_URL");
+    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).toContain("OPENCLAW_GATEWAY_TOKEN='token'");
   });
   it("writes OpenClaw state env for connect-shell pairing approval (#3730)", () => {
@@ -456,8 +456,8 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(configAfter.gateway.auth.token).not.toBe("");
     expect(configAfter.meta).toEqual({ lastTouchedVersion: "2026.9.1" });
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
-    expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
-    expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).not.toContain("NEMOCLAW_OPENCLAW_GATEWAY_URL");
+    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).toContain(`OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
     expect(envFile).not.toContain("stale-token");
     expect(hashAfter).not.toBe("initial-hash\n");
@@ -685,9 +685,9 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(runGuardedOpenclaw(setup, ["agent", "--agent", "main", "-m", "hello"]).status).toBe(0);
       expect(runGuardedOpenclaw(setup, ["config", "get", "foo"]).status).toBe(0);
       expect(runGuardedOpenclaw(setup, ["channels", "list"]).status).toBe(0);
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("agent --agent main -m hello");
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("config get foo");
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("channels list");
+      expect(fs.readFileSync(setup.commandLog, "utf-8")).toMatch(
+        /ARGS=channels list URL=ws:\/\/127\.0\.0\.1:18789 PORT=18789 TOKEN=test-gateway-token/,
+      );
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
