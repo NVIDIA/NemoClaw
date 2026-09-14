@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -104,6 +105,7 @@ import {
   isOnboardStateLockOwned,
   releaseOnboardStateLock,
   retargetOnboardStateLock,
+  type OnboardStateLockAcquisition,
   type OnboardStateLockHandle,
 } from "../../state/onboard-session/lock";
 import {
@@ -3035,14 +3037,23 @@ function tryAcquireInterruptedOnboardLock(
   stateRoot: string,
   sharedStateRoot: string,
   runtime: UninstallRuntime,
-): OnboardStateLockHandle | null {
-  const acquisition = acquireOnboardStateLock(
+): OnboardStateLockAcquisition {
+  return acquireOnboardStateLock(
     stateRoot,
     runtime.env.HOME || os.homedir(),
     "nemoclaw uninstall interrupted onboarding cleanup",
     path.join(sharedStateRoot, ".gateway-state-migration.lock"),
   );
-  return acquisition.handle ?? null;
+}
+
+function interruptedOnboardLockBlockedMessage(acquisition: OnboardStateLockAcquisition): string {
+  if (acquisition.holderPid !== undefined) {
+    return `The onboarding lock at ${acquisition.lockFile} is held by process ${String(acquisition.holderPid)}; preserving the selected gateway state. Wait for that process to finish, then rerun uninstall.`;
+  }
+  if (acquisition.stale) {
+    return `The onboarding lock at ${acquisition.lockFile} is malformed or changing; preserving the selected gateway state. Wait until the lock has not changed for at least 30 seconds, confirm that no onboarding process uses this state root, then rerun uninstall.`;
+  }
+  return `The onboarding lock at ${acquisition.lockFile} could not be acquired because another gateway-state operation is active; preserving the selected gateway state. Wait for that operation to finish, then rerun uninstall.`;
 }
 
 function interruptedPreGatewayStateIsStable(
@@ -3343,21 +3354,19 @@ function prepareOpenShellCleanup(
         )
       ) {
         try {
-          interruptedOnboardLock =
-            tryAcquireInterruptedOnboardLock(
-              paths.nemoclawStateDir,
-              path.dirname(paths.managedSwapMarkerPath),
-              runtime,
-            ) ?? undefined;
+          const acquisition = tryAcquireInterruptedOnboardLock(
+            paths.nemoclawStateDir,
+            path.dirname(paths.managedSwapMarkerPath),
+            runtime,
+          );
+          interruptedOnboardLock = acquisition.handle;
+          if (!interruptedOnboardLock) {
+            runtime.warn(interruptedOnboardLockBlockedMessage(acquisition));
+            return retainStateLifecycleLock("blocked");
+          }
         } catch (error) {
           runtime.warn(
             `Unable to lock the interrupted onboarding state; it was preserved: ${formatError(error)}. Correct the reported path, ownership, permissions, or lock state, then rerun uninstall.`,
-          );
-          return retainStateLifecycleLock("blocked");
-        }
-        if (!interruptedOnboardLock) {
-          runtime.warn(
-            "The selected gateway state is owned by an active onboarding lifecycle; preserving it. Wait for onboarding to finish, then rerun uninstall.",
           );
           return retainStateLifecycleLock("blocked");
         }
@@ -3714,11 +3723,35 @@ function recoverAbandonedInterruptedUninstallState(
       `Recovered preserved state from an interrupted uninstall: ${presentPreservedEntries.join(", ")}`,
     );
   }
+  const quarantineRoot = `${stagingRoot}.cleanup-${randomUUID()}`;
   try {
-    runtime.rmSync(stagingRoot, { force: true, recursive: true });
+    fs.renameSync(stagingRoot, quarantineRoot);
   } catch (error) {
     runtime.warn(
-      `Unable to remove abandoned interrupted-uninstall state at ${stagingRoot}: ${formatError(error)}. Rerun uninstall after checking that directory.`,
+      `Unable to detach abandoned interrupted-uninstall state at ${stagingRoot}: ${formatError(error)}. It was preserved for manual recovery.`,
+    );
+    return false;
+  }
+  let quarantineStat: fs.Stats;
+  try {
+    quarantineStat = fs.lstatSync(quarantineRoot);
+  } catch (error) {
+    runtime.warn(
+      `Unable to inspect detached interrupted-uninstall state at ${quarantineRoot}: ${formatError(error)}. Cleanup stopped before recursive removal.`,
+    );
+    return false;
+  }
+  if (quarantineStat.dev !== stat.dev || quarantineStat.ino !== stat.ino) {
+    runtime.warn(
+      `Abandoned interrupted-uninstall state changed identity while it was detached to ${quarantineRoot}. Cleanup stopped before recursive removal, and that path was preserved.`,
+    );
+    return false;
+  }
+  try {
+    runtime.rmSync(quarantineRoot, { force: true, recursive: true });
+  } catch (error) {
+    runtime.warn(
+      `Unable to remove abandoned interrupted-uninstall state at ${quarantineRoot}: ${formatError(error)}. Rerun uninstall after checking that directory.`,
     );
     return false;
   }

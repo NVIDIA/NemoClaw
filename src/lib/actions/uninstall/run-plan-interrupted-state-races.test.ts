@@ -261,6 +261,25 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     }
   });
 
+  it("reports the lock path when a recent malformed onboarding lock blocks cleanup", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-malformed-lock-"));
+    const port = 9123;
+    const lockFile = path.join(tmpHome, ".nemoclaw", "gateways", String(port), "onboard.lock");
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port, {
+        prepareState: () => fs.writeFileSync(lockFile, "{\n", { mode: 0o600 }),
+      });
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(fs.existsSync(result.stateRoot)).toBe(true);
+      expect(result.errors.join("\n")).toContain(`The onboarding lock at ${lockFile}`);
+      expect(result.errors.join("\n")).toContain("has not changed for at least 30 seconds");
+      expect(nonListOpenShellCalls(result.calls)).toEqual([]);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
   it("preserves a failed checkpoint bound to another gateway", async () => {
     const tmpHome = fs.mkdtempSync(
       path.join(process.cwd(), "nemoclaw-uninstall-other-checkpoint-"),
@@ -381,6 +400,44 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
       expect(fs.existsSync(result.stateRoot)).toBe(true);
       expect(result.errors.join("\n")).toContain("grants access to group or other users");
       expect(fs.statSync(stagingPath).mode & 0o777).toBe(0o777);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves a replacement when quarantined staging changes identity", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-stage-identity-"));
+    const port = 9123;
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
+    let quarantineRoot: string | null = null;
+    let preservedRoot: string | null = null;
+    const renameSync = fs.renameSync.bind(fs);
+    const replaceQuarantine = (source: fs.PathLike, destination: fs.PathLike) => {
+      const destinationPath = String(destination);
+      renameSync(source, destination);
+      quarantineRoot = destinationPath;
+      preservedRoot = `${destinationPath}.original`;
+      renameSync(destination, preservedRoot);
+      fs.mkdirSync(destinationPath, { mode: 0o700 });
+      fs.writeFileSync(path.join(destinationPath, "replacement"), "new\n");
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      path.resolve(String(source)) === path.resolve(detachedRoot) &&
+      String(destination).startsWith(`${detachedRoot}.cleanup-`)
+        ? replaceQuarantine(source, destination)
+        : renameSync(source, destination),
+    );
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port, {
+        initialStateRoot: () => detachedRoot,
+      });
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(quarantineRoot).not.toBeNull();
+      expect(preservedRoot).not.toBeNull();
+      expect(fs.readFileSync(path.join(quarantineRoot!, "replacement"), "utf8")).toBe("new\n");
+      expect(fs.existsSync(path.join(preservedRoot!, "onboard-session.json"))).toBe(true);
+      expect(result.errors.join("\n")).toContain("changed identity");
     } finally {
       fs.rmSync(tmpHome, { force: true, recursive: true });
     }
