@@ -4,7 +4,7 @@
 import * as agentRuntime from "../../../agent/runtime";
 import { inspectPortableAgentReceiptDisposition } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "../lifecycle/lock";
-import { connectSandbox } from "../connect";
+import { connectSandbox, restoreSandboxStartupState } from "../connect";
 import {
   prepareHermesCronRestoreRecovery,
   recoverHermesCronRestore,
@@ -28,6 +28,18 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
       const agent = agentRuntime.getSessionAgent(sandboxName);
       if (agent?.name === "hermes") {
         prepareHermesCronRestoreRecovery(sandboxName);
+      }
+      const startup = await restoreSandboxStartupState(sandboxName);
+      const recoveryFailureDetail =
+        "recoveryFailureDetail" in startup ? startup.recoveryFailureDetail : null;
+      if (
+        recoveryFailureDetail ||
+        (startup.checked && startup.wasRunning === false && startup.recovered === false)
+      ) {
+        throw new Error(
+          recoveryFailureDetail ||
+            `Sandbox '${sandboxName}' startup recovery did not restore its managed supervisor.`,
+        );
       }
       await connectSandbox(sandboxName, {
         probeOnly: true,

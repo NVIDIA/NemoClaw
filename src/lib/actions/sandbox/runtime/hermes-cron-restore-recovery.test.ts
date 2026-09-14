@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   connectSandbox: vi.fn(),
+  restoreSandboxStartupState: vi.fn(),
   getSessionAgent: vi.fn(),
   inspectPortableAgentReceiptDisposition: vi.fn(),
   prepareHermesCronRestoreRecovery: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("../../../onboard/experimental/portable-agent-lifecycle", () => ({
 
 vi.mock("../connect", () => ({
   connectSandbox: mocks.connectSandbox,
+  restoreSandboxStartupState: mocks.restoreSandboxStartupState,
 }));
 
 vi.mock("../rebuild-hermes-post-restore", () => ({
@@ -42,6 +44,11 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.connectSandbox.mockResolvedValue(undefined);
+    mocks.restoreSandboxStartupState.mockResolvedValue({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    });
     mocks.inspectPortableAgentReceiptDisposition.mockReturnValue({ kind: "absent" });
     mocks.prepareHermesCronRestoreRecovery.mockReturnValue("not-required");
     mocks.recoverHermesCronRestore.mockReturnValue("not-required");
@@ -53,6 +60,10 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     mocks.prepareHermesCronRestoreRecovery.mockImplementation(() => {
       events.push("prepare");
       return "gate-prepared";
+    });
+    mocks.restoreSandboxStartupState.mockImplementation(async () => {
+      events.push("restore");
+      return { checked: true, wasRunning: false, recovered: true };
     });
     mocks.connectSandbox.mockImplementation(async () => {
       events.push("connect");
@@ -67,7 +78,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     expect(mocks.withSandboxLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
       timeoutMs: 30_000,
     });
-    expect(events).toEqual(["prepare", "connect", "recover"]);
+    expect(events).toEqual(["prepare", "restore", "connect", "recover"]);
     expect(mocks.prepareHermesCronRestoreRecovery).toHaveBeenCalledWith("alpha");
     expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", {
       probeOnly: true,
@@ -90,6 +101,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
       requireLaunchReadinessPublication: false,
     });
     expect(mocks.prepareHermesCronRestoreRecovery).not.toHaveBeenCalled();
+    expect(mocks.restoreSandboxStartupState).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
   });
 
@@ -132,6 +144,21 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     });
     expect(mocks.prepareHermesCronRestoreRecovery).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
+  });
+
+  it("stops before readiness when startup recovery fails", async () => {
+    mocks.getSessionAgent.mockReturnValue({ name: "openclaw" });
+    mocks.restoreSandboxStartupState.mockResolvedValue({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      recoveryFailureDetail: "supervisor reconstruction failed",
+    });
+
+    await expect(recoverSandboxWithHermesCronRestore("alpha")).rejects.toThrow(
+      "supervisor reconstruction failed",
+    );
+    expect(mocks.connectSandbox).not.toHaveBeenCalled();
   });
 
   it.each([
