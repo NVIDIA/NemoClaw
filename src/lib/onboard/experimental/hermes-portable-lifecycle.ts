@@ -26,6 +26,8 @@ import {
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock/inspection";
 import { assertCurrentPortableHostFenceHeld } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry/types";
+import { SANITIZED_PRIVILEGED_ENV } from "../runtime-provider/privileged-sandbox-environment";
+import { PinnedSandboxResourceIdentityChangedError } from "../runtime-provider/privileged-sandbox-control-errors";
 import {
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
@@ -53,6 +55,7 @@ import {
 } from "./hermes-portable-policy-state";
 import {
   publishHermesPortableSuccessorReceipt,
+  hasHermesPortableReceiptCandidate,
   readHermesPortableLifecycleReceipt,
   readHermesPortableLifecycleReceiptForRequalification,
   retireHermesPortableCreatePolicyState,
@@ -2019,6 +2022,52 @@ export function recoverHermesPortableSandboxLifecycle(
     timing.finish("failed");
     throw error;
   }
+}
+
+/** Run the fixed gateway controller against the exact receipt-owned Podman container. */
+export function executeHermesPortableGatewaySupervisorAction(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext | null,
+  request: {
+    readonly action: "restart" | "recover" | "probe";
+    readonly nonce: string;
+    readonly timeoutMs: number;
+    readonly expectedContainerId?: string;
+  },
+  deps: HermesPortableLifecycleDeps = {},
+): HermesPortablePodmanResult | null {
+  const stateDir = deps.stateDir ?? defaultPortableDemoStateDir(deps.env ?? process.env);
+  if (!hasHermesPortableReceiptCandidate(sandboxName, stateDir)) return null;
+  if (!context) fail("gateway control requires a registered gateway owner");
+  if (request.action !== "recover" && request.action !== "probe") {
+    fail("gateway restart is not supported; use sandbox stop/start");
+  }
+  if (!/^[a-f0-9]{64}$/u.test(request.nonce)) fail("gateway control nonce is invalid");
+  const qualified = qualify(sandboxName, context, deps);
+  const containerId = qualified.receipt.container.containerId;
+  if (request.expectedContainerId !== undefined && request.expectedContainerId !== containerId) {
+    throw new PinnedSandboxResourceIdentityChangedError(sandboxName);
+  }
+  if (!qualified.container.authority.running) fail("exact container is not running");
+  qualified.assertOperatingAuthority();
+  const result = qualified.containerDeps.podman(
+    [
+      "container",
+      "exec",
+      ...SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value]),
+      "--user",
+      "root",
+      containerId,
+      "/usr/local/bin/nemoclaw-gateway-control",
+      request.action,
+      request.nonce,
+    ],
+    request.timeoutMs,
+  );
+  // A successful helper response cannot authorize a changed receipt, registry,
+  // socket, executable, policy, or container generation.
+  qualify(sandboxName, context, deps, qualified.snapshot);
+  return result;
 }
 
 /** Requalify active Hermes authority without starting or changing the sandbox. */

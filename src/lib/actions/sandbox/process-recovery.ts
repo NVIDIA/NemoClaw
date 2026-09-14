@@ -38,6 +38,7 @@ import {
   isPinnedSandboxContainerIdentityChangedError,
   executePrivilegedSandboxCommand as executeProviderPrivilegedSandboxCommand,
   resolvePrivilegedSandboxTarget,
+  executePortableGatewaySupervisorAction,
   withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
@@ -279,6 +280,20 @@ function executeGatewaySupervisorActionPinned(
   const nonce = randomBytes(32).toString("hex");
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
+      const portableResult = executePortableGatewaySupervisorAction(sandboxName, {
+        action,
+        nonce,
+        timeoutMs: timeout,
+        expectedContainerId,
+      });
+      if (portableResult) {
+        if (portableResult.error) return null;
+        return {
+          status: portableResult.status ?? 1,
+          stdout: portableResult.stdout.trim(),
+          stderr: portableResult.stderr.trim(),
+        };
+      }
       const targetContainerId =
         expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
       const result = executeProviderPrivilegedSandboxCommand(
