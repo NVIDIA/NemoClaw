@@ -617,7 +617,7 @@ describe("CLI sandbox status text output", () => {
           "  echo '  Id: abc'",
           "  echo '  Name: alpha'",
           "  echo '  Namespace: openshell'",
-          "  echo '  Phase: Provisioning'",
+          "  echo '  Phase: Stopped'",
           "  exit 0",
           "fi",
           'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
