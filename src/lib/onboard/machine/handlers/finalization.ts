@@ -196,7 +196,7 @@ function logTerminalReadyBlock(
 }
 
 function secretBoundaryIncompleteMessage(sandboxName: string): string {
-  return `Onboarding for '${sandboxName}' is incomplete because the required secret-boundary check did not pass. Resolve the validator diagnostic, then resume onboarding with ${CLI_NAME} onboard.`;
+  return `Onboarding for '${sandboxName}' is incomplete because the required secret-boundary check did not pass. Resolve the validator diagnostic, then resume onboarding with ${CLI_NAME} onboard --resume.`;
 }
 
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({

@@ -763,6 +763,9 @@ describe("secret-boundary refusal during finalization", () => {
       });
       expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
       expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("secret-boundary"));
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("nemoclaw onboard --resume"),
+      );
       expect(calls.verify).not.toHaveBeenCalled();
       expect(calls.dashboard).not.toHaveBeenCalled();
       expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("ready"));

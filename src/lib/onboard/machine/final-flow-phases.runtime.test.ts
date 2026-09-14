@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   context,
   createPhases,
@@ -10,6 +10,7 @@ import {
 } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
 import type { VerifyDeploymentResult } from "../../verify-deployment";
+import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
 import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 
@@ -32,6 +33,7 @@ function deploymentResult(healthy: boolean): VerifyDeploymentResult {
 }
 
 describe("final onboard flow runtime boundary", () => {
+  afterEach(() => vi.restoreAllMocks());
   it.each([
     { label: "fresh", resume: false },
     { label: "resumed", resume: true },
@@ -469,7 +471,18 @@ describe("final onboard flow runtime boundary", () => {
     async (initialState) => {
       const harness = createRuntimeHarness(sessionAt(initialState));
       const recorders = harness.boundary.recorders();
-      const recovery = vi.fn(async () => false);
+      const recovery = vi.fn().mockResolvedValue({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        secretBoundaryRefused: true,
+        secretBoundaryReason: "unexpected-marker",
+      });
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: recovery,
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      });
       const dashboard = vi.fn();
       const reportReadiness = vi.fn();
       const phases = createPhases("agent_setup", [], {
@@ -479,7 +492,7 @@ describe("final onboard flow runtime boundary", () => {
         startRecordedStep: recorders.startRecordedStep,
         recordStepComplete: recorders.recordStepComplete,
         finalizationDeps: {
-          checkAndRecoverSandboxProcesses: recovery,
+          checkAndRecoverSandboxProcesses: finalizationHandlerDeps.checkAndRecoverSandboxProcesses,
           printDashboard: dashboard,
           reportDeploymentReadiness: reportReadiness,
           readRegistryAgent: () => "hermes",
@@ -495,7 +508,12 @@ describe("final onboard flow runtime boundary", () => {
       expect(first.session?.machine.state).not.toBe("complete");
       expect(reportReadiness).toHaveBeenCalledWith(false);
       expect(dashboard).not.toHaveBeenCalled();
-      recovery.mockResolvedValue(true);
+      recovery.mockResolvedValue({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      });
       const resumed = await runFinalOnboardFlowSlice({
         context: context({
           agent: { name: "hermes" },
