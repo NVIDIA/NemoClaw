@@ -1604,7 +1604,9 @@ Show sandbox-scoped status, health, and inference configuration for one register
 
 <AgentOnly variant="hermes">
 
-For Portable Hermes, `status` reports `Portable lifecycle phase: pending`, `configuring`, or `active` from the receipt authority without running Docker or OpenClaw status work. An active receipt must match its sandbox registry lifecycle identity; a mismatch fails instead of reporting status from another runtime.
+For Portable Hermes, text `status` reports `Saved Portable lifecycle phase: pending`, `configuring`, or `active` from the retained receipt.
+It also prints `Runtime and agent health: not probed`; the saved phase does not establish live health.
+An active receipt must match its sandbox registry lifecycle identity; a mismatch fails instead of reporting status from another runtime.
 
 </AgentOnly>
 
@@ -3451,7 +3453,8 @@ If the in-sandbox config write or integrity hash update fails, the OpenShell rou
 
 <AgentOnly variant="openclaw,hermes">
 
-Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
+Canonical supported provider IDs are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
+The installer alias `llama-cpp` is accepted and normalized to `llama-cpp-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 Before it persists the route in the NemoClaw registry or agent config, the command sends a validation request from the target sandbox.
@@ -3548,7 +3551,9 @@ With both flags, `doctor` exits before it runs checks, writes one JSON error to 
 
 ### `$$nemoclaw debug`
 
-Collect diagnostics for bug reports. Gathers system info, Docker state, gateway logs, and sandbox status into a summary or tarball. Use `--sandbox <name>` to target a specific sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball that you can attach to an issue.
+Collect diagnostics for bug reports.
+For non-Portable sandboxes, the command gathers system information, Docker state, gateway logs, and sandbox status into a summary or tarball.
+Use `--sandbox <name>` to select a sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball.
 
 ```bash
 $$nemoclaw debug [--quick|-q] [--sandbox NAME] [--output PATH|-o PATH]
@@ -3562,7 +3567,19 @@ $$nemoclaw debug [--quick|-q] [--sandbox NAME] [--output PATH|-o PATH]
 
 If `--output` is set and the tarball cannot be written (for example, the destination directory is missing or read-only), the command exits non-zero so scripts can detect the failure. The tarball is written to a temporary sibling and renamed on success, so a pre-existing file at `--output` is preserved when `tar` fails.
 
-When `--sandbox` is supplied explicitly through the flag or one of `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_SANDBOX`, or `SANDBOX_NAME`, the name must match a registered sandbox. The flag wins, then the environment variables in that order.
+<AgentOnly variant="hermes">
+For Portable Hermes, select the sandbox explicitly to collect a redacted offline report from its retained receipt.
+The report works when the registry and runtime are unavailable.
+It contains only the report schema version, sandbox name, agent, saved lifecycle phase, and runtime and agent health values of `not-probed`.
+With `--output`, the archive contains only `portable-lifecycle.json`.
+It excludes raw receipts, credentials, environment data, private paths, and runtime logs.
+`--quick` produces the same minimal report.
+A malformed selected receipt stops collection before an archive is created.
+While Portable authority remains on the host, NemoClaw blocks non-Portable diagnostic collection.
+</AgentOnly>
+
+An explicit name can come from `--sandbox`, `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_SANDBOX`, or `SANDBOX_NAME`, in that precedence order.
+For non-Portable sandboxes, the name must match a registered sandbox.
 NemoClaw checks the sandbox on its registered owning gateway.
 An unknown sandbox, invalid gateway binding, denied OpenShell observation, or confirmed absence from that gateway exits nonzero without writing a tarball.
 The error names the sandbox and the source environment variable when applicable.

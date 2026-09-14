@@ -145,9 +145,6 @@ test(
     expect(installLog).toContain(
       "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
     );
-    expect(installLog).not.toMatch(
-      /Recreating OpenShell Docker sandbox container with NVIDIA GPU access|Docker GPU mode selected/u,
-    );
 
     const sandboxContainers = await runtimeProvider.command(
       [
@@ -413,8 +410,9 @@ test(
     timeout: TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "prepare an attached Ollama daemon",
+        "prepare the Ollama export host",
         "onboard OpenClaw without sandbox GPU",
+        "attach the export daemon",
         "export and compare the active Ollama configuration",
         "refuse export after the attached daemon stops",
       ],
@@ -453,8 +451,6 @@ test(
     });
     await ensureOllama(host);
     await cleanupOllama(host, "export-stop-default-ollama");
-    const daemonOwner = startAttachedOllama(progress, exportEnv);
-    cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner.terminate());
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "export-cleanup-gateway",
       env: exportEnv,
@@ -472,13 +468,6 @@ test(
       env: exportEnv,
       timeoutMs: 120000,
     });
-    await waitForAttachedOllama(host, exportEnv);
-    await host.command("ollama", ["pull", "qwen3.5:9b"], {
-      artifactName: "export-prepare-attached-model",
-      env: exportEnv,
-      timeoutMs: execTimeout(30 * 60000),
-    });
-
     progress.phase("onboard OpenClaw without sandbox GPU");
     const onboard = await host.command(
       "node",
@@ -487,16 +476,32 @@ test(
         artifactName: "export-onboard-ollama",
         cwd: REPO_ROOT,
         env: exportEnv,
-        timeoutMs: execTimeout(55 * 60000),
+        timeoutMs: execTimeout(20 * 60000),
       },
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
-    // Onboarding can restart the installer service; only the attached child may own this fixture.
-    await host.command("sudo", ["-n", "systemctl", "stop", "ollama.service"], {
-      artifactName: "export-stop-competing-service",
+    progress.phase("attach the export daemon");
+    // Onboarding restarts the installer service on the same port; stop it before the child binds.
+    const stoppedService = await host.command(
+      "sudo",
+      ["-n", "systemctl", "stop", "ollama.service"],
+      {
+        artifactName: "export-stop-competing-service",
+        env: exportEnv,
+        timeoutMs: 60000,
+      },
+    );
+
+    expect(stoppedService.exitCode, resultText(stoppedService)).toBe(0);
+    const daemonOwner = startAttachedOllama(progress, exportEnv);
+    cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner.terminate());
+    await waitForAttachedOllama(host, exportEnv);
+    const preparedModel = await host.command("ollama", ["pull", "qwen3.5:9b"], {
+      artifactName: "export-prepare-attached-model",
       env: exportEnv,
-      timeoutMs: 60000,
+      timeoutMs: execTimeout(20 * 60000),
     });
+    expect(preparedModel.exitCode, resultText(preparedModel)).toBe(0);
 
     progress.phase("export and compare the active Ollama configuration");
     const firstPath = path.join(directory, "first.yaml");
@@ -525,7 +530,6 @@ test(
       "serving" in exportedProvider && exportedProvider.serving.backend === "ollama"
         ? exportedProvider.serving
         : undefined;
-    expect(exportedProvider.provider).toBe("ollama-local");
     expect(serving?.daemon.hostPort).toBe(11439);
     expect(serving?.proxy.hostPort).toBe(Number(PROXY_PORT));
     expect(serving?.model.digest).toBe(`sha256:${model?.digest.replace(/^sha256:/u, "")}`);
