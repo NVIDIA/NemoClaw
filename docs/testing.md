@@ -101,6 +101,16 @@ trip only on an explicitly owned experiment, then confirm that it remains stoppe
 until explicit apply. Do not confuse that controlled trip with a naturally
 occurring host-pressure event.
 
+Run the maintained lifecycle test with absolute paths, separately from the image
+upgrade test:
+
+```sh
+NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/spark.yaml \
+NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/state \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+  cargo test -p nemoclaw-e2e --test spark spark_apply_export_capacity -- --ignored
+```
+
 Use a dedicated immutable bundle copy for a long live run. Rebuilding `dist`
 replaces development artifacts and is not safe while an operation still uses
 that directory. [Agent fixture instructions](agents.md) cover native messaging

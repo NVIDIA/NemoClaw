@@ -1,0 +1,27 @@
+{
+  "observedAt": "2026-09-14T22:42:57.840552+00:00",
+  "platform": "linux_arm64",
+  "sourceCommit": "a4ed31374743246087b5265328e9a2c48a2fe019",
+  "image": "nc-prototype-qwen38@sha256:d4775421c3ed533fef5218aeb87b6c2bcf97804b74c58143e4c052bb60961e35",
+  "metadata": {
+    "nemoclaw-spark": "1ef4e7fbbf3502eb50da392d17271e4f52dc2d05388a7aed8bd209f2c1623bba",
+    "rust": "1.98.1",
+    "sourceVersion": "0.1.0-dev.e03ca87f041304c3",
+    "supervisor-source.tar.gz": "cbdede9109e576e6502f5ca0081877e85c0d488889b02c673c918178572629c3"
+  },
+  "validation": {
+    "independentOfflineSourceRebuild": {
+      "matches": true,
+      "binarySHA256": "1ef4e7fbbf3502eb50da392d17271e4f52dc2d05388a7aed8bd209f2c1623bba"
+    },
+    "independentOCIRebuild": {
+      "matches": true,
+      "manifestDigest": "sha256:d4775421c3ed533fef5218aeb87b6c2bcf97804b74c58143e4c052bb60961e35"
+    },
+    "scope": "same qualified native build host; fixed retained source and build context; live lifecycle evidence is separate"
+  },
+  "changes": [
+    "Accept legitimate available-memory estimates below free memory without relaxing configured pressure thresholds.",
+    "Distinguish pressure, failed memory observations, closed sample streams, and operator trips."
+  ]
+}
