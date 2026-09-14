@@ -14,6 +14,7 @@ use std::{io::Read, time::Duration};
 #[derive(Clone)]
 pub struct Engine {
     pub(crate) api: bollard::Docker,
+    endpoint: String,
 }
 impl Engine {
     pub fn connect(endpoint: &str) -> Result<Self, Error> {
@@ -27,7 +28,10 @@ impl Engine {
             let api =
                 bollard::Docker::connect_with_unix(endpoint, 120, bollard::API_DEFAULT_VERSION)
                     .map_err(|_| Error::State("cannot configure Docker engine client"))?;
-            Ok(Self { api })
+            Ok(Self {
+                api,
+                endpoint: endpoint.into(),
+            })
         }
         #[cfg(not(unix))]
         {
@@ -35,6 +39,9 @@ impl Engine {
                 "local managed runtime topology is not qualified on this platform",
             ))
         }
+    }
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
     pub async fn info(&self) -> Result<SystemInfo, Error> {
         let info = self.api.info().await.map_err(remote)?;
@@ -173,3 +180,6 @@ fn archive(files: &[(&str, &[u8], u32)]) -> Result<Vec<u8>, Error> {
         .into_inner()
         .map_err(|_| Error::State("cannot finish container file write"))
 }
+
+#[cfg(all(test, unix))]
+pub(crate) mod fixture;
