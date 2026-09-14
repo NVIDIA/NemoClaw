@@ -195,6 +195,7 @@ describe("relaunchManagedSupervisorSession", () => {
       stateRestored: true,
       stateBackupRemoved: true,
     });
+    expect(deps.resolveContainer).toHaveBeenNthCalledWith(2, "alpha", "docker", "new-container-id");
     expect(deps.restoreState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith(

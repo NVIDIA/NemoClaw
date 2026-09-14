@@ -430,7 +430,7 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
-      "registeredSandboxNames" | "sandbox" | "sandboxName"
+      "expectedResourceHandle" | "registeredSandboxNames" | "sandbox" | "sandboxName"
     >,
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(

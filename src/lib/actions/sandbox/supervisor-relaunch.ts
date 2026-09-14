@@ -353,7 +353,7 @@ export function relaunchManagedSupervisorSession(
       let replacementOwned = false;
       try {
         replacementOwned = sameContainerId(
-          resolveContainer(sandboxName, driver),
+          resolveContainer(sandboxName, driver, result.newContainerId),
           result.newContainerId,
         );
       } catch {

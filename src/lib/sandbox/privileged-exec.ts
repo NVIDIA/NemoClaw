@@ -82,18 +82,28 @@ export function withPrivilegedSandboxExecutionLease<T>(
 
 export function resolvePrivilegedSandboxTarget(
   sandboxName: string,
+  expectedResourceHandle?: string,
 ): RuntimeProviderPrivilegedSandboxTarget {
   const { sandbox, control } = privilegedSandboxControl(sandboxName);
-  return control.resolveTarget({
+  const target = control.resolveTarget({
     registeredSandboxNames: registeredSandboxNames(sandboxName),
     sandbox,
     sandboxName,
+    ...(expectedResourceHandle !== undefined ? { expectedResourceHandle } : {}),
   });
+  if (expectedResourceHandle !== undefined && target.resourceHandle !== expectedResourceHandle) {
+    throw new PinnedSandboxResourceIdentityChangedError(sandboxName);
+  }
+  return target;
 }
 
 /** Retained name for Docker compatibility code that only needs an opaque runtime handle. */
-export function resolveDirectSandboxContainer(sandboxName: string, _driver: string | null): string {
-  return resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+export function resolveDirectSandboxContainer(
+  sandboxName: string,
+  _driver: string | null,
+  expectedContainerId?: string,
+): string {
+  return resolvePrivilegedSandboxTarget(sandboxName, expectedContainerId).resourceHandle;
 }
 
 export function executePrivilegedSandboxCommand(
