@@ -268,6 +268,7 @@ const SKILL_LIFECYCLE_OWNING_PATHS = [
 const OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS = [
   "src/lib/adapters/openshell/command-execution.ts",
   "src/lib/adapters/openshell/forward-cli.ts",
+  "src/lib/adapters/openshell/forward-runtime.ts",
   "src/lib/adapters/openshell/forward.ts",
 ] as const;
 

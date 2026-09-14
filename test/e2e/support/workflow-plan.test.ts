@@ -690,6 +690,7 @@ describe("E2E workflow plan", () => {
   it.each([
     "src/lib/adapters/openshell/command-execution.ts",
     "src/lib/adapters/openshell/forward-cli.ts",
+    "src/lib/adapters/openshell/forward-runtime.ts",
     "src/lib/adapters/openshell/forward.ts",
   ])("selects OpenClaw and Hermes forward lifecycles when %s changes (#9808)", (changedFile) => {
     const targetIds = catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id);

@@ -332,13 +332,11 @@ async function stopSandboxWithinLifecycleFence(
       deps.updateSandbox ?? registry.updateSandbox,
     );
   const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
-  const dashboardForwardReleased = hermesPortableVerified
-    ? true
-    : await teardownDashboardForwardBestEffort(
-        sandboxName,
-        deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
-        warn,
-      );
+  const dashboardForwardReleased = await teardownDashboardForwardBestEffort(
+    sandboxName,
+    deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+    warn,
+  );
   if (!stopIntentRecorded) {
     return {
       exitCode: 1,

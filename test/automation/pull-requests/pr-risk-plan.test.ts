@@ -1117,6 +1117,7 @@ describe("Brev Launchable recommendations", () => {
     ["new scenario helper", "test/e2e/live/full-e2e/recovery/observe.ts"],
     ["new scenario fixture", "test/e2e/fixtures/full-e2e-image-receipt.ts"],
     ["listener identity", "src/lib/adapters/openshell/forward-cli.ts"],
+    ["forward command boundary", "src/lib/adapters/openshell/command-execution.ts"],
     ["forward authority", "src/lib/adapters/openshell/forward-runtime.ts"],
     ["forward recovery", "src/lib/actions/sandbox/forward-recovery.ts"],
     ["process recovery", "src/lib/actions/sandbox/process-recovery.ts"],

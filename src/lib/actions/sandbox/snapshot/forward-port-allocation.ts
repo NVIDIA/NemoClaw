@@ -11,7 +11,10 @@ import {
   getRegistryOccupiedDashboardPorts,
   getRegistryOccupiedHermesApiPorts,
 } from "../../../onboard/dashboard-port";
-import { isValidForwardPort } from "../../../onboard/dashboard-runtime";
+import {
+  isValidForwardPort,
+  resolveDashboardForwardBind,
+} from "../../../onboard/dashboard-runtime";
 import { resolveGatewayForwardRuntimeAuthority } from "../../../onboard/gateway-host-runtime";
 import { resolveGatewayForwardAuthority } from "../../../onboard/gateway-teardown-authority";
 import {
@@ -19,14 +22,20 @@ import {
   HERMES_API_PORT_ENV,
   readHermesApiPort,
 } from "../../../onboard/hermes-api-port";
+import { isWsl } from "../../../platform";
 import type { SandboxEntry } from "../../../state/registry";
 
 type SnapshotCloneForwardSource = Pick<
   SandboxEntry,
-  "agent" | "dashboardPort" | "hermesDashboardEnabled" | "hermesDashboardInternalPort" | "name"
+  | "agent"
+  | "dashboardPort"
+  | "dashboardRemoteBindPrepared"
+  | "hermesDashboardEnabled"
+  | "hermesDashboardInternalPort"
+  | "name"
 >;
 
-/** Allocate clone-owned host ports through one exact gateway observer. */
+/** Allocate clone-owned host ports through one exact gateway adapter. */
 export async function allocateSnapshotCloneForwardPorts(input: {
   destinationName: string;
   executable: string;
@@ -46,12 +55,17 @@ export async function allocateSnapshotCloneForwardPorts(input: {
     workspace: "default",
     ...(runtime.localTlsDir ? { localTlsDir: runtime.localTlsDir } : {}),
   };
-  const observeForwardPorts = createOpenShellForwardPortObserver({
-    adapter: createOpenShellForwardAdapterForAuthority(authority, {
-      executable: input.executable,
-    }),
+  const dashboardBind = resolveDashboardForwardBind(input.source, {
+    requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+    wsl: isWsl(),
+  });
+  const adapter = createOpenShellForwardAdapterForAuthority(authority, {
+    executable: input.executable,
+  });
+  const observeDashboardForwardPorts = createOpenShellForwardPortObserver({
+    adapter,
     forwardForPort: (port) =>
-      openShellForwardIdentity(authority, input.destinationName, "127.0.0.1", port),
+      openShellForwardIdentity(authority, input.destinationName, dashboardBind, port),
   });
   const sourceDashboardPort = input.source.dashboardPort;
   const dashboardOccupied = getRegistryOccupiedDashboardPorts(input.destinationName);
@@ -70,7 +84,7 @@ export async function allocateSnapshotCloneForwardPorts(input: {
           await findAvailableDashboardPortFromObserver(
             input.destinationName,
             sourceDashboardPort,
-            observeForwardPorts,
+            observeDashboardForwardPorts,
             dashboardOccupied,
           )
         ).port
@@ -81,7 +95,11 @@ export async function allocateSnapshotCloneForwardPorts(input: {
           await findAvailableHermesApiPortFromObserver(
             input.destinationName,
             readHermesApiPort({}),
-            observeForwardPorts,
+            createOpenShellForwardPortObserver({
+              adapter,
+              forwardForPort: (port) =>
+                openShellForwardIdentity(authority, input.destinationName, "127.0.0.1", port),
+            }),
             getRegistryOccupiedHermesApiPorts(input.destinationName),
           )
         ).port

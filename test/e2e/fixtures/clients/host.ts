@@ -4,6 +4,10 @@
 import { isAbsolute } from "node:path";
 
 import { buildCliOpenShellForwardServiceArgs } from "../../../../src/lib/adapters/openshell/forward-cli.ts";
+import { DEFAULT_GATEWAY_PORT, parsePort } from "../../../../src/lib/core/ports.ts";
+import { getGatewayHttpsEndpoint } from "../../../../src/lib/onboard/docker-driver-gateway-env.ts";
+import { resolveGatewayName } from "../../../../src/lib/onboard/gateway-binding/identity.ts";
+import { loadGatewayManagementDeclaration } from "../../../../src/lib/onboard/gateway-management.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import {
   assertStockManagedImageReceipt,
@@ -38,6 +42,30 @@ const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
 const FORWARD_ALREADY_ABSENT =
   /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/i;
+
+function forwardListenerAuthority(env: NodeJS.ProcessEnv): {
+  gatewayEndpoint: string;
+  gatewayName: string;
+  workspace: string;
+} {
+  const gatewayPort = parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, env);
+  const configuredDeclaration = env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim();
+  const loaded = configuredDeclaration ? loadGatewayManagementDeclaration({ env }) : null;
+  if (loaded && !loaded.ok) {
+    throw new Error(`Forward listener gateway authority is invalid: ${loaded.reason}`);
+  }
+  const externalEndpoint =
+    loaded?.ok && loaded.declaration?.mode === "externally-supervised"
+      ? loaded.declaration.endpoint
+      : null;
+  return {
+    gatewayEndpoint: externalEndpoint
+      ? new URL(externalEndpoint).origin
+      : new URL(getGatewayHttpsEndpoint(gatewayPort)).origin,
+    gatewayName: env.OPENSHELL_GATEWAY?.trim() || resolveGatewayName(gatewayPort),
+    workspace: env.OPENSHELL_WORKSPACE?.trim() || "default",
+  };
+}
 
 export class HostCliClient {
   private readonly runner: CommandRunner;
@@ -236,9 +264,7 @@ export class HostCliClient {
       }),
     ]);
     const target = {
-      gatewayEndpoint: "https://127.0.0.1:8080",
-      gatewayName: "nemoclaw",
-      workspace: "default",
+      ...forwardListenerAuthority(options.env ?? process.env),
       sandboxName,
       localHost: "127.0.0.1" as const,
       port: Number(port),

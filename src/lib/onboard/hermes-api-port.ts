@@ -239,24 +239,17 @@ export async function reserveCreateSandboxHermesApiPort(options: {
           allowRegisteredOverride: options.allowRegisteredOverride,
         })
       : null;
-  const preferredPort = pinnedPort ?? HERMES_OPENAI_API_PORT;
   const registryOccupiedPorts = new Map(
     options.registryOccupiedPorts ?? getRegistryOccupiedHermesApiPorts(options.sandboxName),
   );
-  const observed = await findAvailablePortInRangeFromObserver(
-    options.sandboxName,
-    preferredPort,
-    options.observeForwardPorts,
-    HERMES_API_RANGE,
-    registryOccupiedPorts,
-  );
   const reserveSelectedPort = async (
     effectivePort: number,
+    observations: readonly OpenShellForwardObservation[],
   ): Promise<ReservedCreateSandboxHermesApiPortResult> => {
     const availability = observedForwardPortAvailability(
       options.sandboxName,
       effectivePort,
-      observed.observations,
+      observations,
     );
     if (availability === "owned") {
       return { effectivePort, reservation: null };
@@ -281,9 +274,17 @@ export async function reserveCreateSandboxHermesApiPort(options: {
         `Cannot allocate Hermes API port ${String(pinnedPort)}: it is registered to '${registeredOwner}'.`,
       );
     }
-    return reserveSelectedPort(pinnedPort);
+    const observations = await options.observeForwardPorts([pinnedPort]);
+    return reserveSelectedPort(pinnedPort, observations);
   }
 
+  const observed = await findAvailablePortInRangeFromObserver(
+    options.sandboxName,
+    HERMES_OPENAI_API_PORT,
+    options.observeForwardPorts,
+    HERMES_API_RANGE,
+    registryOccupiedPorts,
+  );
   const occupied = registryOccupiedPorts;
   while (true) {
     const effectivePort = findAvailableHermesApiPortFromObservations(
@@ -293,7 +294,7 @@ export async function reserveCreateSandboxHermesApiPort(options: {
       occupied,
     );
     try {
-      const result = await reserveSelectedPort(effectivePort);
+      const result = await reserveSelectedPort(effectivePort, observed.observations);
       env[HERMES_API_PORT_ENV] = String(effectivePort);
       if (effectivePort !== HERMES_OPENAI_API_PORT) {
         options.warn?.(

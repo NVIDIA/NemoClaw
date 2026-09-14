@@ -538,7 +538,7 @@ describe("stopSandbox", () => {
     expect(h.stopSandboxChannels).not.toHaveBeenCalled();
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.dockerStop).not.toHaveBeenCalled();
-    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    expect(h.teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
     expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
   });
 

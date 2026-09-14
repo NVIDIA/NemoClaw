@@ -13,19 +13,19 @@ const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
-const forwardRuntime = requireSource(
-  "../../src/lib/adapters/openshell/forward-runtime.ts",
-) as typeof import("../../src/lib/adapters/openshell/forward-runtime.js");
-
-function mockForwardOwned(): void {
-  vi.spyOn(forwardRuntime, "createOpenShellForwardAdapterForAuthority").mockReturnValue({
+function mockForwardOwned(): NonNullable<
+  NonNullable<
+    Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1]
+  >["forwardAdapterForAuthority"]
+> {
+  return vi.fn(() => ({
     observeForwards: vi.fn<OpenShellForwardAdapter["observeForwards"]>(async ({ forwards }) =>
       forwards.map((forward) => ({ state: "owned" as const, forward })),
     ),
     startForward: vi.fn(),
     retireLegacyForward: vi.fn(),
     verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
-  });
+  }));
 }
 
 function checkAndRecoverSandboxProcesses(
@@ -33,7 +33,6 @@ function checkAndRecoverSandboxProcesses(
   options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
 ) {
   return checkAndRecoverSandboxProcessesImpl(sandboxName, {
-    describeSandboxForwardListenerImpl: async () => "owned",
     ensureSandboxPortForwardImpl: async () => true,
     isWsl: false,
     withLifecycleLock: async (_name, operation) => await operation(),
@@ -158,16 +157,21 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
       name: "custom-box",
       agent: "custom-agent",
       dashboardPort: 19000,
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
     });
-    mockForwardOwned();
+    const forwardAdapterForAuthority = mockForwardOwned();
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: "SANDBOX  BIND  PORT  PID  STATUS",
     });
 
-    await expect(
-      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("custom-box", { quiet: true })),
-    ).resolves.toEqual({
+    const result = await withFakeOpenshellBinary(() =>
+      checkAndRecoverSandboxProcesses("custom-box", { forwardAdapterForAuthority, quiet: true }),
+    );
+
+    expect(forwardAdapterForAuthority).toHaveBeenCalledOnce();
+    expect(result).toEqual({
       checked: true,
       wasRunning: true,
       recovered: false,
@@ -239,8 +243,10 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
         name: "custom-box",
         agent: "custom-agent",
         dashboardPort: 19000,
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
       });
-      mockForwardOwned();
+      const forwardAdapterForAuthority = mockForwardOwned();
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: runningForward,
@@ -249,7 +255,10 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
 
       await expect(
         withFakeOpenshellBinary(() =>
-          checkAndRecoverSandboxProcesses("custom-box", { quiet: true }),
+          checkAndRecoverSandboxProcesses("custom-box", {
+            forwardAdapterForAuthority,
+            quiet: true,
+          }),
         ),
       ).resolves.toEqual({
         checked: true,

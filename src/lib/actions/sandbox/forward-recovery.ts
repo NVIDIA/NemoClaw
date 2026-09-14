@@ -31,6 +31,7 @@ import {
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
 } from "../../onboard/hermes-api-port";
+import { resolveDashboardForwardBind } from "../../onboard/dashboard-runtime";
 import { isWsl } from "../../platform";
 import * as registry from "../../state/registry";
 export type SandboxForwardHealth = boolean;
@@ -333,10 +334,10 @@ export async function teardownSandboxDashboardForward(
     const { authority, runtime } = (deps.resolveForwardRuntimeAuthority ?? forwardRuntimeAuthority)(
       gatewayName,
     );
-    const primaryBind =
-      isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) || isWsl()
-        ? "0.0.0.0"
-        : "127.0.0.1";
+    const primaryBind = resolveDashboardForwardBind(sandbox, {
+      requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+      wsl: isWsl(),
+    });
     const forwards = [...ports].map((port) =>
       sandboxForwardIdentity(
         runtime,
@@ -382,20 +383,21 @@ export async function ensureSandboxPortForward(
   options: SandboxForwardRecoveryOptions = {},
 ): Promise<boolean> {
   const port = resolveSandboxDashboardPort(sandboxName);
+  const sandbox = registry.getSandbox(sandboxName);
   const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
-  const allInterfaceBindRequired = remoteBindRequested || isWsl({ isWsl: options.isWsl });
-  if (
-    remoteBindRequested &&
-    registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared !== true
-  ) {
+  const bind = resolveDashboardForwardBind(sandbox, {
+    requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+    wsl: isWsl({ isWsl: options.isWsl }),
+  });
+  if (remoteBindRequested && sandbox?.dashboardRemoteBindPrepared !== true) {
     console.error(
       `  Refusing remote dashboard bind for '${sandboxName}': its generated configuration was not prepared for remote exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before reconnecting.`,
     );
     return false;
   }
   return ensureSandboxPortForwardForPort(sandboxName, port, {
-    forwardTarget: allInterfaceBindRequired ? `0.0.0.0:${port}` : String(port),
-    expectedBind: allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+    forwardTarget: bind === "0.0.0.0" ? `0.0.0.0:${port}` : String(port),
+    expectedBind: bind,
     afterSuccess: options.afterSuccess,
     beforeStart: () =>
       (!remoteBindRequested ||
@@ -419,18 +421,28 @@ export async function ensureSandboxPortForward(
  */
 export type SandboxForwardListener = OpenShellForwardObservation["state"];
 
+export type OpenShellForwardObservationAdapterFactory = (
+  authority: OpenShellForwardRuntimeAuthority,
+) => Pick<OpenShellForwardAdapter, "observeForwards">;
+
 export async function describeSandboxForwardListener(
   sandboxName: string,
-  options: { isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection } = {},
+  options: {
+    forwardAdapterForAuthority?: OpenShellForwardObservationAdapterFactory;
+    isWsl?: boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
+  } = {},
 ): Promise<SandboxForwardListener> {
-  const allInterfaceBindRequired =
-    isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) ||
-    isWsl({ isWsl: options.isWsl });
+  const bind = resolveDashboardForwardBind(registry.getSandbox(sandboxName), {
+    requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+    wsl: isWsl({ isWsl: options.isWsl }),
+  });
   return await describeSandboxPortForwardListener(
     sandboxName,
     resolveSandboxDashboardPort(sandboxName),
-    allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+    bind,
     options.runtimeSelection,
+    options.forwardAdapterForAuthority,
   );
 }
 
@@ -479,8 +491,15 @@ export async function describeSandboxPortForwardListener(
   port: number,
   expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  forwardAdapterForAuthority?: OpenShellForwardObservationAdapterFactory,
 ): Promise<SandboxForwardListener> {
-  return await inspectSandboxPortForwardListener(sandboxName, port, expectedBind, runtimeSelection);
+  return await inspectSandboxPortForwardListener(
+    sandboxName,
+    port,
+    expectedBind,
+    runtimeSelection,
+    forwardAdapterForAuthority,
+  );
 }
 
 async function inspectSandboxPortForwardListener(
@@ -488,13 +507,14 @@ async function inspectSandboxPortForwardListener(
   port: number,
   expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  forwardAdapterForAuthority: OpenShellForwardObservationAdapterFactory = createOpenShellForwardAdapterForAuthority,
 ): Promise<SandboxForwardListener> {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return "absent";
   try {
     const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
     const { authority, runtime } = forwardRuntimeAuthority(gatewayName, runtimeSelection);
-    const [observation] = await createOpenShellForwardAdapterForAuthority(runtime).observeForwards({
+    const [observation] = await forwardAdapterForAuthority(runtime).observeForwards({
       forwards: [sandboxForwardIdentity(runtime, sandboxName, port, expectedBind)],
       assertCurrent: async () =>
         assertSandboxForwardAuthorityCurrent(sandboxName, gatewayName, authority),
@@ -788,10 +808,10 @@ export async function areSandboxLaunchForwardsHealthy(
     }
 
     const { authority, runtime } = forwardRuntimeAuthority(owningGatewayName);
-    const primaryBind =
-      isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) || isWsl()
-        ? "0.0.0.0"
-        : "127.0.0.1";
+    const primaryBind = resolveDashboardForwardBind(sandbox, {
+      requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+      wsl: isWsl(),
+    });
     const observations = await (
       deps.forwardAdapterForAuthority ?? createOpenShellForwardAdapterForAuthority
     )(runtime).observeForwards({
@@ -812,10 +832,10 @@ export async function areSandboxLaunchForwardsHealthy(
     if (observations.some((observation) => observation.state !== "owned")) return false;
 
     assertForwardPlanCurrent();
-    const currentPrimaryBind =
-      isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) || isWsl()
-        ? "0.0.0.0"
-        : "127.0.0.1";
+    const currentPrimaryBind = resolveDashboardForwardBind(registry.getSandbox(sandboxName), {
+      requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+      wsl: isWsl(),
+    });
     if (currentPrimaryBind !== primaryBind) {
       throw new Error("Sandbox forward bind changed during observation");
     }

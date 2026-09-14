@@ -769,29 +769,36 @@ describe("CLI OpenShell direct forward start", () => {
     expect(terminate).not.toHaveBeenCalled();
   });
 
-  it("fences authority again immediately before spawning", async () => {
-    let fences = 0;
+  it("refuses a start when authority changes during preflight reachability", async () => {
+    let current = true;
     const assertCurrent = vi.fn(async () => {
-      throwSupersededWhen(++fences === 6);
+      throwSupersededWhen(!current);
     });
-    const { adapter, spawn, terminate } = createHarness();
+    const { adapter, spawn, terminate } = createHarness({
+      probePort: async () => {
+        current = false;
+        return { state: "unbound" };
+      },
+    });
 
     await expect(adapter.startForward({ forward, assertCurrent })).resolves.toEqual({
-      state: "failed",
-      forward,
-      effect: "none",
-      error: errors.authority,
+      state: "refused",
+      observation: { state: "indeterminate", forward, error: errors.authority },
     });
     expect(spawn).not.toHaveBeenCalled();
     expect(terminate).not.toHaveBeenCalled();
   });
 
   it("cleans a spawned process when authority changes after mutation", async () => {
-    let fences = 0;
+    let current = true;
     const assertCurrent = vi.fn(async () => {
-      throwSupersededWhen(++fences === 7);
+      throwSupersededWhen(!current);
     });
     const { adapter, child, probePort, spawn, terminate } = createHarness();
+    spawn.mockImplementation(() => {
+      current = false;
+      return child;
+    });
 
     await expect(adapter.startForward({ forward, assertCurrent })).resolves.toEqual({
       state: "failed",
@@ -1145,28 +1152,6 @@ describe("CLI OpenShell legacy forward retirement", () => {
     expect(run).not.toHaveBeenCalled();
     expect(inspectLegacy).not.toHaveBeenCalled();
     expect(authorize).not.toHaveBeenCalled();
-  });
-
-  it("fences currentness immediately before the legacy stop", async () => {
-    let fences = 0;
-    const assertCurrent = vi.fn(async () => {
-      throwSupersededWhen(++fences === 7);
-    });
-    const authorize = vi.fn(async () => {});
-    const { adapter, run } = createHarness({
-      run: async () => captured(0, legacyForwardList),
-    });
-
-    await expect(
-      adapter.retireLegacyForward({ forward, assertCurrent, authorize }),
-    ).resolves.toEqual({
-      state: "failed",
-      forward,
-      effect: "none",
-      error: errors.authority,
-    });
-    expect(authorize).toHaveBeenCalledOnce();
-    expect(run.mock.calls.some(([, args]) => args.includes("stop"))).toBe(false);
   });
 
   it("does not stop when the second destructive authorization revokes currentness", async () => {

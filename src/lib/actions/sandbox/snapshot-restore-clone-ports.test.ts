@@ -110,6 +110,64 @@ vi.mock("../../onboard/gateway-host-runtime", async (importOriginal) => ({
 beforeEach(f.resetSnapshotRestoreMocks);
 afterEach(f.cleanupSnapshotRestoreMocks);
 describe("runSandboxSnapshot restore: clone port identity", () => {
+  it.each([
+    [false, "127.0.0.1"],
+    [true, "0.0.0.0"],
+  ] as const)(
+    "observes clone dashboard ownership with persisted remote bind %s",
+    async (dashboardRemoteBindPrepared, expectedBind) => {
+      const { allocateSnapshotCloneForwardPorts } =
+        await import("./snapshot/forward-port-allocation");
+
+      await allocateSnapshotCloneForwardPorts({
+        destinationName: "beta",
+        executable: "/usr/local/bin/openshell",
+        gatewayName: "nemoclaw-18080",
+        gatewayPort: 18_080,
+        source: {
+          agent: "openclaw",
+          dashboardPort: 18_790,
+          dashboardRemoteBindPrepared,
+          hermesDashboardEnabled: false,
+          name: "alpha",
+        },
+      });
+
+      const observerFactoryInput =
+        dashboardPortMocks.createOpenShellForwardPortObserver.mock.calls.at(-1)?.[0] as {
+          forwardForPort(port: number): { localHost: string };
+        };
+      expect(observerFactoryInput.forwardForPort(18_790).localHost).toBe(expectedBind);
+    },
+  );
+
+  it("keeps Hermes API observation loopback when the dashboard bind is remote", async () => {
+    const { allocateSnapshotCloneForwardPorts } =
+      await import("./snapshot/forward-port-allocation");
+
+    await allocateSnapshotCloneForwardPorts({
+      destinationName: "beta",
+      executable: "/usr/local/bin/openshell",
+      gatewayName: "nemoclaw-18080",
+      gatewayPort: 18_080,
+      source: {
+        agent: "hermes",
+        dashboardPort: 18_790,
+        dashboardRemoteBindPrepared: true,
+        hermesDashboardEnabled: false,
+        name: "alpha",
+      },
+    });
+
+    const observers = dashboardPortMocks.createOpenShellForwardPortObserver.mock.calls.map(
+      ([input]) => input as { forwardForPort(port: number): { localHost: string } },
+    );
+    expect(observers.map(({ forwardForPort }) => forwardForPort(18_790).localHost)).toEqual([
+      "0.0.0.0",
+      "127.0.0.1",
+    ]);
+  });
+
   it("allocates the auto-created clone its own dashboard port instead of inheriting the source's (#6746)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "selected-sibling");
     let registeredClone: f.SandboxRecord | null = null;

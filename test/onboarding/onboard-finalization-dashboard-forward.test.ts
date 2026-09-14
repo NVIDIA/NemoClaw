@@ -288,9 +288,9 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
         test.helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent(name)),
       ).resolves.toBe(18_790);
       expect(test.startForward.mock.calls.map(([request]) => request.forward.port)).toEqual(ports);
-      expect(test.startForward.mock.results.every(({ value }) => value instanceof Promise)).toBe(
-        true,
-      );
+      await expect(
+        Promise.all(test.startForward.mock.results.map(({ value }) => value)),
+      ).resolves.toEqual(ports.map(() => expect.objectContaining({ state: "reused" })));
     },
   );
 

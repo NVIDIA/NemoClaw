@@ -286,6 +286,29 @@ describe("reserveCreateSandboxHermesApiPort", () => {
     expect(reservePort).not.toHaveBeenCalled();
   });
 
+  it("reports pinned foreign ownership before range exhaustion", async () => {
+    const reservePort = vi.fn();
+    const observeForwardPorts = observePorts(
+      "beta",
+      new Map(Array.from({ length: 11 }, (_, index) => [8642 + index, "foreign" as const])),
+    );
+
+    await expect(
+      reserveCreateSandboxHermesApiPort({
+        sandboxName: "beta",
+        env: { [HERMES_API_PORT_ENV]: "8642" },
+        getSandbox: () => undefined,
+        observeForwardPorts,
+        registryOccupiedPorts: new Map(),
+        reservePort,
+      }),
+    ).rejects.toThrow(
+      "Cannot allocate Hermes API port 8642: OpenShell forward ownership is not proven.",
+    );
+    expect(observeForwardPorts).toHaveBeenCalledWith([8642]);
+    expect(reservePort).not.toHaveBeenCalled();
+  });
+
   it("releases a held port when sandbox preparation fails", async () => {
     const release = vi.fn(async () => undefined);
 

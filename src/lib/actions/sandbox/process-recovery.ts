@@ -63,6 +63,7 @@ import {
   type HermesPortableForwardRecoveryResult,
   type HermesPortableForwardRecoveryTimingEvidence,
   type HermesPortableForwardVerificationResult,
+  type OpenShellForwardObservationAdapterFactory,
   type PreparedHermesPortableForwardRecovery,
   type SandboxForwardListener,
 } from "./forward-recovery";
@@ -1727,6 +1728,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     runtimeSelection,
     ensureSandboxPortForwardImpl = ensureSandboxPortForward,
     describeSandboxForwardListenerImpl = describeSandboxForwardListener,
+    forwardAdapterForAuthority,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
@@ -1746,6 +1748,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     runtimeSelection?: OpenShellRuntimeSelection;
     ensureSandboxPortForwardImpl?: typeof ensureSandboxPortForward;
     describeSandboxForwardListenerImpl?: typeof describeSandboxForwardListener;
+    forwardAdapterForAuthority?: OpenShellForwardObservationAdapterFactory;
   } = {},
 ) {
   const measureAsync = <T>(
@@ -1802,6 +1805,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     // necessary so the live-and-healthy path stays a no-op.
     const forwardListener = await measureAsync("forward", () =>
       describeSandboxForwardListenerImpl(sandboxName, {
+        forwardAdapterForAuthority,
         isWsl: isWslOverride,
         runtimeSelection,
       }),
@@ -2235,6 +2239,7 @@ export async function checkAndRecoverSandboxProcesses(
     runtimeSelection?: OpenShellRuntimeSelection;
     ensureSandboxPortForwardImpl?: typeof ensureSandboxPortForward;
     describeSandboxForwardListenerImpl?: typeof describeSandboxForwardListener;
+    forwardAdapterForAuthority?: OpenShellForwardObservationAdapterFactory;
     withLifecycleLock?: typeof withSandboxLifecycleLock;
   } = {},
 ) {

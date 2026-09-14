@@ -28,11 +28,19 @@ function mockForwardObservation(state: "owned" | "foreign" | "indeterminate" = "
   startForward.mockReset();
   vi.spyOn(forwardRuntime, "createOpenShellForwardAdapterForAuthority").mockReturnValue({
     observeForwards: vi.fn<OpenShellForwardAdapter["observeForwards"]>(async ({ forwards }) => {
-      await (state === "indeterminate"
-        ? Promise.reject(new Error("ownership proof unavailable"))
-        : Promise.resolve());
       const observedState = state === "owned" ? "owned" : "foreign";
-      return forwards.map((forward) => ({ state: observedState, forward }));
+      return forwards.map((forward) =>
+        state === "indeterminate"
+          ? {
+              state,
+              forward,
+              error: {
+                kind: "ownership" as const,
+                message: "NemoClaw could not prove OpenShell forward ownership." as const,
+              },
+            }
+          : { state: observedState, forward },
+      );
     }),
     startForward,
     retireLegacyForward: vi.fn(),

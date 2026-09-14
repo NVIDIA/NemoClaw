@@ -272,8 +272,7 @@ describe("forward recovery through the typed adapter", () => {
     await expect(describeSandboxForwardListener("box", { isWsl: false })).resolves.toBe("stale");
   });
 
-  it("uses an all-interface identity only for a prepared remote dashboard", async () => {
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+  it("preserves an all-interface identity for a prepared remote dashboard", async () => {
     mocks.getSandbox.mockReturnValue(sandboxEntry({ dashboardRemoteBindPrepared: true }));
     states.set(18_789, "absent");
     const { ensureSandboxPortForward } = await import("./forward-recovery");
@@ -359,6 +358,7 @@ describe("declared and cleanup forward sets", () => {
         hermesApiPort: 8_643,
         hermesDashboardEnabled: true,
         hermesDashboardPort: 3_001,
+        dashboardRemoteBindPrepared: true,
       }),
     );
     mocks.getRegisteredAgent.mockReturnValue(HERMES_AGENT);
@@ -370,5 +370,6 @@ describe("declared and cleanup forward sets", () => {
         (forward: OpenShellForwardIdentity) => forward.port,
       ),
     ).toEqual([18_790, 3_001, 8_643]);
+    expect(mocks.verifyForwardRelease.mock.calls[0]?.[0].forwards[0]?.localHost).toBe("0.0.0.0");
   });
 });

@@ -77,6 +77,7 @@ const BREV_LAUNCHABLE_FILES = new Set([
   "src/lib/onboard/agent-dashboard-forward.ts",
   "src/lib/onboard/dashboard-forward-control.ts",
   "src/lib/onboard/dashboard.ts",
+  "src/lib/adapters/openshell/command-execution.ts",
   "src/lib/adapters/openshell/forward-cli.ts",
   "src/lib/adapters/openshell/forward-runtime.ts",
   "src/lib/adapters/openshell/forward.ts",

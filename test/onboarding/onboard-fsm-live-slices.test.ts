@@ -223,11 +223,17 @@ function runSliceProbe(options: ProbeOptions) {
   const externalComponentPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "external-component", "index.ts"),
   );
+  const gatewayServicePath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "docker-driver-gateway-service.ts"),
+  );
 
   fs.writeFileSync(
     scriptPath,
     `
 const scenario = ${JSON.stringify(scenario)};
+if (scenario.mode === "dashboard-spawn-failure") {
+  require(${gatewayServicePath}).hasOpenShellGatewayUserService = () => false;
+}
 const dashboardScenario = scenario.mode.startsWith("dashboard-");
 const flowSlices = require(${flowSlicesPath});
 const { advanceTo, branchTo } = require(${resultPath});
@@ -268,12 +274,17 @@ if (dashboardScenario) {
         ...deps,
         getGatewayForwardRuntimeAuthority: () => ({
           gatewayEndpoint: "https://127.0.0.1:8080",
+          gatewayName: "nemoclaw",
+          workspace: "default",
         }),
         resolveForwardGatewayName: () => "nemoclaw",
         forwardAdapterForAuthority: (authority) => {
           const adapter = createCliOpenShellForwardAdapter({
             executable: ${JSON.stringify(path.join(tmpDir, "missing-openshell"))},
             gatewayEndpoint: authority.gatewayEndpoint,
+            inspect: async () => ({ state: "unbound" }),
+            probePort: async () => ({ state: "unbound" }),
+            run: async () => ({ status: 0, stdout: "No active forwards.", stderr: "" }),
             runtimeSelection: authority,
           });
           return {
