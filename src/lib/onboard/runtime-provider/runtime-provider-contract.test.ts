@@ -1108,6 +1108,7 @@ describe("socket-free MXC action contract", () => {
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },
         dashboardPort: 18789,
+        ...(agent === "hermes" ? { hermesApiPort: 8_642 } : {}),
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         registerSandbox,

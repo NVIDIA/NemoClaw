@@ -39,7 +39,7 @@ import {
   type ListSandboxesFn,
   type OpenShellForwardPortObserver,
 } from "./dashboard-port";
-import { canReuseDashboardForwardForAgent } from "./dashboard-runtime";
+import { canReuseDashboardForwardForAgent, resolveDashboardForwardBind } from "./dashboard-runtime";
 import {
   ensureMessagingHostForwardForSandbox,
   productionForwardServiceRegistryContext,
@@ -90,6 +90,7 @@ export interface OnboardDashboardDeps {
         gatewayName?: string | null;
         gatewayPort?: number | null;
         dashboardPort?: number | null;
+        dashboardRemoteBindPrepared?: boolean;
         hermesApiPort?: number | null;
         hermesDashboardPort?: number | null;
         lifecycleLiveIdentityFingerprint?: string;
@@ -281,11 +282,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     targetKind: "dashboard" | "loopback",
   ): OpenShellForwardIdentity {
     const localHost =
-      targetKind === "dashboard" &&
-      getDashboardForwardTarget(`http://127.0.0.1:${String(port)}`, {
-        isWsl: deps.isWsl(),
-      }).startsWith("0.0.0.0:")
-        ? "0.0.0.0"
+      targetKind === "dashboard"
+        ? resolveDashboardForwardBind(getSandbox?.(sandboxName), {
+            requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+            wsl: deps.isWsl(),
+          })
         : "127.0.0.1";
     return openShellForwardIdentity(authority, sandboxName, localHost, port);
   }

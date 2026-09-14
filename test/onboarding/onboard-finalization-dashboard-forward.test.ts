@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadAgent } from "../../src/lib/agent/defs";
 import type {
   ObserveOpenShellForwardsRequest,
+  OpenShellForwardAdapter,
   OpenShellForwardIdentity,
   OpenShellForwardObservation,
+  OpenShellForwardStartResult,
   RetireLegacyOpenShellForwardRequest,
   StartOpenShellForwardRequest,
 } from "../../src/lib/adapters/openshell/forward";
@@ -19,6 +21,17 @@ type ForwardObservationWithIdentity = Extract<
   { forward: OpenShellForwardIdentity }
 >;
 type ForwardState = ForwardObservationWithIdentity["state"];
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 function observation(
   forward: OpenShellForwardIdentity,
@@ -55,48 +68,50 @@ function harness(options: {
     await request.assertCurrent?.();
     return observations;
   });
-  const startForward = vi.fn(async (request: StartOpenShellForwardRequest) => {
-    await request.assertCurrent?.();
-    switch (request.forward.port === options.startFailurePort) {
-      case true:
-        return {
-          state: "failed" as const,
-          forward: request.forward,
-          effect: "none" as const,
-          error: {
-            kind: "command" as const,
-            message: "The OpenShell forward command failed." as const,
-          },
-        };
-    }
-    const state = states.get(request.forward.port) ?? "absent";
-    switch (state) {
-      case "owned":
-        return { state: "reused" as const, forward: request.forward };
-      case "stale":
-      case "foreign":
-      case "indeterminate":
-        return {
-          state: "refused" as const,
-          observation: observation(request.forward, state) as Extract<
-            ForwardObservationWithIdentity,
-            { state: "stale" | "foreign" | "indeterminate" }
-          >,
-        };
-      case "absent":
-        break;
-    }
-    states.set(request.forward.port, "owned");
-    await request.assertCurrent?.();
-    return {
-      state: "started" as const,
-      forward: request.forward,
-      cleanup: vi.fn(async () => {
-        states.set(request.forward.port, "absent");
-        return { state: "released" as const };
-      }),
-    };
-  });
+  const startForward = vi.fn<OpenShellForwardAdapter["startForward"]>(
+    async (request: StartOpenShellForwardRequest) => {
+      await request.assertCurrent?.();
+      switch (request.forward.port === options.startFailurePort) {
+        case true:
+          return {
+            state: "failed" as const,
+            forward: request.forward,
+            effect: "none" as const,
+            error: {
+              kind: "command" as const,
+              message: "The OpenShell forward command failed." as const,
+            },
+          };
+      }
+      const state = states.get(request.forward.port) ?? "absent";
+      switch (state) {
+        case "owned":
+          return { state: "reused" as const, forward: request.forward };
+        case "stale":
+        case "foreign":
+        case "indeterminate":
+          return {
+            state: "refused" as const,
+            observation: observation(request.forward, state) as Extract<
+              ForwardObservationWithIdentity,
+              { state: "stale" | "foreign" | "indeterminate" }
+            >,
+          };
+        case "absent":
+          break;
+      }
+      states.set(request.forward.port, "owned");
+      await request.assertCurrent?.();
+      return {
+        state: "started" as const,
+        forward: request.forward,
+        cleanup: vi.fn(async () => {
+          states.set(request.forward.port, "absent");
+          return { state: "released" as const };
+        }),
+      };
+    },
+  );
   const retireLegacyForward = vi.fn(async (request: RetireLegacyOpenShellForwardRequest) => {
     await request.assertCurrent?.();
     await request.authorize(request.forward);
@@ -161,15 +176,33 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
   });
 
   it.each([
-    { name: "WSL", isWsl: true, dashboardBind: undefined },
-    { name: "remote dashboard bind", isWsl: false, dashboardBind: "0.0.0.0" },
+    { name: "WSL", isWsl: true, dashboardBind: undefined, persistedRemoteBind: false },
+    {
+      name: "remote dashboard bind",
+      isWsl: false,
+      dashboardBind: "0.0.0.0",
+      persistedRemoteBind: false,
+    },
+    {
+      name: "persisted remote dashboard bind",
+      isWsl: false,
+      dashboardBind: undefined,
+      persistedRemoteBind: true,
+    },
   ])(
     "keeps auxiliary ownership loopback-only during $name resume",
-    async ({ isWsl, dashboardBind }) => {
+    async ({ isWsl, dashboardBind, persistedRemoteBind }) => {
       vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", dashboardBind);
       const test = harness({
         isWsl,
-        listSandboxes: () => ({ sandboxes: [{ name: "reonboard-test" }] }),
+        listSandboxes: () => ({
+          sandboxes: [
+            {
+              name: "reonboard-test",
+              dashboardRemoteBindPrepared: persistedRemoteBind,
+            },
+          ],
+        }),
         initialStates: new Map([[8_643, "owned"]]),
       });
 
@@ -288,11 +321,54 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
         test.helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent(name)),
       ).resolves.toBe(18_790);
       expect(test.startForward.mock.calls.map(([request]) => request.forward.port)).toEqual(ports);
-      await expect(
-        Promise.all(test.startForward.mock.results.map(({ value }) => value)),
-      ).resolves.toEqual(ports.map(() => expect.objectContaining({ state: "reused" })));
     },
   );
+
+  it("awaits every forward start and propagates a rejected start", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const test = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
+      }),
+    });
+    const first = deferred<OpenShellForwardStartResult>();
+    const second = deferred<OpenShellForwardStartResult>();
+    test.startForward
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+
+    let settled = false;
+    const finalization = test.helpers
+      .ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent("hermes"))
+      .then((value) => {
+        settled = true;
+        return value;
+      });
+    await vi.waitFor(() => expect(test.startForward).toHaveBeenCalledTimes(1));
+    expect(settled).toBe(false);
+    const firstForward = test.startForward.mock.calls[0]?.[0].forward;
+    expect(firstForward).toBeDefined();
+    first.resolve({ state: "reused", forward: firstForward! });
+    await vi.waitFor(() => expect(test.startForward).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false);
+    const secondForward = test.startForward.mock.calls[1]?.[0].forward;
+    expect(secondForward).toBeDefined();
+    second.resolve({ state: "reused", forward: secondForward! });
+    await expect(finalization).resolves.toBe(18_790);
+
+    const failure = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
+      }),
+    });
+    failure.startForward.mockRejectedValueOnce(new Error("forward startup rejected"));
+    await expect(
+      failure.helpers.ensureFinalizationAgentDashboardForward(
+        "reonboard-test",
+        loadAgent("hermes"),
+      ),
+    ).rejects.toThrow(/forward startup rejected/u);
+  });
 
   it.each([18_790, 8_643])(
     "establishes missing Hermes forward %s on its recorded port",
