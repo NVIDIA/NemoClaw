@@ -3,13 +3,9 @@
 #[cfg(test)]
 mod tests;
 
-use crate::{
-    Error,
-    config::{Memory, Service},
-    snapshot::Manifest,
-};
+pub use crate::hardware::{Capacity, Watchdog, read_memory};
+use crate::{Error, config::Service, snapshot::Manifest};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, io::Read};
 
 pub const GIB: u64 = 1 << 30;
 pub const BACKEND: &str = "vllm-qwen38-spark-v1";
@@ -40,58 +36,6 @@ pub fn preparation_key() -> String {
     )))
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Capacity {
-    pub architecture: String,
-    pub gpu: String,
-    pub driver_major: u32,
-    pub total: u64,
-    pub available: u64,
-    pub free: u64,
-    pub disk_free: u64,
-    pub foreign_gpu_processes: usize,
-}
-pub fn read_memory(reader: impl Read) -> Result<Capacity, Error> {
-    let mut text = String::new();
-    reader
-        .take((1 << 20) + 1)
-        .read_to_string(&mut text)
-        .map_err(|_| Error::State("host memory observation failed"))?;
-    if text.len() > 1 << 20 {
-        return Err(Error::State("host memory observation exceeds limit"));
-    }
-    let mut values = BTreeMap::new();
-    for line in text.lines() {
-        let fields: Vec<_> = line.split_whitespace().collect();
-        if fields
-            .first()
-            .is_some_and(|key| ["MemTotal:", "MemAvailable:", "MemFree:"].contains(key))
-        {
-            if fields.len() != 3 || fields[2] != "kB" {
-                return Err(Error::State("incomplete host memory observation"));
-            }
-            let number = fields[1]
-                .parse::<u64>()
-                .map_err(|_| Error::State("invalid host memory observation"))?;
-            if number > 1 << 40 || values.insert(fields[0], number * 1024).is_some() {
-                return Err(Error::State("invalid host memory observation"));
-            }
-        }
-    }
-    if values.len() != 3 {
-        return Err(Error::State("incomplete host memory observation"));
-    }
-    let result = Capacity {
-        total: values["MemTotal:"],
-        available: values["MemAvailable:"],
-        free: values["MemFree:"],
-        ..Default::default()
-    };
-    if result.total == 0 || result.available > result.total || result.free > result.total {
-        return Err(Error::State("inconsistent host memory observation"));
-    }
-    Ok(result)
-}
 impl Service {
     pub fn gpu_bytes(&self) -> Result<u64, Error> {
         self.validate()?;
@@ -186,33 +130,6 @@ impl Service {
             ]);
         }
         Ok(args)
-    }
-}
-pub struct Watchdog {
-    policy: Memory,
-    low_samples: u64,
-    tripped: bool,
-}
-impl Watchdog {
-    pub fn new(service: &Service) -> Result<Self, Error> {
-        service.validate()?;
-        Ok(Self {
-            policy: service.memory.clone(),
-            low_samples: 0,
-            tripped: false,
-        })
-    }
-    pub fn sample(&mut self, available: u64, free: u64) -> bool {
-        let low = available < self.policy.min_available_gib as u64 * GIB
-            || (free < self.policy.min_free_gib as u64 * GIB
-                && available < self.policy.free_gate_gib as u64 * GIB);
-        self.low_samples = if low {
-            self.low_samples.saturating_add(1)
-        } else {
-            0
-        };
-        self.tripped |= self.low_samples >= self.policy.consecutive_samples as u64;
-        self.tripped
     }
 }
 

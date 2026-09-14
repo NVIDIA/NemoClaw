@@ -1,18 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nemoclaw_sdk::spark::GIB;
+use nemoclaw_sdk::hardware::{GIB, ProtectionPolicy};
 use process_wrap::tokio::{CommandWrap, KillOnDrop, ProcessGroup};
-fn service() -> Service {
-    nemoclaw_sdk::config::Document::parse(
-        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_bytes(),
-    )
-    .unwrap()
-    .spec
-    .inference_providers
-    .remove(0)
-    .service
-    .unwrap()
+fn policy() -> Policy {
+    Policy {
+        startup_timeout: Duration::from_secs(1800),
+        protection: ProtectionPolicy::new(8 * GIB, 3 * GIB, 12 * GIB, 5).unwrap(),
+    }
 }
 #[tokio::test]
 async fn protection_kills_owned_child_when_readiness_never_responds() {
@@ -49,7 +44,7 @@ async fn protection_kills_owned_child_when_readiness_never_responds() {
         let result = tokio::time::timeout(
             Duration::from_secs(3),
             supervise(
-                &service(),
+                policy(),
                 child.as_mut(),
                 Monitors {
                     samples,
@@ -98,7 +93,7 @@ async fn protection_remains_active_after_readiness_and_never_restarts_the_child(
     };
     assert!(
         supervise(
-            &service(),
+            policy(),
             child.as_mut(),
             Monitors {
                 samples,
@@ -125,10 +120,11 @@ async fn stalled_loading_honors_the_full_startup_budget_then_stops() {
     let (_samples_tx, samples) = tokio::sync::mpsc::channel(1);
     let (_ready_tx, ready) = tokio::sync::mpsc::channel(1);
     let start = tokio::time::Instant::now();
-    let spec = service();
+    let policy = policy();
+    let budget = policy.startup_timeout;
     let report = |_: &str, _: &str, _: u32| Ok(());
     let result = supervise(
-        &spec,
+        policy,
         child.as_mut(),
         Monitors {
             samples,
@@ -140,6 +136,49 @@ async fn stalled_loading_honors_the_full_startup_budget_then_stops() {
     )
     .await;
     assert!(result.unwrap_err().to_string().contains("startup budget"));
-    assert!(start.elapsed() >= Duration::from_secs(spec.serving.startup_timeout_seconds as u64));
+    assert!(start.elapsed() >= budget);
     assert!(child.wait().await.is_ok());
+}
+
+#[tokio::test]
+async fn cancellation_stops_only_the_owned_process_without_a_recipe() {
+    let spawn = || {
+        let mut command = CommandWrap::with_new("/bin/sleep", |command| {
+            command.arg("100");
+        });
+        command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
+        command.spawn().unwrap()
+    };
+    let mut owned = spawn();
+    let mut unrelated = spawn();
+    let owned_pid = owned.id().unwrap();
+    let unrelated_pid = unrelated.id().unwrap();
+    let (_samples_tx, samples) = tokio::sync::mpsc::channel(1);
+    let (_ready_tx, ready) = tokio::sync::mpsc::channel(1);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let result = supervise(
+        Policy {
+            startup_timeout: Duration::from_secs(3),
+            protection: ProtectionPolicy::new(1024, 512, 2048, 2).unwrap(),
+        },
+        owned.as_mut(),
+        Monitors {
+            samples,
+            ready,
+            trip: CancellationToken::new(),
+            report: &|_, _, _| Ok(()),
+        },
+        &cancel,
+    )
+    .await;
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("stopped by operator")
+    );
+    assert!(!std::path::Path::new(&format!("/proc/{owned_pid}")).exists());
+    assert!(std::path::Path::new(&format!("/proc/{unrelated_pid}")).exists());
+    terminate(unrelated.as_mut()).await;
 }

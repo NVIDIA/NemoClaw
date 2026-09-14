@@ -144,7 +144,7 @@ async fn run_owned(
             "memory protection tripped by operator; explicit apply required",
         ));
     }
-    let capacity = supervisor::memory()?;
+    let capacity = memory()?;
     if capacity.available < spec.gpu_bytes()? + 20 * spark::GIB
         || spec.gpu_bytes()? + spec.memory.host_reserve_gib as u64 * spark::GIB > capacity.total
     {
@@ -208,7 +208,7 @@ async fn run_owned(
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
-            if samples_tx.send(supervisor::memory()).await.is_err() {
+            if samples_tx.send(memory()).await.is_err() {
                 break;
             }
         }
@@ -238,7 +238,10 @@ async fn run_owned(
         Ok::<(), Error>(())
     });
     let result = supervisor::supervise(
-        spec,
+        supervisor::Policy {
+            startup_timeout: Duration::from_secs(spec.serving.startup_timeout_seconds as u64),
+            protection: nemoclaw_sdk::hardware::ProtectionPolicy::for_service(spec)?,
+        },
         child.as_mut(),
         Monitors {
             samples,
@@ -252,4 +255,10 @@ async fn run_owned(
     sampler.abort();
     health.abort();
     result
+}
+
+fn memory() -> Result<nemoclaw_sdk::hardware::Capacity, Error> {
+    let file =
+        fs::File::open("/proc/meminfo").map_err(|_| Error::State("host memory is unobservable"))?;
+    nemoclaw_sdk::hardware::read_memory(file)
 }

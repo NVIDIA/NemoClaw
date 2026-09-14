@@ -5,8 +5,7 @@ mod tests;
 
 use nemoclaw_sdk::{
     CancellationToken, Error,
-    config::Service,
-    spark::{self, Capacity, Watchdog},
+    hardware::{Capacity, ProtectionPolicy, Watchdog},
 };
 use process_wrap::tokio::ChildWrapper;
 use std::time::Duration;
@@ -18,15 +17,18 @@ pub(crate) struct Monitors<'a> {
     pub trip: CancellationToken,
     pub report: &'a (dyn Fn(&str, &str, u32) -> Result<(), Error> + Sync),
 }
+pub(crate) struct Policy {
+    pub startup_timeout: Duration,
+    pub protection: ProtectionPolicy,
+}
 pub(crate) async fn supervise(
-    spec: &Service,
+    policy: Policy,
     child: &mut dyn ChildWrapper,
     mut monitors: Monitors<'_>,
     cancel: &CancellationToken,
 ) -> Result<(), Error> {
-    let mut watch = Watchdog::new(spec)?;
-    let deadline = tokio::time::Instant::now()
-        + Duration::from_secs(spec.serving.startup_timeout_seconds as u64);
+    let mut watch = Watchdog::from_policy(policy.protection);
+    let deadline = tokio::time::Instant::now() + policy.startup_timeout;
     let mut ready = false;
     let result = loop {
         tokio::select! {
@@ -69,9 +71,4 @@ pub(crate) async fn terminate(child: &mut dyn ChildWrapper) {
     // The group belongs to this runtime only. Workers may outlive the API
     // process; select by this established group, never a process name.
     let _ = child.start_kill();
-}
-pub(crate) fn memory() -> Result<Capacity, Error> {
-    let file = std::fs::File::open("/proc/meminfo")
-        .map_err(|_| Error::State("host memory is unobservable"))?;
-    spark::read_memory(file)
 }
