@@ -91,6 +91,17 @@ function selection(sourceHeadSha: string): RepairSelection {
 }
 
 describe("PR Review Advisor trusted validation", () => {
+  it("documents candidate execution as a credential-free manual-repair exception (#10791)", () => {
+    const readme = fs.readFileSync(
+      path.join(process.cwd(), "tools/pr-review-advisor/README.md"),
+      "utf8",
+    );
+    expect(readme).toContain("Normal Advisor review is static analysis only");
+    expect(readme).toContain("Manual repair validation is a separate credential-free boundary");
+    expect(readme).toContain("PR-derived tests through `npm run test:changed`");
+    expect(readme).toContain("remain disabled by `npm ci --ignore-scripts`");
+  });
+
   it("reconstructs, runs a secret-free plan, and seals an immutable receipt (#10791)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-validation-test-"));
     temporaryDirectories.push(root);

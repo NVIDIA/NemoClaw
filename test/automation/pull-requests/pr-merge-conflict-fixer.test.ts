@@ -465,7 +465,7 @@ describe("PR merge conflict fixer", () => {
     ).toThrow(/draft/u);
   });
 
-  it("creates a verified commit from a main-relative tree before the atomic head update (#7542)", async () => {
+  it("preserves executable files in a two-parent verified commit before the atomic head update (#7542)", async () => {
     const fixture = createConflictFixture();
     for (let index = 0; index < 100; index += 1) {
       write(fixture.repository, `stale-main/${index}.txt`, `main ${index}\n`);
@@ -475,7 +475,10 @@ describe("PR merge conflict fixer", () => {
     fixture.baseSha = git(fixture.repository, ["rev-parse", "HEAD"]);
     const entry = entryFor(fixture);
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
-    const finalTree = createResolutionPatch(fixture, patchPath);
+    const finalTree = createResolutionPatch(fixture, patchPath, (repository) => {
+      fs.chmodSync(path.join(repository, "conflict.txt"), 0o755);
+      git(repository, ["add", "conflict.txt"]);
+    });
     const commitSha = "c".repeat(40);
     const requests: Array<{ body: unknown; method: string; path: string }> = [];
     const graphql = vi.fn(async (_query: string, variables: Record<string, unknown>) => ({
@@ -511,6 +514,10 @@ describe("PR merge conflict fixer", () => {
         sha: commitSha,
         verification: { reason: "valid", verified: true },
       }),
+      [`/repos/NVIDIA/NemoClaw/git/commits/${commitSha}`]: () => ({
+        sha: commitSha,
+        verification: { reason: "valid", verified: true },
+      }),
     };
     const request = vi.fn(async (method: "GET" | "POST", apiPath: string, body?: unknown) => {
       requests.push({ body, method, path: apiPath });
@@ -543,7 +550,9 @@ describe("PR merge conflict fixer", () => {
       base_tree: string;
       tree: Array<{ mode: string; path: string; sha: string | null; type: string }>;
     };
-    expect(treeBody.base_tree).toBe(entry.base_sha);
+    expect(treeBody.base_tree).toBe(
+      git(fixture.repository, ["rev-parse", `${entry.base_sha}^{tree}`]),
+    );
     expect(treeBody.tree.map((item) => item.path)).toEqual([
       "clean-merge.txt",
       "conflict.txt",
@@ -555,6 +564,7 @@ describe("PR merge conflict fixer", () => {
       sha: null,
       type: "blob",
     });
+    expect(treeBody.tree.find((item) => item.path === "conflict.txt")?.mode).toBe("100755");
     expect(treeBody.tree.some((item) => item.path.startsWith("stale-main/"))).toBe(false);
     const blobRequests = requests.filter((item) => item.path.endsWith("/git/blobs"));
     expect(

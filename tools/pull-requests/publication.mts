@@ -149,16 +149,26 @@ export async function createGitHubTree(input: {
 }
 
 export async function createVerifiedCommit(input: {
+  allowExecutableFiles?: boolean;
+  baseSha?: string;
   finalTree: string;
   headSha: string;
   message: string;
+  parents?: readonly string[];
   repository: string;
   repositoryName: string;
   request: GitHubRequest;
   sleep?: (milliseconds: number) => Promise<void>;
 }): Promise<string> {
+  const parents = input.parents ?? [input.headSha];
+  if (parents.length < 1 || parents.length > 2)
+    throw new Error("A published commit must have one or two parents");
+  const verifiedParents = parents.map((parent, index) =>
+    fullSha(parent, `commit parent ${index + 1}`),
+  );
   const tree = await createGitHubTree({
-    baseSha: input.headSha,
+    allowExecutableFiles: input.allowExecutableFiles,
+    baseSha: input.baseSha ?? input.headSha,
     finalTree: input.finalTree,
     headSha: input.headSha,
     repository: input.repository,
@@ -167,7 +177,7 @@ export async function createVerifiedCommit(input: {
   });
   const created = (await input.request("POST", `/repos/${input.repositoryName}/git/commits`, {
     message: input.message,
-    parents: [input.headSha],
+    parents: verifiedParents,
     tree,
   })) as { sha?: string };
   const commitSha = fullSha(created.sha, "created commit SHA");
