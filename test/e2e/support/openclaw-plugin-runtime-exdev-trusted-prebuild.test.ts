@@ -451,6 +451,10 @@ function writeContainerIdentity(args: string[], containerId = CONTAINER_ID): voi
   fs.writeFileSync(cidfile, `${containerId}\n`);
 }
 
+function createCanonicalExtractionRoot(): string {
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-")));
+}
+
 const invalidExtractionDestinations = [
   {
     label: "non-empty",
@@ -473,7 +477,7 @@ const invalidExtractionDestinations = [
 
 describe("trusted EXDEV host mount extraction", () => {
   it("extracts by immutable container identity and removes the stopped container (#11547)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const root = createCanonicalExtractionRoot();
     const cleanup = new CleanupRegistry();
     try {
       const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
@@ -530,7 +534,7 @@ describe("trusted EXDEV host mount extraction", () => {
   });
 
   it("removes the temporary container after copy failure without using a mutable name (#11547)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const root = createCanonicalExtractionRoot();
     const cleanup = new CleanupRegistry();
     try {
       const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
@@ -573,7 +577,7 @@ describe("trusted EXDEV host mount extraction", () => {
   });
 
   it("reports both copy and immutable cleanup failures (#11547)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const root = createCanonicalExtractionRoot();
     const cleanup = new CleanupRegistry();
     try {
       const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
@@ -604,7 +608,7 @@ describe("trusted EXDEV host mount extraction", () => {
   });
 
   it("uses validated create output only to clean up an unproven cidfile identity (#11547)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const root = createCanonicalExtractionRoot();
     const cleanup = new CleanupRegistry();
     try {
       const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
@@ -644,7 +648,7 @@ describe("trusted EXDEV host mount extraction", () => {
   });
 
   it("removes the exact cidfile container after create reports failure (#11547)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const root = createCanonicalExtractionRoot();
     const cleanup = new CleanupRegistry();
     try {
       const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
@@ -684,7 +688,7 @@ describe("trusted EXDEV host mount extraction", () => {
   });
 
   it("reports a thrown container create without attempting copy or cleanup (#11547)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const root = createCanonicalExtractionRoot();
     const cleanup = new CleanupRegistry();
     try {
       const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
@@ -715,7 +719,7 @@ describe("trusted EXDEV host mount extraction", () => {
   it.each(invalidExtractionDestinations)(
     "rejects a $label extraction destination before invoking Docker (#11547)",
     async ({ prepare }) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+      const root = createCanonicalExtractionRoot();
       const cleanup = new CleanupRegistry();
       try {
         const sourceDirectory = prepare(root, cleanup);
@@ -740,7 +744,7 @@ describe("trusted EXDEV host mount extraction", () => {
   );
 
   it("rejects an untrusted image value before invoking Docker (#11547)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const root = createCanonicalExtractionRoot();
     const cleanup = new CleanupRegistry();
     try {
       const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
@@ -781,7 +785,7 @@ describe("trusted EXDEV host mount extraction", () => {
   ])(
     "removes the exact container before rejecting a $label (#11547)",
     async ({ populate, message }) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+      const root = createCanonicalExtractionRoot();
       const cleanup = new CleanupRegistry();
       try {
         const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
