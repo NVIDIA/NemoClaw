@@ -375,6 +375,8 @@ describe("Docker managed bootstrap adapter", () => {
       .mockImplementationOnce(() => {
         expect(fake.journal?.phase).toBe("shared-state-committed");
         expect(fake.original).toBeNull();
+        expect(fake.replacement?.State?.Running).toBe(false);
+        Object.assign(fake.replacement!.State!, { Running: true });
         return { status: 0 };
       })
       .mockReturnValue({ status: 0 });
@@ -461,11 +463,12 @@ describe("Docker managed bootstrap adapter", () => {
     });
     expect(finalized).toMatchObject({ outcome: "committed" });
     expectEventBefore(fake.events, "journal:shared-state-committed", `rm:${OLD_ID}`);
+    expectEventBefore(fake.events, `rm:${OLD_ID}`, `stop:${NEW_ID}`);
     expectEventBefore(fake.events, "finalization:committed", "journal:removed");
     expect(fake.journal).toBeNull();
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
     expect(fake.sharedState).toBe("none");
-    expect(fake.replacement?.Id).toBe(NEW_ID);
+    expect(fake.replacement).toMatchObject({ Id: NEW_ID, State: { Running: true } });
     expect(vi.mocked(fake.deps.runOpenshell!).mock.calls.map(([args]) => args.slice(0, 2))).toEqual(
       [
         ["sandbox", "stop"],
@@ -563,7 +566,7 @@ describe("Docker managed bootstrap adapter", () => {
     ).rejects.toThrow(/OpenShell sandbox start.*injected readiness failure/);
     expect(fake.journal?.phase).toBe("shared-state-committed");
     expect(fake.original).toBeNull();
-    expect(fake.replacement).toMatchObject({ Id: NEW_ID, State: { Running: true } });
+    expect(fake.replacement).toMatchObject({ Id: NEW_ID, State: { Running: false } });
     expectEventBefore(fake.events, "journal:shared-state-committed", `rm:${OLD_ID}`);
   });
 
