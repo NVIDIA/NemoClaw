@@ -3,6 +3,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
   captureResolvedOpenshell: vi.fn(),
@@ -137,6 +139,7 @@ describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => 
         sandboxName: "hermes-box",
       });
 
+      expect(input.operationTimeoutMs).toBe(OPENSHELL_HEAVY_TIMEOUT_MS);
       expect(input.forwardService).toMatchObject({
         executablePath: "/usr/local/bin/openshell",
         gatewayEndpoint: endpoint,

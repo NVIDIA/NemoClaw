@@ -419,6 +419,62 @@ describe("pull request and main workflow contracts", () => {
     ]);
   });
 
+  it.each([
+    [
+      "docs-only checks",
+      requiredWorkflowStep(prWorkflow.jobs["docs-only-checks"], "Install hadolint"),
+    ],
+    ["shared static checks", requiredStep(sharedActions.staticChecks, "Install hadolint")],
+  ])("retries transient hadolint downloads in %s", (_name, step) => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-hadolint-retry-"));
+    try {
+      const bin = join(root, "bin");
+      const target = join(bin, "hadolint");
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "curl"),
+        `#!/bin/sh
+set -eu
+retry=0
+all_errors=0
+delay=0
+destination=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --retry) [ "\${2:-}" = 3 ] || exit 91; retry=1; shift 2 ;;
+    --retry-all-errors) all_errors=1; shift ;;
+    --retry-delay) [ "\${2:-}" = 2 ] || exit 92; delay=1; shift 2 ;;
+    -o) destination="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ "$retry:$all_errors:$delay" = 1:1:1 ] || exit 93
+printf 'fake hadolint' > "$destination"
+`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(bin, "sha256sum"),
+        `#!/bin/sh
+printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47' "$1"
+`,
+        { mode: 0o755 },
+      );
+      const testStep = {
+        ...step,
+        run: step.run?.replaceAll("/usr/local/bin/hadolint", target),
+      };
+      const result = runWorkflowShellStep(testStep, {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(readFileSync(target, "utf8")).toBe("fake hadolint");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
   it.each([
     ["pull request", prWorkflow],
