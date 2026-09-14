@@ -172,6 +172,34 @@ describe("protected managed-image runtime contract", () => {
     }
   });
 
+  it.each([
+    { reason: "unrelated subsystem", subsystem: "gateway/other", create: fs.copyFileSync },
+    { reason: "symlink log", subsystem: "gateway/heartbeat", create: fs.symlinkSync },
+  ])("rejects heartbeat evidence from a $reason", ({ subsystem, create }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-denial-"));
+    try {
+      const source = path.join(root, "source.log");
+      fs.writeFileSync(
+        source,
+        JSON.stringify({
+          "0": JSON.stringify({ subsystem }),
+          "1": { intervalMs: 120000, apiKey: "fixture-secret" },
+          "2": "heartbeat: started",
+        }) + "\n",
+      );
+      create(source, path.join(root, "openclaw-2026-09-13.log"));
+      const probe = managedOpenClawHeartbeatLogProbe()
+        .replace('"/tmp/openclaw"', JSON.stringify(root))
+        .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+      const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("heartbeat-evidence-unavailable");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10262)", () => {
     const containerId = "a".repeat(64);
     const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
