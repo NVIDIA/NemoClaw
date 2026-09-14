@@ -8,7 +8,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { executeValidationCommand, windowsNpmCli } from "./validation-command.mts";
+import {
+  executeValidationCommand,
+  windowsNpmCli,
+  withValidationNodeHeap,
+} from "./validation-command.mts";
 
 function git(root: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
@@ -39,6 +43,7 @@ function readStableFile(file: string, expected: fs.Stats): Buffer {
 
 function hashPaths(root: string, files: readonly string[], excludeCaches = false): string {
   const hash = createHash("sha256");
+  const canonicalRoot = fs.realpathSync(root);
   const activeLinks = new Set<string>();
   function visit(file: string): void {
     if (excludeCaches && (path.basename(file) === ".cache" || file.endsWith(".tsbuildinfo")))
@@ -62,7 +67,7 @@ function hashPaths(root: string, files: readonly string[], excludeCaches = false
       if (target.isFile())
         hash.update(String(target.mode)).update(readStableFile(resolved, target));
       else {
-        const relative = path.relative(root, resolved);
+        const relative = path.relative(canonicalRoot, resolved);
         if (relative.startsWith("..") || path.isAbsolute(relative) || activeLinks.has(resolved))
           throw new Error("External or cyclic directory symlinks prevent validation reuse");
         activeLinks.add(resolved);
@@ -109,7 +114,9 @@ export function validationEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   // Compiler checks use installed tools; npx must never install a missing tool.
   result.npm_config_yes = "false";
   return Object.fromEntries(
-    Object.entries(result).sort(([left], [right]) => left.localeCompare(right)),
+    Object.entries(withValidationNodeHeap(result)).sort(([left], [right]) =>
+      left.localeCompare(right),
+    ),
   );
 }
 
@@ -119,6 +126,7 @@ export function validationFingerprint(
   env: NodeJS.ProcessEnv,
   outputPaths: readonly string[] = ["dist", "nemoclaw/dist", "nemoclaw/runner-dist"],
 ): { inputs: string; outputs: string } {
+  const canonicalRoot = fs.realpathSync(root);
   const files = git(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
     .split("\0")
     .filter(Boolean);
@@ -175,7 +183,7 @@ export function validationFingerprint(
   const inputs = createHash("sha256")
     .update(
       JSON.stringify({
-        root,
+        root: canonicalRoot,
         command,
         env,
         refs,

@@ -158,3 +158,4 @@ runs:
         path: .vitest-reports/blob-${{ inputs.shard }}-${{ inputs.shard-count }}.json
         if-no-files-found: error
         retention-days: 1
+        overwrite: true

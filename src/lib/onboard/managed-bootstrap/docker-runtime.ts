@@ -277,9 +277,18 @@ function createDockerLifecycle(
         }
       : {}),
   });
-  const adapter =
-    input.adapterOverride ??
-    createDockerManagedBootstrapAdapter({ ...input.dependencies, stateRoot: input.stateRoot });
+  const adapter = (() => {
+    if (input.adapterOverride) return input.adapterOverride;
+    const runOpenshell = input.dependencies.runOpenshell;
+    if (!runOpenshell) {
+      throw new Error("Managed bootstrap Docker requires OpenShell lifecycle authority.");
+    }
+    return createDockerManagedBootstrapAdapter({
+      ...input.dependencies,
+      runOpenshell,
+      stateRoot: input.stateRoot,
+    });
+  })();
   const createPlan = {
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     sandboxName: input.sandboxName,

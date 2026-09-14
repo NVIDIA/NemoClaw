@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../fixtures/clients/command.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
@@ -56,6 +57,19 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor and use a digest pin; got ${fixture.sandboxBaseImageRef}`,
     );
   }
+}
+
+/** Collect both read-only probes without replacing an installer failure. */
+export async function captureGatewayUpgradeProbeEvidence(
+  sandboxName: string,
+  capture: (name: string, args: readonly string[]) => Promise<Pick<ShellProbeResult, "exitCode">>,
+): Promise<boolean> {
+  const probes = [
+    ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
+    ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
+  ] as const;
+  const results = await Promise.allSettled(probes.map(async ([name, args]) => capture(name, args)));
+  return results.every((result) => result.status === "fulfilled" && result.value.exitCode === 0);
 }
 
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {

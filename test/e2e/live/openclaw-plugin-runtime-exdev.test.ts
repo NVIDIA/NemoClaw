@@ -507,6 +507,8 @@ test(
         host.command(
           "node",
           [
+            "--require",
+            openshellWrapper.createPreloadPath,
             CLI_ENTRYPOINT,
             "onboard",
             "--fresh",
@@ -554,7 +556,7 @@ test(
       [CLI_ENTRYPOINT, SANDBOX_NAME, "gateway", "restart"],
       {
         artifactName: "openclaw-weather-plugin-gateway-restart",
-        env: { ...sandboxEnv, NEMOCLAW_OPENSHELL_BIN: openshell.cli },
+        env: sandboxEnv,
         timeoutMs: 180_000,
       },
     );
@@ -604,6 +606,8 @@ test(
         host.command(
           "node",
           [
+            "--require",
+            openshellWrapper.createPreloadPath,
             CLI_ENTRYPOINT,
             "onboard",
             "--fresh",

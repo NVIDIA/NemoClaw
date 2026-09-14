@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
@@ -60,24 +60,21 @@ interface ReadinessFixture {
   root: string;
 }
 
-const fixtureRoots: string[] = [];
-const fixtureProgress: TestProgress[] = [];
 const PROVIDER_COHORT = "protected-123-1";
 const PROVIDER_CONTAINER_ID = "a".repeat(64);
 const PROVIDER_IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const PROVIDER_IMAGE = `registry.example/vllm@sha256:${"c".repeat(64)}`;
 const VLLM_PROVIDER_NAME = protectedProviderContainerName("vllm", PROVIDER_COHORT);
 
-afterEach(() => {
-  for (const progress of fixtureProgress) progress.stop();
-  fixtureProgress.length = 0;
-  for (const root of fixtureRoots) fs.rmSync(root, { force: true, recursive: true });
-  fixtureRoots.length = 0;
-});
+vi.setConfig({ maxConcurrency: 2 });
 
 function createReadinessFixture(): ReadinessFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-readiness-"));
-  fixtureRoots.push(root);
+  const owned: { progress?: TestProgress } = {};
+  onTestFinished(() => {
+    owned.progress?.stop();
+    fs.rmSync(root, { force: true, recursive: true });
+  });
   const home = path.join(root, "home");
   const binDir = path.join(root, "bin");
   fs.mkdirSync(home);
@@ -101,7 +98,7 @@ exec "$@"`,
     ["run protected readiness command", "verify protected readiness result"],
     { logLine: () => undefined },
   );
-  fixtureProgress.push(progress);
+  owned.progress = progress;
   const shellProbe = new ShellProbe({
     artifacts,
     progress,
@@ -308,7 +305,7 @@ exit 64`,
   };
 }
 
-describe("protected managed-image runtime commands", () => {
+describe.concurrent("protected managed-image runtime commands", () => {
   it("derives bounded provider container names from the protected cohort", () => {
     expect(VLLM_PROVIDER_NAME).toBe("nemoclaw-mi-vllm-protected-123-1");
     expect(protectedProviderContainerName("nim", PROVIDER_COHORT)).toBe(

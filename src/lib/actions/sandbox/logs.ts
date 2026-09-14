@@ -4,11 +4,13 @@
 import { spawn, type StdioOptions } from "node:child_process";
 import type { Writable } from "node:stream";
 import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
+import { cliOpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings-cli";
+import type { OpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings";
+import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import * as agentRuntime from "../../agent/runtime";
 import { spawnExitCode } from "../../core/process-exit";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import {
-  buildEnableSandboxAuditLogsArgs,
   buildSandboxLogsArgs,
   buildSandboxOpenclawGatewayLogsArgs,
   describeLogProbeResult,
@@ -106,6 +108,7 @@ type SpawnFn = typeof spawn;
 type ExitFn = (code: number) => never;
 
 export type SandboxLogsRuntimeDeps = {
+  enableAuditLogs?: OpenShellSandboxSettings["enableAuditLogs"];
   env?: NodeJS.ProcessEnv;
   exit?: ExitFn;
   getOpenshellBinary?: typeof getOpenshellBinary;
@@ -146,11 +149,11 @@ function shouldIncludeGatewayLogSource(sandboxName: string, deps: SandboxLogsRun
   return agentRuntime.hasGatewayRuntime(agent);
 }
 
-function streamSandboxFollowLogs(
+async function streamSandboxFollowLogs(
   sandboxName: string,
   options: SandboxLogsOptions,
   deps: SandboxLogsRuntimeDeps,
-): void {
+): Promise<void> {
   const openclawArgs =
     options.since || !shouldIncludeGatewayLogSource(sandboxName, deps)
       ? null
@@ -451,45 +454,31 @@ function streamSandboxFollowLogs(
   if (openclawArgs) {
     addSource("OpenClaw log source", openclawArgs, true);
   }
-  enableSandboxAuditLogs(sandboxName, deps);
+  await enableSandboxAuditLogs(sandboxName, deps);
   addSource("OpenShell log source", openshellArgs);
   setupComplete = true;
   maybeExit();
 }
 
-function enableSandboxAuditLogs(sandboxName: string, deps: SandboxLogsRuntimeDeps) {
-  const args = buildEnableSandboxAuditLogsArgs(sandboxName);
-  const result = (deps.runOpenshell ?? runOpenshell)(args, {
-    stdio: ["ignore", "ignore", "pipe"],
-    ignoreError: true,
-    timeout: getLogsProbeTimeoutMs(),
+async function enableSandboxAuditLogs(sandboxName: string, deps: SandboxLogsRuntimeDeps) {
+  const result = await (deps.enableAuditLogs ?? cliOpenShellSandboxSettings.enableAuditLogs)({
+    target: selectedOpenShellGateway(),
+    sandboxName,
+    timeoutMs: getLogsProbeTimeoutMs(),
   });
-  if (result.status !== 0) {
-    warnSandboxAuditLogsUnavailable(sandboxName, args, result);
+  if (!result.ok) {
+    console.error(
+      `  Warning: failed to enable OpenShell audit logs for sandbox '${sandboxName}': ${result.error.message}`,
+    );
+    console.error("  Policy denial events may be missing from OpenShell logs.");
   }
 }
 
-function warnSandboxAuditLogsUnavailable(
-  sandboxName: string,
-  args: string[],
-  result: LogProbeResult,
-): void {
-  const stderr = String(result.stderr || "").trim();
-  console.error(
-    `  Warning: failed to enable OpenShell audit logs for sandbox '${sandboxName}' ` +
-      `(${describeLogProbeResult(result)}): openshell ${args.join(" ")}`,
-  );
-  if (stderr) {
-    console.error(`  ${stderr}`);
-  }
-  console.error("  Policy denial events may be missing from OpenShell logs.");
+export async function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions | boolean) {
+  await showSandboxLogsWithDeps(sandboxName, options);
 }
 
-export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions | boolean) {
-  showSandboxLogsWithDeps(sandboxName, options);
-}
-
-export function showSandboxLogsWithDeps(
+export async function showSandboxLogsWithDeps(
   sandboxName: string,
   options: SandboxLogsOptions | boolean,
   deps: SandboxLogsRuntimeDeps = {},
@@ -509,11 +498,11 @@ export function showSandboxLogsWithDeps(
   }
 
   if (logsOptions.follow) {
-    streamSandboxFollowLogs(sandboxName, logsOptions, deps);
+    await streamSandboxFollowLogs(sandboxName, logsOptions, deps);
     return;
   }
 
-  enableSandboxAuditLogs(sandboxName, deps);
+  await enableSandboxAuditLogs(sandboxName, deps);
 
   // Capture stdout from both sources so --tail N can be applied once
   // to the merged stream rather than independently per source

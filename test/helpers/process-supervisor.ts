@@ -58,9 +58,14 @@ export interface SuperviseResult {
   /** Set when the spawn itself failed (ENOENT, EPERM, ...). Mutually
    *  exclusive with a non-null `exitCode`. */
   spawnError?: Error;
+  /** Set when the child leader exited but its process group could not be
+   *  confirmed gone after SIGKILL within the bounded cleanup window. */
+  cleanupError?: Error;
 }
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
+const PROCESS_GROUP_REAP_POLL_MS = 10;
+const PROCESS_GROUP_REAP_TIMEOUT_MS = 2_000;
 
 export function superviseChild(
   child: ChildProcess,
@@ -88,13 +93,20 @@ export function superviseChild(
 
     let timedOut = false;
     let killTimer: NodeJS.Timeout | undefined;
+    let reapTimer: NodeJS.Timeout | undefined;
+    let pendingClose: SuperviseResult | undefined;
+    let terminationRequested = false;
+    let killSent = false;
     const terminate = (): void => {
+      if (terminationRequested) return;
+      terminationRequested = true;
       signalProcessGroup("SIGTERM");
-      if (killTimer) clearTimeout(killTimer);
       killTimer = setTimeout(() => {
         signalProcessGroup("SIGKILL");
+        killSent = true;
+        killTimer = undefined;
+        if (pendingClose) waitForProcessGroupExit(pendingClose);
       }, killGraceMs);
-      killTimer.unref();
     };
 
     const timeout = setTimeout(() => {
@@ -138,15 +150,54 @@ export function superviseChild(
       settled = true;
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
+      if (reapTimer) clearTimeout(reapTimer);
       if (opts.signal) opts.signal.removeEventListener("abort", onAbort);
       resolve(result);
+    };
+
+    const processGroupIsRunning = (): boolean => {
+      if (typeof pgid !== "number") return false;
+      try {
+        process.kill(-pgid, 0);
+        return true;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "EPERM";
+      }
+    };
+
+    const waitForProcessGroupExit = (result: SuperviseResult): void => {
+      const deadline = Date.now() + PROCESS_GROUP_REAP_TIMEOUT_MS;
+      const poll = (): void => {
+        if (!processGroupIsRunning()) {
+          settle(result);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          settle({
+            ...result,
+            cleanupError: new Error(`Process group ${pgid ?? "unknown"} survived SIGKILL`),
+          });
+          return;
+        }
+        reapTimer = setTimeout(poll, PROCESS_GROUP_REAP_POLL_MS);
+      };
+      poll();
     };
 
     child.on("error", (err) => {
       settle({ exitCode: null, signal: null, timedOut, spawnError: err });
     });
     child.on("close", (code, signal) => {
-      settle({ exitCode: code, signal, timedOut });
+      const result = { exitCode: code, signal, timedOut };
+      if (terminationRequested && processGroupIsRunning()) {
+        if (killSent) {
+          waitForProcessGroupExit(result);
+          return;
+        }
+        pendingClose = result;
+        return;
+      }
+      settle(result);
     });
   });
 }

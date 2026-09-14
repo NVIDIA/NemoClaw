@@ -106,6 +106,7 @@ const TRUSTED_EXDEV_IMAGE_REF_PATTERN = new RegExp(
 );
 
 export type OpenShellTrustedImageWrapper = OpenShellDriverConfigTestWrapper & {
+  createPreloadPath: string;
   selectImage(image: TrustedPluginFixtureImage): void;
 };
 
@@ -207,9 +208,28 @@ exec ${shellQuote(process.execPath)} ${shellQuote(rewriterPath)} "$@"
     { encoding: "utf8", mode: 0o700 },
   );
 
+  // Keep the canonical CLI as the forward listener's executable. Intercept only
+  // sandbox creation to retain this fixture's image and tmpfs setup.
+  const createPreloadPath = path.join(directory, "sandbox-create-preload.cjs");
+  fs.writeFileSync(
+    createPreloadPath,
+    `const childProcess = require("node:child_process");
+const spawn = childProcess.spawn;
+childProcess.spawn = function (command, args, options) {
+  const executable = command === ${JSON.stringify(canonicalComponents.cli)} &&
+    args?.[0] === "sandbox" && args[1] === "create"
+      ? ${JSON.stringify(executable)} : command;
+  return spawn(executable, args, options);
+};
+require("node:module").syncBuiltinESMExports();
+`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+
   return {
     directory,
     executable,
+    createPreloadPath,
     selectImage: (image) => {
       assert.match(image.imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
       fs.writeFileSync(imageSelectionPath, `${JSON.stringify(image)}\n`, {

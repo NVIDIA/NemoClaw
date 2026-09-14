@@ -18,6 +18,7 @@ import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
 import {
   getBlueprintMaxOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  isOpenshellDevVersion,
   shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
 } from "./openshell-version";
@@ -27,7 +28,7 @@ export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gatew
 export const OPENSHELL_GATEWAY_HOMEBREW_SERVICE = "openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_TAP = "nvidia/openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
-  "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642";
+  "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER =
   "NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE = `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`;
@@ -282,6 +283,16 @@ export function checkUpstreamGatewayVersion(
         "Restore the OpenShell package, then retry.",
     };
   }
+  if (isOpenshellDevVersion(versionOutput)) {
+    return {
+      supported: false,
+      binaryPath,
+      version,
+      message:
+        `  Refusing the system OpenShell gateway service: ${binaryPath} is a development build. ` +
+        "Install exact stable OpenShell 0.0.116 before retrying NemoClaw.",
+    };
+  }
   const bounds = (opts.getUpstreamGatewayVersionBounds ?? defaultUpstreamGatewayVersionBounds)();
   const belowMin = Boolean(bounds.min) && !versionGte(version, bounds.min as string);
   const aboveMax =
@@ -440,9 +451,15 @@ function runSystemctlUser(
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
 ) {
+  const env: NodeJS.ProcessEnv = { ...opts.env, LC_ALL: "C" };
+  if (typeof process.getuid === "function") {
+    const runtimeDir = env.XDG_RUNTIME_DIR?.trim() || `/run/user/${String(process.getuid())}`;
+    env.XDG_RUNTIME_DIR = runtimeDir;
+    env.DBUS_SESSION_BUS_ADDRESS ||= `unix:path=${runtimeDir}/bus`;
+  }
   return runCommand("systemctl", ["--user", ...args], {
     ...opts,
-    env: { ...opts.env, LC_ALL: "C" },
+    env,
   });
 }
 

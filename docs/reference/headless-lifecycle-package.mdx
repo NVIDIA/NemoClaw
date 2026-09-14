@@ -12,7 +12,7 @@ content:
 ---
 
 Use `nemoclaw/lifecycle` when a service needs deterministic Hermes planning and read-only observation without invoking the NemoClaw command-line interface (CLI).
-The first API version supports Hermes `0.20.6` with OpenShell `0.0.106`.
+The first API version supports Hermes `0.20.6` with OpenShell `0.0.116`.
 
 ## Understand the Boundary
 
@@ -75,4 +75,4 @@ When the capability reports that the resource is missing, the result has `state:
 
 This API does not define an image reference, entrypoint, provider, network policy, checkpoint, ownership record, or mutation authority.
 It does not create, stop, start, replace, delete, or clean up a sandbox.
-OpenShell `0.0.115` requires separate compatibility evidence before a later API definition can support it.
+An OpenShell release after `0.0.116` requires separate compatibility evidence before a later API definition can support it.

@@ -22,10 +22,10 @@ function policies(
   const customPresets = (options.custom ?? []).map((name) => ({ name }));
   return {
     setupPolicyPresetSupported: () => true,
-    listSetupPolicyPresets: () => setupPresets,
-    listCustomPresets: () => customPresets,
-    customPresetOwnsNetworkPolicyKey: () => options.customOwnsObservability === true,
-    getAppliedPresets: () => options.applied ?? [],
+    listSetupPolicyPresets: async () => setupPresets,
+    listCustomPresets: async () => customPresets,
+    customPresetOwnsNetworkPolicyKey: async () => options.customOwnsObservability === true,
+    getAppliedPresets: async () => options.applied ?? [],
     clampSetupPolicyPresetNames(
       names: string[],
       selectablePresets: Preset[],
@@ -38,12 +38,12 @@ function policies(
   };
 }
 
-function prepare(
+async function prepare(
   livePolicyPresets: string[],
   provider: "brave" | "tavily",
   webSearchConfigChanged = false,
 ) {
-  return preparePolicyPresetResumeSelection(
+  return await preparePolicyPresetResumeSelection(
     { policies: policies({ applied: livePolicyPresets }) },
     "alpha",
     {
@@ -56,29 +56,29 @@ function prepare(
 }
 
 describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
-  it("replaces stale Brave policy with Tavily during a provider switch", () => {
-    const result = prepare(["brave"], "tavily");
+  it("replaces stale Brave policy with Tavily during a provider switch", async () => {
+    const result = await prepare(["brave"], "tavily");
 
     expect(result.policyPresets).toEqual(["tavily"]);
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("adds Tavily when web search becomes enabled on resume", () => {
-    const result = prepare(["npm"], "tavily", true);
+  it("adds Tavily when web search becomes enabled on resume", async () => {
+    const result = await prepare(["npm"], "tavily", true);
 
     expect(result.policyPresets).toEqual(["npm", "tavily"]);
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("preserves an intentionally removed provider preset when configuration is unchanged", () => {
-    const result = prepare(["npm"], "tavily");
+  it("preserves an intentionally removed provider preset when configuration is unchanged", async () => {
+    const result = await prepare(["npm"], "tavily");
 
     expect(result.policyPresets).toEqual(["npm"]);
     expect(result.livePolicyPresetsNeedUpdate).toBe(false);
   });
 
-  it("preserves an operator-owned preset name while adding the active provider", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("preserves an operator-owned preset name while adding the active provider", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["brave"], custom: ["brave"] }) },
       "alpha",
       {
@@ -97,8 +97,8 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
 describe("preparePolicyPresetResumeSelection required preset reconciliation", () => {
   it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"])(
     "repairs a Personal live policy missing its tier-defining preset: %s",
-    (agent) => {
-      const result = preparePolicyPresetResumeSelection(
+    async (agent) => {
+      const result = await preparePolicyPresetResumeSelection(
         { policies: policies({ applied: ["npm"] }) },
         "alpha",
         {
@@ -114,8 +114,8 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     },
   );
 
-  it("returns the Personal requirement when the legacy live policy is null", () => {
-    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+  it("returns the Personal requirement when the legacy live policy is null", async () => {
+    const result = await preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
       agent: "pi",
       tierName: "personal",
       webSearchConfig: null,
@@ -125,8 +125,8 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     expect(result.policyPresets).toEqual(["personal-open-internet"]);
   });
 
-  it("marks an explicit empty Personal live policy for reconciliation", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("marks an explicit empty Personal live policy for reconciliation", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: [] }) },
       "alpha",
       {
@@ -141,8 +141,8 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("marks an empty live policy for reconciliation when Slack becomes required (#6042)", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("marks an empty live policy for reconciliation when Slack becomes required (#6042)", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: [] }) },
       "alpha",
       {
@@ -157,8 +157,8 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("removes a stale Hermes Slack preset when no messaging channel is enabled", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("removes a stale Hermes Slack preset when no messaging channel is enabled", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm", "slack"] }) },
       "alpha",
       {
@@ -173,8 +173,8 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("keeps only the enabled Hermes messaging preset during resume", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("keeps only the enabled Hermes messaging preset during resume", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm", "slack", "discord"] }) },
       "alpha",
       {
@@ -189,8 +189,8 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("preserves custom ownership of an inactive Hermes messaging preset name", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("preserves custom ownership of an inactive Hermes messaging preset name", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm", "slack"], custom: ["slack"] }) },
       "alpha",
       {
@@ -210,8 +210,8 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
   // These exercise canonical tiers.yaml membership without a tier stub: `brave`
   // is a Balanced default, and Restricted lists no such default.
 
-  it("preserves brave on reuse when it is a Balanced-tier default and web search is off", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("preserves brave on reuse when it is a Balanced-tier default and web search is off", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm", "brave"] }) },
       "alpha",
       {
@@ -228,8 +228,8 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
     expect(result.livePolicyPresetsNeedUpdate).toBe(false);
   });
 
-  it("still prunes a stale brave on the Restricted tier (no brave default)", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("still prunes a stale brave on the Restricted tier (no brave default)", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm", "brave"] }) },
       "alpha",
       {
@@ -244,8 +244,8 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("keeps brave on Balanced even when web search is set to a different provider", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("keeps brave on Balanced even when web search is set to a different provider", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm", "brave"] }) },
       "alpha",
       {
@@ -261,11 +261,11 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
     expect(result.policyPresets).toEqual(["npm", "brave", "tavily"]);
   });
 
-  it("still prunes tavily on Balanced when it is not a tier default and web search is off", () => {
+  it("still prunes tavily on Balanced when it is not a tier default and web search is off", async () => {
     // Boundary: the exemption is scoped to real tier defaults. tavily is NOT a
     // Balanced default (brave is), so a leftover tavily with no matching provider
     // is still a stale web-search preset and must be pruned.
-    const result = preparePolicyPresetResumeSelection(
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm", "tavily"] }) },
       "alpha",
       {
@@ -282,8 +282,8 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
 
   it.each(["hermes", "langchain-deepagents-code"])(
     "prunes OpenClaw-only brave from a Balanced-tier %s resume",
-    (agent) => {
-      const result = preparePolicyPresetResumeSelection(
+    async (agent) => {
+      const result = await preparePolicyPresetResumeSelection(
         { policies: policies({ applied: ["npm", "brave"] }) },
         "alpha",
         {
@@ -301,8 +301,8 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
 });
 
 describe("preparePolicyPresetResumeSelection observability reconciliation", () => {
-  it("adds the local OTLP preset only while Deep Agents Code observability is enabled", () => {
-    const enabled = preparePolicyPresetResumeSelection(
+  it("adds the local OTLP preset only while Deep Agents Code observability is enabled", async () => {
+    const enabled = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm"] }) },
       "alpha",
       {
@@ -312,7 +312,7 @@ describe("preparePolicyPresetResumeSelection observability reconciliation", () =
         webSearchSupported: true,
       },
     );
-    const disabled = preparePolicyPresetResumeSelection(
+    const disabled = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm", "observability-otlp-local"] }) },
       "alpha",
       {
@@ -329,8 +329,8 @@ describe("preparePolicyPresetResumeSelection observability reconciliation", () =
     expect(disabled.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("suppresses the enabled local OTLP preset on the restricted tier", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("suppresses the enabled local OTLP preset on the restricted tier", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       { policies: policies({ applied: ["npm"] }) },
       "alpha",
       {
@@ -345,8 +345,8 @@ describe("preparePolicyPresetResumeSelection observability reconciliation", () =
     expect(result.policyPresets).toEqual(["npm"]);
   });
 
-  it("keeps exact custom OTLP ownership without carrying built-in attribution on resume", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("keeps exact custom OTLP ownership without carrying built-in attribution on resume", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       {
         policies: policies({
           applied: ["observability-otlp-local", "corp-otel"],
@@ -367,8 +367,8 @@ describe("preparePolicyPresetResumeSelection observability reconciliation", () =
     expect(result.livePolicyPresetsNeedUpdate).toBe(false);
   });
 
-  it("preserves same-name different-key custom collision semantics on resume", () => {
-    const result = preparePolicyPresetResumeSelection(
+  it("preserves same-name different-key custom collision semantics on resume", async () => {
+    const result = await preparePolicyPresetResumeSelection(
       {
         policies: policies({
           applied: ["observability-otlp-local"],

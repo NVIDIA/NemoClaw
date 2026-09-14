@@ -240,15 +240,20 @@ describe("package-managed gateway version gate (#8094)", () => {
     expect(getUpstreamGatewayVersion).toHaveBeenCalledWith(PACKAGE_BINARY);
   });
 
-  it("preserves above-maximum development gateways on the development channel", () => {
-    expect(
-      checkUpstreamGatewayVersion(
-        PACKAGE_BINARY,
-        resolveOptions("openshell-gateway 0.0.91-dev.1", {
-          env: { NEMOCLAW_OPENSHELL_CHANNEL: "dev" },
-        }),
-      ).supported,
-    ).toBe(true);
+  it("rejects development gateways even on the development channel", () => {
+    const result = checkUpstreamGatewayVersion(
+      PACKAGE_BINARY,
+      resolveOptions("openshell-gateway 0.0.91-dev.1", {
+        env: { NEMOCLAW_OPENSHELL_CHANNEL: "dev" },
+      }),
+    );
+    expect(result).toMatchObject({
+      supported: false,
+      message: expect.stringContaining("development build"),
+    });
+    expect(result).toMatchObject({
+      message: expect.stringContaining("exact stable OpenShell 0.0.116"),
+    });
   });
 
   it("keeps the package unit paths the gate scans in sync with the resolver", () => {
