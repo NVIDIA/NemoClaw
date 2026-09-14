@@ -17,6 +17,7 @@ import {
   classifyPiReadTaskAttempt,
   isTransientPiInferenceFailure,
   parsePiJsonEvents,
+  parsePiInferenceEvidence,
   PiInferenceFailure,
   qualifyPiReadTask,
 } from "../live/pi-agent-qualification-events.ts";
@@ -156,7 +157,7 @@ describe("Pi qualification event oracle", () => {
     },
   );
 
-  it("retries a transient provider error before the read tool starts", () => {
+  it("retries a transient provider error before the read tool starts (#11761)", () => {
     const eventValues = parsePiJsonEvents(
       events(
         { type: "agent_start" },
@@ -289,5 +290,46 @@ describe("Pi qualification event oracle", () => {
     expect(() =>
       qualifyPiReadTask(parsePiJsonEvents(events(start, reply, success)), PATH, TOKEN),
     ).toThrow("after the read completed");
+  });
+
+  it("accepts the managed Pi inference route", () => {
+    expect(
+      parsePiInferenceEvidence(
+        JSON.stringify({
+          providers: {
+            openshell: {
+              api: "openai-completions",
+              baseUrl: "https://inference.local/v1",
+              models: [{ id: "nvidia/test-model" }],
+            },
+          },
+        }),
+        "nvidia/test-model",
+      ),
+    ).toEqual({
+      api: "openai-completions",
+      model: "nvidia/test-model",
+      route: "https://inference.local/v1",
+    });
+  });
+
+  it("rejects missing or inconsistent Pi qualification evidence", () => {
+    expect(() => parsePiInferenceEvidence("{}", "nvidia/test-model")).toThrow(
+      "Pi managed inference providers must be an object",
+    );
+    expect(() =>
+      parsePiInferenceEvidence(
+        JSON.stringify({
+          providers: {
+            openshell: {
+              api: "openai-completions",
+              baseUrl: "https://inference.local/v1",
+              models: [{ id: "nvidia/other-model" }],
+            },
+          },
+        }),
+        "nvidia/test-model",
+      ),
+    ).toThrow("does not match the qualified route");
   });
 });

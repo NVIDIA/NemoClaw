@@ -10,6 +10,7 @@ import {
   managedImagePlatformForNodeArchitecture,
   parseManagedImageContractV1,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
+import { INFERENCE_ROUTE_URL } from "../../../src/lib/inference/config.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -41,6 +42,12 @@ export interface PiQualificationReceipt {
   readonly path: string;
 }
 
+export interface PiInferenceEvidence {
+  readonly api: string;
+  readonly model: string;
+  readonly route: string;
+}
+
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
@@ -65,6 +72,29 @@ function assistantError(message: unknown): string | null {
     typeof value.errorMessage === "string" ? value.errorMessage : "unspecified provider error";
   const summary = redactString(errorMessage).replace(/\s+/gu, " ").trim();
   return (summary || "unspecified provider error").slice(0, MAX_ASSISTANT_ERROR_LENGTH);
+}
+
+export function parsePiInferenceEvidence(
+  contents: string,
+  expectedModel: string,
+): PiInferenceEvidence {
+  const config = record(JSON.parse(contents) as unknown, "Pi managed inference configuration");
+  const providers = record(config.providers, "Pi managed inference providers");
+  const openshell = record(providers.openshell, "Pi managed inference provider");
+  const models = openshell.models;
+  const model = Array.isArray(models) ? record(models[0], "Pi managed inference model").id : null;
+  if (
+    openshell.api !== "openai-completions" ||
+    openshell.baseUrl !== INFERENCE_ROUTE_URL ||
+    model !== expectedModel
+  ) {
+    throw new Error("Pi managed inference configuration does not match the qualified route");
+  }
+  return {
+    api: openshell.api,
+    model,
+    route: openshell.baseUrl,
+  };
 }
 
 export function isTransientPiInferenceFailure(error: unknown): boolean {
