@@ -11,6 +11,20 @@ content:
   type: "how_to"
 ---
 
+<Warning>
+  **This procedure does not work on NemoClaw 0.0.120 and later.** Verified on 0.0.123 with OpenShell 0.0.106, OpenClaw 2026.7.1 and Ollama 0.34.0:
+
+  - Onboarding binds the host Ollama daemon to `127.0.0.1:11434` and re-applies that setting at every lifecycle command, so
+    `http://host.openshell.internal:11434` answers `upstream_unreachable` from the sandbox.
+  - The managed route `inference.local` serves chat completions only: `POST /v1/embeddings` returns `501` and `/api/embed` is denied by policy.
+  - `nemoclaw <sandbox> config set` was removed together with Shields; agent configuration is edited inside the sandbox.
+  - The managed image does not allow OpenClaw's bundled `ollama` plugin (`plugins.allow`) and does not ship `sqlite-vec`, so no memory
+    embedding provider is registered and no vector table can be created. OpenClaw falls back to keyword (FTS) search and logs
+    `no loaded plugin registered a memory embedding provider`.
+
+  Until the managed route carries embeddings, memory search on NemoClaw is keyword-only. Track progress in the linked issue.
+</Warning>
+
 Configure OpenClaw memory search to use an embedding model from a host Ollama container.
 This setup lets another local server, such as managed vLLM, continue to serve the chat model.
 
