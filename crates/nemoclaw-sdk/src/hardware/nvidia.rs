@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[cfg(any(target_os = "linux", test))]
 use crate::Error;
 #[cfg(target_os = "linux")]
 pub async fn query(query: &str) -> Result<String, Error> {
