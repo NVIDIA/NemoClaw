@@ -62,6 +62,28 @@ describe("port conflict report", () => {
     expect(report).toContain("NEMOCLAW_GATEWAY_PORT=<port> nemoclaw onboard");
   });
 
+  it("does not present a service stop as proof the port was released (#11720)", () => {
+    const report = formatPortConflictReport({
+      port: 8080,
+      label: "OpenShell gateway",
+      envVar: "NEMOCLAW_GATEWAY_PORT",
+      portCheck: {
+        ok: false,
+        process: "openshell-gateway",
+        pid: 1234,
+        reason: "lsof reports openshell-gateway (PID 1234) listening on port 8080",
+      },
+      serviceHints: ["       systemctl --user stop nemoclaw-openshell-gateway.service"],
+    }).join("\n");
+
+    expect(report).toContain("when one owns it, then recheck the port");
+    expect(report).toContain("an inactive service reports success without releasing it");
+    expect(report).toContain("Otherwise signal only the PID from that fresh check.");
+    expect(report).not.toContain(
+      "Stop it through its service manager, or signal only the PID from that fresh check.",
+    );
+  });
+
   it("does not emit raw ANSI escapes when stderr is not color-capable (#6752)", () => {
     vi.stubEnv("NO_COLOR", "");
     stubStderr(false, 1);

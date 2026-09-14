@@ -761,19 +761,63 @@ export function hasOpenShellGatewayUserService(
   return resolveOpenShellGatewayUserService(opts) !== null;
 }
 
+/** systemd states in which stopping the unit still changes what runs. */
+const ENGAGED_SYSTEMD_ACTIVE_STATES = new Set([
+  "active",
+  "activating",
+  "deactivating",
+  "reloading",
+]);
+
+/**
+ * False only when systemd positively reports the resolved unit as inactive or
+ * failed, which means it owns no gateway process.
+ *
+ * An installed unit is not the same thing as the lifecycle owner. After the
+ * standalone fallback runs, the unit is installed but inactive while a
+ * standalone gateway holds the port, so `systemctl --user stop` exits 0 and
+ * frees nothing (#11720). Any other outcome — an unreadable state, a failed
+ * query, an unavailable user manager, no `systemctl` at all — leaves the unit
+ * treated as engaged, because those cases cannot prove it owns nothing and the
+ * fallback flows already depend on the stop being offered.
+ */
+function isOpenShellGatewayUserServiceEngaged(
+  service: OpenShellGatewayUserServiceTarget,
+  opts: OpenShellGatewayUserServiceOptions,
+): boolean {
+  // Homebrew is exempt: the standalone fallback is blocked whenever the formula
+  // is the resolved manager, so the formula service is always the owner there.
+  if (service.manager !== "systemd") return true;
+  const env = opts.env ?? process.env;
+  const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
+  if (!commandExists("systemctl")) return true;
+  const result = runSystemctlUser(["show", service.serviceName, "--property=ActiveState"], {
+    env,
+    spawnSyncImpl: opts.spawnSyncImpl ?? spawnSync,
+  });
+  if (!result.ok) return true;
+  const properties = parseSystemctlShow(result.stdout ?? "", ["ActiveState"]);
+  if (!properties) return true;
+  return ENGAGED_SYSTEMD_ACTIVE_STATES.has(properties.ActiveState);
+}
+
 /**
  * Stop command for whichever service manager owns the gateway on this host, or
  * null when no managed service owns it and NemoClaw runs the gateway standalone.
  *
  * The resolver picks the upstream package unit, the NemoClaw unit, or the
  * Homebrew formula, so a caller that prints a stop command must ask for the
- * resolved name instead of deriving one from the platform (#8797).
+ * resolved name instead of deriving one from the platform (#8797). Resolution
+ * alone only proves the service is installed, so the resolved unit must also
+ * still be engaged before its stop command is offered as the way to stop a
+ * running gateway (#11720).
  */
 export function getOpenShellGatewayServiceStopCommand(
   opts: OpenShellGatewayUserServiceOptions = {},
 ): string | null {
   const service = resolveOpenShellGatewayUserService(opts);
   if (!service) return null;
+  if (!isOpenShellGatewayUserServiceEngaged(service, opts)) return null;
   const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
   return `${prefix} ${service.serviceName}`;
 }

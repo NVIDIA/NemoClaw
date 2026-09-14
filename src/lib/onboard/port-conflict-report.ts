@@ -28,7 +28,13 @@ export function formatPortConflictReport(input: PortConflictReportInput): string
       "     To fix, verify that the same process still owns the port:",
       "",
       `       sudo lsof -i :${port} -sTCP:LISTEN -P -n`,
-      "     Stop it through its service manager, or signal only the PID from that fresh check.",
+      // A service hint is not proof that the service still owns the listener:
+      // after the standalone fallback runs, the gateway user service is
+      // inactive while a standalone gateway holds the port, so its stop exits 0
+      // and frees nothing (#11720). Make the port the success signal.
+      "     Stop it through its service manager when one owns it, then recheck the port;",
+      "     an inactive service reports success without releasing it.",
+      "     Otherwise signal only the PID from that fresh check.",
       ...serviceHints,
     );
   } else {
