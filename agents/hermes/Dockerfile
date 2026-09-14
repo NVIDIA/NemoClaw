@@ -271,8 +271,6 @@ COPY --from=hermes-npm-patch-payload / /
 RUN node /scripts/upgrade-bundled-npm.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /scripts/npm-12.0.2.tgz
-# hadolint ignore=DL3059
-RUN rm /scripts/npm-12.0.2.tgz
 
 # The immutable selected base owns the reviewed Hindsight and agent-browser
 # patches and the root-owned agent-browser runtime. Verify that inherited boundary
@@ -280,7 +278,8 @@ RUN rm /scripts/npm-12.0.2.tgz
 # Apply the dashboard Host guard when the published 0.20.6 base predates that
 # source fix, then verify the exact accepted-host contract.
 # hadolint ignore=DL4006
-RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/memory_setup.py \
+RUN rm /scripts/npm-12.0.2.tgz \
+    && grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fq 'outcome = install_specs(missing, timeout=120)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
     && grep -Fqx 'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"' /opt/hermes/tools/browser_tool.py \

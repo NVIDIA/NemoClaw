@@ -545,6 +545,13 @@ describe("reviewed npm image remediation contract", () => {
     );
     expect(payload).not.toContain("/tmp/");
     expect(npmUpgrade.instruction.body).not.toContain("/tmp/");
+    const instructions = dockerfileInstructions(completedStage(dockerfile));
+    const npmUpgradeInstructionIndex = instructions.findIndex(
+      ({ start }) => start === npmUpgrade.instruction.start,
+    );
+    expect(instructions[npmUpgradeInstructionIndex + 1]?.body).toContain(
+      `rm ${hermesReviewedNpmArchivePath}`,
+    );
     expect(finalization).toHaveLength(1);
     expect(
       [
