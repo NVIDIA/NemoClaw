@@ -142,16 +142,22 @@ Keep it draft while automated evaluation or a candidate-owned repair is pending.
 Before marking a PR ready, record its number, reviewed `headRefOid`, and expected draft state. Read the
 PR immediately before the write. Continue only when its identity and commit are unchanged, it is still
 draft, and the latest commit completed the shared follow-up cycle with no unresolved candidate-owned
-finding or failure. Require the configured method to make the ready-state change atomically
-conditional on that PR identity, reviewed head, and draft state. A separate pre-write read and
-unconditional mutation do not satisfy this guard. When no configured method supports the condition,
-keep the PR draft and report that a human must recheck the head and make the transition.
+finding or failure.
 
-When the conditional operation is available, request it once. After a successful or inconclusive
-response, read the PR again. Continue only when the same PR and commit are no longer draft. Treat every
-other result as unknown state, stop, and do not repeat the write. Report the prepared PR number, head,
-and draft state; the observed PR identity and relevant state; every differing field; whether the
-response was successful or inconclusive; and the no-retry recovery boundary.
+Use `gh pr ready <number> --repo NVIDIA/NemoClaw` or an equivalent configured GitHub method for one
+ready-state request. Treat the response as provisional because GitHub does not provide an
+expected-commit condition for this transition. Follow GitHub access guidance when the request returns
+an access error. After every other successful, failed, or inconclusive response, read the PR again.
+Continue only when the same PR and reviewed commit are open and no longer draft. This transition does
+not approve or merge the PR.
+
+If the same PR and commit remain draft, report the command result and stop without another request in
+this invocation. If the PR identity or commit changed, classify the result as unknown. Stop without
+another ready-state request, preserve the observed state, and restart complete follow-up for the
+latest PR commit before a later readiness action. Do not treat a different commit as evaluated based
+on evidence for the reviewed commit, even if the readback shows it is no longer draft. For any
+non-success result, report the recorded PR number, reviewed commit, expected draft state, command
+result, observed PR state, and each difference.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
