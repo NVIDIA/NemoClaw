@@ -7,9 +7,88 @@ import type {
   ForwardServiceLaunchOptions,
   ForwardServiceTarget,
 } from "../../../adapters/openshell/forward-service";
-import { recoverHermesPortableLaunchForwards } from "./hermes-portable-forward-recovery";
+import {
+  HermesPortableForwardRecoveryError,
+  prepareHermesPortableLaunchForwards,
+  recoverHermesPortableLaunchForwards,
+} from "./hermes-portable-forward-recovery";
 
 describe("Hermes Portable forward recovery deadline", () => {
+  it("verifies both healthy forwards when authority checks take several seconds", async () => {
+    const fixture = createRecoveryFixture({ ports: [8_642, 18_789] });
+    Object.assign(fixture.input, { operationTimeoutMs: 60_000 });
+    const assertCurrent = fixture.input.deps.assertCurrent;
+    Object.assign(fixture.input.deps, {
+      assertCurrent: () => {
+        assertCurrent();
+        fixture.input.deps.sleep!(1_500);
+      },
+    });
+
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).resolves.toEqual({
+      kind: "restored",
+      restoredPorts: [8_642, 18_789],
+    });
+    expect(fixture.elapsedMs()).toBeGreaterThan(30_000);
+    expect(fixture.elapsedMs()).toBeLessThan(60_000);
+    expect(fixture.records.size).toBe(2);
+  });
+
+  it("proves owned-child cleanup when rollback authority checks take several seconds", async () => {
+    const fixture = createRecoveryFixture({ ports: [8_642, 18_789] });
+    const prepared = await prepareHermesPortableLaunchForwards(fixture.input);
+    const assertRollbackCurrent = fixture.input.deps.assertRollbackCurrent;
+    Object.assign(fixture.input.deps, {
+      assertRollbackCurrent: () => {
+        assertRollbackCurrent();
+        fixture.input.deps.sleep!(1_500);
+      },
+    });
+
+    await expect(prepared.rollback()).resolves.toBeUndefined();
+    expect(fixture.records.size).toBe(0);
+    expect(fixture.currentMutationCalls).toHaveLength(0);
+  });
+
+  it("preserves the initiating timeout when rollback cannot be verified", async () => {
+    const fixture = createRecoveryFixture();
+    const launch = fixture.input.deps.launchForwardService!;
+    Object.assign(fixture.input.deps, {
+      launchForwardService: async (
+        target: ForwardServiceTarget,
+        options: ForwardServiceLaunchOptions,
+      ) => {
+        await launch(target, options);
+        fixture.setRollbackAllowed(false);
+        throw new HermesPortableForwardRecoveryError("recovery-failed", {
+          cause: "forward-settlement-timed-out",
+        });
+      },
+    });
+
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toMatchObject({
+      failure: "restoration-unproved",
+      context: { cause: "forward-settlement-timed-out" },
+    });
+    expect(fixture.records.size).toBe(1);
+    expect(fixture.currentMutationCalls).toHaveLength(0);
+  });
+
+  it("rejects cleanup evidence collected after its observation allowance expires", async () => {
+    const fixture = createRecoveryFixture();
+    const prepared = await prepareHermesPortableLaunchForwards(fixture.input);
+    Object.assign(fixture.input.deps, {
+      isPortReachable: () => {
+        fixture.input.deps.sleep!(31_000);
+        return false;
+      },
+    });
+
+    await expect(prepared.rollback()).rejects.toMatchObject({ failure: "restoration-unproved" });
+    expect(fixture.records.size).toBe(0);
+    expect(fixture.rollbackCaptureCalls).toHaveLength(1);
+  });
+
   it("rejects a backward clock before the next initial probe (#11652)", async () => {
     const fixture = createRecoveryFixture();
     await fixture.input.deps.sleep!(10);
