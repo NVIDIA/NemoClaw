@@ -86,11 +86,12 @@ all three names, both launch-spec hashes, image identity, profile fingerprint,
 and sandbox ID and then enter the destructive cutover. Post-cutover rollback
 publishes `rollback-authorized` before replacement deletion; pre-cutover
 staged cleanup removes only the prepared replacement without that journal
-transition. Commit publishes `shared-state-committed` before backup deletion.
-After that irreversible fence, the provider stops the exact replacement by full
-runtime ID and lets OpenShell perform its one authoritative restart. This
-prevents a stale stopped-container observation from racing the final supervisor
-handoff. Cleanup is bound to full runtime IDs. Commit or rollback is claimed
+transition. After the stopped runtimes exchange names, OpenShell performs the
+replacement's authoritative start while its sandbox lifecycle is still
+`Stopped`. This prevents a stale stopped-container observation from racing the
+replacement supervisor handoff. Commit publishes `shared-state-committed`
+before backup deletion and then proves that supervisor remains connected.
+Cleanup is bound to full runtime IDs. Commit or rollback is claimed
 synchronously before asynchronous finalization begins. Repeated calls for the
 claimed outcome share its one pending result, while the opposite outcome remains
 invalid even if acknowledgement of the first finalization is lost. Its private

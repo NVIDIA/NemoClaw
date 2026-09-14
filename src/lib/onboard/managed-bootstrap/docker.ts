@@ -1423,45 +1423,6 @@ function removeExactReplacement(
   }
 }
 
-function quiesceExactReplacementForOpenShellStart(
-  transaction: DockerBootstrapTransaction,
-  replacement: DockerContainerInspect,
-  deps: ResolvedDeps,
-): void {
-  assertTransactionReplacement(transaction, replacement);
-  if (!isStableRunning(replacement) && !isExplicitlyStopped(replacement)) {
-    throw replacementNotStableError(
-      transaction.replacementRuntimeId,
-      "committed replacement",
-      deps,
-    );
-  }
-  if (isExplicitlyStopped(replacement)) return;
-
-  const stopped = deps.dockerStop(transaction.replacementRuntimeId, {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
-  });
-  const afterStop = inspectTransactionRuntime(transaction, transaction.replacementRuntimeId, deps);
-  if (!afterStop) {
-    throw new ManagedBootstrapCommitStateIndeterminateError({
-      bootstrapIdentity: transaction.bootstrapIdentity,
-      runtimeId: transaction.replacementRuntimeId,
-      detail: "the exact committed replacement disappeared during OpenShell handoff",
-    });
-  }
-  assertTransactionReplacement(transaction, afterStop);
-  if (!hasZeroDockerExitStatus(stopped) && !isExplicitlyStopped(afterStop)) {
-    throw new ManagedBootstrapDurableCommitCleanupPendingError({
-      bootstrapIdentity: transaction.bootstrapIdentity,
-      cleanupRuntimeId: transaction.replacementRuntimeId,
-      detail: `${commandDetail(stopped) || "Docker stop failed"}; exact replacement quiescence was not proven before OpenShell start`,
-    });
-  }
-  assertExplicitlyStopped(afterStop, "committed replacement before OpenShell start");
-}
-
 function restoreExactOriginalName(
   transaction: DockerBootstrapTransaction,
   original: DockerContainerInspect,
@@ -3397,40 +3358,7 @@ export function createDockerManagedBootstrapAdapter(
         detail: "exact rollback-backup absence was not durable before OpenShell handoff",
       });
     }
-    const beforeQuiesce = deps.journalStore.load(transaction.bootstrapIdentity);
-    if (!beforeQuiesce || !sameDockerBootstrapJournal(beforeQuiesce, transaction)) {
-      throw new ManagedBootstrapCommitStateIndeterminateError({
-        bootstrapIdentity: transaction.bootstrapIdentity,
-        runtimeId: transaction.replacementRuntimeId,
-        detail: "durable commit authority changed before replacement quiescence",
-      });
-    }
-    const handoffReplacement = inspectTransactionRuntime(
-      transaction,
-      transaction.replacementRuntimeId,
-      deps,
-    );
-    if (!handoffReplacement) {
-      throw new ManagedBootstrapCommitStateIndeterminateError({
-        bootstrapIdentity: transaction.bootstrapIdentity,
-        runtimeId: transaction.replacementRuntimeId,
-        detail: "the exact committed replacement is absent before OpenShell handoff",
-      });
-    }
-    if (dockerContainerName(handoffReplacement) !== transaction.originalName) {
-      throw new ManagedBootstrapCommitStateIndeterminateError({
-        bootstrapIdentity: transaction.bootstrapIdentity,
-        runtimeId: transaction.replacementRuntimeId,
-        detail: "the exact committed replacement lost its authoritative workload name",
-      });
-    }
-    quiesceExactReplacementForOpenShellStart(transaction, handoffReplacement, deps);
     const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
-    runRequiredOpenShellLifecycleCommand(
-      deps,
-      ["sandbox", "start", handle.sandbox.sandboxName],
-      supervisorReconnectTimeoutSecs,
-    );
     if (
       !(await waitForRequiredOpenShellSupervisorReconnect(
         handle.sandbox.sandboxName,
@@ -4196,7 +4124,12 @@ export function createDockerManagedBootstrapAdapter(
           );
         }
 
-        const started = deps.dockerStart(prepared.preparedRuntimeId, options);
+        const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
+        runRequiredOpenShellLifecycleCommand(
+          deps,
+          ["sandbox", "start", handle.sandbox.sandboxName],
+          supervisorReconnectTimeoutSecs,
+        );
         const running = inspectExact(prepared.preparedRuntimeId, deps);
         assertPreparedReplacementSpec(
           journal,
@@ -4208,7 +4141,7 @@ export function createDockerManagedBootstrapAdapter(
         if (!isStableRunning(running)) {
           throw replacementNotStableError(
             journal.replacementRuntimeId,
-            "replacement after Docker start",
+            "replacement after OpenShell start",
             deps,
           );
         }
@@ -4218,8 +4151,7 @@ export function createDockerManagedBootstrapAdapter(
           runningSpec.canonicalJson !== prepared.expectedActivatedSpecCanonicalJson
         ) {
           throw new Error(
-            "Managed bootstrap could not prove its exact replacement running after Docker start: " +
-              (commandDetail(started) || "state did not reach running"),
+            "Managed bootstrap could not prove its exact replacement running after OpenShell start.",
           );
         }
         assertReplacementBoundary(running, handle, snapshot);
