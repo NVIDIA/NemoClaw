@@ -421,10 +421,13 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
     },
   );
 
-  it(
-    "rejects a candidate-local SDK even when it claims a reviewed version",
+  it.for([
+    { name: "catalogue", script: installScript },
+    { name: "Hermes", script: hermesInstallScript },
+  ])(
+    "rejects a candidate-local SDK in the $name install even when it claims a reviewed version",
     testTimeoutOptions(90_000),
-    async (context) => {
+    async ({ script }, context) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-local-"));
       try {
         const [reviewedSdk] = await writePackageArchives(
@@ -468,7 +471,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
 
         await runProcessWithStatus(
           "bash",
-          ["-c", installScript],
+          ["-c", script],
           {
             cwd: workspace,
             env: {
