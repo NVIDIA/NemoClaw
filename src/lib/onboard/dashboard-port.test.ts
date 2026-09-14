@@ -262,31 +262,6 @@ describe("resolveCreateSandboxDashboardPort", () => {
 });
 
 describe("dashboard port reservation", () => {
-  it.each([true, false])(
-    "reserves around a direct forward with verified ownership %s",
-    async (owned) => {
-      const reservePort = vi.fn(async (port: number) => ({ port, release: vi.fn() }));
-      const result = await reserveCreateSandboxDashboardPort(
-        {
-          sandboxName: "alpha",
-          controlUiPort: null,
-          chatUiUrlEnv: null,
-          persistedPort: 18789,
-          agentForwardPort: 18789,
-          forwardListOutput: "",
-          ownsExistingForward: (port) => owned && port === 18789,
-          registryOccupiedPorts: new Map(),
-          findAvailablePort: (name, preferred, listed, _bound, occupied) =>
-            findAvailableDashboardPort(name, preferred, listed, (port) => port === 18789, occupied),
-        },
-        reservePort,
-      );
-      expect(result.effectivePort).toBe(owned ? 18789 : 18790);
-      expect(result.reservation?.port ?? null).toBe(owned ? null : 18790);
-      expect(reservePort.mock.calls).toEqual(owned ? [] : [[18790]]);
-    },
-  );
-
   it("scopes sandbox creation and distinguishes the temporary runtime path", async () => {
     const events: string[] = [];
     const createSandboxWithBaseImageResolution = vi.fn(

@@ -4,33 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
-import {
-  assertSandboxForwardsReleased,
-  canReuseDashboardForwardForAgent,
-} from "./dashboard-runtime";
-import * as forwardRecovery from "../actions/sandbox/forward-recovery";
-import * as forwardHealth from "../actions/sandbox/forward-health";
-
-describe("forward ownership during sandbox recreation", () => {
-  it("excludes current reservations while waiting for old forwards to exit", () => {
-    const isReachable = vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockImplementation(
-      (name, deps) => {
-        expect(name).toBe("alpha");
-        expect(deps?.isLocalForwardReachable?.(18789)).toBe(false);
-        expect(deps?.isLocalForwardReachable?.(8643)).toBe(true);
-        return true;
-      },
-    );
-    expect(() => assertSandboxForwardsReleased("alpha", [18789, undefined])).not.toThrow();
-    expect(isReachable).toHaveBeenCalledExactlyOnceWith(8643);
-  });
-
-  it("refuses to recreate while an old forward remains bound", () => {
-    vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockReturnValue(false);
-    expect(() => assertSandboxForwardsReleased("alpha", [])).toThrow("host forwards did not exit");
-  });
-});
+import { canReuseDashboardForwardForAgent } from "./dashboard-runtime";
 
 describe("agent dashboard forward reuse eligibility", () => {
   it.each([

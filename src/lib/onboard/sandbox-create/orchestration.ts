@@ -2288,10 +2288,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
-      dashboardRuntime.assertSandboxForwardsReleased(sandboxName, [
-        dashboardPortReservationScope.current?.port,
-        hermesApiPortReservationScope.current?.port,
-      ]);
       finalizeRecreatedSourceHermesVolume(
         true,
         previousEntry,

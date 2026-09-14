@@ -2,22 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isTerminalAgent } from "../agent/runtime-manifest";
-import { teardownSandboxDashboardForward } from "../actions/sandbox/forward-recovery";
-import { isLocalForwardReachable } from "../actions/sandbox/forward-health";
-
-export function assertSandboxForwardsReleased(
-  sandboxName: string,
-  reservedPorts: readonly (number | undefined)[],
-): void {
-  if (
-    !teardownSandboxDashboardForward(sandboxName, {
-      isLocalForwardReachable: (port) =>
-        !reservedPorts.includes(port) && isLocalForwardReachable(port),
-    })
-  ) {
-    throw new Error(`Cannot recreate sandbox '${sandboxName}': its host forwards did not exit.`);
-  }
-}
 
 export type DashboardRuntimeAgent = {
   forwardPort?: number | null;
