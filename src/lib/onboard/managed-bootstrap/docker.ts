@@ -2552,6 +2552,51 @@ export function createDockerManagedBootstrapAdapter(
         detail: "shared state is pending after the durable commit fence",
       });
     }
+    const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
+    if (
+      !(await waitForRequiredOpenShellSupervisorReconnect(
+        journal.sandbox.sandboxName,
+        supervisorReconnectTimeoutSecs,
+        deps,
+      ))
+    ) {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        cleanupRuntimeId: journal.replacementRuntimeId,
+        detail: supervisorReconnectFailureDetail(journal.replacementRuntimeId, deps),
+      });
+    }
+    const connectedReplacement = inspectTransactionRuntime(
+      journal,
+      journal.replacementRuntimeId,
+      deps,
+    );
+    if (!connectedReplacement) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "the exact committed replacement disappeared after recovered supervisor reconnect",
+      });
+    }
+    assertTransactionReplacement(journal, connectedReplacement);
+    if (
+      dockerContainerName(connectedReplacement) !== journal.originalName ||
+      !isStableRunning(connectedReplacement)
+    ) {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        cleanupRuntimeId: journal.replacementRuntimeId,
+        detail: supervisorReconnectFailureDetail(journal.replacementRuntimeId, deps),
+      });
+    }
+    const afterHandoff = deps.journalStore.load(journal.bootstrapIdentity);
+    if (!afterHandoff || !sameDockerBootstrapJournal(afterHandoff, journal)) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "durable commit authority changed during recovered supervisor reconnect",
+      });
+    }
     const original = inspectTransactionRuntime(journal, journal.originalRuntimeId, deps);
     if (original) {
       assertTransactionOriginal(journal, original);
@@ -2597,51 +2642,6 @@ export function createDockerManagedBootstrapAdapter(
         bootstrapIdentity: journal.bootstrapIdentity,
         cleanupRuntimeId: journal.originalRuntimeId,
         detail: "exact rollback-backup absence was not durable after restart recovery",
-      });
-    }
-    const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
-    if (
-      !(await waitForRequiredOpenShellSupervisorReconnect(
-        journal.sandbox.sandboxName,
-        supervisorReconnectTimeoutSecs,
-        deps,
-      ))
-    ) {
-      throw new ManagedBootstrapDurableCommitCleanupPendingError({
-        bootstrapIdentity: journal.bootstrapIdentity,
-        cleanupRuntimeId: journal.replacementRuntimeId,
-        detail: supervisorReconnectFailureDetail(journal.replacementRuntimeId, deps),
-      });
-    }
-    const connectedReplacement = inspectTransactionRuntime(
-      journal,
-      journal.replacementRuntimeId,
-      deps,
-    );
-    if (!connectedReplacement) {
-      throw new ManagedBootstrapCommitStateIndeterminateError({
-        bootstrapIdentity: journal.bootstrapIdentity,
-        runtimeId: journal.replacementRuntimeId,
-        detail: "the exact committed replacement disappeared after recovered supervisor reconnect",
-      });
-    }
-    assertTransactionReplacement(journal, connectedReplacement);
-    if (
-      dockerContainerName(connectedReplacement) !== journal.originalName ||
-      !isStableRunning(connectedReplacement)
-    ) {
-      throw new ManagedBootstrapDurableCommitCleanupPendingError({
-        bootstrapIdentity: journal.bootstrapIdentity,
-        cleanupRuntimeId: journal.replacementRuntimeId,
-        detail: supervisorReconnectFailureDetail(journal.replacementRuntimeId, deps),
-      });
-    }
-    const afterHandoff = deps.journalStore.load(journal.bootstrapIdentity);
-    if (!afterHandoff || !sameDockerBootstrapJournal(afterHandoff, journal)) {
-      throw new ManagedBootstrapCommitStateIndeterminateError({
-        bootstrapIdentity: journal.bootstrapIdentity,
-        runtimeId: journal.replacementRuntimeId,
-        detail: "durable commit authority changed during recovered supervisor reconnect",
       });
     }
     if (sharedStatus === "committed") {

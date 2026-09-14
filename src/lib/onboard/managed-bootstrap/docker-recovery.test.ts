@@ -454,6 +454,7 @@ describe("Docker managed bootstrap restart recovery", () => {
     expect(fake.journal?.phase).toBe("shared-state-committed");
     expect(fake.finalization).toBeNull();
     expect(fake.sharedState).toBe("committed");
+    expect(fake.original?.State?.Running).toBe(false);
   });
 
   it("retains committed recovery state when the supervisor does not reconnect", async () => {
