@@ -169,6 +169,8 @@ set sandbox $env(NEMOCLAW_AUTORUN_SANDBOX_NAME)
 set first_prompt $env(NEMOCLAW_AUTORUN_FIRST_PROMPT)
 set markers $env(NEMOCLAW_AUTORUN_EXPECT_MARKERS)
 log_user 0
+# Preserve a terminal frame for redacted failure diagnostics across repaints.
+match_max -d 65536
 
 proc append_marker {markers marker} {
   set fh [open $markers a]
