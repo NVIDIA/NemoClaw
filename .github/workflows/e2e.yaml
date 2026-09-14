@@ -100,7 +100,7 @@ permissions:
 
 concurrency:
   group: e2e-${{ github.ref }}-${{ (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
@@ -439,7 +439,9 @@ jobs:
           if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]; then
             [[ "$ALLOW_JETSON_DISPATCH" != "true" ]] || { echo "::error::exact-base E2E cannot launch dedicated hardware dispatches" >&2; exit 1; }
             [[ ",${TARGETS}," != *",jetson-nvmap-gpu,"* &&
-               ",${JOBS}," != *",jetson-nvmap-gpu,"* ]] || { echo "::error::exact-base E2E cannot select dedicated hardware jobs" >&2; exit 1; }
+               ",${JOBS}," != *",jetson-nvmap-gpu,"* &&
+               ",${TARGETS}," != *",dgx-station-express,"* &&
+               ",${JOBS}," != *",dgx-station-express,"* ]] || { echo "::error::exact-base E2E cannot select dedicated hardware jobs" >&2; exit 1; }
             [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR base repository" >&2; exit 1; }
           else
             [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
@@ -5466,6 +5468,54 @@ jobs:
           name: e2e-jetson-nvmap-gpu
           path: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/
 
+  dgx-station-express:
+    needs: [base-image-publication, generate-matrix]
+    if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'dgx-station-express') && (inputs.jobs == 'dgx-station-express' || inputs.targets == 'dgx-station-express') }}
+    concurrency:
+      group: dgx-station-express-dispatch
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: dgx-station-express
+      E2E_TEST_FILE: test/e2e/live/dgx-station-express.test.ts
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_GATEWAY_RUNTIMES: agnostic
+      E2E_AGENT_RUNTIME: openclaw
+      E2E_OBSERVABLE_OUTCOME: Station Express installs managed Ultra vLLM and NemoClaw, serves sandbox inference, and removes job runtime
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: Dedicated DGX Station GB300 with cached Nemotron 3 Ultra 550B
+    steps:
+      - name: Check out trusted Station controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up Node for Station controller
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ">=22.19.0 <23"
+
+      - name: Dispatch exact commit to Station through operator backend
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/dgx-station-express
+          DGX_STATION_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          DGX_STATION_DISPATCH_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
+          DGX_STATION_DISPATCH_URL: ${{ vars.DGX_STATION_DISPATCH_URL }}
+        run: node --no-warnings tools/e2e/dgx-station-dispatch-client.mts
+
+      - name: Upload Station Express artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-dgx-station-express
+          path: ${{ runner.temp }}/e2e-artifacts/live/dgx-station-express/
+
   cloud-onboard:
     name: Cloud onboard (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
@@ -5833,6 +5883,7 @@ jobs:
         hermes-gpu-startup,
         messaging-providers,
         jetson-nvmap-gpu,
+        dgx-station-express,
         cloud-onboard,
         openclaw-plugin-runtime-exdev,
         native-runtime-qualification-producer,

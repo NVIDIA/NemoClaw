@@ -307,6 +307,7 @@ bootstrap_usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  Options:\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
+  printf "    --express-install    Run DGX Station Express without prompts (requires third-party software acceptance)\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --defer-onboarding   Install Hermes without onboarding when NVIDIA inference credentials are absent\n"

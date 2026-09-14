@@ -53,6 +53,49 @@ export interface JetsonDispatchRequestV2 {
 
 export type JetsonDispatchRequest = JetsonDispatchRequestV1 | JetsonDispatchRequestV2;
 
+export const DGX_STATION_DISPATCH_TARGET = "dgx-station-express";
+export const DGX_STATION_DISPATCH_AUDIENCE = "nemoclaw-dgx-station-dispatch";
+export const DGX_STATION_DISPATCH_CONTRACT_VERSION = "3.0.0";
+
+export interface DgxStationDispatchRequest extends Omit<
+  JetsonDispatchRequestV2,
+  "schemaVersion" | "target"
+> {
+  schemaVersion: 3;
+  target: typeof DGX_STATION_DISPATCH_TARGET;
+}
+
+export type DispatchRequest = JetsonDispatchRequest | DgxStationDispatchRequest;
+
+export interface DgxStationDeviceIdentity {
+  model: string;
+  gpuUuid: string;
+  driverVersion: string;
+  osRelease: string;
+  kernel: string;
+}
+
+export function parseDgxStationDispatchRequest(value: unknown): DgxStationDispatchRequest {
+  const request = record(value, "Station dispatch request");
+  if (request.schemaVersion !== 3 || request.target !== DGX_STATION_DISPATCH_TARGET) {
+    throw new Error("Station dispatch requires schemaVersion 3 and target dgx-station-express");
+  }
+  const parsed = parseJetsonDispatchRequest({
+    ...request,
+    schemaVersion: 2,
+    target: JETSON_DISPATCH_TARGET,
+  });
+  if (parsed.schemaVersion !== 2)
+    throw new Error("Station dispatch requires a managed-image revision");
+  return { ...parsed, schemaVersion: 3, target: DGX_STATION_DISPATCH_TARGET };
+}
+
+export function parseDispatchRequest(value: unknown): DispatchRequest {
+  return record(value, "dispatch request").target === DGX_STATION_DISPATCH_TARGET
+    ? parseDgxStationDispatchRequest(value)
+    : parseJetsonDispatchRequest(value);
+}
+
 export type JetsonDispatchConclusion =
   | "cancelled"
   | "cleanup-failed"
@@ -67,22 +110,35 @@ export interface JetsonDeviceIdentity {
   kernel: string;
 }
 
-export interface JetsonDispatchStatus {
-  schemaVersion: 1 | 2;
+export interface DispatchStatus {
+  schemaVersion: DispatchRequest["schemaVersion"];
   jobId: string;
-  request: JetsonDispatchRequest;
+  request: DispatchRequest;
   state: "queued" | "running" | "completed";
   conclusion?: JetsonDispatchConclusion;
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
-  device?: JetsonDeviceIdentity;
+  device?: JetsonDeviceIdentity | DgxStationDeviceIdentity;
   cleanup: "pending" | "succeeded" | "failed";
   error?: string;
 }
 
-export interface JetsonDispatchArtifact {
+export interface JetsonDispatchStatus extends Omit<
+  DispatchStatus,
+  "schemaVersion" | "request" | "device"
+> {
+  schemaVersion: 1 | 2;
+  request: JetsonDispatchRequest;
+  device?: JetsonDeviceIdentity;
+}
+
+export interface JetsonDispatchArtifact extends Omit<DispatchArtifact, "status"> {
   status: JetsonDispatchStatus;
+}
+
+export interface DispatchArtifact {
+  status: DispatchStatus;
   log: string;
   artifactArchiveBase64?: string;
 }
@@ -167,8 +223,12 @@ export function parseJetsonDispatchRequest(value: unknown): JetsonDispatchReques
 }
 
 export function jetsonDispatchJobId(request: JetsonDispatchRequest): string {
+  return dispatchJobId(request);
+}
+
+export function dispatchJobId(request: DispatchRequest): string {
   const managedImageRevision =
-    request.schemaVersion === 2 ? `:${request.managedImageRevision}` : "";
+    request.schemaVersion !== 1 ? `:${request.managedImageRevision}` : "";
   return createHash("sha256")
     .update(
       `${request.schemaVersion}:${request.target}:${request.candidateSha}${managedImageRevision}:${request.workflowRunId}:${request.workflowRunAttempt}`,
@@ -216,15 +276,45 @@ function parseDeviceIdentity(value: unknown): JetsonDeviceIdentity {
   };
 }
 
+function parseStationDeviceIdentity(value: unknown): DgxStationDeviceIdentity {
+  const device = record(value, "Station device identity");
+  const fields = ["model", "gpuUuid", "driverVersion", "osRelease", "kernel"];
+  requireFields(
+    device,
+    "Station device identity",
+    fields,
+    [],
+    DGX_STATION_DISPATCH_CONTRACT_VERSION,
+  );
+  for (const field of fields) {
+    const entry = device[field];
+    if (
+      typeof entry !== "string" ||
+      entry.length === 0 ||
+      entry.length > MAX_DEVICE_IDENTITY_CHARACTERS ||
+      /[\u0000-\u001f\u007f-\u009f]/u.test(entry)
+    ) {
+      throw new Error(`Station device ${field} is invalid`);
+    }
+  }
+  return device as unknown as DgxStationDeviceIdentity;
+}
+
 export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus {
+  const status = parseDispatchStatus(value);
+  parseJetsonDispatchRequest(status.request);
+  return status as JetsonDispatchStatus;
+}
+
+export function parseDispatchStatus(value: unknown): DispatchStatus {
   const status = record(value, "Jetson dispatch status");
   const baseFields = ["cleanup", "createdAt", "jobId", "request", "schemaVersion", "state"];
-  const request = parseJetsonDispatchRequest(status.request);
+  const request = parseDispatchRequest(status.request);
   if (
     status.schemaVersion !== request.schemaVersion ||
     typeof status.jobId !== "string" ||
     !JOB_ID_PATTERN.test(status.jobId) ||
-    status.jobId !== jetsonDispatchJobId(request)
+    status.jobId !== dispatchJobId(request)
   ) {
     throw new Error("Jetson dispatch status does not match its request and job ID");
   }
@@ -304,7 +394,12 @@ export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus 
   ) {
     throw new Error("completed Jetson dispatch error is invalid");
   }
-  const device = status.device === undefined ? undefined : parseDeviceIdentity(status.device);
+  const device =
+    status.device === undefined
+      ? undefined
+      : request.target === DGX_STATION_DISPATCH_TARGET
+        ? parseStationDeviceIdentity(status.device)
+        : parseDeviceIdentity(status.device);
   if (status.conclusion === "success" && device === undefined) {
     throw new Error("successful Jetson dispatch must include device identity");
   }
@@ -327,10 +422,19 @@ export function parseJetsonDispatchStatusResponse(
   value: unknown,
   expectedRequest?: JetsonDispatchRequest,
 ): JetsonDispatchStatus {
+  const status = parseDispatchStatusResponse(value, expectedRequest);
+  parseJetsonDispatchRequest(status.request);
+  return status as JetsonDispatchStatus;
+}
+
+export function parseDispatchStatusResponse(
+  value: unknown,
+  expectedRequest?: DispatchRequest,
+): DispatchStatus {
   const response = record(value, "Jetson dispatcher response");
   requireFields(response, "Jetson dispatcher response", ["job"]);
-  const status = parseJetsonDispatchStatus(response.job);
-  if (expectedRequest !== undefined && status.jobId !== jetsonDispatchJobId(expectedRequest)) {
+  const status = parseDispatchStatus(response.job);
+  if (expectedRequest !== undefined && status.jobId !== dispatchJobId(expectedRequest)) {
     throw new Error("Jetson dispatcher response does not match the submitted request");
   }
   return status;
@@ -356,8 +460,17 @@ export function parseJetsonDispatchArtifact(
   value: unknown,
   expectedArtifactJobId: string,
 ): JetsonDispatchArtifact {
+  const artifact = parseDispatchArtifact(value, expectedArtifactJobId);
+  parseJetsonDispatchRequest(artifact.status.request);
+  return artifact as JetsonDispatchArtifact;
+}
+
+export function parseDispatchArtifact(
+  value: unknown,
+  expectedArtifactJobId: string,
+): DispatchArtifact {
   const artifact = record(value, "Jetson dispatch artifact");
-  const status = parseJetsonDispatchStatus(artifact.status);
+  const status = parseDispatchStatus(artifact.status);
   requireFields(
     artifact,
     "Jetson dispatch artifact",

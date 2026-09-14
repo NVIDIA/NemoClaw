@@ -134,6 +134,7 @@ describe("E2E workflow plan", () => {
       "staging-brev-launchable-identity",
       "external-gateway-health",
       "mcp-bridge-dev",
+      "dgx-station-express",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
@@ -1438,3 +1439,16 @@ describe("E2E workflow plan", () => {
     }
   });
 });
+
+it.each(["jobs", "targets"] as const)(
+  "selects only the external Station controller through %s",
+  (selector) => {
+    const plan = buildE2eWorkflowPlan({ [selector]: "dgx-station-express" });
+    expect(plan.selectedJobs).toEqual(["dgx-station-express"]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+    expect(plan.runtimeProvidersByJob).toEqual({ "dgx-station-express": ["none"] });
+    expect(plan.explicitOnlyJobs).toContain("dgx-station-express");
+    expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("dgx-station-express");
+  },
+);
