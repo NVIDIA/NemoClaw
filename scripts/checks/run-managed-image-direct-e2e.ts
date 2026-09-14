@@ -317,6 +317,94 @@ function waitForAgentCommand(containerId: string): void {
   throw new Error("managed image did not reach the forwarded sandbox command");
 }
 
+function verifyOpenClawExplicitGatewayConnectEnvironment(
+  input: ManagedImageDirectE2eInputs,
+  request: ManagedStartupRootApplyRequest,
+  heldWorkloadArgv: readonly string[],
+  bootstrapIdentity: string,
+  sandboxUid: string,
+  sandboxGid: string,
+): void {
+  if (input.agent !== "openclaw") return;
+  const gatewayUrl = "wss://gateway.example.test:443";
+  let containerId = "";
+  try {
+    containerId = docker([
+      "run",
+      "-d",
+      "--platform",
+      input.platform,
+      "--network",
+      "none",
+      "--user",
+      "sandbox",
+      "--env",
+      `OPENCLAW_GATEWAY_URL=${gatewayUrl}`,
+      "--env",
+      "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1",
+      "--env",
+      "NEMOCLAW_GATEWAY_WS_HOST=10.200.0.2",
+      "--env",
+      "NEMOCLAW_OPENCLAW_GATEWAY_URL=ws://10.200.0.2:18789",
+      "--entrypoint",
+      "/usr/bin/env",
+      input.image,
+      ...heldWorkloadArgv.slice(1),
+    ]).stdout.trim();
+    if (!CONTAINER_ID_RE.test(containerId)) {
+      throw new Error("explicit gateway startup did not return one exact container identity");
+    }
+    stageManagedBootstrapEnvelope(containerId, bootstrapIdentity, request);
+    docker(
+      [
+        "exec",
+        "--user",
+        "0:0",
+        "--workdir",
+        "/",
+        containerId,
+        MANAGED_BOOTSTRAP,
+        "--agent",
+        input.agent,
+        "--profile-fingerprint",
+        request.profileFingerprint,
+        "--bootstrap-identity",
+        bootstrapIdentity,
+        "--agent-uid",
+        sandboxUid,
+        "--agent-gid",
+        sandboxGid,
+        "--agent-workdir",
+        "/sandbox",
+        "--request-file",
+        MANAGED_BOOTSTRAP_REQUEST_FILE,
+        "--",
+        "/bin/true",
+      ],
+      { timeout: 300_000 },
+    );
+    waitForAgentCommand(containerId);
+    const connected = docker([
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "/bin/bash",
+      "--noprofile",
+      "--norc",
+      "-c",
+      '. /tmp/nemoclaw-proxy-env.sh; printf "URL=%s TOKEN=%s INSECURE=%s\\n" "${OPENCLAW_GATEWAY_URL-unset}" "${OPENCLAW_GATEWAY_TOKEN-unset}" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"',
+    ]).stdout.trim();
+    if (connected !== `URL=${gatewayUrl} TOKEN= INSECURE=unset`) {
+      throw new Error(`explicit gateway connect environment was unsafe: ${connected}`);
+    }
+  } finally {
+    if (CONTAINER_ID_RE.test(containerId)) {
+      docker(["rm", "-f", containerId], { ignoreError: true, timeout: 30_000 });
+    }
+  }
+}
+
 function exactProxyEnvironment(): string {
   return [
     "HTTP_PROXY=http://10.200.0.1:3128",
@@ -462,6 +550,16 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "https_proxy=http://lower-https:lower-secret@lower-https.example.test:28443",
       "--env",
       "no_proxy=lower.internal",
+      ...(input.agent === "openclaw"
+        ? [
+            "--env",
+            "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1",
+            "--env",
+            "NEMOCLAW_GATEWAY_WS_HOST=10.200.0.2",
+            "--env",
+            "NEMOCLAW_OPENCLAW_GATEWAY_URL=ws://10.200.0.2:18789",
+          ]
+        : []),
       "--entrypoint",
       "/usr/bin/env",
       input.image,
@@ -589,6 +687,33 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
         "managed hold or legacy entrypoint did not preserve the sandbox command identity",
       );
     }
+    if (input.agent === "openclaw") {
+      docker([
+        "exec",
+        "--user",
+        "sandbox",
+        containerId,
+        "/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-c",
+        [
+          ". /tmp/nemoclaw-proxy-env.sh",
+          'test -z "${OPENCLAW_GATEWAY_URL+x}"',
+          'test -z "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS+x}"',
+          'test -n "${OPENCLAW_GATEWAY_PORT:-}"',
+          'test -n "${OPENCLAW_GATEWAY_TOKEN:-}"',
+        ].join("\n"),
+      ]);
+    }
+    verifyOpenClawExplicitGatewayConnectEnvironment(
+      input,
+      request,
+      heldWorkloadArgv,
+      bootstrapIdentity,
+      sandboxUid,
+      sandboxGid,
+    );
     const proxyEnvironment = docker([
       "exec",
       "--user",

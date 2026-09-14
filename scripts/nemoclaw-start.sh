@@ -3473,7 +3473,7 @@ export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
-    local _escaped_gateway_port _escaped_gateway_token
+    local _escaped_gateway_port _escaped_gateway_token _escaped_gateway_url
     for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
       _openclaw_env_value="${!_openclaw_env_name:-}"
       [ -n "$_openclaw_env_value" ] || continue
@@ -3491,6 +3491,15 @@ PROXYEOF
       _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"
     fi
+    if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
+      _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
+      printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+    else
+      printf 'unset OPENCLAW_GATEWAY_URL\n'
+    fi
+    # This legacy bypass was only needed by the removed private-interface
+    # route. Never let an inherited value re-enable insecure remote WebSockets.
+    printf 'unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS\n'
     # #7795: bake the sandbox name for the connect-shell hints below.
     # OpenShell exports OPENSHELL_SANDBOX as the boolean "1" to every process it
     # spawns inside the sandbox — this entrypoint included — and only its own

@@ -471,7 +471,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(result.stderr).toContain("http://127.0.0.1:18790/");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).not.toContain("NEMOCLAW_OPENCLAW_GATEWAY_URL");
-    expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).toContain("OPENCLAW_GATEWAY_TOKEN='token'");
   });
   it("writes OpenClaw state env for connect-shell pairing approval (#3730)", () => {
@@ -502,7 +502,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(Number.isNaN(Date.parse(configAfter.meta.lastTouchedAt))).toBe(false);
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).not.toContain("NEMOCLAW_OPENCLAW_GATEWAY_URL");
-    expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).toContain(`OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
     expect(envFile).not.toContain("stale-token");
     expect(hashAfter).not.toBe("initial-hash\n");
