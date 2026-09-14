@@ -165,6 +165,9 @@ try {
     if ([bool]$RuntimeImage -ne [bool]$RuntimeImageReceipt) { throw 'The runtime image and receipt must be supplied together.' }
     if ($RuntimeImage) { $compose += @('--runtime-image', $RuntimeImage, '--runtime-image-receipt', $RuntimeImageReceipt) }
     Invoke-BuildTool $PythonPath $compose 'compose'
+    if ($RuntimeImage) {
+        Remove-Item -LiteralPath (Join-Path $RuntimeAssemblyRoot 'runtimes') -Recurse -Force
+    }
     $receipt.phase = 'native-ui-build'
     $project = Join-Path $windows 'bootstrapper\NemoClaw.Bootstrapper.csproj'
     $publish = Join-Path $work 'bootstrapper'

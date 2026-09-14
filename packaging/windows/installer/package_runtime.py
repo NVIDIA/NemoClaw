@@ -255,7 +255,10 @@ def compose(
             (output / "runtime-copy").rmdir()
         else:
             (output / "images").mkdir()
-            shutil.copy2(runtime_image, output / "images" / (identity["runtimeId"] + ".vhdx"))
+            installed_image = output / "images" / (identity["runtimeId"] + ".vhdx")
+            shutil.move(runtime_image, installed_image)
+            if hash_file(installed_image)[1] != image["image"]["sha256"]:
+                raise ValueError("The runtime application image changed during its staging move.")
             write_json(output / "images" / (identity["runtimeId"] + ".json"), image)
         shutil.copy2(launcher, output / "bin/NemoClaw.exe")
         # Native setup and agent launch use the compiled NemoClaw executable.

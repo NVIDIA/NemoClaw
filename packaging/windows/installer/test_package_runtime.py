@@ -161,7 +161,8 @@ class PackageComposition(unittest.TestCase):
     def test_finished_image_replaces_the_per_file_runtime_payload(self):
         identity = self.assembly["runtime"]
         image = self.fixture.root / "runtime.vhdx"
-        image.write_bytes(b"fixture-finished-runtime-image")
+        image_bytes = b"fixture-finished-runtime-image"
+        image.write_bytes(image_bytes)
         receipt = self.fixture.root / "runtime-image.json"
         receipt.write_text(
             json.dumps(
@@ -178,7 +179,7 @@ class PackageComposition(unittest.TestCase):
                     "image": {
                         "file": image.name,
                         "bytes": image.stat().st_size,
-                        "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                        "sha256": hashlib.sha256(image_bytes).hexdigest(),
                     },
                 }
             )
@@ -196,7 +197,8 @@ class PackageComposition(unittest.TestCase):
         inputs = json.loads((self.output / "immutable-package-inputs.json").read_text())
         installed_image = self.output / "images" / (identity["runtimeId"] + ".vhdx")
         self.assertEqual(inputs["deliveryContract"], "finished-native-image-v1")
-        self.assertEqual(installed_image.read_bytes(), image.read_bytes())
+        self.assertFalse(image.exists())
+        self.assertEqual(installed_image.read_bytes(), image_bytes)
         self.assertEqual(
             list((self.output / "runtimes" / identity["runtimeId"]).iterdir()), []
         )

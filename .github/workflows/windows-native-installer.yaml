@@ -332,6 +332,7 @@ jobs:
         run: |
           $work = "$env:RUNNER_TEMP\finished-windows"
           $identity = Get-Content -LiteralPath "$work\assembled\runtime-identity.json" -Raw | ConvertFrom-Json
+          Remove-Item -LiteralPath "$work\hermes-input\runtime" -Recurse -Force
           & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\build-finished-runtime-image.ps1" `
             -RuntimeRoot "$work\assembled\runtimes\$($identity.runtimeId)" -RuntimeId $identity.runtimeId `
             -OutputImage "$work\runtime-image\$($identity.runtimeId).vhdx" `
