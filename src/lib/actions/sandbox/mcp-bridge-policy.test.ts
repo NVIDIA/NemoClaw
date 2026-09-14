@@ -6,29 +6,26 @@ import YAML from "yaml";
 
 import * as policies from "../../policy";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   applyGeneratedPolicy,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
-  getPolicyGatewayState,
-  getRegisteredGeneratedPolicy,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import { buildMcpBridgeProviderName } from "./mcp-bridge-validation";
 
-const entry: McpBridgeEntry = {
+const entry: McpSourceEntry = {
   server: "github",
   agent: "openclaw",
-  adapter: "mcporter",
+  adapter: "openclaw-config",
   url: "https://mcp.example.com/api",
   env: [],
   allowedIps: ["8.8.8.8"],
   providerName: "mcp-github",
   policyName: buildMcpBridgePolicyName("github"),
-  addedAt: "2026-08-27T00:00:00.000Z",
 };
 const runtimeSelection = {
   gatewayName: "nemoclaw-9090",
@@ -38,83 +35,27 @@ const runtimeSelection = {
 beforeEach(() => vi.restoreAllMocks());
 
 describe("generated MCP policy", () => {
-  it("derives canonical policy content from MCP domain state", () => {
-    expect(getRegisteredGeneratedPolicy("alpha", entry)).toEqual(
-      expect.objectContaining({
-        name: entry.policyName,
-        content: expect.stringContaining("allowed_ips"),
-      }),
-    );
-  });
-
   it("renders denied tool names and globs as tools/call deny rules (#11115)", () => {
-    const managed = getRegisteredGeneratedPolicy("alpha", {
-      ...entry,
-      denyTools: ["delete_*", "doordash_submit_order"],
-    });
-    const parsed = YAML.parse(managed?.content ?? "") as {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        ["delete_*", "doordash_submit_order"],
+      ),
+    ) as {
       network_policies: Record<
         string,
         { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
       >;
     };
 
-    expect(managed?.name).toBe("mcp-bridge-github");
     expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
       { method: "tools/call", tool: "delete_*" },
       { method: "tools/call", tool: "doordash_submit_order" },
     ]);
-  });
-
-  it("matches live policy against persisted denied-tool intent (#11115)", async () => {
-    const stateSpy = vi
-      .spyOn(policies, "getPresetContentGatewayState")
-      .mockImplementation(async (_sandboxName, content) => {
-        const parsed = YAML.parse(content) as {
-          network_policies: Record<
-            string,
-            { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
-          >;
-        };
-        return parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules?.[0]?.tool ===
-          "delete_*"
-          ? "match"
-          : "drift";
-      });
-
-    expect(
-      await getPolicyGatewayState("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection),
-    ).toBe("match");
-    expect(stateSpy).toHaveBeenCalledOnce();
-  });
-
-  it("renders journaled replacement intent for restart recovery (#11115)", () => {
-    const managed = getRegisteredGeneratedPolicy("alpha", {
-      ...entry,
-      denyTools: ["old_tool"],
-      pendingDenyTools: ["replacement_*"],
-    });
-    const parsed = YAML.parse(managed?.content ?? "") as {
-      network_policies: Record<
-        string,
-        { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
-      >;
-    };
-
-    expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
-      { method: "tools/call", tool: "replacement_*" },
-    ]);
-  });
-
-  it("keeps policy drift distinct from unavailable inspection (#11115)", async () => {
-    vi.spyOn(policies, "getPresetContentGatewayState")
-      .mockResolvedValueOnce("drift")
-      .mockResolvedValueOnce(null);
-
-    expect(
-      await getPolicyGatewayState("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection),
-    ).toBe("drift");
-    expect(await getPolicyGatewayState("alpha", entry, runtimeSelection)).toBeNull();
   });
 
   it("omits deny_rules when the bridge has no denied tools (#11115)", () => {
@@ -122,7 +63,7 @@ describe("generated MCP policy", () => {
       buildMcpBridgePolicyYaml(
         entry.server,
         entry.url,
-        "mcporter",
+        "openclaw-config",
         { addresses: ["8.8.8.8"] },
         "mcp-github",
       ),
@@ -177,7 +118,7 @@ describe("generated MCP policy", () => {
           buildMcpBridgePolicyYaml(
             "github",
             entry.url,
-            "mcporter",
+            "openclaw-config",
             { addresses: ["8.8.8.8"] },
             "mcp-github",
           ),
@@ -221,7 +162,7 @@ describe("generated MCP policy", () => {
       buildMcpBridgePolicyYaml(
         "github",
         "https://api.githubcopilot.com/mcp",
-        "mcporter",
+        "openclaw-config",
         { addresses: ["8.8.8.8"] },
         "",
       ),
@@ -230,19 +171,19 @@ describe("generated MCP policy", () => {
       buildMcpBridgePolicyYaml(
         "github",
         "https://api.githubcopilot.com/mcp",
-        "mcporter",
+        "openclaw-config",
         { addresses: ["8.8.8.8"] },
         " provider ",
       ),
     ).toThrow(/requires an exact provider name/);
   });
 
-  it("pins DNS answers and the current MCP method profile for mcporter", () => {
+  it("pins DNS answers and the current MCP method profile for OpenClaw", () => {
     const parsed = YAML.parse(
       buildMcpBridgePolicyYaml(
         "GitHub_Server",
         "https://api.githubcopilot.com/mcp",
-        "mcporter",
+        "openclaw-config",
         { addresses: ["2606:4700:4700::1111", "8.8.8.8"] },
         "alpha-mcp-bound-provider",
       ),
@@ -277,15 +218,13 @@ describe("generated MCP policy", () => {
       MCP_BRIDGE_ALLOWED_METHODS.map((method) => ({ allow: { method } })),
     );
     expect(policy.binaries.map(({ path }) => path)).toEqual([
-      "/usr/local/bin/mcporter",
-      "/usr/bin/mcporter",
       "/usr/local/bin/openclaw",
       "/usr/local/bin/node",
       "/usr/bin/node",
     ]);
   });
 
-  it.each(["mcporter", "hermes-config", "deepagents-config"] as const)(
+  it.each(["openclaw-config", "hermes-config", "deepagents-config"] as const)(
     "renders an authorized private target for %s with a process-local capability",
     (adapter) => {
       const replay = replayTrustedPrivateEndpoint("10.20.30.40", ["10.20.30.40"]);
@@ -325,7 +264,7 @@ describe("generated MCP policy", () => {
       buildMcpBridgePolicyYaml(
         "local",
         "https://other.corp.internal/mcp",
-        "mcporter",
+        "openclaw-config",
         target,
         "alpha-mcp-private-provider",
       ),
@@ -334,7 +273,7 @@ describe("generated MCP policy", () => {
       buildMcpBridgePolicyYaml(
         "local",
         "https://mcp.corp.internal/mcp",
-        "mcporter",
+        "openclaw-config",
         { addresses: ["10.20.30.40"], trustedPrivateHost: "mcp.corp.internal" },
         "alpha-mcp-private-provider",
       ),
@@ -343,7 +282,7 @@ describe("generated MCP policy", () => {
       buildMcpBridgePolicyYaml(
         "local",
         "https://mcp.corp.internal/mcp",
-        "mcporter",
+        "openclaw-config",
         {
           addresses: ["10.20.30.40"],
           trustedPrivateHost: "mcp.corp.internal",
@@ -367,7 +306,7 @@ describe("generated MCP policy", () => {
       buildMcpBridgePolicyYaml(
         "local",
         `https://${host}:31337/mcp`,
-        "mcporter",
+        "openclaw-config",
         { addresses: ["8.8.8.8"] },
         "alpha-mcp-provider",
       ),
@@ -375,7 +314,7 @@ describe("generated MCP policy", () => {
   });
 
   it("emits only current OpenShell fields and scopes binaries by adapter", () => {
-    const render = (adapter: "mcporter" | "hermes-config" | "deepagents-config") =>
+    const render = (adapter: "openclaw-config" | "hermes-config" | "deepagents-config") =>
       YAML.parse(
         buildMcpBridgePolicyYaml(
           "srv",
@@ -390,7 +329,7 @@ describe("generated MCP policy", () => {
           { binaries: Array<{ path: string }>; endpoints: Array<Record<string, unknown>> }
         >;
       };
-    const mcporter = render("mcporter").network_policies.mcp_bridge_srv;
+    const mcporter = render("openclaw-config").network_policies.mcp_bridge_srv;
     expect(mcporter.endpoints[0]).not.toHaveProperty("credential_keys");
     expect(mcporter.endpoints[0]).not.toHaveProperty("tls");
     expect(

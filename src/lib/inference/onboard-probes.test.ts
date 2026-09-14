@@ -19,7 +19,6 @@ import {
 const {
   getChatCompletionsProbeCurlArgs,
   getChatCompletionsProbePayload,
-  getDeepSeekV4ProValidationProbeCurlArgs,
   getProbeExtraHeaders,
   getKimiK26ValidationProbeCurlArgs,
   hasChatCompletionsToolCall,

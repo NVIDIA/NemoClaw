@@ -49,10 +49,6 @@ type WorkflowJob = {
   readonly steps?: readonly WorkflowStep[];
 };
 
-type Workflow = {
-  readonly jobs: Record<string, WorkflowJob>;
-};
-
 type CompositeAction = { readonly runs: WorkflowJob };
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
@@ -334,7 +330,7 @@ describe("trusted npm audit workflow (#5896)", () => {
 
     expect(fixture.result.status).not.toBe(0);
     expect(fixture.result.stderr).toContain(
-      `npm audit requires npm ${REVIEWED_AUDIT_CONFIG.npmVersion}; running npm 11.18.0`,
+      "Reviewed npm audit requires its configured npm version.",
     );
     expect(fixture.lockedReceipt).toBeUndefined();
   });
@@ -382,7 +378,7 @@ describe("trusted npm audit workflow (#5896)", () => {
       cleanupPermissionFailure: fixture.result.stderr.includes("EACCES"),
     }).toEqual({
       status: 1,
-      stderr: expect.stringContaining("simulated offline pack failure"),
+      stderr: expect.stringContaining("Reviewed npm audit could not pack a reviewed archive."),
       trustedCacheModes: { directory: 0o555, entry: 0o444 },
       cleanupPermissionFailure: false,
     });
@@ -397,7 +393,9 @@ describe("trusted npm audit workflow (#5896)", () => {
     });
 
     expect(fixture.result.status).not.toBe(0);
-    expect(fixture.result.stderr).toContain("refuses target-controlled npm config");
+    expect(fixture.result.stderr).toContain(
+      "Reviewed npm audit refused target-controlled npm configuration.",
+    );
     expect(fixture.npmCalls.some((call) => call.includes("--legacy-peer-deps"))).toBe(false);
   });
 
@@ -418,7 +416,7 @@ describe("trusted npm audit workflow (#5896)", () => {
 
     expect(fixture.result.status).not.toBe(0);
     expect(fixture.result.stderr).toContain(
-      "locked package must resolve from the reviewed npm registry origin: node_modules/qrcode-terminal",
+      "Reviewed npm audit rejected a package outside the reviewed npm registry.",
     );
     expect(fixture.npmCalls.some((call) => call.includes("--legacy-peer-deps"))).toBe(false);
   });

@@ -267,6 +267,7 @@ Refer to [CLI Commands](../../reference/commands) for complete command behavior.
 During managed installation, NemoClaw first checks internal runtime readiness and host-loopback health.
 It repeats these checks when onboarding resumes.
 It then runs the authoritative OpenShell Docker bridge probe on fixed port `8081`.
+On Docker Desktop in WSL, NemoClaw runs the loopback health probe from the WSL CLI process because a host-network container cannot reach the WSL loopback listener.
 If that bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
 When the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
 

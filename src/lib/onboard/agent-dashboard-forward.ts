@@ -24,7 +24,7 @@ export type EnsureDashboardForward = (
     reuseExistingForward?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
   },
-) => number;
+) => number | Promise<number>;
 
 export type AgentDashboardForwardConfig = NonNullable<DashboardRuntimeAgent> & {
   dashboard?: { kind?: unknown } | null;
@@ -105,11 +105,15 @@ export async function ensureAgentDashboardForward(options: {
         ? replaceUrlPort(chatUiUrl, agentDashboardPort)
         : `http://127.0.0.1:${agentDashboardPort}`;
     await beforeForwardPort?.(agentDashboardPort);
-    const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
-      allowPortReallocation: false,
-      ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
-      ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
-    });
+    const actualAgentDashboardPort = await ensureDashboardForward(
+      sandboxName,
+      requestedDashboardUrl,
+      {
+        allowPortReallocation: false,
+        ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
+        ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
+      },
+    );
     if (!usesFixedApiPort) {
       revalidateIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
       process.env.CHAT_UI_URL = replaceUrlPort(requestedDashboardUrl, actualAgentDashboardPort);
@@ -123,7 +127,7 @@ export async function ensureAgentDashboardForward(options: {
           port === optionalDashboardPort && chatUiUrl
             ? replaceUrlPort(chatUiUrl, port)
             : `http://127.0.0.1:${port}`;
-        ensureDashboardForward(sandboxName, forwardUrl, {
+        await ensureDashboardForward(sandboxName, forwardUrl, {
           allowPortReallocation: false,
           ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
           ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),

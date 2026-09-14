@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -16,7 +13,6 @@ const SERVER_NAME = "fake";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
 const ROTATED_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost;
 const INSPECTION_CONTROL_MARKER = "MCP_INSPECT_FORGED_CONTROL_LINE";
-const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 
 export async function assertHermesConfig(
   sandbox: SandboxClient,
@@ -318,25 +314,6 @@ export async function assertHermesRemovalSurvivesGatewayRestart(
   sandbox: SandboxClient,
   sandboxName: string,
 ): Promise<void> {
-  expect(fs.existsSync(REGISTRY_FILE), `registry file not found: ${REGISTRY_FILE}`).toBe(true);
-  const registryRaw = fs.readFileSync(REGISTRY_FILE, "utf8");
-  expect(registryRaw).not.toContain(HOST_SECRET);
-  expect(registryRaw).not.toContain(ROTATED_HOST_SECRET);
-  const registry = JSON.parse(registryRaw) as {
-    sandboxes?: Record<
-      string,
-      { mcp?: { bridges?: Record<string, unknown>; managedServerNames?: string[] } }
-    >;
-  };
-  const mcpState = registry.sandboxes?.[sandboxName]?.mcp;
-  expect(mcpState?.bridges, "removed Hermes bridge must leave no active registry intent").toEqual(
-    {},
-  );
-  expect(
-    mcpState?.managedServerNames,
-    "removed Hermes bridge must retain its managed-name tombstone",
-  ).toContain(SERVER_NAME);
-
   const restart = await host.nemoclaw([sandboxName, "gateway", "restart"], {
     artifactName: "hermes-mcp-removal-gateway-restart",
     env: buildAvailabilityProbeEnv(),

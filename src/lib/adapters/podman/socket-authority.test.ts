@@ -99,13 +99,17 @@ describe("Podman socket authority", () => {
     ).toThrow("expected root or current uid 1000");
   });
 
-  it("accepts the rootless systemd socket mode inside a private current-user directory", () => {
+  it("accepts Podman's default socket layout below a private user runtime directory (#11716)", () => {
     const authority = capturePodmanSocketAuthority(SOCKET_PATH, {
-      lstat: secureLstat({ mode: 0o660n }, { "/run/user/1000/podman": { mode: 0o700n } }),
+      lstat: secureLstat({ mode: 0o660n }, { "/run/user/1000": { mode: 0o700n } }),
       uid: 1000,
     });
 
     expect(authority.mode).toBe(String(0o660));
+    expect(authority.directoryChain.slice(0, 2).map(({ mode }) => mode)).toEqual([
+      String(0o755),
+      String(0o700),
+    ]);
   });
 
   it.runIf(process.platform !== "win32")(
