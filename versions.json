@@ -1,0 +1,39 @@
+{
+  "opentofu": "1.12.6",
+  "openshell": "0.0.116",
+  "openclaw": "2026.9.4",
+  "ollama": "0.34.0",
+  "platforms": {
+    "linux_arm64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_arm64.zip",
+        "sha256": "e573979ba68a17fe7b881752051a694a7efcd970e39521f6a25775197861ed4d"
+      }
+    },
+    "linux_amd64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_amd64.zip",
+        "sha256": "5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8"
+      }
+    },
+    "darwin_arm64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_darwin_arm64.zip",
+        "sha256": "e083ee43790ab9e19ad66d9933e24a7244a1412e1d5728f37999ae2163fdac95"
+      }
+    },
+    "darwin_amd64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_darwin_amd64.zip",
+        "sha256": "166388e5feed47e107e11721b6366bf91d21e47eccbced75f3cbe0c7184ffd9b"
+      }
+    },
+    "windows_amd64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_windows_amd64.zip",
+        "sha256": "0d1421721cf9ec24b41b698a9620dda218d47fa7e76ac3dc15cdbc13bd79b0bb"
+      }
+    }
+  },
+  "rust": "1.98.1"
+}

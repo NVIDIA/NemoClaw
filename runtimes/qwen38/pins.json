@@ -1,0 +1,8 @@
+{
+  "recipeRevision": "d03809008834124e80223c3482f2ddb59577a48f",
+  "recipeArchiveSHA256": "5c98f577c4f786cbfb976db9424efb01ad16f2136b357c139f8212081395681a",
+  "baseImage": "vllm/vllm-openai@sha256:3b0e188ffceb3d07e09c3cb5215433a0020eacf02d7f882ed3a8bfd15454477e",
+  "modelManifestSHA256": "c11c41935994dc9fd1d3c15e94bdcdcb0893052f55475b62e946e6a31adb4e61",
+  "preparerSHA256": "35da4312f5c9c442eea85445d6f6712c9bb3a3b7c6caccec412da57000b02475",
+  "sourceDateEpoch": 1788974180
+}

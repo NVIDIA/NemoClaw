@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nemoclaw-sdk", "crates/nemoclaw-provider", "crates/nemoclaw-e2e", "crates/nemoclaw-cli", "crates/nemoclaw-runtime"]
+members = ["crates/nemoclaw-sdk", "crates/nemoclaw-provider", "crates/nemoclaw-e2e", "crates/nemoclaw-cli", "crates/nemoclaw-runtime", "crates/nemoclaw-build"]
 resolver = "3"
 
 [workspace.package]
@@ -44,3 +44,5 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 bollard = { version = "0.21.1", default-features = false, features = ["pipe"] }
 tar = "0.4"
 rustix = { version = "1", features = ["fs"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+flate2 = "1.1"
