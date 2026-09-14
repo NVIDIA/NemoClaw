@@ -273,12 +273,11 @@ test("Hermes tools use only their held canonical runtime and Windows OS paths", 
   assert.equal(held, 1);
   assert.equal(tools.python, runtime.python);
   assert.equal(tools.bash, runtime.bash);
-  assert.equal(tools.node, path.win32.join(root, "node", "node.exe"));
+  assert.equal(tools.node, runtime.node);
   assert.equal(tools.ripgrep, path.win32.join(root, "ripgrep", "rg.exe"));
-  assert.notEqual(tools.node, runtime.node);
   assert.deepEqual(tools.environment.PATH.split(";"), [
     path.win32.join(root, "bin"),
-    path.win32.join(root, "node"),
+    path.win32.dirname(runtime.node),
     path.win32.join(root, "hermes-agent", "venv", "Scripts"),
     path.win32.join(root, "ripgrep"),
     path.win32.join(root, "git", "bin"),
@@ -395,7 +394,7 @@ test("the generated dashboard preserves the required canonical Hermes Node envir
   assert(worker.includes(JSON.stringify(nodeLines[0])));
   const tools = nativeHermesToolEnvironment(heldHermesRuntime(), "C:\\Windows");
   assert.equal(tools.environment.HERMES_NODE, tools.node);
-  assert.notEqual(tools.node, heldHermesRuntime().node);
+  assert.equal(tools.node, heldHermesRuntime().node);
 });
 
 test("Hermes turn-only worker also preserves the held canonical tool environment", () => {

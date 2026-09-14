@@ -310,7 +310,10 @@ export function nativeRuntimeWorkerCommand(runtime: NativeRuntimeLaunchLease, wo
 }
 
 export function nativeHermesToolEnvironment(
-  runtime: Pick<NativeRuntimeSession, "purpose" | "agentRoot" | "python" | "bash" | "assertHeld">,
+  runtime: Pick<
+    NativeRuntimeSession,
+    "purpose" | "agentRoot" | "python" | "bash" | "node" | "assertHeld"
+  >,
   windowsRoot: string,
 ) {
   runtime.assertHeld();
@@ -326,7 +329,7 @@ export function nativeHermesToolEnvironment(
   const bash = path.win32.join(root, "git", "bin", "bash.exe");
   if (runtime.python !== python || runtime.bash !== bash)
     throw new Error("The canonical Hermes interpreter or shell differs from its runtime lease.");
-  const node = path.win32.join(root, "node", "node.exe");
+  const node = runtime.node;
   const ripgrep = path.win32.join(root, "ripgrep", "rg.exe");
   // All application/tool entries are installer-owned. Do not append the host
   // PATH, which may resolve WSL Bash or another Git/Python/Node installation.
