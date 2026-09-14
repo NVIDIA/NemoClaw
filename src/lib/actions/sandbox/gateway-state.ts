@@ -13,6 +13,7 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 export { getNamedGatewayLifecycleState };
+export { getKnownSandboxTargetGatewayName } from "./gateway-target";
 import {
   formatOpenShellPolicyRecoveryAction,
   gatewayStartGuidance,
