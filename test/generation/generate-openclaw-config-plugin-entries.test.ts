@@ -191,7 +191,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(removed.plugins.entries.discord).toEqual({ enabled: false });
   });
 
-  it("retains existing plugin allowlist and managed-image install metadata while explicitly disabling the plugin (#7744)", () => {
+  it("retains the plugin allowlist but drops legacy install metadata while disabling the plugin (#7744)", () => {
     const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-union-"));
     const originalEnvironment = { ...process.env };
     const configPath = path.join(tempDirectory, ".openclaw", "openclaw.json");
@@ -222,7 +222,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       main();
 
       const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+      expect(config.plugins?.installs).toBeUndefined();
       expect(config.plugins?.allow).toEqual(["nemoclaw", "openclaw-weixin"]);
       expect(config.plugins?.entries?.["openclaw-weixin"]).toEqual({ enabled: false });
       expect(config.channels?.["openclaw-weixin"]).toEqual({ enabled: false });

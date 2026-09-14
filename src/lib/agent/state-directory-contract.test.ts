@@ -41,6 +41,7 @@ describe("agent state directory contract", () => {
     expect(agent.backupStateDirs).not.toEqual(
       expect.arrayContaining(["plugins", "profiles", "identity", "devices", "state"]),
     );
+    expect(agent.backupStateDirs).not.toContain("state");
     expect(agent.stateDirs).toEqual(
       expect.arrayContaining(["plugins", "profiles", "identity", "devices", "state"]),
     );

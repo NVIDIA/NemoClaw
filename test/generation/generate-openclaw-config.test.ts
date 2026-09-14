@@ -458,11 +458,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
     });
 
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
-      source: "npm",
-      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
-    });
+    expect(config.plugins?.installs).toBeUndefined();
     expect(config.plugins?.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
     );
@@ -485,7 +481,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
-  it("preserves existing plugin install registry entries without enabling WeChat", () => {
+  it("drops legacy plugin install records without enabling WeChat", () => {
     const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const installEntry = {
@@ -499,7 +495,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
     const config = runConfigScript({});
 
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+    expect(config.plugins?.installs).toBeUndefined();
     expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 

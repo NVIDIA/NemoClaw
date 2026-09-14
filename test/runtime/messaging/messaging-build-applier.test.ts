@@ -1372,11 +1372,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const config = JSON.parse(
         fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
       );
-      expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
-        source: "npm",
-        spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-        installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
-      });
+      expect(config.plugins?.installs).toBeUndefined();
       expect(config.plugins?.load?.paths ?? []).not.toContain(
         "/sandbox/.openclaw/extensions/openclaw-weixin",
       );

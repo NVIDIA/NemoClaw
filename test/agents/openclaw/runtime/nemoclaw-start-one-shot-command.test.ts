@@ -18,15 +18,24 @@ describe("nemoclaw-start one-shot command setup", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-gateway-port-"));
     const configPath = path.join(tmpDir, "openclaw.json");
+    const scriptPath = path.join(tmpDir, "read-configured-gateway-port.sh");
     const readConfiguredGatewayPort = extractShellFunctionFromSource(
       source,
       "_read_configured_gateway_port",
     )
       .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
-      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
+      .replaceAll(
+        'config_path="/sandbox/.openclaw/openclaw.json"',
+        'config_path="${NEMOCLAW_TEST_CONFIG_PATH:?}"',
+      );
+    fs.writeFileSync(scriptPath, `${readConfiguredGatewayPort}\n_read_configured_gateway_port\n`, {
+      mode: 0o700,
+    });
     const readPort = () =>
-      spawnSync("bash", ["-c", `${readConfiguredGatewayPort}\n_read_configured_gateway_port`], {
+      spawnSync("bash", ["--noprofile", "--norc", scriptPath], {
         encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_TEST_CONFIG_PATH: configPath },
+        killSignal: "SIGKILL",
         timeout: 5000,
       });
 

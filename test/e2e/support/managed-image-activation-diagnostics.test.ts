@@ -1,32 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
   managedActivationPostRestartAgentTurnScript,
   summarizeOnboardFailureStartupSignals,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
-function writeExecutable(path: string, source: string): void {
-  writeFileSync(path, source, { mode: 0o755 });
-  chmodSync(path, 0o755);
-}
-
 function runPostRestartAgentTurnFixture(statuses: string[], times: number[]) {
-  const fixture = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-restart-ready-"));
+  const fixture = createHostProcessWorkspace("nemoclaw-openclaw-restart-ready-");
   const command = ["openclaw", "agent", "--session-id", "quoted session"];
   const script = managedActivationPostRestartAgentTurnScript("openclaw", "after", command);
   expect(script).not.toBeNull();
 
-  writeFileSync(join(fixture, "curl-statuses"), `${statuses.join("\n")}\n`);
-  writeFileSync(join(fixture, "times"), `${times.join("\n")}\n`);
-  writeExecutable(
-    join(fixture, "curl"),
+  writeFileSync(fixture.path("curl-statuses"), `${statuses.join("\n")}\n`);
+  writeFileSync(fixture.path("times"), `${times.join("\n")}\n`);
+  fixture.writeExecutable(
+    "curl",
     `#!/bin/sh
 attempt=0
 if [ -f "$MANAGED_ACTIVATION_FIXTURE/curl-attempts" ]; then
@@ -46,8 +40,8 @@ done <"$MANAGED_ACTIVATION_FIXTURE/curl-statuses"
 printf '%s' "$selected"
 `,
   );
-  writeExecutable(
-    join(fixture, "date"),
+  fixture.writeExecutable(
+    "date",
     `#!/bin/sh
 attempt=0
 if [ -f "$MANAGED_ACTIVATION_FIXTURE/date-attempts" ]; then
@@ -67,30 +61,31 @@ done <"$MANAGED_ACTIVATION_FIXTURE/times"
 printf '%s\n' "$selected"
 `,
   );
-  writeExecutable(
-    join(fixture, "sleep"),
+  fixture.writeExecutable(
+    "sleep",
     `#!/bin/sh
 printf '%s\n' "$1" >>"$MANAGED_ACTIVATION_FIXTURE/sleeps"
 `,
   );
-  writeExecutable(
-    join(fixture, "openclaw"),
+  fixture.writeExecutable(
+    "openclaw",
     `#!/bin/sh
 printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 `,
   );
 
   try {
-    const result = spawnSync(
+    const result = fixture.run(
       "/bin/sh",
-      ["-lc", `PATH=${JSON.stringify(fixture)}\nexport PATH\n${String(script)}`],
+      ["-lc", `PATH=${JSON.stringify(fixture.binDir)}\nexport PATH\n${String(script)}`],
       {
-        encoding: "utf8",
-        env: { MANAGED_ACTIVATION_FIXTURE: fixture },
+        env: { MANAGED_ACTIVATION_FIXTURE: fixture.root },
+        killSignal: "SIGKILL",
+        timeout: 10_000,
       },
     );
     const readLines = (name: string): string[] => {
-      const file = join(fixture, name);
+      const file = join(fixture.root, name);
       return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean) : [];
     };
     return {
@@ -100,7 +95,7 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
       openclawArgs: readLines("openclaw-args"),
     };
   } finally {
-    rmSync(fixture, { force: true, recursive: true });
+    fixture.remove();
   }
 }
 

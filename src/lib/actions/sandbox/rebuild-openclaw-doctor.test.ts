@@ -121,7 +121,40 @@ describe("OpenClaw rebuild doctor restart", () => {
       stage: "restart",
       detail: "the sandbox did not consume its doctor request and return a healthy gateway",
     });
-    expect(execute).toHaveBeenCalledTimes(61);
+    expect(execute).toHaveBeenCalledTimes(121);
+  });
+
+  it("retries one stop/start cycle after a transient unready replacement", async () => {
+    let currentMs = 0;
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockImplementation(async () => ({
+        status: currentMs >= 180_000 ? 0 : 20,
+        stdout: "",
+        stderr: "",
+      }));
+    const capture = vi.fn((_args: readonly string[], _options: Record<string, unknown>) => ({
+      status: 0,
+      output: "",
+    }));
+
+    await expect(
+      runOpenClawPostRestoreDoctor("alpha", undefined, {
+        captureOpenshell: capture as never,
+        executeSandboxExecCommand: execute,
+        now: () => currentMs,
+        sleep: vi.fn(async (seconds: number) => {
+          currentMs += seconds * 1_000;
+        }),
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(capture.mock.calls.map((call) => call[0])).toEqual([
+      ["sandbox", "stop", "alpha"],
+      ["sandbox", "start", "alpha"],
+      ["sandbox", "stop", "alpha"],
+      ["sandbox", "start", "alpha"],
+    ]);
   });
 
   it("caps the final completion probe to the remaining reconciliation budget", async () => {

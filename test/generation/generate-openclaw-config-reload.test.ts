@@ -77,9 +77,9 @@ describe("gateway.reload pin (#4710)", () => {
       timeout: 20000,
     },
     () => {
-      // preserveExistingOpenClawState() merges plugin install records from an
-      // existing openclaw.json into the regenerated config; the gateway block
-      // (including reload) must come from the generator, not the old file.
+      // The gateway block (including reload) must come from the generator, not
+      // the old file. OpenClaw 2026.9.1 also requires legacy plugin install
+      // records to stay out of the persisted config.
       const configDir = path.join(tmpDir, ".openclaw");
       fs.mkdirSync(configDir, { recursive: true });
       const configPath = path.join(configDir, "openclaw.json");
@@ -95,8 +95,7 @@ describe("gateway.reload pin (#4710)", () => {
 
       const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       expect(written.gateway.reload).toEqual({ mode: "off" });
-      // The plugin-install carryover still works alongside the pin.
-      expect(written.plugins.installs["custom-plugin"]).toEqual({ origin: "npm" });
+      expect(written.plugins.installs).toBeUndefined();
     },
   );
 
