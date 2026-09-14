@@ -63,23 +63,18 @@ import {
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
-  acquireGatewayStateMigrationLock,
-  acquireOnboardStateLock,
-  assertOnboardStateLockOwned,
+  acquireGatewayTeardownMigrationFence,
+  acquireGatewayTeardownOnboardLock,
   collectOpenShellGatewayNames,
   gatewayRegistrationRemovalFailureMessage,
-  GATEWAY_STATE_MIGRATION_LOCK,
+  type GatewayTeardownMigrationFence,
+  type GatewayTeardownOnboardLock,
+  GATEWAY_TEARDOWN_MIGRATION_FENCE,
   isInterruptedPreGatewaySession,
   type GatewayTeardownAuthorityResolver,
   isInterruptedPreGatewayTeardownSession,
-  isOnboardStateLockOwned,
-  releaseOnboardStateLock,
-  releaseGatewayStateMigrationLock,
-  retargetOnboardStateLock,
   removeGatewayRegistrationWithPolicy,
   resolveGatewayTeardownAuthority,
-  type OnboardStateLockHandle,
-  type GatewayStateMigrationLockHandle,
 } from "../../onboard/gateway-teardown-authority";
 import {
   externallySupervisedHostGatewayProcessOwnershipFailure,
@@ -2639,7 +2634,7 @@ function inspectInterruptedCleanupSiblings(
   const discovered = inspectOtherGatewayEnvironments(
     paths,
     runtime,
-    new Set([GATEWAY_STATE_MIGRATION_LOCK]),
+    new Set([GATEWAY_TEARDOWN_MIGRATION_FENCE]),
   );
   const home = path.resolve(runtime.env.HOME || os.homedir());
   const selectedRoot = path.resolve(paths.nemoclawStateDir);
@@ -2932,7 +2927,7 @@ async function executeOpenShellResourceCleanup(
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-  interruptedOnboardLock?: OnboardStateLockHandle,
+  interruptedOnboardLock?: GatewayTeardownOnboardLock,
 ): Promise<boolean> {
   const externallySupervised = isExternallySupervised(teardownAuthority);
   const portableCleanupInput: PortableRuntimeCleanupInput = {
@@ -3072,14 +3067,13 @@ function tryAcquireInterruptedOnboardLock(
   stateRoot: string,
   sharedStateRoot: string,
   runtime: UninstallRuntime,
-): OnboardStateLockHandle | null {
-  const acquisition = acquireOnboardStateLock(
+): GatewayTeardownOnboardLock | null {
+  return acquireGatewayTeardownOnboardLock(
     stateRoot,
     runtime.env.HOME || os.homedir(),
     "nemoclaw uninstall interrupted onboarding cleanup",
     path.join(sharedStateRoot, ".gateway-state-migration.lock"),
   );
-  return acquisition.handle ?? null;
 }
 
 function interruptedPreGatewayStateIsStable(
@@ -3088,12 +3082,11 @@ function interruptedPreGatewayStateIsStable(
   runtime: UninstallRuntime,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-  onboardLock?: OnboardStateLockHandle,
+  onboardLock?: GatewayTeardownOnboardLock,
 ): boolean {
   const onboardLockPath = path.join(paths.nemoclawStateDir, "onboard.lock");
   const onboardLockIsStable = onboardLock
-    ? path.resolve(onboardLockPath) === path.resolve(onboardLock.lockFile) &&
-      isOnboardStateLockOwned(onboardLock)
+    ? path.resolve(onboardLockPath) === path.resolve(onboardLock.lockFile) && onboardLock.isOwned()
     : true;
   return (
     GATEWAY_PORT !== DEFAULT_GATEWAY_PORT &&
@@ -3196,7 +3189,7 @@ function canRemoveInterruptedPreGatewayState(
   runtime: UninstallRuntime,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-  onboardLock?: OnboardStateLockHandle,
+  onboardLock?: GatewayTeardownOnboardLock,
 ): boolean {
   if (
     !interruptedPreGatewayStateIsStable(
@@ -3289,7 +3282,7 @@ type OpenShellCleanupDisposition =
 
 interface PreparedOpenShellCleanup {
   disposition: OpenShellCleanupDisposition;
-  interruptedOnboardLock?: OnboardStateLockHandle;
+  interruptedOnboardLock?: GatewayTeardownOnboardLock;
   stateLifecycleLock?: Exclude<ReturnType<typeof tryAcquireManagedGatewayStateLifecycleLock>, null>;
 }
 
@@ -3302,7 +3295,7 @@ function assertInterruptedPreGatewayStateRemovalAllowed(
   runtime: UninstallRuntime,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-  onboardLock?: OnboardStateLockHandle,
+  onboardLock?: GatewayTeardownOnboardLock,
 ): void {
   if (disposition !== "interrupted-pre-gateway") return;
   if (
@@ -3335,7 +3328,7 @@ function prepareOpenShellCleanup(
   let stateLifecycleLock:
     | Exclude<ReturnType<typeof tryAcquireManagedGatewayStateLifecycleLock>, null>
     | undefined;
-  let interruptedOnboardLock: OnboardStateLockHandle | undefined;
+  let interruptedOnboardLock: GatewayTeardownOnboardLock | undefined;
   try {
     stateLifecycleLock = configuredStateDir
       ? (tryAcquireManagedGatewayStateLifecycleLock(paths.selectedGatewayLocalStateDir) ??
@@ -3463,7 +3456,7 @@ function prepareOpenShellCleanup(
     return retainStateLifecycleLock("reservation-removed");
   } finally {
     if (!cleanupLocksTransferred && interruptedOnboardLock) {
-      releaseOnboardStateLock(interruptedOnboardLock);
+      interruptedOnboardLock.release();
     }
     if (!cleanupLocksTransferred && stateLifecycleLock) {
       releaseManagedGatewayStateLifecycleLock(stateLifecycleLock);
@@ -3518,12 +3511,12 @@ async function executePlan(
     interruptedOnboardLock,
     stateLifecycleLock,
   } = preparedOpenShellCleanup;
-  let gatewayStateMigrationLock: GatewayStateMigrationLockHandle | undefined;
+  let gatewayStateMigrationLock: GatewayTeardownMigrationFence | undefined;
   try {
     if (openShellCleanup === "blocked") return { ok: false, scopedToSelectedGateway };
     if (openShellCleanup === "interrupted-pre-gateway") {
       try {
-        gatewayStateMigrationLock = acquireGatewayStateMigrationLock(
+        gatewayStateMigrationLock = acquireGatewayTeardownMigrationFence(
           runtime.env.HOME || os.homedir(),
         );
       } catch (error) {
@@ -3576,9 +3569,9 @@ async function executePlan(
     }
     throw error;
   } finally {
-    if (interruptedOnboardLock) releaseOnboardStateLock(interruptedOnboardLock);
+    if (interruptedOnboardLock) interruptedOnboardLock.release();
     if (stateLifecycleLock) releaseManagedGatewayStateLifecycleLock(stateLifecycleLock);
-    if (gatewayStateMigrationLock) releaseGatewayStateMigrationLock(gatewayStateMigrationLock);
+    if (gatewayStateMigrationLock) gatewayStateMigrationLock.release();
   }
 }
 
@@ -3779,9 +3772,9 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
     return false;
   }
 
-  let migrationLock: GatewayStateMigrationLockHandle;
+  let migrationLock: GatewayTeardownMigrationFence;
   try {
-    migrationLock = acquireGatewayStateMigrationLock(runtime.env.HOME || os.homedir());
+    migrationLock = acquireGatewayTeardownMigrationFence(runtime.env.HOME || os.homedir());
   } catch (error) {
     runtime.warn(
       `Unable to fence host gateway state during interrupted-uninstall recovery; it was preserved: ${formatError(error)}. Wait for the active state operation to finish, then rerun uninstall.`,
@@ -3800,7 +3793,7 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
     );
   } finally {
     try {
-      releaseGatewayStateMigrationLock(migrationLock);
+      migrationLock.release();
     } catch (error) {
       released = false;
       runtime.warn(
@@ -3818,7 +3811,7 @@ function removeInterruptedStateRootAfterFinalCleanup(
   runtime: UninstallRuntime,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-  onboardLock: OnboardStateLockHandle | undefined,
+  onboardLock: GatewayTeardownOnboardLock | undefined,
   preservedEntries: readonly string[],
 ): boolean {
   if (disposition !== "interrupted-pre-gateway") return true;
@@ -3832,7 +3825,7 @@ function removeInterruptedStateRootAfterFinalCleanup(
     onboardLock,
   );
   if (!onboardLock) throw new InterruptedPreGatewayStateChangedError();
-  assertOnboardStateLockOwned(onboardLock);
+  onboardLock.assertOwned();
   let detachedStateRoot: string;
   try {
     detachedStateRoot = interruptedUninstallStagingRoot(paths, runtime);
@@ -3851,7 +3844,7 @@ function removeInterruptedStateRootAfterFinalCleanup(
   try {
     fs.renameSync(paths.nemoclawStateDir, detachedStateRoot);
     detached = true;
-    retargetOnboardStateLock(onboardLock, detachedStateRoot);
+    onboardLock.retarget(detachedStateRoot);
   } catch (error) {
     runtime.warn(
       `Unable to detach interrupted onboarding state for cleanup; it was preserved${detached ? ` at ${detachedStateRoot}` : ""}: ${formatError(error)}. Rerun uninstall after verifying the reported state directory is unchanged.`,
@@ -3943,7 +3936,7 @@ async function executePreparedPlan(
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
   openShellCleanup: Exclude<OpenShellCleanupDisposition, "blocked">,
-  interruptedOnboardLock?: OnboardStateLockHandle,
+  interruptedOnboardLock?: GatewayTeardownOnboardLock,
 ): Promise<{ ok: boolean; scopedToSelectedGateway: boolean }> {
   const externallySupervised = isExternallySupervised(teardownAuthority);
   let ok = true;

@@ -17,10 +17,15 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import {
+  acquireGatewayStateMigrationLock,
+  GATEWAY_STATE_MIGRATION_LOCK,
+  releaseGatewayStateMigrationLock,
+} from "../state/legacy-port-migration";
 import { inspectCheckpoint } from "../state/onboard-checkpoint";
 import { resolveCheckpointForResume } from "../state/onboard-checkpoint-migrate";
 import type { Session } from "../state/onboard-session";
-export {
+import {
   acquireOnboardStateLock,
   assertOnboardStateLockOwned,
   isOnboardStateLockOwned,
@@ -28,12 +33,6 @@ export {
   retargetOnboardStateLock,
   type OnboardStateLockHandle,
 } from "../state/onboard-session/lock";
-export {
-  acquireGatewayStateMigrationLock,
-  GATEWAY_STATE_MIGRATION_LOCK,
-  releaseGatewayStateMigrationLock,
-  type GatewayStateMigrationLockHandle,
-} from "../state/legacy-port-migration";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 import { gatewayOwnerFromCheckpoint } from "./gateway-authority-checkpoint";
@@ -53,6 +52,47 @@ import {
 export interface GatewayTeardownTarget {
   gatewayName: string;
   gatewayPort: number;
+}
+
+export const GATEWAY_TEARDOWN_MIGRATION_FENCE = GATEWAY_STATE_MIGRATION_LOCK;
+
+export interface GatewayTeardownOnboardLock {
+  readonly lockFile: string;
+  assertOwned(): void;
+  isOwned(): boolean;
+  release(): void;
+  retarget(stateRoot: string): void;
+}
+
+export interface GatewayTeardownMigrationFence {
+  release(): void;
+}
+
+export function acquireGatewayTeardownOnboardLock(
+  stateRoot: string,
+  homeDir: string,
+  command: string,
+  migrationFencePath: string,
+): GatewayTeardownOnboardLock | null {
+  const acquisition = acquireOnboardStateLock(stateRoot, homeDir, command, migrationFencePath);
+  if (!acquisition.handle) return null;
+  const handle: OnboardStateLockHandle = acquisition.handle;
+  return {
+    get lockFile() {
+      return handle.lockFile;
+    },
+    assertOwned: () => assertOnboardStateLockOwned(handle),
+    isOwned: () => isOnboardStateLockOwned(handle),
+    release: () => releaseOnboardStateLock(handle),
+    retarget: (detachedStateRoot) => retargetOnboardStateLock(handle, detachedStateRoot),
+  };
+}
+
+export function acquireGatewayTeardownMigrationFence(
+  homeDir: string,
+): GatewayTeardownMigrationFence {
+  const handle = acquireGatewayStateMigrationLock(homeDir);
+  return { release: () => releaseGatewayStateMigrationLock(handle) };
 }
 
 export interface GatewayTeardownAuthorityDeps {
