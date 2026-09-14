@@ -23,6 +23,7 @@ PROJECT_TREES = (
     "hermes-agent/evals/",
 )
 WINDOWS_UNUSED_TREES = (
+    "agent-browser/",
     "bin/uv.exe",
     "bin/uvw.exe",
     "bin/uvx.exe",

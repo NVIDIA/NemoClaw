@@ -632,13 +632,15 @@ def finalize_hermes(
         != "agent-browser/bin/agent-browser-win32-x64.exe"
     ):
         raise ValueError("The canonical browser input contract differs")
+    node.pop("agentBrowser")
     node["browserHost"] = "native-edge-cdp"
     changes[node_contract] = (json.dumps(node, indent=2) + "\n").encode()
     receipt["browserDelivery"] = {
         "host": "native-arm64-microsoft-edge",
         "transport": "authenticated-session-cdp-relay",
         "bundledChromiumRemoved": True,
-        "agentBrowserClientPreserved": True,
+        "agentBrowserClientPreserved": False,
+        "unsupportedEmulatedAgentBrowserRemoved": True,
     }
     module.apply_plan(changes)
     pruning = Path(__file__).parents[1] / "hermes/prepare-production-runtime.py"

@@ -180,19 +180,18 @@ def _prebuilt_node(root: Path) -> dict | None:
         or record.get("profile") != "official-prebuilt-cli-web-tui"
         or record.get("tui") != "hermes-agent/ui-tui/dist/entry.js"
         or record.get("web") != "hermes-agent/hermes_cli/web_dist/index.html"
-        or record.get("agentBrowser") != "agent-browser/bin/agent-browser-win32-x64.exe"
         or record.get("browserUse") != "0.13.10"
     ):
         _refuse("the production Node contract differs from the installed profile.")
     edge = record.get("browserHost") == "native-edge-cdp"
     if edge:
-        if "chromium" in record:
+        if "chromium" in record or "agentBrowser" in record:
             _refuse("the native Edge profile cannot select bundled Chromium.")
     elif not isinstance(record.get("chromium"), str) or not re.fullmatch(
         r"browsers/chromium-[0-9]+/chrome-win64/chrome\.exe", record["chromium"]
     ):
         _refuse("the production browser contract differs from the installed profile.")
-    selected = ("tui", "web", "agentBrowser") if edge else ("tui", "web", "chromium", "agentBrowser")
+    selected = ("tui", "web") if edge else ("tui", "web", "chromium", "agentBrowser")
     return {
         key: _regular_file(root / record[key], root)
         for key in selected
@@ -319,12 +318,16 @@ def _adapt_module(module: ModuleType, root: Path, bash: Path) -> None:
         files = _prebuilt_node(root)
         if files is None:
             _refuse("the installed production browser chain is missing.")
-        executable = files["agentBrowser"]
+        executable = files.get("agentBrowser")
         validated = False
         module._resolve_npx_bin = lambda: None
 
         def owned_browser(*, validate=True):
             nonlocal validated
+            if executable is None:
+                raise FileNotFoundError(
+                    "The native ARM64 profile uses browser_exec through Microsoft Edge."
+                )
             result = str(_regular_file(executable, root))
             # Keep upstream's runnable check, but never enter its npx/Ensure
             # installer fallback when the immutable official binary cannot run.
