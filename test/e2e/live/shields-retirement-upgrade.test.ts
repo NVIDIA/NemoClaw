@@ -343,12 +343,36 @@ test.skipIf(process.platform !== "linux")(
     expect(blocked.exitCode).not.toBe(0);
 
     progress.phase("recover through the production managed sandbox upgrade");
+    const trace = await artifacts.writeText(
+      "gateway-probe-trace.cjs",
+      `const cp = require('node:child_process');
+const net = require('node:net');
+const gatewayProbes = new Set(['status -g nemoclaw', 'gateway info -g nemoclaw', 'gateway info']);
+const spawnSync = cp.spawnSync;
+cp.spawnSync = function (file, args, options) {
+  const result = spawnSync.apply(this, arguments);
+  const selected = (String(file).endsWith('/openshell') && gatewayProbes.has(args.join(' '))) || file === 'lsof';
+  selected && console.error('gateway-probe', JSON.stringify({file, args, status: result.status, error: result.error?.code, stdout: String(result.stdout), stderr: String(result.stderr)}));
+  return result;
+};
+const listen = net.Server.prototype.listen;
+net.Server.prototype.listen = function (port, host) {
+  this.once('error', error => console.error('gateway-bind', port, host, error.code));
+  this.once('listening', () => console.error('gateway-bind', port, host, 'available'));
+  return listen.apply(this, arguments);
+};
+require('node:module').syncBuiltinESMExports();
+`,
+    );
     const upgrade = await candidateNemoclaw(
       host,
       ["upgrade-sandboxes", "--auto"],
       "candidate-upgrade-retired-shields",
       50 * 60_000,
-      { NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1" },
+      {
+        NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
+        NODE_OPTIONS: `--require=${trace}`,
+      },
     );
     await bash(
       host,
