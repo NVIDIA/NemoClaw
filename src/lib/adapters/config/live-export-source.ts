@@ -272,7 +272,9 @@ async function readWebSearchProvider(
     ...(provider.profileWorkspace === undefined
       ? {}
       : { profileWorkspace: provider.profileWorkspace }),
-    ...(provider.managedProfile === undefined ? {} : { profile: provider.managedProfile }),
+    ...(provider.managedProfile === undefined || provider.managedProfile === null
+      ? {}
+      : { profile: provider.managedProfile }),
     credentialKeys: provider.credentialKeys,
     configKeys: provider.configKeys,
   };

@@ -142,8 +142,8 @@ test(
 
     const installLog = resultText(install);
     assertGpuInstallProofs(installLog);
-    expect(installLog).toContain(
-      "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
+    expect(installLog).not.toMatch(
+      /Recreating OpenShell Docker sandbox container with NVIDIA GPU access|Docker GPU mode selected/u,
     );
 
     const sandboxContainers = await runtimeProvider.command(
@@ -436,10 +436,12 @@ test(
       OLLAMA_HOST: "127.0.0.1:11439",
       OLLAMA_CONTEXT_LENGTH: "32768",
     });
+    let daemonOwner: ReturnType<typeof startAttachedOllama> | undefined;
     cleanup.trackDisposable("stop Ollama processes after export qualification", async () => {
       const result = await cleanupOllama(host, "export-cleanup-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
+    cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner?.terminate());
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-export-"));
     cleanup.trackDisposable("remove private Ollama export documents", () =>
       fs.rmSync(directory, { recursive: true, force: true }),
@@ -493,8 +495,7 @@ test(
     );
 
     expect(stoppedService.exitCode, resultText(stoppedService)).toBe(0);
-    const daemonOwner = startAttachedOllama(progress, exportEnv);
-    cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner.terminate());
+    daemonOwner = startAttachedOllama(progress, exportEnv);
     await waitForAttachedOllama(host, exportEnv);
     const preparedModel = await host.command("ollama", ["pull", "qwen3.5:9b"], {
       artifactName: "export-prepare-attached-model",
@@ -549,6 +550,11 @@ test(
 
     progress.phase("refuse export after the attached daemon stops");
     await daemonOwner.terminate();
+    // Sandbox destruction unloads models through the saved endpoint, so restore it during cleanup.
+    cleanup.trackDisposable("restore the fixture daemon for model cleanup", async () => {
+      daemonOwner = startAttachedOllama(progress, exportEnv);
+      await waitForAttachedOllama(host, exportEnv);
+    });
     const rejectedPath = path.join(directory, "must-not-exist.yaml");
     const rejected = await host.command(
       "node",

@@ -508,6 +508,8 @@ before export. Onboarding and model preparation each have a 20-minute limit with
 scenario. It retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
+After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
+models through the saved endpoint. It destroys the sandbox before stopping that daemon.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 

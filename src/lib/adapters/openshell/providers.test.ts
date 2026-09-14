@@ -212,6 +212,32 @@ describe("OpenShell provider evidence", () => {
     ).rejects.toMatchObject({ kind: "schema" });
   });
 
+  it("records a confirmed absent global OpenAI profile (#11435)", async () => {
+    const { connect, raw } = fixture();
+    raw.getProvider.mockResolvedValue({
+      provider: { ...provider().provider, profileWorkspace: "" },
+    });
+    raw.getProviderProfile.mockRejectedValue({ code: 5 });
+    const result = await createProviders(connect).get({ ...request(), profileContract: "openai" });
+    expect(result).toMatchObject({ profileWorkspace: "", managedProfile: null });
+  });
+
+  it.each([
+    { workspace: "default", code: 5, kind: "transport" },
+    { workspace: "", code: 7, kind: "authentication" },
+    { workspace: "", code: 4, kind: "timeout" },
+    { workspace: "", code: 13, kind: "transport" },
+  ])("rejects unverified OpenAI profile absence %j (#11435)", async ({ workspace, code, kind }) => {
+    const { connect, raw } = fixture();
+    raw.getProvider.mockResolvedValue({
+      provider: { ...provider().provider, profileWorkspace: workspace },
+    });
+    raw.getProviderProfile.mockRejectedValue({ code });
+    await expect(
+      createProviders(connect).get({ ...request(), profileContract: "openai" }),
+    ).rejects.toMatchObject({ kind });
+  });
+
   it.each([
     { $unknown: [{}] },
     { host: "foreign.example" },

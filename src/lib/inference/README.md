@@ -57,3 +57,9 @@ The public `serving.backend: ollama` branch records the daemon as external and t
 NemoClaw-managed. It does not claim ownership of the daemon process, software installation, or model
 cache. The initial contract covers `qwen3.5:9b` on native Linux Docker with managed OpenClaw and no
 direct sandbox GPU. Hosted inference and managed vLLM retain their existing schema variants.
+
+The pinned OpenShell release can bind the Ollama route to its global `openai` provider type without
+a provider profile. Export records an explicit absent-profile observation only when that global
+profile read returns not found. Other read failures and missing workspace profiles remain terminal.
+Both snapshots include the profile evidence, so adding or replacing a profile during export prevents
+publication. Present profiles still undergo the existing complete boundary validation.
