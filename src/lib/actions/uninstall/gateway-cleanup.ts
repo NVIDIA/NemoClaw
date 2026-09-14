@@ -21,6 +21,7 @@ export interface GatewayCleanupRuntime {
     args: string[],
     options?: SpawnSyncOptions,
   ): { status: number | null; stdout: string; stderr: string };
+  runDocker(args: string[], options?: SpawnSyncOptions): { status: number | null };
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
   log(message: string): void;
   warn(message: string): void;
@@ -61,9 +62,28 @@ export async function removeGatewayRegistration(
       ),
   });
   if (!outcome.ok) {
+    if (outcome.unsupported && !allowLegacyDestroy) {
+      runtime.warn(
+        `Could not remove local registration for externally supervised gateway '${gatewayLabel}'. ` +
+          "NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
+      );
+      return false;
+    }
     runtime.warn(
       `Could not remove gateway registration '${gatewayLabel}': ${outcome.error.message}`,
     );
+    if (
+      !runtime.commandExists("docker") ||
+      runtime.runDocker(["info"], { env: runtime.env, stdio: "ignore", timeout: 10_000 }).status !==
+        0
+    ) {
+      runtime.warn(
+        "Docker is not available in this shell. Restore Docker access. " +
+          "If using Docker Desktop on Windows, enable WSL integration for this distro. " +
+          "For WSL, save work in all sessions before running wsl --shutdown from PowerShell. Reopen the distro afterward. " +
+          "Verify docker info succeeds, then rerun the same uninstall command.",
+      );
+    }
     return false;
   }
   if (outcome.state === "absent") runtime.warn(`Gateway '${gatewayLabel}' is already absent`);

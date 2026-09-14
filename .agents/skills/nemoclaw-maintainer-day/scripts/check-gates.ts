@@ -313,79 +313,6 @@ interface ExactDiffIdentity {
   headRepository: string;
 }
 
-interface E2eCoordinationEvidence {
-  valid: boolean | null;
-  startedAt?: number;
-  completedAt?: number;
-  enclosingCoordinatorStartedAt?: number;
-  enclosingCoordinatorCompletedAt?: number;
-  trustedCustomCheckId?: number;
-  checkSnapshot?: E2eCoordinationCheckSnapshot;
-  coordinatorSnapshot?: E2eCoordinatorInventorySnapshot;
-  selectedCheckId?: number;
-}
-
-interface E2eCoordinationCheckSnapshot {
-  checkRuns: Array<Record<string, unknown>>;
-}
-
-interface E2eCoordinatorRunMetadata {
-  id: number;
-  attempt: number;
-  createdAt: number;
-  updatedAt: number;
-  event: E2eCoordinatorEvent;
-  displayTitle: string;
-  headSha: string;
-  status: string;
-  conclusion: string | null;
-}
-
-type E2eCoordinatorEvent = "workflow_run" | "workflow_dispatch";
-
-interface E2eCoordinatorRunPartition {
-  startedAt: number;
-  completedAt: number;
-}
-
-interface E2eCoordinatorInventoryRecord {
-  value: Record<string, unknown>;
-  createdAt: number;
-  event: E2eCoordinatorEvent;
-  partitionIndex: number;
-}
-
-interface E2eCoordinatorCandidateSnapshot {
-  listedRun: Record<string, unknown>;
-  firstRun: Record<string, unknown>;
-  jobPages: unknown[];
-  refreshedRun: Record<string, unknown>;
-}
-
-interface E2eCoordinatorInventorySnapshot {
-  candidates: E2eCoordinatorCandidateSnapshot[];
-}
-
-interface E2eCoordinatorEvaluation {
-  valid: boolean | null;
-  snapshot?: E2eCoordinatorInventorySnapshot;
-  coordinateStartedAt?: number;
-  coordinateCompletedAt?: number;
-}
-
-const E2E_RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
-const E2E_RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
-const E2E_RETRYABLE_FAILURE_REASONS = new Set([
-  "prerequisite-ci",
-  "child-cancelled",
-  "evidence-download",
-]);
-const E2E_NEVER_RETRY_FAILURE_TITLES = new Set([
-  "Authorized E2E run requires reconciliation",
-  "PR base changed",
-  "Controller stopped early",
-  "Run could not start",
-]);
 function parseGitHubTimestamp(value: string | undefined): number {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/u);
   if (!match) return Number.NaN;
@@ -400,807 +327,6 @@ function parseGitHubTimestamp(value: string | undefined): number {
     parsed.getUTCSeconds() === second
     ? Date.parse(match[0])
     : Number.NaN;
-}
-
-const E2E_COORDINATOR_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
-const E2E_COORDINATOR_PARTITION_MS = 12 * 60 * 60 * 1000;
-const E2E_COORDINATOR_INVENTORY_MAX_MS = 14 * 24 * 60 * 60 * 1000;
-const E2E_COORDINATOR_MAX_PARTITIONS = Math.ceil(
-  E2E_COORDINATOR_INVENTORY_MAX_MS / E2E_COORDINATOR_PARTITION_MS,
-);
-const GITHUB_WORKFLOW_RUN_RESULT_CAP = 1000;
-const E2E_COORDINATOR_RUN_PAGE_PROJECTION =
-  "{total_count,workflow_runs:[.workflow_runs[]|{id,run_attempt,event,display_title,path," +
-  "head_branch,head_sha,status,conclusion,repository:{full_name:.repository.full_name}," +
-  "head_repository:{full_name:.head_repository.full_name},created_at,updated_at}]}";
-
-function formatGitHubTimestamp(value: number): string {
-  return new Date(value).toISOString().replace(".000Z", "Z");
-}
-
-function ghJsonPages(args: string[]): unknown[] | null {
-  const output = run("gh", args);
-  if (!output) return null;
-  try {
-    return output.split("\n").map((page) => JSON.parse(page));
-  } catch {
-    process.stderr.write(
-      `[check-gates] The gate checker could not parse a JSON page from this command: gh ${args.join(" ")}\n`,
-    );
-    return null;
-  }
-}
-
-function e2eCoordinatorRunPartitions(
-  historyStartedAt: number,
-  observationAt: number,
-): E2eCoordinatorRunPartition[] | null {
-  if (!Number.isFinite(historyStartedAt) || !Number.isFinite(observationAt)) return null;
-  const checkStart = new Date(historyStartedAt);
-  const inventoryStartedAt = Date.UTC(
-    checkStart.getUTCFullYear(),
-    checkStart.getUTCMonth(),
-    checkStart.getUTCDate() - 1,
-  );
-  const inventoryCompletedAt = Math.ceil(observationAt / 1000) * 1000;
-  const inventorySpan = inventoryCompletedAt - inventoryStartedAt;
-  const partitionCount = Math.ceil(inventorySpan / E2E_COORDINATOR_PARTITION_MS);
-  if (
-    inventorySpan <= 0 ||
-    inventorySpan > E2E_COORDINATOR_INVENTORY_MAX_MS ||
-    !Number.isSafeInteger(partitionCount) ||
-    partitionCount < 1 ||
-    partitionCount > E2E_COORDINATOR_MAX_PARTITIONS
-  ) {
-    return null;
-  }
-  return Array.from({ length: partitionCount }, (_value, index) => {
-    const startedAt = inventoryStartedAt + index * E2E_COORDINATOR_PARTITION_MS;
-    return {
-      startedAt,
-      completedAt: Math.min(startedAt + E2E_COORDINATOR_PARTITION_MS, inventoryCompletedAt),
-    };
-  });
-}
-
-function automaticE2eCoordinatorRunTitle(exactDiff: ExactDiffIdentity): string {
-  return (
-    "E2E Gate coordinate from CI PR #" +
-    exactDiff.number +
-    " head " +
-    exactDiff.headSha +
-    " base " +
-    exactDiff.baseSha +
-    " gate true"
-  );
-}
-
-function manualE2eCoordinatorRunTitle(exactDiff: ExactDiffIdentity): string {
-  return (
-    "E2E Gate approve PR #" +
-    exactDiff.number +
-    " head " +
-    exactDiff.headSha +
-    " base " +
-    exactDiff.baseSha
-  );
-}
-
-function hasRepositoryName(value: unknown, repo: string): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    (value as Record<string, unknown>).full_name === repo
-  );
-}
-
-function parseE2eCoordinatorRun(
-  value: unknown,
-  repo: string,
-  exactDiff: ExactDiffIdentity,
-  trustedWorkflowSha: string | null,
-): E2eCoordinatorRunMetadata | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const createdAt =
-    typeof record.created_at === "string" ? parseGitHubTimestamp(record.created_at) : Number.NaN;
-  const updatedAt =
-    typeof record.updated_at === "string" ? parseGitHubTimestamp(record.updated_at) : Number.NaN;
-  const status = typeof record.status === "string" ? record.status.toUpperCase() : null;
-  const conclusion =
-    typeof record.conclusion === "string" ? record.conclusion.toUpperCase() : record.conclusion;
-  const event =
-    record.event === "workflow_run" || record.event === "workflow_dispatch" ? record.event : null;
-  const expectedTitle =
-    event === "workflow_run"
-      ? automaticE2eCoordinatorRunTitle(exactDiff)
-      : event === "workflow_dispatch"
-        ? manualE2eCoordinatorRunTitle(exactDiff)
-        : null;
-  const headSha = typeof record.head_sha === "string" ? record.head_sha : "";
-  if (
-    !Number.isSafeInteger(record.id) ||
-    (record.id as number) < 1 ||
-    record.run_attempt !== 1 ||
-    !event ||
-    !expectedTitle ||
-    record.display_title !== expectedTitle ||
-    record.path !== E2E_COORDINATOR_WORKFLOW_PATH ||
-    record.head_branch !== "main" ||
-    !/^[0-9a-f]{40}$/u.test(headSha) ||
-    trustedWorkflowSha === null ||
-    headSha !== trustedWorkflowSha ||
-    !status ||
-    !ACTION_STATUSES.has(status) ||
-    (conclusion !== null &&
-      (typeof conclusion !== "string" || !ACTION_CONCLUSIONS.has(conclusion))) ||
-    (status === "COMPLETED" ? conclusion === null : conclusion !== null) ||
-    !hasRepositoryName(record.repository, repo) ||
-    !hasRepositoryName(record.head_repository, repo) ||
-    !Number.isFinite(createdAt) ||
-    !Number.isFinite(updatedAt) ||
-    createdAt > updatedAt
-  ) {
-    return null;
-  }
-  return {
-    id: record.id as number,
-    attempt: 1,
-    createdAt,
-    updatedAt,
-    event,
-    displayTitle: expectedTitle,
-    headSha,
-    status,
-    conclusion,
-  };
-}
-
-function sameE2eCoordinatorRun(
-  left: E2eCoordinatorRunMetadata,
-  right: E2eCoordinatorRunMetadata,
-): boolean {
-  return (
-    left.id === right.id &&
-    left.attempt === right.attempt &&
-    left.createdAt === right.createdAt &&
-    left.updatedAt === right.updatedAt &&
-    left.event === right.event &&
-    left.displayTitle === right.displayTitle &&
-    left.headSha === right.headSha &&
-    left.status === right.status &&
-    left.conclusion === right.conclusion
-  );
-}
-
-type E2eCoordinatorCandidateResult =
-  | "authorization-predecessor"
-  | "enclosing"
-  | "history"
-  | false
-  | null;
-
-interface E2eCoordinatorCandidateEvaluation {
-  result: E2eCoordinatorCandidateResult;
-  snapshot?: E2eCoordinatorCandidateSnapshot;
-  event?: E2eCoordinatorEvent;
-  runCreatedAt?: number;
-  runUpdatedAt?: number;
-  coordinateStartedAt?: number;
-  coordinateCompletedAt?: number;
-}
-
-function evaluateE2eCoordinatorCandidate(
-  listedValue: unknown,
-  repo: string,
-  exactDiff: ExactDiffIdentity,
-  trustedWorkflowSha: string | null,
-  coordinationStartedAt: number,
-  coordinationCompletedAt: number,
-): E2eCoordinatorCandidateEvaluation {
-  const listedRun = parseE2eCoordinatorRun(listedValue, repo, exactDiff, trustedWorkflowSha);
-  if (!listedRun) return { result: false };
-  const firstRunResponse = ghJson(["api", "repos/" + repo + "/actions/runs/" + listedRun.id]);
-  if (firstRunResponse === null) return { result: null };
-  const firstRun = parseE2eCoordinatorRun(firstRunResponse, repo, exactDiff, trustedWorkflowSha);
-  if (!firstRun || !sameE2eCoordinatorRun(listedRun, firstRun)) return { result: false };
-
-  const jobPages = ghJson([
-    "api",
-    "--paginate",
-    "--slurp",
-    "repos/" +
-      repo +
-      "/actions/runs/" +
-      firstRun.id +
-      "/attempts/" +
-      firstRun.attempt +
-      "/jobs?per_page=100",
-  ]);
-  if (!Array.isArray(jobPages) || jobPages.length === 0) return { result: null };
-
-  let expectedJobs: number | null = null;
-  let observedJobs = 0;
-  const jobIds = new Set<number>();
-  const coordinateJobs: Array<Record<string, unknown>> = [];
-  for (const page of jobPages) {
-    if (typeof page !== "object" || page === null || Array.isArray(page)) {
-      return { result: null };
-    }
-    const { total_count: totalCount, jobs } = page as Record<string, unknown>;
-    if (
-      !Number.isSafeInteger(totalCount) ||
-      (totalCount as number) < 0 ||
-      (expectedJobs !== null && totalCount !== expectedJobs) ||
-      !Array.isArray(jobs)
-    ) {
-      return { result: null };
-    }
-    expectedJobs = totalCount as number;
-    observedJobs += jobs.length;
-    for (const value of jobs) {
-      if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        return { result: null };
-      }
-      const record = value as Record<string, unknown>;
-      if (
-        !Number.isSafeInteger(record.id) ||
-        (record.id as number) < 1 ||
-        jobIds.has(record.id as number) ||
-        typeof record.name !== "string" ||
-        !record.name
-      ) {
-        return { result: false };
-      }
-      jobIds.add(record.id as number);
-      if (record.name === "coordinate") coordinateJobs.push(record);
-    }
-  }
-
-  const refreshedRunResponse = ghJson(["api", "repos/" + repo + "/actions/runs/" + firstRun.id]);
-  if (refreshedRunResponse === null) return { result: null };
-  const refreshedRun = parseE2eCoordinatorRun(
-    refreshedRunResponse,
-    repo,
-    exactDiff,
-    trustedWorkflowSha,
-  );
-  if (!refreshedRun || !sameE2eCoordinatorRun(firstRun, refreshedRun)) {
-    return { result: false };
-  }
-
-  const snapshot: E2eCoordinatorCandidateSnapshot = {
-    listedRun: listedValue as Record<string, unknown>,
-    firstRun: firstRunResponse as Record<string, unknown>,
-    jobPages,
-    refreshedRun: refreshedRunResponse as Record<string, unknown>,
-  };
-  if (
-    expectedJobs === null ||
-    observedJobs !== expectedJobs ||
-    jobIds.size !== expectedJobs ||
-    coordinateJobs.length !== 1
-  ) {
-    return { result: false, snapshot };
-  }
-
-  const coordinate = coordinateJobs[0];
-  const coordinateStatus =
-    typeof coordinate.status === "string" ? coordinate.status.toUpperCase() : null;
-  const coordinateConclusion =
-    typeof coordinate.conclusion === "string"
-      ? coordinate.conclusion.toUpperCase()
-      : coordinate.conclusion;
-  const coordinateStartedAt =
-    typeof coordinate.started_at === "string"
-      ? parseGitHubTimestamp(coordinate.started_at)
-      : Number.NaN;
-  const coordinateCompletedAt =
-    typeof coordinate.completed_at === "string"
-      ? parseGitHubTimestamp(coordinate.completed_at)
-      : Number.NaN;
-  if (
-    !coordinateStatus ||
-    !ACTION_STATUSES.has(coordinateStatus) ||
-    (coordinateConclusion !== null &&
-      (typeof coordinateConclusion !== "string" ||
-        !ACTION_CONCLUSIONS.has(coordinateConclusion))) ||
-    (coordinateStatus === "COMPLETED"
-      ? coordinateConclusion === null
-      : coordinateConclusion !== null) ||
-    !Number.isFinite(coordinateStartedAt) ||
-    !Number.isFinite(coordinateCompletedAt) ||
-    coordinateStartedAt > coordinateCompletedAt
-  ) {
-    return { result: false, snapshot };
-  }
-
-  const completedSuccessfully =
-    firstRun.status === "COMPLETED" &&
-    firstRun.conclusion === "SUCCESS" &&
-    coordinateStatus === "COMPLETED" &&
-    coordinateConclusion === "SUCCESS";
-  const coordinateWithinRun =
-    firstRun.createdAt <= coordinateStartedAt &&
-    coordinateStartedAt <= coordinateCompletedAt &&
-    coordinateCompletedAt <= firstRun.updatedAt;
-  const candidateEvidence = {
-    snapshot,
-    event: firstRun.event,
-    runCreatedAt: firstRun.createdAt,
-    runUpdatedAt: firstRun.updatedAt,
-    coordinateStartedAt,
-    coordinateCompletedAt,
-  };
-  if (
-    completedSuccessfully &&
-    coordinateWithinRun &&
-    coordinateStartedAt <= coordinationCompletedAt &&
-    coordinationCompletedAt <= coordinateCompletedAt
-  ) {
-    return { result: "enclosing", ...candidateEvidence };
-  }
-
-  const completedHistory =
-    completedSuccessfully && coordinateWithinRun && firstRun.updatedAt <= coordinationStartedAt;
-  if (completedHistory) return { result: "history", ...candidateEvidence };
-
-  const authorizationPredecessor =
-    completedSuccessfully &&
-    coordinateWithinRun &&
-    firstRun.event === "workflow_run" &&
-    coordinationStartedAt <= coordinateStartedAt &&
-    coordinateCompletedAt < coordinationCompletedAt;
-  return {
-    result: authorizationPredecessor ? "authorization-predecessor" : false,
-    ...candidateEvidence,
-  };
-}
-
-function fetchE2eCoordinatorEvidence(
-  repo: string,
-  exactDiff: ExactDiffIdentity,
-  trustedWorkflowSha: string | null,
-  historyStartedAt: number,
-  coordinationStartedAt: number,
-  coordinationCompletedAt: number,
-  observationAt: number,
-): E2eCoordinatorEvaluation {
-  const inventoryById = new Map<number, E2eCoordinatorInventoryRecord>();
-  const partitions = e2eCoordinatorRunPartitions(historyStartedAt, observationAt);
-  if (!partitions) return { valid: null };
-  const events: E2eCoordinatorEvent[] = ["workflow_run", "workflow_dispatch"];
-  for (const event of events) {
-    for (const [partitionIndex, partition] of partitions.entries()) {
-      const createdRange = encodeURIComponent(
-        formatGitHubTimestamp(partition.startedAt) +
-          ".." +
-          formatGitHubTimestamp(partition.completedAt),
-      );
-      const pages = ghJsonPages([
-        "api",
-        "--paginate",
-        "--jq",
-        E2E_COORDINATOR_RUN_PAGE_PROJECTION,
-        "repos/" +
-          repo +
-          "/actions/workflows/pr-e2e-gate.yaml/runs?event=" +
-          event +
-          "&created=" +
-          createdRange +
-          "&per_page=100",
-      ]);
-      if (!Array.isArray(pages) || pages.length === 0) return { valid: null };
-
-      let expectedTotal: number | null = null;
-      let observedTotal = 0;
-      const partitionIds = new Set<number>();
-      const partitionRecords: Array<{ value: Record<string, unknown>; createdAt: number }> = [];
-      for (const page of pages) {
-        if (typeof page !== "object" || page === null || Array.isArray(page)) {
-          return { valid: null };
-        }
-        const { total_count: totalCount, workflow_runs: workflowRuns } = page as Record<
-          string,
-          unknown
-        >;
-        if (
-          !Number.isSafeInteger(totalCount) ||
-          (totalCount as number) < 0 ||
-          (totalCount as number) >= GITHUB_WORKFLOW_RUN_RESULT_CAP ||
-          (expectedTotal !== null && totalCount !== expectedTotal) ||
-          !Array.isArray(workflowRuns)
-        ) {
-          return { valid: null };
-        }
-        expectedTotal = totalCount as number;
-        observedTotal += workflowRuns.length;
-        for (const value of workflowRuns) {
-          if (typeof value !== "object" || value === null || Array.isArray(value)) {
-            return { valid: null };
-          }
-          const record = value as Record<string, unknown>;
-          const createdAt =
-            typeof record.created_at === "string"
-              ? parseGitHubTimestamp(record.created_at)
-              : Number.NaN;
-          if (
-            !Number.isSafeInteger(record.id) ||
-            (record.id as number) < 1 ||
-            partitionIds.has(record.id as number) ||
-            record.event !== event ||
-            !Number.isFinite(createdAt) ||
-            createdAt < partition.startedAt ||
-            createdAt > partition.completedAt
-          ) {
-            return { valid: null };
-          }
-          partitionIds.add(record.id as number);
-          partitionRecords.push({ value: record, createdAt });
-        }
-      }
-      if (
-        expectedTotal === null ||
-        observedTotal !== expectedTotal ||
-        partitionIds.size !== expectedTotal
-      ) {
-        return { valid: null };
-      }
-
-      for (const record of partitionRecords) {
-        const id = record.value.id as number;
-        const existing = inventoryById.get(id);
-        if (!existing) {
-          inventoryById.set(id, {
-            value: record.value,
-            createdAt: record.createdAt,
-            event,
-            partitionIndex,
-          });
-          continue;
-        }
-        const exactBoundaryDuplicate =
-          existing.event === event &&
-          existing.partitionIndex === partitionIndex - 1 &&
-          existing.createdAt === partition.startedAt &&
-          record.createdAt === partition.startedAt &&
-          isDeepStrictEqual(existing.value, record.value);
-        if (!exactBoundaryDuplicate) return { valid: null };
-      }
-    }
-  }
-
-  const expectedTitles = new Set([
-    automaticE2eCoordinatorRunTitle(exactDiff),
-    manualE2eCoordinatorRunTitle(exactDiff),
-  ]);
-  const candidates = [...inventoryById.values()]
-    .map((record) => record.value)
-    .filter((record) => expectedTitles.has(String(record.display_title)));
-  if (candidates.length === 0) return { valid: false };
-
-  const enclosingCandidates: E2eCoordinatorCandidateEvaluation[] = [];
-  const authorizationPredecessors: E2eCoordinatorCandidateEvaluation[] = [];
-  const candidateSnapshots: E2eCoordinatorCandidateSnapshot[] = [];
-  for (const candidate of candidates) {
-    const evaluation = evaluateE2eCoordinatorCandidate(
-      candidate,
-      repo,
-      exactDiff,
-      trustedWorkflowSha,
-      coordinationStartedAt,
-      coordinationCompletedAt,
-    );
-    if (evaluation.result === null) return { valid: null };
-    if (evaluation.result === false || !evaluation.snapshot) return { valid: false };
-    candidateSnapshots.push(evaluation.snapshot);
-    if (evaluation.result === "enclosing") enclosingCandidates.push(evaluation);
-    if (evaluation.result === "authorization-predecessor") {
-      authorizationPredecessors.push(evaluation);
-    }
-  }
-  if (enclosingCandidates.length !== 1) return { valid: false };
-  const encloser = enclosingCandidates[0];
-  if (
-    !encloser ||
-    encloser.coordinateStartedAt === undefined ||
-    encloser.coordinateCompletedAt === undefined
-  ) {
-    return { valid: false };
-  }
-  const automaticLineage =
-    encloser.event === "workflow_run" && authorizationPredecessors.length === 0;
-  const predecessor = authorizationPredecessors[0];
-  const authorizedForkLineage =
-    exactDiff.headRepository !== repo &&
-    encloser.event === "workflow_dispatch" &&
-    authorizationPredecessors.length === 1 &&
-    predecessor?.event === "workflow_run" &&
-    predecessor.runUpdatedAt !== undefined &&
-    encloser.runCreatedAt !== undefined &&
-    predecessor.coordinateCompletedAt !== undefined &&
-    encloser.coordinateStartedAt !== undefined &&
-    predecessor.runUpdatedAt <= encloser.runCreatedAt &&
-    predecessor.coordinateCompletedAt <= encloser.coordinateStartedAt;
-  if (!automaticLineage && !authorizedForkLineage) {
-    return { valid: false };
-  }
-  candidateSnapshots.sort(
-    (left, right) => (left.listedRun.id as number) - (right.listedRun.id as number),
-  );
-  return {
-    valid: true,
-    snapshot: { candidates: candidateSnapshots },
-    coordinateStartedAt: encloser.coordinateStartedAt,
-    coordinateCompletedAt: encloser.coordinateCompletedAt,
-  };
-}
-
-function hasRetryableE2eFailureMarker(check: Record<string, unknown>): boolean {
-  if (check.status !== "completed" || check.conclusion !== "failure") return false;
-  const output = check.output;
-  if (typeof output !== "object" || output === null || Array.isArray(output)) return false;
-  const { summary, title } = output as Record<string, unknown>;
-  if (
-    (title !== undefined && title !== null && typeof title !== "string") ||
-    E2E_NEVER_RETRY_FAILURE_TITLES.has(typeof title === "string" ? title : "")
-  ) {
-    return false;
-  }
-  if (typeof summary !== "string") return false;
-  const markerBoundary = `\n\n${E2E_RETRYABLE_FAILURE_MARKER_PREFIX}`;
-  const markerStart = summary.lastIndexOf(markerBoundary);
-  if (markerStart < 0) return false;
-  const marker = summary.slice(markerStart + 2);
-  if (!marker.endsWith(E2E_RETRYABLE_FAILURE_MARKER_SUFFIX)) return false;
-  const reason = marker.slice(
-    E2E_RETRYABLE_FAILURE_MARKER_PREFIX.length,
-    -E2E_RETRYABLE_FAILURE_MARKER_SUFFIX.length,
-  );
-  return (
-    E2E_RETRYABLE_FAILURE_REASONS.has(reason) &&
-    marker ===
-      `${E2E_RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${E2E_RETRYABLE_FAILURE_MARKER_SUFFIX}`
-  );
-}
-
-function currentE2eCoordinationCheck(
-  checks: Array<Record<string, unknown>>,
-): Record<string, unknown> | undefined {
-  if (checks.length === 0) return undefined;
-  const ordered = [...checks].sort((left, right) => (left.id as number) - (right.id as number));
-  const active = ordered.filter((check) => check.status !== "completed");
-  if (active.length > 1) return undefined;
-  if (ordered.slice(0, -1).some((check) => !hasRetryableE2eFailureMarker(check))) {
-    return undefined;
-  }
-  const current = ordered.at(-1)!;
-  if (active[0] && active[0].id !== current.id) return undefined;
-  return current;
-}
-
-function fetchE2eCoordinationCheckSnapshot(
-  repo: string,
-  exactDiff: ExactDiffIdentity,
-): E2eCoordinationCheckSnapshot | null {
-  const checkNames = ["E2E / PR Gate", "E2E / PR Gate Coordination"];
-  const checkRuns: Array<Record<string, unknown>> = [];
-  const ids = new Set<number>();
-  for (const checkName of checkNames) {
-    const pages = ghJson([
-      "api",
-      "--paginate",
-      "--slurp",
-      `repos/${repo}/commits/${exactDiff.headSha}/check-runs?check_name=${encodeURIComponent(checkName)}&filter=all&per_page=100`,
-    ]);
-    if (!Array.isArray(pages) || pages.length === 0) return null;
-
-    let expectedTotal: number | null = null;
-    let observedTotal = 0;
-    for (const page of pages) {
-      if (typeof page !== "object" || page === null || Array.isArray(page)) return null;
-      const { total_count: totalCount, check_runs: pageRuns } = page as Record<string, unknown>;
-      if (
-        !Number.isSafeInteger(totalCount) ||
-        (totalCount as number) < 0 ||
-        (expectedTotal !== null && totalCount !== expectedTotal) ||
-        !Array.isArray(pageRuns)
-      ) {
-        return null;
-      }
-      expectedTotal = totalCount as number;
-      observedTotal += pageRuns.length;
-      for (const value of pageRuns) {
-        if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-        const record = value as Record<string, unknown>;
-        if (
-          !Number.isSafeInteger(record.id) ||
-          (record.id as number) < 1 ||
-          ids.has(record.id as number) ||
-          (typeof record.external_id !== "string" && record.external_id !== null)
-        ) {
-          return null;
-        }
-        ids.add(record.id as number);
-        checkRuns.push(record);
-      }
-    }
-    if (
-      expectedTotal === null ||
-      observedTotal !== expectedTotal ||
-      ids.size !== checkRuns.length
-    ) {
-      return null;
-    }
-  }
-
-  checkRuns.sort((left, right) => (left.id as number) - (right.id as number));
-  return { checkRuns };
-}
-
-function selectE2eCoordinationCheck(
-  snapshot: E2eCoordinationCheckSnapshot,
-  exactDiff: ExactDiffIdentity,
-): Record<string, unknown> | undefined {
-  const checkNames = ["E2E / PR Gate", "E2E / PR Gate Coordination"];
-  const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
-  const claimedChecks = snapshot.checkRuns.filter((check) => check.external_id === externalId);
-  if (
-    claimedChecks.some(
-      (check) =>
-        check.head_sha !== exactDiff.headSha ||
-        typeof check.name !== "string" ||
-        !checkNames.includes(check.name) ||
-        typeof check.app !== "object" ||
-        check.app === null ||
-        Array.isArray(check.app) ||
-        (check.app as Record<string, unknown>).id !== 15368,
-    )
-  ) {
-    return undefined;
-  }
-  const currentNameChecks = claimedChecks.filter((check) => check.name === "E2E / PR Gate");
-  const exactChecks =
-    currentNameChecks.length > 0
-      ? currentNameChecks
-      : claimedChecks.filter((check) => check.name === "E2E / PR Gate Coordination");
-  return currentE2eCoordinationCheck(exactChecks);
-}
-
-interface E2eLineageCheckTiming {
-  startedAt: number;
-  completedAt: number;
-}
-
-function selectedE2eLineageTiming(
-  snapshot: E2eCoordinationCheckSnapshot,
-  exactDiff: ExactDiffIdentity,
-  selectedCheckId: number,
-): E2eLineageCheckTiming[] | null {
-  const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
-  const claimedChecks = snapshot.checkRuns.filter((check) => check.external_id === externalId);
-  const currentNameChecks = claimedChecks.filter((check) => check.name === "E2E / PR Gate");
-  const exactChecks =
-    currentNameChecks.length > 0
-      ? currentNameChecks
-      : claimedChecks.filter((check) => check.name === "E2E / PR Gate Coordination");
-  if (currentE2eCoordinationCheck(exactChecks)?.id !== selectedCheckId) return null;
-
-  const ordered = [...exactChecks].sort(
-    (left, right) => (left.id as number) - (right.id as number),
-  );
-  const timing: E2eLineageCheckTiming[] = [];
-  for (const check of ordered) {
-    const startedAt =
-      typeof check.started_at === "string" ? parseGitHubTimestamp(check.started_at) : Number.NaN;
-    const completedAt =
-      typeof check.completed_at === "string"
-        ? parseGitHubTimestamp(check.completed_at)
-        : Number.NaN;
-    if (
-      !Number.isFinite(startedAt) ||
-      !Number.isFinite(completedAt) ||
-      startedAt > completedAt ||
-      (timing.at(-1)?.completedAt ?? Number.NEGATIVE_INFINITY) > startedAt
-    ) {
-      return null;
-    }
-    timing.push({ startedAt, completedAt });
-  }
-  return timing.length > 0 ? timing : null;
-}
-
-function e2eCoordinationHistoryStartedAt(
-  snapshot: E2eCoordinationCheckSnapshot,
-  exactDiff: ExactDiffIdentity,
-): number {
-  const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
-  const claimedChecks = snapshot.checkRuns.filter((check) => check.external_id === externalId);
-  if (claimedChecks.length === 0) return Number.NaN;
-
-  let earliest = Number.POSITIVE_INFINITY;
-  for (const check of claimedChecks) {
-    const startedAt =
-      typeof check.started_at === "string" ? parseGitHubTimestamp(check.started_at) : Number.NaN;
-    const completedAt =
-      typeof check.completed_at === "string"
-        ? parseGitHubTimestamp(check.completed_at)
-        : Number.NaN;
-    if (
-      !Number.isFinite(startedAt) ||
-      (check.status === "completed" && (!Number.isFinite(completedAt) || startedAt > completedAt))
-    ) {
-      return Number.NaN;
-    }
-    earliest = Math.min(earliest, startedAt);
-  }
-  return earliest;
-}
-
-function fetchE2eCoordinationEvidence(
-  repo: string,
-  exactDiff: ExactDiffIdentity,
-  trustedWorkflowSha: string | null,
-): E2eCoordinationEvidence {
-  const checkSnapshot = fetchE2eCoordinationCheckSnapshot(repo, exactDiff);
-  if (!checkSnapshot) return { valid: null };
-  const exact = selectE2eCoordinationCheck(checkSnapshot, exactDiff);
-  if (!exact) return { valid: false };
-  const checkNames = ["E2E / PR Gate", "E2E / PR Gate Coordination"];
-  const app = exact.app;
-  const startedAt =
-    typeof exact.started_at === "string" ? parseGitHubTimestamp(exact.started_at) : Number.NaN;
-  const completedAt =
-    typeof exact.completed_at === "string" ? parseGitHubTimestamp(exact.completed_at) : Number.NaN;
-  const historyStartedAt = e2eCoordinationHistoryStartedAt(checkSnapshot, exactDiff);
-  const valid =
-    typeof exact.name === "string" &&
-    checkNames.includes(exact.name) &&
-    exact.head_sha === exactDiff.headSha &&
-    typeof app === "object" &&
-    app !== null &&
-    !Array.isArray(app) &&
-    (app as Record<string, unknown>).id === 15368 &&
-    exact.status === "completed" &&
-    exact.conclusion === "success" &&
-    Number.isFinite(startedAt) &&
-    Number.isFinite(completedAt) &&
-    Number.isFinite(historyStartedAt) &&
-    startedAt <= completedAt;
-  const coordinator = valid
-    ? fetchE2eCoordinatorEvidence(
-        repo,
-        exactDiff,
-        trustedWorkflowSha,
-        historyStartedAt,
-        startedAt,
-        completedAt,
-        Date.now(),
-      )
-    : { valid: false };
-  const completeEvidence =
-    valid &&
-    coordinator.valid === true &&
-    Boolean(coordinator.snapshot) &&
-    typeof coordinator.coordinateStartedAt === "number" &&
-    typeof coordinator.coordinateCompletedAt === "number";
-  return {
-    valid: coordinator.valid === null ? null : completeEvidence,
-    ...(completeEvidence ? { startedAt, completedAt } : {}),
-    ...(completeEvidence
-      ? {
-          checkSnapshot,
-          coordinatorSnapshot: coordinator.snapshot,
-          selectedCheckId: exact.id as number,
-          enclosingCoordinatorStartedAt: coordinator.coordinateStartedAt,
-          enclosingCoordinatorCompletedAt: coordinator.coordinateCompletedAt,
-        }
-      : {}),
-    ...(completeEvidence && exact.name === "E2E / PR Gate"
-      ? { trustedCustomCheckId: exact.id as number }
-      : {}),
-  };
 }
 
 const ACTION_STATUSES = new Set([
@@ -1228,8 +354,6 @@ const PR_CI_RUN_TITLE =
   /^CI PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
 const INSTALLER_HASH_RUN_TITLE =
   /^Installer Hash PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
-const E2E_GATE_RUN_TITLE =
-  /^E2E Gate PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
 const PR_REVIEW_ADVISOR_RUN_TITLE =
   /^Advisor after CI PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate true$/u;
 const REPOSITORY_NAME_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
@@ -1239,7 +363,6 @@ const REQUIRED_CHECK_WORKFLOW_PATHS = new Map([
   ["check-hash", ".github/workflows/installer-hash-check.yaml"],
   ["commit-lint", ".github/workflows/commit-lint.yaml"],
   ["dco-check", ".github/workflows/dco-check.yaml"],
-  ["E2E / PR Gate", ".github/workflows/pr-e2e-gate.yaml"],
 ]);
 const PR_METADATA_EDIT_JOB_NAMES = new Set([
   "build-typecheck",
@@ -1275,8 +398,6 @@ interface ActionRunMetadata {
   immutablePrDiff: boolean | null;
   prCiGate: boolean | null;
   installerHashGate: boolean | null;
-  e2eGateDiff: boolean | null;
-  e2eGateRun: boolean | null;
   event: string | null;
   path: string | null;
   status: string | null;
@@ -1312,35 +433,11 @@ function currentCheckRollup(
   statusCheckRollup: StatusCheck[],
   repo: string,
   exactDiff: ExactDiffIdentity,
-  e2eCoordinationEvidence: E2eCoordinationEvidence,
   actionEvidence = createCiActionEvidenceCache(),
   allowActionEvidenceReads = true,
 ): CurrentCheckRollup {
   const { actionRunMetadataById, latestAttemptJobsByRun } = actionEvidence;
   const incompleteAttemptEvidence = new Set<string>();
-  const observedE2eLineage =
-    e2eCoordinationEvidence.valid === true &&
-    e2eCoordinationEvidence.checkSnapshot &&
-    e2eCoordinationEvidence.selectedCheckId !== undefined
-      ? selectedE2eLineageTiming(
-          e2eCoordinationEvidence.checkSnapshot,
-          exactDiff,
-          e2eCoordinationEvidence.selectedCheckId,
-        )
-      : null;
-  const selectedE2eCheck = observedE2eLineage?.at(-1);
-  const authenticatedE2eLineage =
-    observedE2eLineage &&
-    selectedE2eCheck &&
-    selectedE2eCheck.startedAt === e2eCoordinationEvidence.startedAt &&
-    selectedE2eCheck.completedAt === e2eCoordinationEvidence.completedAt &&
-    (observedE2eLineage.length === 1 ||
-      (typeof e2eCoordinationEvidence.enclosingCoordinatorStartedAt === "number" &&
-        typeof e2eCoordinationEvidence.enclosingCoordinatorCompletedAt === "number" &&
-        e2eCoordinationEvidence.enclosingCoordinatorStartedAt <= selectedE2eCheck.startedAt &&
-        selectedE2eCheck.startedAt <= e2eCoordinationEvidence.enclosingCoordinatorCompletedAt))
-      ? observedE2eLineage
-      : null;
 
   const fetchActionRunMetadata = (runId: string): ActionRunMetadata | null => {
     if (!allowActionEvidenceReads) return null;
@@ -1415,8 +512,6 @@ function currentCheckRollup(
     let immutablePrDiff: boolean | null = null;
     let prCiGate: boolean | null = null;
     let installerHashGate: boolean | null = null;
-    let e2eGateDiff: boolean | null = null;
-    let e2eGateRun: boolean | null = null;
     if (event === "pull_request") {
       const title = typeof record.display_title === "string" ? record.display_title : "";
       const titlePattern =
@@ -1438,20 +533,6 @@ function currentCheckRollup(
           } else if (path === ".github/workflows/installer-hash-check.yaml") {
             installerHashGate = match[4] === "true";
           }
-        }
-      }
-    }
-    if (event === "pull_request_target" && path === ".github/workflows/pr-e2e-gate.yaml") {
-      const title = typeof record.display_title === "string" ? record.display_title : "";
-      const match = title.match(E2E_GATE_RUN_TITLE);
-      if (match) {
-        const titlePrNumber = Number(match[1]);
-        if (Number.isSafeInteger(titlePrNumber) && titlePrNumber > 0) {
-          e2eGateDiff =
-            titlePrNumber === exactDiff.number &&
-            match[2] === exactDiff.headSha &&
-            match[3] === exactDiff.baseSha;
-          e2eGateRun = match[4] === "true";
         }
       }
     }
@@ -1492,8 +573,6 @@ function currentCheckRollup(
       immutablePrDiff,
       prCiGate,
       installerHashGate,
-      e2eGateDiff,
-      e2eGateRun,
       event,
       path,
       status,
@@ -1614,8 +693,6 @@ function currentCheckRollup(
       refreshed.immutablePrDiff !== metadata.immutablePrDiff ||
       refreshed.prCiGate !== metadata.prCiGate ||
       refreshed.installerHashGate !== metadata.installerHashGate ||
-      refreshed.e2eGateDiff !== metadata.e2eGateDiff ||
-      refreshed.e2eGateRun !== metadata.e2eGateRun ||
       refreshed.event !== metadata.event ||
       refreshed.path !== metadata.path ||
       refreshed.status !== metadata.status ||
@@ -1660,105 +737,10 @@ function currentCheckRollup(
     return hasExactMetadataEditShape ? "recognized" : "invalid";
   };
 
-  const e2eControllerHeadBinding = (run: ActionRunMetadata): "current" | "other" | "unknown" => {
-    if (run.event !== "pull_request_target" || run.path !== ".github/workflows/pr-e2e-gate.yaml") {
-      return "unknown";
-    }
-    if (
-      run.exactDiff === false ||
-      run.e2eGateDiff === false ||
-      run.headShaMatches === false ||
-      run.headRefNameMatches === false ||
-      run.headRepositoryMatches === false
-    ) {
-      return "other";
-    }
-    return e2eCoordinationEvidence.valid === true &&
-      run.e2eGateDiff === true &&
-      run.hasPullRequests === false &&
-      run.headShaMatches === true &&
-      run.headRefNameMatches === true &&
-      run.headRepositoryMatches === true
-      ? "current"
-      : "unknown";
-  };
-
-  type E2eSeedRunKind = "initial" | "reuse" | "unknown";
-
-  const classifyE2eSeedRun = (runId: string, run: ActionRunMetadata): E2eSeedRunKind => {
-    if (
-      e2eControllerHeadBinding(run) !== "current" ||
-      run.e2eGateRun !== true ||
-      !authenticatedE2eLineage
-    ) {
-      return "unknown";
-    }
-    const initializeJobs = [...(latestAttemptJobs(runId)?.values() ?? [])].filter(
-      (job) => job.name === "initialize",
-    );
-    if (initializeJobs.length !== 1) return "unknown";
-    const [initialize] = initializeJobs;
-    const initializeStartedAt = initialize.startedAt;
-    const initializeCompletedAt = initialize.completedAt;
-    if (
-      initialize.status !== "COMPLETED" ||
-      initialize.conclusion !== "SUCCESS" ||
-      initializeStartedAt === null ||
-      initializeCompletedAt === null ||
-      run.createdAt > initializeStartedAt ||
-      initializeStartedAt > initializeCompletedAt ||
-      initializeCompletedAt > run.updatedAt
-    ) {
-      return "unknown";
-    }
-    const checksStartedDuringInitialize = authenticatedE2eLineage.filter(
-      (check) => initializeStartedAt <= check.startedAt && check.startedAt <= initializeCompletedAt,
-    );
-    if (
-      checksStartedDuringInitialize.length === 1 &&
-      checksStartedDuringInitialize[0] === authenticatedE2eLineage[0]
-    ) {
-      return "initial";
-    }
-    return checksStartedDuringInitialize.length === 0 &&
-      authenticatedE2eLineage.some((check) => check.startedAt < initializeStartedAt)
-      ? "reuse"
-      : "unknown";
-  };
-
-  const isCurrentE2eSeedRun = (runId: string, run: ActionRunMetadata): boolean =>
-    classifyE2eSeedRun(runId, run) === "initial";
-
   const isNonAttemptRun = (runId: string): boolean => {
     const run = actionRunMetadata(runId);
     const jobs = latestAttemptJobs(runId);
     if (!run || !jobs || jobs.size === 0) return false;
-
-    const successfulE2eSeedReuse = Boolean(
-      classifyE2eSeedRun(runId, run) === "reuse" &&
-      run.status === "COMPLETED" &&
-      run.conclusion === "SUCCESS" &&
-      [...jobs.values()].every(
-        (job) =>
-          job.status === "COMPLETED" &&
-          job.conclusion !== null &&
-          PASSING_ACTION_RUN_CONCLUSIONS.has(job.conclusion),
-      ),
-    );
-    if (successfulE2eSeedReuse) return true;
-
-    const allSkippedTargetRun = Boolean(
-      (runIdentityEvidence(runId, true) === "current" ||
-        e2eControllerHeadBinding(run) === "current") &&
-      run.event === "pull_request_target" &&
-      run.path === ".github/workflows/pr-e2e-gate.yaml" &&
-      run.e2eGateDiff === true &&
-      run.e2eGateRun === false &&
-      run.status === "COMPLETED" &&
-      run.conclusion === "SKIPPED" &&
-      [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED"),
-    );
-    if (allSkippedTargetRun) return true;
     return classifyPrMetadataEditRun(runId) === "recognized";
   };
 
@@ -1775,9 +757,6 @@ function currentCheckRollup(
       (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
       (run.path !== ".github/workflows/installer-hash-check.yaml" ||
         run.installerHashGate === true) &&
-      (run.path !== ".github/workflows/pr-e2e-gate.yaml" ||
-        run.event !== "pull_request_target" ||
-        (run.e2eGateDiff === true && run.e2eGateRun === true)) &&
       run.status === "COMPLETED" &&
       run.conclusion !== null &&
       run.conclusion !== "SKIPPED" &&
@@ -1830,9 +809,6 @@ function currentCheckRollup(
       (expectedWorkflowPath === ".github/workflows/pr.yaml" && runMetadata.prCiGate !== true) ||
       (expectedWorkflowPath === ".github/workflows/installer-hash-check.yaml" &&
         runMetadata.installerHashGate !== true) ||
-      (expectedWorkflowPath === ".github/workflows/pr-e2e-gate.yaml" &&
-        runMetadata.event === "pull_request_target" &&
-        (runMetadata.e2eGateDiff !== true || runMetadata.e2eGateRun !== true)) ||
       runMetadata.status !== "COMPLETED" ||
       runMetadata.conclusion === null ||
       (requiresExactDiff
@@ -1940,12 +916,6 @@ function currentCheckRollup(
     );
   };
 
-  const isTrustedCustomE2eCheck = (check: StatusCheck): boolean =>
-    e2eCoordinationEvidence.trustedCustomCheckId !== undefined &&
-    check.name === "E2E / PR Gate" &&
-    check.detailsUrl?.match(/\/runs\/(\d+)(?:[/?#]|$)/u)?.[1] ===
-      String(e2eCoordinationEvidence.trustedCustomCheckId);
-
   function runIdentityEvidence(
     runId: string,
     requiresExactDiff: boolean,
@@ -1983,16 +953,7 @@ function currentCheckRollup(
       return "unknown";
     }
     if (metadata.exactDiff === false) return "other";
-    const e2eHeadBinding = e2eControllerHeadBinding(metadata);
-    if (e2eHeadBinding === "other") return "other";
-    if (e2eHeadBinding === "current") {
-      return isCurrentE2eSeedRun(runId, metadata) ? "current" : "unknown";
-    }
-    if (
-      exactDiff.headRepository !== repo &&
-      metadata.path !== ".github/workflows/pr-e2e-gate.yaml" &&
-      headBinding !== "unknown"
-    ) {
+    if (exactDiff.headRepository !== repo && headBinding !== "unknown") {
       return headBinding;
     }
     if (
@@ -2045,10 +1006,7 @@ function currentCheckRollup(
         (check.detailsUrl?.includes("/actions/") ||
           (Boolean(check.workflowName) && !/\/runs\/\d+(?:[/?#]|$)/u.test(check.detailsUrl ?? ""))),
     );
-    if (
-      (requiredCheck || expectsActionEvidence) &&
-      group.some((check) => !actionRunId(check) && !isTrustedCustomE2eCheck(check))
-    ) {
+    if ((requiredCheck || expectsActionEvidence) && group.some((check) => !actionRunId(check))) {
       incompleteAttemptEvidence.add(groupName);
     }
     if (group.length === 1) {
@@ -2203,14 +1161,16 @@ function currentCheckRollup(
     incompleteAttemptEvidence.add("checks");
     incompleteAttemptEvidence.add("changes");
   }
-  return { checks: current, incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort() };
+  return {
+    checks: current,
+    incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort(),
+  };
 }
 
 interface CiGateResult extends GateResult {
   failingChecks?: string[];
   pendingChecks?: string[];
   missingChecks?: string[];
-  trustedCustomCheckId?: number;
 }
 
 interface RequiredCheckSnapshotRecord {
@@ -2228,7 +1188,6 @@ interface RequiredCheckSnapshotRecord {
 
 interface CiEvaluation {
   gate: CiGateResult;
-  e2eCoordinationEvidence: E2eCoordinationEvidence;
   requiredCheckSnapshot: RequiredCheckSnapshotRecord[] | null;
 }
 
@@ -2265,9 +1224,12 @@ const ADVISORY_E2E_CHECK_NAMES = new Set([
 ]);
 const ADVISORY_E2E_WORKFLOW_NAMES = new Set(["E2E / PR Gate Controller"]);
 
+// PR #8445 retired the PR E2E controller and moved live E2E after merges to main.
+// Ignore former rollout contexts here; maintainers evaluate explicitly requested
+// manual E2E separately, as documented in MERGE-GATE.md.
 function isAdvisoryE2eCheck(check: StatusCheck): boolean {
   return (
-    ADVISORY_E2E_CHECK_NAMES.has(check.name ?? check.context ?? "") ||
+    ADVISORY_E2E_CHECK_NAMES.has(check.name ?? check.context ?? "") &&
     ADVISORY_E2E_WORKFLOW_NAMES.has(check.workflowName ?? "")
   );
 }
@@ -2276,7 +1238,6 @@ function evaluateCiRollup(
   statusCheckRollup: StatusCheck[] | null,
   repo: string,
   exactDiff: ExactDiffIdentity,
-  e2eCoordinationEvidence: E2eCoordinationEvidence,
   actionEvidence = createCiActionEvidenceCache(),
   allowActionEvidenceReads = true,
 ): CiGateResult {
@@ -2289,7 +1250,6 @@ function evaluateCiRollup(
     mergeRelevantChecks,
     repo,
     exactDiff,
-    e2eCoordinationEvidence,
     actionEvidence,
     allowActionEvidenceReads,
   );
@@ -2348,7 +1308,11 @@ function evaluateCiRollup(
     };
   }
   if (pending.length > 0) {
-    return { pass: false, details: `${pending.length} pending check(s)`, pendingChecks: pending };
+    return {
+      pass: false,
+      details: `${pending.length} pending check(s)`,
+      pendingChecks: pending,
+    };
   }
   if (incompleteAttemptEvidence.size > 0) {
     const incompleteNames = [...incompleteAttemptEvidence].sort();
@@ -2361,9 +1325,6 @@ function evaluateCiRollup(
   return {
     pass: true,
     details: `All ${currentChecks.length} current checks green`,
-    ...(e2eCoordinationEvidence.trustedCustomCheckId !== undefined
-      ? { trustedCustomCheckId: e2eCoordinationEvidence.trustedCustomCheckId }
-      : {}),
   };
 }
 
@@ -2371,12 +1332,9 @@ function checkCi(
   statusCheckRollup: StatusCheck[] | null,
   repo: string,
   exactDiff: ExactDiffIdentity,
-  _trustedWorkflowSha: string | null,
 ): CiEvaluation {
-  const e2eCoordinationEvidence: E2eCoordinationEvidence = { valid: true };
   return {
-    gate: evaluateCiRollup(statusCheckRollup, repo, exactDiff, e2eCoordinationEvidence),
-    e2eCoordinationEvidence,
+    gate: evaluateCiRollup(statusCheckRollup, repo, exactDiff),
     requiredCheckSnapshot: captureRequiredCheckSnapshot(statusCheckRollup),
   };
 }
@@ -2389,13 +1347,7 @@ function checkFinalCi(
   actionEvidence: CiActionEvidenceCache,
 ): CiGateResult {
   if (!initial.gate.pass) return initial.gate;
-  const finalGate = evaluateCiRollup(
-    finalStatusCheckRollup,
-    repo,
-    exactDiff,
-    initial.e2eCoordinationEvidence,
-    actionEvidence,
-  );
+  const finalGate = evaluateCiRollup(finalStatusCheckRollup, repo, exactDiff, actionEvidence);
   if (!finalGate.pass) return finalGate;
   const finalRequiredCheckSnapshot = captureRequiredCheckSnapshot(finalStatusCheckRollup);
   if (
@@ -2412,59 +1364,16 @@ function checkFinalCi(
   return finalGate;
 }
 
-function checkFinalE2eEvidence(
-  ci: CiGateResult,
-  initial: CiEvaluation,
-  finalE2eEvidence: E2eCoordinationEvidence,
-  exactDiff: ExactDiffIdentity,
-): CiGateResult {
-  if (!ci.pass) return ci;
-  const initialE2eCheckSnapshot = initial.e2eCoordinationEvidence.checkSnapshot;
-  const initialCoordinatorSnapshot = initial.e2eCoordinationEvidence.coordinatorSnapshot;
-  const initialSelectedCheckId = initial.e2eCoordinationEvidence.selectedCheckId;
-  const finalE2eCheckSnapshot = finalE2eEvidence.checkSnapshot;
-  const finalSelectedCheck = finalE2eCheckSnapshot
-    ? selectE2eCoordinationCheck(finalE2eCheckSnapshot, exactDiff)
-    : undefined;
-  if (
-    !initialE2eCheckSnapshot ||
-    !initialCoordinatorSnapshot ||
-    initialSelectedCheckId === undefined ||
-    finalE2eEvidence.valid !== true ||
-    !finalE2eCheckSnapshot ||
-    !finalE2eEvidence.coordinatorSnapshot ||
-    !finalSelectedCheck ||
-    finalSelectedCheck.id !== initialSelectedCheckId ||
-    !isDeepStrictEqual(finalE2eCheckSnapshot, initialE2eCheckSnapshot) ||
-    !isDeepStrictEqual(finalE2eEvidence.coordinatorSnapshot, initialCoordinatorSnapshot)
-  ) {
-    return {
-      pass: false,
-      details: "E2E custom-check history changed during gate evaluation",
-      failingChecks: ["E2E / PR Gate: final evidence changed"],
-    };
-  }
-  return ci;
-}
-
 function checkLastCi(
   ci: CiGateResult,
   initial: CiEvaluation,
   lastStatusCheckRollup: StatusCheck[] | null,
   repo: string,
   exactDiff: ExactDiffIdentity,
-  finalE2eEvidence: E2eCoordinationEvidence,
   actionEvidence: CiActionEvidenceCache,
 ): CiGateResult {
   if (!ci.pass) return ci;
-  const lastGate = evaluateCiRollup(
-    lastStatusCheckRollup,
-    repo,
-    exactDiff,
-    finalE2eEvidence,
-    actionEvidence,
-    false,
-  );
+  const lastGate = evaluateCiRollup(lastStatusCheckRollup, repo, exactDiff, actionEvidence, false);
   if (!lastGate.pass) return lastGate;
   const lastRequiredCheckSnapshot = captureRequiredCheckSnapshot(lastStatusCheckRollup);
   if (
@@ -2562,7 +1471,11 @@ function fetchCurrentBaseSha(repo: string, number: number): string | null {
       }
     }`,
   ]) as {
-    data?: { repository?: { pullRequest?: { baseRef?: { target?: { oid?: unknown } } } } };
+    data?: {
+      repository?: {
+        pullRequest?: { baseRef?: { target?: { oid?: unknown } } };
+      };
+    };
   } | null;
   const oid = response?.data?.repository?.pullRequest?.baseRef?.target?.oid;
   return typeof oid === "string" && /^[0-9a-f]{40}$/i.test(oid) ? oid : null;
@@ -2632,7 +1545,10 @@ function checkCodeRabbit(
 
   // Fail-closed: if we cannot reach the API, do not assume clean
   if (!out) {
-    return { pass: false, details: "Could not fetch review threads (API error — fail-closed)" };
+    return {
+      pass: false,
+      details: "Could not fetch review threads (API error — fail-closed)",
+    };
   }
 
   let data: {
@@ -2642,7 +1558,13 @@ function checkCodeRabbit(
           reviewThreads?: {
             nodes?: Array<{
               isResolved: boolean;
-              comments: { nodes: Array<{ author: { login: string }; body: string; path: string }> };
+              comments: {
+                nodes: Array<{
+                  author: { login: string };
+                  body: string;
+                  path: string;
+                }>;
+              };
             }>;
           };
         };
@@ -2652,7 +1574,10 @@ function checkCodeRabbit(
   try {
     data = JSON.parse(out);
   } catch {
-    return { pass: false, details: "Could not parse review threads (invalid JSON — fail-closed)" };
+    return {
+      pass: false,
+      details: "Could not parse review threads (invalid JSON — fail-closed)",
+    };
   }
 
   const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
@@ -2681,7 +1606,10 @@ function checkCodeRabbit(
   }
 
   if (unresolved.length === 0) {
-    return { pass: true, details: "No unresolved major/critical CodeRabbit findings" };
+    return {
+      pass: true,
+      details: "No unresolved major/critical CodeRabbit findings",
+    };
   }
   return {
     pass: false,
@@ -2735,7 +1663,11 @@ interface CommitVerificationRecord {
 
 function normalizeCommitVerification(value: unknown): CommitVerificationRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { sha: "(unknown)", verified: false, reason: "malformed_commit_verification_data" };
+    return {
+      sha: "(unknown)",
+      verified: false,
+      reason: "malformed_commit_verification_data",
+    };
   }
 
   const record = value as Record<string, unknown>;
@@ -3448,7 +2380,7 @@ function main(): void {
     headRepository,
   };
   const currentBaseSha = fetchCurrentBaseSha(repo, prNumber);
-  const initialCi = checkCi(prData.statusCheckRollup, repo, exactDiff, currentBaseSha);
+  const initialCi = checkCi(prData.statusCheckRollup, repo, exactDiff);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
   const contributorCompliance = checkContributorCompliance(
@@ -3485,7 +2417,6 @@ function main(): void {
     exactDiff,
     finalCiActionEvidence,
   );
-  const finalE2eEvidence: E2eCoordinationEvidence = { valid: true };
   const evaluatedCi = evaluatedRollupCi;
   const currentRevision = fetchPrRevisionSnapshot(repo, prNumber);
   const ciBeforeFinalSnapshot = checkLastCi(
@@ -3494,7 +2425,6 @@ function main(): void {
     currentRevision?.statusCheckRollup ?? null,
     repo,
     exactDiff,
-    finalE2eEvidence,
     finalCiActionEvidence,
   );
   const finalSnapshot = fetchFinalPrSnapshot(repo, prNumber);
@@ -3514,7 +2444,6 @@ function main(): void {
           finalRevision.statusCheckRollup,
           repo,
           exactDiff,
-          finalE2eEvidence,
           finalCiActionEvidence,
         );
   const baseRevisionGate: ReturnType<typeof checkConflicts> =
@@ -3562,7 +2491,13 @@ function main(): void {
       coderabbit.pass &&
       riskyCodeTested.pass &&
       contributorCompliance.pass,
-    gates: { ci, conflicts, coderabbit, riskyCodeTested, contributorCompliance },
+    gates: {
+      ci,
+      conflicts,
+      coderabbit,
+      riskyCodeTested,
+      contributorCompliance,
+    },
     advisories: { contributorApprovalOverlap },
   };
 

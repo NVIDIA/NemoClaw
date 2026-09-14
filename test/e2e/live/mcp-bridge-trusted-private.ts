@@ -147,7 +147,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     url: rebindMcpUrl,
     env: { names: [REBIND_CREDENTIAL_KEY], ready: true, missing: [] },
     provider: { attached: true, credentialReady: true },
-    policy: { gatewayPresent: true },
+    policy: { present: true },
     adapter: { registered: true },
     trustedPrivateTarget: {
       host: REBIND_HOSTNAME,

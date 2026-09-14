@@ -204,7 +204,6 @@ export function createDockerDriverGatewayStart(
             registerDockerDriverGatewayEndpoint,
             observer,
             preparePortForOpenShellGatewayUserServiceStart: servicePortOwnership.preparePort,
-            runCaptureOpenshell,
             skipSandboxBridgeReachability,
             validatePortOwnerForOpenShellGatewayUserServiceStart:
               servicePortOwnership.validatePortOwner,

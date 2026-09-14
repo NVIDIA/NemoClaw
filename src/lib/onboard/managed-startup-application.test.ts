@@ -387,7 +387,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-different-model",
         primaryModelRef: "inference/nvidia/a-different-model",
       },
@@ -451,7 +451,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-competing-model",
         primaryModelRef: "inference/nvidia/a-competing-model",
       },
@@ -467,7 +467,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-competing-model",
         primaryModelRef: "inference/nvidia/a-competing-model",
       },
@@ -506,7 +506,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-delayed-competing-model",
         primaryModelRef: "inference/nvidia/a-delayed-competing-model",
       },
@@ -553,7 +553,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-straddling-competing-model",
         primaryModelRef: "inference/nvidia/a-straddling-competing-model",
       },

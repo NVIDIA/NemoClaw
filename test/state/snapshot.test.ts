@@ -1380,13 +1380,13 @@ describe("Deep Agents Code durable state files", () => {
         "name: note-summarizer\n",
       );
       fs.writeFileSync(path.join(deepAgentsDir, "config.toml"), "generated config\n");
+      const hooks = '{"hooks":[{"command":["/sandbox/bin/reviewed-hook"]}]}\n';
+      fs.writeFileSync(path.join(deepAgentsDir, "hooks.json"), hooks);
       fs.writeFileSync(path.join(deepAgentsDir, ".env"), "NVIDIA_API_KEY=should-not-copy\n");
-      fs.writeFileSync(path.join(deepAgentsDir, ".mcp.json"), '{"token":"should-not-copy"}\n');
       fs.writeFileSync(
-        path.join(deepAgentsDir, ".nemoclaw-mcp.json"),
+        path.join(deepAgentsDir, ".mcp.json"),
         '{"mcpServers":{"reconstructable":{}}}\n',
       );
-
       const openshell = path.join(binDir, "openshell");
       writeExecutable(
         openshell,
@@ -1415,6 +1415,14 @@ if (cmd.includes("config.toml") && cmd.includes("cat --")) {
   process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "config.toml")));
   process.exit(0);
 }
+if (cmd.includes("hooks.json") && cmd.includes("cat --")) {
+  process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "hooks.json")));
+  process.exit(0);
+}
+if (cmd.includes("hooks.json") && cmd.includes('cat > "$tmp"')) {
+  fs.writeFileSync(path.join(deepAgentsDir, "hooks.json"), fs.readFileSync(0));
+  process.exit(0);
+}
 if (cmd.includes(".env") || cmd.includes(".mcp.json")) {
   process.exit(99);
 }
@@ -1434,12 +1442,12 @@ if (cmd.includes("-cf -")) {
   process.exit(r.status || 0);
 }
 if (cmd.includes("tar --no-same-owner -xf -")) {
-  // drain the piped restore tarball in chunks (no full-stream buffering)
-  const buf = Buffer.alloc(65536);
-  while (fs.readSync(0, buf, 0, buf.length, null) > 0) {
-    // discard
-  }
-  process.exit(0);
+  const r = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", deepAgentsDir], {
+    stdio: [0, "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  if (r.stderr) fs.writeSync(2, r.stderr);
+  process.exit(r.status || 0);
 }
 process.exit(0);
 `,
@@ -1452,38 +1460,35 @@ process.exit(0);
       const backup = sandboxState.backupSandboxState("deepagents", { name: "deepagents-state" });
       expect(backup.success).toBe(true);
       expect(backup.backedUpDirs).toEqual([".state", "agent/skills"]);
-      expect(backup.backedUpFiles).toEqual(["config.toml"]);
+      expect(backup.backedUpFiles).toEqual(["config.toml", "hooks.json"]);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.agentType).toBe("langchain-deepagents-code");
       expect(backup.manifest?.stateDirs).toEqual([".state", "agent/skills"]);
-      expect(backup.manifest?.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "auth.json"))).toBe(
-        false,
-      );
-      expect(
-        fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "chatgpt-auth.json")),
-      ).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "skills"))).toBe(false);
-      expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "config.toml"), "utf-8")).toBe(
+      expect(backup.manifest?.stateFiles?.map(({ path: statePath }) => statePath)).toEqual([
+        "config.toml",
+        "hooks.json",
+      ]);
+      const backupPath = backup.manifest!.backupPath;
+      expect(fs.existsSync(path.join(backupPath, ".state", "thread.json"))).toBe(true);
+      expect(fs.existsSync(path.join(backupPath, ".state", "auth.json"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, ".state", "chatgpt-auth.json"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, "skills"))).toBe(false);
+      expect(fs.readFileSync(path.join(backupPath, "config.toml"), "utf-8")).toBe(
         "generated config\n",
       );
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".nemoclaw-mcp.json"))).toBe(
-        false,
-      );
+      expect(fs.readFileSync(path.join(backupPath, "hooks.json"), "utf-8")).toBe(hooks);
+      expect(fs.existsSync(path.join(backupPath, ".env"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, ".mcp.json"))).toBe(false);
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");
-      expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
       // #5753: restore must include agent/skills after backup and recreation.
+      fs.rmSync(path.join(deepAgentsDir, "hooks.json"));
       const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(expect.arrayContaining([".state", "agent/skills"]));
+      expect(fs.readFileSync(path.join(deepAgentsDir, "hooks.json"), "utf-8")).toBe(hooks);
     } finally {
       oldOpenshell === undefined
         ? delete process.env.NEMOCLAW_OPENSHELL_BIN

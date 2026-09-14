@@ -5,9 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
+import * as gatewaySelection from "./gateway-select";
+import * as gatewayState from "./gateway-state";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as registryPersistence from "../../state/registry/persistence";
 import { type RebuildSandboxEntry, resolveRebuildLiveState } from "./rebuild-flow-helpers";
 import {
@@ -52,23 +55,24 @@ function bail(message: string): never {
 
 describe("rebuild gateway drift preflight", () => {
   let captureOpenshellSpy: MockInstance;
-  let runOpenshellSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let recoverDockerDriverSandboxSpy: MockInstance;
   let errorSpy: MockInstance;
-  let logSpy: MockInstance;
 
   beforeEach(() => {
+    vi.spyOn(gatewaySelection, "selectSandboxOwningGateway").mockImplementation(async (name) => ({
+      outcome: "selected",
+      gatewayName: registry.getSandbox(name)?.gatewayName ?? "nemoclaw",
+    }));
+
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
     vi.spyOn(gatewayDrift, "printOpenShellStateRpcIssue").mockImplementation(() => undefined);
     captureOpenshellSpy = vi
       .spyOn(openshellRuntime, "captureOpenshell")
       .mockReturnValue({ status: 0, output: "alpha Ready" });
-    runOpenshellSpy = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0, output: "" } as never);
+    vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0, output: "" } as never);
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
       .mockResolvedValue({
@@ -88,15 +92,49 @@ describe("rebuild gateway drift preflight", () => {
       .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
       .mockReturnValue({ recovered: false, via: null });
     vi.spyOn(registry, "getSandbox").mockReturnValue(makeSandboxEntry() as never);
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+      (name: string) => {
+        const entry = registry.getSandbox(name);
+        return entry
+          ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+          : null;
+      },
+    );
     vi.spyOn(registryPersistence, "load").mockReturnValue({
       sandboxes: { alpha: makeSandboxEntry() },
     } as never);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("reports failed gateway observation without claiming a sibling is active", async () => {
+    captureOpenshellSpy.mockReturnValue({ status: 0, output: "beta Ready" });
+    vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue({
+      state: "present",
+      output: "alpha Ready",
+    });
+    const observation = {
+      state: "observation_failed" as const,
+      activeGateway: null,
+      diagnostic: "Gateway observation could not be completed.",
+      recoveryBlocked: true,
+      unavailable: true,
+    };
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue(observation);
+    const hint = vi
+      .spyOn(gatewayState, "printGatewayLifecycleHint")
+      .mockImplementation(() => undefined);
+    const wrongGateway = vi.spyOn(gatewayState, "printWrongGatewayActiveGuidance");
+
+    await expect(
+      resolveRebuildLiveState("alpha", makeSandboxEntry(), vi.fn(), bail),
+    ).rejects.toThrow("(observation_failed)");
+    expect(hint).toHaveBeenCalledWith(observation, "alpha", console.error);
+    expect(wrongGateway).not.toHaveBeenCalled();
   });
 
   it("rejects gateway image drift before confirming rebuild intent", async () => {
@@ -173,9 +211,10 @@ describe("rebuild gateway drift preflight", () => {
       const registrySnapshot = { sandboxes: { alpha: entry } };
       vi.mocked(registry.getSandbox).mockReturnValue(entry as never);
       vi.mocked(registryPersistence.load).mockReturnValue(registrySnapshot as never);
-      captureOpenshellSpy
-        .mockReturnValueOnce({ status: 0, output: "" })
-        .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
+      captureOpenshellSpy.mockReturnValueOnce({ status: 0, output: "" }).mockReturnValueOnce({
+        status: 1,
+        output: `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
+      });
       getNamedGatewayLifecycleStateSpy.mockResolvedValue({
         state: "connected_other",
         activeGateway,
@@ -187,10 +226,7 @@ describe("rebuild gateway drift preflight", () => {
         "Cannot rebuild an absent sandbox without its authoritative OpenShell policy",
       );
       expect(getNamedGatewayLifecycleStateSpy).not.toHaveBeenCalled();
-      expect(runOpenshellSpy).toHaveBeenCalledWith(
-        ["gateway", "select", recordedGateway],
-        expect.objectContaining({ ignoreError: true }),
-      );
+      expect(gatewaySelection.selectSandboxOwningGateway).toHaveBeenCalledWith("alpha");
       expect(captureOpenshellSpy).toHaveBeenNthCalledWith(
         1,
         ["sandbox", "list", "-g", recordedGateway],
@@ -223,7 +259,10 @@ describe("rebuild gateway drift preflight", () => {
       vi.mocked(registryPersistence.load).mockReturnValue(registrySnapshot as never);
       captureOpenshellSpy
         .mockReturnValueOnce({ status: 0, output: "beta Ready" })
-        .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
+        .mockReturnValueOnce({
+          status: 1,
+          output: `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
+        });
       getNamedGatewayLifecycleStateSpy.mockResolvedValue({
         state: "healthy_named",
         activeGateway: gatewayName,
@@ -271,7 +310,7 @@ describe("rebuild gateway drift preflight", () => {
       .mockReturnValueOnce({ status: 0, output: "beta Ready" })
       .mockReturnValueOnce({
         status: 1,
-        output: "Error:   × Not Found: sandbox not found",
+        output: `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
       });
     const behaviorLog = vi.fn();
 

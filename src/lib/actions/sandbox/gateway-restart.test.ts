@@ -27,9 +27,6 @@ const supervisorFailureMarkers: Array<
   [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],
   [MARKERS.SECRET_BOUNDARY_VALIDATOR_MISSING, "unsafe config path"],
   [MARKERS.GATEWAY_UNSAFE_CONFIG_PATH, "unsafe config path"],
-  ["mcp-integrity", "MCP reconciliation refusal"],
-  ["mcp-reconcile-required", "MCP reconciliation refusal"],
-  ["HERMES_MCP_CONFIG_DRIFT", "MCP reconciliation refusal"],
   [MARKERS.GATEWAY_CONFIG_HASH_MISMATCH, "config hash mismatch"],
   ["HERMES_UNSAFE_CONFIG_PATH", "unsafe config path"],
   ["HERMES_LOCKED_HASH_MISMATCH", "config hash mismatch"],
@@ -62,7 +59,6 @@ describe("gateway restart failure classification precedence", () => {
     ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
     [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],
     [MARKERS.GATEWAY_UNSAFE_CONFIG_PATH, "unsafe config path"],
-    ["HERMES_MCP_CONFIG_DRIFT", "MCP reconciliation refusal"],
     ["HERMES_CONFIG_HASH_MISMATCH", "config hash mismatch"],
   ] as const)("classifies %s ahead of the health timeout it causes", (marker, layer) => {
     expect(classify([marker, "GATEWAY_HEALTH_TIMEOUT"].join("\n"))).toMatchObject({ layer });
@@ -81,11 +77,6 @@ describe("gateway restart failure classification precedence", () => {
       "SUPERVISOR_BUSY",
     ].join("\n");
     expect(classify(output)).toMatchObject({ layer: "supervisor unavailable" });
-  });
-
-  it("classifies MCP drift ahead of the config hash mismatch reported with it", () => {
-    const output = ["HERMES_MCP_CONFIG_DRIFT", "HERMES_CONFIG_HASH_MISMATCH"].join("\n");
-    expect(classify(output)).toMatchObject({ layer: "MCP reconciliation refusal" });
   });
 
   it("applies the same precedence when markers split across stdout and stderr", () => {

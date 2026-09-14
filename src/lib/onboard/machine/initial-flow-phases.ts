@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import type { GatewayReuseState } from "../../state/gateway";
 import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
 import { formatSandboxGpuPassthroughNote } from "../sandbox-gpu-notes";
+import { assertProviderlessSandboxAgent } from "../sandbox-agent";
 import {
   ExternalComponentContractError,
   type PreparedExternalComponent,
@@ -143,6 +144,9 @@ export function createInitialOnboardFlowPhases<
     state: "preflight",
     async run(context) {
       const externalComponent = options.prepareExternalComponent?.(context.session) ?? null;
+      if (context.session?.apfInterceptorRequested === true) {
+        assertProviderlessSandboxAgent(context.agent);
+      }
       if (externalComponent && (context.resume || options.recreateSandbox())) {
         throw new ExternalComponentContractError("lifecycle_unsupported");
       }

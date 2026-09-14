@@ -49,10 +49,11 @@ export interface GatewayStateOptions<Gpu> {
     assertExternalComponentFreshSandbox(requestedSandboxName: string | null): void;
     configureExternalComponentGateway(
       component: ExternalComponentGatewayConfiguration | null,
-    ): ExternalComponentGatewayPreparation | void;
-    refreshDockerDriverGatewayReuseState(
-      state: GatewayReuseState,
-    ): GatewayReuseState | Promise<GatewayReuseState>;
+    ):
+      | ExternalComponentGatewayPreparation
+      | void
+      | Promise<ExternalComponentGatewayPreparation | void>;
+    refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean | Promise<boolean>;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
     waitForGatewayHttpReady(): boolean | Promise<boolean>;
@@ -162,7 +163,7 @@ async function handleGatewayStatePhase<Gpu>({
   }
   externalComponent?.revalidateBeforeGateway();
   if (deps.isLinuxDockerDriverGatewayEnabled()) {
-    const preparation = deps.configureExternalComponentGateway(
+    const preparation = await deps.configureExternalComponentGateway(
       externalComponent
         ? gatewayConfigurationForExternalComponent(externalComponent.declaration)
         : null,

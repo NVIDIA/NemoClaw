@@ -13,12 +13,9 @@ import {
   type GatewayVersionCompatibility,
   type GatewayVersionSource,
   getGatewayClusterContainerName,
-  getGatewayReuseState,
-  isGatewayHealthy,
   OPENSHELL_PROBE_TIMEOUT_MS,
   observeOpenShellGatewayVersionCompatibility,
   parseVersionFromText,
-  stripAnsi,
 } from "../adapters/openshell/gateway-drift";
 export { classifyManagedGatewayEndpointBinding };
 import { cliName as resolveCliName } from "../onboard/branding";

@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
-import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
 import type { GatewayRecoveryOutput } from "./gateway-recovery";
 import {
@@ -137,7 +136,6 @@ export interface PackageManagedDockerDriverGatewayOptions {
   preparePortForOpenShellGatewayUserServiceStart?: () => void;
   registerDockerDriverGatewayEndpoint: () => boolean | Promise<boolean>;
   observer: import("../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
-  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string;
   skipSandboxBridgeReachability: boolean;
   sleepSeconds?: (seconds: number) => void;
   startOpenShellGatewayUserService?: (
@@ -452,9 +450,15 @@ function runSystemctlUser(
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
 ) {
+  const env: NodeJS.ProcessEnv = { ...opts.env, LC_ALL: "C" };
+  if (typeof process.getuid === "function") {
+    const runtimeDir = env.XDG_RUNTIME_DIR?.trim() || `/run/user/${String(process.getuid())}`;
+    env.XDG_RUNTIME_DIR = runtimeDir;
+    env.DBUS_SESSION_BUS_ADDRESS ||= `unix:path=${runtimeDir}/bus`;
+  }
   return runCommand("systemctl", ["--user", ...args], {
     ...opts,
-    env: { ...opts.env, LC_ALL: "C" },
+    env,
   });
 }
 
@@ -1410,7 +1414,6 @@ export async function startPackageManagedDockerDriverGateway({
   preparePortForOpenShellGatewayUserServiceStart,
   registerDockerDriverGatewayEndpoint,
   observer,
-  runCaptureOpenshell,
   skipSandboxBridgeReachability,
   sleepSeconds: sleepSecondsImpl = sleepSeconds,
   startOpenShellGatewayUserService: startService = startOpenShellGatewayUserService,

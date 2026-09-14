@@ -298,5 +298,3 @@ function formatMentionMode(value: string): string {
 function log(options: ConfigPromptHookOptions, message: string): void {
   (options.log ?? console.log)(message);
 }
-
-export const configPromptHook = createConfigPromptHook();

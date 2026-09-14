@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as registry from "../../state/registry";
+import * as crossPort from "../../state/registry/cross-port";
 import { selectSandboxOwningGateway } from "./gateway-select";
 
 describe("selectSandboxOwningGateway", () => {
@@ -11,7 +15,11 @@ describe("selectSandboxOwningGateway", () => {
     [8080, "nemoclaw"],
     [8091, "nemoclaw-8091"],
   ] as const)("selects the recorded gateway on port %d", async (gatewayPort, gatewayName) => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort } as never);
+    vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry: { name: "alpha", gatewayPort },
+      gatewayPort,
+      registryFile: "/test/sandboxes.json",
+    });
     const selectGateway = vi.fn().mockResolvedValue({ ok: true, state: "completed" });
     expect(await selectSandboxOwningGateway("alpha", { selectGateway })).toEqual({
       outcome: "selected",
@@ -22,7 +30,7 @@ describe("selectSandboxOwningGateway", () => {
     });
   });
   it("does not change selection for an unregistered sandbox", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+    vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue(null);
     const selectGateway = vi.fn();
     expect(await selectSandboxOwningGateway("ghost", { selectGateway })).toEqual({
       outcome: "unregistered",
@@ -31,7 +39,11 @@ describe("selectSandboxOwningGateway", () => {
     expect(selectGateway).not.toHaveBeenCalled();
   });
   it("propagates a typed selection failure without retrying", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
+    vi.spyOn(crossPort, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry: { name: "alpha", gatewayPort: 8091 },
+      gatewayPort: 8091,
+      registryFile: "/test/sandboxes.json",
+    });
     const selectGateway = vi.fn().mockResolvedValue({
       ok: false,
       error: { kind: "authentication", message: "Access denied." },
@@ -43,5 +55,36 @@ describe("selectSandboxOwningGateway", () => {
       gatewayName: "nemoclaw-8091",
     });
     expect(selectGateway).toHaveBeenCalledTimes(1);
+  });
+  it("resolves the owning gateway from a sibling gateway-port registry root", async () => {
+    // Regression: with two gateways on one host, the sandbox's recorded
+    // binding lives under ~/.nemoclaw/gateways/<its port>/ even when the
+    // process points at another gateway port.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-select-cross-"));
+    try {
+      vi.stubEnv("HOME", home);
+      const siblingDir = path.join(home, ".nemoclaw", "gateways", "8245");
+      fs.mkdirSync(siblingDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(siblingDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: null,
+          defaultSelectionRevision: 1,
+          sandboxes: { "owner-a": { name: "owner-a", gatewayPort: 8245 } },
+        }),
+      );
+      const selectGateway = vi.fn().mockResolvedValue({ ok: true, state: "completed" });
+
+      expect(await selectSandboxOwningGateway("owner-a", { selectGateway })).toEqual({
+        outcome: "selected",
+        gatewayName: "nemoclaw-8245",
+      });
+      expect(selectGateway).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw-8245" },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

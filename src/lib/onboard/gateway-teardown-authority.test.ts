@@ -16,6 +16,7 @@ import {
   GatewayAuthorityError,
   removeGatewayRegistrationThroughAdapter,
   resolveGatewayCredentialMutationAuthority,
+  resolveGatewayForwardAuthority,
   resolveGatewayRebuildAuthority,
   resolveGatewayTeardownAuthority,
 } from "./gateway-teardown-authority";
@@ -299,6 +300,58 @@ describe("resolveGatewayTeardownAuthority", () => {
         },
       ),
     ).toThrow(/noncanonical target/);
+    expect(loaded).toBe(false);
+  });
+});
+
+describe("resolveGatewayForwardAuthority", () => {
+  it("returns the exact external endpoint while its recorded authority still matches", () => {
+    const currentDeclaration = declaration();
+    const recordedOwner = owner(currentDeclaration);
+
+    expect(
+      resolveGatewayForwardAuthority(target, {
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({
+          ok: true,
+          declaration: currentDeclaration,
+          source: "profile",
+        }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toEqual(recordedOwner);
+  });
+
+  it("fails closed when forward recovery observes authority drift", () => {
+    const recordedOwner = owner(declaration("systemd-system"));
+
+    expect(() =>
+      resolveGatewayForwardAuthority(target, {
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({
+          ok: true,
+          declaration: declaration("systemd-user"),
+          source: "profile",
+        }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toThrow(/authority changed since onboarding.*sandbox forward recovery/u);
+  });
+
+  it("rejects a noncanonical forward target before loading authority", () => {
+    let loaded = false;
+
+    expect(() =>
+      resolveGatewayForwardAuthority(
+        { gatewayName: "other", gatewayPort: 8080 },
+        {
+          loadDeclaration: () => {
+            loaded = true;
+            return { ok: true, declaration: null, source: null };
+          },
+        },
+      ),
+    ).toThrow(/noncanonical target/u);
     expect(loaded).toBe(false);
   });
 });

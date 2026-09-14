@@ -5,6 +5,8 @@ import fs from "node:fs";
 import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as wait from "../core/wait";
+import * as gatewayService from "./docker-driver-gateway-service";
 import { createGatewayHostRuntime, type GatewayHostRuntimeDeps } from "./gateway-host-runtime";
 import {
   GATEWAY_MANAGEMENT_ENV_VAR,
@@ -243,18 +245,22 @@ describe("gateway host runtime ownership", () => {
   });
 
   it("restarts an already-bound packaged service after a trusted binary replacement", () => {
-    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const start = vi.spyOn(gatewayService, "startOpenShellGatewayUserService").mockReturnValue({
+      attempted: true,
+      started: true,
+    });
+    const portReady = vi.spyOn(wait, "waitForPort").mockReturnValue(true);
     const runtime = createGatewayHostRuntime(
       createDeps({
         hasOpenShellGatewayUserService: () => true,
-        restartPackagedGatewayAfterTrustedInstall,
+        restartPackagedGatewayAfterTrustedInstall: undefined,
       }),
     );
     const owner = runtime.getGatewayOwner();
 
     expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
-    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledOnce();
-    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledWith(owner);
+    expect(start).toHaveBeenCalledBefore(portReady);
+    expect(portReady).toHaveBeenCalledExactlyOnceWith(owner.gatewayPort, 30);
   });
 
   it("adopts only a trusted standalone-to-packaged-service install transition (#7411)", () => {
@@ -309,18 +315,26 @@ describe("gateway host runtime ownership", () => {
   });
 
   it("fails the trusted install reconciliation when packaged restart fails", () => {
+    const start = vi.spyOn(gatewayService, "startOpenShellGatewayUserService").mockReturnValue({
+      attempted: true,
+      started: false,
+    });
+    const portReady = vi.spyOn(wait, "waitForPort").mockReturnValue(false);
     const runtime = createGatewayHostRuntime(
       createDeps({
         hasOpenShellGatewayUserService: () => true,
-        restartPackagedGatewayAfterTrustedInstall: () => {
-          throw new Error("packaged restart failed");
-        },
+        restartPackagedGatewayAfterTrustedInstall: undefined,
       }),
     );
     runtime.getGatewayOwner();
 
     expect(() => runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toThrow(
-      "packaged restart failed",
+      "OpenShell packaged gateway restart after install failed",
+    );
+    expect(portReady).not.toHaveBeenCalled();
+    start.mockReturnValue({ attempted: true, started: true });
+    expect(() => runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toThrow(
+      "OpenShell packaged gateway did not bind its port after install.",
     );
   });
 

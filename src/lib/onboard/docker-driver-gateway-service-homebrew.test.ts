@@ -199,7 +199,6 @@ describe("OpenShell Homebrew service boundary", () => {
       gatewayName: "nemoclaw",
       hasOpenShellGatewayUserService: () => false,
       registerDockerDriverGatewayEndpoint: () => true,
-      runCaptureOpenshell: () => "",
       skipSandboxBridgeReachability: true,
       startOpenShellGatewayUserService: startService,
       verifySandboxBridgeGatewayReachableOrExit: async () => {},

@@ -4,10 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  SUBPROCESS_ENV_ALLOWED_NAMES,
-  SUBPROCESS_ENV_ALLOWED_PREFIXES,
-} from "../../subprocess-env";
-import {
   MCP_SERVER_URL_MAX_LENGTH,
   normalizeMcpServerUrl,
   parseMcpAddArgs,

@@ -49,7 +49,7 @@ import {
   readUserManagedFiles,
   readVersionScheme,
 } from "./manifest-readers";
-import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
+import { readAgentRuntime } from "./runtime-manifest";
 import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
 import {
   readStateDirectories,
