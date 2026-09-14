@@ -11,10 +11,10 @@ import {
   runOnboardProcessAsync,
 } from "../helpers/onboard-child-process-harness";
 
-vi.setConfig({ maxConcurrency: 4 });
-
 const repoRoot = path.join(import.meta.dirname, "../..");
 const probeTimeoutMs = 60_000;
+
+vi.setConfig({ maxConcurrency: 4, testTimeout: probeTimeoutMs });
 
 type SliceName = "initial" | "core" | "final";
 type ProbeMode =
@@ -39,6 +39,7 @@ interface ProbeOptions {
   slice: SliceName;
   mode?: ProbeMode;
   policyTier?: "balanced" | "restricted";
+  workspaceRoot?: string;
 }
 
 interface DistArtifact {
@@ -177,61 +178,70 @@ function probeFailureMessage(result: OnboardProcessResult): string {
   return details.join("\n\n");
 }
 
-async function runSliceProbe(options: ProbeOptions, context: TestContext) {
+async function runSliceProbe(
+  options: ProbeOptions,
+  context: Pick<TestContext, "signal" | "onTestFinished">,
+) {
   const scenario = { mode: options.mode ?? "fresh", slice: options.slice };
   const tmpDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), `nemoclaw-onboard-fsm-${scenario.mode}-${scenario.slice}-`),
+    path.join(
+      options.workspaceRoot ?? os.tmpdir(),
+      `nemoclaw-onboard-fsm-${scenario.mode}-${scenario.slice}-`,
+    ),
   );
-  const scriptPath = path.join(tmpDir, `probe-${scenario.mode}-${scenario.slice}.js`);
-  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-  const flowSlicesPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
-  );
-  const resultPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
-  );
-  const sessionPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
-  );
-  const entryOptionsPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "entry-options.ts"),
-  );
-  const lockedRuntimePath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "resume", "locked-runtime.ts"),
-  );
-  const preflightHandlerPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
-  );
-  const providerHandlerPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "provider-inference.ts"),
-  );
-  const gatewayHandlerPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "gateway.ts"),
-  );
-  const coreFlowPhasesPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
-  );
-  const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-  const onboardDashboardPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "dashboard.ts"),
-  );
-  const agentOnboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "onboard.ts"));
-  const agentSelectionPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "agent-selection.ts"),
-  );
-  const dashboardUrlCommandPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "dashboard-url-command.ts"),
-  );
-  const finalizationDepsPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "finalization-deps.ts"),
-  );
-  const externalComponentPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "external-component", "index.ts"),
-  );
+  try {
+    const scriptPath = path.join(tmpDir, `probe-${scenario.mode}-${scenario.slice}.js`);
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const flowSlicesPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
+    );
+    const resultPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
+    );
+    const sessionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+    );
+    const entryOptionsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "entry-options.ts"),
+    );
+    const lockedRuntimePath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "resume", "locked-runtime.ts"),
+    );
+    const preflightHandlerPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
+    );
+    const providerHandlerPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "provider-inference.ts"),
+    );
+    const gatewayHandlerPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "gateway.ts"),
+    );
+    const coreFlowPhasesPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
+    );
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const onboardDashboardPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "dashboard.ts"),
+    );
+    const agentOnboardPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "agent", "onboard.ts"),
+    );
+    const agentSelectionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "agent-selection.ts"),
+    );
+    const dashboardUrlCommandPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "dashboard-url-command.ts"),
+    );
+    const finalizationDepsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "finalization-deps.ts"),
+    );
+    const externalComponentPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "external-component", "index.ts"),
+    );
 
-  fs.writeFileSync(
-    scriptPath,
-    `
+    fs.writeFileSync(
+      scriptPath,
+      `
 const scenario = ${JSON.stringify(scenario)};
 const dashboardScenario = scenario.mode.startsWith("dashboard-");
 const flowSlices = require(${flowSlicesPath});
@@ -662,37 +672,36 @@ const { onboard } = require(${onboardPath});
   }
 })();
 `,
-  );
+    );
 
-  const result = await runOnboardProcessAsync(
-    ["--require", path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
-    {
-      cwd: repoRoot,
-      env: {
-        ...probeEnvironment(tmpDir),
-        ...(scenario.mode === "endpoint-override"
-          ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
-          : {}),
-        ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
-        ...(scenario.mode === "providerless-staged-messaging"
-          ? {
-              NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
-                JSON.stringify({
-                  schemaVersion: 1,
-                  sandboxName: "fsm-sandbox",
-                  agent: "openclaw",
-                  workflow: "onboard",
-                  channels: [{ channelId: "telegram", active: true }],
-                }),
-              ).toString("base64"),
-            }
-          : {}),
+    const result = await runOnboardProcessAsync(
+      ["--require", path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
+      {
+        cwd: repoRoot,
+        env: {
+          ...probeEnvironment(tmpDir),
+          ...(scenario.mode === "endpoint-override"
+            ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
+            : {}),
+          ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
+          ...(scenario.mode === "providerless-staged-messaging"
+            ? {
+                NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+                  JSON.stringify({
+                    schemaVersion: 1,
+                    sandboxName: "fsm-sandbox",
+                    agent: "openclaw",
+                    workflow: "onboard",
+                    channels: [{ channelId: "telegram", active: true }],
+                  }),
+                ).toString("base64"),
+              }
+            : {}),
+        },
+        timeoutMs: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
+        context,
       },
-      timeoutMs: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
-      context,
-    },
-  );
-  try {
+    );
     assert.equal(result.status, 0, probeFailureMessage(result));
     const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
     const resultLine = [...lines].reverse().find((line) => line.startsWith("__RESULT__"));
@@ -720,6 +729,25 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
    */
   beforeAll(() => {
     assertFreshDistArtifacts();
+  });
+
+  it("removes its workspace when cancelled before child launch", async (context) => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fsm-cleanup-"));
+    const controller = new AbortController();
+    const reason = new Error("fixture test cancelled");
+    controller.abort(reason);
+    try {
+      await assert.rejects(
+        runSliceProbe(
+          { slice: "initial", workspaceRoot },
+          { signal: controller.signal, onTestFinished: context.onTestFinished },
+        ),
+        (error: unknown) => error === reason,
+      );
+      assert.deepEqual(fs.readdirSync(workspaceRoot), []);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
   it("enters the initial slice on fresh onboard runs", async (context) => {
