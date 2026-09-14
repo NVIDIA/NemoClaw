@@ -1,0 +1,46 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.124
+
+NemoClaw v0.0.124 updates the managed OpenShell runtime to 0.0.116 and improves upgrades, local inference, and sandbox recovery.
+It also restores interactive Deep Agents Code execution features and improves agent message handling.
+
+- Upgrade recovery now waits for the replaced packaged gateway to bind before recovering sandboxes.
+  Failed required pre-upgrade backups no longer leave incomplete directories that appear to be recovery points; failed cleanup reports the retained path.
+  Rebuild also preserves the recorded serving-profile selection instead of losing it during recreation.
+  Related changes: [PR #11251](https://github.com/NVIDIA/NemoClaw/pull/11251), [PR #11710](https://github.com/NVIDIA/NemoClaw/pull/11710), [PR #11589](https://github.com/NVIDIA/NemoClaw/pull/11589), and [PR #11686](https://github.com/NVIDIA/NemoClaw/pull/11686).
+- Named sandbox commands now use the sandbox's recorded gateway across gateway-port registry roots.
+  Portable Hermes recovery reconciles a saved stopped OpenShell state and repairs required forwards.
+  If forward startup fails, recovery removes only forwards it started and reports cleanup it cannot verify.
+  Interactive `launch` releases lifecycle locks after dispatch so other lifecycle commands can proceed during the session.
+  Related changes: [PR #11445](https://github.com/NVIDIA/NemoClaw/pull/11445), [PR #11668](https://github.com/NVIDIA/NemoClaw/pull/11668), [PR #11670](https://github.com/NVIDIA/NemoClaw/pull/11670), and [PR #11657](https://github.com/NVIDIA/NemoClaw/pull/11657).
+- llama.cpp selection uses the authenticated server's served context window when no valid explicit override is set.
+  Docker Desktop on WSL checks the host-loopback listener from the WSL CLI process before the sandbox bridge check.
+  Unsupported inference-provider errors list supported providers on the selected gateway, with a supported-provider fallback when discovery fails.
+  Related changes: [PR #11544](https://github.com/NVIDIA/NemoClaw/pull/11544), [PR #11444](https://github.com/NVIDIA/NemoClaw/pull/11444), and [PR #11464](https://github.com/NVIDIA/NemoClaw/pull/11464).
+- Interrupted managed vLLM installation can replace a running container only when its ownership, local Docker connection, and port mapping match the requested installation.
+  Other port holders remain protected.
+  N1x preview rebuild accepts a retained canonical managed endpoint with the recorded preview decision.
+  Related changes: [PR #11587](https://github.com/NVIDIA/NemoClaw/pull/11587) and [PR #11580](https://github.com/NVIDIA/NemoClaw/pull/11580).
+- Native Linux Docker OpenClaw configuration export accepts the verified Ollama route created during ordinary onboarding.
+  It requires the managed proxy credential and omits its value from the export.
+  Stopping an Ollama sandbox no longer retains its model solely because a matching sibling is stopped or incomplete.
+  An unverified sibling state prevents model unload and makes `stop` exit nonzero.
+  Related changes: [PR #11550](https://github.com/NVIDIA/NemoClaw/pull/11550) and [PR #11656](https://github.com/NVIDIA/NemoClaw/pull/11656).
+- Managed Deep Agents Code interactive sessions restore native local shell, startup-command, and interpreter behavior inside the OpenShell sandbox.
+  Headless shell execution remains disabled, and headless non-shell tools retain automatic approval.
+  Non-interactive reply handling and pre-session inference verification also improve.
+  Related changes: [PR #11683](https://github.com/NVIDIA/NemoClaw/pull/11683), [PR #11276](https://github.com/NVIDIA/NemoClaw/pull/11276), and [PR #11546](https://github.com/NVIDIA/NemoClaw/pull/11546).
+- Agent message dispatch preserves piped input and avoids waiting on idle standard input when a message is already supplied.
+  Managed OpenClaw heartbeats use isolated sessions to avoid changing the main conversation.
+  Related changes: [PR #11382](https://github.com/NVIDIA/NemoClaw/pull/11382) and [PR #11487](https://github.com/NVIDIA/NemoClaw/pull/11487).
+- Fresh interceptor-based providerless onboarding now leaves OpenClaw and Hermes without an inference route until a managed provider is configured.
+  Version 2 external-component declarations remain unqualified against a released OpenShell runtime and must not be relied on in an installed release.
+  Related changes: [PR #11584](https://github.com/NVIDIA/NemoClaw/pull/11584), [PR #11633](https://github.com/NVIDIA/NemoClaw/pull/11633), and [PR #11525](https://github.com/NVIDIA/NemoClaw/pull/11525).
+- Discord setup rejects the literal bot-token placeholder before configuring the channel.
+  Uninstall failures caused by unavailable Docker now explain how to restore access and retry while preserving gateway state.
+  Fatal messaging-build and npm remediation diagnostics redact sensitive process details.
+  Related changes: [PR #11404](https://github.com/NVIDIA/NemoClaw/pull/11404), [PR #11474](https://github.com/NVIDIA/NemoClaw/pull/11474), and [PR #11674](https://github.com/NVIDIA/NemoClaw/pull/11674).
