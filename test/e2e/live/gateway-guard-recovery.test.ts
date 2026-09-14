@@ -542,6 +542,8 @@ test(
     // Existing sandboxes may still persist the historical keepalive. Recreate
     // that exact state from the identity-pinned modern container so recovery
     // proves the compatibility migration independently of fresh onboarding.
+    // The fixture also removes modern image/profile metadata, matching the
+    // pre-profile #6635 sandbox while preserving its container ownership.
     await host.cleanupForward(18789, {
       artifactName: "legacy-restart-stop-dashboard-forward",
       env: buildAvailabilityProbeEnv(),

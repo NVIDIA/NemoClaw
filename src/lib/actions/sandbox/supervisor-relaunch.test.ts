@@ -6,14 +6,12 @@ import type { DockerGpuPatchFinalizeOutcome } from "../../onboard/docker-gpu-pat
 import type { DockerGpuPatchResult } from "../../onboard/docker-gpu-patch";
 import * as registry from "../../state/registry";
 import * as privilegedExec from "../../sandbox/privileged-exec";
-import * as dockerProvider from "../../onboard/runtime-provider/docker";
-import * as containerSnapshot from "../../onboard/openshell-docker-sandbox-containers";
 import {
   type ManagedSupervisorRelaunchDeps,
   relaunchManagedSupervisorSession,
 } from "./supervisor-relaunch";
 import * as backupAuthority from "./snapshot/backup-authority";
-import * as restoreAuthority from "./snapshot/restore-authority";
+import * as sandboxState from "../../state/sandbox";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -180,16 +178,10 @@ describe("relaunchManagedSupervisorSession", () => {
       stateRestored: true,
       stateBackupRemoved: true,
     });
-    expect(deps.restoreState).toHaveBeenCalledWith(
-      "alpha",
-      { backupPath: "/tmp/rebuild-backups/alpha/recovery" },
-      {
-        targetAgentType: "openclaw",
-        newContainerId: "new-container-id",
-        oldContainerId: "old-container-id",
-      },
-      { getSandbox: deps.getSandbox, resolveContainer: deps.resolveContainer },
-    );
+    expect(deps.restoreState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery", {
+      targetAgentType: "openclaw",
+      runCommand: expect.any(Function),
+    });
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
@@ -206,7 +198,7 @@ describe("relaunchManagedSupervisorSession", () => {
     );
   });
 
-  it("uses managed backup and restore authority for default supervisor recovery", async () => {
+  it("uses managed backup authority and the pinned sandbox user for default recovery", async () => {
     vi.stubEnv("NEMOCLAW_HERMES_API_PORT", "8642");
     vi.spyOn(registry, "getSandbox").mockReturnValue({ hermesApiPort: 8642 } as never);
     const managedBackup = vi
@@ -245,19 +237,9 @@ describe("relaunchManagedSupervisorSession", () => {
       stdout: Buffer.from("restored"),
       stderr: Buffer.alloc(0),
     });
-    const snapshot = vi
-      .spyOn(containerSnapshot, "queryOpenShellDockerSandboxRuntimeSnapshot")
-      .mockReturnValue({ ok: false, error: "snapshot test result" });
-    const provider = vi
-      .spyOn(dockerProvider, "createDockerRuntimeProviderBundle")
-      .mockImplementation((options) => {
-        expect(options?.queryRuntimeSnapshot?.("alpha")).toEqual(snapshot.mock.results[0]?.value);
-        return {} as never;
-      });
     const restore = vi
-      .spyOn(restoreAuthority, "restoreRecreatedSandboxStateWithManagedAuthority")
-      .mockImplementation((_name, _manifest, options, authority) => {
-        authority.requireProvider?.(getSandbox("alpha")!);
+      .spyOn(sandboxState, "restoreRecreatedSandboxState")
+      .mockImplementation((_name, _path, options) => {
         const result = options.runCommand!("restore-command", {
           input: Buffer.from("state"),
           timeout: 30000,
@@ -280,9 +262,8 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     expect(restore).toHaveBeenCalledWith(
       "alpha",
-      managedBackup.mock.results[0]?.value.manifest,
+      managedBackup.mock.results[0]?.value.manifest.backupPath,
       expect.objectContaining({ targetAgentType: "hermes", runCommand: expect.any(Function) }),
-      { getSandbox, requireProvider: expect.any(Function) },
     );
     expect(execution).toHaveBeenCalledWith(
       "alpha",
@@ -310,9 +291,7 @@ describe("relaunchManagedSupervisorSession", () => {
         maxOutputBytes: 1024,
       },
     );
-    expect(provider).toHaveBeenCalledOnce();
-    expect(snapshot).toHaveBeenCalledWith("alpha", {}, { expectedContainerId: "new-container-id" });
-    expect(deps.resolveContainer).toHaveBeenLastCalledWith("alpha", null, {
+    expect(deps.resolveContainer).toHaveBeenLastCalledWith("alpha", "docker", {
       expectedResourceHandle: "new-container-id",
       retainedDockerBackupId: "old-container-id",
     });

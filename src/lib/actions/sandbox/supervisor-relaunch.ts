@@ -26,13 +26,15 @@ import {
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
-import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
+import {
+  executePrivilegedSandboxCommand,
+  resolveDirectSandboxContainer,
+} from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
 import { backupSandboxStateWithManagedAuthority } from "./snapshot/backup-authority";
-import { restoreRecreatedDockerSandboxState } from "./snapshot/docker-recreated-restore";
 
 /**
  * Legacy sandboxes persist `sleep infinity` while `scripts/nemoclaw-start.sh`
@@ -69,7 +71,7 @@ export type ManagedSupervisorRelaunchDeps = {
   restartRestoredManagedGateway?: (containerId: string, retainedDockerBackupId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
   sleep?: (seconds: number) => void;
-  restoreState?: typeof restoreRecreatedDockerSandboxState;
+  restoreState?: typeof sandboxState.restoreRecreatedSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   recreate?: (
@@ -239,7 +241,7 @@ export function relaunchManagedSupervisorSession(
   const backupState =
     deps.backupState ??
     ((name: string) => backupSandboxStateWithManagedAuthority(name, {}, { getSandbox }));
-  const restoreState = deps.restoreState ?? restoreRecreatedDockerSandboxState;
+  const restoreState = deps.restoreState ?? sandboxState.restoreRecreatedSandboxState;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
   const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
   const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
@@ -349,17 +351,39 @@ export function relaunchManagedSupervisorSession(
       }
       let stateRestored = false;
       try {
-        const restored = restoreState(
-          sandboxName,
-          backupManifest,
-          {
-            targetAgentType: entry.agent || "openclaw",
-            ...(entry.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
-            newContainerId: result.newContainerId,
-            oldContainerId: result.oldContainerId,
-          },
-          { getSandbox, resolveContainer },
-        );
+        const restored = restoreState(sandboxName, backupManifest.backupPath, {
+          targetAgentType: entry.agent || "openclaw",
+          ...(entry.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
+          // The final handoff has not made OpenShell SSH available yet.
+          // Preserve the existing restore checks and ordinary sandbox user.
+          runCommand: (command, options) =>
+            executePrivilegedSandboxCommand(
+              sandboxName,
+              [
+                "/usr/bin/setpriv",
+                "--reuid=sandbox",
+                "--regid=sandbox",
+                "--init-groups",
+                "--no-new-privs",
+                "--",
+                "/usr/bin/env",
+                "-i",
+                "HOME=/sandbox",
+                "PATH=/usr/local/bin:/usr/bin:/bin",
+                "/bin/sh",
+                "-c",
+                command,
+              ],
+              {
+                expectedResourceHandle: result.newContainerId,
+                retainedDockerBackupId: result.oldContainerId,
+                sanitizeEnvironment: true,
+                input: options.input,
+                timeout: options.timeout,
+                maxOutputBytes: options.maxBuffer,
+              },
+            ),
+        });
         stateRestored = restored.success;
         if (!stateRestored && restored.error) throw new Error(restored.error);
       } catch (error) {

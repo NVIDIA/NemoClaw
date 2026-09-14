@@ -69,6 +69,7 @@ function lifecycleDeps() {
   return {
     runOpenshell: vi.fn(() => ({ status: 0 })),
     finalize: vi.fn(async () => successfulFinalization()),
+    recordLegacyWorkload: vi.fn(),
   };
 }
 
@@ -240,6 +241,10 @@ describe("gateway guard legacy keepalive fixture", () => {
     );
 
     expect(result.newContainerId).toBe(NEW_CONTAINER_ID);
+    expect(lifecycle.recordLegacyWorkload).toHaveBeenCalledWith("e2e-2701", NEW_CONTAINER_ID);
+    expect(lifecycle.recordLegacyWorkload.mock.invocationCallOrder[0]).toBeGreaterThan(
+      lifecycle.finalize.mock.invocationCallOrder[0]!,
+    );
     expect(recreate).toHaveBeenCalledOnce();
     expect(recreate).toHaveBeenCalledWith(
       {
@@ -699,6 +704,7 @@ describe("gateway guard legacy keepalive fixture", () => {
         { recreate, ...lifecycle },
       ),
     ).rejects.toThrow(error);
+    expect(lifecycle.recordLegacyWorkload).not.toHaveBeenCalled();
   });
 
   it("rejects an abbreviated container ID before recreation", async () => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { pathToFileURL } from "node:url";
 
 import * as dockerRunNamespace from "../../../src/lib/adapters/docker/run.ts";
@@ -17,6 +18,9 @@ import type {
 } from "../../../src/lib/onboard/docker-gpu-patch-types.ts";
 import * as startupCommandEnvNamespace from "../../../src/lib/onboard/docker-startup-command-env.ts";
 import * as startupCommandPatchNamespace from "../../../src/lib/onboard/docker-startup-command-patch.ts";
+import * as registryNamespace from "../../../src/lib/state/registry.ts";
+import * as privilegedExecNamespace from "../../../src/lib/sandbox/privileged-exec.ts";
+import * as workloadAuthorityNamespace from "../../../src/lib/onboard/workload/authority.ts";
 import { redactString } from "../fixtures/redaction.ts";
 
 const LEGACY_KEEPALIVE_COMMAND = ["sleep", "infinity"] as const;
@@ -84,6 +88,18 @@ const { createCliOpenShellSandboxCommandExecutor } = (
     : sandboxCommandCliNamespace
 ) as typeof import("../../../src/lib/adapters/openshell/sandbox-command-cli.ts");
 
+const registry = (
+  "default" in registryNamespace ? registryNamespace.default : registryNamespace
+) as typeof import("../../../src/lib/state/registry.ts");
+const { resolveDirectSandboxContainer } = (
+  "default" in privilegedExecNamespace ? privilegedExecNamespace.default : privilegedExecNamespace
+) as typeof import("../../../src/lib/sandbox/privileged-exec.ts");
+const { readManagedWorkloadAuthority } = (
+  "default" in workloadAuthorityNamespace
+    ? workloadAuthorityNamespace.default
+    : workloadAuthorityNamespace
+) as typeof import("../../../src/lib/onboard/workload/authority.ts");
+
 type StartupCommandRecreate = typeof recreateOpenShellDockerSandboxWithStartupCommand;
 type DockerGpuPatchFinalize = typeof finalizeDockerGpuPatchBackup;
 type DockerCapture = NonNullable<DockerGpuPatchDeps["dockerCapture"]>;
@@ -107,6 +123,7 @@ export type LegacyKeepaliveFixtureDeps = {
   runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
   runCaptureOpenshell: NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
   finalize: DockerGpuPatchFinalize;
+  recordLegacyWorkload: (sandboxName: string, containerId: string) => void;
 };
 
 const defaultDeps: LegacyKeepaliveFixtureDeps = {
@@ -121,7 +138,42 @@ const defaultDeps: LegacyKeepaliveFixtureDeps = {
       timeout: typeof options?.timeout === "number" ? options.timeout : undefined,
     }).output,
   finalize: finalizeDockerGpuPatchBackup,
+  recordLegacyWorkload,
 };
+
+/** #6635 predates managed profile receipts; keep fixture metadata in that generation. */
+function recordLegacyWorkload(sandboxName: string, containerId: string): void {
+  registry.withLock(() => {
+    const data = registry.load();
+    const entry = data.sandboxes[sandboxName];
+    requireFixtureInput(
+      Boolean(entry) && entry.name === sandboxName,
+      "legacy fixture registry owner is missing",
+    );
+    requireFixtureInput(
+      resolveDirectSandboxContainer(sandboxName, entry.openshellDriver ?? null, {
+        expectedResourceHandle: containerId,
+      }) === containerId,
+      "legacy fixture replacement ownership changed",
+    );
+    if (!readManagedWorkloadAuthority(entry)) return;
+    requireFixtureInput(
+      entry.agent === "openclaw" && !entry.hostLocalInferenceReceipt,
+      "legacy fixture requires a cloud OpenClaw workload",
+    );
+    // Historical entries had no managed profile receipt. This fixture reuses
+    // a shared image, so it must not claim per-sandbox image cleanup ownership.
+    const replacement = { ...entry };
+    delete replacement.imageTag;
+    delete replacement.workload;
+    data.sandboxes[sandboxName] = replacement;
+    registry.save(data);
+    requireFixtureInput(
+      isDeepStrictEqual(registry.load().sandboxes[sandboxName], replacement),
+      "legacy fixture workload identity did not persist",
+    );
+  });
+}
 
 function requireFixtureInput(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -472,6 +524,10 @@ export async function createLegacyKeepaliveFixture(
         ? `; last sandbox phase was ${finalization.lastSandboxPhase}`
         : ""
     }`,
+  );
+  (deps.recordLegacyWorkload ?? defaultDeps.recordLegacyWorkload)(
+    options.sandboxName,
+    result.newContainerId,
   );
   return { ...result, backupRemoved: true };
 }
