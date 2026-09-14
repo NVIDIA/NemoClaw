@@ -89,8 +89,8 @@ pub(super) async fn build_runtime(pins: &Pins) -> Result<()> {
         )?;
     }
     fs::copy("LICENSE", context.join("LICENSE"))?;
-    fs::copy(binary, context.join("nemoclaw-spark"))?;
-    let metadata = json!({"rust":pins.rust,"sourceVersion":version,"nemoclaw-spark":bundle::hash_file(&context.join("nemoclaw-spark"))?,"supervisor-source.tar.gz":bundle::hash_file(&context.join("supervisor-source.tar.gz"))?});
+    fs::copy(binary, context.join("nemoclaw-runtime"))?;
+    let metadata = json!({"rust":pins.rust,"sourceVersion":version,"nemoclaw-runtime":bundle::hash_file(&context.join("nemoclaw-runtime"))?,"supervisor-source.tar.gz":bundle::hash_file(&context.join("supervisor-source.tar.gz"))?});
     fs::write(
         context.join("supervisor.json"),
         serde_json::to_vec_pretty(&metadata)?,
@@ -203,5 +203,5 @@ fn build_retained_source(root: &Path, archive: &Path) -> Result<PathBuf> {
         )
         .env("CFLAGS", format!("-ffile-prefix-map={prefix}=/workspace"))
         .env("CXXFLAGS", format!("-ffile-prefix-map={prefix}=/workspace")))?;
-    Ok(target.join("aarch64-unknown-linux-gnu/release/nemoclaw-spark"))
+    Ok(target.join("aarch64-unknown-linux-gnu/release/nemoclaw-runtime"))
 }

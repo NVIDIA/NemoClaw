@@ -47,3 +47,11 @@ Keep a bundle immutable while a deployment operation uses it. The development
 builder replaces `dist/<platform>`; copy it to a dedicated location for a long
 live experiment before rebuilding. Repository text uses LF on every platform so
 source-derived provider versions do not change with checkout newline conversion.
+
+The image contains the shared `nemoclaw-runtime` executable. Its preparation
+adapter selects the pinned Qwen recipe, the vLLM backend, and the Spark hardware
+profile. The old `nemoclaw-spark` path is a symlink, and `NEMOCLAW_SPARK_SPEC`
+remains an accepted environment name alongside `NEMOCLAW_RUNTIME_SPEC`.
+Conflicting specifications fail before work begins. Managed containers continue
+using the legacy entrypoint/environment contract so existing pinned images and
+resource bindings remain valid; the image's default entrypoint uses the new name.

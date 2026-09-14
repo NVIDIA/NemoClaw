@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [[bin]]
-name = "nemoclaw-spark"
+name = "nemoclaw-runtime"
 path = "src/main.rs"
 
 [lints]

@@ -28,13 +28,27 @@ async fn main() -> std::process::ExitCode {
     }.await;
     let result = async {
         let _signals = signals?;
-        let text = std::env::var("NEMOCLAW_SPARK_SPEC").map_err(|_| {
-            Error::Configuration(nemoclaw_sdk::config::ConfigError(
-                "missing Spark specification",
-            ))
-        })?;
+        let read = |name| match std::env::var(name) {
+            Ok(value) => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(Error::State("runtime specification is not UTF-8"))
+            }
+        };
+        let current = read("NEMOCLAW_RUNTIME_SPEC")?;
+        let legacy = read("NEMOCLAW_SPARK_SPEC")?;
+        if current
+            .as_ref()
+            .zip(legacy.as_ref())
+            .is_some_and(|(a, b)| a != b)
+        {
+            return Err(Error::Conflict("conflicting runtime specifications"));
+        }
+        let text = current
+            .or(legacy)
+            .ok_or(Error::State("missing runtime specification"))?;
         let spec: Service = serde_json::from_str(&text)
-            .map_err(|_| Error::State("invalid pinned Spark specification"))?;
+            .map_err(|_| Error::State("invalid pinned runtime specification"))?;
         spec.validate()?;
         runtime::run(&spec, &cancel, &trip).await
     }
@@ -47,6 +61,8 @@ async fn main() -> std::process::ExitCode {
 }
 #[cfg(not(target_os = "linux"))]
 fn main() -> std::process::ExitCode {
-    eprintln!("the Spark inference supervisor requires Linux ARM64");
+    eprintln!(
+        "the inference runtime requires Linux; hardware support depends on the selected recipe"
+    );
     std::process::ExitCode::FAILURE
 }

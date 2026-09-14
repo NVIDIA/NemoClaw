@@ -161,3 +161,30 @@ at least 64K. Its retained Go-compatible Ollama/Qwen3 path passed a short native
 response; that does not establish long-context capability. Do not falsify model
 metadata or widen isolation policy to make readiness pass. Backend/agent
 compatibility needs evidence beyond successful provider registration.
+
+## Runtime boundaries
+
+The runtime crate follows process lifetime, not hardware identity. It builds one
+`nemoclaw-runtime` executable. Within the existing crates:
+
+| Concern | Owner |
+|---|---|
+| Process lifetime, cancellation, status, readiness deadline | Shared runtime supervisor |
+| Memory measurements, GPU detection, capacity and protection rules | Hardware modules and validated profiles |
+| Snapshot pins, preparation identity, PLE tools, patches and model tuning | Versioned recipe artifacts and their typed adapter |
+| Launch arguments and readiness probe | Backend modules |
+
+The recipe selects a qualified backend/hardware combination. The existing YAML
+backend identifier remains unchanged for compatibility; this refactor does not
+add supported combinations or an arbitrary launch-argument mechanism. A new
+hardware profile or backend normally adds a module and qualification evidence.
+A crate is justified by a dependency or deployment boundary, not a new GPU name.
+
+Acceptance uses a real fixture process with no Spark configuration to exercise
+supervisor deadlines, cancellation, readiness, pressure and failed observations.
+A separate HTTP fixture exercises backend readiness. Reference preparation keys,
+capacity decisions and the observed pre-refactor vLLM argument vector protect
+compatibility. The live image-upgrade gate must preserve storage receipts and all
+independent resource identities, then return an actual agent response and an
+unchanged export/reapply. These tests establish separation for this recipe; a
+second real backend remains the next test of how well the modules generalize.

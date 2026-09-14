@@ -9,9 +9,11 @@ COPY verify_packed.py /opt/nemoclaw/source/verify_packed.py
 COPY model.json /opt/nemoclaw/model.json
 COPY LICENSE /opt/nemoclaw/source/Apache-2.0.txt
 RUN SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH python3 /opt/nemoclaw/source/apply_patches.py
-COPY nemoclaw-spark /usr/local/bin/nemoclaw-spark
+COPY nemoclaw-runtime /usr/local/bin/nemoclaw-runtime
+# Retain the entrypoint used by existing desired-state bindings.
+RUN ln -s nemoclaw-runtime /usr/local/bin/nemoclaw-spark
 COPY supervisor-source.tar.gz supervisor.json /opt/nemoclaw/source/
-ENTRYPOINT ["/usr/local/bin/nemoclaw-spark"]
+ENTRYPOINT ["/usr/local/bin/nemoclaw-runtime"]
 CMD []
 LABEL org.nemoclaw.backend="vllm-qwen38-spark-v1" \
       org.nemoclaw.recipe="d03809008834124e80223c3482f2ddb59577a48f" \
