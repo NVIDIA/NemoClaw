@@ -10,11 +10,14 @@ Use these instructions only after official detection identifies Windows WSL.
 Offer the maintained Windows Express path before the normal provider menu.
 Explain that Express keeps the selected agent, selects the admitted local inference profile, and leaves optional setup at its defaults.
 For a qualifying N1x WSL host, Express uses managed llama.cpp with Qwen 3.6 35B-A3B and downloads a pinned 20.4 GB GGUF file.
-The installer checks only the preliminary Express-selection conditions.
-Before managed llama.cpp starts, onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+The installer leaves provider, model, and recipe selection to onboarding.
+Before managed llama.cpp starts, onboarding requires Linux Arm64 WSL, one proof-backed GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and successful Docker Desktop GPU passthrough.
 Before selecting managed llama.cpp, unset `DOCKER_HOST` and select Docker's `default` context.
 Managed N1x WSL selection rejects other Docker selectors.
-For other Windows WSL hosts, Express uses Windows-host Ollama only when local Docker Desktop is confirmed. Native Docker Engine, remote or unknown Docker targets, and failed Docker detection use WSL-local Ollama with its memory-aware default model.
+For other Windows WSL hosts, Express uses WSL-local Ollama with its memory-aware default model.
+WSL-local Ollama can use Docker Desktop or the qualification-backed rootless Podman provider.
+When the operator selects Podman, set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and require the current-user Podman service. Require the NVIDIA CDI device only when the operator enables sandbox GPU passthrough or needs the N1x CUDA capacity proof.
+Podman does not enable the Docker Desktop-only managed llama.cpp or Windows-host Ollama routes.
 Include the third-party-software notice, then ask: "Run Express install with these settings?"
 Choices:
 
@@ -23,12 +26,14 @@ Choices:
 
 If Express is selected:
 
-- When the installer confirms local Docker Desktop, Arm64, the N1x Windows product identity, and at least 48,000 MiB of GPU memory, set `NEMOCLAW_PROVIDER=install-llama-cpp` and `NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1`.
-  Onboarding must then confirm Docker Desktop GPU passthrough before managed llama.cpp starts.
-  If any required readiness check fails, stop and explain that managed llama.cpp is unavailable on this host.
+- Leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` unset.
+  Leave `NEMOCLAW_LLAMACPP_RECIPE` unset for the automatic Qwen recipe, or set it to a compatible recipe ID to make the managed recipe explicit.
+  Onboarding selects managed llama.cpp only after the complete N1x WSL readiness contract passes.
+  If N1x readiness does not match before managed selection starts, onboarding selects WSL-local Ollama. If a required check fails after selection starts, onboarding stops before installation.
 - For managed llama.cpp, explain that Hugging Face authentication is optional and anonymous downloads can return HTTP 429. If needed, `HF_TOKEN` supplies a Hugging Face read token only to the temporary downloader. The token remains in the installer environment; remove `HF_TOKEN` after installation when no process needs it.
-- Otherwise, when local Docker Desktop is confirmed, set `NEMOCLAW_PROVIDER=install-windows-ollama` and leave `NEMOCLAW_MODEL` unset so the installed release chooses its memory-aware Ollama model.
-- For native Docker Engine, remote or unknown Docker targets, and failed Docker detection, set `NEMOCLAW_PROVIDER=install-ollama` and leave `NEMOCLAW_MODEL` unset. This installs WSL-local Ollama; the sandbox authentication proxy is used when containers cannot reach host loopback directly.
+- For other WSL hosts, onboarding installs WSL-local Ollama and uses the sandbox authentication proxy.
+  Use Docker Desktop by default; preserve `NEMOCLAW_GATEWAY_RUNTIME=podman` only when the operator selected the qualified rootless Podman path and its current-user service prerequisites pass. Require NVIDIA CDI only for sandbox GPU passthrough or the N1x CUDA capacity proof.
+  Docker Desktop can reach host loopback directly, but that does not bypass the proxy.
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
 - Set `NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.
@@ -36,5 +41,6 @@ If Express is selected:
 - Treat the Express confirmation as approval for the disclosed notice, downloads, and installation, and skip the later final-permission prompt.
 - Do not ask again for the agent or ask separate questions for model, sandbox name, web search, messaging, policy, download approval, or final installation approval.
 - Do not start a second Ollama service on the same port.
+- Do not set Windows `OLLAMA_HOST` to `0.0.0.0:11434`.
 
 If Express is declined, continue with the normal provider selection and offer every provider supported by the selected agent on Windows WSL.

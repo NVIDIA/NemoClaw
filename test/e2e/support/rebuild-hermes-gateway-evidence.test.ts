@@ -34,15 +34,14 @@ describe("Hermes rebuild gateway evidence", () => {
     ).toThrow("Hermes gateway running_pid is invalid");
   });
 
-  it.each([
-    "active_agents",
-    "pid",
-    "start_time",
-  ] as const)("keeps %s strict while accepting the restart transient", (field) => {
-    expect(() =>
-      parseHermesGatewayEvidence(JSON.stringify({ ...liveEvidence, [field]: null })),
-    ).toThrow(`Hermes gateway ${field} is invalid`);
-  });
+  it.each(["active_agents", "pid", "start_time"] as const)(
+    "keeps %s strict while accepting the restart transient",
+    (field) => {
+      expect(() =>
+        parseHermesGatewayEvidence(JSON.stringify({ ...liveEvidence, [field]: null })),
+      ).toThrow(`Hermes gateway ${field} is invalid`);
+    },
+  );
 
   it("rejects an invalid gateway state", () => {
     expect(() =>

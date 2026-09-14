@@ -40,32 +40,11 @@ function resolveLaunchableVersion(options: { channel: string; explicit?: string 
   }
 }
 
-function runLaunchableDevGate() {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-dev-gate-"));
-  try {
-    return spawnSync("bash", [LAUNCHABLE], {
-      encoding: "utf8",
-      env: {
-        HOME: tempDir,
-        LAUNCH_LOG: path.join(tempDir, "launch.log"),
-        LOGNAME: "tester",
-        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-        PATH: "/usr/bin:/bin",
-        SUDO_USER: "tester",
-        USER: "tester",
-      },
-    });
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
 describe("OpenShell channel workflow boundary", () => {
   it.each([
-    { channel: "dev", expected: "dev" },
-    { channel: "stable", expected: "v0.0.106" },
-    { channel: "auto", expected: "v0.0.106" },
-    { channel: "dev", explicit: "v9.9.9", expected: "v9.9.9" },
+    { channel: "stable", expected: "v0.0.116" },
+    { channel: "auto", expected: "v0.0.116" },
+    { channel: "stable", explicit: "0.0.116", expected: "v0.0.116" },
   ])("resolves launchable channel $channel to $expected", ({ channel, explicit, expected }) => {
     const result = resolveLaunchableVersion({ channel, explicit });
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -76,20 +55,17 @@ describe("OpenShell channel workflow boundary", () => {
     const result = resolveLaunchableVersion({ channel: "artifact" });
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain(
-      "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto",
+      "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto",
     );
   });
 
-  it("requires explicit opt-in before a launchable consumes unverified dev artifacts", () => {
-    const result = runLaunchableDevGate();
+  it.each([
+    { channel: "dev" },
+    { channel: "dev", explicit: "v0.0.116" },
+    { channel: "stable", explicit: "v9.9.9" },
+  ])("rejects unsupported launchable OpenShell selection %#", ({ channel, explicit }) => {
+    const result = resolveLaunchableVersion({ channel, explicit });
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain(
-      "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1",
-    );
-
-    const source = fs.readFileSync(LAUNCHABLE, "utf8");
-    expect(source).toContain(
-      'if [[ "$OPENSHELL_VERSION" != "dev" ]]; then\n    verify_openshell_cli_asset',
-    );
+    expect(`${result.stdout}${result.stderr}`).toContain("requires exact stable OpenShell 0.0.116");
   });
 });

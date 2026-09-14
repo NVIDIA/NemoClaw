@@ -72,7 +72,7 @@ describe("rebuildSandbox DCode recovered provider", () => {
       configureDcodeSession(harness);
       setGatewayProviderMetadata(
         harness,
-        "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\n",
+        "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: <none>\n",
       );
 
       await expect(

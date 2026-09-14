@@ -102,6 +102,20 @@ export function listTreeChanges(repository: string, fromTree: string, toTree: st
   return nulPaths(gitBuffer(repository, ["diff", "--name-only", "-z", fromTree, toTree]));
 }
 
+export function hasTreeChanges(
+  repository: string,
+  fromTree: string,
+  toTree: string,
+  pathspec: string,
+): boolean {
+  const result = gitStatus(repository, ["diff", "--quiet", fromTree, toTree, "--", pathspec]);
+  if (result.status === 0) return false;
+  if (result.status === 1) return true;
+  throw new ConflictFixerError(
+    `Git could not compare trees: ${result.stderr.trim() || result.stdout.trim()}`,
+  );
+}
+
 export function writeTree(repository: string): string {
   return requireSha(gitText(repository, ["write-tree"]), "tree");
 }

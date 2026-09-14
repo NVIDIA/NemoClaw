@@ -2,98 +2,50 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
-const sourcePath = path.join(
-  repoRoot,
-  "agents",
-  "langchain-deepagents-code",
-  "dcode-login-profile.sh",
-);
-const tempDirs: string[] = [];
 
-function fixture(): {
-  fallbackMarker: string;
-  hookMarker: string;
-  home: string;
-  runtimeEnv: string;
-} {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-login-profile-"));
-  tempDirs.push(home);
-  const runtimeEnv = path.join(home, "runtime-env.sh");
-  const hook = path.join(home, "hostile-bash-env.sh");
-  const hookMarker = path.join(home, "hook-ran");
-  const fallbackMarker = path.join(home, "fallback-ran");
-  const source = fs
-    .readFileSync(sourcePath, "utf8")
-    .replaceAll("/tmp/nemoclaw-proxy-env.sh", runtimeEnv);
-
-  fs.writeFileSync(path.join(home, ".bash_profile"), source, "utf8");
-  fs.writeFileSync(path.join(home, ".bash_login"), `printf ran > ${fallbackMarker}\n`, "utf8");
-  fs.writeFileSync(hook, `printf ran > ${hookMarker}\n`, "utf8");
-  return { fallbackMarker, hookMarker, home, runtimeEnv };
+// The live fresh-reonboard check owns Linux /etc/profile.d ordering against
+// personal profiles. This test executes the hook's environment changes only.
+function runHook(command: string) {
+  return spawnSync(
+    "/bin/bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-p",
+      "-c",
+      '. agents/langchain-deepagents-code/dcode-login-profile.sh; printf \'%s\\n\' "$HOME" "${BASH_ENV-unset}" "${ENV-unset}"; ' +
+        command,
+    ],
+    {
+      encoding: "utf8",
+      cwd: repoRoot,
+      env: {
+        HOME: "/sandbox",
+        BASH_ENV: "/sandbox/.bashrc",
+        ENV: "/sandbox/.profile",
+      },
+    },
+  );
 }
 
-describe("managed DCode login profile", () => {
-  afterEach(() => {
-    for (const directory of tempDirs.splice(0)) {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it("skips sandbox startup hooks before a managed exec command (#8624)", () => {
-    const { fallbackMarker, hookMarker, home, runtimeEnv } = fixture();
-    const runtimeMarker = path.join(home, "runtime-env-ran");
-    fs.writeFileSync(runtimeEnv, `printf ran > ${runtimeMarker}\n`, "utf8");
-
-    const result = spawnSync(
-      "/bin/bash",
-      ["-lc", ": /usr/local/lib/nemoclaw/dcode-managed-exec; printf '%s\\n' MANAGED_COMMAND_RAN"],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          BASH_ENV: path.join(home, "hostile-bash-env.sh"),
-          ENV: path.join(home, "hostile-bash-env.sh"),
-          HOME: home,
-        },
-      },
-    );
+describe("managed DCode system login hook", () => {
+  it("selects the image-owned home and clears startup hooks for managed exec (#11256)", () => {
+    const result = runHook(": /usr/local/lib/nemoclaw/dcode-managed-exec");
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("MANAGED_COMMAND_RAN\n");
+    expect(result.stdout).toBe("/usr/local/lib/nemoclaw\nunset\nunset\n");
     expect(result.stderr).toBe("");
-    expect(fs.existsSync(runtimeMarker)).toBe(false);
-    expect(fs.existsSync(hookMarker)).toBe(false);
-    expect(fs.existsSync(fallbackMarker)).toBe(false);
   });
 
-  it("preserves the managed runtime environment for ordinary login commands (#6191)", () => {
-    const { fallbackMarker, hookMarker, home, runtimeEnv } = fixture();
-    fs.writeFileSync(runtimeEnv, "export NEMOCLAW_DCODE_LOGIN_TEST=preserved\n", "utf8");
-
-    const result = spawnSync(
-      "/bin/bash",
-      ["-lc", "printf '%s\\n' \"$NEMOCLAW_DCODE_LOGIN_TEST\""],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          BASH_ENV: path.join(home, "hostile-bash-env.sh"),
-          ENV: path.join(home, "hostile-bash-env.sh"),
-          HOME: home,
-        },
-      },
-    );
+  it("leaves the agent's home and startup hooks unchanged for ordinary commands (#11256)", () => {
+    const result = runHook(":");
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("preserved\n");
+    expect(result.stdout).toBe("/sandbox\n/sandbox/.bashrc\n/sandbox/.profile\n");
     expect(result.stderr).toBe("");
-    expect(fs.existsSync(hookMarker)).toBe(false);
-    expect(fs.existsSync(fallbackMarker)).toBe(false);
   });
 });

@@ -35,9 +35,9 @@ function context(verification: "verified" | "gateway-unavailable" = "verified"):
 }
 
 describe("access failure classification", () => {
-  it("uses live verified preset state for a high-confidence missing approval", () => {
+  it("uses live verified preset state for a high-confidence missing approval", async () => {
     expect(
-      classifyAccessFailure({
+      await classifyAccessFailure({
         sandboxName: "alpha",
         host: "api.slack.com",
         error: { status: 401 },
@@ -46,9 +46,9 @@ describe("access failure classification", () => {
     ).toEqual(expect.objectContaining({ kind: "missing-approval", confidence: "high" }));
   });
 
-  it("keeps an unavailable live observation advisory", () => {
+  it("keeps an unavailable live observation advisory", async () => {
     expect(
-      classifyAccessFailure({
+      await classifyAccessFailure({
         sandboxName: "alpha",
         host: "api.slack.com",
         error: { code: "ETIMEDOUT" },
@@ -57,31 +57,35 @@ describe("access failure classification", () => {
     ).toEqual(expect.objectContaining({ kind: "blocked-by-policy", confidence: "low" }));
   });
 
-  it("classifies an undeclared host as blocked by policy", () => {
+  it("classifies an undeclared host as blocked by policy", async () => {
     expect(
-      classifyAccessFailure({
-        sandboxName: "alpha",
-        host: "unknown.example",
-        error: { code: "ENETUNREACH" },
-        context: context(),
-      }).kind,
+      (
+        await classifyAccessFailure({
+          sandboxName: "alpha",
+          host: "unknown.example",
+          error: { code: "ENETUNREACH" },
+          context: context(),
+        })
+      ).kind,
     ).toBe("blocked-by-policy");
   });
 
-  it("reports unsupported capabilities before network heuristics", () => {
+  it("reports unsupported capabilities before network heuristics", async () => {
     expect(
-      classifyAccessFailure({
-        sandboxName: "alpha",
-        host: "api.slack.com",
-        capability: { supported: false, reason: "not available" },
-        context: context(),
-      }).kind,
+      (
+        await classifyAccessFailure({
+          sandboxName: "alpha",
+          host: "api.slack.com",
+          capability: { supported: false, reason: "not available" },
+          context: context(),
+        })
+      ).kind,
     ).toBe("unsupported");
   });
 
-  it("treats a network error on a live verified preset as upstream-unknown", () => {
+  it("treats a network error on a live verified preset as upstream-unknown", async () => {
     expect(
-      classifyAccessFailure({
+      await classifyAccessFailure({
         sandboxName: "alpha",
         host: "api.slack.com",
         error: { code: "EHOSTUNREACH" },
@@ -90,9 +94,9 @@ describe("access failure classification", () => {
     ).toEqual(expect.objectContaining({ kind: "unknown", confidence: "high" }));
   });
 
-  it("keeps HTTP 403 on an active host ambiguous", () => {
+  it("keeps HTTP 403 on an active host ambiguous", async () => {
     expect(
-      classifyAccessFailure({
+      await classifyAccessFailure({
         sandboxName: "alpha",
         host: "api.slack.com",
         error: { status: 403 },
@@ -101,7 +105,7 @@ describe("access failure classification", () => {
     ).toEqual(expect.objectContaining({ kind: "missing-approval", confidence: "low" }));
   });
 
-  it("reports a known but live-unapplied host as blocked by policy", () => {
+  it("reports a known but live-unapplied host as blocked by policy", async () => {
     const ctx = context();
     ctx.activePresets = [];
     ctx.knownUnappliedPresets = [
@@ -115,7 +119,7 @@ describe("access failure classification", () => {
       },
     ];
     expect(
-      classifyAccessFailure({
+      await classifyAccessFailure({
         sandboxName: "alpha",
         host: "api.github.com",
         error: { status: 403 },
@@ -130,14 +134,16 @@ describe("access failure classification", () => {
     );
   });
 
-  it("falls back to unknown when there is no policy or approval signal", () => {
+  it("falls back to unknown when there is no policy or approval signal", async () => {
     expect(
-      classifyAccessFailure({
-        sandboxName: "alpha",
-        host: "unknown.example",
-        error: { message: "application failed" },
-        context: context(),
-      }).kind,
+      (
+        await classifyAccessFailure({
+          sandboxName: "alpha",
+          host: "unknown.example",
+          error: { message: "application failed" },
+          context: context(),
+        })
+      ).kind,
     ).toBe("unknown");
   });
 });

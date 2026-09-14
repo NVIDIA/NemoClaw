@@ -165,7 +165,7 @@ function executableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function createRuntimeFixture(pullFailure?: PullFailure) {
+function createRuntimeFixture(pullFailure?: PullFailure, gatewayName = "nemoclaw") {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-inference-"));
   temporaryDirectories.push(homeDir);
   const runtime = runtimeAuthority(homeDir);
@@ -211,6 +211,7 @@ function createRuntimeFixture(pullFailure?: PullFailure) {
     : capture;
   const resolverOptions = {
     runtimeContext: { authority: runtime, environmentScope },
+    gatewayName,
     credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
     getReservationSessionId: () => "portable-session",
     runGatewayOpenshell,
@@ -294,6 +295,7 @@ function gatewayJournal(fixture: ReturnType<typeof createRuntimeFixture>) {
   return JSON.parse(fs.readFileSync(gatewayJournalPath(fixture), "utf8")) as {
     phase: string;
     intent: {
+      gatewayName: string;
       providerCredentialEnv: string;
       transactionId: string;
       targetSha256: string;
@@ -340,6 +342,7 @@ describe("Hermes Portable Ollama inference activation", () => {
 
     const authority = prepareHermesPortableOllamaPublishedReceiptAuthority({
       directory: path.dirname(receiptPath),
+      gatewayName: journal.intent.gatewayName,
       sandboxName: journal.intent.sandboxName,
       credentialEnv: journal.intent.credentialEnv,
     });
@@ -364,6 +367,7 @@ describe("Hermes Portable Ollama inference activation", () => {
 
     const authority = prepareHermesPortableOllamaPublishedInferenceAuthority({
       directory: path.dirname(receiptPath),
+      gatewayName: journal.intent.gatewayName,
       sandboxName: journal.intent.sandboxName,
       credentialEnv: journal.intent.credentialEnv,
       runGatewayOpenshell: fixture.gatewayProvider.run,
@@ -409,7 +413,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       id: "portable-ollama-provider",
       resourceVersion: 1,
     });
-    prepared.removeAndVerify();
+    await prepared.removeAndVerify();
     expect(fixture.gatewayProvider.isPresent()).toBe(false);
 
     const retry = prepareHermesPortableOllamaProviderRetirement({
@@ -417,7 +421,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       allowAbsent: true,
     });
     expect(retry.present).toBe(false);
-    retry.removeAndVerify();
+    await retry.removeAndVerify();
     retry.verifyAbsent();
     expect(
       fixture.gatewayProvider
@@ -537,6 +541,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const resolverOptions = {
       runtimeContext: null,
+      gatewayName: "nemoclaw",
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       getReservationSessionId: () => null,
       runGatewayOpenshell: () => ({ status: 1, stdout: "", stderr: "" }),
@@ -682,6 +687,44 @@ describe("Hermes Portable Ollama inference activation", () => {
     await expect(published.prepareGatewayMutation(gatewayMutationInput)).rejects.toThrow(
       "gateway mutation authority changed",
     );
+  });
+
+  it("preserves the selected gateway through publication and retirement for a non-default port (#10778)", async () => {
+    const gatewayName = "nemoclaw-18080";
+    const fixture = createRuntimeFixture(undefined, gatewayName);
+    const selection = fixture.resolve()!;
+    const route = prepareManagedRoute(fixture, selection);
+    route.prepared.validateBeforeCommit();
+    const mutation = await selection.prepareGatewayMutation({
+      ...gatewayMutationInput,
+      gatewayName,
+    });
+    createExactGatewayProvider(mutation);
+    await mutation.commit();
+    route.prepared.commit();
+    const journal = gatewayJournal(fixture);
+
+    expect(journal.intent.gatewayName).toBe(gatewayName);
+    const published = prepareHermesPortableOllamaPublishedReceiptAuthority({
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      credentialEnv: journal.intent.credentialEnv,
+    });
+    published.assertCurrent();
+    const retirement = prepareHermesPortableOllamaProviderRetirement({
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      transactionId: journal.intent.transactionId,
+      targetSha256: journal.intent.targetSha256,
+      gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      model: journal.intent.model,
+      credentialEnv: journal.intent.credentialEnv,
+      runGatewayOpenshell: fixture.gatewayProvider.run,
+    });
+    expect(retirement.present).toBe(true);
+    await retirement.removeAndVerify();
+    retirement.verifyAbsent();
   });
 
   it("recovers a committed gateway transaction before checking rebound live authority (#9596)", async () => {
@@ -969,78 +1012,17 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(fixture.gatewayProvider.isPresent()).toBe(false);
   });
 
-  it("validates the exact OpenAI profile before Portable provider creation (#10155)", async () => {
+  it("creates the Portable OpenAI provider without a compatibility-profile mutation (#11229)", async () => {
     const fixture = createRuntimeFixture();
     const mutation = await fixture.resolve()!.prepareGatewayMutation(gatewayMutationInput);
 
     expect(createExactGatewayProvider(mutation)).toEqual({ ok: true });
 
-    const profileExport = fixture.events.indexOf(
-      "openshell:provider profile export openai --output json",
-    );
     const providerCreate = fixture.events.findIndex((event) =>
       event.includes("provider create --name ollama-local"),
     );
-    expect(profileExport).toBeGreaterThanOrEqual(0);
-    expect(providerCreate).toBeGreaterThan(profileExport);
-    expect(fixture.events.some((event) => event.includes("provider profile import"))).toBe(false);
-  });
-
-  it("imports a missing OpenAI profile before Portable provider creation (#10155)", async () => {
-    const fixture = createRuntimeFixture();
-    fixture.gatewayProvider.setProfileState("missing");
-    const mutation = await fixture.resolve()!.prepareGatewayMutation(gatewayMutationInput);
-
-    expect(createExactGatewayProvider(mutation)).toEqual({ ok: true });
-
-    const profileExport = fixture.events.indexOf(
-      "openshell:provider profile export openai --output json",
-    );
-    const profileImport = fixture.events.findIndex((event) =>
-      event.includes("provider profile import --file"),
-    );
-    const providerCreate = fixture.events.findIndex((event) =>
-      event.includes("provider create --name ollama-local"),
-    );
-    expect(profileExport).toBeGreaterThanOrEqual(0);
-    expect(profileImport).toBeGreaterThan(profileExport);
-    expect(providerCreate).toBeGreaterThan(profileImport);
-  });
-
-  it("rejects an incompatible OpenAI profile before Portable provider mutation (#10155)", async () => {
-    const fixture = createRuntimeFixture();
-    fixture.gatewayProvider.setProfileState("incompatible");
-    const mutation = await fixture.resolve()!.prepareGatewayMutation(gatewayMutationInput);
-
-    expect(() => createExactGatewayProvider(mutation)).toThrow(
-      "does not match NemoClaw's endpointless inference contract",
-    );
-
-    expect(fixture.gatewayProvider.isPresent()).toBe(false);
-    expect(
-      fixture.events.some((event) => event.includes("provider create --name ollama-local")),
-    ).toBe(false);
-    expect(gatewayJournal(fixture)).toMatchObject({ phase: "prepared" });
-  });
-
-  it("revalidates the OpenAI profile before reusing a Portable provider (#10155)", async () => {
-    const fixture = createRuntimeFixture();
-    await publishPortableInference(fixture);
-    fixture.gatewayProvider.setProfileState("incompatible");
-    const resumed = fixture.resolve({
-      ...freshPortableInput,
-      allowPublishedResume: true,
-      recover: true,
-    })!;
-    const mutation = await resumed.prepareGatewayMutation(gatewayMutationInput);
-
-    expect(() => createExactGatewayProvider(mutation)).toThrow(
-      "does not match NemoClaw's endpointless inference contract",
-    );
-
-    expect(fixture.gatewayProvider.isPresent()).toBe(true);
-    expect(gatewayJournal(fixture)).toMatchObject({ phase: "committed" });
-    expect(fixture.events.some((event) => event.includes("provider delete"))).toBe(false);
+    expect(providerCreate).toBeGreaterThanOrEqual(0);
+    expect(fixture.events.some((event) => event.includes("provider profile"))).toBe(false);
   });
 
   it("resumes the journaled provider-create crash window and publishes exact ownership (#9596)", async () => {
@@ -1193,7 +1175,9 @@ describe("Hermes Portable Ollama inference activation", () => {
     createExactGatewayProvider(mutation);
     fixture.gatewayProvider.bumpResourceVersion();
     expect(() => mutation.commit()).toThrow("gateway provider authority changed");
-    expect(() => mutation.rollback()).toThrow("refused to delete changed gateway authority");
+    await expect(mutation.rollback()).rejects.toThrow(
+      "refused to delete changed gateway authority",
+    );
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
   });
 
@@ -1287,7 +1271,9 @@ describe("Hermes Portable Ollama inference activation", () => {
     createExactGatewayProvider(mutation);
     await mutation.commit();
     fixture.gatewayProvider.setDeleteFailure(true);
-    expect(() => mutation.rollback()).toThrow("could not resume its gateway provider rollback");
+    await expect(mutation.rollback()).rejects.toThrow(
+      "could not resume its gateway provider rollback",
+    );
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(gatewayJournal(fixture)).toMatchObject({ phase: "rolling-back" });
 

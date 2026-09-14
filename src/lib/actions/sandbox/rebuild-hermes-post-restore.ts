@@ -7,6 +7,7 @@ import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privilege
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
   checkAndRecoverSandboxProcesses,
+  executeGatewaySupervisorAction,
   executePrivilegedSandboxCommand,
   restartSandboxGateway,
   type SandboxCommandResult,
@@ -49,6 +50,7 @@ interface HermesCronRestoreReceipt {
   profiles?: number;
   active_jobs?: number;
   script_jobs?: number;
+  rearmed_oneshots?: number;
   disposition: HermesCronRestoreDisposition;
   operator_drain_active: boolean;
   preserved_drain?: boolean;
@@ -96,22 +98,30 @@ type GatewayRecoveryObservation = {
   recovered: boolean;
   forwardRecoveryFailed?: boolean;
   secretBoundaryRefused?: boolean;
-  mcpReconciliationRefused?: boolean;
 };
 
 interface HermesPostRestoreGatewayDeps {
   checkAndRecoverSandboxProcesses?: (
     sandboxName: string,
-    options: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
-  ) => GatewayRecoveryObservation;
+    options: {
+      quiet: boolean;
+      requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
+      runtimeSelection?: OpenShellRuntimeSelection;
+    },
+  ) => Promise<GatewayRecoveryObservation>;
   restartSandboxGateway?: (
     sandboxName: string,
-    options: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
-  ) => GatewayRestartResult;
+    options: {
+      quiet: boolean;
+      deps?: { requestGatewaySupervisorAction: typeof executeGatewaySupervisorAction };
+      runtimeSelection?: OpenShellRuntimeSelection;
+    },
+  ) => Promise<GatewayRestartResult>;
   observeHermesCronReplacement?: (
     sandboxName: string,
     originalIdentity: HermesCronRestoreIdentity,
   ) => HermesCronRestoreIdentity;
+  frozenTargetGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
   runtimeSelection?: OpenShellRuntimeSelection;
 }
 
@@ -139,67 +149,41 @@ export interface HermesPostRestoreGatewayVerification {
  * identity whose MCP load just converged. A gated rebuild keeps the root-owned
  * cron drain active across restart, MCP restoration, and final verification.
  */
-export function ensureHermesGatewayAfterStateRestore(
+export async function restartHermesGatewayAfterStateRestore(
   sandboxName: string,
   agentName: string,
   deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayState {
-  const restartState = restartHermesGatewayAfterStateRestore(sandboxName, agentName, deps);
-  return verifyHermesGatewayAfterStateRestore(sandboxName, agentName, restartState, deps);
-}
-
-export function ensureHermesGatewayAfterStateRestoreForCronGate(
-  sandboxName: string,
-  agentName: string,
-  originalIdentity: HermesCronRestoreIdentity,
-  deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayVerification {
-  const restartState = restartHermesGatewayAfterStateRestore(sandboxName, agentName, deps);
-  return verifyHermesGatewayAfterStateRestoreForCronGate(
-    sandboxName,
-    agentName,
-    restartState,
-    originalIdentity,
-    deps,
-  );
-}
-
-export function restartHermesGatewayAfterStateRestore(
-  sandboxName: string,
-  agentName: string,
-  deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayRestartState {
+): Promise<HermesPostRestoreGatewayRestartState> {
   if (agentName !== "hermes") return "not-applicable";
   const restart = deps.restartSandboxGateway ?? restartSandboxGateway;
-  const result = restart(sandboxName, {
+  const requestGatewaySupervisorAction = deps.frozenTargetGatewaySupervisorAction;
+  const result = await restart(sandboxName, {
     quiet: true,
+    ...(requestGatewaySupervisorAction ? { deps: { requestGatewaySupervisorAction } } : {}),
     ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
   });
   if (result.ok) return "restarted";
-  const mcpRestoreCanSupersede =
-    result.failureLayer === "MCP reconciliation refusal" &&
-    result.restarted === true &&
-    result.healthPassed === true;
-  // Final verification still requires MCP reconciliation after restoration.
-  return mcpRestoreCanSupersede ? "restarted" : "restart-failed";
+  return "restart-failed";
 }
 
-export function verifyHermesGatewayAfterStateRestore(
+export async function verifyHermesGatewayAfterStateRestore(
   sandboxName: string,
   agentName: string,
   restartState: HermesPostRestoreGatewayRestartState,
   deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayState {
-  return verifyHermesGatewayAfterStateRestoreImpl(sandboxName, agentName, restartState, deps).state;
+): Promise<HermesPostRestoreGatewayState> {
+  return (
+    await verifyHermesGatewayAfterStateRestoreImpl(sandboxName, agentName, restartState, deps)
+  ).state;
 }
 
-export function verifyHermesGatewayAfterStateRestoreForCronGate(
+export async function verifyHermesGatewayAfterStateRestoreForCronGate(
   sandboxName: string,
   agentName: string,
   restartState: HermesPostRestoreGatewayRestartState,
   originalIdentity: HermesCronRestoreIdentity,
   deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayVerification {
+): Promise<HermesPostRestoreGatewayVerification> {
   return verifyHermesGatewayAfterStateRestoreImpl(
     sandboxName,
     agentName,
@@ -216,17 +200,16 @@ function sameGatewayIdentity(
   return left.pid === right.pid && left.start_time === right.start_time;
 }
 
-function verifyHermesGatewayAfterStateRestoreImpl(
+async function verifyHermesGatewayAfterStateRestoreImpl(
   sandboxName: string,
   agentName: string,
   restartState: HermesPostRestoreGatewayRestartState,
   deps: HermesPostRestoreGatewayDeps,
   originalIdentity?: HermesCronRestoreIdentity,
-): HermesPostRestoreGatewayVerification {
+): Promise<HermesPostRestoreGatewayVerification> {
   if (agentName !== "hermes") return { state: "not-applicable" };
   const restarted = restartState === "restarted";
-  const checkAndRecover =
-    deps.checkAndRecoverSandboxProcesses ?? checkAndRecoverSandboxProcesses;
+  const checkAndRecover = deps.checkAndRecoverSandboxProcesses ?? checkAndRecoverSandboxProcesses;
   const observeReplacement = deps.observeHermesCronReplacement ?? observeHermesCronReplacement;
   const maxAttempts = originalIdentity
     ? HERMES_GATEWAY_RECHECK_ATTEMPTS + 1
@@ -242,15 +225,14 @@ function verifyHermesGatewayAfterStateRestoreImpl(
         // later iteration must observe it both before and after health.
       }
     }
-    const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, {
+    const observation: GatewayRecoveryObservation = await checkAndRecover(sandboxName, {
       quiet: true,
+      ...(deps.frozenTargetGatewaySupervisorAction
+        ? { requestGatewaySupervisorAction: deps.frozenTargetGatewaySupervisorAction }
+        : {}),
       ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
     });
-    if (
-      observation.forwardRecoveryFailed === true ||
-      observation.secretBoundaryRefused === true ||
-      observation.mcpReconciliationRefused === true
-    ) {
+    if (observation.forwardRecoveryFailed === true || observation.secretBoundaryRefused === true) {
       return { state: "unverified" };
     }
     if (!observation.checked) continue;
@@ -400,6 +382,7 @@ function parseCronRestoreReceipt(
         isNonNegativeInteger(receipt.profiles) &&
         isNonNegativeInteger(receipt.active_jobs) &&
         isNonNegativeInteger(receipt.script_jobs) &&
+        isNonNegativeInteger(receipt.rearmed_oneshots) &&
         isReleaseDispositionValid(receipt) &&
         hasExactReceiptFields(receipt, [
           ...baseFields,
@@ -408,6 +391,7 @@ function parseCronRestoreReceipt(
           "profiles",
           "active_jobs",
           "script_jobs",
+          "rearmed_oneshots",
           "preserved_drain",
         ]);
       break;
@@ -418,6 +402,7 @@ function parseCronRestoreReceipt(
           isNonNegativeInteger(receipt.profiles) &&
           isNonNegativeInteger(receipt.active_jobs) &&
           isNonNegativeInteger(receipt.script_jobs) &&
+          isNonNegativeInteger(receipt.rearmed_oneshots) &&
           isReleaseDispositionValid(receipt) &&
           hasExactReceiptFields(receipt, [
             ...baseFields,
@@ -426,6 +411,7 @@ function parseCronRestoreReceipt(
             "profiles",
             "active_jobs",
             "script_jobs",
+            "rearmed_oneshots",
             "preserved_drain",
           ]);
       } else {

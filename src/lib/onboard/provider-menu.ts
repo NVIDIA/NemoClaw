@@ -98,14 +98,15 @@ export function buildInferenceProviderMenu(
 
   options.push(...input.vllmEntries);
 
-  if (
-    (input.hasWindowsOllama || input.isWindowsHostOllama) &&
-    (!input.isWindowsHostOllama || !input.windowsOllamaReachable)
-  ) {
+  const needsWindowsOllamaRepair = input.hasWindowsOllama && !input.isWindowsHostOllama;
+  const needsWindowsOllamaRestart = input.isWindowsHostOllama && !input.windowsOllamaReachable;
+  if (needsWindowsOllamaRepair || needsWindowsOllamaRestart) {
     options.push({
       key: "start-windows-ollama",
       label: input.windowsHostStartLabel({
-        reachable: input.windowsOllamaReachable,
+        // Only an already-classified Windows route has passed the loopback,
+        // Docker reachability, and Host-header validation gates.
+        reachable: input.isWindowsHostOllama && input.windowsOllamaReachable,
         loopbackOnly: input.winOllamaLoopbackOnly,
       }),
     });

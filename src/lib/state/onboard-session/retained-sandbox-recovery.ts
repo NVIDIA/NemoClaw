@@ -309,7 +309,7 @@ function validSandboxName(value: unknown): value is string {
   );
 }
 
-function validSafeEvidence(value: unknown): value is string {
+export function validSafeEvidence(value: unknown): value is string {
   return typeof value === "string" && SAFE_EVIDENCE_PATTERN.test(value);
 }
 
@@ -472,9 +472,7 @@ function retainedSandboxRecoveryAuthorityMatchesState(
   state: RetainedSandboxRecoveryState,
   expected: RetainedSandboxRecoveryRecord,
 ): boolean {
-  const recorded = state.unresolved.find(
-    (candidate) => candidate.recordId === expected.recordId,
-  );
+  const recorded = state.unresolved.find((candidate) => candidate.recordId === expected.recordId);
   if (!recorded) return false;
   if (!isDeepStrictEqual(recorded, expected)) {
     throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
@@ -501,7 +499,9 @@ export function resolveRetainedSandboxRecovery(
     ...current,
     unresolved: current.unresolved.filter((candidate) => candidate.recordId !== expected.recordId),
   });
-  if (loadState(filePath).unresolved.some((candidate) => candidate.recordId === expected.recordId)) {
+  if (
+    loadState(filePath).unresolved.some((candidate) => candidate.recordId === expected.recordId)
+  ) {
     throw new Error("Retained sandbox recovery record remained after verified cleanup.");
   }
   return true;

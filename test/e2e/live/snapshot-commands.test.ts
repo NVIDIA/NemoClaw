@@ -449,9 +449,9 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
     expect(cloneRestoreResult).toBe(requiredCloneRestoreResult);
     progress.phase("verify the restored clone state and gateway pairing");
     switch (requiredCloneRestoreResult) {
-      case "managed-clone-rebind-required": {
+      case "managed-clone-not-available": {
         expect(resultText(cloneRestore)).toContain(
-          `restoring '${SANDBOX_NAME}' as '${CLONE_SANDBOX_NAME}' requires managed-profile clone rebind`,
+          `restoring '${SANDBOX_NAME}' into '${CLONE_SANDBOX_NAME}' is not available because '${SANDBOX_NAME}' uses a NemoClaw-managed image`,
         );
         expect(resultText(cloneRestore)).toContain(
           `Destination '${CLONE_SANDBOX_NAME}' was not changed`,

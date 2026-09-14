@@ -14,7 +14,7 @@ import {
   dockerRmi,
   dockerTag,
 } from "../adapters/docker";
-import { CUA_SANDBOX_IMAGE_ENV, requireCuaSandboxImageRef } from "../cua/feature";
+import { requireCuaSandboxImageRef } from "../cua/feature";
 import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
 import { ROOT } from "../runner";
@@ -37,12 +37,17 @@ import {
   SANDBOX_BASE_RESOLUTION_SCHEMA,
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
+  type SandboxBaseImageValidationContext,
   SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
   versionGte,
 } from "../sandbox-base-image";
-import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
+import {
+  hermesSandboxBaseImageHasSecurityInventory,
+  sandboxBaseImageHasSecurityInventory,
+} from "../sandbox-base-image/security-inventory";
+import { getAgentSandboxBaseImageEnvVar } from "./base-image-env";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
 
@@ -84,6 +89,7 @@ export interface EnsureAgentBaseImageOptions {
   forceBaseImageRebuild?: boolean;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceBaseImageRefresh?: boolean;
+  allowLocalFallback?: boolean;
 }
 
 export interface CreateAgentSandboxOptions extends EnsureAgentBaseImageOptions {
@@ -183,10 +189,7 @@ function reuseTrustedAgentRemoteBaseImageOverride(
   return reused;
 }
 
-export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
-  if (agentName === "nemocua") return CUA_SANDBOX_IMAGE_ENV;
-  return `NEMOCLAW_${agentName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`;
-}
+export { getAgentSandboxBaseImageEnvVar };
 
 function immutableLocalBaseImageTag(agentName: string, imageId: string, temporary = false): string {
   const match = imageId.trim().match(/^sha256:([0-9a-f]{64})$/i);
@@ -316,7 +319,7 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
       imageRef,
       "-I",
       "-c",
-      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
+      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); mcp_tool._ensure_mcp_sdk() or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
     ],
     { ignoreError: true, timeout: 20_000 },
   );
@@ -329,12 +332,16 @@ function createAgentBaseImageResolutionOptions(
   options: EnsureAgentBaseImageOptions,
 ): ResolveBaseImageOptions {
   const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;
   const validationOptions =
     agent.name === "hermes"
       ? {
-          validateImage: (imageRef: string) =>
+          validateImage: (imageRef: string, context?: SandboxBaseImageValidationContext) =>
             hermesBaseImageSupportsMcp(imageRef) &&
-            sandboxBaseImageHasSecurityInventory(imageRef),
+            hermesSandboxBaseImageHasSecurityInventory(
+              imageRef,
+              context?.source === "pinned" && context.pinnedRemoteRef === pinnedRemoteRef,
+            ),
           validationDescription:
             "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
         }
@@ -344,7 +351,6 @@ function createAgentBaseImageResolutionOptions(
             validationDescription: "the immutable security package inventory",
           }
         : createDeepAgentsCodeBaseImageResolutionOptions(agent, dockerfilePath);
-  const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;
   return {
     imageName,
     dockerfilePath,
@@ -358,6 +364,7 @@ function createAgentBaseImageResolutionOptions(
     rootDir: ROOT,
     pinnedRemoteRef,
     requirePinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
+    allowLocalFallback: options.allowLocalFallback,
     ...validationOptions,
   };
 }
@@ -418,7 +425,12 @@ export function bindLocalAgentBaseImageToPinnedProvenance(
   ) {
     return null;
   }
-  if (resolutionOptions.validateImage && !resolutionOptions.validateImage(imageRef)) return null;
+  if (
+    resolutionOptions.validateImage &&
+    !resolutionOptions.validateImage(imageRef, { source: "pinned", pinnedRemoteRef })
+  ) {
+    return null;
+  }
   const digest = resolvedRemoteRef.slice(resolvedRemoteRef.indexOf("@") + 1);
   const metadata = createSandboxBaseImageResolutionMetadata(
     resolutionOptions,

@@ -7,6 +7,7 @@ import {
 } from "../domain/lifecycle/options";
 import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "../gateway-runtime-action";
 import type { OnboardFlags } from "../onboard/command-support";
+import { completeAutomaticGatewayPortAfterOnboard } from "../onboard/gateway/automatic-port-completion";
 import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
@@ -16,18 +17,11 @@ import { help, version } from "./root-help";
 
 type GatewayRecovery = { recovered: boolean };
 
-export type ManagedMcpCredentialReservation = {
-  sandboxName: string;
-  server: string;
-  credentialKeys: readonly string[];
-};
-
 type GlobalCliActionRuntimeHooks = {
   recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
   upgradeSandboxes?: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
   recordExtraProvider?: (name: string) => boolean;
   forgetExtraProvider?: (name: string) => boolean;
-  listManagedMcpCredentialReservations?: () => readonly ManagedMcpCredentialReservation[];
 };
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
@@ -41,6 +35,7 @@ export async function runOnboardAction(
   runtimeDeps: OnboardActionRuntimeDeps = {},
 ): Promise<void> {
   await executeOnboardAction(flags, runtimeDeps);
+  completeAutomaticGatewayPortAfterOnboard();
 }
 
 export async function runBackupAllAction(): Promise<void> {
@@ -99,15 +94,4 @@ export function forgetExtraProvider(name: string): boolean {
     removeExtraProvider: (name: string) => boolean;
   };
   return removeExtraProvider(name);
-}
-
-export function listManagedMcpCredentialReservations(): readonly ManagedMcpCredentialReservation[] {
-  if (typeof runtimeHooks.listManagedMcpCredentialReservations === "function") {
-    return runtimeHooks.listManagedMcpCredentialReservations();
-  }
-  const { listManagedMcpCredentialReservations: queryReservations } =
-    require("../state/registry/mcp-credential-reservations") as {
-      listManagedMcpCredentialReservations: () => readonly ManagedMcpCredentialReservation[];
-    };
-  return queryReservations();
 }

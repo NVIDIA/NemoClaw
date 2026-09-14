@@ -62,11 +62,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
   });
 
   it("removes OPENCLAW_GATEWAY_TOKEN from the executed command environment (#6291)", () => {
-    const command = [
-      "/bin/sh",
-      "-c",
-      'printf "TOKEN=[%s]" "${OPENCLAW_GATEWAY_TOKEN:-}"',
-    ];
+    const command = ["/bin/sh", "-c", 'printf "TOKEN=[%s]" "${OPENCLAW_GATEWAY_TOKEN:-}"'];
     const wrapped = wrapExecCommandWithRuntimeEnv(command);
     const trustedArgv = trustedRuntimeEnvArgv(command);
     expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);
@@ -127,12 +123,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
   });
 
   it("does not reinterpret a command-leading exec option (#4504)", () => {
-    const command = [
-      "-a",
-      "spoofed-argv-zero",
-      "/usr/bin/printf",
-      "SHOULD_NOT_RUN",
-    ];
+    const command = ["-a", "spoofed-argv-zero", "/usr/bin/printf", "SHOULD_NOT_RUN"];
     const wrapped = wrapExecCommandWithRuntimeEnv(command);
     const trustedArgv = trustedRuntimeEnvArgv(command);
     expect(wrapped).toEqual(["/bin/bash", ...trustedArgv]);

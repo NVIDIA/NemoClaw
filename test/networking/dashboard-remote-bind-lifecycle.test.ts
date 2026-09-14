@@ -33,7 +33,7 @@ function remoteBindDockerfile(...postGeneratorInstructions: string[]): string {
     "ARG CHAT_UI_URL=",
     "ARG NEMOCLAW_DASHBOARD_BIND=",
     "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-    "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+    "RUN node /scripts/generate-openclaw-config.mts",
     ...postGeneratorInstructions,
   ].join("\n");
 }
@@ -81,7 +81,7 @@ describe("remote dashboard bind production lifecycle", () => {
     const dockerfile = path.join(directory, "Dockerfile");
     const stockDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
     const generator =
-      "RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts";
+      "RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node /scripts/generate-openclaw-config.mts";
     const proxyPatch = 'RUN python3 -c "\\\n';
     const configHash =
       "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash";
@@ -176,7 +176,7 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
       ].join("\n"),
     );
 
@@ -288,7 +288,7 @@ describe("remote dashboard bind production lifecycle", () => {
         "FROM scratch AS decoy",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
         "FROM scratch",
         "ARG NEMOCLAW_MODEL=",
         "ARG CHAT_UI_URL=",
@@ -318,7 +318,7 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
         "RUN printf '{}' > /sandbox/.openclaw/openclaw.json",
       ].join("\n"),
     );
@@ -337,8 +337,8 @@ describe("remote dashboard bind production lifecycle", () => {
     [
       "generator",
       remoteBindDockerfile().replace(
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts && printf '{}' > /sandbox/.openclaw/openclaw.json",
+        "RUN node /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts && printf '{}' > /sandbox/.openclaw/openclaw.json",
       ),
     ],
     [
@@ -436,7 +436,7 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
         "RUN chmod 660 /sandbox/.openclaw/openclaw.json",
         "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash",
       ].join("\n"),
@@ -506,8 +506,8 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
       ].join("\n"),
     );
 
@@ -533,8 +533,8 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
-        'RUN validation_home="$validation_root/progressive"; HOME="$validation_home" node --experimental-strip-types /scripts/generate-openclaw-config.mts',
+        "RUN node /scripts/generate-openclaw-config.mts",
+        'RUN validation_home="$validation_root/progressive"; HOME="$validation_home" node /scripts/generate-openclaw-config.mts',
       ].join("\n"),
     );
 
@@ -548,7 +548,7 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", () => {
+  it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
@@ -559,14 +559,14 @@ describe("remote dashboard bind production lifecycle", () => {
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    expect(ensureSandboxPortForward("beta")).toBe(false);
+    expect(await ensureSandboxPortForward("beta")).toBe(false);
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("not prepared for remote exposure"));
   });
 
-  it("refuses to reuse a local-only sandbox for remote exposure during onboarding (#6024)", () => {
+  it("refuses to reuse a local-only sandbox for remote exposure during onboarding (#6024)", async () => {
     const ensureDashboardForward = vi.fn();
-    expect(() =>
+    await expect(
       applyReusedSandboxDashboardState({
         sandboxName: "beta",
         chatUiUrl: "http://127.0.0.1:18789",
@@ -586,7 +586,7 @@ describe("remote dashboard bind production lifecycle", () => {
         },
         updateReusedSandboxMetadata: vi.fn(),
       }),
-    ).toThrow(/--recreate-sandbox/);
+    ).rejects.toThrow(/--recreate-sandbox/);
     expect(ensureDashboardForward).not.toHaveBeenCalled();
   });
 });

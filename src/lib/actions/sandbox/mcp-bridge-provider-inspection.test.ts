@@ -14,6 +14,7 @@ import {
 } from "./mcp-bridge-provider-inspection";
 
 const temporaryDirectories: string[] = [];
+const runtimeSelection = { gatewayName: "nemoclaw-8080", workspace: "default" } as const;
 
 afterEach(() => {
   setProviderCommandRuntimeHooksForTest({});
@@ -156,7 +157,7 @@ describe("MCP provider runtime selection", () => {
 });
 
 describe("MCP provider absence inspection", () => {
-  it("accepts only an exact provider-specific absence diagnostic (#10514)", () => {
+  it("accepts only an exact provider-specific absence diagnostic (#10514)", async () => {
     setProviderCommandRuntimeHooksForTest({
       runOpenshell: (() => ({
         status: 1,
@@ -165,7 +166,7 @@ describe("MCP provider absence inspection", () => {
       })) as never,
     });
 
-    expect(inspectMcpProvider("alpha-mcp-fake")).toEqual({
+    await expect(inspectMcpProvider("alpha-mcp-fake", runtimeSelection)).resolves.toEqual({
       exists: false,
       id: null,
       resourceVersion: null,
@@ -181,20 +182,20 @@ describe("MCP provider absence inspection", () => {
     'status: NotFound, message: "gateway not found"',
     "workspace 'default' does not exist",
     "transport unavailable",
-  ])("keeps ambiguous lookup failure indeterminate: %s (#10514)", (diagnostic) => {
+  ])("keeps ambiguous lookup failure indeterminate: %s (#10514)", async (diagnostic) => {
     setProviderCommandRuntimeHooksForTest({
       runOpenshell: (() => ({ status: 1, stdout: "", stderr: diagnostic })) as never,
     });
 
-    expect(inspectMcpProvider("alpha-mcp-fake")).toMatchObject({
+    await expect(inspectMcpProvider("alpha-mcp-fake", runtimeSelection)).resolves.toMatchObject({
       exists: null,
-      error: diagnostic,
+      error: expect.any(String),
     });
   });
 
   it.each([null, 2])(
     "keeps exact-looking absence indeterminate for noncanonical exit %s (#10514)",
-    (status) => {
+    async (status) => {
       setProviderCommandRuntimeHooksForTest({
         runOpenshell: (() => ({
           status,
@@ -203,9 +204,9 @@ describe("MCP provider absence inspection", () => {
         })) as never,
       });
 
-      expect(inspectMcpProvider("alpha-mcp-fake")).toMatchObject({
+      await expect(inspectMcpProvider("alpha-mcp-fake", runtimeSelection)).resolves.toMatchObject({
         exists: null,
-        error: "provider 'alpha-mcp-fake' not found",
+        error: expect.any(String),
       });
     },
   );

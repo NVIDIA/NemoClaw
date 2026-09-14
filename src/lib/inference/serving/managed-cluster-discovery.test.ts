@@ -479,39 +479,40 @@ describe("managed DGX Spark cluster discovery", () => {
     expect(bindingWrites()).toBe(0);
   });
 
-  it.each(
-    STOPPED_FOREIGN_CONTAINER_FIXTURES,
-  )("preserves a stopped foreign vLLM setup identified by $signal", (container) => {
-    const base = fixture();
-    const deps = {
-      ...base.deps,
-      probeHost: (candidate: ManagedClusterReadOnlyHostTransport) =>
-        candidate === base.localTransport
-          ? host("local", {
-              runtimeSnapshot: {
-                containers: [
-                  {
-                    id: "9".repeat(64),
-                    name: container.name,
-                    image: container.image,
-                    running: false,
-                    healthy: false,
-                    labels: container.labels,
-                  },
-                ],
-                listeningPorts: [],
-              },
-            })
-          : host("peer"),
-    };
+  it.each(STOPPED_FOREIGN_CONTAINER_FIXTURES)(
+    "preserves a stopped foreign vLLM setup identified by $signal",
+    (container) => {
+      const base = fixture();
+      const deps = {
+        ...base.deps,
+        probeHost: (candidate: ManagedClusterReadOnlyHostTransport) =>
+          candidate === base.localTransport
+            ? host("local", {
+                runtimeSnapshot: {
+                  containers: [
+                    {
+                      id: "9".repeat(64),
+                      name: container.name,
+                      image: container.image,
+                      running: false,
+                      healthy: false,
+                      labels: container.labels,
+                    },
+                  ],
+                  listeningPorts: [],
+                },
+              })
+            : host("peer"),
+      };
 
-    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
-      kind: "not-selected",
-      code: "runtime-conflict",
-    });
-    expect(base.bindingWrites()).toBe(0);
-    expect(base.events).not.toContain("write-binding");
-  });
+      expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
+        kind: "not-selected",
+        code: "runtime-conflict",
+      });
+      expect(base.bindingWrites()).toBe(0);
+      expect(base.events).not.toContain("write-binding");
+    },
+  );
 
   it("does not classify an arbitrary stopped container as a managed vLLM setup", () => {
     const base = fixture();

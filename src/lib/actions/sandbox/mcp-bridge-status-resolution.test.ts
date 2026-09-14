@@ -32,34 +32,54 @@ afterEach(() => {
 // per test so both the 401 (auth-shaped) and 400 (validation-ambiguous)
 // warnings are exercised end-to-end.
 const harnessPreludeTemplate = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const gatewayManagementPath = path.join(process.env.HOME, "gateway-management.json");
+fs.writeFileSync(gatewayManagementPath, JSON.stringify({
+  version: 1,
+  mode: "nemoclaw-managed",
+  requiredCapabilities: [],
+}));
+process.env.NEMOCLAW_GATEWAY_MANAGEMENT = gatewayManagementPath;
 const registry = require("./src/lib/state/registry.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
   attempted: false,
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 let providerAttachmentState = "attached";
 let providerInspectionState = "present";
 let providerCredentialKey = "GITHUB_TOKEN";
 let persistedCredentialRevision = "v11";
+let includeSecondSource = false;
+let providerAttachmentInspectionCount = 0;
 const hermesIntentPayloads = [];
 providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     if (providerInspectionState === "absent") {
       return { status: 1, stdout: "", stderr: "provider not found" };
     }
+    const providerName = args[2];
+    const credentialKey = providerName === "alpha-mcp-slack" ? "SLACK_TOKEN" : providerCredentialKey;
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + providerCredentialKey + "\n",
+      stdout: "Name: " + providerName + "\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + credentialKey + "\nConfig keys: <none>\n",
       stderr: "",
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    providerAttachmentInspectionCount += 1;
     if (providerAttachmentState === "unknown") {
       return { status: 1, stdout: "", stderr: "attachment inspection failed" };
     }
@@ -68,7 +88,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     }
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github nemoclaw-mcp-v1 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github nemoclaw-mcp-v1 1 0\n" +
+        (includeSecondSource ? "alpha-mcp-slack nemoclaw-mcp-v1 1 0\n" : ""),
       stderr: "",
     };
   }
@@ -80,15 +101,29 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       "Bearer openshell:resolve:env:" + persistedCredentialRevision + "_GITHUB_TOKEN";
     return matches
       ? { status: 0, stdout: '{"ok":true,"state":"matched"}\n', stderr: "" }
-      : { status: 2, stdout: "", stderr: "Hermes MCP config does not match persisted managed intent" };
+      : { status: 2, stdout: "", stderr: "Hermes MCP config does not match the requested native entry" };
   }
   throw new Error("Unexpected OpenShell call: " + args.join(" "));
 };
 let activePolicyState = "match";
 policies.getPresetContentGatewayState = () => activePolicyState;
+policies.captureRecordedSandboxBasePolicy = () => {
+  if (activePolicyState === null) throw new Error("policy inspection failed");
+  return activePolicyState === "absent"
+    ? "network_policies: {}\n"
+    : "network_policies:\n  mcp_bridge_github: {}\n";
+};
 const executedSandboxCommands = [];
 let providerCredentialObservation = "v11";
 let credentialObservationCount = 0;
+let toolDiscoveryStatus = 0;
+let toolDiscoveryResult = {
+  protocol: 2,
+  ok: true,
+  count: 2,
+  tools: ["alpha", "zeta"],
+  truncated: false,
+};
 processRecovery.executeSandboxExecCommand = () => {
   credentialObservationCount += 1;
   return {
@@ -109,7 +144,7 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
         "",
         "NEMOCLAW_MCP_PROBE_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
         "NEMOCLAW_MCP_PROBE_CURL_EXIT=" + resultMarker + ":0",
-        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
+        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=" + resultMarker + ":__CONTROL_HTTP_STATUS__",
         "NEMOCLAW_MCP_CONTROL_CURL_EXIT=" + resultMarker + ":0",
       ].join("\n"),
       stderr: "",
@@ -119,14 +154,8 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
     const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
     if (!resultMarker) throw new Error("tool discovery result marker missing");
     return {
-      status: 0,
-      stdout: resultMarker + "\n" + JSON.stringify({
-        protocol: 1,
-        ok: true,
-        count: 2,
-        tools: ["alpha", "zeta"],
-        truncated: false,
-      }),
+      status: toolDiscoveryStatus,
+      stdout: resultMarker + "\n" + JSON.stringify(toolDiscoveryResult),
       stderr: "",
     };
   }
@@ -138,22 +167,39 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
     stderr: "",
   };
 };
-registry.registerSandbox({
-  name: "alpha",
-  agent: "openclaw",
-  mcp: { bridges: { github: {
+const sourceEntry = {
     server: "github",
     agent: "openclaw",
-    adapter: "mcporter",
+    adapter: "openclaw-config",
     url: "https://api.githubcopilot.com/mcp/",
     env: ["GITHUB_TOKEN"],
     allowedIps: ["8.8.8.8"],
     providerName: "alpha-mcp-github",
     providerId: "11111111-2222-4333-8444-555555555555",
     policyName: "mcp-bridge-github",
-    addedAt: "2026-06-01T00:00:00.000Z",
-  } } },
+};
+const secondSourceEntry = {
+  ...sourceEntry,
+  server: "slack",
+  env: ["SLACK_TOKEN"],
+  providerName: "alpha-mcp-slack",
+  policyName: "mcp-bridge-slack",
+};
+let legacySourceEnabled = false;
+let policyOnlySourceEnabled = false;
+sourceState.inspectSourceBridgeState = () => ({
+  bridges: {
+    github: policyOnlySourceEnabled ? { ...sourceEntry, source: "policy" } : sourceEntry,
+    ...(includeSecondSource ? { slack: secondSourceEntry } : {}),
+  },
+  sources: {
+    native: legacySourceEnabled || policyOnlySourceEnabled
+      ? {}
+      : { github: sourceEntry, ...(includeSecondSource ? { slack: secondSourceEntry } : {}) },
+    legacy: legacySourceEnabled ? { github: { ...sourceEntry, source: "legacy" } } : {},
+  },
 });
+registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const logLines = [];
 const errorLines = [];
@@ -170,12 +216,12 @@ console.error = (...parts) => errorLines.push(parts.join(" "));
 function runHarness(
   home: string,
   body: string,
-  options: { probeHttpStatus?: number } = {},
+  options: { controlHttpStatus?: number; probeHttpStatus?: number } = {},
 ): { status: number | null; stdout: string } {
-  const prelude = harnessPreludeTemplate.replaceAll(
-    "__PROBE_HTTP_STATUS__",
-    String(options.probeHttpStatus ?? 401),
-  );
+  const probeHttpStatus = options.probeHttpStatus ?? 401;
+  const prelude = harnessPreludeTemplate
+    .replaceAll("__PROBE_HTTP_STATUS__", String(probeHttpStatus))
+    .replaceAll("__CONTROL_HTTP_STATUS__", String(options.controlHttpStatus ?? probeHttpStatus));
   const script = `
 process.env.HOME = ${JSON.stringify(home)};
 ${prelude}
@@ -196,6 +242,111 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
+  it.each([
+    [200, 401, true],
+    [401, 401, false],
+    [400, 400, false],
+  ] as const)(
+    "requires wire authorization for an unchanged stable handle (%s/control %s)",
+    (probeHttpStatus, controlHttpStatus, accepted) => {
+      const home = createTempHome("nemoclaw-mcp-stable-authorization-");
+      const { stdout } = runHarness(
+        home,
+        String.raw`
+  const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
+  const handle = "s" + "a".repeat(64);
+  providerCredentialObservation = handle;
+  let accepted = true;
+  let detail = "";
+  try {
+    await status.assertUnchangedStableMcpCredentialAuthorized(
+      "alpha", sourceEntry, { gatewayName: "nemoclaw", workspace: "default" }, handle, handle,
+    );
+  } catch (error) {
+    accepted = false;
+    detail = String(error.message);
+  }
+  writeHarnessResult(JSON.stringify({
+    accepted, detail, probed: executedSandboxCommands.some((command) => command.includes("NEMOCLAW_MCP_PROBE")),
+  }));
+`,
+        { probeHttpStatus, controlHttpStatus },
+      );
+      const result = JSON.parse(stdout) as { accepted: boolean; detail: string; probed: boolean };
+      expect(result.accepted).toBe(accepted);
+      expect(result.probed).toBe(true);
+      expect(result.detail).toEqual(
+        accepted
+          ? ""
+          : expect.stringContaining(
+              "did not authorize its unchanged stable credential handle after provider update",
+            ),
+      );
+    },
+  );
+
+  it("inspects the attachment inventory once for a multi-server source read (#9806)", () => {
+    const home = createTempHome("nemoclaw-mcp-status-attachments-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  includeSecondSource = true;
+  providerAttachmentInspectionCount = 0;
+  const statuses = await bridge.statusMcpBridge("alpha");
+  writeHarnessResult(JSON.stringify({
+    attachmentInspections: providerAttachmentInspectionCount,
+    attached: statuses.map((status) => status.provider.attached),
+  }));
+`,
+    );
+
+    expect(JSON.parse(stdout)).toEqual({
+      attachmentInspections: 1,
+      attached: [true, true],
+    });
+  });
+
+  it("reports a policy-derived entry as configured when direct adapter inspection succeeds", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-policy-source-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  policyOnlySourceEnabled = true;
+  const [status] = await bridge.statusMcpBridge("alpha", "github");
+  writeHarnessResult(JSON.stringify({
+    adapter: status.adapter,
+    policy: status.policy,
+    provider: status.provider,
+  }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      adapter: { registered: boolean | null };
+      policy: { state: string };
+      provider: { state: string };
+    };
+    expect(payload.adapter.registered).toBe(true);
+    expect(payload.policy.state).toBe("configured");
+    expect(payload.provider.state).toBe("configured");
+  });
+
+  it("refuses status while a legacy source still requires explicit migration", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-legacy-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  legacySourceEnabled = true;
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github"]);
+  const exitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  writeHarnessResult(JSON.stringify({ errorLines, exitCode }));
+`,
+    );
+    const payload = JSON.parse(stdout) as { errorLines: string[]; exitCode: number };
+    expect(payload.exitCode).toBe(2);
+    expect(payload.errorLines.join("\n")).toContain("mcp migrate");
+  });
+
   it("probes by default for a single named server and surfaces the wire failure (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-single-");
     const { stdout } = runHarness(
@@ -273,7 +424,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
     );
     expect(outcomes[1]?.probeCommand).toBeNull();
-    expect(outcomes[1]?.resolution.detail).toContain("revision-scoped placeholder");
+    expect(outcomes[1]?.resolution.detail).toContain("identityless credential placeholder");
     expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1]);
   });
 
@@ -286,16 +437,12 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   persistedCredentialRevision = "v11";
   const outcomes = [];
   for (const [agent, adapter] of [
-    ["openclaw", "mcporter"],
+    ["openclaw", "openclaw-config"],
     ["langchain-deepagents-code", "deepagents-config"],
     ["hermes", "hermes-config"],
   ]) {
-    const current = registry.getSandbox("alpha");
-    const entry = { ...current.mcp.bridges.github, agent, adapter };
-    registry.updateSandbox("alpha", {
-      agent,
-      mcp: { bridges: { github: entry }, managedServerNames: ["github"] },
-    });
+    Object.assign(sourceEntry, { agent, adapter });
+    registry.updateSandbox("alpha", { agent });
     credentialObservationCount = 0;
     executedSandboxCommands.length = 0;
     hermesIntentPayloads.length = 0;
@@ -339,10 +486,45 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
     expect(outcomes[0]?.adapterCommand).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
     expect(outcomes[1]?.adapterCommand).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
-    expect(JSON.stringify(outcomes[2]?.hermesIntent)).toContain(
-      "openshell:resolve:env:v12_GITHUB_TOKEN",
-    );
+    expect(outcomes[2]?.adapterCommand).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
     expect(JSON.stringify(outcomes)).not.toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+  });
+
+  it("lets restart verify a stored credential before repairing a stale adapter revision", () => {
+    const home = createTempHome("nemoclaw-mcp-status-restart-revision-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  providerCredentialObservation = "v12";
+  persistedCredentialRevision = "v11";
+  sourceEntry.agent = "hermes";
+  sourceEntry.adapter = "hermes-config";
+  registry.updateSandbox("alpha", { agent: "hermes" });
+  const [status] = await bridge.statusMcpBridge("alpha", "github", {
+    allowCredentialProbeWithAdapterMismatch: true,
+    probeCredentialResolution: true,
+  });
+  writeHarnessResult(JSON.stringify({
+    adapter: status.adapter,
+    resolution: status.provider.credentialResolution,
+    probed: executedSandboxCommands.some((command) => command.includes("NEMOCLAW_MCP_PROBE")),
+  }));
+`,
+      { controlHttpStatus: 401, probeHttpStatus: 200 },
+    );
+    const payload = JSON.parse(stdout) as {
+      adapter: { registered: boolean | null };
+      resolution: { ok: boolean | null; httpStatus?: number; controlHttpStatus?: number };
+      probed: boolean;
+    };
+
+    expect(payload.adapter.registered).toBe(false);
+    expect(payload.probed).toBe(true);
+    expect(payload.resolution).toMatchObject({
+      ok: true,
+      httpStatus: 200,
+      controlHttpStatus: 401,
+    });
   });
 
   it("reports an unsafe Deep Agents projection when credential handling would hide it (#10754)", () => {
@@ -392,12 +574,12 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   ];
   const outcomes = [];
   for (const credentialCase of credentialCases) {
-    const current = registry.getSandbox("alpha");
-    current.agent = "langchain-deepagents-code";
-    current.mcp.bridges.github.agent = "langchain-deepagents-code";
-    current.mcp.bridges.github.adapter = "deepagents-config";
-    current.mcp.bridges.github.env = [credentialCase.env];
-    registry.updateSandbox("alpha", current);
+    registry.updateSandbox("alpha", { agent: "langchain-deepagents-code" });
+    Object.assign(sourceEntry, {
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config",
+      env: [credentialCase.env],
+    });
     providerCredentialObservation = credentialCase.observation;
     for (const fixture of cases) {
       process.exitCode = undefined;
@@ -487,7 +669,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     outcomes.forEach((outcome) => {
       expect(outcome.stdout, outcome.name).toBe("");
       expect(outcome.stderr, outcome.name).toContain(
-        `Unsafe managed Deep Agents MCP projection path: ${outcome.type}`,
+        `Unsafe Deep Agents native MCP config path: ${outcome.type}`,
       );
       expect(outcome.stderr, outcome.name).not.toContain("adapter does not match");
     });
@@ -499,12 +681,12 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       home,
       String.raw`
   const deepAgentsFixture = require("./test/helpers/mcp-bridge-adapter-deepagents-fixture.ts");
-  const current = registry.getSandbox("alpha");
-  current.agent = "langchain-deepagents-code";
-  current.mcp.bridges.github.agent = "langchain-deepagents-code";
-  current.mcp.bridges.github.adapter = "deepagents-config";
-  current.mcp.bridges.github.env = ["v1_TOKEN"];
-  registry.updateSandbox("alpha", current);
+  registry.updateSandbox("alpha", { agent: "langchain-deepagents-code" });
+  Object.assign(sourceEntry, {
+    agent: "langchain-deepagents-code",
+    adapter: "deepagents-config",
+    env: ["v1_TOKEN"],
+  });
   let inspected = false;
   processRecovery.executeSandboxCommand = (_sandboxName, command) => {
     inspected = true;
@@ -542,11 +724,11 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       home,
       String.raw`
   const deepAgentsFixture = require("./test/helpers/mcp-bridge-adapter-deepagents-fixture.ts");
-  const current = registry.getSandbox("alpha");
-  current.agent = "langchain-deepagents-code";
-  current.mcp.bridges.github.agent = "langchain-deepagents-code";
-  current.mcp.bridges.github.adapter = "deepagents-config";
-  registry.updateSandbox("alpha", current);
+  registry.updateSandbox("alpha", { agent: "langchain-deepagents-code" });
+  Object.assign(sourceEntry, {
+    agent: "langchain-deepagents-code",
+    adapter: "deepagents-config",
+  });
   providerCredentialObservation = "absent";
   let inspected = false;
   processRecovery.executeSandboxCommand = (_sandboxName, command) => {
@@ -594,13 +776,13 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("skips status probe traffic until exact policy and provider readiness are verified (#6379)", () => {
+  it("skips status probe traffic until policy presence and provider readiness are verified (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-readiness-");
     const { stdout } = runHarness(
       home,
       String.raw`
   const outcomes = [];
-  for (const policyState of ["absent", "drift", null]) {
+  for (const policyState of ["absent", null]) {
     activePolicyState = policyState;
     providerAttachmentState = "attached";
     providerCredentialKey = "GITHUB_TOKEN";
@@ -610,7 +792,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
     outcomes.push({
       case: "policy:" + String(policyState),
-      gatewayPresent: status.policy.gatewayPresent,
+      policyPresent: status.policy.present,
       resolution: status.provider.credentialResolution,
       probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
     });
@@ -635,6 +817,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   const [wrongProvider] = await bridge.statusMcpBridge("alpha", "github", {
     probeCredentialResolution: true,
   });
+
   outcomes.push({
     case: "provider:wrong-shape",
     resolution: wrongProvider.provider.credentialResolution,
@@ -645,16 +828,12 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     );
     const outcomes = JSON.parse(stdout) as Array<{
       case: string;
-      gatewayPresent?: boolean | null;
+      policyPresent?: boolean | null;
       resolution: { ok: boolean | null; detail?: string };
       probed: boolean;
     }>;
-    expect(outcomes).toHaveLength(6);
-    expect(outcomes.map((outcome) => outcome.gatewayPresent).slice(0, 3)).toEqual([
-      false,
-      null,
-      null,
-    ]);
+    expect(outcomes).toHaveLength(5);
+    expect(outcomes.map((outcome) => outcome.policyPresent).slice(0, 2)).toEqual([false, null]);
     outcomes.forEach((outcome) => {
       expect(outcome.probed, outcome.case).toBe(false);
       expect(outcome.resolution.ok, outcome.case).toBeNull();
@@ -793,7 +972,13 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     const payload = JSON.parse(stdout) as {
       status: {
         provider: { credentialResolution?: unknown };
-        toolDiscovery: { ok: boolean; count: number; tools: string[]; truncated: boolean };
+        toolDiscovery: {
+          ok: boolean;
+          count: number;
+          tools: string[];
+          truncated: boolean;
+          commandStatus: number | null;
+        };
       };
       probed: boolean;
       discovered: boolean;
@@ -806,7 +991,67 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       count: 2,
       tools: ["alpha", "zeta"],
       truncated: false,
+      commandStatus: 0,
     });
+  });
+
+  it("exits nonzero when a zero-exit runtime reports denied authentication (#10944)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-auth-failure-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  toolDiscoveryResult = {
+    protocol: 2,
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    detail: "MCP endpoint rejected the request (HTTP 401)",
+    failedStage: "initialization",
+    failureClass: "authentication",
+  };
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools", "--json"]);
+  const observedExitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  writeHarnessResult(JSON.stringify({
+    observedExitCode,
+    status: JSON.parse(logLines.join("\n")),
+  }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      observedExitCode: number;
+      status: { toolDiscovery: Record<string, unknown> };
+    };
+    expect(payload.observedExitCode).toBe(1);
+    expect(payload.status.toolDiscovery).toEqual({
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      commandStatus: 0,
+      detail: "MCP endpoint rejected the request (HTTP 401)",
+      failedStage: "initialization",
+      failureClass: "authentication",
+    });
+  });
+
+  it("does not accept a successful payload from a nonzero runtime (#10944)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-runtime-failure-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  toolDiscoveryStatus = 7;
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools"]);
+  const observedExitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  writeHarnessResult(JSON.stringify({ observedExitCode, rendered: logLines }));
+`,
+    );
+    const payload = JSON.parse(stdout) as { observedExitCode: number; rendered: string[] };
+    expect(payload.observedExitCode).toBe(1);
+    expect(payload.rendered.join("\n")).toContain("runtime exit 7");
+    expect(payload.rendered.join("\n")).toContain("FAILED");
   });
 
   it("skips authenticated discovery until provider readiness is verified (#6901)", () => {
@@ -870,7 +1115,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
           count: 0,
           tools: [],
           truncated: false,
+          commandStatus: null,
           detail: "tool discovery skipped: the credential provider is not attached to the sandbox",
+          failedStage: "preflight",
+          failureClass: "precondition",
         },
         discoveryCommands: 0,
       },
@@ -881,7 +1129,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
           count: 0,
           tools: [],
           truncated: false,
+          commandStatus: null,
           detail: "tool discovery skipped: provider attachment could not be inspected",
+          failedStage: "preflight",
+          failureClass: "precondition",
         },
         discoveryCommands: 0,
       },
@@ -892,7 +1143,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
           count: 0,
           tools: [],
           truncated: false,
+          commandStatus: null,
           detail: "tool discovery skipped: provider attachment could not be inspected",
+          failedStage: "preflight",
+          failureClass: "precondition",
         },
         discoveryCommands: 0,
       },
@@ -903,8 +1157,11 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
           count: 0,
           tools: [],
           truncated: false,
+          commandStatus: null,
           detail:
             "tool discovery skipped: the OpenShell provider is absent or does not match the recorded credential binding",
+          failedStage: "preflight",
+          failureClass: "precondition",
         },
         discoveryCommands: 0,
       },
@@ -1005,7 +1262,7 @@ describe("MCP add post-add credential-resolution probe", () => {
     expect(payload.exitCode).toBe(0);
   });
 
-  it("skips post-add probe traffic when policy verification is absent, drifted, or unknown (#6379)", () => {
+  it("skips post-add probe traffic when policy presence is absent or unknown (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-add-policy-gate-");
     const { stdout } = runHarness(
       home,
@@ -1013,7 +1270,7 @@ describe("MCP add post-add credential-resolution probe", () => {
   const addRestart = require("./src/lib/actions/sandbox/mcp-bridge-add-restart.js");
   addRestart.addMcpBridge = async () => {};
   const outcomes = [];
-  for (const policyState of ["absent", "drift", null]) {
+  for (const policyState of ["absent", null]) {
     activePolicyState = policyState;
     executedSandboxCommands.length = 0;
     logLines.length = 0;
@@ -1032,12 +1289,12 @@ describe("MCP add post-add credential-resolution probe", () => {
 `,
     );
     const outcomes = JSON.parse(stdout) as Array<{
-      policyState: "absent" | "drift" | null;
+      policyState: "absent" | null;
       probed: boolean;
       output: string;
       exitCode: number;
     }>;
-    expect(outcomes).toHaveLength(3);
+    expect(outcomes).toHaveLength(2);
     outcomes.forEach((outcome) => {
       expect(outcome.probed, String(outcome.policyState)).toBe(false);
       expect(outcome.output).toContain("Credential resolution probe was inconclusive");

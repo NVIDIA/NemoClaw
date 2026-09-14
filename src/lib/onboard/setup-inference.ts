@@ -18,7 +18,7 @@ import {
   withGatewayRouteMutationLock,
   withModelRouterPortLifecycleLock,
 } from "../inference/gateway-route-mutation-lock";
-import { getManagedVllmProviderBinding } from "../inference/local";
+import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
   clearPendingOllamaModelCleanup,
   isLocalOllamaRouteOwner,
@@ -43,7 +43,6 @@ import {
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
-import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 import { resolveModelRouterPort } from "./model-router";
 import {
   type RoutedProviderDeps,
@@ -128,11 +127,6 @@ import type {
   VllmDeps,
 } from "./inference-providers";
 import * as inferenceProviders from "./inference-providers";
-import {
-  ensureOpenAiInferenceProviderProfile,
-  type InferenceProviderProfileDeps,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "./inference-providers/provider-profile";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
@@ -153,6 +147,7 @@ import {
   hostLocalInferenceRuntimeOwnerSandboxName,
 } from "./runtime-provider/host-local-inference-routing";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "./runtime-provider/registry";
+import { releaseAbandonedRouteReservation } from "./sandbox-lifecycle";
 
 type ProviderBranchDeps = Pick<
   CommonDeps,
@@ -219,7 +214,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
     options?: { revalidateSandboxIdentity?(operation: string): void },
   ) => ReturnType<CommonDeps["upsertProvider"]>;
   verifyInferenceRoute: (gatewayName: string, provider: string, model: string) => void;
-  providerExistsInGateway: (name: string, gatewayName: string) => boolean;
+  providerExistsInGateway: (name: string, gatewayName: string) => Promise<boolean>;
   run: typeof import("../runner").run;
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
   // #9110 optional GPU-release seams; omitted by test literals that build deps
@@ -242,8 +237,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // #6294 optional overrides for the remote-provider OpenAI-surface branch;
   // production omits these and remote.ts falls back to the real modules.
   probeOpenAiLikeEndpoint?: RemoteProviderDeps["probeOpenAiLikeEndpoint"];
-  readGatewayProviderMetadata?: RemoteProviderDeps["readGatewayProviderMetadata"];
-  deleteGatewayProvider?: RemoteProviderDeps["deleteGatewayProvider"];
+  providerAdapter?: RemoteProviderDeps["providerAdapter"];
   log: (message: string) => void;
   error: (message: string) => void;
   exitProcess: (code: number) => never;
@@ -271,44 +265,18 @@ export function bindGatewayUpsertProvider(
       : upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
 }
 
-export function bindOpenAiProviderProfile(
-  upsertProvider: CommonDeps["upsertProvider"],
-  runOpenshell: InferenceProviderProfileDeps["runOpenshell"],
-  error: CommonDeps["error"],
-  exitProcess: CommonDeps["exitProcess"],
-): CommonDeps["upsertProvider"] {
-  return (name, type, ...rest) => {
-    if (type === OPENAI_GATEWAY_PROVIDER_TYPE) {
-      ensureOpenAiInferenceProviderProfile({
-        runOpenshell,
-        log: error,
-        exit: exitProcess,
-      });
-    }
-    return upsertProvider(name, type, ...rest);
-  };
-}
-
 export function createRoutedResumeProviderUpsert(deps: {
   upsertProvider: SetupInferenceDeps["upsertProvider"];
-  runGatewayOpenshell: InferenceProviderProfileDeps["runOpenshell"];
   hydrateCredentialEnv: RoutedProviderDeps["hydrateCredentialEnv"];
-  error?: CommonDeps["error"];
-  exitProcess?: CommonDeps["exitProcess"];
 }) {
-  return (
+  return async (
     gatewayName: string,
     provider: string,
     endpointUrl: string | null,
     credentialEnv: string | null,
   ) => {
-    const result = upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
-      upsertProvider: bindOpenAiProviderProfile(
-        bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
-        deps.runGatewayOpenshell,
-        deps.error ?? console.error,
-        deps.exitProcess ?? ((code) => process.exit(code)),
-      ),
+    const result = await upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
+      upsertProvider: bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
       hydrateCredentialEnv: deps.hydrateCredentialEnv,
     });
     return {
@@ -768,6 +736,13 @@ export function createSetupInference(
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
+          // A route-only reservation abandoned by an earlier run otherwise
+          // refuses this one and blames a session that no longer exists
+          // (#11051). Release it here, before the first write, so the refusal
+          // is reserved for a reservation that is genuinely contended.
+          if (releaseAbandonedRouteReservation(name)) {
+            deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
+          }
           const reserved = deps.updateSandbox(name, {
             provider: selectedProvider,
             model: selectedModel,
@@ -805,20 +780,14 @@ export function createSetupInference(
               hostLocalProviderErrors.push(message);
             }
           : deps.error;
-        const profiledUpsertProvider = bindOpenAiProviderProfile(
-          (...args) => {
-            revalidateSandboxIdentity?.("register the inference provider");
-            const selectedUpsertProvider =
-              hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
-            return selectedUpsertProvider(...args);
-          },
-          runGatewayOpenshell,
-          providerError,
-          providerExitProcess,
-        );
+        const selectedUpsertProvider: CommonDeps["upsertProvider"] = async (...args) => {
+          revalidateSandboxIdentity?.("register the inference provider");
+          const upsertProvider = hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
+          return await upsertProvider(...args);
+        };
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
-          upsertProvider: profiledUpsertProvider,
+          upsertProvider: selectedUpsertProvider,
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
             if (!hostLocalRoute && sandboxName) {
               reserveRoute(sandboxName, selectedProvider, selectedModel);
@@ -972,8 +941,7 @@ export function createSetupInference(
                 redact: deps.redact,
                 compactText: deps.compactText,
                 probeOpenAiLikeEndpoint: deps.probeOpenAiLikeEndpoint,
-                readGatewayProviderMetadata: deps.readGatewayProviderMetadata,
-                deleteGatewayProvider: deps.deleteGatewayProvider,
+                providerAdapter: deps.providerAdapter,
               },
             );
             if (outcome.done) return outcome.result;
@@ -1167,7 +1135,21 @@ export function createSetupInference(
               }
             }
             revalidateSandboxIdentity?.("publish the host-local inference provider receipt");
-            const committed = normalizeHostLocalInferenceReceipt(hostLocalRoute.prepared.commit());
+            const finalizePublishedResume = hostLocalRoute.prepared.finalizePublishedResume;
+            const committed = normalizeHostLocalInferenceReceipt(
+              finalizePublishedResume
+                ? finalizePublishedResume(() => {
+                    revalidateSandboxIdentity?.(
+                      "finalize the published host-local inference provider receipt",
+                    );
+                    if (sandboxName && !routeReserved) {
+                      throw new Error(
+                        "Host-local inference published resume lost sandbox route reservation authority.",
+                      );
+                    }
+                  })
+                : hostLocalRoute.prepared.commit(),
+            );
             if (
               serializeHostLocalInferenceReceipt(committed) !==
               serializeHostLocalInferenceReceipt(hostLocalRoute.receipt)

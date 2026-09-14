@@ -80,6 +80,104 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
     });
   });
 
+  it("does not enter the Docker container probe for native Podman cleanup", () => {
+    const captureOpenshell = vi.fn(() => ({ status: 0, output: "" }));
+    const dockerCapture = vi.fn(() => {
+      throw new Error("native Podman cleanup reached Docker");
+    });
+
+    expect(
+      shouldCleanupGatewayAfterConfirmedFinalDestroy(
+        {
+          deleteSucceededOrAlreadyGone: true,
+          removedRegistryEntry: true,
+          runtimeProviderId: "podman",
+        },
+        {
+          captureOpenshell,
+          dockerCapture,
+          listSandboxes: () => ({ sandboxes: [] }),
+          resolveRuntimeProvider: () => ({ gateway: { ownsHostReadiness: true } }) as never,
+        },
+      ),
+    ).toBe(true);
+    expect(captureOpenshell).toHaveBeenCalledOnce();
+    expect(dockerCapture).not.toHaveBeenCalled();
+  });
+
+  it("preserves the gateway for an unclassified terminal row after a Podman destroy", () => {
+    const captureDestroyIdentityByName = vi.fn(() => ({
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: null,
+      ownershipSha256: null,
+    }));
+    const dockerCapture = vi.fn(() => {
+      throw new Error("native Podman cleanup reached Docker");
+    });
+
+    expect(
+      shouldCleanupGatewayAfterConfirmedFinalDestroy(
+        {
+          deleteSucceededOrAlreadyGone: true,
+          removedRegistryEntry: true,
+          runtimeProviderId: "podman",
+        },
+        {
+          captureOpenshell: () => ({
+            status: 0,
+            output:
+              "NAME              CREATED              PHASE\nalpha             now                  Error\n",
+          }),
+          dockerCapture,
+          listSandboxes: () => ({ sandboxes: [] }),
+          resolveRuntimeProvider: () =>
+            ({
+              identity: { id: "podman" },
+              gateway: { ownsHostReadiness: true },
+              cleanup: { supported: true, captureDestroyIdentityByName },
+            }) as never,
+        },
+      ),
+    ).toBe(false);
+    expect(captureDestroyIdentityByName).not.toHaveBeenCalled();
+    expect(dockerCapture).not.toHaveBeenCalled();
+  });
+
+  it("does not attribute an unclassified terminal Docker row to Podman", () => {
+    const captureDestroyIdentityByName = vi.fn(() => {
+      throw new Error("provider-specific attribution must not run");
+    });
+
+    expect(
+      shouldCleanupGatewayAfterConfirmedFinalDestroy(
+        {
+          deleteSucceededOrAlreadyGone: true,
+          removedRegistryEntry: true,
+          runtimeProviderId: "podman",
+        },
+        {
+          captureOpenshell: () => ({
+            status: 0,
+            output:
+              "NAME              CREATED              PHASE\nalpha             now                  Failed\n",
+          }),
+          dockerCapture: vi.fn(() => {
+            throw new Error("native Podman cleanup reached Docker");
+          }),
+          listSandboxes: () => ({ sandboxes: [] }),
+          resolveRuntimeProvider: () =>
+            ({
+              identity: { id: "podman" },
+              gateway: { ownsHostReadiness: true },
+              cleanup: { supported: true, captureDestroyIdentityByName },
+            }) as never,
+        },
+      ),
+    ).toBe(false);
+    expect(captureDestroyIdentityByName).not.toHaveBeenCalled();
+  });
+
   it("preserves the gateway when a live sandbox appears after the empty-registry check", () => {
     const events: string[] = [];
     expect(

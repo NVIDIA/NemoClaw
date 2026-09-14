@@ -109,7 +109,7 @@ export function unexpectedHermesPortablePodmanArgs(args: readonly string[]): nev
 
 export function hermesPortableTestOpenShellAuthority(): HermesPortableOpenShellExecutableAuthority {
   return {
-    version: "0.0.106",
+    version: "0.0.116",
     executable: {
       executablePath: "/usr/bin/openshell",
       device: "1",

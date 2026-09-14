@@ -53,8 +53,8 @@ function writeScopedGatewayState(home: string): string {
   return configPath;
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(
     options,
     withSuccessfulPreUninstallBackup(
       withProvenManagedGatewayProcess({

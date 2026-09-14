@@ -58,20 +58,19 @@ describe("onboard session reasoning effort", () => {
     ).toBeNull();
   });
 
-  it.each([
-    "default",
-    "extreme",
-    42,
-  ])("rejects a persisted session with invalid reasoning effort %j", (invalidEffort) => {
-    session.saveSession(
-      session.createSession({
-        compatibleEndpointReasoningEffort: "high",
-      }),
-    );
-    const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
-    raw.compatibleEndpointReasoningEffort = invalidEffort;
-    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(raw));
+  it.each(["default", "extreme", 42])(
+    "rejects a persisted session with invalid reasoning effort %j",
+    (invalidEffort) => {
+      session.saveSession(
+        session.createSession({
+          compatibleEndpointReasoningEffort: "high",
+        }),
+      );
+      const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
+      raw.compatibleEndpointReasoningEffort = invalidEffort;
+      fs.writeFileSync(session.SESSION_FILE, JSON.stringify(raw));
 
-    expect(session.loadSession()).toBeNull();
-  });
+      expect(session.loadSession()).toBeNull();
+    },
+  );
 });

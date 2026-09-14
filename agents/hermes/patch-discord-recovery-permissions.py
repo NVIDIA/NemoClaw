@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Patch the pinned Hermes Discord recovery ledger to remain group-writable.
 
-Hermes v2026.7.20 / 0.19.0 creates the Discord recovery database as the
+Hermes v2026.8.27 / 0.20.6 creates the Discord recovery database as the
 ``gateway`` user and then forces mode 0600. NemoClaw snapshot and restore
 commands run as the ``sandbox`` user, so that mode prevents online backup and
 prevents the gateway from reopening a sandbox-restored database.

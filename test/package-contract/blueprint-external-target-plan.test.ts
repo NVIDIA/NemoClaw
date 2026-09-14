@@ -51,6 +51,12 @@ function npmEnvironment(
   };
 }
 
+function rootPackagePackEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return { ...npmEnvironment(environment), NEMOCLAW_INSTALLING: "1" };
+}
+
 function writeRuntimeProbe(probePath: string): void {
   fs.writeFileSync(
     probePath,
@@ -169,6 +175,12 @@ type ProbeEvidence = Readonly<{
 }>;
 
 describe("packaged Blueprint Runner npm cache", () => {
+  it("marks root package packing as installer-owned so prepare cannot race the build", () => {
+    const environment = rootPackagePackEnvironment({ NEMOCLAW_INSTALLING: "" });
+
+    expect(environment.NEMOCLAW_INSTALLING).toBe("1");
+  });
+
   it("uses the populated trusted runner cache before npm exec's default", () => {
     const runnerTemp = path.join(os.tmpdir(), "trusted-runner");
     const environment = npmEnvironment(
@@ -227,7 +239,7 @@ describe.sequential("packaged Blueprint Runner external target", () => {
     const pack = spawnSync(
       "npm",
       ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveRoot],
-      { cwd: REPOSITORY_ROOT, encoding: "utf8", env: npmEnvironment() },
+      { cwd: REPOSITORY_ROOT, encoding: "utf8", env: rootPackagePackEnvironment() },
     );
     assertCommandSucceeded(pack, "root package archive creation");
     const archives = fs.readdirSync(archiveRoot).filter((entry) => entry.endsWith(".tgz"));
@@ -288,12 +300,12 @@ describe.sequential("packaged Blueprint Runner external target", () => {
     blueprintFile = path.join(blueprintRoot, "blueprint.yaml");
     validBlueprintDocument = {
       version: "1.0.0",
-      min_openshell_version: "0.0.106",
-      max_openshell_version: "0.0.106",
+      min_openshell_version: "0.0.116",
+      max_openshell_version: "0.0.116",
       openshell_target: {
         endpoint: "https://192.0.2.1:8443",
         workspace: "default",
-        expected_release: "0.0.106",
+        expected_release: "0.0.116",
         lifecycle: "external",
         trust: { ca_file: privateCaPath },
         authentication: { credential_file: privateAuthenticationPath },
@@ -454,7 +466,7 @@ describe.sequential("packaged Blueprint Runner external target", () => {
     // Result
     expect(execution.result.status, execution.safeDiagnostics).toBe(1);
     expect(execution.result.stderr).toContain(
-      "external OpenShell target expected_release must be 0.0.106",
+      "external OpenShell target expected_release must be 0.0.116",
     );
     expect(execution.result.stdout).not.toContain("openshell_target");
     expect(execution.evidence).toEqual({ effects: [] });
@@ -478,7 +490,7 @@ describe.sequential("packaged Blueprint Runner external target", () => {
       openshell_target: {
         endpoint: "https://192.0.2.1:8443",
         workspace: "default",
-        expected_release: "0.0.106",
+        expected_release: "0.0.116",
         lifecycle: "external",
         authentication_source: "file",
         ca_fingerprint: expectedFingerprint,

@@ -10,6 +10,7 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import { openClawSandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
+import { getAgentSandboxBaseImageEnvVar } from "../agent/base-image-env";
 import { getInstalledOpenshellVersion } from "./openshell-version";
 
 /**
@@ -44,7 +45,7 @@ export function pullAndResolveBaseImageDigest(
     imageName: SANDBOX_BASE_IMAGE,
     dockerfilePath: defaultOpenclawBaseDockerfile(ROOT),
     localTag: buildLocalBaseTag("nemoclaw-sandbox-base-local", ROOT),
-    envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+    envVar: getAgentSandboxBaseImageEnvVar("openclaw"),
     label: "OpenClaw sandbox base image",
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
     validateImage: openClawBaseImageHasSecurityInventory,

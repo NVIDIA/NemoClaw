@@ -31,6 +31,7 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="07-deepagents-code-headless-inference"
 HEADLESS_TIMEOUT="${DEEPAGENTS_HEADLESS_TIMEOUT:-120}"
+SKILL_CLI_TIMEOUT_SECONDS=180
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -73,6 +74,11 @@ sandbox_direct_rlimit_exec() {
 
 sandbox_direct_dcode() {
   openshell sandbox exec --name "$SANDBOX_NAME" --timeout "$HEADLESS_TIMEOUT" -- dcode "$@" 2>&1
+}
+
+bounded_skill_cli() {
+  timeout --signal=TERM --kill-after=5s "${SKILL_CLI_TIMEOUT_SECONDS}s" \
+    "$cli_bin" "$SANDBOX_NAME" skill "$@"
 }
 
 sandbox_dcode_wrapper_contract() {
@@ -369,6 +375,7 @@ is_empty_prompt_rejection() {
 classify_headless_output() {
   local dcode_exit="$1"
   local headless_output="$2"
+  local expected_response="${3:-PONG}"
   local payload
   payload="$(
     printf '%s' "$headless_output" \
@@ -410,8 +417,9 @@ classify_headless_output() {
     return 1
   fi
 
-  if printf '%s' "$payload" | python3 -c '
+  if printf '%s' "$payload" | EXPECTED_RESPONSE="$expected_response" python3 -c '
 import json
+import os
 import sys
 
 try:
@@ -434,7 +442,7 @@ if not isinstance(data, dict) or set(data) != {
     raise SystemExit(1)
 if data["status"] != "success" or data["exit_code"] != 0:
     raise SystemExit(1)
-if not isinstance(data["response"], str) or data["response"].strip() != "PONG":
+if not isinstance(data["response"], str) or data["response"].strip() != os.environ["EXPECTED_RESPONSE"]:
     raise SystemExit(1)
 completion = data["completion"]
 if not isinstance(completion, dict) or set(completion) != {
@@ -450,7 +458,11 @@ if not isinstance(completion["duration_ms"], int) or completion["duration_ms"] <
 if completion["response_bytes"] != len(data["response"].encode("utf-8")):
     raise SystemExit(1)
 '; then
-    printf '%s\n' "json-pong"
+    if [ "$expected_response" = "PONG" ]; then
+      printf '%s\n' "json-pong"
+    else
+      printf '%s\n' "json-response"
+    fi
     return 0
   fi
 
@@ -597,6 +609,42 @@ main() {
     fail_test "login-shell proxy did not receive HTTP 200 from https://inference.local/v1/models (HTTP ${route_code:-000})"
   fi
 
+  # Exercise the stateless public boundary, then let native DCode list/session
+  # behavior remain authoritative for discovery and activation.
+  skill_name="nemoclaw-native-lifecycle"
+  skill_marker_v1="DCODE_NATIVE_SKILL_V1"
+  skill_marker_v2="DCODE_NATIVE_SKILL_V2"
+  cli_bin="${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}"
+  skill_body_v1="When asked for the native lifecycle canary, reply with exactly ${skill_marker_v1} and nothing else."
+  skill_helper="${REPO:-.}/test/e2e/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh"
+  if skill_install_output="$(SKILL_ID="$skill_name" SKILL_BODY="$skill_body_v1" \
+    SKILL_DESCRIPTION="Use when asked for the native lifecycle canary." \
+    SANDBOX_NAME="$SANDBOX_NAME" NEMOCLAW_CLI_BIN="$cli_bin" bash "$skill_helper" 2>&1)"; then
+    pass "public install and native list reported the DCode canonical-root skill"
+  else
+    fail_test "public install and native list did not complete through DCode"
+  fi
+  skill_root="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}-skill.XXXXXX")"
+  printf '%s\n' \
+    '---' \
+    "name: ${skill_name}" \
+    'description: Use when asked for the native lifecycle canary.' \
+    '---' \
+    '# Native lifecycle canary' \
+    "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v2} and nothing else." \
+    >"${skill_root}/SKILL.md"
+  skill_update_output="$(bounded_skill_cli install "$skill_root" 2>&1)" \
+    && skill_update_status=0 || skill_update_status=$?
+  skill_file_output="$(sandbox_exec "cat /sandbox/.deepagents/agent/skills/${skill_name}/SKILL.md" || true)"
+  rm -rf -- "$skill_root"
+  if [ "$skill_update_status" -ne 0 ] \
+    && grep -Fxq "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v1} and nothing else." <<<"$skill_file_output" \
+    && ! grep -Fq "$skill_marker_v2" <<<"$skill_file_output"; then
+    pass "public NemoClaw skill install refused to replace the existing DCode canonical-root target"
+  else
+    fail_test "public NemoClaw skill install replaced or changed the existing DCode canonical-root target"
+  fi
+
   # 5. The same login-shell path runs dcode and returns a JSON PONG envelope.
   headless_output="$(sandbox_login_exec "cd /sandbox && timeout ${HEADLESS_TIMEOUT} dcode -n 'Reply with exactly one word: PONG' --json; echo \"DCODE_EXIT:\$?\"" || true)"
   dcode_exit="$(printf '%s' "$headless_output" | sed -n 's/.*DCODE_EXIT:\([0-9]\+\).*/\1/p' | tail -n1)"
@@ -607,17 +655,42 @@ main() {
   fi
 
   # 6. The public direct-exec path reaches inference without shell startup files.
-  if direct_output="$(sandbox_direct_dcode -n "Reply with exactly one word: PONG" --json)"; then
+  if direct_output="$(sandbox_direct_dcode -n "Use the ${skill_name} skill for the native lifecycle canary." --json)"; then
     direct_exit=0
   else
     direct_exit=$?
   fi
   direct_headless_output="${direct_output}
 DCODE_EXIT:${direct_exit}"
-  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output")"; then
-    pass "direct-exec dcode -n reached managed inference with ${direct_classification} (exit ${direct_exit}; direct DNS/hosts ${direct_dns_state})"
+  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker_v1")"; then
+    pass "direct-exec dcode -n reached managed inference; fresh direct-exec dcode session retained only the original skill (${direct_classification}; exit ${direct_exit})"
   else
-    fail_test "direct-exec dcode -n --json did not return a success envelope with PONG (${direct_classification}, exit ${direct_exit})"
+    fail_test "fresh direct-exec dcode session did not retain only the original skill (${direct_classification}, exit ${direct_exit})"
+  fi
+  skill_remove_output="$(bounded_skill_cli remove "$skill_name" 2>&1)" \
+    && skill_remove_status=0 || skill_remove_status=$?
+  skill_post_remove_list=""
+  info "checking DCode's native list through the public boundary after removal"
+  skill_post_remove_list="$(bounded_skill_cli list --json 2>&1)" \
+    && skill_post_remove_list_status=0 || skill_post_remove_list_status=$?
+  if [ "$skill_remove_status" -eq 0 ] \
+    && [ "$skill_post_remove_list_status" -eq 0 ] \
+    && ! grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\"" <<<"$skill_post_remove_list"; then
+    pass "DCode's native remove and list no longer report the canonical-root skill"
+  else
+    fail_test "DCode's native remove/list lifecycle still reported the canonical-root skill"
+  fi
+  if removed_skill_output="$(sandbox_direct_dcode -n "The native lifecycle canary skill was removed. Reply exactly PONG without inventing its value." --json)"; then
+    removed_skill_exit=0
+  else
+    removed_skill_exit=$?
+  fi
+  if [ "$removed_skill_exit" -eq 0 ] \
+    && ! grep -Fq "$skill_marker_v1" <<<"$removed_skill_output" \
+    && ! grep -Fq "$skill_marker_v2" <<<"$removed_skill_output"; then
+    pass "fresh direct-exec dcode session did not consume the removed native skill"
+  else
+    fail_test "fresh direct-exec dcode session retained removed native skill content (exit ${removed_skill_exit})"
   fi
 
   # 7. The user-facing bare-connect readiness path must route every observed
@@ -666,8 +739,13 @@ ${empty_direct_output}
 ${dns_hosts_output}
 ${proxy_contract_output}
 ${route_output}
+${skill_install_output}
+${skill_update_output}
+${skill_file_output}
 ${headless_output}
 ${direct_headless_output}
+${skill_remove_output}
+${skill_post_remove_list}
 ${connect_output}
 ${fail_closed_connect_output}"
   if printf '%s' "$combined" | contains_secret; then

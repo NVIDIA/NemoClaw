@@ -10,7 +10,6 @@ manifest_version: 1
 provides_tools:
   - nemoclaw_status
   - nemoclaw_info
-  - nemoclaw_reload_skills
 
 provides_hooks:
   - on_session_start

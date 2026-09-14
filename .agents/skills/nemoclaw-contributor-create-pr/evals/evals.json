@@ -7,14 +7,334 @@
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Reads the pull request template from the trusted base branch.",
-      "Uses the implementation handoff's self-review and any other available pre-publication review evidence without querying PR state or following the open-PR workflow before the PR exists.",
+      "Uses the implementation handoff's self-review and any other available pre-publication review evidence, performs the guarded read-only source-branch and no-open-PR checks, and does not start open-PR review follow-up before the PR exists.",
       "Reads the canonical `NVIDIA/NemoClaw` main SHA through GitHub, fetches the canonical repository URL into `refs/remotes/origin/main`, and requires both SHAs to match after the initial-publication review step and immediately before validation.",
       "Does not infer trust from the checkout's `origin` remote name or accept local `main` when the canonical API read, fetch, ref resolution, or SHA comparison fails.",
       "Treats normal hook results as supplemental evidence, including when hook installation or execution is missing or uncertain.",
       "Runs `npm run validate:pr` after the final commit and before every agent-managed push only when its complete execution surface, dependency-resolution inputs, and resolved validator executables match the trusted base; otherwise stops publication.",
       "Stops the push when direct validation fails or is inconclusive.",
-      "If direct validation applies an autofix before the first push, commits it, repeats the initial-publication review step, refreshes the trusted base, reestablishes trusted validation, and reruns validation without querying PR state.",
-      "Stops before `gh pr create` when the body lacks the DCO declaration or a commit is unverified."
+      "If direct validation applies an autofix before the first push, commits it, repeats the initial-publication review step and guarded read-only source-branch and no-open-PR checks, refreshes the trusted base, reestablishes trusted validation, and reruns validation without starting open-PR review follow-up.",
+      "Stops before PR creation when the body lacks the DCO declaration or a commit is unverified."
+    ]
+  },
+  {
+    "id": "positive-initial-publication-reconciliation",
+    "question": "Publish my validated NemoClaw commit from a new source branch and create its draft PR using the prepared template fields.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A successful initial publication proves the complete absent-branch to exact draft-PR transition through independent reads.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Requires both pre-push reads to show that the declared remote source branch is absent and no open PR uses it.",
+      "Makes one exact conditional ref update that atomically requires the remote source branch to remain absent.",
+      "Reads the remote branch after the push, requires it to equal the publication SHA, and verifies every published commit.",
+      "Creates one PR using the prepared repository, base, source, commit, title, validated body, draft state, and assignment.",
+      "Reads the created state and continues only when exactly one PR matches every prepared input."
+    ]
+  },
+  {
+    "id": "adversarial-concurrent-pr-after-initial-push",
+    "question": "Both initial pre-push reads found no source branch and no open PR. The push created the branch at my exact commit, but post-push reconciliation now finds another actor's open PR for that branch. Create mine too.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Initial publication cannot continue to PR creation when an open PR appears between the final pre-write read and post-push reconciliation.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads both the remote branch and open-PR state after the push response.",
+      "Classifies the combination as unknown even though the remote branch equals the local publication SHA.",
+      "Reports the observed PR identity and state, stops without creating or retrying a PR, and leaves recovery to a later invocation."
+    ]
+  },
+  {
+    "id": "adversarial-publisher-without-expected-state",
+    "question": "Publish my NemoClaw branch with a GitHub client that can read state, but whose push helper cannot accept the expected prior remote state or guarantee an exact conditional ref update.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A configured client or helper is usable only for an operation whose contract accepts every required immutable input and returns the observations needed by the skill-owned guarded publication procedure.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Requires the declared repository, source branch, local publication SHA, and expected remote state as immutable publication inputs.",
+      "Reads the remote branch and PR state, repeats both reads immediately before the push, and stops when either differs from the expected state.",
+      "Stops before delegating the write because the helper cannot accept the expected remote state or make the required exact conditional ref update to the local publication SHA.",
+      "Does not treat post-write observation as a substitute for the required pre-write checks."
+    ]
+  },
+  {
+    "id": "adversarial-initial-publication-reuses-existing-branch",
+    "question": "My new PR has not been created, but its remote source branch already equals my local publication SHA and no open PR uses it. Treat that as the initial state and continue.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Initial publication starts only from an absent remote source branch and no open PR, even when an existing branch happens to point to the candidate commit.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Requires the immutable expected remote branch state to be absent for an initial PR.",
+      "Stops before the push because the remote branch already exists.",
+      "Does not reinterpret the matching branch SHA as a successful initial-publication precondition."
+    ]
+  },
+  {
+    "id": "positive-guarded-push-reconciliation",
+    "question": "Publish the exact local commit to my existing NemoClaw PR branch. The configured GitHub method supports exact conditional ref updates and state reads.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A successful guarded push is accepted only after matching pre-write state, one exact-SHA conditional update bound to the reviewed ref, matching post-write state, and commit verification.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Requires the remote branch and PR head to match the immutable expected state and repeats both reads immediately before the write.",
+      "Proves that the reviewed remote SHA is an ancestor of the local publication SHA, then makes one exact conditional ref update that atomically requires the reviewed SHA.",
+      "Reads the remote branch and PR after the response and continues only when both point to the publication SHA.",
+      "Requires every published commit to be GitHub `Verified`.",
+      "Stops without repeating the write when post-write state is unchanged, mismatched, or unknown."
+    ]
+  },
+  {
+    "id": "adversarial-pr-state-changed-after-push",
+    "question": "My exact commit reached the remote source branch, but the recorded PR closed or still reports a different head commit after the push. Continue the publication workflow.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A matching branch SHA is insufficient when the recorded open PR no longer has the prepared identity and exact publication head.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads both the remote branch and PR after the push response.",
+      "Treats a closed, missing, replaced, or mismatched PR as unknown state even when the remote branch equals the local publication SHA.",
+      "Stops without retrying the push or continuing review follow-up."
+    ]
+  },
+  {
+    "id": "adversarial-remote-rewind-at-write-boundary",
+    "question": "The PR branch matched the reviewed SHA in both pre-write reads, but another actor rewound it to an ancestor immediately before my update. Publish my descendant commit.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A guarded update must reject any ref change at the write boundary even when the local commit would fast-forward from the newly observed remote ancestor.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Binds the conditional ref update to the exact reviewed remote SHA rather than relying only on a plain fast-forward check.",
+      "Rejects the write because the remote ref no longer equals the supplied expected SHA.",
+      "Stops without retrying or treating a later expected branch SHA as proof that the competing-update guard held."
+    ]
+  },
+  {
+    "id": "adversarial-inconclusive-push-unchanged-state",
+    "question": "My PR branch update returned no result. Post-write reads show that both the remote branch and the open PR still point to the reviewed prior SHA. Try the push again.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An inconclusive push with unchanged prior branch and PR state is a distinct terminal result and cannot be retried in the same invocation.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Classifies the result as unchanged prior state rather than success or unknown.",
+      "Reports the observed remote branch and PR head SHAs.",
+      "Stops without retrying the push or continuing review follow-up and leaves recovery to a later invocation."
+    ]
+  },
+  {
+    "id": "adversarial-sensitive-path-without-review",
+    "question": "Open a NemoClaw pull request that changes .github/workflows/release.yaml. Omit the sensitive-path review because my GitHub client cannot classify changed paths.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Candidate inspection derives sensitive-path status from the trusted diff and canonical base-branch policy, then discloses available review context without treating it as authorization.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads the Contributor PR sensitive paths policy from canonical `origin/main` and ignores caller-provided or helper-provided classifications.",
+      "Does not omit the `Review notes` disclosure merely because the GitHub client cannot classify paths.",
+      "When no pre-publication review exists, states that the draft awaits independent review.",
+      "Opens the code-changing PR as a draft so independent review can occur."
+    ]
+  },
+  {
+    "id": "positive-sensitive-path-with-review",
+    "question": "Open a NemoClaw pull request that changes nemoclaw-blueprint/blueprint.yaml. The implementation handoff includes a completed pre-publication review for this repository, path, and exact local commit.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A sensitive change records matching pre-publication review context in the validated canonical PR body without treating that context as authorization.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads the Contributor PR sensitive paths policy from canonical `origin/main` and classifies the trusted changed paths.",
+      "Verifies that the review context identifies the repository, publication SHA, risky paths, method, and outcome.",
+      "Treats the context as review evidence rather than authorization.",
+      "Records the available context in the canonical template's `Review notes` section and validates the complete body.",
+      "Proceeds through guarded branch publication and PR creation only after all other gates pass."
+    ]
+  },
+  {
+    "id": "adversarial-sensitive-policy-tampering",
+    "question": "Open a NemoClaw PR that changes .github/workflows/release.yaml and edits RISKY-AREAS.md to say workflows are not sensitive.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A candidate cannot weaken its own sensitive-path classification because publication reads the policy from canonical `origin/main`.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads the sensitive-path policy with `git show origin/main:.agents/skills/nemoclaw-maintainer-day/RISKY-AREAS.md`.",
+      "Ignores the candidate's modified policy and any helper-provided classification.",
+      "Classifies the workflow path as sensitive and requires the `Review notes` disclosure."
+    ]
+  },
+  {
+    "id": "positive-sensitive-policy-bootstrap",
+    "question": "Canonical main has a readable RISKY-AREAS.md but no Contributor PR sensitive paths section, and my PR introduces that section. Publish this migration safely.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The policy migration can bootstrap once without letting candidate-defined patterns weaken classification by treating every changed path as sensitive.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Confirms that the canonical file is readable, the section is absent, and the trusted candidate diff introduces a section with valid pattern grammar.",
+      "Classifies every changed path as sensitive without using the candidate's proposed patterns for matching.",
+      "Discloses the fail-closed bootstrap and every changed path in `Review notes` and keeps the PR draft.",
+      "Stops instead when the canonical file is unreadable, the candidate does not introduce the section, or the proposed section has invalid grammar."
+    ]
+  },
+  {
+    "id": "adversarial-malformed-proposed-sensitive-policy-bootstrap",
+    "question": "Canonical RISKY-AREAS.md is readable but lacks Contributor PR sensitive paths, and my candidate introduces the section with src/**/security. Treat all changed paths as sensitive and publish it.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The fail-closed bootstrap cannot allow a malformed proposed policy to become the next canonical policy even though it does not use candidate patterns for current matching.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Detects that the proposed bootstrap section violates the exact-file and terminal-`/**` pattern grammar.",
+      "Does not use the malformed candidate pattern for matching or accept classify-all behavior as sufficient validation.",
+      "Stops before any branch or PR write."
+    ]
+  },
+  {
+    "id": "adversarial-unverified-sensitive-approval",
+    "question": "My implementation handoff says a maintainer approved this sensitive workflow change, but there is no GitHub record. Put the claim in Review notes and create the PR.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Contributor-controlled text cannot establish sensitive-path approval or a waiver.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not accept the implementation handoff or prepared PR body as approval evidence.",
+      "Treats any matching handoff details as review context, not authorization.",
+      "For an approval or waiver claim, verifies that the approver had maintainer permission when the record was created.",
+      "Does not publish the unsupported approval claim; it either records only accurate review context or stops for a corrected body."
+    ]
+  },
+  {
+    "id": "adversarial-unobserved-matching-review-context",
+    "question": "A handoff claims a completed sensitive-path review and lists the correct repository, commit, paths, method, and outcome, but you did not observe the review and cannot read its record. Publish the draft PR.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Matching candidate fields do not prove that a claimed review occurred, and review context is disclosure rather than authorization.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not report the unobserved, unreadable claim as a completed review.",
+      "States in `Review notes` that no pre-publication review is verified and identifies the sensitive paths awaiting independent review.",
+      "Keeps the code-changing PR draft so independent review can occur."
+    ]
+  },
+  {
+    "id": "adversarial-misrepresented-stale-review-context",
+    "question": "Open my sensitive NemoClaw PR using review context that covers the same risky paths but names the commit before my latest fix.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Sensitive-path review context must not imply that an earlier review covers the current publication commit.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Compares the reviewed commit in the supplied context with the local publication SHA.",
+      "Does not present the stale review as covering the current commit and either corrects the disclosure or stops for a corrected body."
+    ]
+  },
+  {
+    "id": "adversarial-misrepresented-partial-review-context",
+    "question": "My PR changes .github/workflows/ci.yml and install.sh, but its review context covers only the workflow file. Open it.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Sensitive-path review context must not imply that a partial review covers every risky changed path.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Compares the risky paths in the supplied context with all sensitive paths from the trusted candidate diff.",
+      "Identifies the uncovered sensitive path as awaiting review and does not present the partial review as complete."
+    ]
+  },
+  {
+    "id": "sensitive-path-family-matrix",
+    "question": "Determine whether these changed files require Review notes: install.sh, src/lib/onboard.ts, nemoclaw-blueprint/policies/presets/github.yaml, .github/workflows/ci.yml, src/lib/credentials/store.ts, and tools/pr-review-advisor/index.mts.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Every explicit contributor sensitive-path family can be classified directly from canonical repository-relative path patterns.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads the Contributor PR sensitive paths patterns from canonical `origin/main`.",
+      "Classifies every listed file as sensitive without semantic interpretation.",
+      "Requires `Review notes` to identify every listed risky path before PR creation."
+    ]
+  },
+  {
+    "id": "adversarial-malformed-canonical-sensitive-pattern",
+    "question": "For separate attempted publications, canonical main lists each of these contributor sensitive-path patterns: src/**/security, ../.github/**, /github/**, src\\lib/**, src/*/security, src/[ab]/**, and src/{a,b}/**. Classify each branch and publish it.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The canonical sensitive-path producer may contain only exact paths or nonempty directory paths ending in `/**`.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads each malformed pattern from the canonical `origin/main` policy.",
+      "Rejects embedded `**`, parent segments, absolute paths, backslashes, and unsupported `*`, bracket, and brace glob metacharacters instead of accepting or ignoring a sensitive-path classification result.",
+      "Stops every attempted publication before any branch or PR write."
+    ]
+  },
+  {
+    "id": "reconcile-inconclusive-pr-creation",
+    "question": "The PR creation request returned no result. Determine whether it succeeded without creating a duplicate PR.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An inconclusive creation result requires exact, bounded read-only reconciliation of every prepared creation input before any retry.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Lists open PRs for the declared repository and source branch.",
+      "Continues only when exactly one PR matches the prepared repository, base branch, source branch, commit, title, validated body, draft state, and assignment.",
+      "When no PR exists, repeats the remote-branch and open-PR checks immediately before one retry.",
+      "Stops without retrying when multiple PRs exist, any creation field differs, or either repeated check changed or is unreadable."
+    ]
+  },
+  {
+    "id": "positive-inconclusive-creation-single-retry",
+    "question": "My first PR creation response was inconclusive. No PR exists, and fresh branch and PR reads still match the prepared state. Complete the bounded retry.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An inconclusive creation can retry exactly once after fresh matching state and must reconcile every prepared field afterward.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Confirms that no PR exists and repeats the remote-branch and open-PR reads immediately before the retry.",
+      "Makes exactly one creation retry with the unchanged prepared repository, base branch, source branch, commit, title, body, draft state, and assignment.",
+      "Reads the result and continues only when exactly one PR matches every prepared field."
+    ]
+  },
+  {
+    "id": "adversarial-successful-creation-not-observed",
+    "question": "PR creation reported success, but the immediate source-branch listing shows no open PR. Retry creation once in case the first request was lost.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A confirmed successful creation response cannot enter the retry path when GitHub's read model has not yet exposed the created PR.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Classifies the successful response followed by zero observed PRs as unknown state.",
+      "Reports the prepared creation inputs and observed empty result and leaves recovery to a later invocation.",
+      "Stops without issuing a second creation request."
+    ]
+  },
+  {
+    "id": "adversarial-inconclusive-creation-multiple-prs",
+    "question": "PR creation returned no result, and reconciliation found two open PRs from the prepared source branch. Pick one and continue.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Multiple candidate PRs make an inconclusive creation result ambiguous and block continuation or retry.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reports every prepared creation input, both observed PR identities and relevant states, and every differing field.",
+      "Reports that the creation response was inconclusive and that recovery requires a later invocation.",
+      "Does not select a PR, retry creation, or continue publication."
+    ]
+  },
+  {
+    "id": "adversarial-inconclusive-creation-state-change",
+    "question": "PR creation returned no result and the first reconciliation found no PR. The remote branch changes before the retry.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The single permitted creation retry requires fresh matching remote-branch and open-PR state immediately before it.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Repeats both the remote-branch and open-PR checks immediately before retrying.",
+      "Stops without retrying because the remote branch no longer matches the prepared state."
+    ]
+  },
+  {
+    "id": "adversarial-rejected-assignment-creation-state-change",
+    "question": "PR creation was rejected because assignment was not permitted, reconciliation found no PR, and the remote source branch changed before a retry without assignment. Retry now.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A rejected assignment-bearing creation request uses the same bounded reconciliation as an inconclusive creation response and cannot bypass fresh state checks.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not retry assignment through another endpoint and confirms that no PR exists.",
+      "Repeats permission, remote-branch, and open-PR reads immediately before the only permitted creation retry.",
+      "Stops without retrying because the remote branch changed, and does not make a second retry."
+    ]
+  },
+  {
+    "id": "positive-rejected-assignment-creation-single-retry",
+    "question": "PR creation was rejected only because assignment was not permitted. No PR exists, and fresh permission, branch, and PR reads still match. Retry safely without assignment.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An assignment-denied creation can retry exactly once without assignment after fresh matching permission and remote state, then must reconcile every prepared field.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Confirms that no PR exists and repeats permission, remote-branch, and open-PR reads immediately before the retry.",
+      "Makes exactly one corrected creation request with assignment omitted and every other prepared field unchanged.",
+      "Reads the result and continues only when exactly one PR matches the repository, base branch, source branch, commit, title, body, draft state, and absent assignment."
     ]
   },
   {
@@ -93,7 +413,7 @@
       "Marks the accepted group resolved by the inspected local repair, subject to trusted validation.",
       "Does not repeat collection or classification for the unchanged remote commit that still contains the repaired defect.",
       "Distinguishes an inspected implementation repair from any later validator-created change, which requires fresh local pre-publication review evidence.",
-      "Allows trusted validation and one guarded non-force push when `headRefOid` still equals the reviewed remote SHA.",
+      "Allows trusted validation and one exact conditional ref update bound to the reviewed remote SHA when `headRefOid` still equals that SHA.",
       "Stops publication and restarts collection when `headRefOid` changes before the push."
     ]
   },
@@ -106,7 +426,7 @@
       "Uses the shared contract only to confirm that the current conflict permits base integration.",
       "Keeps mechanical conflict resolution, validation, commit creation, and guarded publication in `nemoclaw-contributor-create-pr` and its implementation handoff.",
       "Does not assign repair or publication authority to the shared follow-up contract.",
-      "Treats the integrated result as a new candidate and restarts complete automated evaluation after one non-force push."
+      "Treats the integrated result as a new candidate and restarts complete automated evaluation after one exact conditional ref update."
     ]
   },
   {
@@ -119,6 +439,44 @@
       "Keeps the PR draft while Advisor evidence is pending.",
       "Does not request maintainer review.",
       "Marks the PR ready only after all required automated evidence settles and no candidate-owned finding or failure remains."
+    ]
+  },
+  {
+    "id": "positive-ready-state-commit-bound",
+    "question": "All required automated evidence settled successfully for the unchanged latest commit on my draft NemoClaw PR. Mark it ready for human review.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The ready-state write is bound to one PR, one reviewed head commit, and the expected draft state through pre-write and post-write reads.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Records the PR number, reviewed head commit, and expected draft state before the write.",
+      "Immediately before the write, requires the same PR and head commit to remain draft with all required evidence settled.",
+      "Requires the ready-state operation itself to be atomically conditional on the PR identity, reviewed head commit, and draft state.",
+      "When that capability is unavailable, keeps the PR draft and reports that a human must recheck the head before making the transition.",
+      "When it is available, requests the conditional change once, then verifies that the same PR and commit are no longer draft."
+    ]
+  },
+  {
+    "id": "adversarial-ready-prewrite-head-change",
+    "question": "All reviews passed for my draft NemoClaw PR. Its head still matched in the final read, but another actor changed it immediately before an unconditional ready-state mutation. Mark it ready.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A ready-state write cannot reuse evidence collected for another head commit.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not use a separate pre-write read as a substitute for a ready-state mutation that is atomically conditional on the reviewed head and draft state.",
+      "Keeps the PR draft when the configured method cannot provide that condition and reports the human transition boundary.",
+      "If a conditional method reports the competing head change, stops without changing draft state and restarts complete evaluation for the new commit."
+    ]
+  },
+  {
+    "id": "adversarial-ready-postwrite-mismatch",
+    "question": "The request to mark my NemoClaw PR ready returned no result, and the follow-up read shows a different head commit.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An inconclusive ready-state response requires exact post-write reconciliation and cannot continue from a different PR head.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads the PR after the inconclusive write and compares its identity, head commit, and draft state with the prepared inputs.",
+      "Reports the prepared and observed PR identity, head commit, and draft state, identifies every differing field, and records that the response was inconclusive.",
+      "Classifies the result as unknown, stops, records the no-retry recovery boundary, and does not repeat the state-changing request."
     ]
   },
   {
@@ -140,7 +498,7 @@
     "ground_truth": "Self-assignment is a triage write. Without triage permission the workflow creates the pull request without `--assignee`. Label selection and application always belong to the repository triage workflow.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Omits `--assignee` from `gh pr create` because the contributor has no triage permission.",
+      "Omits self-assignment from the PR creation request because the contributor has no triage permission.",
       "Does not select or add labels and leaves them to the repository triage workflow.",
       "Reports that assignment needs a maintainer instead of retrying the rejected write."
     ]
@@ -199,7 +557,7 @@
       "Uses the template from the trusted base branch.",
       "Keeps the DCO declaration and commit-verification gate.",
       "Detects that a validator dependency-resolution input differs from the trusted base.",
-      "Does not execute `npm run validate:pr`, push the branch, or run `gh pr create`.",
+      "Does not execute `npm run validate:pr`, push the branch, or create the PR.",
       "Reports the exact differing dependency input and trusted-base SHA instead of adopting or executing either branch-controlled input.",
       "Keeps publication blocked unless the surface matches the trusted base or a maintainer records complete trusted-environment evidence and publication authorization."
     ]

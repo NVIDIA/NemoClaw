@@ -85,6 +85,7 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   | "noGpu"
   | "controlUiPort"
   | "allowDeferredN1xManagedVllm"
+  | "allowLegacyDgxStationQualification"
   | "runtimeSelection"
 > & {
   authoritativeResumeConfig: true;
@@ -102,12 +103,14 @@ export function authoritativeRebuildRuntimePreflightOptions(
   opts: AuthoritativeRebuildPreflightOptions,
 ): Pick<OnboardOptions, "sandboxGpu" | "sandboxGpuDevice" | "noGpu"> & {
   allowDeferredN1xManagedVllm: boolean;
+  allowLegacyDgxStationQualification: boolean;
 } {
   return {
     sandboxGpu: opts.sandboxGpu,
     sandboxGpuDevice: opts.sandboxGpuDevice,
     noGpu: opts.noGpu,
     allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm === true,
+    allowLegacyDgxStationQualification: opts.allowLegacyDgxStationQualification === true,
   };
 }
 

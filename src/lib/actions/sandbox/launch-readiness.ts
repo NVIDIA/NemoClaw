@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import {
-  createSyncCliOpenShellSandboxPolicyReader,
+  createCliOpenShellSandboxPolicyReader,
   namedOpenShellGateway,
   type OpenShellSandboxError,
 } from "../../adapters/openshell/sandbox-policy-cli";
@@ -47,9 +47,8 @@ import {
   publishLaunchReadinessLease,
   readLaunchReadinessLease,
 } from "../../state/launch-readiness-lease";
-import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withSandboxLifecycleLock as withSandboxMutationLock } from "./lifecycle/lock";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry";
-import { normalizeSandboxMcpState } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   cloneSandboxMessagingState,
@@ -396,36 +395,6 @@ function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown 
   };
 }
 
-function projectMcpState(value: unknown): unknown {
-  const state = normalizeSandboxMcpState(value);
-  if (!state) return null;
-  if (state.destroyPreparedAt || state.destroyPendingAt) throw new ObservationError("config");
-  return {
-    bridges: Object.values(state.bridges)
-      .map((bridge) => {
-        if (bridge.addState) throw new ObservationError("config");
-        const endpoint = new URL(bridge.url);
-        if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
-          throw new ObservationError("config");
-        }
-        return {
-          server: bridge.server,
-          agent: bridge.agent,
-          adapter: bridge.adapter ?? null,
-          url: bridge.url,
-          env: [...bridge.env],
-          trustedPrivateHost: bridge.trustedPrivateHost ?? null,
-          allowedIps: bridge.allowedIps ? [...bridge.allowedIps] : null,
-          providerName: bridge.providerName ?? null,
-          providerId: bridge.providerId ?? null,
-          policyName: bridge.policyName,
-        };
-      })
-      .sort((left, right) => left.server.localeCompare(right.server)),
-    managedServerNames: [...(state.managedServerNames ?? [])].sort(),
-  };
-}
-
 function projectMessagingState(entry: SandboxEntry): unknown {
   const state = cloneSandboxMessagingState(entry.messaging);
   const persisted = serializeSandboxMessagingStateForDisk(entry.messaging);
@@ -653,7 +622,6 @@ export function buildLaunchReadinessRegistryProjection(
     observabilityEnabled: entry.observabilityEnabled === true,
     dcodeAutoApprovalMode: entry.dcodeAutoApprovalMode ?? null,
     messagingSha256: launchReadinessDigest(projectMessagingState(entry)),
-    mcpSha256: launchReadinessDigest(projectMcpState(entry.mcp)),
     hermesToolGateways: [...(entry.hermesToolGateways ?? [])],
     hermesInferenceProvider: normalizedString(entry.hermesInferenceProvider),
     hermesAuthMethod,
@@ -677,13 +645,13 @@ function classifyReceipt(
   return read.kind === "valid" ? "config" : read.kind;
 }
 
-function validateLivePolicy(
+async function validateLivePolicy(
   sandboxName: string,
   gatewayName: string,
   deps: LaunchReadinessDeps,
-): void {
+): Promise<void> {
   const capture = deps.capture ?? captureLaunchReadiness;
-  const result = createSyncCliOpenShellSandboxPolicyReader({
+  const result = await createCliOpenShellSandboxPolicyReader({
     capture: (args, options) =>
       capture(args, {
         ...options,
@@ -805,7 +773,7 @@ async function captureLaunchIdentity(
 
   const policyStartedAt = performance.now();
   try {
-    validateLivePolicy(sandboxName, gatewayName, deps);
+    await validateLivePolicy(sandboxName, gatewayName, deps);
   } catch (error) {
     recordLaunchReadinessObservationFailure(deps, "policy-get");
     throw error;

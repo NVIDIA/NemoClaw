@@ -60,16 +60,8 @@ const codexBlock = between(
   "AS codex-acp-runtime",
   "AS wechat-npm-cache",
 );
-const runtimeBlock = between(
-  dockerfile,
-  "# Upgrade OpenClaw if the base image is stale.",
-  "# Patch OpenClaw media fetch for proxy-only sandbox",
-);
-const baseBlock = between(
-  dockerfileBase,
-  "# Install OpenClaw CLI + PyYAML.",
-  "# Baseline health check.",
-);
+const runtimeBlock = dockerfile;
+const baseBlock = dockerfileBase;
 const optionalPluginBlock = between(
   dockerfile,
   "# Install non-messaging OpenClaw plugins that need to match the runtime.",

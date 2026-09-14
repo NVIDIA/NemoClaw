@@ -50,16 +50,6 @@ export function normalizeSandboxLogsOptions(
   };
 }
 
-export function buildEnableSandboxAuditLogsArgs(
-  sandboxName: string,
-  gatewayName?: string,
-): string[] {
-  const args = ["settings", "set"];
-  if (gatewayName) args.push("-g", gatewayName);
-  args.push(sandboxName, "--key", "ocsf_json_enabled", "--value", "true");
-  return args;
-}
-
 export function buildSandboxOpenclawGatewayLogsArgs(
   sandboxName: string,
   options: SandboxLogsOptions,

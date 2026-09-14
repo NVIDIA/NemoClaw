@@ -41,6 +41,9 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const sandboxCreateStreamPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "sandbox", "create-stream.ts"),
   );
+  const sandboxCommandCliPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+  );
   const onboardScriptMocksPath = JSON.stringify(
     path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
   );
@@ -55,6 +58,7 @@ const path = require("node:path");
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
@@ -142,13 +146,7 @@ runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
   commands.push({ command: normalized, env: null });
-  if (
-    normalized.includes(
-      "sandbox exec --name " +
-        sandboxName +
-        " --gateway nemoclaw -- /usr/local/bin/dcode identity",
-    )
-  ) {
+  if (normalized.includes("sandbox exec") && normalized.includes("dcode identity")) {
     return [
       "Route:    inference",
       "Provider: nvidia-prod",
@@ -158,6 +156,29 @@ runner.runCapture = (command) => {
   }
   if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
+};
+
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell",
+        "sandbox",
+        "exec",
+        "--name",
+        request.sandboxName,
+        ...gatewayArgs,
+        "--",
+        ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
 };
 
 registry.getSandbox = () =>
