@@ -237,7 +237,7 @@ describe("rebuild destroy phase", () => {
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
   });
 
-  it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
+  it("prepares MCP state independently of the generic force flag (#7062)", async () => {
     const log = vi.fn();
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -258,9 +258,9 @@ describe("rebuild destroy phase", () => {
     expect(mocks.prepareMcpForRebuild).toHaveBeenCalledWith(
       "alpha",
       false,
-      true,
       expect.any(Function),
       undefined,
+      [],
     );
   });
 
@@ -588,7 +588,7 @@ describe("rebuild destroy phase", () => {
       .mockReturnValueOnce({
         status: 1,
         stdout: "",
-        stderr: 'status: Internal, message: "sandbox has no spec"',
+        stderr: "sandbox alpha not found",
       });
     const onDeleted = vi.fn();
 
@@ -613,6 +613,18 @@ describe("rebuild destroy phase", () => {
   });
 
   it.each([
+    [
+      "retained legacy sandbox without a readable spec",
+      { status: 1, stdout: "", stderr: 'status: Internal, message: "sandbox has no spec"' },
+    ],
+    [
+      "current OpenShell legacy config failure",
+      {
+        status: 1,
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      },
+    ],
     [
       "bare NotFound output",
       {

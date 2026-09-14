@@ -3,8 +3,6 @@
 
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -18,7 +16,6 @@ import {
   MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY,
   MANAGED_STARTUP_PROFILE_CAPABILITIES,
   MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS,
-  MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS,
   MANAGED_STARTUP_PROFILE_MAX_BYTES,
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
   MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS,
@@ -280,44 +277,6 @@ function encodeUnknown(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
-function dockerArgs(relativePath: string): Set<string> {
-  const source = readFileSync(relativePath, "utf8");
-  return new Set(
-    [...source.matchAll(/^ARG\s+([A-Z][A-Z0-9_]*)/gmu)].map((match) => match[1] as string),
-  );
-}
-
-const STOCK_DOCKER_ARGS = {
-  openclaw: dockerArgs(path.join(process.cwd(), "Dockerfile")),
-  hermes: dockerArgs(path.join(process.cwd(), "agents/hermes/Dockerfile")),
-  "langchain-deepagents-code": dockerArgs(
-    path.join(process.cwd(), "agents/langchain-deepagents-code/Dockerfile"),
-  ),
-  pi: dockerArgs(path.join(process.cwd(), "agents/pi/Dockerfile")),
-} satisfies Record<ManagedStartupAgent, Set<string>>;
-
-const RUNTIME_INPUT_SOURCE_FILES = [
-  "src/lib/onboard/sandbox-create-launch.ts",
-  "src/lib/onboard/openclaw-runtime-env.ts",
-  "src/lib/onboard/extra-placeholder-keys.ts",
-  "src/lib/onboard/host-proxy-env.ts",
-  "src/lib/onboard/hermes-dashboard.ts",
-  "src/lib/hermes-dashboard.ts",
-] as const;
-const QUOTED_RUNTIME_INPUT_RE =
-  /["']((?:(?:NEMOCLAW|OPENCLAW)_[A-Z0-9_]+)|CHAT_UI_URL|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)["']/gu;
-const STOCK_RUNTIME_INPUTS = new Set(
-  RUNTIME_INPUT_SOURCE_FILES.flatMap((relativePath) => [
-    ...readFileSync(path.join(process.cwd(), relativePath), "utf8").matchAll(
-      QUOTED_RUNTIME_INPUT_RE,
-    ),
-  ]).map((match) => match[1] as string),
-);
-const OPENCLAW_AUTO_PAIR_CONSUMER_INPUTS = new Set(
-  readFileSync(path.join(process.cwd(), "scripts/nemoclaw-start.sh"), "utf8").match(
-    /\bNEMOCLAW_AUTO_PAIR_[A-Z0-9_]+\b/gu,
-  ) ?? [],
-);
 const STOCK_RUNTIME_INPUT_AGENTS = {
   CHAT_UI_URL: ["openclaw", "hermes"],
   HTTPS_PROXY: MANAGED_STARTUP_AGENTS,

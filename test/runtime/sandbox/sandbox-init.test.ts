@@ -348,264 +348,288 @@ EOF
   });
 
   describe("drop_capabilities", () => {
-    it("function is defined and callable", () => {
-      // We can't test actual capsh on macOS, but verify the function exists
-      // and handles the no-capsh case gracefully. Capture stderr via redirect.
-      const { stdout } = runWithLib(
-        `
-        # Hide capsh from PATH so the function falls through
-        drop_capabilities /usr/local/bin/fake-entrypoint 2>&1
-        echo "FALLTHROUGH_OK"
-      `,
-        { env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "" } },
-      );
-      expect(stdout).toContain("capsh not available");
-      expect(stdout).toContain("FALLTHROUGH_OK");
-    });
-
-    it("skips when NEMOCLAW_CAPS_DROPPED=1", () => {
-      const { stdout } = runWithLib(
-        `
-        NEMOCLAW_CAPS_DROPPED=1
-        drop_capabilities /usr/local/bin/fake-entrypoint
-        echo "SKIPPED_OK"
-      `,
-      );
-      expect(stdout).toContain("SKIPPED_OK");
-    });
-
-    // Context for reopened issue #3280 (NVBug 6159223), QA FAIL reported by
-    // hulynn on v0.0.54: on a host whose container runtime does not grant
-    // CAP_SETPCAP (e.g. the Colossus Ubuntu 24.04 image), capsh --drop cannot
-    // run, so the bounding-set drop is skipped and the dangerous caps
-    // (cap_sys_admin, cap_sys_ptrace, cap_net_raw, cap_dac_override,
-    // cap_net_bind_service, ...) remain in the bounding set.
-    //
-    // The strict-mode tests below use NEMOCLAW_PROC_STATUS — a test seam in
-    // sandbox-init.sh — to feed a known CapBnd fixture, so they exercise the
-    // real enforcement against a controlled bounding set without depending on
-    // the test runner's own /proc/self/status. CapBnd 0x4a82c35fb is the exact
-    // value hulynn decoded on the failing Colossus host.
-    const QA_CAPBND = "00000004a82c35fb"; // contains all 10 inspected dangerous caps
-    const CLEAN_CAPBND = "0000000000000000"; // none present
+    const QA_CAPBND = "00000004a82c35fb"; // All ten dangerous capabilities from issue #3280.
+    const CLEAN_CAPBND = "0000000000000000";
+    const RETAINED_SETPCAP = "0000000000000100";
+    const CLEAN_STATUS = `CapInh: 0
+CapPrm: 0
+CapEff: 0
+CapBnd: ${CLEAN_CAPBND}
+CapAmb: 0
+`;
     const QA_DANGEROUS =
       "cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service";
+    const forwardedArgs = ["argument with spaces", "literal;$value"];
+    let workDir: string;
 
-    // Stub capsh so it is found on PATH (command -v succeeds) but reports
-    // CAP_SETPCAP absent, forcing the fall-through that skips the real drop.
-    const capshNoSetpcapStub = [
-      "cat >\"$TMP/capsh\" <<'STUB'",
-      "#!/bin/sh",
-      '[ "$1" = "--has-p=cap_setpcap" ] && exit 1',
-      "exit 0",
-      "STUB",
-      'chmod +x "$TMP/capsh"',
-      'export PATH="$TMP:$PATH"',
-    ];
-    const writeStatusFixture = (capbndHex: string) => [
-      `printf 'CapBnd:\\t${capbndHex}\\n' >"$TMP/status"`,
-      'export NEMOCLAW_PROC_STATUS="$TMP/status"',
-    ];
+    beforeEach(() => {
+      workDir = mkdtempSync(join(tmpdir(), "nemoclaw-cap-drop-"));
+    });
+    afterEach(() => rmSync(workDir, { recursive: true, force: true }));
 
-    // Default (no NEMOCLAW_REQUIRE_CAP_DROP): warns and CONTINUES even though
-    // dangerous caps remain — preserving the zero-regression posture for
-    // CAP_SETPCAP-less hosts. report_residual_capabilities still names them.
-    it("warns without refusing to start when CAP_SETPCAP is unavailable (#3280)", () => {
+    function runDrop({
+      caps = QA_CAPBND,
+      strict = false,
+      sentinel = "",
+      capsh = "unavailable",
+      afterDrop = caps,
+      procStatus = caps === null ? null : CLEAN_STATUS.replace(CLEAN_CAPBND, caps),
+    }: {
+      caps?: string | null;
+      strict?: boolean;
+      sentinel?: string;
+      capsh?: string;
+      afterDrop?: string | null;
+      procStatus?: string | null;
+    } = {}) {
+      const entrypoint = join(workDir, "entrypoint with spaces");
+      for (const name of ["reads", "calls", "args"]) writeFileSync(join(workDir, name), "");
+      writeFileSync(join(workDir, "status"), procStatus ?? "");
+      writeFileSync(
+        join(workDir, "after-status"),
+        CLEAN_STATUS.replace(CLEAN_CAPBND, afterDrop ?? ""),
+      );
+      writeFileSync(
+        join(workDir, "capsh"),
+        `#!/bin/bash
+printf '%s\\n' "$1" >>"$TEST_CAPSH_CALLS"
+if [ "$1" = --has-p=cap_setpcap ]; then
+  [ "$TEST_CAPSH_MODE" = available ] || [ "$TEST_CAPSH_MODE" = error ]
+  exit $?
+fi
+printf '%s\\0' "$@" >>"$TEST_CAPSH_ARGS"
+if [ "$TEST_CAPSH_MODE" = error ]; then echo CAPSH_EXEC_FAILED >&2; exit 71; fi
+[ "$NEMOCLAW_CAPS_DROPPED" = 1 ] || exit 72
+export TEST_PROC_STATUS="$TEST_AFTER_DROP"
+shift 2
+exec /bin/bash "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        entrypoint,
+        `#!/bin/bash
+set -euo pipefail
+source ${JSON.stringify(SANDBOX_INIT)}
+install_capability_reader_fixture
+drop_capabilities "$0" "$@"
+printf 'ENTRYPOINT_RETURNED\\n'
+printf 'FORWARDED:%s\\n' "$@"
+`,
+        { mode: 0o700 },
+      );
       const { stdout } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
-          'echo "SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
-      );
-      expect(stdout).toContain(
-        "CAP_SETPCAP not available — cannot drop bounding-set caps via capsh",
-      );
-      expect(stdout).toContain(`Dangerous caps remain in bounding set: ${QA_DANGEROUS}`);
-      expect(stdout).toContain("SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS");
-      expect(stdout).not.toContain("Refusing to start sandbox");
-    });
-
-    // Exercise the REAL decode function (not a copy of its loop) so future
-    // drift in dangerous_caps_in_capbnd is caught.
-    it("dangerous_caps_in_capbnd decodes the inspected caps from a CapBnd hex", () => {
-      const { stdout } = runWithLib(
-        [
-          `echo "DANGEROUS:[$(dangerous_caps_in_capbnd ${QA_CAPBND})]"`,
-          `echo "CLEAN:[$(dangerous_caps_in_capbnd ${CLEAN_CAPBND})]"`,
-        ].join("\n"),
-      );
-      expect(stdout).toContain(`DANGEROUS:[${QA_DANGEROUS}]`);
-      expect(stdout).toContain("CLEAN:[]");
-    });
-
-    // ── Fix: opt-in fail-closed strict mode (issue #3280) ──────────────
-    // The inverse of the reverted #4266: default stays warn-and-continue (no
-    // regression), but NEMOCLAW_REQUIRE_CAP_DROP=1 refuses to start unless the
-    // ACTUAL bounding set is provably free of the dangerous caps.
-
-    it("refuses to start when REQUIRE_CAP_DROP=1 and dangerous caps remain (CAP_SETPCAP path)", () => {
-      const { stdout, stderr } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint",
-          'echo "SHOULD_NOT_REACH"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" }, expectFail: true },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain(
-        `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
-      );
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
-    });
-
-    it("refuses to start when REQUIRE_CAP_DROP=1 and capsh is missing", () => {
-      const { stdout, stderr } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint",
-          'echo "SHOULD_NOT_REACH"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        {
-          // Hide capsh so command -v fails, exercising the capsh-missing branch.
-          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
-          expectFail: true,
-        },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("capsh not available");
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
-    });
-
-    // Regression for the sentinel-bypass finding: a pre-set NEMOCLAW_CAPS_DROPPED=1
-    // must NOT let a host with residual caps slip past strict mode. The gate
-    // verifies the actual bounding set, so it still refuses.
-    it("refuses despite a pre-set NEMOCLAW_CAPS_DROPPED=1 when dangerous caps remain (strict)", () => {
-      const { stdout, stderr } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint",
-          'echo "BYPASSED_STRICT_MODE"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        {
-          env: { NEMOCLAW_CAPS_DROPPED: "1", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
-          expectFail: true,
-        },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain("dangerous caps remain in bounding set");
-      expect(combined).not.toContain("BYPASSED_STRICT_MODE");
-    });
-
-    // Strict mode trusts the verified state, not the fall-through: if the
-    // bounding set is already clean it must NOT refuse.
-    it("continues under REQUIRE_CAP_DROP=1 when the bounding set is already clean", () => {
-      const { stdout } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(CLEAN_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
-          'echo "CONTINUED_CLEAN"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" } },
-      );
-      expect(stdout).toContain("CONTINUED_CLEAN");
-      expect(stdout).not.toContain("Refusing to start sandbox");
-    });
-
-    it("refuses under REQUIRE_CAP_DROP=1 when the bounding set cannot be verified", () => {
-      const { stdout, stderr } = runWithLib(
         `
-        export NEMOCLAW_PROC_STATUS=/nonexistent/sandbox-init-status
-        drop_capabilities /usr/local/bin/fake-entrypoint
-        echo "SHOULD_NOT_REACH"
-      `,
+        install_capability_reader_fixture() {
+          eval "$(declare -f read_capability_state | sed '1s/read_capability_state/read_fixture_capability_state/')"
+          read_capability_state() {
+            printf '%s\\n' "$1" >>"$TEST_CAP_READS"
+            [ "$#" -eq 1 ] && [ "$1" = /proc/self/status ] || return 90
+            read_fixture_capability_state "$TEST_PROC_STATUS"
+          }
+        }
+        command() {
+          if [ "$TEST_CAPSH_MODE" = missing ] && [ "$*" = '-v capsh' ]; then return 1; fi
+          builtin command "$@"
+        }
+        export -f install_capability_reader_fixture command
+        install_capability_reader_fixture
+        : >"$TEST_CAPSH_CALLS"
+        set +e
+        (set -e; drop_capabilities ${JSON.stringify(entrypoint)} 'argument with spaces' 'literal;$value'; echo ENTRYPOINT_RETURNED) 2>&1
+        printf 'DROP_STATUS=%s\\n' "$?"
+        `,
         {
-          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
-          expectFail: true,
+          env: {
+            PATH: `${workDir}:/usr/bin:/bin`,
+            TEST_PROC_STATUS: join(workDir, procStatus === null ? "unreadable" : "status"),
+            TEST_AFTER_DROP: join(workDir, afterDrop === null ? "unreadable" : "after-status"),
+            TEST_CAPSH_MODE: capsh,
+            TEST_CAP_READS: join(workDir, "reads"),
+            TEST_CAPSH_CALLS: join(workDir, "calls"),
+            TEST_CAPSH_ARGS: join(workDir, "args"),
+            NEMOCLAW_PROC_STATUS: join(workDir, "forged-status"),
+            NEMOCLAW_CAPS_DROPPED: sentinel,
+            NEMOCLAW_REQUIRE_CAP_DROP: strict ? "1" : "",
+          },
         },
       );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain("could not read bounding set");
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
+      return {
+        stdout,
+        reads: readFileSync(join(workDir, "reads"), "utf8").trim().split("\n"),
+        calls: readFileSync(join(workDir, "calls"), "utf8"),
+        args: readFileSync(join(workDir, "args"), "utf8").split("\0").slice(0, -1),
+        entrypoint,
+      };
+    }
+
+    it.each([false, true])(
+      "returns before capsh for a verified clean set (strict=%s)",
+      (strict) => {
+        const result = runDrop({
+          caps: CLEAN_CAPBND,
+          strict,
+          sentinel: strict ? "1" : "",
+          capsh: "error",
+        });
+        expect(result.stdout).toBe("ENTRYPOINT_RETURNED\nDROP_STATUS=0");
+        expect(result.reads).toEqual(["/proc/self/status"]);
+        expect(result.calls).toBe("");
+        expect(result.args).toEqual([]);
+      },
+    );
+
+    it.each([
+      { uid: 0, users: ["--reuid=sandbox", "--reuid=gateway"], drops: 2, refusals: 0 },
+      { uid: 1000, users: [], drops: 0, refusals: 2 },
+    ])(
+      "initializes source-time privilege prefixes only for UID 0 (uid=$uid)",
+      ({ uid, users, drops, refusals }) => {
+        writeFileSync(join(workDir, "capsh"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+        const { stdout } = runWithLib(
+          `id() { printf '%s\\n' ${uid}; }
+         setpriv() { :; }
+         capsh() { echo CAPSH_PREFIX_CHECK; }
+         unset _SANDBOX_INIT_LOADED
+         source ${JSON.stringify(SANDBOX_INIT)} 2>&1
+         printf '%s\\n' "\${STEP_DOWN_PREFIX_SANDBOX[@]}" "\${STEP_DOWN_PREFIX_GATEWAY[@]}"`,
+          { env: { PATH: `${workDir}:/usr/bin:/bin` } },
+        );
+        expect(stdout.includes("CAPSH_PREFIX_CHECK")).toBe(uid === 0);
+        expect(stdout.match(/--reuid=(?:sandbox|gateway)/g) ?? []).toEqual(users);
+        expect(
+          stdout.match(/--bounding-set=-setuid,-setgid,-fowner,-chown,-kill/g) ?? [],
+        ).toHaveLength(drops);
+        expect(stdout.match(/refusing to execute a root privilege transition/g) ?? []).toHaveLength(
+          refusals,
+        );
+      },
+    );
+
+    it.each([
+      { procStatus: `CapBnd: ${CLEAN_CAPBND}\n`, afterDrop: CLEAN_CAPBND },
+      {
+        procStatus: CLEAN_STATUS.replace(
+          "CapPrm: 0\nCapEff: 0",
+          "CapPrm: 102\nCapEff: 102",
+        ).replace(CLEAN_CAPBND, RETAINED_SETPCAP),
+        afterDrop: RETAINED_SETPCAP,
+      },
+    ])(
+      "retains capsh handling for a clean bounding set without five empty sets: %j",
+      ({ procStatus, afterDrop }) => {
+        const fallback = runDrop({ caps: afterDrop, procStatus, strict: true });
+        expect(fallback.calls).toBe("--has-p=cap_setpcap\n");
+        expect(fallback.stdout).toBe("ENTRYPOINT_RETURNED\nDROP_STATUS=0");
+        expect(fallback.reads).toEqual(["/proc/self/status"]);
+        const reexec = runDrop({
+          caps: afterDrop,
+          procStatus,
+          strict: true,
+          capsh: "available",
+        });
+        expect(reexec.reads).toEqual(["/proc/self/status", "/proc/self/status"]);
+        expect(reexec.args[0]).toBe(`--drop=${QA_DANGEROUS}`);
+        expect(reexec.stdout).toContain("ENTRYPOINT_RETURNED");
+        expect(reexec.stdout).toContain("DROP_STATUS=0");
+      },
+    );
+
+    it("decodes the dangerous set and preserves the empty-set result", () => {
+      const { stdout } = runWithLib(
+        `echo "DANGEROUS:[$(dangerous_caps_in_capbnd ${QA_CAPBND})]"
+         echo "CLEAN:[$(dangerous_caps_in_capbnd ${CLEAN_CAPBND})]"`,
+      );
+      expect(stdout).toBe(`DANGEROUS:[${QA_DANGEROUS}]\nCLEAN:[]`);
     });
 
-    // Harden (issue #3280): a non-empty but unparseable CapBnd (corrupt /proc,
-    // CRLF fixture, future format change) must be treated as "cannot verify"
-    // — refusing in strict mode — and must NOT surface a raw bash arithmetic
-    // error. MALFORMED_CAPBND contains non-hex characters.
-    const MALFORMED_CAPBND = "00000000nothex0";
-    it("refuses under REQUIRE_CAP_DROP=1 when CapBnd is non-empty but unparseable", () => {
-      const { stdout, stderr } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...writeStatusFixture(MALFORMED_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint",
-          'echo "SHOULD_NOT_REACH"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
+    it.each(
+      [
         {
-          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
-          expectFail: true,
+          caps: QA_CAPBND,
+          reason: `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
         },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain("could not parse bounding set");
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
-      // No leaked bash arithmetic error.
-      expect(combined).not.toMatch(/value too great for base|invalid arithmetic|16#/);
-    });
+        { caps: null, reason: "could not read bounding set from /proc/self/status" },
+        {
+          caps: CLEAN_CAPBND,
+          procStatus: `${CLEAN_STATUS}CapPrm: 0\n`,
+          reason: "could not read bounding set from /proc/self/status",
+        },
+        {
+          caps: "00000000nothex0",
+          reason: "could not parse bounding set (CapBnd=00000000nothex0)",
+        },
+      ].flatMap((failure) => [false, true].map((strict) => ({ ...failure, strict }))),
+    )(
+      "retains residual and unverifiable outcomes (caps=$caps, strict=$strict)",
+      ({ reason, strict, ...state }) => {
+        const result = runDrop({ ...state, strict });
+        expect(result.reads).toEqual(["/proc/self/status"]);
+        expect(result.stdout).toContain(reason);
+        expect(result.stdout).toContain(
+          strict
+            ? "[SECURITY] Refusing to start sandbox:"
+            : "[SECURITY WARNING] Cannot drop bounding-set capabilities with capsh:",
+        );
+        expect(result.stdout).toContain(`DROP_STATUS=${strict ? 1 : 0}`);
+        expect(result.stdout.includes("ENTRYPOINT_RETURNED")).toBe(!strict);
+        expect(result.stdout).not.toMatch(/value too great for base|invalid arithmetic|16#/);
+        expect(result.args).toEqual([]);
+      },
+    );
 
-    it("warns and continues (no abort) on an unparseable CapBnd when REQUIRE_CAP_DROP is unset", () => {
-      const { stdout } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(MALFORMED_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
-          'echo "CONTINUED_ON_BAD_CAPBND"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
-      );
-      expect(stdout).toContain("residual caps unknown");
-      expect(stdout).toContain("CONTINUED_ON_BAD_CAPBND");
-      expect(stdout).not.toContain("Refusing to start sandbox");
-    });
+    it.each([{ capsh: "missing" }, { capsh: "available", sentinel: "1" }])(
+      "refuses residual caps with missing capsh or a forged sentinel: %j",
+      (options) => {
+        const result = runDrop({ ...options, strict: true });
+        expect(result.reads).toEqual(["/proc/self/status"]);
+        expect(result.stdout).toContain(
+          `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
+        );
+        expect(result.stdout).toContain("DROP_STATUS=1");
+        expect(result.stdout).not.toContain("ENTRYPOINT_RETURNED");
+        expect(result.calls).toBe("");
+      },
+    );
 
-    it("continues (no regression) when NEMOCLAW_REQUIRE_CAP_DROP is unset even with residual caps", () => {
-      const { stdout } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
-          'echo "CONTINUED_OK"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
-      );
-      expect(stdout).toContain("CONTINUED_OK");
-      expect(stdout).not.toContain("Refusing to start sandbox");
+    it.each([
+      {
+        caps: QA_CAPBND,
+        afterDrop: CLEAN_CAPBND,
+        strict: true,
+        status: 0,
+        forwarded: forwardedArgs,
+      },
+      { caps: QA_CAPBND, afterDrop: QA_CAPBND, strict: false, status: 0, forwarded: forwardedArgs },
+      { caps: QA_CAPBND, afterDrop: QA_CAPBND, strict: true, status: 1, forwarded: [] },
+      { caps: null, afterDrop: null, strict: true, status: 1, forwarded: [] },
+    ])(
+      "reexecutes once and verifies the resulting state: %j",
+      ({ status, forwarded, ...options }) => {
+        const result = runDrop({ ...options, capsh: "available" });
+        expect(result.reads).toEqual(["/proc/self/status", "/proc/self/status"]);
+        expect(result.args).toEqual([
+          `--drop=${QA_DANGEROUS}`,
+          "--",
+          "-c",
+          'exec "$0" "$@"',
+          result.entrypoint,
+          ...forwardedArgs,
+        ]);
+        expect(result.stdout).toContain(`DROP_STATUS=${status}`);
+        expect(result.stdout.includes("ENTRYPOINT_RETURNED")).toBe(status === 0);
+        expect([...result.stdout.matchAll(/^FORWARDED:(.*)$/gm)].map((match) => match[1])).toEqual(
+          forwarded,
+        );
+      },
+    );
+
+    it("keeps a capsh execution error terminal without continuing the entrypoint", () => {
+      const result = runDrop({ capsh: "error" });
+      expect(result.reads).toEqual(["/proc/self/status"]);
+      expect(result.stdout).toContain("CAPSH_EXEC_FAILED\nDROP_STATUS=71");
+      expect(result.stdout).not.toContain("ENTRYPOINT_RETURNED");
+      expect(result.args[0]).toBe(`--drop=${QA_DANGEROUS}`);
     });
   });
 

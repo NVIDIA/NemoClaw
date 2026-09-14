@@ -208,6 +208,7 @@ When NemoClaw runs in WSL, the provider menu can offer these Windows-host action
 
 The install and restart paths set `OLLAMA_HOST=127.0.0.1:11434` on Windows.
 NemoClaw relaunches Ollama from the detected Windows tray application or verified `ollama.exe` path and checks the endpoint from Docker Desktop's network context.
+If initial host discovery misses a protected Windows route, NemoClaw can reuse it without an executable path.
 It first requires a valid `/api/tags` response and then requires `403` from the same endpoint with an untrusted `Host` header.
 A direct request from WSL can fail because Docker Desktop defines this hostname for its containers.
 It pulls missing models through the Ollama HTTP API without requiring an Ollama CLI inside WSL.
@@ -394,7 +395,10 @@ Windows-host Ollama does not receive this Linux recovery guidance.
 ## Release GPU Memory
 
 When you destroy an Ollama-backed sandbox or stop host services, NemoClaw asks Ollama to unload each currently loaded model by sending `keep_alive: 0`.
-When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model, and leaves it loaded when another Ollama-backed sandbox uses the same model.
+When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model.
+It leaves the model loaded only when OpenShell reports that another matching Ollama-backed sandbox is active.
+Stopped or incomplete sibling registry rows do not retain the model.
+If NemoClaw cannot verify sibling state, it does not unload the model and `stop` exits nonzero.
 When you re-onboard an existing Ollama-backed sandbox onto a different model, NemoClaw unloads the model it replaced, with the same sibling protection.
 A re-onboard that keeps the same model leaves it loaded, because the new route can still be served by the same Ollama daemon.
 This cleanup runs on a best-effort basis and does not delete downloaded model files.

@@ -27,8 +27,12 @@ import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuil
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 
 export {
-  clearHermesOperatorConfigHandoff,
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
+  readRebuildPolicyHandoff,
+  readRebuildMcpHandoff,
+  writeRebuildMcpHandoff,
+  clearHermesOperatorConfigHandoff,
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";

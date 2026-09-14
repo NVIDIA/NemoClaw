@@ -35,6 +35,7 @@ export type RebuildFlowSession = Record<string, unknown> & {
   steps: Record<string, RebuildFlowStep>;
 };
 export type RebuildFlowOverrides = {
+  useRealPortableRetirementBoundary?: boolean;
   agentName?: string;
   sessionAgentName?: string | null;
   entryUpdatesAfterVersionCheck?: Record<string, unknown>;
@@ -110,6 +111,11 @@ export type RebuildFlowOverrides = {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries?: Array<Record<string, unknown>>;
+    runtimeSelection?: {
+      gatewayName: string;
+      workspace: "default";
+      localTlsDir?: string;
+    };
     policyHandoff?: string;
     revalidateBeforeDelete?: () => Promise<void>;
     assertDeleteEdgeUnchanged?: () => void;
