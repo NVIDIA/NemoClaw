@@ -6,7 +6,11 @@ import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode
 import { NemoClawOllamaServingSchema } from "../../config/model";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
-import type { ExportFinding, QualifiedExportSnapshot } from "./export-evidence";
+import type {
+  ExportFinding,
+  ObservedExportEndpointEvidence,
+  QualifiedExportSnapshot,
+} from "./export-evidence";
 import { hasManagedOpenAiProfile } from "./verify-managed-serving";
 
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
@@ -26,12 +30,21 @@ function validObservation(
   );
 }
 
+function hasOllamaOpenAiProfile(evidence: ObservedExportEndpointEvidence | null): boolean {
+  const provider = evidence?.provider;
+  return (
+    hasManagedOpenAiProfile(evidence) ||
+    (provider?.managedProfile === null &&
+      (provider.profileWorkspace === "" || provider.profileWorkspace === provider.workspace))
+  );
+}
+
 export function validateOllamaServing(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry: entry, inference } = snapshot;
   const observed = inference.ollamaServing;
   if (
     validObservation(observed) &&
-    hasManagedOpenAiProfile(inference.endpointEvidence) &&
+    hasOllamaOpenAiProfile(inference.endpointEvidence) &&
     entry.workload?.kind === "managed-image" &&
     /^linux\/(?:amd64|arm64)$/u.test(entry.workload.platform ?? "") &&
     isDeepStrictEqual(
@@ -41,7 +54,7 @@ export function validateOllamaServing(snapshot: QualifiedExportSnapshot): Export
         inference.topology,
         inference.provider,
         inference.api,
-        inference.credentialEnv,
+        inference.credentialEnv ?? OLLAMA_LOCAL_CREDENTIAL_ENV,
         inference.model,
         inference.endpoint,
         snapshot.sandbox.providerNames.filter((name) => name === inference.provider),
