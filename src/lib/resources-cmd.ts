@@ -9,10 +9,10 @@
  * auto-select profiles and models based on available hardware.
  */
 
-import * as os from "os";
+import { execSync, spawnSync } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
-import { spawnSync, execSync } from "child_process";
 import * as YAML from "yaml";
 
 import { dockerSpawnSync } from "./adapters/docker";
@@ -388,12 +388,4 @@ export function loadResourceProfiles(): Record<string, ResourceProfile> {
   } catch {
     return {};
   }
-}
-
-/**
- * Dispatcher for the `nemoclaw resources` command.
- */
-export function runResourcesCommand(argv: string[]): void {
-  const json = argv.includes("--json");
-  printHardwareResources(json);
 }

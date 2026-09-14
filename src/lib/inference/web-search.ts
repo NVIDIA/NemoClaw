@@ -60,12 +60,6 @@ export function webSearchLabelFor(provider: WebSearchProvider): string {
   return provider === "tavily" ? "Tavily Search" : "Brave Search";
 }
 
-export function webSearchProviderForEnvKey(envKey: string): WebSearchProvider | null {
-  if (envKey === BRAVE_API_KEY_ENV) return "brave";
-  if (envKey === TAVILY_API_KEY_ENV) return "tavily";
-  return null;
-}
-
 export function isWebSearchEnabled(
   config: Pick<WebSearchConfig, "fetchEnabled"> | null | undefined,
 ): boolean {

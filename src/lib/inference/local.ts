@@ -58,7 +58,6 @@ import {
   largestFittableOllamaModelTag,
   modelFitsAvailableMemory,
   OLLAMA_MODEL_REGISTRY,
-  SMALLEST_OLLAMA_MODEL_TAG,
 } from "./ollama-model-registry";
 import type {
   ApplyOllamaRuntimeContextWindowOptions,
@@ -122,7 +121,6 @@ function assertRegistryTag(tag: string): string {
   return tag;
 }
 
-export const SMALL_OLLAMA_MODEL = SMALLEST_OLLAMA_MODEL_TAG;
 export const DEFAULT_OLLAMA_MODEL = assertRegistryTag(DEFAULT_OLLAMA_MODEL_TAG);
 export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 

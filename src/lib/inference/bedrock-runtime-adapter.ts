@@ -25,7 +25,6 @@ import {
   BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
   BEDROCK_RUNTIME_AWS_BEARER_TOKEN_ENV,
-  BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV,
   type CustomAnthropicEndpointClassification,
   resolveBedrockRuntimeRegion,
 } from "./bedrock-runtime";
@@ -720,10 +719,6 @@ export async function ensureBedrockRuntimeAdapter(options: {
       gatewayPort: GATEWAY_PORT,
     });
   });
-}
-
-export function getCompatibleAnthropicCredentialForBedrock(): string | null {
-  return process.env[BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV]?.trim() || null;
 }
 
 export const __test = {
