@@ -42,6 +42,8 @@ Automation refreshes the patch only while it owns the draft PR.
 Documentation-only pushes do not trigger catch-up.
 The workflow creates no PR for an empty documentation patch.
 It leaves a ready-for-review PR unchanged.
+Creation, refresh, recovery, and no-change runs with an open managed draft exit successfully.
+The publisher emits a GitHub Actions notice that links to the draft for maintainer review and merge.
 The publisher uses fast-forward-only updates.
 It stops when a person changes the branch or PR metadata.
 It never force-pushes.

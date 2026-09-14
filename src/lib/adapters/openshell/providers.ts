@@ -35,12 +35,13 @@ export type Provider = Readonly<
     config: Readonly<Record<string, string>>;
     builtinInferenceEndpoint?: string;
     profileWorkspace?: string;
+    // null records a successful not-found read at the OpenAI provider's profile binding.
     managedProfile?: Readonly<{
       id: "brave" | "openai";
       source: "builtin" | "user";
       scope: "" | "platform" | "workspace";
       resourceVersion: string;
-    }>;
+    }> | null;
   }
 >;
 export interface Providers {
@@ -75,20 +76,36 @@ async function readManagedProfile(
   profileId: "brave" | "openai",
   providerType: string,
   profileWorkspace: string | undefined,
-): Promise<NonNullable<Provider["managedProfile"]>> {
+): Promise<NonNullable<Provider["managedProfile"]> | null> {
   if (
     providerType !== profileId ||
     (profileWorkspace !== "" && profileWorkspace !== request.workspace)
   )
     throw new OpenShellReadError("schema");
   request.signal.throwIfAborted();
-  const { profile } = readValue(
-    profileId === "brave" ? ManagedBraveProfileResponseSchema : ManagedOpenAiProfileResponseSchema,
-    await client.raw.getProviderProfile(
+  let response: unknown;
+  try {
+    response = await client.raw.getProviderProfile(
       // Resolve the actual profile binding; the default-workspace import is managed state.
       { id: profileId, workspace: profileWorkspace },
       { signal: request.signal },
-    ),
+    );
+  } catch (error) {
+    // OpenShell 0.0.116 has an OpenAI provider type without a builtin profile.
+    if (profileId === "openai" && isNotFound(error)) return null;
+    throw error;
+  }
+  return validateManagedProfileResponse(response, profileId, profileWorkspace);
+}
+
+function validateManagedProfileResponse(
+  response: unknown,
+  profileId: "brave" | "openai",
+  profileWorkspace: string,
+): NonNullable<Provider["managedProfile"]> {
+  const { profile } = readValue(
+    profileId === "brave" ? ManagedBraveProfileResponseSchema : ManagedOpenAiProfileResponseSchema,
+    response,
   );
   const builtin = profile.source === "builtin";
   const customScope = profileWorkspace === "" ? "platform" : "workspace";
