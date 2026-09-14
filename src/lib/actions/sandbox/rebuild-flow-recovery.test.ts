@@ -9,8 +9,10 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
+  policies,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { mcpBridgeSource } from "../../../../test/helpers/rebuild-flow-harness";
+import * as sandboxState from "../../state/sandbox";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
   makeActiveTeamsMessagingPlan,
@@ -19,6 +21,70 @@ import {
 
 describe("rebuildSandbox flow: recovery", () => {
   installRebuildFlowTestHooks();
+
+  function makePreparedRecoveryPolicy(policy: string) {
+    const manifest = makePreparedRecoveryManifest();
+    sandboxState.__test.writeManifest(manifest.backupPath, manifest);
+    return { ...sandboxState.writeRebuildPolicyHandoff(manifest, policy) };
+  }
+
+  it("uses the retained pre-upgrade policy at the delete edge for a non-ready recovery", async () => {
+    const policy = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+    const recoveryManifest = makePreparedRecoveryPolicy(policy);
+    let recreatedPolicy = "";
+    const harness = createRebuildFlowHarness({
+      sandboxInventory: {
+        sandboxes: [{ name: "alpha", phase: "Provisioning", readiness: "not_ready" }],
+      },
+      preDeleteLatestManifest: recoveryManifest,
+      onboard: (_session, options) => {
+        recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
+      },
+    });
+    vi.mocked(policies.captureRecordedSandboxBasePolicy).mockRejectedValue(
+      new Error("legacy provider is unavailable"),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(policies.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
+    expect(recreatedPolicy).toBe(policy);
+  });
+
+  it("stops before deletion when the retained pre-upgrade policy changes at the delete edge", async () => {
+    const recoveryManifest = makePreparedRecoveryPolicy(
+      "version: 1\nnetwork_policies:\n  host_preserved: {}\n",
+    );
+    const handoffPath = path.join(
+      recoveryManifest.backupPath,
+      recoveryManifest.rebuildPolicyHandoff!.file,
+    );
+    const harness = createRebuildFlowHarness({
+      preDeleteLatestManifest: recoveryManifest,
+      mcpPreparation: {
+        entries: [],
+        detachedProviderEntries: [],
+        scrubbedAdapterEntries: [],
+        revalidateBeforeDelete: async () => {
+          fs.rmSync(handoffPath);
+        },
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).rejects.toThrow("The prepared recovery policy handoff changed before sandbox deletion");
+
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
 
   it("uses marked manifest provenance when the custom-image registry baseline is missing (#6108)", async () => {
     const customDockerfile = path.join(process.cwd(), "Dockerfile");

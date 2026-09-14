@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse as parseToml } from "smol-toml";
@@ -60,7 +61,7 @@ function declaration(caCertificatePath = "/run/component/ca.pem"): ExternalCompo
 
 function fixture() {
   vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
-  const root = fs.mkdtempSync(path.join(path.dirname(process.cwd()), "nc-connections-"));
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nc-connections-"));
   roots.push(root);
   const ca = path.join(root, "ca.pem");
   fs.writeFileSync(ca, PEM, { mode: 0o600 });

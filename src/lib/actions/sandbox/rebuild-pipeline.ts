@@ -27,6 +27,7 @@ import {
   clearRebuildMcpHandoff,
   clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
+  readRebuildPolicyHandoff,
   readRebuildMcpHandoff,
   type RebuildBackupManifest,
   runRebuildBackupPhase,
@@ -892,6 +893,16 @@ async function rebuildSandboxUnlocked(
           // path only after digest-verifying the policy handoff bound to the
           // prepared recovery manifest, so there is no live policy to recapture.
           if (staleRecovery) return validation;
+          // Prepared legacy recovery freezes source policy before the gateway upgrade.
+          // Revalidate that handoff instead of recapturing unreadable live state.
+          if (preparedBackupRecovery) {
+            return backup.backupManifest && readRebuildPolicyHandoff(backup.backupManifest)
+              ? validation
+              : {
+                  ok: false,
+                  message: "The prepared recovery policy handoff changed before sandbox deletion.",
+                };
+          }
           try {
             return (await capturePolicyHandoff(runtimeSelection))
               ? validation

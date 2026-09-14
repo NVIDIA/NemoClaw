@@ -19,9 +19,9 @@ import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const NODE_BIN = path.dirname(process.execPath);
+const IS_WSL = os.release().toLowerCase().includes("microsoft");
 const DOCKER_OPERATING_SYSTEM =
-  ({ darwin: "Docker Desktop" } as Partial<Record<NodeJS.Platform, string>>)[process.platform] ??
-  "Docker Engine";
+  process.platform === "darwin" || IS_WSL ? "Docker Desktop" : "Docker Engine";
 const tmpFixtures: string[] = [];
 const gatewayProcesses: ReturnType<typeof spawn>[] = [];
 
