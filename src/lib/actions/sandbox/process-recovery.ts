@@ -780,6 +780,19 @@ async function recoveryDetailAfterRelaunchRollback(
   return `NemoClaw could not confirm rollback to the previous sandbox container. Inspect Docker state before retrying. Recovery failure before rollback: ${recoveryFailureDetail}`;
 }
 
+async function verifyRelaunchBeforeFinalization(
+  relaunch: ManagedSupervisorRelaunch,
+  confirmManagedHealth: ((timeout?: number) => boolean | null | undefined) | null,
+  managedHealthFailure: () => ReturnType<typeof classifyGatewayRestartFailure> | null,
+): Promise<FinalRelaunchRecoveryFailure | null> {
+  if (confirmManagedHealth?.(OPENSHELL_PROBE_TIMEOUT_MS) === true) return null;
+  const failure = managedHealthFailure();
+  const detail = failure
+    ? `the managed supervisor health check for the recreated sandbox did not pass before the final replacement handoff. Managed supervisor health check result: ${failure.layer}: ${failure.detail}`
+    : "the managed supervisor health check for the recreated sandbox stayed inconclusive before the final replacement handoff";
+  return finalRelaunchRecoveryFailure(await recoveryDetailAfterRelaunchRollback(relaunch, detail));
+}
+
 export function confirmRecoveredSandboxGatewayManaged(
   sandboxName: string,
   options: {
@@ -2057,11 +2070,12 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         recoveryFailureDetail,
       };
     }
-    // Host-forward recovery requires an OpenShell-ready sandbox. Managed
-    // recovery has already passed its authenticated control and health gates;
-    // a replacement also rechecks its pinned identity before readiness.
-    const recoveryRequiresReadiness =
-      recovery.kind === "managed" || recovery.kind === "provider" || relaunch;
+    // Host-forward recovery requires an OpenShell-ready sandbox. A relaunch
+    // cannot require that phase until its finalizer has handed the replacement
+    // back to OpenShell; before that commit, OpenShell still reports the legacy
+    // container's terminal phase. The relaunch finalizer performs the pinned
+    // supervisor proof, authoritative stop/start handoff, and readiness check.
+    const recoveryRequiresReadiness = recovery.kind === "managed" || recovery.kind === "provider";
     const waitForRecoveryReadiness = async () => {
       const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
         commandExecutor,
@@ -2104,19 +2118,29 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       };
     }
     if (relaunch) {
-      const finalizationFailure = await measureAsync("processes", () =>
-        finalizeRelaunchedRecovery(sandboxName, relaunch, {
-          printRecoveryHints: () =>
-            printHostManagedGatewayRecoveryHints(
-              sandboxName,
-              recoveryAgent,
-              managedRecoveryFailureLayer,
-            ),
-          quiet,
-          requestManagedProbe,
-          waitForRecoveryReadiness,
-        }),
+      // Retain the pinned identity and health fence immediately before commit
+      // without asking OpenShell to report Ready for a transaction it does not
+      // own yet. The finalizer performs the authoritative lifecycle handoff.
+      const preFinalizationFailure = await verifyRelaunchBeforeFinalization(
+        relaunch,
+        confirmRelaunchedManagedHealth,
+        () => relaunchedManagedHealth.failure,
       );
+      const finalizationFailure =
+        preFinalizationFailure ??
+        (await measureAsync("processes", () =>
+          finalizeRelaunchedRecovery(sandboxName, relaunch, {
+            printRecoveryHints: () =>
+              printHostManagedGatewayRecoveryHints(
+                sandboxName,
+                recoveryAgent,
+                managedRecoveryFailureLayer,
+              ),
+            quiet,
+            requestManagedProbe,
+            waitForRecoveryReadiness,
+          }),
+        ));
       if (finalizationFailure) return finalizationFailure;
     }
     const forwardRecovered = await measureAsync("forward", () =>
