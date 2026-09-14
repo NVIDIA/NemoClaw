@@ -750,10 +750,10 @@ async function finalizeRelaunchedRecovery(
         `the managed supervisor health check for the pinned replacement container did not pass after the final replacement container restart. NemoClaw did not start the primary dashboard/API host forward. Managed supervisor health check result: ${managedSupervisor.failure.layer}: ${managedSupervisor.failure.detail}`,
       );
     }
-    const finalReadinessFailureDetail = await waitForRecoveryReadiness();
-    if (finalReadinessFailureDetail) {
-      return finalRelaunchRecoveryFailure(finalReadinessFailureDetail);
-    }
+  }
+  const finalReadinessFailureDetail = await waitForRecoveryReadiness();
+  if (finalReadinessFailureDetail) {
+    return finalRelaunchRecoveryFailure(finalReadinessFailureDetail);
   }
 
   if (!completion.backupRemoved && !quiet) {
@@ -2077,11 +2077,9 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         recoveryFailureDetail,
       };
     }
-    // Host-forward recovery requires an OpenShell-ready sandbox. Managed
-    // recovery has already passed its authenticated control and health gates;
-    // a replacement also rechecks its pinned identity before readiness.
-    const recoveryRequiresReadiness =
-      recovery.kind === "managed" || recovery.kind === "provider" || relaunch;
+    // A replacement's finalizer owns the OpenShell lifecycle handoff. Check
+    // its readiness after that handoff; other recoveries can check it now.
+    const recoveryRequiresReadiness = recovery.kind === "managed" || recovery.kind === "provider";
     const waitForRecoveryReadiness = async () => {
       const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
         commandExecutor,
@@ -2112,15 +2110,12 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       ? await measureAsync("processes", waitForRecoveryReadiness)
       : null;
     if (readinessFailureDetail) {
-      const recoveryFailureDetail = relaunch
-        ? await recoveryDetailAfterRelaunchRollback(relaunch, readinessFailureDetail)
-        : readinessFailureDetail;
       return {
         checked: true,
         wasRunning: false,
         recovered: false,
         forwardRecovered: false,
-        recoveryFailureDetail,
+        recoveryFailureDetail: readinessFailureDetail,
       };
     }
     if (relaunch) {
