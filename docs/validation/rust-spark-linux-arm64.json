@@ -1,0 +1,294 @@
+{
+  "platform": "linux_arm64",
+  "hardware": "DGX Spark / GB10",
+  "referenceRevision": "b549ccd43e6102b72aa9c65ee17abfe3c429fc0b",
+  "runtimeImage": "nc-prototype-qwen38@sha256:d4775421c3ed533fef5218aeb87b6c2bcf97804b74c58143e4c052bb60961e35",
+  "coldStart": {
+    "runtimeImage": "nc-prototype-qwen38@sha256:e04d4c5ad8b514eaf9fe10c530f69366a9bf999d880afa78854ef5e88e333efa",
+    "result": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "update"
+          ]
+        },
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_workspace.deployment",
+          "actions": [
+            "create"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "startup": {
+      "loading": "2026-09-14T22:11:53.68854914Z",
+      "ready": "2026-09-14T22:23:03.976813552Z",
+      "seconds": 670.29
+    },
+    "snapshotFiles": 51,
+    "snapshotBytes": 105935744618,
+    "manifest": "d2f64e56b5a66a1ec6d0f6552f2f6c2b33551015bb3b343b55e824586a7b702c",
+    "preparedReceipt": {
+      "key": "7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43",
+      "files": [
+        {
+          "name": "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.packed_u8",
+          "size": 28800138240,
+          "sha256": "e404177a577d4f27930df88d8055af66c4b66b5b2d0a194ef66f8a6c55fbefaf",
+          "modified": 1789423860382918291
+        },
+        {
+          "name": "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.packed_u8.json",
+          "size": 192,
+          "sha256": "3111a87e65a108d8440bafca3ceff98710d25b7c68ed13a566084ad91b9e49e0",
+          "modified": 1789423860385123733
+        }
+      ]
+    }
+  },
+  "interruptedDownloadRecovery": {
+    "at": "2026-09-14T21:18:49.768733+00:00",
+    "container_id": "da27fe62cfc4cbe90be4bd28ad94d253b8bf36c92bde664459f4b62a7d289a62",
+    "volume": [
+      "nc-0179426feb940b73-inference-data"
+    ],
+    "restart_policy": "no",
+    "running": true,
+    "bytes_before": 35162912858,
+    "bytes_after": 36683656294,
+    "files_unchanged": 56,
+    "initial_stop_diagnostic": "inference runtime stopped; inspect logs and explicitly reapply; identity and model data retained"
+  },
+  "boundedDownloadFailure": {
+    "retained": {
+      "GiB": 87.23636752087623,
+      "partial": {
+        "model-00033-of-00034.safetensors.nemoclaw-partial": 62436451,
+        "model-00032-of-00034.safetensors.nemoclaw-partial": 941086716,
+        "model-00031-of-00034.safetensors.nemoclaw-partial": 4056531156,
+        "model-00028-of-00034.safetensors.nemoclaw-partial": 4872247441
+      }
+    },
+    "result": "explicit reapply resumed the snapshot with the same container and volume"
+  },
+  "imageUpgrade": {
+    "after": {
+      "ids": {
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-gateway-data/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/c184f029f9fb99ce20411364c58fd5796f62465fea13377283cfe5ecfb4f43d0/2026-09-14T13:51:33-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-inference-data/2026-09-14T13:51:33-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/d970c4e45931477ee46ba6f0e48fbdc00f0ffdb2b3cca007ec4921c2ba493837/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf/1d21f70ecc378c25eed9c54d4ecc2d119890eee00a93b241aa596d19ff6fc015",
+        "nemoclaw_provider.inference": "6234d45d-cdca-4864-90d3-54decb150f3e",
+        "nemoclaw_route.primary": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5/primary",
+        "nemoclaw_sandbox.agent": "8863bbab-7053-4353-afe9-a24c380a2bc5",
+        "nemoclaw_workspace.deployment": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5"
+      },
+      "receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": {
+          "mtime": "2026-09-14T15:10:25.16088244-07:00",
+          "sha256": "9535d56c00bdd7c6d8d2f334426e28bb19822392b975d9cb9c0601399a0cb3a4"
+        },
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": {
+          "mtime": "2026-09-14T15:11:53.649971949-07:00",
+          "sha256": "eb3b92e37ddef6df9016c5b746dadee8fc07c13681f3edf54526d6e00d634ef8"
+        }
+      }
+    },
+    "apply": {
+      "agentResponse": "FOUR",
+      "changes": [
+        {
+          "actions": [
+            "delete",
+            "create"
+          ],
+          "resource": "nemoclaw_inference_service.runtime"
+        }
+      ],
+      "outcome": "succeeded"
+    },
+    "before": {
+      "ids": {
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-gateway-data/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/da27fe62cfc4cbe90be4bd28ad94d253b8bf36c92bde664459f4b62a7d289a62/2026-09-14T13:51:33-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-inference-data/2026-09-14T13:51:33-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/d970c4e45931477ee46ba6f0e48fbdc00f0ffdb2b3cca007ec4921c2ba493837/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf/1d21f70ecc378c25eed9c54d4ecc2d119890eee00a93b241aa596d19ff6fc015",
+        "nemoclaw_provider.inference": "6234d45d-cdca-4864-90d3-54decb150f3e",
+        "nemoclaw_route.primary": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5/primary",
+        "nemoclaw_sandbox.agent": "8863bbab-7053-4353-afe9-a24c380a2bc5",
+        "nemoclaw_workspace.deployment": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5"
+      },
+      "receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": {
+          "mtime": "2026-09-14T15:10:25.16088244-07:00",
+          "sha256": "9535d56c00bdd7c6d8d2f334426e28bb19822392b975d9cb9c0601399a0cb3a4"
+        },
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": {
+          "mtime": "2026-09-14T15:11:53.649971949-07:00",
+          "sha256": "eb3b92e37ddef6df9016c5b746dadee8fc07c13681f3edf54526d6e00d634ef8"
+        }
+      }
+    },
+    "deployment": "435d6941-9513-470b-9598-441deda2aff0",
+    "exportReapply": true,
+    "finishedEpoch": 1789426151,
+    "newImage": "nc-prototype-qwen38@sha256:d4775421c3ed533fef5218aeb87b6c2bcf97804b74c58143e4c052bb60961e35",
+    "oldImage": "nc-prototype-qwen38@sha256:e04d4c5ad8b514eaf9fe10c530f69366a9bf999d880afa78854ef5e88e333efa",
+    "passed": true,
+    "plan": {
+      "changes": [
+        {
+          "actions": [
+            "delete",
+            "create"
+          ],
+          "resource": "nemoclaw_inference_service.runtime"
+        }
+      ],
+      "outcome": "planned"
+    }
+  },
+  "lifecycle": {
+    "after": {
+      "ids": {
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-gateway-data/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/c184f029f9fb99ce20411364c58fd5796f62465fea13377283cfe5ecfb4f43d0/2026-09-14T13:51:33-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-inference-data/2026-09-14T13:51:33-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/d970c4e45931477ee46ba6f0e48fbdc00f0ffdb2b3cca007ec4921c2ba493837/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf/1d21f70ecc378c25eed9c54d4ecc2d119890eee00a93b241aa596d19ff6fc015",
+        "nemoclaw_provider.inference": "6234d45d-cdca-4864-90d3-54decb150f3e",
+        "nemoclaw_route.primary": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5/primary",
+        "nemoclaw_sandbox.agent": "8863bbab-7053-4353-afe9-a24c380a2bc5",
+        "nemoclaw_workspace.deployment": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5"
+      },
+      "receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": {
+          "mtime": "2026-09-14T15:10:25.16088244-07:00",
+          "sha256": "9535d56c00bdd7c6d8d2f334426e28bb19822392b975d9cb9c0601399a0cb3a4"
+        },
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": {
+          "mtime": "2026-09-14T15:11:53.649971949-07:00",
+          "sha256": "eb3b92e37ddef6df9016c5b746dadee8fc07c13681f3edf54526d6e00d634ef8"
+        }
+      }
+    },
+    "before": {
+      "ids": {
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-gateway-data/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/c184f029f9fb99ce20411364c58fd5796f62465fea13377283cfe5ecfb4f43d0/2026-09-14T13:51:33-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-inference-data/2026-09-14T13:51:33-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/d970c4e45931477ee46ba6f0e48fbdc00f0ffdb2b3cca007ec4921c2ba493837/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf/1d21f70ecc378c25eed9c54d4ecc2d119890eee00a93b241aa596d19ff6fc015",
+        "nemoclaw_provider.inference": "6234d45d-cdca-4864-90d3-54decb150f3e",
+        "nemoclaw_route.primary": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5/primary",
+        "nemoclaw_sandbox.agent": "8863bbab-7053-4353-afe9-a24c380a2bc5",
+        "nemoclaw_workspace.deployment": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5"
+      },
+      "receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": {
+          "mtime": "2026-09-14T15:10:25.16088244-07:00",
+          "sha256": "9535d56c00bdd7c6d8d2f334426e28bb19822392b975d9cb9c0601399a0cb3a4"
+        },
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": {
+          "mtime": "2026-09-14T15:11:53.649971949-07:00",
+          "sha256": "eb3b92e37ddef6df9016c5b746dadee8fc07c13681f3edf54526d6e00d634ef8"
+        }
+      }
+    },
+    "bundle": {
+      "Files": {
+        "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "bin/nemoclaw": "af666f37cec339e91cbbd3da3b481d101fea66fe754bc5f549a08e4e9273b7cf",
+        "libexec/tofu": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59",
+        "licenses/OpenTofu-LICENSE": "142b957651baf401646dd7f3d855cb7c4f6f0921d645faa27e7cb540bc33cf4c",
+        "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.e03ca87f041304c3/linux_arm64/terraform-provider-nemoclaw_v0.1.0-dev.e03ca87f041304c3": "06f95d153154b22d44556399763ea8a4baad1e82d12e0a28bdb532d810c7b2e0"
+      },
+      "OpenTofu": "1.12.6",
+      "Rust": "1.98.1",
+      "Version": "0.1.0-dev.e03ca87f041304c3"
+    },
+    "capacityRejection": "requested GPU budget leaves less than declared host memory reserve",
+    "deployment": "435d6941-9513-470b-9598-441deda2aff0",
+    "exportReapply": {
+      "agentResponse": "FOUR",
+      "changes": [],
+      "outcome": "succeeded"
+    },
+    "finishedEpoch": 1789426809,
+    "initialApply": {
+      "agentResponse": "FOUR",
+      "changes": [],
+      "outcome": "succeeded"
+    },
+    "passed": true,
+    "recoveryApply": {
+      "agentResponse": "FOUR",
+      "changes": [
+        {
+          "actions": [
+            "update"
+          ],
+          "resource": "nemoclaw_inference_service.runtime"
+        }
+      ],
+      "outcome": "succeeded"
+    },
+    "startedEpoch": 1789426192,
+    "stoppedPlan": {
+      "changes": [
+        {
+          "actions": [
+            "update"
+          ],
+          "resource": "nemoclaw_inference_service.runtime"
+        }
+      ],
+      "outcome": "planned"
+    },
+    "unchangedApply": {
+      "agentResponse": "FOUR",
+      "changes": [],
+      "outcome": "succeeded"
+    },
+    "watchdogStop": {
+      "detail": "memory protection tripped by operator; explicit apply required",
+      "phase": "stopped",
+      "pid": 0,
+      "updated": "2026-09-14T22:50:32.372104922Z"
+    }
+  },
+  "unexpectedOriginalStop": {
+    "during": "concurrent workspace compilation after successful no-op/export checks",
+    "reason": "old supervisor conflated pressure and sampling failure; exact cause not established",
+    "result": "container and data retained; no automatic restart; corrected runtime qualified separately"
+  },
+  "readOnlyObservationTests": {
+    "passed": 3,
+    "scope": "current managed gateway, inference process, and retained storage bindings"
+  },
+  "limits": [
+    "Linux ARM64 live qualification only.",
+    "Model downloads were fresh; no Go model volume was copied.",
+    "Preparation interruption and pressure boundaries use deterministic fixtures; host memory was not deliberately exhausted.",
+    "The corrected image reused independently verified existing model/preparation data."
+  ]
+}

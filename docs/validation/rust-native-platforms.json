@@ -1,0 +1,102 @@
+{
+  "sourceCommit": "a4ed31374743246087b5265328e9a2c48a2fe019",
+  "run": "https://github.com/NVIDIA/NemoClaw/actions/runs/34904683625",
+  "toolchain": {
+    "Rust": "1.98.1",
+    "OpenTofu": "1.12.6",
+    "protoc": "36.1"
+  },
+  "jobs": [
+    {
+      "name": "native (ubuntu-24.04-arm, linux_arm64)",
+      "result": "success",
+      "steps": [
+        {
+          "name": "Formatting, lint, and deterministic behavior",
+          "result": "success"
+        },
+        {
+          "name": "Build and verify native bundle",
+          "result": "success"
+        },
+        {
+          "name": "Execute real OpenTofu and SDK/CLI lifecycle",
+          "result": "success"
+        }
+      ]
+    },
+    {
+      "name": "native (ubuntu-24.04, linux_amd64)",
+      "result": "success",
+      "steps": [
+        {
+          "name": "Formatting, lint, and deterministic behavior",
+          "result": "success"
+        },
+        {
+          "name": "Build and verify native bundle",
+          "result": "success"
+        },
+        {
+          "name": "Execute real OpenTofu and SDK/CLI lifecycle",
+          "result": "success"
+        }
+      ]
+    },
+    {
+      "name": "native (macos-15, darwin_arm64)",
+      "result": "success",
+      "steps": [
+        {
+          "name": "Formatting, lint, and deterministic behavior",
+          "result": "success"
+        },
+        {
+          "name": "Build and verify native bundle",
+          "result": "success"
+        },
+        {
+          "name": "Execute real OpenTofu and SDK/CLI lifecycle",
+          "result": "success"
+        }
+      ]
+    },
+    {
+      "name": "native (macos-15-intel, darwin_amd64)",
+      "result": "success",
+      "steps": [
+        {
+          "name": "Formatting, lint, and deterministic behavior",
+          "result": "success"
+        },
+        {
+          "name": "Build and verify native bundle",
+          "result": "success"
+        },
+        {
+          "name": "Execute real OpenTofu and SDK/CLI lifecycle",
+          "result": "success"
+        }
+      ]
+    },
+    {
+      "name": "native (windows-2025, windows_amd64)",
+      "result": "success",
+      "steps": [
+        {
+          "name": "Formatting, lint, and deterministic behavior",
+          "result": "success"
+        },
+        {
+          "name": "Build and verify native bundle",
+          "result": "success"
+        },
+        {
+          "name": "Execute real OpenTofu and SDK/CLI lifecycle",
+          "result": "success"
+        }
+      ]
+    }
+  ],
+  "scope": "Native builds and real OpenTofu/provider/SDK/CLI lifecycle against local fixtures; not Docker, GPU, or real-model qualification on every platform."
+}
