@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-analyze-pr-value-stream
-description: Analyze one NemoClaw pull request across its complete observable lifetime. Produces a bounded Perfetto trace and summary, separates contributor, review, and automation time, and compares the latest revision with a target. Use for PR latency, value-stream, bottleneck, timeline, or ten-minute-target analysis.
+description: "Analyze one NemoClaw PR lifetime to identify contributor, review, and automation delays or compare it with a latency target."
 user_invocable: true
 ---
 
@@ -22,7 +22,7 @@ Do not run a reduced or latest-revision-only analysis. The latest-revision water
 ## Run the analysis
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts \
   --workdir "$PWD" \
   --number <pull-request-number>

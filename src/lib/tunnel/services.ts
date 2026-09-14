@@ -712,7 +712,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     const sandboxName = resolveTunnelOriginSandboxName(opts);
     if (sandboxName) {
       try {
-        registerTunnelOrigin(sandboxName, tunnelUrl, { info, warn });
+        await registerTunnelOrigin(sandboxName, tunnelUrl, { info, warn });
       } catch (err) {
         warn(`Could not register tunnel origin (${err instanceof Error ? err.message : err}).`);
       }

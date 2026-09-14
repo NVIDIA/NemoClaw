@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/** Maximum length shared by canonical provider endpoints and their wire schema. */
+export const MAX_CANONICAL_ENDPOINT_LENGTH = 2048;
+
 /** True when an endpoint input carries userinfo, query, or fragment components. */
 export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | undefined): boolean {
   const raw = String(value || "").trim();
@@ -9,7 +12,7 @@ export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | und
     const url = new URL(raw);
     // A scheme-less input such as user:pass@host/v1 parses with scheme
     // "user:" and empty userinfo; classify it from the raw string instead.
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
+    if (!["http:", "https:"].includes(url.protocol)) {
       return /[?#@]/.test(raw);
     }
     // Parsed fields catch every userinfo form the WHATWG parser accepts,
@@ -80,12 +83,12 @@ export function unsafeEndpointUrlViolation(
   // character (ASCII %0A as well as UTF-8 forms such as %C2%80 and %E2%80%8B)
   // cannot pass while its literal form is rejected. Downstream consumers
   // decode at most once, so a double-encoded sequence stays inert text.
-  let decoded = raw;
+  let decoded: string;
   try {
     decoded = decodeURIComponent(raw);
   } catch {
-    // Malformed percent-encoding carries no decoded controls; the remaining
-    // checks classify the raw input.
+    // A malformed suffix can hide a valid encoded control from the decoder.
+    return { kind: "invalid-url", reason: "must be a valid HTTP or HTTPS URL." };
   }
   if (CONTROL_OR_FORMAT_CHARACTER.test(decoded)) {
     return {
@@ -101,7 +104,7 @@ export function unsafeEndpointUrlViolation(
   }
   try {
     const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
+    if (!["http:", "https:"].includes(url.protocol)) {
       return { kind: "unsupported-protocol", reason: "must use HTTP or HTTPS." };
     }
   } catch {

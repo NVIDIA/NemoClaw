@@ -56,7 +56,6 @@ describe("Hermes gateway auxiliary retry", () => {
       "hermes_gateway_healthy() { return 0; }",
       'ensure_hermes_supervised_auxiliaries() { auxiliary_calls=$((auxiliary_calls + 1)); [ "$auxiliary_calls" -ge 3 ]; }',
       "finalize_tirith_marker_retry() { :; }",
-      "commit_hermes_mcp_applied_if_pending() { return 0; }",
       "refresh_hermes_supervised_child_pids() { :; }",
       "nemoclaw_runtime_state_mutation_checkpoint() { return 0; }",
       "hermes_stop_tracked_role() { stop_calls=$((stop_calls + 1)); return 0; }",
@@ -156,7 +155,7 @@ describe("Hermes gateway auxiliary retry", () => {
     const result = runBashHarness([
       "prepare_hermes_nonroot_runtime() { return 0; }",
       "has_live_hermes_gateway() { return 1; }",
-      'repair_hermes_startup_layout() { HERMES_LAYOUT_REPAIR_RECOVERY_ACTION=retained-log-cleanup; return 1; }',
+      "repair_hermes_startup_layout() { HERMES_LAYOUT_REPAIR_RECOVERY_ACTION=retained-log-cleanup; return 1; }",
       extractShellFunction(source, "cleanup_stale_hermes_gateway_runtime"),
       launchFunction,
       "launch_hermes_gateway_current_user() { launch_hermes_gateway_current_user_impl; }",
@@ -170,10 +169,7 @@ describe("Hermes gateway auxiliary retry", () => {
     ]);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual([
-      "recovery_status=1",
-      "quarantine_calls=1",
-    ]);
+    expect(result.stdout.trim().split("\n")).toEqual(["recovery_status=1", "quarantine_calls=1"]);
     expect(result.stderr).toContain(
       "automatic respawn is quarantined until old retained logs are archived or removed from a trusted host-side recovery environment and the sandbox is restarted",
     );

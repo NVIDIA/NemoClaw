@@ -205,9 +205,7 @@ describe("managed inference YAML profile contract", () => {
     const preset = catalog.presets.find(
       ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_PROFILE_ID,
     );
-    const recipe = catalog.recipes.find(
-      ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_RECIPE_ID,
-    );
+    const recipe = catalog.recipes.find(({ metadata }) => metadata.id === MUSE_LLAMA_CPP_RECIPE_ID);
 
     expect(preset?.metadata.supportState).toBe("experimental");
     expect(preset?.spec).toMatchObject({

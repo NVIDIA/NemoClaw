@@ -41,16 +41,12 @@ function errorMessage(run: () => unknown): string {
 
 describe("sandbox and provider name canonical validators", () => {
   describe("isValidName", () => {
-    it.each([
-      "openclaw",
-      "nvidia-router",
-      "a",
-      "a1",
-      "my-sandbox-1",
-      "a".repeat(NAME_MAX_LENGTH),
-    ])("accepts the OpenShell-compatible sandbox name '%s'", (name) => {
-      expect(isValidName(name)).toBe(true);
-    });
+    it.each(["openclaw", "nvidia-router", "a", "a1", "my-sandbox-1", "a".repeat(NAME_MAX_LENGTH)])(
+      "accepts the OpenShell-compatible sandbox name '%s'",
+      (name) => {
+        expect(isValidName(name)).toBe(true);
+      },
+    );
 
     it.each([
       ["empty string", ""],
@@ -77,15 +73,13 @@ describe("sandbox and provider name canonical validators", () => {
   });
 
   describe("isValidProviderName", () => {
-    it.each([
-      "default",
-      "Provider_1.prod",
-      "a",
-      `a${"b".repeat(PROVIDER_NAME_MAX_LENGTH - 1)}`,
-    ])("accepts the supported provider name '%s'", (name) => {
-      expect(isValidProviderName(name)).toBe(true);
-      expect(PROVIDER_NAME_VALID_PATTERN.test(name)).toBe(true);
-    });
+    it.each(["default", "Provider_1.prod", "a", `a${"b".repeat(PROVIDER_NAME_MAX_LENGTH - 1)}`])(
+      "accepts the supported provider name '%s'",
+      (name) => {
+        expect(isValidProviderName(name)).toBe(true);
+        expect(PROVIDER_NAME_VALID_PATTERN.test(name)).toBe(true);
+      },
+    );
 
     it.each([
       ["empty string", ""],
@@ -129,14 +123,15 @@ describe("sandbox and provider name canonical validators", () => {
       expect(message).toMatch(/^[\x20-\x7e]+$/);
     });
 
-    it.each(
-      REJECTED_DIAGNOSTIC_CASES,
-    )("escapes %s as printable ASCII", (_label, value, escaped) => {
-      const message = errorMessage(() => assertValidName(value, "sandbox name"));
-      expect(message).toContain(escaped);
-      expect(message).toMatch(/^[\x20-\x7e]+$/);
-      expect(message).not.toContain(value);
-    });
+    it.each(REJECTED_DIAGNOSTIC_CASES)(
+      "escapes %s as printable ASCII",
+      (_label, value, escaped) => {
+        const message = errorMessage(() => assertValidName(value, "sandbox name"));
+        expect(message).toContain(escaped);
+        expect(message).toMatch(/^[\x20-\x7e]+$/);
+        expect(message).not.toContain(value);
+      },
+    );
 
     it("uses the same escaped diagnostic boundary for provider names", () => {
       const message = errorMessage(() => assertValidProviderName("bad\n::warning::forged"));

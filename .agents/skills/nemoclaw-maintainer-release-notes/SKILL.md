@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-release-notes
-description: Drafts the post-tag NemoClaw Announcement from tag, compare, and release-entry data. Use after tagging or when asked to summarize vX.Y.Z.
+description: "Draft a post-tag NemoClaw Announcement from the verified release range and shipped PRs. Use when summarizing a release."
 user_invocable: true
 ---
 

@@ -9,7 +9,7 @@
  * Run only inside the release-latest-tag workflow, which serializes this
  * operation with every authorized release-label assignment.
  *
- * Usage: node --experimental-strip-types --no-warnings scripts/retire-release-label.mts <released-version> [--repo OWNER/REPO]
+ * Usage: node --no-warnings scripts/retire-release-label.mts <released-version> [--repo OWNER/REPO]
  */
 
 import { execFileSync } from "node:child_process";

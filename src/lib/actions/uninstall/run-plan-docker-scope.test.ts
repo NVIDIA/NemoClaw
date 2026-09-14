@@ -18,8 +18,8 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, {
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -75,12 +75,12 @@ interface FixtureOptions {
   sandboxes?: readonly string[];
 }
 
-function runWithDockerInventory(options: FixtureOptions = {}): {
+async function runWithDockerInventory(options: FixtureOptions = {}): Promise<{
   calls: string[][];
   errors: string[];
-  result: ReturnType<typeof runUninstallPlan>;
+  result: Awaited<ReturnType<typeof runUninstallPlan>>;
   rmSync: ReturnType<typeof vi.fn>;
-} {
+}> {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-docker-scope-"));
   const stateDir = path.join(tmpHome, ".nemoclaw");
   fs.mkdirSync(stateDir, { recursive: true });
@@ -118,7 +118,7 @@ function runWithDockerInventory(options: FixtureOptions = {}): {
     });
     const errors: string[] = [];
     const rmSync = vi.fn();
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
       {
         commandExists: () => true,
@@ -144,8 +144,8 @@ function runWithDockerInventory(options: FixtureOptions = {}): {
 }
 
 describe("uninstall Docker resource scope", () => {
-  it("keeps containers without container-specific ownership evidence (#10382)", () => {
-    const { calls, result } = runWithDockerInventory();
+  it("keeps containers without container-specific ownership evidence (#10382)", async () => {
+    const { calls, result } = await runWithDockerInventory();
 
     expect(result.exitCode).toBe(0);
     const forbiddenIds = new Set([
@@ -168,8 +168,8 @@ describe("uninstall Docker resource scope", () => {
     expect(removedForbiddenIds).toEqual([]);
   });
 
-  it("removes exact gateway and unambiguous registered sandbox containers", () => {
-    const { calls } = runWithDockerInventory();
+  it("removes exact gateway and unambiguous registered sandbox containers", async () => {
+    const { calls } = await runWithDockerInventory();
 
     expect(calls).toContainEqual(["rm", "-f", "c-cluster"]);
     expect(calls).toContainEqual(["rm", "-f", "c-sandbox"]);
@@ -178,21 +178,21 @@ describe("uninstall Docker resource scope", () => {
     expect(calls).toContainEqual(["rm", "-f", "c-gateway"]);
   });
 
-  it("fails closed when registered sandbox ownership is ambiguous", () => {
+  it("fails closed when registered sandbox ownership is ambiguous", async () => {
     const psResult = ok(
       [
         "c-first redis:7 openshell-my-assistant-runtime-a",
         "c-second redis:7 openshell-my-assistant-runtime-b",
       ].join("\n"),
     );
-    const { calls } = runWithDockerInventory({ psResult, sandboxes: ["my-assistant"] });
+    const { calls } = await runWithDockerInventory({ psResult, sandboxes: ["my-assistant"] });
 
     expect(calls).not.toContainEqual(["rm", "-f", "c-first"]);
     expect(calls).not.toContainEqual(["rm", "-f", "c-second"]);
   });
 
-  it("keeps images belonging to the separate OpenClaw project (#8496)", () => {
-    const { calls } = runWithDockerInventory();
+  it("keeps images belonging to the separate OpenClaw project (#8496)", async () => {
+    const { calls } = await runWithDockerInventory();
 
     expect(calls).not.toContainEqual(["rmi", "-f", "i-openclaw"]);
     expect(calls).not.toContainEqual(["rmi", "-f", "i-tag"]);
@@ -200,16 +200,16 @@ describe("uninstall Docker resource scope", () => {
     expect(calls).not.toContainEqual(["rmi", "-f", "i-unrelated"]);
   });
 
-  it("removes NemoClaw and gateway-built OpenShell images", () => {
-    const { calls } = runWithDockerInventory();
+  it("removes NemoClaw and gateway-built OpenShell images", async () => {
+    const { calls } = await runWithDockerInventory();
 
     expect(calls).toContainEqual(["rmi", "-f", "i-nemoclaw"]);
     expect(calls).toContainEqual(["rmi", "-f", "i-managed"]);
     expect(calls).toContainEqual(["rmi", "-f", "i-openshell"]);
   });
 
-  it("preserves retry state when Docker container inventory fails", () => {
-    const { calls, errors, result, rmSync } = runWithDockerInventory({
+  it("preserves retry state when Docker container inventory fails", async () => {
+    const { calls, errors, result, rmSync } = await runWithDockerInventory({
       psResult: { status: 42, stdout: "", stderr: "daemon inventory unavailable" },
     });
 

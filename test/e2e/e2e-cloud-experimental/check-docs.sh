@@ -491,7 +491,7 @@ run_install_check() {
   local _canonical
   if [[ "$PROVIDERS_TS" == */provider-selection-keys.ts ]]; then
     _canonical="$(
-      "$NODE" --experimental-strip-types --no-warnings --input-type=module -e '
+      "$NODE" --no-warnings --input-type=module -e '
         import { pathToFileURL } from "node:url";
         const source = await import(pathToFileURL(process.argv[1]).href);
         const prefix = "Valid values: ";

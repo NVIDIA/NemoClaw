@@ -241,7 +241,7 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
 
     policyMutationAttempted = true;
     expect(
-      setPolicyDocument(options.sandboxName, fs.readFileSync(policyPath, "utf8"), {
+      await setPolicyDocument(options.sandboxName, fs.readFileSync(policyPath, "utf8"), {
         nonFatal: true,
         operation: "run the raw OpenShell allowed_ips rebinding proof",
       }),
@@ -294,7 +294,7 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     try {
       if (policyMutationAttempted && basePolicyPath) {
         expect(
-          setPolicyDocument(options.sandboxName, fs.readFileSync(basePolicyPath, "utf8"), {
+          await setPolicyDocument(options.sandboxName, fs.readFileSync(basePolicyPath, "utf8"), {
             nonFatal: true,
             operation: "restore the raw OpenShell allowed_ips rebinding proof policy",
           }),

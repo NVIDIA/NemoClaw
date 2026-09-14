@@ -58,7 +58,8 @@ export type AdvisorPromptTurn = {
   /**
    * Terminal submit tool that may follow context, reads, prose, and other active draft tools.
    * With repair enabled, the turn permits settled failed attempts with exactly one success.
-   * Only failed duplicate submit calls may follow a success.
+   * Only failed duplicate submit calls may follow a success in that model turn. A configured,
+   * tool-disabled assistant-text repair may follow when required analysis was omitted.
    */
   terminalSubmitToolName?: string;
   /** Opt into repeated submits or one continuation after omission or settled failures. */

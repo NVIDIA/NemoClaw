@@ -35,11 +35,11 @@ RUN apt-get update \
       build-essential=12.10ubuntu1 \
       ca-certificates=20260601~24.04.1 \
       cmake=3.28.3-1build7 \
-      curl=8.5.0-2ubuntu10.12 \
+      curl=8.5.0-2ubuntu10.13 \
       g++-14=14.2.0-4ubuntu2~24.04.1 \
       gcc-14=14.2.0-4ubuntu2~24.04.1 \
-      libcurl4-openssl-dev=8.5.0-2ubuntu10.12 \
-      libssl-dev=3.0.13-0ubuntu3.12 \
+      libcurl4-openssl-dev=8.5.0-2ubuntu10.13 \
+      libssl-dev=3.0.13-0ubuntu3.15 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CC=${C_COMPILER} \
@@ -143,9 +143,9 @@ RUN test -n "${CUDA_DEV_IMAGE}" \
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates=20260601~24.04.1 \
-      libcurl4t64=8.5.0-2ubuntu10.12 \
+      libcurl4t64=8.5.0-2ubuntu10.13 \
       libgomp1=14.2.0-4ubuntu2~24.04.1 \
-      libssl3t64=3.0.13-0ubuntu3.12 \
+      libssl3t64=3.0.13-0ubuntu3.15 \
     && groupadd --gid "${RUNTIME_GID}" nemoclaw-llama \
     && useradd --uid "${RUNTIME_UID}" --gid "${RUNTIME_GID}" \
       --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin nemoclaw-llama \

@@ -87,14 +87,31 @@ export const REQUIRED_PUBLISHER_JOBS = [
   "Build and push Hermes base image",
   "Build and push Deep Agents Code base image",
 ] as const;
-const PUBLISHER_JOB_ALIASES = new Map<string, (typeof REQUIRED_PUBLISHER_JOBS)[number]>([
+const REQUIRED_MANUAL_MANAGED_IMAGE_JOB =
+  "Publish complete managed images / Promote complete multi-platform managed image cohort";
+type RequiredPublisherJob =
+  | (typeof REQUIRED_PUBLISHER_JOBS)[number]
+  | typeof REQUIRED_MANUAL_MANAGED_IMAGE_JOB;
+const PUBLISHER_JOB_ALIASES = new Map<string, RequiredPublisherJob>([
   ["Build and push OpenClaw base image", "Build and push OpenClaw base image"],
   ["Manifests / OpenClaw", "Build and push OpenClaw base image"],
   ["Build and push Hermes base image", "Build and push Hermes base image"],
   ["Manifests / Hermes", "Build and push Hermes base image"],
   ["Build and push Deep Agents Code base image", "Build and push Deep Agents Code base image"],
   ["Manifests / Deep Agents Code", "Build and push Deep Agents Code base image"],
+  [REQUIRED_MANUAL_MANAGED_IMAGE_JOB, REQUIRED_MANUAL_MANAGED_IMAGE_JOB],
 ]);
+
+class IneligibleManualManagedImagePromotionError extends Error {}
+
+function requiredPublisherIneligibilityError(
+  requiredName: RequiredPublisherJob,
+  message: string,
+): Error {
+  return requiredName === REQUIRED_MANUAL_MANAGED_IMAGE_JOB
+    ? new IneligibleManualManagedImagePromotionError(message)
+    : new Error(message);
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -108,6 +125,7 @@ export interface FirstParentHistory {
 export interface PublicationRun {
   id: number;
   attempt: number;
+  event: "push" | "workflow_dispatch";
   workflowId: number;
   headSha: string;
   status: string;
@@ -429,7 +447,12 @@ export function validateWorkflow(payload: unknown): number {
   return workflowId;
 }
 
-function validateRun(value: unknown, index: number, expectedWorkflowId: number): PublicationRun {
+function validateRun(
+  value: unknown,
+  index: number,
+  expectedWorkflowId: number,
+  allowWorkflowDispatch = false,
+): PublicationRun {
   const run = asRecord(value);
   const id = positiveSafeInteger(run.id, `workflow run ${index} id`);
   const attempt = positiveSafeInteger(run.run_attempt, `workflow run ${index} attempt`);
@@ -439,7 +462,12 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
     throw new Error(`workflow run ${index} workflow id does not match the base-image workflow`);
   }
   const headSha = sha(run.head_sha, `workflow run ${index} head SHA`);
-  exactString(run.event, "push", `workflow run ${index} event`);
+  const event = run.event;
+  if (event !== "push" && !(allowWorkflowDispatch && event === "workflow_dispatch")) {
+    throw new Error(
+      `workflow run ${index} event must be push${allowWorkflowDispatch ? " or workflow_dispatch" : ""}`,
+    );
+  }
   exactString(run.head_branch, MAIN_BRANCH, `workflow run ${index} branch`);
   exactString(run.path, WORKFLOW_PATH, `workflow run ${index} path`);
   trustedWorkflowName(run.name, `workflow run ${index} name`);
@@ -468,6 +496,7 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
   return {
     id,
     attempt,
+    event,
     workflowId: expectedWorkflowId,
     headSha,
     status,
@@ -480,7 +509,11 @@ export function selectPublicationRun(
   payload: unknown,
   history: FirstParentHistory,
   workflowId: number,
-  options: { readonly completedSuccessOnly?: boolean } = {},
+  options: {
+    readonly allowWorkflowDispatch?: boolean;
+    readonly completedSuccessOnly?: boolean;
+    readonly excludedRunIds?: ReadonlySet<number>;
+  } = {},
 ): PublicationSelection {
   positiveSafeInteger(workflowId, "base-image workflow id");
   const response = asRecord(payload);
@@ -495,29 +528,37 @@ export function selectPublicationRun(
   const runs = response.workflow_runs.flatMap((value, index) => {
     const run = asRecord(value);
     return typeof run.head_sha === "string" && history.distanceBySha.has(run.head_sha)
-      ? [validateRun(run, index, workflowId)]
+      ? [validateRun(run, index, workflowId, options.allowWorkflowDispatch === true)]
       : [];
   });
   if (new Set(runs.map((run) => run.id)).size !== runs.length) {
     throw new Error("workflow run listing contains duplicate run ids");
   }
   const eligible = runs.flatMap((run) => {
+    if (options.excludedRunIds?.has(run.id)) return [];
     const distance = history.distanceBySha.get(run.headSha);
     return distance === undefined ? [] : [{ run, distance }];
   });
-  const selectable = options.completedSuccessOnly
-    ? eligible.filter(({ run }) => run.status === "completed" && run.conclusion === "success")
-    : eligible;
+  const selectable = eligible.filter(({ run }) => {
+    if (options.completedSuccessOnly || run.event === "workflow_dispatch") {
+      return run.status === "completed" && run.conclusion === "success";
+    }
+    return true;
+  });
   if (selectable.length === 0) return { state: "missing" };
 
   const nearestDistance = Math.min(...selectable.map(({ distance }) => distance));
   const nearest = selectable.filter(({ distance }) => distance === nearestDistance);
-  if (nearest.length !== 1) {
+  const preferredEvent = nearest.some(({ run }) => run.event === "push")
+    ? "push"
+    : "workflow_dispatch";
+  const preferred = nearest.filter(({ run }) => run.event === preferredEvent);
+  if (preferredEvent === "push" && preferred.length !== 1) {
     throw new Error(
-      `multiple trusted base-image workflow runs match ${nearest[0]?.run.headSha ?? history.relevantSha}`,
+      `multiple trusted ${preferredEvent} base-image workflow runs match ${preferred[0]?.run.headSha ?? history.relevantSha}: ${preferred.map(({ run }) => run.url).join(", ")}`,
     );
   }
-  const run = nearest[0].run;
+  const run = [...preferred].sort((left, right) => right.run.id - left.run.id)[0].run;
   return { state: "selected", run };
 }
 
@@ -566,11 +607,16 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
   }
 
   let pending = false;
-  for (const requiredName of REQUIRED_PUBLISHER_JOBS) {
+  const requiredJobs: readonly RequiredPublisherJob[] =
+    run.event === "workflow_dispatch"
+      ? [...REQUIRED_PUBLISHER_JOBS, REQUIRED_MANUAL_MANAGED_IMAGE_JOB]
+      : REQUIRED_PUBLISHER_JOBS;
+  for (const requiredName of requiredJobs) {
     const current = jobsByName.get(requiredName);
     if (!current) {
       if (run.status === "completed") {
-        throw new Error(
+        throw requiredPublisherIneligibilityError(
+          requiredName,
           `missing required ${requiredName} job in attempt ${run.attempt}; ${run.url}`,
         );
       }
@@ -579,7 +625,8 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
     }
     if (current.status !== "completed") {
       if (run.status === "completed") {
-        throw new Error(
+        throw requiredPublisherIneligibilityError(
+          requiredName,
           `${requiredName} job is not complete in terminal attempt ${run.attempt}; ${run.url}`,
         );
       }
@@ -587,7 +634,8 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
       continue;
     }
     if (current.conclusion !== "success") {
-      throw new Error(
+      throw requiredPublisherIneligibilityError(
+        requiredName,
         `${requiredName} job did not complete successfully in attempt ${run.attempt}; ${run.url}`,
       );
     }
@@ -596,10 +644,16 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
 }
 
 export function validateBoundRun(payload: unknown, expected: PublicationRun): PublicationRun {
-  const actual = validateRun(payload, 0, expected.workflowId);
+  const actual = validateRun(
+    payload,
+    0,
+    expected.workflowId,
+    expected.event === "workflow_dispatch",
+  );
   if (
     actual.id !== expected.id ||
     actual.attempt !== expected.attempt ||
+    actual.event !== expected.event ||
     actual.headSha !== expected.headSha
   ) {
     throw new Error(
@@ -753,13 +807,18 @@ export async function waitForBaseImagePublication(
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
-  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&event=push&per_page=100`;
+  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&per_page=100`;
   while (true) {
     const runs = await collectPaginated(request, runsPath, "workflow_runs");
-    const selection = selectPublicationRun(runs, options.history, workflowId, {
-      completedSuccessOnly: options.selectNearestSuccessfulRun === true,
-    });
-    if (selection.state === "selected") {
+    const excludedRunIds = new Set<number>();
+    const select = () =>
+      selectPublicationRun(runs, options.history, workflowId, {
+        allowWorkflowDispatch: true,
+        completedSuccessOnly: options.selectNearestSuccessfulRun === true,
+        excludedRunIds,
+      });
+    let selection = select();
+    while (selection.state === "selected") {
       if (now() > deadline) {
         throw new Error(
           `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
@@ -804,6 +863,14 @@ export async function waitForBaseImagePublication(
           }
         }
       } catch (error) {
+        if (
+          selection.run.event === "workflow_dispatch" &&
+          error instanceof IneligibleManualManagedImagePromotionError
+        ) {
+          excludedRunIds.add(selection.run.id);
+          selection = select();
+          continue;
+        }
         throw publicationEvidenceError(error, selection.run);
       }
       if (publisherState === "ready") {
@@ -814,6 +881,7 @@ export async function waitForBaseImagePublication(
         }
         return validatedRun;
       }
+      break;
     }
 
     if (now() >= deadline) {
@@ -825,7 +893,7 @@ export async function waitForBaseImagePublication(
     notice(
       selection.state === "selected"
         ? `Required base image publishers are not complete for ${selection.run.headSha}; selected workflow run status ${selection.run.status}; ${selection.run.url}`
-        : `Waiting for a trusted base-image push run covering ${options.history.relevantSha}`,
+        : `Waiting for a trusted base-image publication run covering ${options.history.relevantSha}`,
     );
     await sleep(Math.min(options.pollMs, Math.max(1, deadline - now())));
   }

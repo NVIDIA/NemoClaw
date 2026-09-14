@@ -120,8 +120,7 @@ describe("snapshot restored-gateway probe classification", () => {
     [
       {
         exitCode: 0,
-        stdout:
-          '{"status":"error","result":{"payloads":[{"text":"secret-output"}],"meta":{}}}',
+        stdout: '{"status":"error","result":{"payloads":[{"text":"secret-output"}],"meta":{}}}',
         stderr: "",
       },
       "invalid-response",

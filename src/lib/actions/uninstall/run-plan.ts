@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
+import type { SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { dockerSpawnSync } from "../../adapters/docker/exec";
+import {
+  defaultRun,
+  defaultRunDocker,
+  createUninstallProviderAdapter,
+  type RunResult,
+} from "../../adapters/uninstall/commands";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
@@ -62,7 +67,10 @@ import {
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
+  collectOpenShellGatewayNames,
+  gatewayRegistrationRemovalFailureMessage,
   type GatewayTeardownAuthorityResolver,
+  removeGatewayRegistrationWithPolicy,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
@@ -122,11 +130,7 @@ import {
   withPortableHostFence,
 } from "./portable-runtime-cleanup";
 
-export interface RunResult {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-}
+export type { RunResult } from "../../adapters/uninstall/commands";
 
 export interface UninstallRunOptions {
   assumeYes: boolean;
@@ -176,7 +180,7 @@ export interface UninstallRunDeps {
       sandboxNames: readonly string[],
       gatewayName: string,
     ) => boolean,
-  ) => PortableRuntimeCleanupResult | null;
+  ) => PortableRuntimeCleanupResult | null | Promise<PortableRuntimeCleanupResult | null>;
   stderrHasColors?: boolean;
   stderrIsTty?: boolean;
   withPortableHostFence?: typeof withPortableHostFence;
@@ -197,22 +201,6 @@ const OPENSHELL_COMMAND_MISSING_ERROR =
   "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.";
 export const MANAGED_INFERENCE_CONTAINER_NAME_PATTERN =
   /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/;
-
-function toRunResult(result: SpawnSyncReturns<string | Buffer>): RunResult {
-  return {
-    status: result.status,
-    stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? ""),
-    stderr: typeof result.stderr === "string" ? result.stderr : String(result.stderr ?? ""),
-  };
-}
-
-function defaultRun(command: string, args: string[], options: SpawnSyncOptions = {}): RunResult {
-  return toRunResult(spawnSync(command, args, { encoding: "utf-8", ...options }));
-}
-
-function defaultRunDocker(args: string[], options: SpawnSyncOptions = {}): RunResult {
-  return toRunResult(dockerSpawnSync(args, { encoding: "utf-8", ...options }));
-}
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
   if (!command || command.includes("\0")) return false;
@@ -551,7 +539,7 @@ interface UninstallRuntime {
       sandboxNames: readonly string[],
       gatewayName: string,
     ) => boolean,
-  ) => PortableRuntimeCleanupResult | null;
+  ) => PortableRuntimeCleanupResult | null | Promise<PortableRuntimeCleanupResult | null>;
   stderrHasColors: boolean;
   stderrIsTty: boolean;
   warn: (message: string) => void;
@@ -868,7 +856,7 @@ function isExplicitPortableSandboxAbsence(result: RunResult, sandboxName: string
   if (result.status === 0) return false;
   const clean = `${result.stdout}\n${result.stderr}`.replace(/\x1b\[[0-9;]*m|\r/gu, "").trim();
   const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const namedSandbox = `(?:['\"]${escapedName}['\"]|${escapedName})`;
+  const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
   return (
     /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu.test(
       clean,
@@ -909,56 +897,55 @@ function deletePortableOpenShellSandbox(
   return false;
 }
 
-const GATEWAY_ALREADY_ABSENT =
-  /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
-const GATEWAY_REMOVE_UNSUPPORTED =
-  /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
-
+/** Report unconfirmed removal so callers retain uninstall state for recovery. */
 function removeGatewayRegistration(
   runtime: UninstallRuntime,
   gatewayLabel: string,
   allowLegacyDestroy: boolean,
 ): boolean {
-  const removeResult = runtime.run("openshell", ["gateway", "remove", gatewayLabel], {
-    env: runtime.env,
+  const outcome = removeGatewayRegistrationWithPolicy({
+    allowLegacyDestroy,
+    gatewayLabel,
+    run: (args) =>
+      runtime.run("openshell", args, {
+        env: runtime.env,
+      }),
   });
-  if (removeResult.status === 0) {
-    runtime.log(`Removed gateway registration '${gatewayLabel}'`);
-    return true;
-  }
-
-  const removeOutput = `${removeResult.stdout}\n${removeResult.stderr}`;
-  if (GATEWAY_ALREADY_ABSENT.test(removeOutput)) {
+  if (outcome.ok && outcome.state === "absent") {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
-  if (!GATEWAY_REMOVE_UNSUPPORTED.test(removeOutput)) {
-    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
-    return false;
+  if (outcome.ok) {
+    const verb =
+      outcome.operation === "destroy" ? "Destroyed legacy gateway" : "Removed gateway registration";
+    runtime.log(`${verb} '${gatewayLabel}'`);
+    return true;
   }
-  if (!allowLegacyDestroy) {
+  if (outcome.reason === "legacy-disabled") {
     runtime.warn(
       `Could not remove local registration for externally supervised gateway '${gatewayLabel}'. ` +
         "NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
     );
     return false;
   }
-
-  // OpenShell builds before 0.0.44 exposed `gateway destroy` instead of the
-  // current `gateway remove` command. Only fall back when the modern verb is
-  // explicitly unsupported so a real removal failure is not hidden.
-  const destroyResult = runtime.run("openshell", ["gateway", "destroy", "-g", gatewayLabel], {
-    env: runtime.env,
-  });
-  if (destroyResult.status === 0) {
-    runtime.log(`Destroyed legacy gateway '${gatewayLabel}'`);
-    return true;
+  runtime.warn(
+    gatewayRegistrationRemovalFailureMessage(gatewayLabel, outcome.operation, {
+      status: outcome.result.status,
+      stdout: outcome.result.stdout ?? "",
+      stderr: outcome.result.stderr ?? "",
+    }),
+  );
+  if (
+    !runtime.commandExists("docker") ||
+    runtime.runDocker(["info"], { env: runtime.env, stdio: "ignore", timeout: 10_000 }).status !== 0
+  ) {
+    runtime.warn(
+      "Docker is not available in this shell. Restore Docker access. " +
+        "If using Docker Desktop on Windows, enable WSL integration for this distro. " +
+        "For WSL, save work in all sessions before running wsl --shutdown from PowerShell. Reopen the distro afterward. " +
+        "Verify docker info succeeds, then rerun the same uninstall command.",
+    );
   }
-  if (GATEWAY_ALREADY_ABSENT.test(`${destroyResult.stdout}\n${destroyResult.stderr}`)) {
-    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
-    return true;
-  }
-  runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
   return false;
 }
 
@@ -971,23 +958,6 @@ function stopHelperServices(paths: UninstallPaths, runtime: UninstallRuntime): v
       startServices,
       ["--stop"],
     );
-}
-
-function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: string): void {
-  if (!runtime.commandExists("pgrep")) {
-    runtime.warn(`pgrep not found; skipping ${label}.`);
-    return;
-  }
-  const result = runtime.run("pgrep", ["-f", pattern], { env: runtime.env });
-  const pids = splitNonEmptyLines(result.stdout).map(Number).filter(Number.isFinite);
-  if (pids.length === 0) {
-    runtime.log(`No ${label} found`);
-    return;
-  }
-  for (const pid of pids) {
-    if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL")) runtime.log(`Stopped ${label} ${pid}`);
-    else runtime.warn(`Failed to stop ${label} ${pid}`);
-  }
 }
 
 // Resolve the proxy port from runtime.env (rather than `process.env` at
@@ -1557,14 +1527,14 @@ function finishScopedOpenShellCleanup(
   );
 }
 
-function removeOpenShellResources(
+async function removeOpenShellResources(
   paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
   sandboxNames: readonly string[],
   teardownAuthority: GatewayOwner,
-): boolean {
+): Promise<boolean> {
   if (!runtime.commandExists("openshell")) {
     runtime.error(OPENSHELL_COMMAND_MISSING_ERROR);
     return false;
@@ -1608,17 +1578,16 @@ function removeOpenShellResources(
       onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
     },
   );
-  for (const provider of NEMOCLAW_PROVIDERS) {
-    runOptional(
-      runtime,
-      `Deleted provider '${provider}'`,
-      "openshell",
-      ["provider", "delete", provider],
-      { onSkip: providerDeleteSkipMessage(provider) },
-    );
+  const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
+  for (const providerName of NEMOCLAW_PROVIDERS) {
+    const result = await providerAdapter.deleteProvider({
+      target: { kind: "selected" },
+      providerName,
+    });
+    if (result.ok) runtime.log(`Deleted provider '${providerName}'`);
+    else runtime.warn(providerDeleteSkipMessage(providerName));
   }
-  removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised);
-  return true;
+  return removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised);
 }
 
 function normalizeGatewayProcessExecutable(
@@ -1962,7 +1931,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
   const nodeVersionsDir = path.join(paths.nvmDir, "versions", "node");
   if (!runtime.existsSync(nodeVersionsDir)) return;
   // npm publishes every declared bin as a symlink, so an `isFile()` test never matched them.
-  const cliBinNames = ["nemoclaw", ...paths.agentAliasShimPaths.map((shim) => shim.binName)];
+  const cliBinNames = ["nemoclaw", ...paths.siblingCliShimPaths.map((shim) => shim.binName)];
   for (const version of dirEntries(nodeVersionsDir)) {
     if (!version.isDirectory()) continue;
     const versionDir = path.join(nodeVersionsDir, version.name);
@@ -1997,7 +1966,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
 
 /**
  * Remove installer-managed user-local CLI shims (`~/.local/bin/nemoclaw` and
- * agent-alias siblings). Classification still preserves foreign files of those
+ * sibling executables). Classification still preserves foreign files of those
  * names. Shared npm global package removal stays in `removeNemoclawCli`.
  * Returns how many shim paths `removePath` actually deleted.
  */
@@ -2011,10 +1980,10 @@ function removeManagedCliShims(paths: UninstallPaths, runtime: UninstallRuntime)
       `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
     );
   }
-  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
-  // installer creates; uninstall previously left them resolving on PATH (#6098).
+  // Also remove the sibling CLI shims that the installer creates; uninstall
+  // previously left them resolving on PATH (#6098).
   // The same classification guard preserves any non-managed file of that name.
-  for (const alias of paths.agentAliasShimPaths) {
+  for (const alias of paths.siblingCliShimPaths) {
     const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
     if (aliasShim.remove) {
       if (removePath(alias.path, runtime)) removed += 1;
@@ -2123,7 +2092,7 @@ function removeManagedDistributedVllmRuntime(
     state = findManagedDistributedVllmRuntimeReceipts({
       homeDir: runtime.env.HOME || os.homedir(),
     });
-  } catch (error) {
+  } catch {
     runtime.error(
       "Could not inspect managed distributed vLLM rollback state. NemoClaw refused uninstall before making changes.",
     );
@@ -2259,7 +2228,7 @@ function managedLlamaCppCleanupTargets(
       if (target) targets.push(target);
     }
     return targets;
-  } catch (error) {
+  } catch {
     runtime.error(
       "Managed llama.cpp cleanup could not safely inventory gateway-scoped ownership state. NemoClaw did not start the remaining uninstall steps.",
     );
@@ -2634,24 +2603,11 @@ function otherGatewaysRemain(
  */
 function collectLiveOpenShellGatewayNames(runtime: UninstallRuntime): Set<string> | null {
   if (!runtime.commandExists("openshell")) return null;
-  const result = runtime.run("openshell", ["gateway", "list", "-o", "json"], {
-    env: runtime.env,
-  });
-  if (result.status !== 0) return null;
-  try {
-    const parsed: unknown = JSON.parse(result.stdout);
-    if (!Array.isArray(parsed)) return null;
-    const names = new Set<string>();
-    for (const item of parsed) {
-      if (item === null || typeof item !== "object") return null;
-      const name = (item as { name?: unknown }).name;
-      if (typeof name !== "string" || name.length === 0) return null;
-      names.add(name);
-    }
-    return names;
-  } catch {
-    return null;
-  }
+  return collectOpenShellGatewayNames((args) =>
+    runtime.run("openshell", args, {
+      env: runtime.env,
+    }),
+  );
 }
 
 /**
@@ -2933,7 +2889,7 @@ function resolvePreserveSet(
   return PRESERVED_USER_DATA_ENTRIES;
 }
 
-function executeOpenShellResourceCleanup(
+async function executeOpenShellResourceCleanup(
   paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
@@ -2942,7 +2898,7 @@ function executeOpenShellResourceCleanup(
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-): boolean {
+): Promise<boolean> {
   const externallySupervised = isExternallySupervised(teardownAuthority);
   const portableCleanupInput: PortableRuntimeCleanupInput = {
     env: runtime.env,
@@ -2954,7 +2910,7 @@ function executeOpenShellResourceCleanup(
   };
   if (portableRuntimeCleanup) {
     try {
-      const cleanup = runtime.runPortableRuntimeCleanupTransaction(
+      const cleanup = await runtime.runPortableRuntimeCleanupTransaction(
         portableCleanupInput,
         (removed, receiptSandboxNames, receiptGatewayName) => {
           runtime.log(`Removed ${String(removed)} receipt-owned portable sandbox container(s).`);
@@ -2976,14 +2932,14 @@ function executeOpenShellResourceCleanup(
       return false;
     }
   } else if (
-    !removeOpenShellResources(
+    !(await removeOpenShellResources(
       paths,
       options,
       runtime,
       scopedToSelectedGateway,
       sandboxNames,
       teardownAuthority,
-    )
+    ))
   ) {
     return false;
   }
@@ -3206,7 +3162,7 @@ function prepareOpenShellCleanup(
   }
 }
 
-function executePlan(
+async function executePlan(
   plan: UninstallPlan,
   paths: UninstallPaths,
   options: UninstallRunOptions,
@@ -3220,7 +3176,7 @@ function executePlan(
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
-): { ok: boolean } {
+): Promise<{ ok: boolean }> {
   const preparedOpenShellCleanup = prepareOpenShellCleanup(
     paths,
     options,
@@ -3232,7 +3188,7 @@ function executePlan(
   const { disposition: openShellCleanup, stateLifecycleLock } = preparedOpenShellCleanup;
   try {
     if (openShellCleanup === "blocked") return { ok: false };
-    return executePreparedPlan(
+    return await executePreparedPlan(
       plan,
       paths,
       options,
@@ -3253,7 +3209,7 @@ function executePlan(
   }
 }
 
-function executePreparedPlan(
+async function executePreparedPlan(
   plan: UninstallPlan,
   paths: UninstallPaths,
   options: UninstallRunOptions,
@@ -3268,7 +3224,7 @@ function executePreparedPlan(
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
   openShellCleanup: Exclude<OpenShellCleanupDisposition, "blocked">,
-): { ok: boolean } {
+): Promise<{ ok: boolean }> {
   const externallySupervised = isExternallySupervised(teardownAuthority);
   let ok = true;
   const failedManagedLlamaStateDirs: string[] = [];
@@ -3382,7 +3338,7 @@ function executePreparedPlan(
       if (openShellCleanup === "reservation-removed") {
         runtime.log("No OpenShell gateway resources were created; skipped gateway cleanup.");
       } else if (
-        !executeOpenShellResourceCleanup(
+        !(await executeOpenShellResourceCleanup(
           paths,
           options,
           runtime,
@@ -3391,12 +3347,12 @@ function executePreparedPlan(
           managedHermesStateVolumes,
           teardownAuthority,
           false,
-        )
+        ))
       ) {
         return { ok: false };
       }
     } else if (step.name === "NemoClaw CLI") {
-      const completion = completePortablePlan(
+      const completion = await completePortablePlan(
         ok,
         portableRuntimeCleanup,
         paths,
@@ -3553,7 +3509,7 @@ function executePreparedPlan(
   return { ok };
 }
 
-function completePortablePlan(
+async function completePortablePlan(
   ok: boolean,
   portable: boolean,
   paths: UninstallPaths,
@@ -3562,11 +3518,11 @@ function completePortablePlan(
   scoped: boolean,
   sandboxNames: readonly string[],
   authority: GatewayOwner,
-): { ok: boolean } {
+): Promise<{ ok: boolean }> {
   if (!portable) return { ok: true };
   if (!ok) return { ok };
   if (
-    !executeOpenShellResourceCleanup(
+    !(await executeOpenShellResourceCleanup(
       paths,
       options,
       runtime,
@@ -3575,7 +3531,7 @@ function completePortablePlan(
       [],
       authority,
       true,
-    )
+    ))
   )
     return { ok: false };
   runtime.log(
@@ -3800,7 +3756,9 @@ function prepareUninstallRun(
   };
 }
 
-function executePreparedUninstall(prepared: PreparedUninstallRun): UninstallRunOutcome {
+async function executePreparedUninstall(
+  prepared: PreparedUninstallRun,
+): Promise<UninstallRunOutcome> {
   const {
     paths,
     plan,
@@ -3815,7 +3773,7 @@ function executePreparedUninstall(prepared: PreparedUninstallRun): UninstallRunO
   } = prepared;
   let ok = false;
   try {
-    ({ ok } = executePlan(
+    ({ ok } = await executePlan(
       plan,
       paths,
       resolvedOptions,
@@ -3988,10 +3946,10 @@ async function backUpAndExecutePreparedUninstall(
   return executePreparedUninstall(prepared);
 }
 
-export function runUninstallPlan(
+export async function runUninstallPlan(
   options: UninstallRunOptions,
   deps: UninstallRunDeps = {},
-): UninstallRunOutcome {
+): Promise<UninstallRunOutcome> {
   const preparation = prepareUninstallRun(options, deps);
   if (preparation.kind === "complete") return preparation.outcome;
   if (!admitRemovedImmutabilityUninstall(preparation.prepared)) {

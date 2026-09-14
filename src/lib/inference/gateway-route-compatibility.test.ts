@@ -449,39 +449,42 @@ describe("shared gateway inference route compatibility", () => {
   it.each([
     ["endpoint", null, "openai-completions"],
     ["API family", "https://example.test/v1", null],
-  ] as const)("fails closed when legacy custom route %s metadata is missing (#6315)", (_label, endpointUrl, preferredInferenceApi) => {
-    const result = check(
-      route("compatible-endpoint", "custom/model", {
-        endpointUrl: "https://example.test/v1",
-        preferredInferenceApi: "openai-completions",
-      }),
-      [
-        sandbox("legacy-custom", {
-          provider: "compatible-endpoint",
-          model: "custom/model",
-          endpointUrl,
-          preferredInferenceApi,
+  ] as const)(
+    "fails closed when legacy custom route %s metadata is missing (#6315)",
+    (_label, endpointUrl, preferredInferenceApi) => {
+      const result = check(
+        route("compatible-endpoint", "custom/model", {
+          endpointUrl: "https://example.test/v1",
+          preferredInferenceApi: "openai-completions",
         }),
-      ],
-    );
+        [
+          sandbox("legacy-custom", {
+            provider: "compatible-endpoint",
+            model: "custom/model",
+            endpointUrl,
+            preferredInferenceApi,
+          }),
+        ],
+      );
 
-    expect(result).toMatchObject({
-      ok: false,
-      conflicts: [
-        {
-          sandboxName: "legacy-custom",
-          reason: "incomplete-custom-route",
-          scope: "registered",
-        },
-      ],
-    });
-    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
-      "remove and re-onboard that sandbox with complete custom-route metadata",
-    );
-    expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
-      false,
-    );
-  });
+      expect(result).toMatchObject({
+        ok: false,
+        conflicts: [
+          {
+            sandboxName: "legacy-custom",
+            reason: "incomplete-custom-route",
+            scope: "registered",
+          },
+        ],
+      });
+      expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
+        "remove and re-onboard that sandbox with complete custom-route metadata",
+      );
+      expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
+        false,
+      );
+    },
+  );
 
   it("fails closed when a different provider encounters an incomplete custom peer (#6315)", () => {
     const result = check(route("anthropic-prod", "claude-new"), [
@@ -539,25 +542,28 @@ describe("shared gateway inference route compatibility", () => {
     ["provider and model", null, null],
     ["model", "nvidia-prod", null],
     ["provider", null, "nvidia/model-a"],
-  ] as const)("fails closed when a same-gateway registry row lacks %s metadata (#6315)", (_missing, provider, model) => {
-    const result = check(route("nvidia-prod", "nvidia/model-a"), [
-      sandbox("recovered-live", { provider, model }),
-    ]);
+  ] as const)(
+    "fails closed when a same-gateway registry row lacks %s metadata (#6315)",
+    (_missing, provider, model) => {
+      const result = check(route("nvidia-prod", "nvidia/model-a"), [
+        sandbox("recovered-live", { provider, model }),
+      ]);
 
-    expect(result).toMatchObject({
-      ok: false,
-      conflicts: [
-        {
-          sandboxName: "recovered-live",
-          reason: "incomplete-route",
-          scope: "registered",
-        },
-      ],
-    });
-    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
-      "lacks durable provider or model metadata",
-    );
-  });
+      expect(result).toMatchObject({
+        ok: false,
+        conflicts: [
+          {
+            sandboxName: "recovered-live",
+            reason: "incomplete-route",
+            scope: "registered",
+          },
+        ],
+      });
+      expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
+        "lacks durable provider or model metadata",
+      );
+    },
+  );
 
   it("fails closed when a registry row has an invalid gateway binding (#6315)", () => {
     const result = check(route("nvidia-prod", "nvidia/model-a"), [

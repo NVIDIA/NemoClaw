@@ -355,6 +355,22 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     expect(session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint).toBeNull();
   });
 
+  it("accepts OpenShell 0.0.116 wrapped missing-sandbox evidence", () => {
+    mocks.captureOpenshell.mockReturnValue({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr:
+        "Error:   × code: 'Some requested entity was not found', message:\n" +
+        '  │ "sandbox not found"',
+    });
+
+    open();
+
+    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
+    expect(session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint).toBeNull();
+  });
+
   it("starts a fresh journal when the stranded one no longer owns a replacement (#10473)", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",

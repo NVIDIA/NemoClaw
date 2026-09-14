@@ -171,7 +171,7 @@ export function probeTerminalRuntimeCgroupOom(
   );
   if (!containerName) return { kind: "unavailable", detail: "sandbox container owner unresolved" };
 
-  const result = deps.run(["exec", containerName, "sh", "-lc", CGROUP_OOM_PROBE_SCRIPT]);
+  const result = deps.run(["exec", containerName, "sh", "-c", CGROUP_OOM_PROBE_SCRIPT]);
   if (result.error) return { kind: "unavailable", detail: result.error.message };
   if (result.status !== 0) {
     const stderr = Buffer.isBuffer(result.stderr)

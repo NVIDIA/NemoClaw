@@ -675,9 +675,7 @@ function classifyProviderDefinition(
     ...definition.credentials
       .filter(
         ({ name, value }) =>
-          name !== primaryCredentialKey &&
-          !allowMissingPresentCredentials &&
-          Boolean(value),
+          name !== primaryCredentialKey && !allowMissingPresentCredentials && Boolean(value),
       )
       .map(({ name }) => name),
   ]);

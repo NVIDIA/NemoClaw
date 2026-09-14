@@ -474,9 +474,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         remoteConfig.helpUrl,
         withCredentialMutationGuard(state, {
           provider: state.provider,
-          ...(remoteConfig.defaultModel
-            ? { providerDefaultModel: remoteConfig.defaultModel }
-            : {}),
+          ...(remoteConfig.defaultModel ? { providerDefaultModel: remoteConfig.defaultModel } : {}),
           useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(state.provider),
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),

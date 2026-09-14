@@ -165,15 +165,20 @@ describe("sandbox base-image glibc compatibility", () => {
       { error: new Error("Docker removal failed"), status: null },
       "failed before returning an exit status",
     ],
-  ])("stops before retry when cleanup %s leaves the retained container present (#8375)", (removal, expectedStatus) => {
-    mocks.dockerForceRm.mockReturnValue(removal);
-    mockRetainedProbeContainer();
+  ])(
+    "stops before retry when cleanup %s leaves the retained container present (#8375)",
+    (removal, expectedStatus) => {
+      mocks.dockerForceRm.mockReturnValue(removal);
+      mockRetainedProbeContainer();
 
-    expect(() => getImageGlibcVersion("nemoclaw:cold")).toThrow(
-      new RegExp(`cleanup ${expectedStatus}; container nemoclaw-glibc-probe-.+ is still present`),
-    );
-    expect(mocks.dockerCapture.mock.calls.filter((call) => call[0]?.[0] === "run")).toHaveLength(1);
-  });
+      expect(() => getImageGlibcVersion("nemoclaw:cold")).toThrow(
+        new RegExp(`cleanup ${expectedStatus}; container nemoclaw-glibc-probe-.+ is still present`),
+      );
+      expect(mocks.dockerCapture.mock.calls.filter((call) => call[0]?.[0] === "run")).toHaveLength(
+        1,
+      );
+    },
+  );
 
   it("stops before retry when retained-container absence cannot be verified (#8375)", () => {
     mockCleanupVerificationFailure();

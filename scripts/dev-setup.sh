@@ -15,8 +15,8 @@ WARN_COUNT=0
 FAIL_COUNT=0
 OUTPUT_FORMAT="human"
 JSON_RESULTS=""
-NODE_HEAP_REMEDIATION_CLI="Run: NODE_OPTIONS=--max-old-space-size=5120 npm run typecheck:cli"
-NODE_HEAP_REMEDIATION_PLUGIN="Run: NODE_OPTIONS=--max-old-space-size=5120 npm --prefix nemoclaw run build"
+NODE_HEAP_REMEDIATION_CLI="Run: NODE_OPTIONS=--max-old-space-size=8192 npm run typecheck:cli"
+NODE_HEAP_REMEDIATION_PLUGIN="Run: NODE_OPTIONS=--max-old-space-size=8192 npm --prefix nemoclaw run build"
 
 usage() {
   cat <<'EOF'

@@ -82,103 +82,105 @@ describe("managed startup image hold", () => {
     expect(persistence).not.toMatch(/from ["']\.\/channels["']/u);
   });
 
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("enters the %s legacy startup as sandbox after the exact handoff", (agent) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-hold-"));
-    try {
-      const trace = path.join(directory, "trace");
-      const runtime = path.join(directory, "runtime.cjs");
-      const runtimeEnvironment = path.join(directory, "runtime.env");
-      const script = path.join(directory, "hold.sh");
-      fs.writeFileSync(runtime, "");
-      fs.writeFileSync(runtimeEnvironment, "export NEMOCLAW_MANAGED_STARTUP_APPLIED='1'\n", {
-        mode: 0o444,
-      });
-      executable(
-        path.join(directory, "id"),
-        fakeIdScript({
-          currentUid: 1000,
-          currentGid: 1000,
-          sandboxUid: 1000,
-          sandboxGid: 1000,
-        }),
-      );
-      executable(path.join(directory, "stat"), "#!/bin/sh\nprintf '0:0:444\\n'\n");
-      executable(path.join(directory, "node"), `#!/bin/sh\nprintf 'node:%s\\n' "$*" >>"$TRACE"\n`);
-      executable(
-        path.join(directory, "nemoclaw-start"),
-        `#!/bin/bash
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "enters the %s legacy startup as sandbox after the exact handoff",
+    (agent) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-hold-"));
+      try {
+        const trace = path.join(directory, "trace");
+        const runtime = path.join(directory, "runtime.cjs");
+        const runtimeEnvironment = path.join(directory, "runtime.env");
+        const script = path.join(directory, "hold.sh");
+        fs.writeFileSync(runtime, "");
+        fs.writeFileSync(runtimeEnvironment, "export NEMOCLAW_MANAGED_STARTUP_APPLIED='1'\n", {
+          mode: 0o444,
+        });
+        executable(
+          path.join(directory, "id"),
+          fakeIdScript({
+            currentUid: 1000,
+            currentGid: 1000,
+            sandboxUid: 1000,
+            sandboxGid: 1000,
+          }),
+        );
+        executable(path.join(directory, "stat"), "#!/bin/sh\nprintf '0:0:444\\n'\n");
+        executable(
+          path.join(directory, "node"),
+          `#!/bin/sh\nprintf 'node:%s\\n' "$*" >>"$TRACE"\n`,
+        );
+        executable(
+          path.join(directory, "nemoclaw-start"),
+          `#!/bin/bash
 if declare -F attacker >/dev/null; then attacker; fi
 case ":$SHELLOPTS:" in *:xtrace:*) printf 'attacker:shellopts\\n' >>"$TRACE" ;; esac
 case ":$BASHOPTS:" in *:extdebug:*) printf 'attacker:bashopts\\n' >>"$TRACE" ;; esac
 printf 'start:%s:%s:%s:%s:%s:%s\\n' "$NEMOCLAW_MANAGED_STARTUP_APPLIED" "\${NEMOCLAW_STARTUP_PROFILE_B64-unset}" "\${NEMOCLAW_CORPORATE_CA_B64-unset}" "\${BASH_ENV-unset}" "\${NODE_OPTIONS-unset}" "$*" >>"$TRACE"
 `,
-      );
-      const attacker = path.join(directory, "attacker.sh");
-      fs.writeFileSync(attacker, `printf 'attacker:bash-env\\n' >>"$TRACE"\n`);
-      const source = fs
-        .readFileSync(HOLD, "utf8")
-        .replace(
-          'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
-          'export PATH="$TEST_PATH"',
-        )
-        .replace(
-          '_nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"',
-          `_nemoclaw_runtime=${JSON.stringify(runtime)}`,
-        )
-        .replace(
-          '_nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"',
-          `_nemoclaw_runtime_env=${JSON.stringify(runtimeEnvironment)}`,
-        )
-        .replace("/usr/local/bin/node", path.join(directory, "node"))
-        .replace("/usr/local/bin/nemoclaw-start", path.join(directory, "nemoclaw-start"));
-      fs.writeFileSync(script, source, { mode: 0o755 });
-      fs.chmodSync(script, 0o755);
-      const fingerprint = "a".repeat(64);
-      const bootstrapIdentity = "b".repeat(64);
+        );
+        const attacker = path.join(directory, "attacker.sh");
+        fs.writeFileSync(attacker, `printf 'attacker:bash-env\\n' >>"$TRACE"\n`);
+        const source = fs
+          .readFileSync(HOLD, "utf8")
+          .replace(
+            'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+            'export PATH="$TEST_PATH"',
+          )
+          .replace(
+            '_nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"',
+            `_nemoclaw_runtime=${JSON.stringify(runtime)}`,
+          )
+          .replace(
+            '_nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"',
+            `_nemoclaw_runtime_env=${JSON.stringify(runtimeEnvironment)}`,
+          )
+          .replace("/usr/local/bin/node", path.join(directory, "node"))
+          .replace("/usr/local/bin/nemoclaw-start", path.join(directory, "nemoclaw-start"));
+        fs.writeFileSync(script, source, { mode: 0o755 });
+        fs.chmodSync(script, 0o755);
+        const fingerprint = "a".repeat(64);
+        const bootstrapIdentity = "b".repeat(64);
 
-      execFileSync(
-        script,
-        [
-          "--agent",
-          agent,
-          "--profile-fingerprint",
-          fingerprint,
-          "--bootstrap-identity",
-          bootstrapIdentity,
-          "--",
-          "/bin/sh",
-          "-c",
-          "exec tail -f /dev/null",
-        ],
-        {
-          env: {
-            ...process.env,
-            TRACE: trace,
-            TEST_PATH: directory,
-            NEMOCLAW_STARTUP_PROFILE_B64: "must-drop",
-            NEMOCLAW_CORPORATE_CA_B64: "must-drop",
-            BASH_ENV: attacker,
-            ENV: attacker,
-            NODE_OPTIONS: "--require=/sandbox/attacker.cjs",
-            SHELLOPTS: "xtrace",
-            BASHOPTS: "extdebug",
-            "BASH_FUNC_attacker%%": '() { printf "attacker:function\\n" >>"$TRACE"; }',
+        execFileSync(
+          script,
+          [
+            "--agent",
+            agent,
+            "--profile-fingerprint",
+            fingerprint,
+            "--bootstrap-identity",
+            bootstrapIdentity,
+            "--",
+            "/bin/sh",
+            "-c",
+            "exec tail -f /dev/null",
+          ],
+          {
+            env: {
+              ...process.env,
+              TRACE: trace,
+              TEST_PATH: directory,
+              NEMOCLAW_STARTUP_PROFILE_B64: "must-drop",
+              NEMOCLAW_CORPORATE_CA_B64: "must-drop",
+              BASH_ENV: attacker,
+              ENV: attacker,
+              NODE_OPTIONS: "--require=/sandbox/attacker.cjs",
+              SHELLOPTS: "xtrace",
+              BASHOPTS: "extdebug",
+              "BASH_FUNC_attacker%%": '() { printf "attacker:function\\n" >>"$TRACE"; }',
+            },
           },
-        },
-      );
+        );
 
-      expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
-        `node:${runtime} --wait-for-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${bootstrapIdentity}`,
-        "start:1:unset:unset:unset:unset:/bin/sh -c exec tail -f /dev/null",
-      ]);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+        expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
+          `node:${runtime} --wait-for-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${bootstrapIdentity}`,
+          "start:1:unset:unset:unset:unset:/bin/sh -c exec tail -f /dev/null",
+        ]);
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it.each([
     {

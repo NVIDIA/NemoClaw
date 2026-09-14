@@ -24,10 +24,7 @@ import type {
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
-import {
-  classifyDestroySandboxPresence,
-  type DestroySandboxPresence,
-} from "./destroy-presence";
+import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -65,17 +62,11 @@ export function resolveSandboxDestroyGatewayName(
 }
 
 export function resolveSandboxDestroyRuntimeSelection(
-  sandbox: SandboxEntry | null,
+  _sandbox: SandboxEntry | null,
 ): OpenShellRuntimeSelection | undefined {
-  if (
-    !sandbox ||
-    !Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared")
-  ) {
-    return undefined;
-  }
-  return (
-    require("./mcp-bridge-provider") as typeof import("./mcp-bridge-provider")
-  ).getMcpProviderInspectionRuntimeSelection(sandbox);
+  // MCP source inspection freezes its gateway target during preparation. The
+  // non-MCP registry is only a routing hint and cannot assert MCP ownership.
+  return undefined;
 }
 
 export function stopSandboxInferenceResources(

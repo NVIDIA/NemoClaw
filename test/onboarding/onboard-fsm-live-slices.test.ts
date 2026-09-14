@@ -22,7 +22,9 @@ type ProbeMode =
   | "authoritative-core-gateway"
   | "authoritative-core-gateway-policy-tier"
   | "dashboard-port-composition"
+  | "dashboard-spawn-failure"
   | "ordinary-policy-tier"
+  | "providerless-external-component"
   | "providerless-staged-messaging"
   | "stale-recovery-admission"
   | "stale-session-decision"
@@ -218,11 +220,15 @@ function runSliceProbe(options: ProbeOptions) {
   const finalizationDepsPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "finalization-deps.ts"),
   );
+  const externalComponentPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "external-component", "index.ts"),
+  );
 
   fs.writeFileSync(
     scriptPath,
     `
 const scenario = ${JSON.stringify(scenario)};
+const dashboardScenario = scenario.mode.startsWith("dashboard-");
 const flowSlices = require(${flowSlicesPath});
 const { advanceTo, branchTo } = require(${resultPath});
 const onboardSession = require(${sessionPath});
@@ -237,7 +243,18 @@ const called = [];
 const sentinel = new Error("slice-called");
 const staleAdmissionExit = new Error("stale recovery admission refused");
 
-if (scenario.mode === "dashboard-port-composition") {
+if (scenario.mode === "providerless-external-component") {
+  require(${externalComponentPath}).loadExternalComponentDeclaration = () => {
+    called.push("component-validated");
+    return {
+      declaration: { schemaVersion: 1, componentId: "policy-governance", interceptorSocketPath: "/run/component/interceptor.sock", activationSocketPath: "/run/component/activation.sock" },
+      revalidateBeforeGateway() {},
+      revalidateBeforeActivation() {},
+    };
+  };
+}
+
+if (dashboardScenario) {
   const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
   finalizationHandlerDeps.checkAndRecoverSandboxProcesses = () => undefined;
   finalizationHandlerDeps.settleOrdinaryOpenClawPairing = async () => ({ kind: "settled" });
@@ -245,6 +262,29 @@ if (scenario.mode === "dashboard-port-composition") {
   const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;
   let dashboardForwardCalls = 0;
   onboardDashboard.createOnboardDashboardHelpers = (deps) => {
+    if (scenario.mode === "dashboard-spawn-failure") {
+      const forward = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/forward-service.ts"))});
+      return createOnboardDashboardHelpers({
+        ...deps,
+        getGatewayForwardRuntimeAuthority: undefined,
+        runCaptureOpenshell: () => "SANDBOX BIND PORT PID STATUS",
+        isPortBoundOnHost: () => false,
+        forwardService: {
+          executable: () => ${JSON.stringify(path.join(tmpDir, "missing-openshell"))},
+          resolveGatewayName: () => "nemoclaw",
+          owns: () => false,
+          launch: (target, options) => {
+            called.push("forward-launch");
+            return forward.launchForwardService(target, {
+              ...options,
+              isReachable: () => false,
+              timeoutMs: 1000,
+              terminateProcessTree: () => { called.push("terminate-process-tree"); },
+            });
+          },
+        },
+      });
+    }
     const nextDashboardForward = () => {
       const port = dashboardForwardCalls === 0 ? 18791 : 18792;
       dashboardForwardCalls += 1;
@@ -257,10 +297,23 @@ if (scenario.mode === "dashboard-port-composition") {
       ensureFinalizationAgentDashboardForward: nextDashboardForward,
     };
   };
-  require(${agentOnboardPath}).handleAgentSetup = async () => undefined;
+  require(${agentOnboardPath}).handleAgentSetup = async (
+    _sandboxName,
+    _model,
+    _provider,
+    _agent,
+    _resume,
+    _preparedSandbox,
+    context,
+  ) => {
+    called.push("agent-executor:" + typeof context.sandboxCommandExecutor?.runBuffered);
+  };
   require(${agentSelectionPath}).createOnboardAgentSelector = () => async () => ({
     name: "hermes",
     displayName: "Hermes Agent",
+    ...(scenario.mode === "dashboard-spawn-failure"
+      ? { dashboard: { kind: "api", port: 8642 } }
+      : {}),
   });
 }
 
@@ -331,6 +384,21 @@ function baseContext(context, overrides = {}) {
 }
 
 preflightHandlers.handlePreflightState = async (options) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("preflight-effect");
+    return {
+      gpu: null,
+      sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
+      resumePreflight: false,
+      resumeHasResolvedGpuIntent: false,
+      requestedGpuPassthrough: false,
+      gpuPassthrough: false,
+      effectiveSandboxGpuFlag: "disable",
+      effectiveSandboxGpuDevice: null,
+      session: options.session,
+      stateResult: advanceTo("gateway", { metadata: { state: "preflight" } }),
+    };
+  }
   if (scenario.mode.includes("core-gateway")) {
     return {
       gpu: null,
@@ -349,6 +417,10 @@ preflightHandlers.handlePreflightState = async (options) => {
 };
 
 gatewayHandlers.handleGatewayState = async (options) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("gateway-effect");
+    return { gatewayReuseState: "healthy", session: options.session, stateResult: advanceTo("provider_selection", { metadata: { state: "gateway" } }) };
+  }
   if (!scenario.mode.includes("core-gateway")) {
     throw new Error("unexpected gateway compatibility handler");
   }
@@ -370,23 +442,29 @@ providerHandlers.handleProviderInferenceState = async (options) => {
   throw sentinel;
 };
 
-flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
-  const initialSession = await runtime.session();
-  called.push("initial:" + initialSession.machine.state);
-  if (scenario.slice === "initial") throw sentinel;
-  if (initialSession.machine?.state === "init") {
-    await runtime.applyResult(advanceTo("preflight"));
-  }
-  await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
-  await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
-  if (scenario.mode === "ahead-core") {
-    await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
-  }
-  const session = await runtime.session();
-  return { context: baseContext(context, { session }), session };
-};
+if (scenario.mode !== "providerless-external-component") {
+  flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
+    const initialSession = await runtime.session();
+    called.push("initial:" + initialSession.machine.state);
+    if (scenario.slice === "initial") throw sentinel;
+    if (initialSession.machine?.state === "init") {
+      await runtime.applyResult(advanceTo("preflight"));
+    }
+    await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
+    await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
+    if (scenario.mode === "ahead-core") {
+      await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
+    }
+    const session = await runtime.session();
+    return { context: baseContext(context, { session }), session };
+  };
+}
 
 flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("sandbox-effect");
+    throw sentinel;
+  }
   called.push("core");
   if (scenario.mode === "ahead-core") {
     throw new Error("strict core runner should not run after an ahead-state handoff");
@@ -395,7 +473,7 @@ flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
   await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
   await runtime.applyResult(advanceTo("sandbox", { metadata: { state: "inference" } }));
   await runtime.applyResult(
-    branchTo(scenario.mode === "dashboard-port-composition" ? "agent_setup" : "openclaw", {
+    branchTo(dashboardScenario ? "agent_setup" : "openclaw", {
       metadata: { state: "sandbox" },
     }),
   );
@@ -404,7 +482,7 @@ flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
 };
 
 flowSlices.runFinalOnboardFlowSequence = async ({ context, phases }) => {
-  if (scenario.mode === "dashboard-port-composition") {
+  if (dashboardScenario) {
     registry.registerSandbox({
       name: "fsm-sandbox",
       agent: "hermes",
@@ -519,13 +597,25 @@ const { onboard } = require(${onboardPath});
 
 (async () => {
   try {
+    if (scenario.mode === "dashboard-spawn-failure") {
+      await require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/onboard.ts"))}).runOnboardAction({
+        "non-interactive": true,
+        yes: true,
+        "yes-i-accept-third-party-software": true,
+        "no-gpu": true,
+        name: "fsm-sandbox",
+      });
+      throw new Error("onboarding unexpectedly succeeded");
+    }
     await onboard({
       nonInteractive: true,
       autoYes: true,
       acceptThirdPartySoftware: true,
       noGpu: true,
       sandboxName: "fsm-sandbox",
-      apfInterceptorRequested: scenario.mode === "providerless-staged-messaging",
+      apfInterceptorRequested:
+        scenario.mode === "providerless-staged-messaging" ||
+        scenario.mode === "providerless-external-component",
       resume: scenario.mode === "resume-initial" || scenario.mode.includes("core-gateway"),
       ...(scenario.mode.startsWith("authoritative-")
         ? {
@@ -540,6 +630,11 @@ const { onboard } = require(${onboardPath});
     throw new Error("expected slice sentinel");
   } catch (error) {
     if (ownsAuthoritativeOnboardLock) onboardSession.releaseOnboardLock();
+    if (scenario.mode === "dashboard-spawn-failure") {
+      called.push("failure:" + String(error?.message));
+      console.log("__RESULT__" + JSON.stringify({ called }));
+      return;
+    }
     if (
       error === sentinel ||
       error?.message === sentinel.message ||
@@ -550,7 +645,7 @@ const { onboard } = require(${onboardPath});
         /supports providerless sandbox creation only/.test(String(error?.message)))
     ) {
       const payload = "__RESULT__" + JSON.stringify({ called });
-      if (scenario.mode === "dashboard-port-composition") {
+      if (dashboardScenario) {
         process.stdout.write(payload + "\\n", () => process.exit(0));
         return;
       }
@@ -638,6 +733,17 @@ describe("live onboard FSM slice boundaries", () => {
     );
   });
 
+  it(
+    "validates the registered component before providerless onboarding effects (#11486)",
+    () => {
+      assert.deepEqual(
+        runSliceProbe({ slice: "initial", mode: "providerless-external-component" }),
+        ["component-validated", "preflight-effect", "gateway-effect", "sandbox-effect"],
+      );
+    },
+    probeTimeoutMs,
+  );
+
   it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }), []);
   });
@@ -656,10 +762,19 @@ describe("live onboard FSM slice boundaries", () => {
     assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
   });
 
+  it("reports a missing forward executable through the production onboarding action (#11648)", () => {
+    const called = runSliceProbe({ slice: "final", mode: "dashboard-spawn-failure" });
+    assert.ok(called.includes("forward-launch"), JSON.stringify(called));
+    assert.match(called.at(-1) ?? "", /failure:.*ENOENT/);
+    assert.ok(!called.includes("terminate-process-tree"));
+    assert.ok(!called.some((entry) => entry.startsWith("registry-port:")));
+  }, 60_000);
+
   it("keeps the single dashboard port established during agent onboarding (#8214)", () => {
     assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [
       "initial:init",
       "core",
+      "agent-executor:function",
       "forward-port:18791",
       "registry-port:18791",
       "dashboard-url:http://127.0.0.1:18791/",

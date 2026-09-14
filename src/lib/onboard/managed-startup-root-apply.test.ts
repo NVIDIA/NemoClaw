@@ -31,19 +31,18 @@ function requestFor(
 }
 
 describe("managed startup root-application envelope", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("round-trips one canonical bounded %s request", (agent) => {
-    const request = requestFor(agent, true);
-    const serialized = serializeManagedStartupRootApplyRequest(request);
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "round-trips one canonical bounded %s request",
+    (agent) => {
+      const request = requestFor(agent, true);
+      const serialized = serializeManagedStartupRootApplyRequest(request);
 
-    expect(Buffer.byteLength(serialized, "utf8")).toBeLessThan(
-      MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES,
-    );
-    expect(parseManagedStartupRootApplyRequest(serialized)).toEqual(request);
-  });
+      expect(Buffer.byteLength(serialized, "utf8")).toBeLessThan(
+        MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES,
+      );
+      expect(parseManagedStartupRootApplyRequest(serialized)).toEqual(request);
+    },
+  );
 
   it("rejects non-canonical JSON and unknown fields", () => {
     const request = requestFor("openclaw");

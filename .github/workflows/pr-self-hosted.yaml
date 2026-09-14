@@ -66,6 +66,11 @@ jobs:
                   .filename == ".github/workflows/e2e.yaml"
                   or .filename == ".github/workflows/pr-self-hosted.yaml"
                   or .filename == "scripts/install.sh"
+                  or .filename == "src/lib/inference/nim.ts"
+                  or .filename == "src/lib/onboard/provider-selection.ts"
+                  or .filename == "src/lib/onboard/runtime-provider/configured-runtime.ts"
+                  or .filename == "src/lib/onboard/runtime-provider/current.ts"
+                  or .filename == "src/lib/onboard/setup-nim-flow.ts"
                   or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
                   or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
                   or .filename == "test/e2e/mock-parity.json"
@@ -102,7 +107,7 @@ jobs:
         if: ${{ steps.changed.outputs.selected == 'true' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ">=22.19.0 <23"
 
       - name: Install publication verifier dependencies
         if: ${{ steps.changed.outputs.selected == 'true' }}
@@ -122,7 +127,7 @@ jobs:
           set -euo pipefail
           export GITHUB_REF=refs/heads/main
           export GITHUB_SHA="$EXPECTED_SHA"
-          node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
+          node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
 
   llama-cpp-generic-gpu:
     name: llama.cpp on generic NVIDIA GPU
@@ -139,6 +144,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.sha }}
       NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_GATEWAY_RUNTIME: docker
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ github.sha }}
       NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       NEMOCLAW_NON_INTERACTIVE: "1"

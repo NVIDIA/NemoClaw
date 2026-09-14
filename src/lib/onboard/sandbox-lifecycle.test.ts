@@ -162,56 +162,6 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     onboardSessionState.recreate = null;
   });
 
-  it.each([
-    ["destroyPreparedAt", "without bridges", false],
-    ["destroyPreparedAt", "with bridges", true],
-    ["destroyPendingAt", "without bridges", false],
-    ["destroyPendingAt", "with bridges", true],
-  ] as const)(
-    "preserves %s and blocks absent-sandbox recreation %s",
-    (marker, _bridgeState, withBridge) => {
-      const runCaptureOpenshell = vi.fn(() => null);
-      registryState.sandbox = {
-        name: "alpha",
-        agent: "openclaw",
-        mcp: {
-          bridges: withBridge
-            ? {
-                github: {
-                  server: "github",
-                  agent: "openclaw",
-                  adapter: "mcporter",
-                  url: "https://mcp.example.test/mcp",
-                  env: ["GITHUB_TOKEN"],
-                  providerName: "alpha-mcp-github",
-                  providerId: "provider-123",
-                  policyName: "mcp-github",
-                  addedAt: "2026-07-02T22:49:42.000Z",
-                },
-              }
-            : {},
-          [marker]: "2026-07-02T22:49:42.000Z",
-        },
-      };
-      const before = JSON.stringify(registryState.sandbox);
-      const helpers = createSandboxLifecycleHelpers({
-        runCaptureOpenshell,
-        getGatewayName: () => "nemoclaw-18081",
-        fetchGatewayAuthTokenFromSandbox: () => null,
-        agentProductName: () => "OpenClaw",
-        prompt: async () => "no",
-        isAffirmativeAnswer: () => false,
-      });
-
-      expect(() => helpers.inspectSandboxForCreate("alpha")).toThrow(
-        /incomplete MCP destroy transaction.*finish cleanup before recreating/i,
-      );
-      expect(runCaptureOpenshell).not.toHaveBeenCalled();
-      expect(registryState.removeSandbox).not.toHaveBeenCalled();
-      expect(JSON.stringify(registryState.sandbox)).toBe(before);
-    },
-  );
-
   it("keeps the source registry row when OpenShell reports no sandbox (#7736)", () => {
     const rows = new Map<string, SandboxEntry>([
       ["beta", { name: "beta", agent: "openclaw", toolDisclosure: "progressive" }],
@@ -252,7 +202,6 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     expect(helpers.inspectSandboxForCreate("alpha")).toMatchObject({
       existingEntry: registryState.sandbox,
       liveExists: false,
-      preservedMcpState: undefined,
     });
     expect(runCaptureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "get", "--gateway", "nemoclaw-18081", "alpha"],

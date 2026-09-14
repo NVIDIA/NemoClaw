@@ -301,95 +301,95 @@ function sleep(ms: number): Promise<void> {
 test(
   "gateway recovery restores the guard chain and keeps the recovered process identity for 15 seconds (#2478)",
   {
-  meta: {
-    e2ePhases: [
-      "start the compatible endpoint and confirm host readiness",
-      "onboard the guarded OpenClaw sandbox",
-      "confirm initial gateway and inference health",
-      "terminate one live gateway and verify production recovery",
-      "verify the recovered process identity remains unchanged for 15 seconds",
-    ],
-  },
+    meta: {
+      e2ePhases: [
+        "start the compatible endpoint and confirm host readiness",
+        "onboard the guarded OpenClaw sandbox",
+        "confirm initial gateway and inference health",
+        "terminate one live gateway and verify production recovery",
+        "verify the recovered process identity remains unchanged for 15 seconds",
+      ],
+    },
   },
   async ({ artifacts, cleanup, environment, gateway, host, progress, runtime, sandbox }) => {
-  await artifacts.target.declare({
-    id: "issue-2478-crash-loop-recovery",
-    issues: ["#2478", "#2701"],
-    unresponsiveRecoveryCycles: 1,
-    stabilitySeconds: STABILITY_SECONDS,
-    compatibleEndpointModel: COMPATIBLE_MODEL,
-  });
+    await artifacts.target.declare({
+      id: "issue-2478-crash-loop-recovery",
+      issues: ["#2478", "#2701"],
+      unresponsiveRecoveryCycles: 1,
+      stabilitySeconds: STABILITY_SECONDS,
+      compatibleEndpointModel: COMPATIBLE_MODEL,
+    });
 
-  const compatibleEndpoint = await startCompatibleEndpointMock(artifacts);
-  cleanup.add("stop issue-2478 compatible endpoint mock", async () => {
-    await artifacts.writeJson("compatible-endpoint-mock-requests.json", [
-      ...compatibleEndpoint.requests(),
-    ]);
-    await compatibleEndpoint.close();
-  });
+    const compatibleEndpoint = await startCompatibleEndpointMock(artifacts);
+    cleanup.add("stop issue-2478 compatible endpoint mock", async () => {
+      await artifacts.writeJson("compatible-endpoint-mock-requests.json", [
+        ...compatibleEndpoint.requests(),
+      ]);
+      await compatibleEndpoint.close();
+    });
 
-  await environment.assertReady(ENVIRONMENT);
-  progress.phase("onboard the guarded OpenClaw sandbox");
-  const instance = await onboardWithCompatibleEndpoint(
-    host,
-    cleanup,
-    SANDBOX_NAME,
-    compatibleEndpoint,
-  );
-  cleanup.add(`final guard-chain diagnostics ${instance.sandboxName}`, async () => {
-    const pid = await gateway.resolveGatewayPid(instance);
-    await artifacts.writeJson("final-gateway-pid.json", { pid });
-  });
+    await environment.assertReady(ENVIRONMENT);
+    progress.phase("onboard the guarded OpenClaw sandbox");
+    const instance = await onboardWithCompatibleEndpoint(
+      host,
+      cleanup,
+      SANDBOX_NAME,
+      compatibleEndpoint,
+    );
+    cleanup.add(`final guard-chain diagnostics ${instance.sandboxName}`, async () => {
+      const pid = await gateway.resolveGatewayPid(instance);
+      await artifacts.writeJson("final-gateway-pid.json", { pid });
+    });
 
-  progress.phase("confirm initial gateway and inference health");
-  const initialIdentity = await waitForGatewayIdentity(gateway, instance, 60_000);
-  expect(initialIdentity, "gateway should be running after onboard").not.toBeNull();
-  await gateway.expectGuardChainActive(instance);
-  await runtime.expectInferenceLocalModels(instance, {
-    artifactName: "initial-inference-local-models",
-    timeoutMs: 60_000,
-  });
-  const preRecoveryIdentity = await gateway.resolveGatewayIdentity(instance);
+    progress.phase("confirm initial gateway and inference health");
+    const initialIdentity = await waitForGatewayIdentity(gateway, instance, 60_000);
+    expect(initialIdentity, "gateway should be running after onboard").not.toBeNull();
+    await gateway.expectGuardChainActive(instance);
+    await runtime.expectInferenceLocalModels(instance, {
+      artifactName: "initial-inference-local-models",
+      timeoutMs: 60_000,
+    });
+    const preRecoveryIdentity = await gateway.resolveGatewayIdentity(instance);
     expect(
       preRecoveryIdentity,
       "gateway process identity changed before the recovery probe",
     ).toEqual(initialIdentity);
 
-  progress.phase("terminate one live gateway and verify production recovery");
-  await terminateGatewayIdentity(
-    sandbox,
-    instance.sandboxName,
-    preRecoveryIdentity!,
-    "functional-recovery-terminate-gateway",
-  );
+    progress.phase("terminate one live gateway and verify production recovery");
+    await terminateGatewayIdentity(
+      sandbox,
+      instance.sandboxName,
+      preRecoveryIdentity!,
+      "functional-recovery-terminate-gateway",
+    );
     await runProbeOnly(host, instance.sandboxName, "functional-recovery-connect-probe-only");
-  const recoveredIdentity = await waitForGatewayIdentity(gateway, instance, 45_000);
-  expect(
-    recoveredIdentity,
-    "gateway should respawn after the production recovery probe",
-  ).not.toBeNull();
-  expect(
-    `${recoveredIdentity!.pid}:${recoveredIdentity!.startIdentity}`,
-    "recovery should replace the terminated gateway process identity",
-  ).not.toBe(`${preRecoveryIdentity!.pid}:${preRecoveryIdentity!.startIdentity}`);
-  await gateway.expectGuardChainActive(instance);
-  await runtime.expectInferenceLocalModels(instance, {
-    artifactName: "recovered-inference-local-models",
-    timeoutMs: 60_000,
-  });
+    const recoveredIdentity = await waitForGatewayIdentity(gateway, instance, 45_000);
+    expect(
+      recoveredIdentity,
+      "gateway should respawn after the production recovery probe",
+    ).not.toBeNull();
+    expect(
+      `${recoveredIdentity!.pid}:${recoveredIdentity!.startIdentity}`,
+      "recovery should replace the terminated gateway process identity",
+    ).not.toBe(`${preRecoveryIdentity!.pid}:${preRecoveryIdentity!.startIdentity}`);
+    await gateway.expectGuardChainActive(instance);
+    await runtime.expectInferenceLocalModels(instance, {
+      artifactName: "recovered-inference-local-models",
+      timeoutMs: 60_000,
+    });
 
-  progress.phase("verify the recovered process identity remains unchanged for 15 seconds");
-  const stableIdentity = await gateway.expectPidStable(instance, {
-    durationSeconds: STABILITY_SECONDS,
-    pollIntervalSeconds: 5,
-  });
-  expect(stableIdentity).toEqual(recoveredIdentity);
-  await artifacts.writeJson("functional-recovery-summary.json", {
-    initialIdentity,
-    preRecoveryIdentity,
-    recoveredIdentity,
-    stableIdentity,
-    stabilitySeconds: STABILITY_SECONDS,
-  });
+    progress.phase("verify the recovered process identity remains unchanged for 15 seconds");
+    const stableIdentity = await gateway.expectPidStable(instance, {
+      durationSeconds: STABILITY_SECONDS,
+      pollIntervalSeconds: 5,
+    });
+    expect(stableIdentity).toEqual(recoveredIdentity);
+    await artifacts.writeJson("functional-recovery-summary.json", {
+      initialIdentity,
+      preRecoveryIdentity,
+      recoveredIdentity,
+      stableIdentity,
+      stabilitySeconds: STABILITY_SECONDS,
+    });
   },
 );

@@ -70,8 +70,7 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   const env = opts.env ?? process.env;
   const userChoseManagedVllm =
     (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === MANAGED_VLLM_PROVIDER_KEY;
-  const hasManagedVllmGpuSelection =
-    String(env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
+  const hasManagedVllmGpuSelection = String(env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
   const preserveManagedVllmIntent =
     userChoseManagedVllm && (opts.platform === "n1x" || hasManagedVllmGpuSelection);
   if (opts.vllmRunning && !preserveManagedVllmIntent) {

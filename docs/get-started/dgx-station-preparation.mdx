@@ -18,14 +18,21 @@ DGX Station GB300 Express install accepts these host images:
 
 - Generic Ubuntu 24.04 ARM64.
 - Stock OTA-form DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
-- Stock no-OTA DGX OS `7.6.x` with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS` or `DGX_PRETTY_NAME=NVIDIA DGX Server`.
+- Stock no-OTA DGX OS `7.6.x`.
+
+NemoClaw confirms Station GB300 hardware from a bounded firmware product, product-family, board, or device-tree value and an NVIDIA GB300 PCI device.
+The firmware value must contain separate `Station` and `GB300` tokens.
+Conflicting recognized platform or Station-generation values across firmware fields stop detection.
+Linux ARM64, Ubuntu 24.04, and an effective NVIDIA GPU remain required for Station Express.
+The readiness report records the system vendor, possible CPU count, host memory, GPU count and memory, OS name, and DGX release fields as diagnostic evidence.
+Memory capacity and display text do not replace the firmware and PCI hardware requirements.
 
 Every stock DGX OS form requires `/etc/dgx-release` to be a nonempty regular non-symlink file of at most 4096 bytes, owned by UID and GID 0, and not writable by group or other users.
 The marker must include `DGX_PLATFORM=DGX Server for GALAXY-GB300`.
 OTA-form qualification uses the latest `DGX_OTA_VERSION` and accepts `7.2.0`, `7.4.0`, or `7.5.0`.
 When `DGX_OTA_PRETTY_NAME` is present, it must equal `DGX OS`.
 An OTA-upgraded host can omit `DGX_OTA_PRETTY_NAME`.
-On that OTA-form path, `DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`.
+`DGX_PRETTY_NAME` is diagnostic release text and does not determine Station identity or software lineage.
 The no-OTA DGX OS `7.6.x` profile must omit every `DGX_OTA_*` field.
 NemoClaw rejects partial OTA metadata.
 It requires a numeric `7.6.x` `DGX_SWBUILD_VERSION` and a present `DGX_SWBUILD_DATE`, but does not require the date to match a build.
@@ -34,10 +41,10 @@ All accepted DGX OS forms remain subject to the runtime checks below.
 NemoClaw also recognizes these no-OTA factory profiles for bounded qualification.
 Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires every `DGX_OTA_*` field to be absent, and requires every profile-specific field below:
 
-- April 2026 NVIDIA Colossus BaseOS with `DGX_PRETTY_NAME=NVIDIA DGX Server`, `DGX_SWBUILD_VERSION=7.5.0-GB300ws-GB200ws`, and `DGX_SWBUILD_DATE=2026-04-02-08-20-16`.
-- May and June 2026 NVIDIA AI Developer Tools with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, `DGX_SWBUILD_VERSION=7.5.0`, and `DGX_SWBUILD_DATE` set to `2026-05-13-18-42-38` or `2026-06-16-11-48-10`.
+- April 2026 NVIDIA Colossus BaseOS with `DGX_SWBUILD_VERSION=7.5.0-GB300ws-GB200ws` and `DGX_SWBUILD_DATE=2026-04-02-08-20-16`.
+- May and June 2026 NVIDIA AI Developer Tools with `DGX_SWBUILD_VERSION=7.5.0` and `DGX_SWBUILD_DATE` set to `2026-05-13-18-42-38` or `2026-06-16-11-48-10`.
 
-By default, an unknown version, malformed or unsafe marker, unmatched no-OTA factory image, or other Station generation stops before host preparation.
+An unrecognized version or build, malformed or unsafe marker, partial release identity, conflicting DGX platform, or other Station generation stops automatic host preparation.
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
 
 Station preparation preserves existing stopped Docker container records, captures their IDs before its probes, and stops if that inventory changes during preparation.
@@ -55,7 +62,7 @@ Without an interactive terminal or a choice, the installer safely selects the fi
 
 <Warning title="Temporary Metadata Override">
 Use `--force-station-install` only when automatic Station detection rejects release metadata on a DGX Station with recognized GB300 hardware.
-The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
+The flag selects validation-only factory-runtime handling after explicit operator intent; it is not a general compatibility bypass.
 The flag bypasses only the `/etc/dgx-release` allowlist.
 It still requires ARM64 Ubuntu 24.04, recognized GB300 hardware, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
 Preparation requires no active agent owned by the invoking user.
@@ -63,8 +70,9 @@ A direct root invocation checks agents across the host.
 Preparation also requires no inference workload or unrelated Docker workload.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
 It cannot enable Station Express on another Station generation or hardware platform.
-This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the automatic allowlist.
-Remove the override after those images publish recognized metadata or NemoClaw replaces the allowlist with a separately qualified platform-family and runtime-capability check.
+This override remains for release metadata that automatic classification cannot admit as a trusted, complete Station profile.
+A successful validation-only run then exits without onboarding because the software profile remains unqualified.
+Install a supported DGX Station software profile before rerunning the installer without the override.
 
 If the installer cannot read the prompt, it stops before host changes.
 Run the override from an interactive terminal:
@@ -73,7 +81,7 @@ Run the override from an interactive terminal:
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --force-station-install
 ```
 
-Add `--station-deepseek` to the same command to select DeepSeek V4 Flash.
+Do not add model-selection flags to this command; validation-only handling does not select or serve a model.
 The installer records the override in the printed relogin command when Docker-group access requires a new session.
 </Warning>
 
@@ -114,7 +122,7 @@ The generic Ubuntu profile permits the pinned OEM `cloud-init` telemetry failure
 Stock DGX OS and Colossus BaseOS require reviewed systemd, unit-file, configuration-file, and failure-cause fingerprints for `cloud-init`, Fluent Bit, `fwupd`, and SSSD.
 Any other failed unit blocks preparation for administrator review.
 If `openibd.service` is the failed unit, follow [Resolve a Failed OpenIB Service](#resolve-a-failed-openib-service) before you rerun the installer.
-On the `--force-station-install` path, preparation also tolerates the InfiniBand communication manager (`ibacm`) and the realtime audio scheduler (`rtkit-daemon`) as failed units, because neither affects GPU or container capability; the required GPU, container, and preparation-critical service checks still apply.
+On the validation-only or `--force-station-install` path, preparation also tolerates the InfiniBand communication manager (`ibacm`) and the realtime audio scheduler (`rtkit-daemon`) as failed units, because neither affects GPU or container capability; the required GPU, container, and preparation-critical service checks still apply.
 It does not install a host CUDA toolkit or Docker Compose.
 If any other existing prerequisite version differs, preparation stops instead of changing it automatically.
 Before host preparation begins, the installer stores the accepted Station Express recipe in owner-only local state.
@@ -169,6 +177,10 @@ Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launc
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.
 The AI Developer Tools path can also leave the packaged CDI refresh units enabled when it repairs a missing device.
+The validation-only path applies only after explicit `--force-station-install` intent for unrecognized release metadata.
+It can add the trusted account to the Docker group and cache the digest-pinned visibility-test image.
+It does not install packages, repair CDI, register a Docker runtime, restart Docker or containerd, or apply other profile-specific failed-service exceptions.
+It permits only `ibacm.service` and `rtkit-daemon.service` as condition-qualified failed units.
 
 For the current support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
 
@@ -185,4 +197,5 @@ Follow [Set Up vLLM on Two DGX Stations](../../inference/local-inference/set-up-
 
 ## Next Step
 
-After your host passes preparation or validation, continue with the [Quickstart](../quickstart).
+After a qualified host passes preparation, continue with the [Quickstart](../quickstart).
+The validation-only override exits with the recovery action above instead of continuing to Quickstart.

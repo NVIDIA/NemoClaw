@@ -85,6 +85,7 @@ runner.run = (command) => {
     createdSandbox.delete();
     return { status: 0 };
   }
+  if (cmd.includes("sandbox start")) createdSandbox.setPhase("Ready");
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
 };
@@ -174,8 +175,17 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.NEMOCLAW_RECREATE_SANDBOX;
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
-  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+  const firstSandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
     [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+    createFixture,
+  ));
+  createdSandbox.setPhase("NotReady");
+  const legacyCheckpoint = createFixture.seedLegacyCompatibilityCreate({
+    sandboxId: createdSandbox.state.sandboxId,
+    createAttemptNonce: createdSandbox.state.createAttemptNonce,
+  });
+  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, firstSandboxName, null, null, null, null, null, null, null, []],
     createFixture,
   ));
 
@@ -227,7 +237,13 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
   } catch (error) {
     if (error !== execFinished) throw error;
   }
-  console.log(JSON.stringify({ sandboxName, events, execCode }));
+  console.log(JSON.stringify({
+    sandboxName,
+    events,
+    execCode,
+    legacyCheckpoint,
+    publishedEntry: registry.getSandbox(sandboxName),
+  }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -266,6 +282,26 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
         payload.sandboxName,
         "my-assistant",
         "should recreate and return the sandbox name",
+      );
+      assert.equal(
+        payload.legacyCheckpoint.exactFinalHandoffCommitStarted,
+        undefined,
+        "v0.0.55-shaped checkpoint should not synthesize a final-handoff receipt",
+      );
+      assert.equal(
+        payload.publishedEntry.pendingCreateIdentity,
+        undefined,
+        "resumed publication should consume the legacy pending checkpoint",
+      );
+      assert.equal(
+        payload.publishedEntry.lifecycleGeneration,
+        payload.legacyCheckpoint.lifecycleGeneration,
+        "resumed publication should preserve the recreate generation",
+      );
+      assert.equal(
+        payload.publishedEntry.lifecycleLiveIdentityFingerprint,
+        payload.legacyCheckpoint.sandboxIdentityFingerprint,
+        "resumed publication should preserve the exact replacement identity",
       );
 
       const events = payload.events as Array<{

@@ -39,18 +39,16 @@ function runValidation(tempDir: string, validation: string): string {
 }
 
 describe("LangChain Deep Agents Code managed reasoning effort", () => {
-  it.each([
-    "low",
-    "medium",
-    "high",
-  ])("supplies the configured reasoning effort from the managed provider resolver: %s (#7938)", (effort) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    writeManagedReasoningEffort(tempDir, `${effort}\n`);
+  it.each(["low", "medium", "high"])(
+    "supplies the configured reasoning effort from the managed provider resolver: %s (#7938)",
+    (effort) => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
+      writeManagedReasoningEffort(tempDir, `${effort}\n`);
 
-    const output = runValidation(
-      tempDir,
-      `
+      const output = runValidation(
+        tempDir,
+        `
 from deepagents_code import config
 from deepagents_code._nemoclaw_managed import managed_reasoning_effort
 
@@ -62,10 +60,11 @@ assert config._get_provider_kwargs("openai") == {
 assert config._get_provider_kwargs("openrouter") == ${BASE_OPENROUTER_KWARGS}
 print("managed-reasoning-effort-ok")
 `,
-    );
+      );
 
-    expect(output).toContain("managed-reasoning-effort-ok");
-  });
+      expect(output).toContain("managed-reasoning-effort-ok");
+    },
+  );
 
   it("keeps the endpoint default when onboarding recorded no reasoning effort (#7938)", () => {
     const tempDir = createPackageFixture();

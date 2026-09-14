@@ -32,7 +32,7 @@ function withFirmwareModel(model: string, fn: () => void): void {
   const origReadFileSync = fs.readFileSync;
   fs.readFileSync = (p: string, ...args: unknown[]) => {
     if (p === "/sys/class/dmi/id/product_name") return model;
-    if (p === "/sys/firmware/devicetree/base/model") return "";
+    if (/\/(?:product_family|board_name|devicetree\/base\/model)$/.test(p)) return "";
     return origReadFileSync(p, ...args);
   };
   try {
@@ -402,11 +402,11 @@ describe("nim", () => {
       }
     }
 
-    it.each(["NVIDIA DGX Station GB300", "DGX-Station", "P3830"])(
+    it.each(["NVIDIA DGX Station GB300", "NVIDIA Station GB300"])(
       "classifies explicit DGX Station identifier %s as station",
       (model) => {
         withFirmwareModel(model, () => {
-          expect(nim.detectNvidiaPlatform()).toBe("station");
+          expect(nim.detectNvidiaPlatform({ stationGb300PciGpu: true })).toBe("station");
         });
       },
     );

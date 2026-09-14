@@ -163,75 +163,75 @@ describe("rebuild-Hermes base identity", () => {
     ).toThrow("was not classified stale by resolution key mismatch");
   });
 
-  it.each([
-    false,
-    true,
-  ])("proves the final image uses the phase 1 layers for stale mode %s (#7144)", (staleBaseMode) => {
-    const expected = currentMetadata();
-    const old = oldMetadata();
-    const finalImageId = `sha256:${"f".repeat(64)}`;
+  it.each([false, true])(
+    "proves the final image uses the phase 1 layers for stale mode %s (#7144)",
+    (staleBaseMode) => {
+      const expected = currentMetadata();
+      const old = oldMetadata();
+      const finalImageId = `sha256:${"f".repeat(64)}`;
 
-    expect(
-      verifyRebuildHermesFinalBaseIdentity(
-        staleBaseMode,
-        expected,
-        old,
-        imageInspect({ id: imageId, repoDigests: [expected.ref] }),
-        imageInspect({
-          id: old.imageId,
-          repoDigests: [old.ref],
-          layers: oldRootFsLayers,
-        }),
-        imageInspect({
-          id: finalImageId,
-          layers: [...rootFsLayers, `sha256:${"7".repeat(64)}`],
-          labels: resolutionLabels(expected),
-        }),
-      ),
-    ).toMatchObject({
-      lane: staleBaseMode ? "stale-base" : "current-base",
-      imageName,
-      ref: expected.ref,
-      digest,
-      contentIdentity: digest,
-      imageId,
-      pinnedRemoteRef,
-      source: "pinned",
-      oldImageId: `sha256:${"e".repeat(64)}`,
-      finalImageId,
-      currentBaseLayerCount: rootFsLayers.length,
-      finalLayerCount: rootFsLayers.length + 1,
-      currentBaseRootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
-      oldBaseRootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
-      resolutionLabelsVerified: true,
-    });
-  });
+      expect(
+        verifyRebuildHermesFinalBaseIdentity(
+          staleBaseMode,
+          expected,
+          old,
+          imageInspect({ id: imageId, repoDigests: [expected.ref] }),
+          imageInspect({
+            id: old.imageId,
+            repoDigests: [old.ref],
+            layers: oldRootFsLayers,
+          }),
+          imageInspect({
+            id: finalImageId,
+            layers: [...rootFsLayers, `sha256:${"7".repeat(64)}`],
+            labels: resolutionLabels(expected),
+          }),
+        ),
+      ).toMatchObject({
+        lane: staleBaseMode ? "stale-base" : "current-base",
+        imageName,
+        ref: expected.ref,
+        digest,
+        contentIdentity: digest,
+        imageId,
+        pinnedRemoteRef,
+        source: "pinned",
+        oldImageId: `sha256:${"e".repeat(64)}`,
+        finalImageId,
+        currentBaseLayerCount: rootFsLayers.length,
+        finalLayerCount: rootFsLayers.length + 1,
+        currentBaseRootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
+        oldBaseRootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
+        resolutionLabelsVerified: true,
+      });
+    },
+  );
 
-  it.each([
-    false,
-    true,
-  ])("fails when final provenance is missing for stale mode %s (#7144)", (staleBaseMode) => {
-    const expected = currentMetadata();
-    const old = oldMetadata();
+  it.each([false, true])(
+    "fails when final provenance is missing for stale mode %s (#7144)",
+    (staleBaseMode) => {
+      const expected = currentMetadata();
+      const old = oldMetadata();
 
-    expect(() =>
-      verifyRebuildHermesFinalBaseIdentity(
-        staleBaseMode,
-        expected,
-        old,
-        imageInspect({ id: imageId, repoDigests: [expected.ref] }),
-        imageInspect({
-          id: old.imageId,
-          repoDigests: [old.ref],
-          layers: oldRootFsLayers,
-        }),
-        imageInspect({
-          id: `sha256:${"f".repeat(64)}`,
-          layers: [...rootFsLayers, `sha256:${"7".repeat(64)}`],
-        }),
-      ),
-    ).toThrow("did not retain the resolved phase 1 base metadata");
-  });
+      expect(() =>
+        verifyRebuildHermesFinalBaseIdentity(
+          staleBaseMode,
+          expected,
+          old,
+          imageInspect({ id: imageId, repoDigests: [expected.ref] }),
+          imageInspect({
+            id: old.imageId,
+            repoDigests: [old.ref],
+            layers: oldRootFsLayers,
+          }),
+          imageInspect({
+            id: `sha256:${"f".repeat(64)}`,
+            layers: [...rootFsLayers, `sha256:${"7".repeat(64)}`],
+          }),
+        ),
+      ).toThrow("did not retain the resolved phase 1 base metadata");
+    },
+  );
 
   it("fails closed on mutable metadata or a different final filesystem (#7144)", () => {
     const expected = currentMetadata();

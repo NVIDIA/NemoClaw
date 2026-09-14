@@ -22,7 +22,6 @@ import {
   renderSandboxCreateArgsForGpuRoute,
   type SelectedDockerGpuRoute,
 } from "../docker-gpu-route";
-import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
 import { isShippedManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/contract";
 import {
@@ -342,7 +341,7 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
-    const selectedModel = input.model?.trim() || "unconfigured";
+    const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
     const inferenceApi =
       input.agentName === "langchain-deepagents-code"
@@ -359,20 +358,24 @@ export function createManagedWorkloadOnboardRuntime(
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
-      inference: {
-        routeProvider: inference.providerKey,
-        upstreamProvider: selectedProvider ?? inference.providerKey,
-        model: selectedModel,
-        routedBaseUrl: inference.inferenceBaseUrl,
-        upstreamEndpointUrl:
-          input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
-        api: inference.inferenceApi as
-          | "openai-completions"
-          | "openai-responses"
-          | "anthropic-messages",
-        primaryModelRef: input.agentName === "openclaw" ? inference.primaryModelRef : null,
-        compatibility: input.agentName === "openclaw" ? (inference.inferenceCompat ?? {}) : null,
-      },
+      inference:
+        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !input.endpointUrl
+          ? null
+          : {
+              routeProvider: inference.providerKey,
+              upstreamProvider: selectedProvider ?? inference.providerKey,
+              model: selectedModel,
+              routedBaseUrl: inference.inferenceBaseUrl,
+              upstreamEndpointUrl:
+                input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
+              api: inference.inferenceApi as
+                | "openai-completions"
+                | "openai-responses"
+                | "anthropic-messages",
+              primaryModelRef: input.agentName === "openclaw" ? inference.primaryModelRef : null,
+              compatibility:
+                input.agentName === "openclaw" ? (inference.inferenceCompat ?? {}) : null,
+            },
       ...input.startupProfile,
       corporateCa: resolveCorporateCa(input.startupProfile.environment),
     });
@@ -559,9 +562,12 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
       ...patchInput,
-      // An explicit path to the checked-in agent Dockerfile is staged through
-      // the trusted agent builder. Preserve that classification at patch time.
-      fromDockerfile: buildContext.origin === "generated" ? null : patchInput.fromDockerfile,
+      // A prepared rebuild must retain its original target for identity checks.
+      // Fresh generated builds use the managed-agent Dockerfile patch policy.
+      fromDockerfile:
+        !patchInput.preparedBuildContext && buildContext.origin === "generated"
+          ? null
+          : patchInput.fromDockerfile,
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
     });

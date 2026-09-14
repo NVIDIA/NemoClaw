@@ -65,7 +65,9 @@ export async function discoverHostAddress(
   const runtimeProviderAddress = configuredRuntimeProviderHostAddress(environment, platform);
   if (runtimeProviderAddress !== null) {
     if (isIP(runtimeProviderAddress) !== 4) {
-      throw new Error(`runtime provider returned invalid sandbox host address: ${runtimeProviderAddress}`);
+      throw new Error(
+        `runtime provider returned invalid sandbox host address: ${runtimeProviderAddress}`,
+      );
     }
     return { source: "runtime-provider", address: runtimeProviderAddress, probe: null };
   }

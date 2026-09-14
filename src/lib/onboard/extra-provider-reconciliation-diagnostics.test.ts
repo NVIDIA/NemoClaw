@@ -10,7 +10,7 @@ const exactWrappedDiagnostic = [
   "  │ <type> --name stale-provider`",
 ].join("\n");
 
-describe("reconcileRegisteredExtraProviders diagnostics", () => {
+describe("planRegisteredExtraProviders diagnostics", () => {
   it.each([
     {
       label: "single-quoted CLI",
@@ -97,8 +97,8 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
       provider: "my-gateway-provider",
       stderr: "Error: provider 'my-gateway-provider' not found",
     },
-  ])("accepts exact $label not-found diagnostics (#6501)", ({ provider, stderr }) => {
-    expect(reconcile([provider], { [provider]: { status: 1, stderr } })).toEqual([]);
+  ])("accepts exact $label not-found diagnostics (#6501)", async ({ provider, stderr }) => {
+    expect(await reconcile([provider], { [provider]: { status: 1, stderr } })).toEqual([]);
   });
 
   it.each([
@@ -128,19 +128,19 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
       "conflicting structured status",
       "Error: status: Unavailable, message: \"provider 'stale-provider' not found\"",
     ],
-  ])("preserves providers for ambiguous diagnostics: %s (#6501)", (_label, stderr) => {
+  ])("preserves providers for ambiguous diagnostics: %s (#6501)", async (_label, stderr) => {
     expect(
-      reconcile(["stale-provider"], {
+      await reconcile(["stale-provider"], {
         "stale-provider": { status: 1, stderr },
       }),
     ).toEqual(["stale-provider"]);
   });
 
-  it("uses composite output only when stderr and stdout are empty (#6501)", () => {
+  it("uses composite output only when stderr and stdout are empty (#6501)", async () => {
     const diagnostic = Buffer.from("Error: provider 'stale-provider' not found");
 
     expect(
-      reconcile(["stale-provider"], {
+      await reconcile(["stale-provider"], {
         "stale-provider": {
           status: 1,
           output: [null, Buffer.alloc(0), diagnostic],
@@ -151,12 +151,12 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
     ).toEqual([]);
   });
 
-  it("bounds diagnostics before parsing and warns without leaking provider names (#6501)", () => {
+  it("bounds diagnostics before parsing and warns without leaking provider names (#6501)", async () => {
     const warn = vi.fn();
     const recorded = ["at-limit-provider", "ambiguous-provider"];
 
     expect(
-      reconcile(
+      await reconcile(
         recorded,
         {
           "at-limit-provider": {
@@ -170,20 +170,20 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
         },
         { warn },
       ),
-    ).toEqual(recorded);
+    ).toEqual(["ambiguous-provider"]);
     expect(warn).toHaveBeenCalledWith(
       "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
-        "(providerCount=2; reasonClasses=ambiguous-diagnostic,diagnostic-capture-limit).",
+        "(providerCount=1; reasonClasses=ambiguous-diagnostic).",
     );
     expect(warn.mock.calls[0]?.[0]).not.toContain("at-limit-provider");
     expect(warn.mock.calls[0]?.[0]).not.toContain("ambiguous-provider");
   });
 
-  it("redacts exact diagnostic provider names from warnings (#6501)", () => {
+  it("redacts exact diagnostic provider names from warnings (#6501)", async () => {
     const warn = vi.fn();
 
     expect(
-      reconcile(
+      await reconcile(
         ["exact-provider", "named-ambiguous-provider"],
         {
           "exact-provider": {
@@ -207,9 +207,9 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
     expect(warn.mock.calls[0]?.[0]).not.toContain("named-ambiguous-provider");
   });
 
-  it("keeps branch priority deterministic for conflicting diagnostics (#6501)", () => {
+  it("keeps branch priority deterministic for conflicting diagnostics (#6501)", async () => {
     expect(
-      reconcile(["stale-provider"], {
+      await reconcile(["stale-provider"], {
         "stale-provider": {
           status: 1,
           stderr: [
@@ -220,7 +220,7 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
       }),
     ).toEqual(["stale-provider"]);
     expect(
-      reconcile(["stale-provider"], {
+      await reconcile(["stale-provider"], {
         "stale-provider": {
           status: 1,
           stderr: [
@@ -232,9 +232,9 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
     ).toEqual(["stale-provider"]);
   });
 
-  it("preserves providers when the not-found diagnostic uses different casing (#6501)", () => {
+  it("preserves providers when the not-found diagnostic uses different casing (#6501)", async () => {
     expect(
-      reconcile(["tavily-search"], {
+      await reconcile(["tavily-search"], {
         "tavily-search": {
           status: 1,
           stderr: "Error: provider 'Tavily-Search' not found",
@@ -243,7 +243,7 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
     ).toEqual(["tavily-search"]);
   });
 
-  it("parses adversarial diagnostics within a bounded budget (#6501)", () => {
+  it("parses adversarial diagnostics within a bounded budget (#6501)", async () => {
     const adversarial = [
       `${"error: ".repeat(2_000)}provider 'redos-provider' not found`,
       `Error: provider '${"a".repeat(8_000)}`,
@@ -253,7 +253,7 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
     const started = performance.now();
 
     expect(
-      reconcile(["redos-provider"], {
+      await reconcile(["redos-provider"], {
         "redos-provider": { status: 1, stderr: adversarial },
       }),
     ).toEqual(["redos-provider"]);

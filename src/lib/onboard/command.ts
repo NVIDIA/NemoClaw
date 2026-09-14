@@ -10,6 +10,7 @@ import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
 import {
   resolveServingProfileSelection,
+  servingBackendProviderKey,
   type ServingProfileListEntry,
   ServingProfileSelectionError,
 } from "../inference/serving/profile-list";
@@ -28,7 +29,7 @@ import {
   TOOL_DISCLOSURE_ENV,
   type ToolDisclosure,
 } from "../tool-disclosure";
-import { applyAgentsManifestEnv } from "./agents-manifest";
+import { applyAgentsManifestEnv, assertNoPerAgentMaxSpawnDepthJson } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
 import {
   type ExperimentalOnboardProfile,
@@ -284,12 +285,14 @@ const PROFILE_CONFLICT_ENV = [
   "NEMOCLAW_MODEL",
   "NEMOCLAW_VLLM_MODEL",
   VLLM_EXTRA_ARGS_ENV,
+  "NEMOCLAW_LLAMACPP_RECIPE",
   "NEMOCLAW_MANAGED_CLUSTER_PEERS",
 ] as const;
 
 function validateServingProfileConflicts(
   selectedProfileId: string,
   deps: ResolveOnboardOptionsDeps,
+  allowedLlamaCppRecipeId?: string,
 ): void {
   const existingPreset = String(deps.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
   if (existingPreset && existingPreset !== selectedProfileId) {
@@ -298,7 +301,11 @@ function validateServingProfileConflicts(
       `  --profile ${selectedProfileId} conflicts with ${NEMOCLAW_SERVING_PRESET_ENV}=${existingPreset}.`,
     );
   }
-  const conflicts = PROFILE_CONFLICT_ENV.filter((name) => String(deps.env[name] ?? "").trim());
+  const conflicts = PROFILE_CONFLICT_ENV.filter((name) => {
+    const value = String(deps.env[name] ?? "").trim();
+    if (!value) return false;
+    return name !== "NEMOCLAW_LLAMACPP_RECIPE" || value !== allowedLlamaCppRecipeId;
+  });
   if (conflicts.length > 0) {
     fail(deps, `  --profile cannot be combined with inference overrides: ${conflicts.join(", ")}.`);
   }
@@ -398,16 +405,7 @@ function activeServingProfileId(provenance: ServingProfileProvenance | null): st
  * provider wired up, which the caller reports rather than silently ignoring.
  */
 export function servingProfileProviderKey(provenance: ServingProfileProvenance): string | null {
-  switch (provenance.recipe.backend) {
-    // Kept as literals so this module does not take a dependency on the
-    // provider menu; `command.test.ts` asserts they match its exported keys.
-    case "vllm":
-      return "install-vllm";
-    case "install-llama-cpp":
-      return "install-llama-cpp";
-    default:
-      return null;
-  }
+  return servingBackendProviderKey(provenance.recipe.backend);
 }
 
 function resolveResumedServingProfile(
@@ -439,7 +437,11 @@ function resolveResumedServingProfile(
       `  --profile ${requested.preset.id} does not match resumed profile ${current.preset.id}.`,
     );
   }
-  validateServingProfileConflicts(current.preset.id, deps);
+  validateServingProfileConflicts(
+    current.preset.id,
+    deps,
+    current.recipe.backend === "install-llama-cpp" ? current.recipe.id : undefined,
+  );
   return current;
 }
 
@@ -737,6 +739,13 @@ async function runOnboardCommandAttempt(
   };
   let options = resolvedOptions;
   try {
+    const selectedAgent = deps.flags.agent ?? env.NEMOCLAW_AGENT;
+    const validationAgent = resolveAgentNameAlias(selectedAgent, ["openclaw"]) ?? selectedAgent;
+    if (options.agentsManifest) {
+      applyAgentsManifestEnv(options.agentsManifest, env);
+    } else if (isOpenclawAgent(validationAgent)) {
+      assertNoPerAgentMaxSpawnDepthJson(env.NEMOCLAW_EXTRA_AGENTS_JSON);
+    }
     const activation = await activatePortableInference(resolvedOptions, deps, env);
     options = activation.options;
     restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
@@ -747,7 +756,6 @@ async function runOnboardCommandAttempt(
     if (options.noOllamaAutostart && !options.experimentalProfile) {
       env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
     }
-    if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
     await withCredentialOverrides(activation.credentialOverrides, () => deps.runOnboard(options));
     return "complete";
   } catch (error) {

@@ -28,7 +28,9 @@ export interface HermesPortableUninstallTransactionDeps {
     phase: HermesPortableUninstallPhase,
   ) => void;
   readonly reconcileSandboxes: (authority: HermesPortableUninstallAuthority) => number;
-  readonly reconcileProviders: (authority: HermesPortableUninstallAuthority) => void;
+  readonly reconcileProviders: (
+    authority: HermesPortableUninstallAuthority,
+  ) => void | Promise<void>;
   readonly reconcileInference: (authority: HermesPortableUninstallAuthority) => void;
   readonly verifyResourcesAbsent: (authority: HermesPortableUninstallAuthority) => void;
   readonly retireRegistry: (authority: HermesPortableUninstallAuthority) => void;
@@ -45,10 +47,10 @@ export interface HermesPortableUninstallTransactionResult {
 }
 
 /** Run or resume the exact schema-5 transaction after its lifecycle and registry locks are held. */
-export function runHermesPortableUninstallTransaction(
+export async function runHermesPortableUninstallTransaction(
   stateDir: string,
   deps: HermesPortableUninstallTransactionDeps,
-): HermesPortableUninstallTransactionResult {
+): Promise<HermesPortableUninstallTransactionResult> {
   const journalStore = deps.journalStore ?? createHermesPortableUninstallJournalStore(stateDir);
   let journal = journalStore.read();
   if (!journal) journal = journalStore.publishPrepared(deps.prepare());
@@ -80,7 +82,7 @@ export function runHermesPortableUninstallTransaction(
     }
     if (phase === "sandboxes-retired") {
       deps.revalidateResources(journal.authority, phase);
-      deps.reconcileProviders(journal.authority);
+      await deps.reconcileProviders(journal.authority);
       deps.afterPhaseAction?.(phase);
       journal = journalStore.replacePhase(journal, "providers-retired");
       continue;

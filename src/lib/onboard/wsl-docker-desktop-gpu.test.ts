@@ -173,6 +173,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       platform: "linux",
       arch: "arm64",
       env: {},
+      resolveRuntimeProvider: () => proofProvider("docker"),
       runProof,
       log: () => undefined,
     });
@@ -195,6 +196,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       platform: "linux",
       arch: "arm64",
       env: {},
+      resolveRuntimeProvider: () => proofProvider("docker"),
       runProof,
       log: () => undefined,
     });
@@ -469,9 +471,9 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
           proveArm64ContainerGpu: () => result,
           runCaptureImpl: vi.fn((command: readonly string[]) =>
             command[0] === "nvidia-smi"
-            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 999999, 999999\n"
-            : "",
-        ),
+              ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 999999, 999999\n"
+              : "",
+          ),
           isWsl: true,
           n1xWslProduct: true,
         }),
@@ -709,6 +711,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       platform: "linux",
       arch: "arm64",
       env: {},
+      resolveRuntimeProvider: () => proofProvider("docker"),
       runProof: () => passingProof,
       log: (message) => logs.push(message),
     });
@@ -743,6 +746,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     const prover = createArm64ContainerGpuProver({
       platform: "linux",
       arch: "arm64",
+      resolveRuntimeProvider: () => proofProvider("docker"),
       runProof: () => failing,
       log: () => undefined,
     });
@@ -761,6 +765,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     const prover = createArm64ContainerGpuProver({
       platform: "linux",
       arch: "arm64",
+      resolveRuntimeProvider: () => proofProvider("docker"),
       runProof: () => execFormatFailure,
       log: (message) => logs.push(message),
     });

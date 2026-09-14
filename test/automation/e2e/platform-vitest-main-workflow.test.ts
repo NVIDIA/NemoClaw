@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  readRepoText,
   readYaml,
   type Workflow,
   type WorkflowJob,
@@ -12,10 +11,8 @@ import {
 } from "../../helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
-const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
-const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
+
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
-const wslHelperSource = readRepoText(WSL_HELPER_PATH);
 
 function job(name: string): WorkflowJob {
   const candidate = workflow.jobs[name];
@@ -49,12 +46,24 @@ describe("platform evidence workflow", () => {
     },
   ])("limits credentialed $job E2E to the first main-branch shard", (workflowCase) => {
     const live = step(workflowCase.job, workflowCase.step);
-    expect(live.if).toContain("matrix.shard == 1");
-    expect(live.if).toContain(workflowCase.dockerOutput);
+    expect([
+      live.if?.includes("matrix.shard == 1"),
+      live.if?.includes(workflowCase.dockerOutput),
+    ]).toEqual([true, true]);
     expect(live.if).toContain("github.ref == 'refs/heads/main'");
     expect(live.env).toMatchObject({
       GITHUB_TOKEN: "${{ github.token }}",
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     });
+  });
+
+  it("reserves macOS cleanup and artifact time beyond the full E2E deadline", () => {
+    const macosShards = job("macos-vitest").strategy?.matrix?.include as Array<{
+      shard: number;
+      timeout_minutes: number;
+    }>;
+    const firstShard = macosShards.find(({ shard }) => shard === 1);
+
+    expect(firstShard?.timeout_minutes).toBe(150);
   });
 });

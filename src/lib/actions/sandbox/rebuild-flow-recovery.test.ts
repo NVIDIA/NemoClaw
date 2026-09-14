@@ -230,8 +230,25 @@ describe("rebuildSandbox flow: recovery", () => {
 
   it("retains the exact policy handoff across a failed recreate and consumes it on retry", async () => {
     const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}";
+    const mcpEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "openclaw-config" as const,
+      url: "https://api.githubcopilot.com/mcp/",
+      env: ["GITHUB_TOKEN"],
+      denyTools: ["delete_*", "repo.destroy"],
+      providerName: "alpha-mcp-github",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      source: "native" as const,
+    };
     const interrupted = createRebuildFlowHarness({
       captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+        scrubbedAdapterEntries: [],
+      },
       onboard: () => {
         throw new Error("replacement create failed");
       },
@@ -242,12 +259,16 @@ describe("rebuildSandbox flow: recovery", () => {
 
     const persistedManifest = JSON.parse(
       fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
-    ) as { rebuildPolicyHandoff: { file: string } } & Record<string, unknown>;
+    ) as {
+      rebuildPolicyHandoff: { file: string };
+      rebuildMcpHandoff: { entries: unknown[] };
+    } & Record<string, unknown>;
     const handoffPath = path.join(
       interrupted.backupPath,
       persistedManifest.rebuildPolicyHandoff.file,
     );
     expect(fs.readFileSync(handoffPath, "utf8")).toBe(policyDocument);
+    expect(persistedManifest.rebuildMcpHandoff.entries).toEqual([mcpEntry]);
     expect(
       fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
     ).toBe(true);
@@ -255,6 +276,12 @@ describe("rebuildSandbox flow: recovery", () => {
     const restarted = createRebuildFlowHarness({
       staleRecovery: true,
       captureOpenshell: sandboxGetProbes([null]),
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+        scrubbedAdapterEntries: [],
+        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+      },
       onboard: (_session, options) => {
         recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
       },
@@ -268,7 +295,21 @@ describe("rebuildSandbox flow: recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(recreatedPolicy).toBe(policyDocument);
+    expect(restarted.prepareMcpBridgesForAbsentSandboxRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      { gatewayName: "nemoclaw", workspace: "default" },
+      [mcpEntry],
+    );
+    expect(restarted.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
     expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+      ),
+    ).not.toHaveProperty("rebuildMcpHandoff");
     expect(
       fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
     ).toBe(false);
@@ -505,12 +546,12 @@ describe("rebuildSandbox flow: recovery", () => {
       "alpha",
       [attached],
       undefined,
-      undefined,
+      { gatewayName: "nemoclaw", workspace: "default" },
     );
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
-  it("does not reclaim the default sandbox when an MCP rebuild recreate fails", async () => {
+  it("does not reconstruct MCP registry state when source-backed recreate fails", async () => {
     const mcpEntry = {
       server: "github",
       providerName: "nemoclaw-mcp-alpha-github",
@@ -533,9 +574,7 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-      [expect.objectContaining({ name: "alpha" })],
-    ]);
+    expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
   });
 
   it("starts the active Teams host forward after a successful rebuild", async () => {

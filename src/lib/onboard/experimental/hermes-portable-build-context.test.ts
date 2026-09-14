@@ -177,9 +177,7 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
       fs.existsSync(path.join(first.buildContextPath, "agents/hermes/plugin/__pycache__")),
     ).toBe(false);
     expect(
-      fs.existsSync(
-        path.join(first.buildContextPath, "agents/hermes/security-dependencies.patch"),
-      ),
+      fs.existsSync(path.join(first.buildContextPath, "agents/hermes/security-dependencies.patch")),
     ).toBe(false);
 
     const reused = plan.materialize(contextInput());

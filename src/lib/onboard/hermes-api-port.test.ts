@@ -233,6 +233,26 @@ describe("reserveCreateSandboxHermesApiPort", () => {
     expect(env[HERMES_API_PORT_ENV]).toBe("8642");
   });
 
+  it("defers a durable port reservation only for the exact owned forward", async () => {
+    const reservePort = vi.fn();
+    const ownsExistingForward = vi.fn((port: number) => port === 8643);
+
+    const selection = await reserveCreateSandboxHermesApiPort({
+      sandboxName: "beta",
+      env: {},
+      getSandbox: () => ({ hermesApiPort: 8643 }),
+      forwardListOutput: "",
+      isPortBoundCheck: () => true,
+      registryOccupiedPorts: new Map(),
+      reservePort,
+      ownsExistingForward,
+    });
+
+    expect(selection).toEqual({ effectivePort: 8643, reservation: null });
+    expect(ownsExistingForward).toHaveBeenCalledExactlyOnceWith(8643);
+    expect(reservePort).not.toHaveBeenCalled();
+  });
+
   it("releases a held port when sandbox preparation fails", async () => {
     const release = vi.fn(async () => undefined);
 

@@ -58,8 +58,8 @@ function observer(): HuggingFaceModelAcquisitionObserver {
 }
 
 function forcedRemoveCall(): ReturnType<typeof dockerSpawn>["mock"]["calls"][number] {
-  const call = dockerSpawn.mock.calls.find(([args]) =>
-    Array.isArray(args) && args[0] === "rm" && args[1] === "--force",
+  const call = dockerSpawn.mock.calls.find(
+    ([args]) => Array.isArray(args) && args[0] === "rm" && args[1] === "--force",
   );
   expect(call).toBeDefined();
   return call as ReturnType<typeof dockerSpawn>["mock"]["calls"][number];
@@ -132,17 +132,14 @@ describe("Hugging Face model acquisition", () => {
     ]);
   });
 
-  it.each([
-    "",
-    "../model.gguf",
-    "/model.gguf",
-    "--revision",
-    "model/../other.gguf",
-  ])("rejects an exact filename that is not a normalized repository-relative path %j (#8279)", (filename) => {
-    expect(() => buildHuggingFaceModelDownloadArgv(request({ filename }))).toThrow(
-      "Hugging Face filename must be one normalized repository-relative path",
-    );
-  });
+  it.each(["", "../model.gguf", "/model.gguf", "--revision", "model/../other.gguf"])(
+    "rejects an exact filename that is not a normalized repository-relative path %j (#8279)",
+    (filename) => {
+      expect(() => buildHuggingFaceModelDownloadArgv(request({ filename }))).toThrow(
+        "Hugging Face filename must be one normalized repository-relative path",
+      );
+    },
+  );
 
   it.each([
     "",
@@ -422,7 +419,9 @@ describe("Hugging Face model acquisition", () => {
     expect(dockerSpawn).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1);
-    const downloadCall = dockerSpawn.mock.calls.find(([args]) => Array.isArray(args) && args[0] === "run");
+    const downloadCall = dockerSpawn.mock.calls.find(
+      ([args]) => Array.isArray(args) && args[0] === "run",
+    );
     const downloadArgv = downloadCall?.[0] as string[];
     const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
     expect(forcedRemoveCall()).toEqual([
@@ -457,7 +456,9 @@ describe("Hugging Face model acquisition", () => {
     );
 
     await vi.advanceTimersByTimeAsync(1_000);
-    const downloadCall = dockerSpawn.mock.calls.find(([args]) => Array.isArray(args) && args[0] === "run");
+    const downloadCall = dockerSpawn.mock.calls.find(
+      ([args]) => Array.isArray(args) && args[0] === "run",
+    );
     const downloadArgv = downloadCall?.[0] as string[];
     const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
     expect(forcedRemoveCall()).toEqual([

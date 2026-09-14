@@ -13,7 +13,6 @@ import { cleanupTempDir, secureTempFile } from "../temp-files";
 import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
   MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
-  MANAGED_BOOTSTRAP_REQUEST_FILE,
   type ManagedBootstrapImageCompletion,
   parseManagedBootstrapImageCompletion,
   serializeManagedBootstrapEnvelopeTar,
@@ -438,7 +437,12 @@ function boundedBootstrapStartLogFailure(
     if (copied.status !== 0 || copied.error) return null;
     descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     const stat = fs.fstatSync(descriptor);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > START_LOG_MAX_BYTES) {
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.nlink !== 1 ||
+      stat.size > START_LOG_MAX_BYTES
+    ) {
       return null;
     }
     const uid = process.getuid?.();

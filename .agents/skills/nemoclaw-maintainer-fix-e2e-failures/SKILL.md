@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-fix-e2e-failures
-description: Fixes failures from automatic NemoClaw E2E runs on main through continuous maintainer coordination. Groups failures by root cause, assigns one PR to each cause, reviews peer changes, satisfies GitHub merge requirements, merges eligible PRs when authorized, and monitors new results. Use for continuous main E2E maintenance or coordinated multi-agent E2E maintenance. Do not use for manual E2E dispatch; use nemoclaw-maintainer-e2e instead.
+description: "Continuously maintain automatic NemoClaw main E2E results through coordinated repairs. Use for ongoing maintenance, not one-time dispatch or diagnosis."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -85,7 +85,7 @@ Read [Review and Merge](references/review-and-merge.md) before reviewing, approv
 
 Observe automatic push runs and replacement attempts that the workflow starts. Never use `gh run rerun`, `gh workflow run .github/workflows/e2e.yaml`, or local live E2E to duplicate an automatic run.
 
-Approving a first-time contributor's ordinary `pull_request` workflow after trust review is not a manual E2E dispatch. Environment approval for a secret-bearing or hardware E2E job is different: follow `nemoclaw-maintainer-e2e` only when the maintainer explicitly requests that run.
+Approving a first-time contributor's ordinary `pull_request` workflow after trust review is not a manual E2E dispatch. Environment approval for a secret-bearing or hardware E2E job is different: follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) only when the maintainer explicitly requests that run.
 
 Never weaken, skip, delete, relabel, or narrow coverage to make a failure disappear. Do not freeze `main`, block unrelated merges, or ask other maintainers to wait.
 

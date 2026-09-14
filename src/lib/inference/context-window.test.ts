@@ -26,11 +26,19 @@ type CaptureStub = { stdout: string; exitCode: number | null; timedOut: boolean 
 const runner = require("../runner") as {
   runCaptureEx: (cmd: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => CaptureStub;
 };
+const llamaCpp = require("./llama-cpp") as {
+  probeLlamaCppAttachment: (
+    apiKey: string,
+    options?: { requestedModel?: string | null },
+  ) => { ok: boolean; contextWindow?: number };
+};
 
+/** Build a captured command result with an optional timeout. */
 function captured(timedOut = false): CaptureStub {
   return { stdout: "", exitCode: 0, timedOut };
 }
 
+/** Supply isolated context probes with per-test overrides. */
 function makeDeps(over: Partial<ContextWindowDeps> = {}): ContextWindowDeps {
   return {
     loadOllamaModel: vi.fn(),
@@ -42,6 +50,20 @@ function makeDeps(over: Partial<ContextWindowDeps> = {}): ContextWindowDeps {
 }
 
 describe("resolveContextWindowForModel", () => {
+  it("uses the llama.cpp served context instead of the cloud default (#11527)", () => {
+    const probe = vi.fn(() => 65536);
+    const deps = makeDeps({ probeLlamaCppContextWindow: probe });
+    expect(resolveContextWindowForModel("llama-cpp-local", "test-model", deps)).toBe(65536);
+    expect(probe).toHaveBeenCalledWith("test-model");
+    expect(deps.defaultCloudContextWindow).not.toHaveBeenCalled();
+  });
+
+  it("does not invent a context window when llama.cpp metadata is unavailable (#11527)", () => {
+    const deps = makeDeps({ probeLlamaCppContextWindow: () => null });
+    expect(resolveContextWindowForModel("llama-cpp-local", "test-model", deps)).toBeNull();
+    expect(deps.defaultCloudContextWindow).not.toHaveBeenCalled();
+  });
+
   it("ollama-local: loads the model, then returns the probed window", () => {
     const deps = makeDeps({ probeOllamaContextWindow: vi.fn(() => 16384) });
 
@@ -103,10 +125,28 @@ describe("resolveContextWindowForModel", () => {
 
 describe("resolveContextWindowForModel default dependencies (#8974)", () => {
   const originalRunCaptureEx = runner.runCaptureEx;
+  const originalProbeLlamaCppAttachment = llamaCpp.probeLlamaCppAttachment;
 
   afterEach(() => {
     runner.runCaptureEx = originalRunCaptureEx;
+    llamaCpp.probeLlamaCppAttachment = originalProbeLlamaCppAttachment;
     vi.mocked(createOllamaApiCaptureEx).mockImplementation((capture) => capture!);
+    vi.unstubAllEnvs();
+  });
+
+  it("llama-cpp-local: reads the authenticated server's context window (#11527)", () => {
+    vi.stubEnv("NEMOCLAW_LLAMACPP_LOCAL_TOKEN", "secret-token");
+    const probeLlamaCppAttachment = vi.fn(() => ({
+      ok: true as const,
+      model: "team/model-alias",
+      contextWindow: 65536,
+    }));
+    llamaCpp.probeLlamaCppAttachment = probeLlamaCppAttachment;
+
+    expect(resolveContextWindowForModel("llama-cpp-local", "team/model-alias")).toBe(65536);
+    expect(probeLlamaCppAttachment).toHaveBeenCalledWith("secret-token", {
+      requestedModel: "team/model-alias",
+    });
   });
 
   it("ollama-local: runs the blocking probe command, not a backgrounded warm-up", () => {

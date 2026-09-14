@@ -11,6 +11,7 @@ export type OpenShellProviderCommandReason =
   | "invalid_request"
   | "not_found"
   | "profile_incompatible"
+  | "sandbox_not_found"
   | "uncertain";
 
 export type OpenShellProviderTransportReason =

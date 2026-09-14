@@ -468,7 +468,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       },
     );
     expect(imageUser.exitCode, imageUser.stderr).toBe(0);
-    expect(["sandbox", "root"]).toContain(imageUser.stdout.trim());
+    expect(imageUser.stdout.trim()).toBe("sandbox");
     await runDefaultContainer(
       host,
       image,

@@ -23,9 +23,12 @@ const { NemoClawCommand: SharedNemoClawCommand } = requireFromNode(
 
 describe("oclif pattern command discovery", () => {
   it("discovers representative command ids from oclif's pattern config", async () => {
+    const configModelPath = path.join(process.cwd(), "dist", "lib", "config", "model.js");
+    expect(requireFromNode.cache[configModelPath]).toBeUndefined();
     const config = await OclifConfig.load(process.cwd());
     const discoveredIds = config.commands.map((command) => command.id).sort();
 
+    expect(requireFromNode.cache[configModelPath]).toBeUndefined();
     expect(discoveredIds).toEqual(
       expect.arrayContaining([
         "onboard",

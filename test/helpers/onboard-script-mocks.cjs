@@ -96,8 +96,12 @@ function installForwardServiceReachabilityFixture(initiallyReachable = false) {
   const listener = require(
     path.resolve(__dirname, "../../src/lib/adapters/openshell/local-forward-listener.ts"),
   );
+  const forwardService = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-service.ts"),
+  );
   let reachable = initiallyReachable;
   listener.probeLocalForwardListener = () => reachable;
+  forwardService.isForwardServiceListenerOwner = () => reachable;
   return {
     recordSpawn(args) {
       const argv = Array.isArray(args[1]) ? args[1] : [];
@@ -240,10 +244,7 @@ function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable
 }
 
 function mockManagedEndpointlessProviderProfileRun(command) {
-  return (
-    mockEndpointlessProviderProfileRun(command, "openai", true) ??
-    mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
-  );
+  return mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
 }
 
 function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {
@@ -395,7 +396,7 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
   'test -f "$security_inventory"',
   'test ! -L "$security_inventory"',
   `test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"`,
-  `printf '%s\\n' "architecture=$arch" "libexpat1=2.8.3-1" "libonig5=6.9.9-1+b1" "libjq1=1.8.2-1" "jq=1.8.2-1" "vim-common=2:9.2.0858-1" "vim-tiny=2:9.2.0858-1" "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" "libssl3t64=3.5.7-1~deb13u2" "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" "perl-base=5.44.0-1nemoclaw1" "perl=5.44.0-1nemoclaw1" "libevent-core-2.1-7t64=2.1.13-stable-1" | cmp -s - "$security_inventory"`,
+  `printf '%s\\n' "architecture=$arch" "libexpat1=2.8.3-1" "libonig5=6.9.9-1+b1" "libjq1=1.8.2-1" "jq=1.8.2-1" "vim-common=2:9.2.0858-1" "vim-tiny=2:9.2.0858-1" "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" "libssl3t64=3.5.7-1~deb13u2" "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1" "perl-base=5.44.0-1nemoclaw1" "perl=5.44.0-1nemoclaw1" "libevent-core-2.1-7t64=2.1.13-stable-1" | cmp -s - "$security_inventory"`,
   `printf '%s\\n' "nemoclaw-security-inventory-ok"`,
 ].join("; ");
 
@@ -883,6 +884,92 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     require.cache[registryPath].exports = registry;
   }
 
+  const fixtureTargetIntentFingerprint = () => {
+    const recreate = require(
+      path.resolve(__dirname, "../../src/lib/onboard/sandbox-recreate-transaction.ts"),
+    );
+    return recreate.fingerprintSandboxRecreateValue({
+      fixture: "verified-sandbox-create",
+      gatewayName,
+      sandboxName,
+      selection,
+    });
+  };
+
+  const seedLegacyCompatibilityCreate = ({ sandboxId, createAttemptNonce }) => {
+    const onboardSession = require(
+      path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
+    );
+    const recreate = require(
+      path.resolve(__dirname, "../../src/lib/onboard/sandbox-recreate-transaction.ts"),
+    );
+    const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+    if (runner.run.__nemoclawDockerLifecycleState) {
+      runner.run.__nemoclawDockerLifecycleState.sandboxId = sandboxId;
+      runner.run.__nemoclawDockerLifecycleState.legacyRecoverySandboxId = sandboxId;
+    }
+    sourceEntry = publishedEntry || sourceEntry;
+    publishedEntry = null;
+    const session = onboardSession.createSession({
+      sessionId,
+      sandboxName,
+      agent: options.agentName || "openclaw",
+    });
+    const transaction = recreate.beginSandboxRecreateTransaction(session, {
+      sandboxName,
+      gatewayName,
+      gatewayPort,
+      sourceEntry,
+      observation: { state: "missing", liveIdentityFingerprint: null },
+      targetIntentFingerprint: fixtureTargetIntentFingerprint(),
+    });
+    recreate.advanceSandboxRecreateTransaction(session, transaction.id, "creating");
+    const sandboxIdentityFingerprint = recreate.fingerprintSandboxRecreateValue(sandboxId);
+    recreate.recordSandboxRecreateTargetCreated(session, transaction.id, {
+      state: "ready",
+      liveIdentityFingerprint: sandboxIdentityFingerprint,
+    });
+    session.checkpoint = {
+      ...session.checkpoint,
+      sandboxIdentity: {
+        kind: "selected",
+        value: { name: sandboxName, agent: options.agentName || "openclaw" },
+      },
+      gatewayAuthority: {
+        kind: "selected",
+        value: {
+          gatewayName,
+          gatewayPort,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        },
+      },
+    };
+    onboardSession.saveSession(session);
+    pendingCheckpoint = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName,
+      gatewayPort,
+      sandboxName,
+      lifecycleGeneration: transaction.targetGeneration,
+      sandboxIdentityFingerprint,
+      createAttemptNonce,
+      route: "compatibility",
+    };
+    pendingEntry = {
+      ...structuredClone(reservationEntry),
+      lifecycleGeneration: transaction.targetGeneration,
+      lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
+      pendingCreateIdentity: structuredClone(pendingCheckpoint),
+    };
+    return structuredClone(pendingCheckpoint);
+  };
+
   const prepareCreateIntent = () => {
     const onboardSession = require(
       path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
@@ -922,12 +1009,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
         observation: sourceIdentity
           ? { state: "ready", liveIdentityFingerprint: sourceIdentity }
           : { state: "missing", liveIdentityFingerprint: null },
-        targetIntentFingerprint: recreate.fingerprintSandboxRecreateValue({
-          fixture: "verified-sandbox-create",
-          gatewayName,
-          sandboxName,
-          selection,
-        }),
+        targetIntentFingerprint: fixtureTargetIntentFingerprint(),
       });
       session.checkpoint = {
         ...session.checkpoint,
@@ -962,7 +1044,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       },
     };
   };
-  return { sessionId, selection, prepareCreateIntent };
+  return { sessionId, selection, prepareCreateIntent, seedLegacyCompatibilityCreate };
 }
 
 function sandboxCreateArgsWithVerifiedReservation(args, fixture) {
@@ -1145,7 +1227,17 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
   };
   const captureOutput = (normalized) => {
     if (
-      state.finalCommitReleased &&
+      normalized.startsWith("docker ps -a --no-trunc ") &&
+      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+      normalized.includes("openshell.ai/sandbox-id")
+    ) {
+      const row = `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
+      return state.finalCommitReleased || state.legacyRecoverySandboxId
+        ? row
+        : `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n${row}`;
+    }
+    if (
+      (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
       normalized.startsWith("docker ps -a --no-trunc ") &&
       normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
       normalized.endsWith("--format {{.ID}}")
@@ -1153,14 +1245,14 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
       return `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`;
     }
     if (
-      state.finalCommitReleased &&
+      (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
       normalized ===
         `docker inspect --type container --format {{ index .Config.Labels "openshell.ai/sandbox-namespace" }} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
     ) {
       return "test-gateway\n";
     }
     if (
-      state.finalCommitReleased &&
+      (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
       normalized ===
         `docker inspect --type container --format {{json .State.Running}} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
     ) {

@@ -3,10 +3,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import {
-  createCliOpenShellSandboxObserver,
-  stripOpenShellCliAnsi,
-} from "../../adapters/openshell/sandbox-observer-cli";
+import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
   namedOpenShellGateway,
   type OpenShellSandboxError,
@@ -97,7 +95,6 @@ type DoctorGatewayProbe = {
 
 type DoctorGatewayProbeOptions = {
   gatewayPort: number;
-  ignoreProbeErrors?: boolean;
   recoverGateway: boolean;
   unavailableHint?: string;
 };
@@ -106,6 +103,8 @@ type SandboxProbe = {
   checks: DoctorCheck[];
   reachable: boolean;
 };
+
+const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
 function hermesPortableDoctorReport(
   sandboxName: string,
@@ -217,11 +216,7 @@ function collectDoctorHostChecks(sb: SandboxEntry | null | undefined): DoctorHos
 
 async function gatewayLifecycle(gatewayName: string, options: DoctorGatewayProbeOptions) {
   if (!options.recoverGateway) {
-    return options.ignoreProbeErrors === undefined
-      ? getNamedGatewayLifecycleState(gatewayName)
-      : getNamedGatewayLifecycleState(gatewayName, {
-          ignoreProbeErrors: options.ignoreProbeErrors,
-        });
+    return getNamedGatewayLifecycleState(gatewayName);
   }
   const recovery = await recoverNamedGatewayRuntime({ gatewayName });
   return recovery.after || recovery.before;
@@ -232,7 +227,7 @@ async function probeOpenShellGateway(
   options: DoctorGatewayProbeOptions,
 ): Promise<{ check: DoctorCheck; connected: boolean }> {
   const lifecycle = await gatewayLifecycle(gatewayName, options);
-  const cleanStatus = oneLine(stripOpenShellCliAnsi(lifecycle?.status || ""));
+
   const connected = lifecycle?.state === "healthy_named";
   return {
     connected,
@@ -242,7 +237,7 @@ async function probeOpenShellGateway(
       status: connected ? "ok" : "fail",
       detail: connected
         ? `connected to ${gatewayName}`
-        : oneLine(cleanStatus || lifecycle?.gatewayInfo || `not connected to ${gatewayName}`),
+        : oneLine(lifecycle.diagnostic || `not connected to ${gatewayName}`),
       hint: connected
         ? undefined
         : lifecycle?.state === "connected_other" || !options.unavailableHint
@@ -417,9 +412,9 @@ function resolveInferenceRoute(
   };
 }
 
-function agentVersionDoctorCheck(sandboxName: string): DoctorCheck {
+async function agentVersionDoctorCheck(sandboxName: string): Promise<DoctorCheck> {
   try {
-    const version = sandboxVersion.checkAgentVersion(sandboxName);
+    const version = await sandboxVersion.checkAgentVersion(sandboxName);
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
     if (version.isStale) {
       return {
@@ -454,14 +449,14 @@ function agentVersionDoctorCheck(sandboxName: string): DoctorCheck {
   }
 }
 
-function collectRegisteredSandboxChecks(
+async function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
   wantsFix: boolean,
   sandboxReachable: boolean,
-): DoctorCheck[] {
+): Promise<DoctorCheck[]> {
   if (!sb) return [];
-  const checks = [agentVersionDoctorCheck(sandboxName)];
+  const checks = [await agentVersionDoctorCheck(sandboxName)];
   let dashboardPortRequired = true;
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
@@ -477,19 +472,20 @@ function collectRegisteredSandboxChecks(
     cliName: CLI_NAME,
   });
   if (permsCheck) checks.push(permsCheck);
-  checks.push(...collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable));
+  checks.push(...(await collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable)));
   return checks;
 }
 
-function collectToolScopeChecks(
+async function collectToolScopeChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
   sandboxReachable: boolean,
   wantsFix: boolean,
-): DoctorCheck[] {
+): Promise<DoctorCheck[]> {
   if (!sb || !sandboxReachable || (sb.agent ?? "openclaw") !== "openclaw") return [];
   return buildToolScopeChecks(sandboxName, CLI_NAME, wantsFix, {
-    exec: (name, script) => executeSandboxCommandForVerification(name, script),
+    exec: (name, script) =>
+      executeSandboxCommandForVerification(name, script, sandboxCommandExecutor),
     runApprovalPass: (name) => {
       const result = runSandboxAutoPairApprovalPass(name, { capture: true });
       return { reported: result.reported, approved: result.approved };
@@ -547,8 +543,8 @@ async function collectDoctorChecks(
       gatewayName,
       includeServingProcessCheck: shouldReportServingProcessHealth(sb?.agent),
     })),
-    ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),
-    ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
+    ...(await collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable)),
+    ...(await collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix)),
     ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
@@ -601,8 +597,7 @@ function globalGatewayGuidance(gatewayName: string): {
   try {
     return { checks: [], unavailableHint: gatewayDoctorStartHint(gatewayName) };
   } catch {
-    const hint =
-      "check the gateway-management declaration file permissions and JSON, then retry";
+    const hint = "check the gateway-management declaration file permissions and JSON, then retry";
     return {
       checks: [
         {
@@ -631,7 +626,6 @@ export async function runGlobalDoctor(
       ...(
         await collectDoctorGatewayChecks(gatewayName, null, host.openshellBin, {
           gatewayPort: GATEWAY_PORT,
-          ignoreProbeErrors: true,
           recoverGateway: false,
           unavailableHint: guidance.unavailableHint,
         })

@@ -26,7 +26,9 @@ describe("debug command", () => {
 
   it("accepts an explicit --sandbox name that is registered", async () => {
     const runDebug = vi.fn();
-    const getSandboxAvailability = vi.fn().mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
+    const getSandboxAvailability = vi
+      .fn()
+      .mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
     await runDebugCommandWithOptions(
       { sandboxName: "alpha" },
       {
@@ -142,7 +144,9 @@ describe("debug command", () => {
 
   it("prefers NEMOCLAW_SANDBOX_NAME over NEMOCLAW_SANDBOX and SANDBOX_NAME", async () => {
     const runDebug = vi.fn();
-    const getSandboxAvailability = vi.fn().mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
+    const getSandboxAvailability = vi
+      .fn()
+      .mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
     await runDebugCommandWithOptions(
       {},
       {
@@ -162,7 +166,9 @@ describe("debug command", () => {
 
   it("flag overrides env vars when both are present", async () => {
     const runDebug = vi.fn();
-    const getSandboxAvailability = vi.fn().mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
+    const getSandboxAvailability = vi
+      .fn()
+      .mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
     await runDebugCommandWithOptions(
       { sandboxName: "alpha" },
       {
