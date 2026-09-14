@@ -45,3 +45,13 @@ Failed readiness must preserve established identities. The watchdog stays active
 after CLI exit and must not trigger an automatic restart loop. Retain upstream
 licenses and source notices when porting runtime artifacts. SDK errors and
 progress must not expose secret values.
+
+## OpenShell transport boundary
+
+The pinned high-level Rust SDK explicitly excludes mTLS. The Go reference accepts
+client certificate/key file references. Use the same pinned OpenShell generated
+Rust clients from openshell-core, with telemetry disabled, and a tonic channel
+that retains mTLS, bearer references, bounded calls, and no automatic mutation
+retry. This avoids silently dropping an existing authentication mode. Transport
+qualification must cover certificate validation independently of plaintext wire
+tests.

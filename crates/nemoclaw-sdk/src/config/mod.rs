@@ -6,7 +6,7 @@ mod validation;
 use sha2::{Digest, Sha256};
 use std::{fmt, io::Read};
 pub use types::*;
-pub use validation::validate_endpoint;
+pub use validation::{is_fabric_harness, validate_endpoint};
 
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;

@@ -14,6 +14,13 @@ serde_json.workspace = true
 tf-provider.workspace = true
 tokio.workspace = true
 tempfile.workspace = true
+openshell-core.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+tower.workspace = true
+http.workspace = true
+tokio-stream.workspace = true
 
 [[bin]]
 name = "terraform-provider-nemoclaw-fixture"
