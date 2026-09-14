@@ -15,6 +15,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   HERMES_ACP_LIFECYCLE_BUDGET_MS,
   type HermesAcpLiveScenario,
+  hermesAcpGatewayStoppedPreconditionPassed,
   runHermesAcpLiveScenario,
 } from "../fixtures/hermes-acp-live.ts";
 import {
@@ -824,8 +825,7 @@ test(
       timeoutMs: 30_000,
     });
     expect(
-      stoppedGatewayStatus.exitCode === 0 &&
-        /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(stoppedGatewayStatus.stdout),
+      hermesAcpGatewayStoppedPreconditionPassed(stoppedGatewayStatus),
       resultText(stoppedGatewayStatus),
     ).toBe(true);
     const gatewayRecoveryPassed = await runAcpScenario("gateway-recovery");

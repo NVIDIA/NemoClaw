@@ -953,6 +953,16 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- The coverage merge must consume the current attempt instead of a stale failed shard report
+  it("replaces stale CLI shard reports when a failed job is rerun", () => {
+    const upload = requiredStep(sharedActions.cliCoverageShard, "Upload CLI shard blob report");
+
+    expect(upload.with).toMatchObject({
+      name: "cli-blob-report-${{ inputs.shard }}",
+      overwrite: true,
+    });
+  });
+
   it.each([
     ["cli-build-output", "required=true\n"],
     ["compiled-test-inputs", ""],

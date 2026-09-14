@@ -153,7 +153,7 @@ export function createHermesPortableForwardRecoveryInput(input: {
           stdio: "ignore",
           timeout,
         }),
-      isForwardServiceOwner: (target) => isForwardServiceListenerOwner(target),
+      isForwardServiceOwner: (target, options) => isForwardServiceListenerOwner(target, options),
       launchForwardService: (target, options) => launchForwardService(target, options),
       isPortReachable: isLocalForwardReachable,
     },

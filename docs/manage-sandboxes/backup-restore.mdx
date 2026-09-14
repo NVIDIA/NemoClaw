@@ -226,17 +226,15 @@ After a rebuild restores `dashboard-home` or `profiles`, NemoClaw reruns the das
 
 Credential-bearing Deep Agents files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally excluded from snapshots. Deep Agents auth state files such as `.deepagents/.state/auth.json` and `.deepagents/.state/chatgpt-auth.json` are also excluded because the managed launcher refuses to start when upstream credential state is present.
 
-The managed v2 `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are excluded because NemoClaw disables executable Deep Agents Code hooks in the managed harness.
-For a managed v2 runtime, NemoClaw reconstructs the managed MCP projection from host-side registry state.
+The agent-native `.deepagents/.mcp.json` and `hooks.json` are excluded from ordinary file copying because MCP is carried through the bounded source handoff and NemoClaw disables executable Deep Agents Code hooks in the managed harness.
+For a native-MCP runtime, NemoClaw carries managed entries from the agent source through the bounded rebuild or restore handoff.
 NemoClaw recreates the current inference route headers, `models` and `update` tables, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
 
 ### Restore Managed Deep Agents Configuration
 
 For a NemoClaw-managed Deep Agents image, NemoClaw restores only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences from the previous `config.toml` when their values pass validation. Unknown, runtime-controlled, executable, and security-sensitive backup keys are dropped instead of replacing freshly generated settings on that managed path.
 
-Before it restores snapshot files for a managed v2 runtime, NemoClaw reconstructs the managed MCP projection from the host registry.
-For a legacy runtime, NemoClaw does not reconstruct the dedicated v2 projection.
-If the v2 projection path `/sandbox/.deepagents/.nemoclaw-mcp.json` is a directory, the restore leaves snapshot files unchanged and prints a recovery command.
+Before it restores snapshot files for a native-MCP runtime, NemoClaw verifies the current agent source and writes the native `.mcp.json` entry atomically. A legacy `.nemoclaw-mcp.json` source must be migrated first. If the native path `/sandbox/.deepagents/.mcp.json` is a directory, restore leaves snapshot files unchanged and prints a recovery command.
 Run that command to move the directory into a new recovery location.
 The command prints the selected location and does not replace an existing recovery file or directory.
 Then rerun the same snapshot restore command.

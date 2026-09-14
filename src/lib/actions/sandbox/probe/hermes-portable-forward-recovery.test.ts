@@ -1020,7 +1020,7 @@ describe("Hermes Portable connect composition", () => {
       },
       expect.objectContaining({
         sourceEnvironment: expect.any(Object),
-        timeoutMs: 30_000,
+        timeoutMs: expect.any(Number),
       }),
     );
     expect(
@@ -1031,6 +1031,8 @@ describe("Hermes Portable connect composition", () => {
           !["start", "stop"].includes(String(args[1])),
       ),
     ).toBe(true);
+    expect(forward.launchSpy.mock.calls[0]![1].timeoutMs).toBeGreaterThan(0);
+    expect(forward.launchSpy.mock.calls[0]![1].timeoutMs).toBeLessThanOrEqual(30_000);
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
     expect(forward.launchSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       harness.publishLaunchReadinessSpy.mock.invocationCallOrder[0]!,
@@ -1479,7 +1481,9 @@ describe("Hermes Portable connect composition", () => {
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
-    expect(harness.forwardServiceOwnerSpy).toHaveBeenCalledWith(expectedTarget);
+    expect(harness.forwardServiceOwnerSpy).toHaveBeenCalledWith(expectedTarget, {
+      remainingMs: expect.any(Function),
+    });
     expect(
       harness.runOpenshellSpy.mock.calls.some(
         ([args]) => Array.isArray(args) && args[0] === "forward",
