@@ -625,6 +625,17 @@ def main():
         owner.extract_verified(archive, details, args.output / "runtime")
     proof_root = args.native_proof_directory
     proof = json.loads((proof_root / "result.json").read_text())
+    reuse = proof.get("qualificationReuse")
+    if reuse is not None:
+        reuse_receipt = json.loads((proof_root / "reuse-receipt.json").read_text())
+        require(
+            reuse == {key: value for key, value in reuse_receipt.items() if key != "rewrittenReceiptFiles"}
+            and reuse.get("classification") == "exact-input-reused-bash-qualification"
+            and reuse.get("currentSource") == args.source_revision
+            and reuse.get("runtimeExecutedThisRun") is False
+            and reuse.get("baselinePassed") is True,
+            "Reused Bash qualification is not bound to exact producer inputs",
+        )
     require(
         proof.get("classification") == "small-msys-appcontainer-compatibility-proof"
         and proof.get("sourceRevision") == args.source_revision

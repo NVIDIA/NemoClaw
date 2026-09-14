@@ -122,8 +122,8 @@ jobs:
 
   windows-finished-installer:
     name: Finished Windows ${{ inputs.finished_windows_agent || 'openclaw' }} preview installer (ARM64)
-    needs: [windows-compiled-application, windows-bash-compatibility]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && needs.windows-compiled-application.result == 'success' && (inputs.finished_windows_agent != 'hermes' || needs.windows-bash-compatibility.result == 'success') }}
+    needs: [windows-compiled-application, windows-bash-compatibility, windows-bash-compatibility-reuse]
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && needs.windows-compiled-application.result == 'success' && (inputs.finished_windows_agent != 'hermes' || needs.windows-bash-compatibility-reuse.result == 'success') }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 120
     outputs:
@@ -266,7 +266,7 @@ jobs:
         if: ${{ inputs.finished_windows_agent == 'hermes' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: ${{ needs.windows-bash-compatibility.outputs.compatibility_id }}
+          artifact-ids: ${{ needs.windows-bash-compatibility-reuse.outputs.compatibility_id }}
           merge-multiple: true
           path: ${{ runner.temp }}/finished-windows/native-proof
       - name: Verify the explicitly pinned Personal-passing complete Hermes candidate
@@ -980,9 +980,51 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-bash-compatibility-reuse:
+    name: Reuse byte-identical canonical Bash qualification
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.finished_windows_agent == 'hermes' && inputs.windows_native_diagnostic_source_run_id == '' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      compatibility_id: ${{ steps.compatibility_artifact.outputs.artifact-id }}
+    steps:
+      - name: Check out current Bash qualification inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: current
+          persist-credentials: false
+      - name: Check out the passing baseline inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 934bf1a73320ccb4f53cf836c87059209f269626
+          path: baseline
+          persist-credentials: false
+      - name: Download the immutable passing Bash evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bash-compatibility-934bf1a73320ccb4f53cf836c87059209f269626-1
+          github-token: ${{ github.token }}
+          run-id: 34847492642
+          path: baseline-evidence
+      - name: Require byte-identical producer inputs and rebind receipts
+        run: |
+          python current/packaging/windows/mxc-bash/reuse-qualified-proof.py \
+            --current current --baseline baseline --evidence baseline-evidence \
+            --output reused-evidence --current-source "$GITHUB_SHA"
+      - name: Preserve same-run exact-input Bash evidence
+        id: compatibility_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reused-bash-compatibility-${{ github.sha }}
+          path: reused-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
   windows-bash-compatibility:
     name: Canonical Bash private-namespace prototype (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && ((!inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'bash-compat') || (inputs.run_windows_native_installer && inputs.finished_windows_agent == 'hermes' && inputs.windows_native_diagnostic_source_run_id == '')) && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'bash-compat' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     outputs:
       compatibility_id: ${{ steps.compatibility_artifact.outputs.artifact-id }}
     runs-on: windows-11-vs2026-arm
