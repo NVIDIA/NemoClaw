@@ -14,7 +14,7 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
-import { withSandboxLifecycleLock } from "./gateway-state";
+import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   resolveSandboxLifecycleProvider,
@@ -31,7 +31,7 @@ function verifyGateway(sandboxName: string): Promise<void> {
 
 type SandboxStartupRecoveryResult = import("./connect").SandboxStartupRecoveryResult;
 
-function restoreProcessState(sandboxName: string): SandboxStartupRecoveryResult {
+function restoreProcessState(sandboxName: string): Promise<SandboxStartupRecoveryResult> {
   const { restoreSandboxStartupState } = require("./connect") as typeof import("./connect");
   return restoreSandboxStartupState(sandboxName);
 }
@@ -55,7 +55,7 @@ async function waitForSandboxReady(
 
 export interface SandboxStartupStateDeps {
   waitForSandboxReady?: (sandboxName: string) => void | Promise<void>;
-  restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
+  restoreProcessState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
 }
 
 export async function restoreStoppedSandboxStartupState(
@@ -63,7 +63,7 @@ export async function restoreStoppedSandboxStartupState(
   deps: SandboxStartupStateDeps = {},
 ): Promise<SandboxStartupRecoveryResult> {
   await (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
-  return (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
+  return await (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
 
 export interface SandboxStartDeps {
@@ -71,11 +71,10 @@ export interface SandboxStartDeps {
   observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
-  restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
+  updateSandbox?: typeof registry.updateSandbox;
+  restoreProcessState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  restoreStartupState?: (
-    sandboxName: string,
-  ) => SandboxStartupRecoveryResult | Promise<SandboxStartupRecoveryResult>;
+  restoreStartupState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
   waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
@@ -128,18 +127,18 @@ function startupRecoveryError(sandboxName: string, detail: unknown): Error {
  * provider or no model has nothing to request, so start skips the request
  * instead of failing.
  */
-function checkStartedSandboxInference(
+async function checkStartedSandboxInference(
   sandboxName: string,
   sandbox: SandboxEntry,
   deps: SandboxStartDeps,
   log: (message: string) => void,
-): SandboxInferenceInvocationResult | null {
+): Promise<SandboxInferenceInvocationResult | null> {
   const model = (sandbox.model ?? "").trim();
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
-  return (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
+  return await (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
     {
       sandboxName,
       gatewayName,
@@ -162,8 +161,11 @@ export async function startSandbox(
   sandboxName: string,
   deps: SandboxStartDeps = {},
 ): Promise<SandboxLifecycleResult> {
-  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(sandboxName, () =>
-    startSandboxWithinLifecycleFence(sandboxName, deps),
+  const environment = deps.environment ?? process.env;
+  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(
+    sandboxName,
+    () => startSandboxWithinLifecycleFence(sandboxName, deps),
+    hermesPortableLifecycleLockOptions(sandboxName, environment),
   );
 }
 
@@ -191,7 +193,21 @@ async function startSandboxWithinLifecycleFence(
   if (preflight) return preflight;
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
+  if (
+    resolved.sandbox.stopped === true &&
+    !registry.recordSandboxStopIntent(
+      sandboxName,
+      false,
+      deps.updateSandbox ?? registry.updateSandbox,
+    )
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
+    );
+  }
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    log("  Checking gateway health and host forwards…");
+    await (deps.verifyGateway ?? verifyGateway)(sandboxName);
     return { exitCode: 0 };
   }
 
@@ -236,7 +252,7 @@ async function startSandboxWithinLifecycleFence(
     if (failure) throw startupRecoveryError(name, failure);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
-    readiness.inference = checkStartedSandboxInference(name, resolved.sandbox, deps, log);
+    readiness.inference = await checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
   if (readiness.inference && !readiness.inference.ok) {
     log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);

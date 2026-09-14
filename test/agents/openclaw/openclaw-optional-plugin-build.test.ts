@@ -153,7 +153,7 @@ it.each([
 
     expect(result.status, result.stderr).toBe(0);
     expect(calls.trim().split("\n")).toEqual([
-      `node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase ${expectedPhase}`,
+      `node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase ${expectedPhase}`,
     ]);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

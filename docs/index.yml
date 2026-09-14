@@ -327,6 +327,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.openclaw.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Register an External Component"
+                path: _build/agent-variants/deployment/register-external-component.openclaw.generated.mdx
+                slug: register-external-component
               - page: "Gateway Lifecycle Authority"
                 path: _build/agent-variants/deployment/gateway-lifecycle-authority.openclaw.generated.mdx
                 slug: gateway-lifecycle-authority
@@ -708,6 +711,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.deepagents.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Register an External Component"
+                path: _build/agent-variants/deployment/register-external-component.deepagents.generated.mdx
+                slug: register-external-component
               - page: "Gateway Lifecycle Authority"
                 path: _build/agent-variants/deployment/gateway-lifecycle-authority.deepagents.generated.mdx
                 slug: gateway-lifecycle-authority
@@ -1111,6 +1117,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.hermes.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Register an External Component"
+                path: _build/agent-variants/deployment/register-external-component.hermes.generated.mdx
+                slug: register-external-component
               - page: "Gateway Lifecycle Authority"
                 path: _build/agent-variants/deployment/gateway-lifecycle-authority.hermes.generated.mdx
                 slug: gateway-lifecycle-authority

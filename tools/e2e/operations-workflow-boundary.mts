@@ -35,6 +35,8 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
+const BASE_PUBLICATION_CONDITION =
+  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' || inputs.jobs != '' || inputs.targets == '' || contains(inputs.targets, 'managed-image-') }}";
 const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
   [
     "set -euo pipefail",
@@ -50,7 +52,7 @@ const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
     "    exit 1",
     "  }",
     "fi",
-    'selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
+    'selection="$(node --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
     'case "$selection" in',
     "  base-cohort)",
     '    [[ ! -e "$catalog_path" && ! -L "$catalog_path" ]] || {',
@@ -79,10 +81,15 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
-    "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    "  NVIDIA/NemoClaw:refs/heads/main:push:)",
     '    expected_sha="$WORKFLOW_SHA"',
     "    allow_non_head=0",
     "    select_nearest_successful=0",
+    "    ;;",
+    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    '    expected_sha="$WORKFLOW_SHA"',
+    "    allow_non_head=0",
+    "    select_nearest_successful=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
     '    [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
@@ -282,6 +289,7 @@ function passesNeedsAsEnvironmentData(step: WorkflowStep): boolean {
   );
 }
 
+/** Appends violations of the trusted PR dispatch boundary, including source identity and credential custody. */
 function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow): void {
   const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
   for (const name of [
@@ -384,7 +392,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
-    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
@@ -419,11 +426,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
     'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
     '"$ALLOW_JETSON_DISPATCH" != "true"',
-    '"$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true"',
     '",${TARGETS}," != *",jetson-nvmap-gpu,"*',
     '",${JOBS}," != *",jetson-nvmap-gpu,"*',
-    '",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"*',
-    '",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"*',
     "exact-base E2E cannot select dedicated hardware jobs",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
@@ -439,6 +443,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "Launchable PR E2E requires a branch in NVIDIA/NemoClaw",
     `"$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA"`,
     `"$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization"`,
+    `"$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw"`,
+    "Manual PR E2E requires a source branch in NVIDIA/NemoClaw.",
     "nvidia_owned=false",
     "nvidia_owned=true",
     `printf 'nvidia_owned=%s\\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"`,
@@ -506,6 +512,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '[[ -n "$GITHUB_TOKEN" ]]',
     'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
     '"${auth_args[@]}"',
+    `"$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw"`,
     "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
@@ -541,6 +548,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authorizationSource = String(credentialAuthorization.run ?? "");
   for (const fragment of [
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+    '"$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
     '"$REF" == refs/heads/*',
@@ -605,16 +613,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted Hermes resolver" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
-      const trustedLlamaCppPlanCheckout =
-        jobName === "llama-cpp-dgx-spark-plan" &&
-        step.name === "Checkout trusted llama.cpp plan compiler" &&
-        step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
-      const trustedLlamaCppQualificationCheckout =
-        jobName === "llama-cpp-dgx-spark-qualification" &&
-        step.name === "Checkout trusted llama.cpp qualification" &&
-        step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedJetsonControllerCheckout =
         jobName === "jetson-nvmap-gpu" &&
         step.name === "Check out trusted Jetson controller" &&
@@ -662,7 +660,15 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           step.name === "Check out the qualification aggregator" &&
           step.with?.repository === "${{ github.repository }}" &&
           step.with?.ref === "${{ github.workflow_sha }}");
+      const trustedCompilerCheckout =
+        jobName === "generate-matrix" &&
+        step.name === "Check out trusted compiled artifact action" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ github.workflow_sha }}" &&
+        step.with?.path === ".trusted-ci-actions" &&
+        step.with?.["persist-credentials"] === false;
       const trustedCheckout =
+        trustedCompilerCheckout ||
         trustedHermesFixtureCheckout ||
         trustedE2ePlannerCheckout ||
         trustedReportHelperCheckout ||
@@ -673,8 +679,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedOpenShellSdkPackageCheckout ||
         trustedManagedImageMultiarchResolverCheckout ||
         trustedManagedImageRuntimeCheckout ||
-        trustedLlamaCppPlanCheckout ||
-        trustedLlamaCppQualificationCheckout ||
         trustedJetsonControllerCheckout ||
         nativeRuntimeQualificationCheckout ||
         trustedOpenShellDevToolingCheckout;
@@ -742,9 +746,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         name: "Set up Node for publication verification",
         uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-        with: {
-          "node-version": 22,
-        },
+        with: {},
       },
       {
         id: "select_pr_source",
@@ -764,6 +766,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "publication",
         name: "Select base and optional managed-image publication",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           EXPECTED_SHA: "${{ steps.publication_mode.outputs.expected_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
@@ -783,29 +786,31 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           'if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then',
           "  wait_seconds=300",
           "fi",
-          'node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30',
+          'node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30',
           "",
         ].join("\n"),
       },
       {
         name: "Download immutable Deep Agents Code base contract",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
-        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"',
+        run: 'node --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"',
       },
       {
         id: "validate_dcode_base",
         name: "Validate immutable Deep Agents Code base",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
-        run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
+        run: 'node --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
       },
       {
         id: "download_managed_cohort",
@@ -818,7 +823,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
-        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-image-cohort"',
+        run: 'node --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-image-cohort"',
       },
       {
         id: "validate_managed_cohort",
@@ -829,12 +834,20 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
-        run: 'node --experimental-strip-types --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"',
+        run: 'node --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"',
       },
     ],
   };
 
-  if (!isDeepStrictEqual(job, expectedJob)) {
+  const securityBoundary = {
+    ...job,
+    steps: job.steps?.map((step) => {
+      if (step.name !== "Set up Node for publication verification") return step;
+      const { "node-version": _nodeVersion, ...inputs } = step.with ?? {};
+      return { ...step, with: inputs };
+    }),
+  };
+  if (!isDeepStrictEqual(securityBoundary, expectedJob)) {
     errors.push(
       "base-image-publication job must preserve its exact trusted-mode classifier, minimal permissions, pinned checkout, and verifier boundary",
     );
@@ -911,7 +924,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     "catalogue-brave-nvidia-inference",
   ]) {
     const catalogue = workflow.jobs[jobName] ?? {};
-    if (!sameMembers(needs(catalogue), ["base-image-publication", "generate-matrix"])) {
+    if (
+      !sameMembers(needs(catalogue), [
+        "base-image-publication",
+        "generate-matrix",
+        "package-openshell-sdk",
+      ])
+    ) {
       errors.push(`${jobName} must wait for matrix generation and base-image publication`);
     }
     if (
@@ -1087,12 +1106,15 @@ function validateAggregation(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
+/** Appends violations that could let the aggregate check omit a selected E2E result. */
 function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
-    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '')) }}";
   if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
-    errors.push("relevant-e2e must be the stable aggregate check for main pushes");
+    errors.push(
+      "relevant-e2e must be the stable aggregate check for main pushes and trusted PR runs",
+    );
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
     errors.push("relevant-e2e permissions must be contents: read");
@@ -1102,7 +1124,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const steps = job.steps ?? [];
   requirePinnedAction(errors, checkout, "relevant-e2e checkout");
   if (
-    steps.length !== 3 ||
+    steps.length !== 4 ||
     steps[0] !== checkout ||
     steps[1] !== requireResults ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
@@ -1116,8 +1138,9 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
-    requireResults.run !==
-      "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
+    requireResults.env?.E2E_RESULT_PATH !==
+      "${{ inputs.checkout_sha != '' && format('{0}/review-queue-e2e-result.json', runner.temp) || '' }}" ||
+    requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
   }
@@ -1126,7 +1149,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
 function validateReleaseQualification(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["release-qualification"] ?? {};
   const expectedCondition =
-    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue }}";
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch }}";
   if (job.if !== expectedCondition) {
     errors.push("release-qualification must run only for a full manual run against main");
   }
@@ -1159,8 +1182,7 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
-    requireResults.run !==
-      "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
+    requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");
   }
@@ -1532,9 +1554,7 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
-export function validateE2eOperationsWorkflow(
-  workflow: OperationsWorkflow,
-): string[] {
+export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): string[] {
   const errors = validateStandardProfileWorkflowBoundary(
     workflow as unknown as Record<string, unknown>,
   );

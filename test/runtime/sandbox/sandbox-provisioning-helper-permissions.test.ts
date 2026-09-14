@@ -101,7 +101,6 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       configGuardPath,
       managedGatewayControlPath,
       path.join(localLib, "openclaw_device_approval_policy.py"),
-      path.join(localLib, "clean_runtime_shell_env_shim.py"),
       path.join(localLib, "normalize_mutable_config_perms.py"),
       generatorPath,
       toolSearchValidatorPath,
@@ -177,7 +176,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       expect((fs.statSync(nestedPluginFile).mode & 0o777).toString(8)).toBe("644");
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
-      expect((fs.statSync(configGuardPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(configGuardPath).mode & 0o777).toString(8)).toBe("555");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

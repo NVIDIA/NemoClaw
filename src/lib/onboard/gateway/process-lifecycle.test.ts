@@ -54,10 +54,13 @@ describe("gateway process lifecycle", () => {
     expect(clearRuntimeFiles).toHaveBeenCalledOnce();
   });
 
-  it("uses gateway destroy when gateway remove fails", () => {
+  it("uses gateway destroy when gateway remove is unsupported", () => {
     const runOpenshell = vi
       .fn<GatewayProcessLifecycleDeps["runOpenshell"]>()
-      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValueOnce({
+        status: 1,
+        stderr: Buffer.from("unrecognized subcommand 'remove'"),
+      })
       .mockReturnValueOnce({ status: 0 });
     const lifecycle = createGatewayProcessLifecycle(dependencies({ runOpenshell }));
 
@@ -66,6 +69,21 @@ describe("gateway process lifecycle", () => {
       2,
       ["gateway", "destroy", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+  });
+
+  it("does not hide a current gateway remove failure behind the legacy verb", () => {
+    const runOpenshell = vi.fn<GatewayProcessLifecycleDeps["runOpenshell"]>(() => ({
+      status: 1,
+      stderr: Buffer.from("connection refused"),
+    }));
+    const lifecycle = createGatewayProcessLifecycle(dependencies({ runOpenshell }));
+
+    expect(lifecycle.removeDockerDriverGatewayRegistration()).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      expect.anything(),
     );
   });
 });

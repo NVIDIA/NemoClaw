@@ -100,28 +100,28 @@ describe("global doctor command", () => {
   it.each([
     ["--text", "--json"],
     ["--json", "--text"],
-  ])("rejects conflicting output modes before a doctor check runs for %s %s (#11150)", async (
-    first,
-    second,
-  ) => {
-    const { stdout, stderr } = captureCommandOutput();
+  ])(
+    "rejects conflicting output modes before a doctor check runs for %s %s (#11150)",
+    async (first, second) => {
+      const { stdout, stderr } = captureCommandOutput();
 
-    await DoctorCommand.run([first, second], rootDir);
+      await DoctorCommand.run([first, second], rootDir);
 
-    expect(mocks.runGlobalDoctor).not.toHaveBeenCalled();
-    // Parsing the whole of stdout is the assertion: a second document or any
-    // stray text after the envelope makes it throw.
-    const stdoutText = stdout.join("");
-    expect(Buffer.byteLength(stdoutText)).toBeLessThan(1_000);
-    expect(JSON.parse(stdoutText)).toEqual({
-      error: {
-        message: "--json and --text are mutually exclusive. Use one or the other.",
-        exit: 2,
-      },
-    });
-    expect(stderr.join("")).toContain("--json and --text are mutually exclusive");
-    expect(process.exitCode).toBeGreaterThan(0);
-  });
+      expect(mocks.runGlobalDoctor).not.toHaveBeenCalled();
+      // Parsing the whole of stdout is the assertion: a second document or any
+      // stray text after the envelope makes it throw.
+      const stdoutText = stdout.join("");
+      expect(Buffer.byteLength(stdoutText)).toBeLessThan(1_000);
+      expect(JSON.parse(stdoutText)).toEqual({
+        error: {
+          message: "--json and --text are mutually exclusive. Use one or the other.",
+          exit: 2,
+        },
+      });
+      expect(stderr.join("")).toContain("--json and --text are mutually exclusive");
+      expect(process.exitCode).toBeGreaterThan(0);
+    },
+  );
 
   it("does not report another parse failure as an output-mode conflict (#11150)", async () => {
     const { stdout, stderr } = captureCommandOutput();

@@ -36,7 +36,7 @@ describe("createSetupNim vLLM resume", () => {
           makeHostState({
             vllmProfile: profile,
             vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
-        }),
+          }),
         installVllm,
         exitProcess,
         abortNonInteractive,

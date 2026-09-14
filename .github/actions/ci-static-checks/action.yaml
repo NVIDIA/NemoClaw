@@ -10,7 +10,7 @@ runs:
     - name: Setup Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
-        node-version: "22"
+        node-version: ">=22.19.0 <23"
         cache: npm
         cache-dependency-path: |
           package-lock.json
@@ -22,7 +22,7 @@ runs:
 
     - name: Enforce base-trusted createRequire allowlist ratchet
       shell: bash
-      run: node --experimental-strip-types "$GITHUB_ACTION_PATH/create-require-ratchet.mts"
+      run: node "$GITHUB_ACTION_PATH/create-require-ratchet.mts"
 
     - name: Install hadolint
       shell: bash

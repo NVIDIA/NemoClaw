@@ -11,7 +11,7 @@ It also hardens sandbox recovery, onboarding, inference validation, MCP lifecycl
 
 - `nemoclaw config export <sandbox> --output <path|->` now writes a canonical `nemoclaw.nvidia.com/v1` configuration document after cross-checking registry, lifecycle, gateway, workload, image, inference, policy, and credential-reference state.
   The command keeps secrets out of YAML and JSON output and fails closed on inconsistent evidence.
-  On Linux, file output uses owner-only atomic publication; `--output -` writes YAML to standard output on another supported host or in a pipeline.
+  On Linux, file output uses owner-only atomic publication; `--output -` writes YAML to standard output on any supported host or in a pipeline.
   Related change: [PR #11015](https://github.com/NVIDIA/NemoClaw/pull/11015).
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - `nemoclaw doctor` now runs read-only host and gateway checks before onboarding or without selecting a sandbox.

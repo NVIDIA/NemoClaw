@@ -61,7 +61,7 @@ describe("advisor HTTP dispatcher", () => {
     `;
     const child = spawn(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "--input-type=module", "--eval", script],
+      ["--no-warnings", "--input-type=module", "--eval", script],
       {
         env: {
           ...process.env,

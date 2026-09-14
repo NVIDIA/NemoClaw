@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -14,6 +18,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import type { AgentTurnInference } from "../live/agent-turn-latency-helpers.ts";
 import {
   cleanupTurnSandboxes,
+  hermesTurnCommand,
   installSandbox,
   turnLatencyInstallAttemptCount,
 } from "../live/agent-turn-latency-helpers.ts";
@@ -82,6 +87,47 @@ function failedProbe(stderr: string, timedOut = false): ShellProbeResult {
     timedOut,
   };
 }
+
+it.each([
+  { name: "without authentication", apiKey: "", headers: ["Content-Type: application/json"] },
+  {
+    name: "with authentication",
+    apiKey: "fixture key with spaces",
+    headers: ["Content-Type: application/json", "Authorization: Bearer fixture key with spaces"],
+  },
+])("preserves quoted Hermes request arguments $name", ({ apiKey, headers }) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw turn request-"));
+  try {
+    const capture = path.join(root, "request.args");
+    const payload = JSON.stringify({
+      messages: [{ role: "user", content: 'What\'s "$HOME" and `literal`?' }],
+    });
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          // Mock environment loading and curl so the probe cannot read host secrets or use the network.
+          "function .() { :; }",
+          'curl() { printf "%s\\0" "$@" > "$REQUEST_ARGS"; printf "%s" "{}" > "$3"; printf "200"; }',
+          hermesTurnCommand(payload),
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, API_SERVER_KEY: apiKey, REQUEST_ARGS: capture, TMPDIR: root },
+        timeout: 5_000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const args = fs.readFileSync(capture, "utf8").split("\0").slice(0, -1);
+    expect(args[args.indexOf("-d") + 1]).toBe(payload);
+    expect(args.filter((_, index) => args[index - 1] === "-H")).toEqual(headers);
+    expect(fs.existsSync(args[args.indexOf("-o") + 1]!)).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("live test progress", () => {
   afterEach(() => {

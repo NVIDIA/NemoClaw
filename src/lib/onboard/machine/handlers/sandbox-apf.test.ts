@@ -21,58 +21,62 @@ describe("APF sandbox create selection", () => {
     expect(apfCreateFingerprintFields(true)).toEqual(["apf-interceptor"]);
   });
 
-  it("defers providerless creation effects behind the verified APF callback (#9833)", async () => {
-    const session = createSession({ apfInterceptorRequested: true });
-    const { deps, calls } = createDeps(
-      {
-        getSandboxRegistryEntry: (name) => ({
-          name,
-          gatewayName: "nemoclaw",
-          pendingRouteReservation: true,
-          reservationSessionId: session.sessionId,
-          webSearchEnabled: false,
-          toolDisclosure: "progressive",
-          fromDockerfile: null,
-          hermesAuthMethod: null,
-        }),
-        getSandboxRecreateObservation: () => ({
-          state: "missing" as const,
-          liveIdentityFingerprint: null,
-        }),
-      },
-      session,
-    );
+  it.each([false, true])(
+    "defers providerless creation effects behind verification with registration=%s (#11486)",
+    async (externalComponentRegistered) => {
+      const session = createSession({ apfInterceptorRequested: true });
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) => ({
+            name,
+            gatewayName: "nemoclaw",
+            pendingRouteReservation: true,
+            reservationSessionId: session.sessionId,
+            webSearchEnabled: false,
+            toolDisclosure: "progressive",
+            fromDockerfile: null,
+            hermesAuthMethod: null,
+          }),
+          getSandboxRecreateObservation: () => ({
+            state: "missing" as const,
+            liveIdentityFingerprint: null,
+          }),
+        },
+        session,
+      );
 
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      fresh: true,
-      apfInterceptorRequested: true,
-      model: "",
-      provider: "",
-      preferredInferenceApi: null,
-    });
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        fresh: true,
+        apfInterceptorRequested: true,
+        externalComponentRegistered,
+        model: "",
+        provider: "",
+        preferredInferenceApi: null,
+      });
 
-    expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
-    expect(calls.configureWebSearch).not.toHaveBeenCalled();
-    expect(calls.validateBrave).not.toHaveBeenCalled();
-    expect(calls.setupMessaging).not.toHaveBeenCalled();
-    expect(calls.createSandbox).toHaveBeenCalledOnce();
-    const createCall = calls.createSandbox.mock.calls[0] ?? [];
-    expect(createCall.at(-2)).toMatchObject({
-      apfInterceptorRequested: true,
-      deferSandboxEffectsUntilIdentityVerification: true,
-    });
-    const activateVerifiedEffects = createCall.at(-1);
-    expect(activateVerifiedEffects).toEqual(expect.any(Function));
+      expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
+      expect(calls.configureWebSearch).not.toHaveBeenCalled();
+      expect(calls.validateBrave).not.toHaveBeenCalled();
+      expect(calls.setupMessaging).not.toHaveBeenCalled();
+      expect(calls.createSandbox).toHaveBeenCalledOnce();
+      const createCall = calls.createSandbox.mock.calls[0] ?? [];
+      expect(createCall.at(-2)).toMatchObject({
+        apfInterceptorRequested: true,
+        deferSandboxEffectsUntilIdentityVerification: true,
+      });
+      const activateVerifiedEffects = createCall.at(-1);
+      expect(activateVerifiedEffects).toEqual(expect.any(Function));
 
-    const sessionUpdatesBeforeVerifiedEffects = calls.updateSession.mock.calls.length;
-    await (activateVerifiedEffects as unknown as (context: unknown) => Promise<void>)({
-      revalidateSandboxIdentity: () => undefined,
-    });
-    expect(calls.updateSession.mock.calls.length).toBeGreaterThan(
-      sessionUpdatesBeforeVerifiedEffects,
-    );
-  });
+      const sessionUpdatesBeforeVerifiedEffects = calls.updateSession.mock.calls.length;
+      await (activateVerifiedEffects as unknown as (context: unknown) => Promise<void>)({
+        revalidateSandboxIdentity: () => undefined,
+      });
+      expect(calls.updateSession.mock.calls.length).toBeGreaterThan(
+        sessionUpdatesBeforeVerifiedEffects,
+      );
+    },
+  );
 
   it.each([
     [
@@ -103,43 +107,47 @@ describe("APF sandbox create selection", () => {
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
-  it("rejects a resolved APF provider plan before sandbox or provider effects (#9833)", async () => {
-    const session = createSession({ apfInterceptorRequested: true });
-    const { deps, calls } = createDeps(
-      {
-        getSandboxRegistryEntry: (name) => ({
-          name,
-          gatewayName: "nemoclaw",
-          pendingRouteReservation: true,
-          reservationSessionId: session.sessionId,
-        }),
-        getSandboxRecreateObservation: () => ({
-          state: "missing" as const,
-          liveIdentityFingerprint: null,
-        }),
-        planRegisteredExtraProviders: () => ({
-          extraProviders: [],
-          staleExtraProviders: ["stale-provider"],
-        }),
-      },
-      session,
-    );
+  it.each([false, true])(
+    "rejects a provider plan before effects with registration=%s (#11486)",
+    async (externalComponentRegistered) => {
+      const session = createSession({ apfInterceptorRequested: true });
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) => ({
+            name,
+            gatewayName: "nemoclaw",
+            pendingRouteReservation: true,
+            reservationSessionId: session.sessionId,
+          }),
+          getSandboxRecreateObservation: () => ({
+            state: "missing" as const,
+            liveIdentityFingerprint: null,
+          }),
+          planRegisteredExtraProviders: () => ({
+            extraProviders: [],
+            staleExtraProviders: ["stale-provider"],
+          }),
+        },
+        session,
+      );
 
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        fresh: true,
-        apfInterceptorRequested: true,
-        model: "",
-        provider: "",
-        preferredInferenceApi: null,
-      }),
-    ).rejects.toThrow(/supports providerless sandbox creation only/u);
+      await expect(
+        handleSandboxState({
+          ...baseOptions(deps, session),
+          fresh: true,
+          apfInterceptorRequested: true,
+          externalComponentRegistered,
+          model: "",
+          provider: "",
+          preferredInferenceApi: null,
+        }),
+      ).rejects.toThrow(/supports providerless sandbox creation only/u);
 
-    expect(calls.resolveCreateIntent).not.toHaveBeenCalled();
-    expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-  });
+      expect(calls.resolveCreateIntent).not.toHaveBeenCalled();
+      expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects registered sandbox adoption before credential staging (#9833)", async () => {
     const session = createSession({ apfInterceptorRequested: true });

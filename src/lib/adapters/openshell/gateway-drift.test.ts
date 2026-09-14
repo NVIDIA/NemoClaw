@@ -143,10 +143,7 @@ describe("OpenShell gateway drift preflight", () => {
       .spyOn(docker, "dockerContainerInspectFormat")
       .mockReturnValueOnce("true")
       .mockReturnValue('{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"9090"}]}');
-    spies.push(
-      captureOpenshell,
-      inspectContainer,
-    );
+    spies.push(captureOpenshell, inspectContainer);
     const runtimeSelection = {
       gatewayName: "nemoclaw-9090",
       localTlsDir: "/authority/tls",
@@ -173,11 +170,7 @@ describe("OpenShell gateway drift preflight", () => {
       ["gateway", "info", "-g", "nemoclaw-9090"],
       selectedProbeOptions,
     );
-    expect(captureOpenshell).toHaveBeenNthCalledWith(
-      3,
-      ["gateway", "info"],
-      selectedProbeOptions,
-    );
+    expect(captureOpenshell).toHaveBeenNthCalledWith(3, ["gateway", "info"], selectedProbeOptions);
     const firstProbeOptions = captureOpenshell.mock.calls[0]?.[1] as
       | { env?: Record<string, string> }
       | undefined;
@@ -343,21 +336,24 @@ describe("OpenShell gateway drift preflight", () => {
     ["0.0.44", "compatible"],
     ["0.0.43", "drift"],
     [null, "unknown"],
-  ] as const)("reports host-process running version %s as %s readiness evidence", (runningVersion, expected) => {
-    expect(
-      observeOpenShellGatewayVersionCompatibility({
-        source: "host-process",
-        deps: {
-          getInstalledOpenshellVersion: () => "0.0.44",
-          getGatewayClusterImageRef: () => null,
-          getHostProcessGatewayRuntime: () => ({
-            gatewayBin: "/home/u/.local/bin/openshell-gateway",
-            runningVersion,
-          }),
-        },
-      }),
-    ).toBe(expected);
-  });
+  ] as const)(
+    "reports host-process running version %s as %s readiness evidence",
+    (runningVersion, expected) => {
+      expect(
+        observeOpenShellGatewayVersionCompatibility({
+          source: "host-process",
+          deps: {
+            getInstalledOpenshellVersion: () => "0.0.44",
+            getGatewayClusterImageRef: () => null,
+            getHostProcessGatewayRuntime: () => ({
+              gatewayBin: "/home/u/.local/bin/openshell-gateway",
+              runningVersion,
+            }),
+          },
+        }),
+      ).toBe(expected);
+    },
+  );
 
   it("keeps version compatibility unknown without an installed version", () => {
     expect(

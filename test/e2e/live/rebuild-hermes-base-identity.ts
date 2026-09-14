@@ -64,10 +64,7 @@ export interface RebuildHermesFinalBaseEvidence {
 
 function parseDockerImageInspect(
   inspectJson: string,
-  label:
-    | "old Hermes fixture"
-    | "phase 1 current Hermes base"
-    | "rebuilt Hermes sandbox",
+  label: "old Hermes fixture" | "phase 1 current Hermes base" | "rebuilt Hermes sandbox",
 ): ParsedDockerImageInspect {
   let parsed: DockerImageInspect;
   try {

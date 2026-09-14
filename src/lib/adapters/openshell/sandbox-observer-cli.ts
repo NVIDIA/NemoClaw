@@ -34,6 +34,7 @@ const KNOWN_PHASES = new Set([
   "NotReady",
   "Pending",
   "Provisioning",
+  "Stopped",
   "Terminating",
 ]);
 const CANONICAL_PHASES = new Map(
@@ -252,7 +253,7 @@ function failure<T>(error: OpenShellSandboxError): OpenShellSandboxResult<T> {
 }
 
 function streamText(value: string | Buffer | null | undefined): string {
-  return value == null ? "" : String(value);
+  return String(value ?? "");
 }
 
 /** Normalize structured runner results inside the CLI implementation. */

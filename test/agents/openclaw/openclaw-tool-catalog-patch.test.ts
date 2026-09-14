@@ -158,7 +158,7 @@ function makeFixture(opts: { version?: string; allCustomToolsLine?: string } = {
 }
 
 function runPatch(dist: string) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", PATCH_SCRIPT, dist], {
+  return spawnSync(process.execPath, [PATCH_SCRIPT, dist], {
     encoding: "utf-8",
     timeout: 10_000,
   });

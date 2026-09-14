@@ -345,53 +345,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.dcodeAutoApprovalMode).toBeUndefined();
   });
 
-  it("carries a durable MCP rebuild manifest into the replacement registry entry", () => {
-    const preservedMcpState = {
-      bridges: {
-        github: {
-          server: "github",
-          agent: "openclaw",
-          adapter: "mcporter",
-          url: "https://mcp.example.test/mcp",
-          env: ["GITHUB_TOKEN"],
-          providerName: "demo-mcp-github",
-          policyName: "mcp-bridge-github",
-          addedAt: "2026-06-27T00:00:00.000Z",
-        },
-      },
-    };
-    const entry = buildCreatedSandboxRegistryEntry({
-      sandboxName: "demo",
-      inferenceSelection: {
-        model: "llama",
-        provider: "compatible-endpoint",
-        endpointUrl: null,
-        credentialEnv: null,
-        preferredInferenceApi: null,
-        compatibleEndpointReasoning: "true",
-        compatibleEndpointReasoningEffort: null,
-        nimContainer: null,
-      },
-      runtimeFields,
-      agent: null,
-      agentVersionKnown: true,
-      imageTag: "nemoclaw-demo:replacement",
-      toolDisclosure: "direct",
-      plannedMessagingState: undefined,
-      preservedMcpState,
-      hermesToolGateways: [],
-      hermesDashboardState: { enabled: false, config: null },
-      dashboardPort: 18789,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-    });
-
-    expect(entry.mcp).toBe(preservedMcpState);
-    expect(entry.mcp?.bridges.github?.providerName).toBe("demo-mcp-github");
-    expect(entry.compatibleEndpointReasoning).toBe("true");
-    expect(entry.toolDisclosure).toBe("direct");
-  });
-
   it("normalizes invalid preferred inference API values", () => {
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
@@ -588,20 +541,23 @@ describe("registerCreatedSandbox", () => {
       },
       "generation-1",
     ],
-  ])("rejects a Portable OpenClaw %s receipt before registry mutation (#9207)", (_label, receipt, lifecycleGeneration) => {
-    const registerSandbox = vi.fn();
+  ])(
+    "rejects a Portable OpenClaw %s receipt before registry mutation (#9207)",
+    (_label, receipt, lifecycleGeneration) => {
+      const registerSandbox = vi.fn();
 
-    expect(() =>
-      registerCreatedSandbox({
-        ...createdRegistryEntryInput({ lifecycleGeneration }),
-        portableLifecycle: true,
-        environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-        classifyPortableLifecycleReceipt: () => receipt,
-        registerSandbox,
-      }),
-    ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
-    expect(registerSandbox).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        registerCreatedSandbox({
+          ...createdRegistryEntryInput({ lifecycleGeneration }),
+          portableLifecycle: true,
+          environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+          classifyPortableLifecycleReceipt: () => receipt,
+          registerSandbox,
+        }),
+      ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
+      expect(registerSandbox).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps ordinary OpenClaw registration agent-neutral (#9207)", () => {
     const classifyPortableLifecycleReceipt = vi.fn();

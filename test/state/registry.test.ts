@@ -184,7 +184,7 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.livePhase).toBeUndefined();
   });
 
-  it("persists MCP server state without local proxy secrets", () => {
+  it("drops every legacy MCP field from runtime and disk state", () => {
     registry.registerSandbox({
       name: "alpha",
       agent: "openclaw",
@@ -193,7 +193,7 @@ describe("registry", () => {
           github: {
             server: "github",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://api.githubcopilot.com/mcp/",
             env: ["GITHUB_TOKEN"],
             denyTools: ["delete_*", "doordash_submit_order"],
@@ -208,52 +208,11 @@ describe("registry", () => {
     });
 
     const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    const entry = raw.sandboxes.alpha.mcp.bridges.github;
-
-    expect(entry).toMatchObject({
-      url: "https://api.githubcopilot.com/mcp/",
-      env: ["GITHUB_TOKEN"],
-      denyTools: ["delete_*", "doordash_submit_order"],
-      pendingDenyTools: ["replacement_*"],
-      providerName: "alpha-mcp-github",
-      providerId: "11111111-2222-4333-8444-555555555555",
-      policyName: "mcp-bridge-github",
-    });
-    expect(entry.token).toBeUndefined();
-    expect(entry.command).toBeUndefined();
-    expect(entry.port).toBeUndefined();
-    expect(raw.sandboxes.alpha.mcp.managedServerNames).toEqual(["github"]);
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("mcp");
+    expect(raw.sandboxes.alpha).not.toHaveProperty("mcp");
   });
 
-  it.each([
-    ["invalid selector", ["tool name"]],
-    ["duplicate selector", ["delete_*", "delete_*"]],
-    ["non-canonical selector order", ["doordash_submit_order", "delete_*"]],
-  ])("rejects %s from durable MCP denied-tool intent (#11115)", (_label, denyTools) => {
-    registry.registerSandbox({
-      name: "invalid-denied-tools",
-      agent: "openclaw",
-      mcp: {
-        bridges: {
-          github: {
-            server: "github",
-            agent: "openclaw",
-            adapter: "mcporter",
-            url: "https://api.githubcopilot.com/mcp/",
-            env: ["GITHUB_TOKEN"],
-            denyTools,
-            providerName: "invalid-denied-tools-mcp-github",
-            policyName: "mcp-bridge-github",
-            addedAt: new Date(0).toISOString(),
-          },
-        },
-      },
-    });
-
-    expect(registry.getSandbox("invalid-denied-tools").mcp?.bridges.github).toBeUndefined();
-  });
-
-  it("persists canonical trusted-private MCP intent and exact pins (#8267)", () => {
+  it("drops legacy trusted-private MCP registry state because policy is authoritative", () => {
     registry.registerSandbox({
       name: "private-mcp",
       agent: "hermes",
@@ -276,10 +235,7 @@ describe("registry", () => {
       },
     });
 
-    expect(registry.getSandbox("private-mcp").mcp.bridges.local).toMatchObject({
-      trustedPrivateHost: "mcp.corp.example",
-      allowedIps: ["10.20.30.40", "fd00::40"],
-    });
+    expect(registry.getSandbox("private-mcp")).not.toHaveProperty("mcp");
   });
 
   it.each([
@@ -318,29 +274,25 @@ describe("registry", () => {
         },
       });
 
-      expect(registry.getSandbox("noncanonical-private-mcp").mcp?.bridges?.local).toBeUndefined();
+      expect(registry.getSandbox("noncanonical-private-mcp")).not.toHaveProperty("mcp");
     },
   );
 
-  it("retains sanitized managed MCP names after the active bridge map is emptied", () => {
+  it("drops legacy managed-server ownership tombstones", () => {
     registry.registerSandbox({
       name: "alpha",
       agent: "hermes",
       mcp: {
         bridges: {},
-        managedServerNames: ["retired", "../invalid", "retired", "still_active"],
+        expectedServerNames: ["retired", "../invalid", "retired", "still_active"],
       },
     });
 
-    const stored = registry.getSandbox("alpha").mcp;
-    expect(stored).toEqual({
-      bridges: {},
-      managedServerNames: ["retired", "still_active"],
-    });
-    expect(JSON.parse(fs.readFileSync(regFile, "utf-8")).sandboxes.alpha.mcp).toEqual(stored);
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("mcp");
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8")).sandboxes.alpha).not.toHaveProperty("mcp");
   });
 
-  it("normalizes MCP bridge maps by the recovered server name", () => {
+  it("does not normalize legacy MCP bridge maps into a second authority", () => {
     registry.registerSandbox({
       name: "alpha",
       agent: "openclaw",
@@ -349,7 +301,7 @@ describe("registry", () => {
           stale_key: {
             server: "github",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://api.githubcopilot.com/mcp/",
             env: ["GITHUB_TOKEN"],
             providerName: "alpha-mcp-github",
@@ -361,8 +313,7 @@ describe("registry", () => {
     });
 
     const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(raw.sandboxes.alpha.mcp.bridges.github.server).toBe("github");
-    expect(raw.sandboxes.alpha.mcp.bridges.stale_key).toBeUndefined();
+    expect(raw.sandboxes.alpha).not.toHaveProperty("mcp");
   });
 
   it("normalizes configured inference fields into a discriminated view", () => {
@@ -408,7 +359,7 @@ describe("registry", () => {
     expect(sb.model).toBe("new-model");
   });
 
-  it("persists MCP env names without raw host env values", () => {
+  it("omits legacy MCP rows during ordinary registry updates", () => {
     registry.registerSandbox({ name: "mcp-sb", agent: "openclaw" });
     registry.updateSandbox("mcp-sb", {
       mcp: {
@@ -416,7 +367,7 @@ describe("registry", () => {
           github: {
             server: "github",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://api.githubcopilot.com/mcp/",
             env: ["GITHUB_TOKEN"],
             providerName: "mcp-sb-mcp-github",
@@ -430,17 +381,12 @@ describe("registry", () => {
 
     const raw = fs.readFileSync(regFile, "utf-8");
     const data = JSON.parse(raw);
-    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.env).toEqual(["GITHUB_TOKEN"]);
-    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.providerName).toBe("mcp-sb-mcp-github");
-    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.providerId).toBe(
-      "11111111-2222-4333-8444-555555555555",
-    );
-    expect(data.sandboxes["mcp-sb"].mcp.bridges.github.token).toBeUndefined();
+    expect(data.sandboxes["mcp-sb"]).not.toHaveProperty("mcp");
     expect(raw).not.toContain("ghp_");
     expect(raw).not.toContain("secret-value");
   });
 
-  it("drops invalid persisted MCP bridge entries during registry serialization", () => {
+  it("drops valid and invalid legacy MCP rows alike", () => {
     registry.registerSandbox({ name: "mcp-safe", agent: "openclaw" });
     registry.updateSandbox("mcp-safe", {
       mcp: {
@@ -448,7 +394,7 @@ describe("registry", () => {
           ok: {
             server: "ok",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://api.githubcopilot.com/mcp/#ignored",
             env: ["GITHUB_TOKEN", "GITHUB_TOKEN"],
             providerName: "mcp-safe-mcp-ok",
@@ -458,7 +404,7 @@ describe("registry", () => {
           credentialUrl: {
             server: "credentialUrl",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://user:secret@example.test/mcp",
             env: ["TOKEN"],
             providerName: "mcp-safe-mcp-credential",
@@ -468,7 +414,7 @@ describe("registry", () => {
           privateIp: {
             server: "privateIp",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "http://127.0.0.1:31337/mcp",
             env: ["TOKEN"],
             providerName: "mcp-safe-mcp-private",
@@ -478,7 +424,7 @@ describe("registry", () => {
           invalidEnv: {
             server: "invalidEnv",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://api.githubcopilot.com/mcp/",
             env: ["TOKEN=secret"],
             providerName: "mcp-safe-mcp-invalid-env",
@@ -498,7 +444,7 @@ describe("registry", () => {
           invalidProviderId: {
             server: "invalidProviderId",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://api.githubcopilot.com/mcp/",
             env: ["TOKEN"],
             providerName: "mcp-safe-mcp-invalid-provider-id",
@@ -509,7 +455,7 @@ describe("registry", () => {
           oversizedUrl: {
             server: "oversizedUrl",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: `https://api.githubcopilot.com/${"a".repeat(2_048)}`,
             env: ["TOKEN"],
             providerName: "mcp-safe-mcp-oversized",
@@ -520,10 +466,10 @@ describe("registry", () => {
       },
     });
 
-    const bridges = registry.getSandbox("mcp-safe").mcp.bridges;
-    expect(Object.keys(bridges)).toEqual(["ok"]);
-    expect(bridges.ok.url).toBe("https://api.githubcopilot.com/mcp/");
-    expect(bridges.ok.env).toEqual(["GITHUB_TOKEN"]);
+    expect(registry.getSandbox("mcp-safe")).not.toHaveProperty("mcp");
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8")).sandboxes["mcp-safe"]).not.toHaveProperty(
+      "mcp",
+    );
   });
 
   it("updateSandbox returns false for nonexistent sandbox", () => {

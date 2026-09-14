@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Buffer } from "node:buffer";
+
 import {
   type OpenShellRuntimeSelection,
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/command-argv";
+import { removeGatewayRegistrationWithPolicy } from "../gateway-teardown-authority";
 
 type RunResult = ReturnType<typeof import("../../runner").run>;
 
@@ -27,7 +30,11 @@ export interface GatewayRegistrationDeps {
       suppressOutput?: boolean;
     },
   ): RunResult;
-  runQuietOpenshell(args: string[]): { status: number | null };
+  runQuietOpenshell(args: string[]): {
+    status: number | null;
+    stdout?: string | Buffer;
+    stderr?: string | Buffer;
+  };
 }
 
 export interface GatewayRegistration {
@@ -61,11 +68,11 @@ export function createGatewayRegistration(deps: GatewayRegistrationDeps): Gatewa
         : deps.runQuietOpenshell(args);
     const removeRegistration = (): boolean => {
       if (!runtimeSelection) return deps.removeDockerDriverGatewayRegistration();
-      const removeResult = runQuietOpenshell(["gateway", "remove", deps.gatewayName()]);
-      if (removeResult.status === 0) return true;
-      return (
-        runQuietOpenshell(["gateway", "destroy", "-g", deps.gatewayName()]).status === 0
-      );
+      return removeGatewayRegistrationWithPolicy({
+        allowLegacyDestroy: true,
+        gatewayLabel: deps.gatewayName(),
+        run: runQuietOpenshell,
+      }).ok;
     };
     const selectExisting = runQuietOpenshell(["gateway", "select", deps.gatewayName()]);
     if (selectExisting.status === 0) {
@@ -92,7 +99,7 @@ export function createGatewayRegistration(deps: GatewayRegistrationDeps): Gatewa
       { ignoreError: true, suppressOutput: true },
     );
     if (addResult.status !== 0) {
-      removeRegistration();
+      if (!removeRegistration()) return false;
       addResult = runOpenshell(
         [
           "gateway",

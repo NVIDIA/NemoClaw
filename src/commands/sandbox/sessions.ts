@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  createSessionsPassthrough,
   hasSessionsPassthroughHelpToken,
   printSessionsPassthroughHelp,
-  runSessionsPassthrough,
 } from "../../lib/actions/sandbox/sessions/passthrough";
+import { createCliOpenShellSandboxCommandExecutor } from "../../lib/adapters/openshell/sandbox-command-cli";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { REPOSITORY_ROOT } from "../../lib/core/repository-root";
+
+const runSessionsPassthrough = createSessionsPassthrough({
+  sandboxCommandExecutor: createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT }),
+});
 
 export default class SandboxSessionsCommand extends NemoClawCommand {
   static id = "sandbox:sessions";

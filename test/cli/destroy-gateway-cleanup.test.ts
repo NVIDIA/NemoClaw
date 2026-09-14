@@ -104,7 +104,7 @@ describe("CLI dispatch", () => {
   );
 
   it(
-    "falls back to legacy gateway destroy and still cleans volumes when remove fails (#6569)",
+    "falls back to legacy gateway destroy when remove is unsupported (#6569)",
     testTimeoutOptions(30_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
@@ -142,6 +142,7 @@ describe("CLI dispatch", () => {
           "fi",
           'printf \'%s\\n\' "$*" >> "$log_file"',
           'if [ "$1" = "gateway" ] && [ "$2" = "remove" ]; then',
+          "  printf '%s\n' \"unrecognized subcommand 'remove'\" >&2",
           "  exit 1",
           "fi",
           "exit 0",

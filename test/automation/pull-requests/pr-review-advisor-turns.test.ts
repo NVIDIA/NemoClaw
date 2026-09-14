@@ -4,9 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { settleAdvisorTurn } from "../../../tools/advisors/session.mts";
 
-
 describe("PR review advisor turn trace", () => {
-
   it("settles turns and reports provider or callback errors (#6446)", async () => {
     const settle = (overrides: Partial<Parameters<typeof settleAdvisorTurn>[0]>) =>
       settleAdvisorTurn({

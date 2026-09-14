@@ -16,6 +16,7 @@
 // duplicate every helper's exact signature.
 
 import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
 
@@ -45,7 +46,7 @@ export type UpsertProvider = (
   credentialEnv: any,
   baseUrl: any,
   env?: NodeJS.ProcessEnv,
-) => UpsertProviderResult;
+) => Promise<UpsertProviderResult>;
 
 export type RemoteProviderConfigEntry = {
   label: string;
@@ -115,14 +116,7 @@ export type RemoteProviderDeps = CommonDeps & {
     apiKey: string,
     options?: Record<string, unknown>,
   ) => { ok: boolean; message?: string } | Promise<{ ok: boolean; message?: string }>;
-  readGatewayProviderMetadata?: (
-    name: string,
-    runOpenshell: RunOpenshell,
-  ) => { name: string; type: string; credentialKeys: string[]; configKeys: string[] } | null;
-  deleteGatewayProvider?: (
-    name: string,
-    deps: { runOpenshell: RunOpenshell; allowedSandboxes?: readonly string[] },
-  ) => { ok: boolean; status?: number | null; stderr?: string; stdout?: string };
+  providerAdapter?: OpenShellProviderAdapter;
   bedrockRuntimeOnboard: {
     setupBedrockRuntimeInference(input: {
       sandboxName: string | null;
@@ -176,7 +170,7 @@ export type HermesDeps = CommonDeps & {
   lookup?: LookupFn;
   hermesProviderAuth: {
     HERMES_PROVIDER_NAME: string;
-    isHermesProviderRegistered(runOpenshell: any): boolean;
+    isHermesProviderRegistered(runOpenshell: any): Promise<boolean>;
     ensureHermesProviderApiKeyCredentials(
       sandboxName: string,
       opts: { apiKey: unknown; runOpenshell: any; baseUrl?: string | undefined },
@@ -194,10 +188,12 @@ export type HermesDeps = CommonDeps & {
   getHermesToolGatewayBroker: () => {
     getHermesToolGatewayProviderName(sandboxName: string): string;
   };
-  providerExistsInGateway: (name: string) => boolean;
+  providerExistsInGateway: (name: string) => Promise<boolean>;
   normalizeHermesAuthMethod: (m: HermesAuthMethod | string | null) => HermesAuthMethod | null;
   resolveHermesNousApiKey: () => any;
-  checkHermesProviderStoreReachable: (runOpenshell: any) => { ok: boolean; message?: string };
+  checkHermesProviderStoreReachable: (
+    runOpenshell: any,
+  ) => { ok: boolean; message?: string } | Promise<{ ok: boolean; message?: string }>;
   hermesAuthMethodLabel: (m: HermesAuthMethod) => string;
   hermesConstants: {
     HERMES_NOUS_API_KEY_CREDENTIAL_ENV: string;
@@ -284,7 +280,9 @@ export type RoutedDeps = CommonDeps & {
         upsertProvider: UpsertProvider;
         hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
       },
-    ): { ok: boolean; result: { message?: string; status?: number } };
+    ):
+      | { ok: boolean; result: { message?: string; status?: number } }
+      | Promise<{ ok: boolean; result: { message?: string; status?: number } }>;
   };
   hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
   redact: (input: string) => string;

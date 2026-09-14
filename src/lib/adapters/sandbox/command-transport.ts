@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
-import { resolveOpenshellSandboxSshHost } from "../openshell/sandbox-ssh-host";
+import type {
+  OpenShellSandboxBufferedCommandExecutor,
+  OpenShellSandboxCommandError,
+} from "../openshell/sandbox-command";
+import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
+import { createCliOpenShellSandboxSshCommandExecutor } from "../openshell/sandbox-ssh-cli";
+import type { OpenShellSandboxSshExecutor } from "../openshell/sandbox-ssh";
 
 export type SandboxCommandResult = {
   status: number;
@@ -23,8 +27,15 @@ export type SandboxCommandTransportFailure =
   | { kind: "timeout"; timeoutMs: number }
   | { kind: "error"; detail?: string };
 
+/**
+ * Declares when a command is safe to repeat through the pinned local runtime.
+ * `read-only` commands cannot leave a mutation to reconcile. `reconciled`
+ * commands are idempotent and verify their postcondition before continuing.
+ */
+export type LocalDockerFallbackPolicy = "never" | "unavailable-only" | "read-only" | "reconciled";
+
 export type SandboxExecCommandOptions = {
-  allowLocalDockerFallback?: boolean;
+  localDockerFallbackPolicy?: LocalDockerFallbackPolicy;
   gatewayName?: string;
   onTransportFailure?: (failure: SandboxCommandTransportFailure) => void;
   runtimeEnv?: NodeJS.ProcessEnv;
@@ -38,16 +49,7 @@ export type SandboxSshCommandOptions = {
 export type CommandTransportDependencies = {
   buildSandboxExecMarkedCommand: (command: string) => string;
   buildSubprocessEnv: () => NodeJS.ProcessEnv;
-  captureSandboxSshConfig: (
-    sandboxName: string,
-    options: {
-      env?: NodeJS.ProcessEnv;
-      gatewayName?: string;
-      ignoreError: boolean;
-      replaceEnv?: boolean;
-      timeout: number;
-    },
-  ) => { output: string; status: number | null };
+  sshExecutor?: OpenShellSandboxSshExecutor;
   executePrivilegedSandboxCommand: (
     sandboxName: string,
     command: readonly string[],
@@ -59,10 +61,8 @@ export type CommandTransportDependencies = {
     readonly error?: unknown;
   };
   extractSandboxExecCommandStdout: (output: string) => string | null;
-  getOpenshellBinary: () => string;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   isDirectSandboxFallbackUnavailableError: (error: unknown) => boolean;
-  openshellProbeTimeoutMs: number;
-  root: string;
 };
 
 export const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
@@ -73,82 +73,51 @@ function resolveSandboxExecTimeout(timeout: number): number {
 }
 
 /**
- * Classify a subprocess outcome that yielded no usable command result. A
- * subprocess timeout sets `error.code = "ETIMEDOUT"` and kills the child with
- * SIGTERM; report that as a timeout so callers can distinguish a slow endpoint
- * from a genuine subprocess error (#11162). A missing error and signal returns
- * `null`: the cause is unknown, so the caller keeps its generic message. Only
- * the error code (never the error message or any captured output) crosses this
- * boundary. Shared by the OpenShell exec transport and the DCode
- * `runOpenshell` probe path so both classify identically.
+ * Classify a typed OpenShell command failure that yielded no usable result so
+ * callers can distinguish a slow endpoint (a timeout) from a genuine subprocess
+ * error (#11162). A `timeout` outcome reports the effective duration; every
+ * other transport failure kind reports its kind as the error detail. Only the
+ * error kind (never the error message or any captured output) crosses this
+ * boundary. An `unavailable` outcome is not a probe-transport failure — it means
+ * OpenShell itself was absent, so the caller keeps its generic message.
  */
-export function classifySandboxCommandTransportFailure(
-  outcome: { error?: unknown; signal?: NodeJS.Signals | null },
+export function classifyOutcomeTransportFailure(
+  error: OpenShellSandboxCommandError,
   timeoutMs: number,
 ): SandboxCommandTransportFailure | null {
-  const error = outcome.error as NodeJS.ErrnoException | undefined;
-  if (error?.code === "ETIMEDOUT" || outcome.signal === "SIGTERM") {
-    return { kind: "timeout", timeoutMs };
-  }
-  if (error) {
-    return error.code ? { kind: "error", detail: error.code } : { kind: "error" };
-  }
-  return null;
+  if (error.kind === "timeout") return { kind: "timeout", timeoutMs };
+  if (error.kind === "unavailable") return null;
+  return { kind: "error", detail: error.kind };
 }
 
-export function executeSandboxCommandTransport(
+function permitsUnknownOutcomeFallback(policy: LocalDockerFallbackPolicy): boolean {
+  return policy === "read-only" || policy === "reconciled";
+}
+
+export async function executeSandboxCommandTransport(
   deps: CommandTransportDependencies,
   sandboxName: string,
   command: string,
   timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
   options: SandboxSshCommandOptions = {},
-): SandboxCommandResult | null {
-  const sshConfigResult = deps.captureSandboxSshConfig(sandboxName, {
-    ...(options.runtimeEnv ? { env: options.runtimeEnv, replaceEnv: true } : {}),
-    ...(options.gatewayName ? { gatewayName: options.gatewayName } : {}),
-    ignoreError: true,
-    timeout: deps.openshellProbeTimeoutMs,
+): Promise<SandboxCommandResult | null> {
+  const result = await (deps.sshExecutor ?? createCliOpenShellSandboxSshCommandExecutor()).run({
+    sandboxName,
+    target: options.gatewayName
+      ? namedOpenShellGateway(options.gatewayName)
+      : selectedOpenShellGateway(),
+    command,
+    environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
+    timeoutMilliseconds: timeout,
   });
-  if (sshConfigResult.status !== 0) return null;
-  if (!sshConfigResult.output.trim()) return null;
-  const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfigResult.output);
-  if (sshHost === null) return null;
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-");
-  try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F",
-        tmpSshConfig.file,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "LogLevel=ERROR",
-        sshHost,
-        command,
-      ],
-      {
-        encoding: "utf-8",
-        env: options.runtimeEnv ?? deps.buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      },
-    );
-    return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch {
-    return null;
-  } finally {
-    tmpSshConfig.cleanup();
-  }
+  const commandResult = result.kind === "completed" ? result : result.command;
+  return commandResult
+    ? {
+        status: commandResult.exitCode,
+        stdout: commandResult.stdout.trim(),
+        stderr: commandResult.stderr.trim(),
+      }
+    : null;
 }
 
 function parseSandboxCommandResult(
@@ -195,52 +164,56 @@ function executeLocalSandboxCommand(
   }
 }
 
-export function executeSandboxExecCommandTransport(
+export async function executeSandboxExecCommandTransport(
   deps: CommandTransportDependencies,
   sandboxName: string,
   command: string,
   timeout: number,
   options: SandboxExecCommandOptions,
-): SandboxCommandResult | null {
+): Promise<SandboxCommandResult | null> {
   const markedCommand = deps.buildSandboxExecMarkedCommand(command);
   const effectiveTimeout = resolveSandboxExecTimeout(timeout);
+  const fallbackPolicy = options.localDockerFallbackPolicy ?? "unavailable-only";
+  // Track why the OpenShell transport produced no usable result so a caller
+  // that opted out of the local fallback can surface the real reason instead of
+  // a generic "unavailable" message (#11162). Only a subprocess error code or a
+  // timeout duration crosses this boundary — never captured command output.
   let pendingFailure: SandboxCommandTransportFailure | null = null;
-  try {
-    const gatewayArgs = options.gatewayName ? ["-g", options.gatewayName] : [];
-    const result = spawnSync(
-      deps.getOpenshellBinary(),
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        sandboxName,
-        ...gatewayArgs,
-        "--",
-        "sh",
-        "-c",
-        markedCommand,
-      ],
-      {
-        cwd: deps.root,
-        encoding: "utf-8",
-        env: options.runtimeEnv ?? deps.buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: effectiveTimeout,
-      },
-    );
-    const parsed = parseSandboxCommandResult(deps, result);
+  const completed = await deps.commandExecutor.runBuffered({
+    sandboxName,
+    target: options.gatewayName
+      ? namedOpenShellGateway(options.gatewayName)
+      : selectedOpenShellGateway(),
+    command: ["sh", "-c", markedCommand],
+    environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
+    timeoutMilliseconds: effectiveTimeout,
+  });
+  if (completed.outcome.kind === "completed") {
+    const parsed = parseSandboxCommandResult(deps, {
+      status: completed.outcome.exitCode,
+      stdout: completed.stdout,
+      stderr: completed.stderr,
+    });
     if (parsed !== null) return parsed;
-    pendingFailure = classifySandboxCommandTransportFailure(result, effectiveTimeout);
-  } catch (error) {
-    // OpenShell transport failed; try the trusted direct-container fallback.
-    pendingFailure = classifySandboxCommandTransportFailure({ error }, effectiveTimeout);
+    if (!permitsUnknownOutcomeFallback(fallbackPolicy)) return null;
+  } else if (completed.outcome.error.kind === "cancelled") {
+    return null;
+  } else {
+    pendingFailure = classifyOutcomeTransportFailure(completed.outcome.error, effectiveTimeout);
+    if (
+      completed.outcome.error.kind !== "unavailable" &&
+      !permitsUnknownOutcomeFallback(fallbackPolicy)
+    ) {
+      if (pendingFailure) options.onTransportFailure?.(pendingFailure);
+      return null;
+    }
   }
-  if (options.allowLocalDockerFallback === false) {
+  if (fallbackPolicy === "never") {
     if (pendingFailure) options.onTransportFailure?.(pendingFailure);
     return null;
   }
-  // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
-  // refusal cannot be caught and retried against changing container state.
+  // Keep the fallback outside the OpenShell outcome handling so a fail-closed
+  // identity refusal cannot be retried against changing container state.
   const fallback = executeLocalSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);
   if (fallback === null && pendingFailure) options.onTransportFailure?.(pendingFailure);
   return fallback;

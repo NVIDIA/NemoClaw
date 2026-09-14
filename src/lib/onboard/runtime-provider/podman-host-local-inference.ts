@@ -26,7 +26,6 @@ import {
   type HostLocalInferenceRouteAuthorityStore,
   type HostLocalInferenceRuntime,
   type HostLocalInferenceRuntimeAuthority,
-  type HostLocalInferenceService,
   type HostLocalManagedInferenceInput,
   type HostLocalManagedInferenceInspection,
   type HostLocalOllamaAccelerationAuthority,

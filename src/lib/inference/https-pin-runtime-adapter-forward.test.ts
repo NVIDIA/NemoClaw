@@ -357,32 +357,33 @@ describe("forwardHttpsPinnedRequest header handling (#6141)", () => {
 });
 
 describe("forwardHttpsPinnedRequest redirect fail-closed (#6141)", () => {
-  it.each([
-    301, 302, 303, 307, 308,
-  ])("blocks a %i upstream redirect instead of following or relaying it", async (status) => {
-    const upstream = http.createServer(async (req, res) => {
-      await readRequestBody(req);
-      res.writeHead(status, { Location: "http://169.254.169.254/latest/meta-data/" });
-      res.end();
-    });
-    const { port: upstreamPort } = await listen(upstream);
+  it.each([301, 302, 303, 307, 308])(
+    "blocks a %i upstream redirect instead of following or relaying it",
+    async (status) => {
+      const upstream = http.createServer(async (req, res) => {
+        await readRequestBody(req);
+        res.writeHead(status, { Location: "http://169.254.169.254/latest/meta-data/" });
+        res.end();
+      });
+      const { port: upstreamPort } = await listen(upstream);
 
-    const target: HttpsPinTarget = {
-      targetUrl: new URL(`http://forward-test.example:${upstreamPort}/base`),
-      pinnedAddress: "127.0.0.1",
-      credential: TEST_CREDENTIAL,
-    };
-    const adapter = createForwardTestServer(target);
-    const { baseUrl } = await listen(adapter);
+      const target: HttpsPinTarget = {
+        targetUrl: new URL(`http://forward-test.example:${upstreamPort}/base`),
+        pinnedAddress: "127.0.0.1",
+        credential: TEST_CREDENTIAL,
+      };
+      const adapter = createForwardTestServer(target);
+      const { baseUrl } = await listen(adapter);
 
-    const response = await fetch(`${baseUrl}/base`, { method: "POST", body: "{}" });
-    expect(response.status).toBe(502);
-    const body = (await response.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("redirect_blocked");
-    // The attacker-influenced Location header must never reach the client.
-    expect(response.headers.get("location")).toBeNull();
-    expect(JSON.stringify(body)).not.toContain("169.254.169.254");
-  });
+      const response = await fetch(`${baseUrl}/base`, { method: "POST", body: "{}" });
+      expect(response.status).toBe(502);
+      const body = (await response.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("redirect_blocked");
+      // The attacker-influenced Location header must never reach the client.
+      expect(response.headers.get("location")).toBeNull();
+      expect(JSON.stringify(body)).not.toContain("169.254.169.254");
+    },
+  );
 });
 
 const sniPinSetup = resolveCaSetup("https-pin-runtime-adapter-forward SNI pinning");

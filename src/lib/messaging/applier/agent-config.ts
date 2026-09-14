@@ -211,7 +211,7 @@ const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 
 /**
  * Resolve only manifest-derived cross-key aliases from OpenShell's injected,
- * revision-scoped placeholders. The exact placeholder grammar prevents a raw
+ * generation-scoped placeholders. The exact placeholder grammar prevents a raw
  * provider credential or arbitrary sandbox value from entering Hermes state.
  */
 function readHermesRuntimeAliasRender(
@@ -229,7 +229,7 @@ function readHermesRuntimeAliasRender(
     ) {
       return [];
     }
-    const expectedPattern = `^openshell:resolve:env:v[0-9]+_${sourceKey}$`;
+    const expectedPattern = `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${sourceKey}$`;
     const expectedValue = `openshell:resolve:env:${sourceKey}`;
     if (alias.match !== expectedPattern || alias.value !== expectedValue) return [];
     const result = runOpenshell(

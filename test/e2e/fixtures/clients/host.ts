@@ -3,6 +3,10 @@
 
 import { isAbsolute } from "node:path";
 
+import {
+  buildForwardServiceArgs,
+  createForwardServiceTarget,
+} from "../../../../src/lib/adapters/openshell/forward-service.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import {
   assertStockManagedImageReceipt,
@@ -26,6 +30,7 @@ export interface HostClientOptions {
 
 export interface ForwardListenerEvidence {
   valid: boolean;
+  pid?: number;
   identity: string;
   output: string;
 }
@@ -76,10 +81,7 @@ export class HostCliClient {
       merged,
     );
     const environment = merged.env ?? {};
-    if (
-      result.exitCode === 0 &&
-      shouldAssertStockManagedImageReceipt(command, args, environment)
-    ) {
+    if (result.exitCode === 0 && shouldAssertStockManagedImageReceipt(command, args, environment)) {
       const sandboxName = environment.NEMOCLAW_SANDBOX_NAME?.trim();
       if (!sandboxName) {
         throw new Error("stock managed-image receipt assertion requires a sandbox name");
@@ -201,12 +203,21 @@ export class HostCliClient {
       }),
     ]);
     const pids = [
-      ...new Set(before.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)),
+      ...new Set(
+        before.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
     ];
     const pid = pids.length === 1 && /^[1-9]\d*$/u.test(pids[0]!) ? pids[0]! : "";
     const commandPath = command.stdout.trim();
     if (!pid || !commandPath) {
-      return { valid: false, identity: "", output: `${resultText(before)}\n${resultText(command)}` };
+      return {
+        valid: false,
+        identity: "",
+        output: `${resultText(before)}\n${resultText(command)}`,
+      };
     }
 
     const [actualExecutable, expectedExecutable, commandLine, after] = await Promise.all([
@@ -227,9 +238,24 @@ export class HostCliClient {
         artifactName: `${artifactName}-listener-after`,
       }),
     ]);
-    const expectedCommandLine = `${commandPath} --gateway nemoclaw --workspace default forward service ${sandboxName} --target-port ${port} --target-host 127.0.0.1 --local 127.0.0.1:${port}`;
+    const target = createForwardServiceTarget(
+      {
+        executable: commandPath,
+        gatewayName: "nemoclaw",
+        localHost: "127.0.0.1",
+        sandboxName,
+        workspace: "default",
+      },
+      Number(port),
+    );
+    const expectedCommandLine = [commandPath, ...buildForwardServiceArgs(target)].join(" ");
     const afterPids = [
-      ...new Set(after.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)),
+      ...new Set(
+        after.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
     ];
     const probes = [before, command, actualExecutable, expectedExecutable, commandLine, after];
     const identity = `${pid}\t${actualExecutable.stdout.trim()}\t${commandLine.stdout.trim()}`;
@@ -241,6 +267,7 @@ export class HostCliClient {
       afterPids[0] === pid;
     return {
       valid,
+      ...(valid ? { pid: Number(pid) } : {}),
       identity,
       output: probes.map(resultText).filter(Boolean).join("\n"),
     };

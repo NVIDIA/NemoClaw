@@ -86,7 +86,7 @@ jobs:
 
       - name: Compile image manifest
         id: manifest
-        run: node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts
+        run: node --no-warnings scripts/checks/export-llama-cpp-image-config.mts
 
   pr-build:
     name: Build native llama.cpp server (${{ matrix.arch }})

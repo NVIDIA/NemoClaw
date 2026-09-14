@@ -70,28 +70,28 @@ afterEach(() => {
 });
 
 describe("gateway supervisor request protocol", () => {
-  it.each([
-    "restart",
-    "probe",
-  ])("accepts an exact versioned %s request and publishes a nonce-bound status", (action) => {
-    const result = runSupervisorLibrary(
-      [
-        "GATEWAY_CONTROL_SIGNAL_PENDING=1",
-        "gateway_control_take_request",
-        'printf "%s %s\\n" "$GATEWAY_CONTROL_NONCE" "$GATEWAY_CONTROL_ACTION"',
-      ].join("\n"),
-      `v1 ${VALID_NONCE} ${action}\n`,
-    );
+  it.each(["restart", "probe"])(
+    "accepts an exact versioned %s request and publishes a nonce-bound status",
+    (action) => {
+      const result = runSupervisorLibrary(
+        [
+          "GATEWAY_CONTROL_SIGNAL_PENDING=1",
+          "gateway_control_take_request",
+          'printf "%s %s\\n" "$GATEWAY_CONTROL_NONCE" "$GATEWAY_CONTROL_ACTION"',
+        ].join("\n"),
+        `v1 ${VALID_NONCE} ${action}\n`,
+      );
 
-    expect(result).toMatchObject({
-      status: 0,
-      stdout: `${VALID_NONCE} ${action}`,
-      stderr: "",
-    });
-    const statusPath = join(result.controlDirectory, "status");
-    expect(readFileSync(statusPath, "utf-8")).toBe(`v1 ${VALID_NONCE} accepted\n`);
-    expect(statSync(statusPath).mode & 0o777).toBe(0o600);
-  });
+      expect(result).toMatchObject({
+        status: 0,
+        stdout: `${VALID_NONCE} ${action}`,
+        stderr: "",
+      });
+      const statusPath = join(result.controlDirectory, "status");
+      expect(readFileSync(statusPath, "utf-8")).toBe(`v1 ${VALID_NONCE} accepted\n`);
+      expect(statSync(statusPath).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it.each([
     ["unsupported version", `v2 ${VALID_NONCE} restart\n`],
@@ -116,24 +116,27 @@ describe("gateway supervisor request protocol", () => {
   it.each([
     ["recover", "ok", 101, 202],
     ["probe", "already-running", 101, 101],
-  ])("publishes %s completion with the request nonce and removes the request", (action, detail, oldPid, newPid) => {
-    const result = runSupervisorLibrary(
-      [
-        "GATEWAY_CONTROL_SIGNAL_PENDING=1",
-        "gateway_control_take_request",
-        `gateway_control_complete ${detail} ${oldPid} ${newPid}`,
-        'test ! -e "$NEMOCLAW_GATEWAY_CONTROL_REQUEST"',
-        'cat "$NEMOCLAW_GATEWAY_CONTROL_STATUS"',
-      ].join("\n"),
-      `v1 ${VALID_NONCE} ${action}\n`,
-    );
+  ])(
+    "publishes %s completion with the request nonce and removes the request",
+    (action, detail, oldPid, newPid) => {
+      const result = runSupervisorLibrary(
+        [
+          "GATEWAY_CONTROL_SIGNAL_PENDING=1",
+          "gateway_control_take_request",
+          `gateway_control_complete ${detail} ${oldPid} ${newPid}`,
+          'test ! -e "$NEMOCLAW_GATEWAY_CONTROL_REQUEST"',
+          'cat "$NEMOCLAW_GATEWAY_CONTROL_STATUS"',
+        ].join("\n"),
+        `v1 ${VALID_NONCE} ${action}\n`,
+      );
 
-    expect(result).toMatchObject({
-      status: 0,
-      stdout: `v1 ${VALID_NONCE} complete ${detail} ${oldPid} ${newPid}`,
-      stderr: "",
-    });
-  });
+      expect(result).toMatchObject({
+        status: 0,
+        stdout: `v1 ${VALID_NONCE} complete ${detail} ${oldPid} ${newPid}`,
+        stderr: "",
+      });
+    },
+  );
 
   it("maps an unknown failure detail to the closed internal status", () => {
     const result = runSupervisorLibrary(
@@ -275,65 +278,65 @@ describe("gateway supervisor listener ownership", () => {
 });
 
 describe("root-only gateway control helper", () => {
-  it.each([
-    "restart",
-    "probe",
-  ])("enters managed %s control with isolated Python before user-site startup hooks", (action) => {
-    const root = temporaryDirectory("nemoclaw-managed-python-isolation-");
-    const userBase = join(root, "attacker-userbase");
-    const marker = join(root, "pth-loaded");
-    const attackEnv: NodeJS.ProcessEnv = { ...process.env, PYTHONUSERBASE: userBase };
-    delete attackEnv.PYTHONNOUSERSITE;
-    const userSite = spawnSync(
-      "python3",
-      ["-c", "import site; print(site.getusersitepackages())"],
-      { encoding: "utf-8", env: attackEnv },
-    );
-    expect(userSite.status, userSite.stderr).toBe(0);
-    const sitePackages = userSite.stdout.trim();
-    mkdirSync(sitePackages, { recursive: true });
-    writeFileSync(
-      join(sitePackages, "attacker.pth"),
-      `import pathlib; pathlib.Path(${JSON.stringify(marker)}).write_text("loaded")\n`,
-    );
-    const vulnerable = spawnSync("python3", ["-c", "pass"], { env: attackEnv });
-    expect(vulnerable.status).toBe(0);
-    expect(existsSync(marker)).toBe(true);
-    rmSync(marker);
+  it.each(["restart", "probe"])(
+    "enters managed %s control with isolated Python before user-site startup hooks",
+    (action) => {
+      const root = temporaryDirectory("nemoclaw-managed-python-isolation-");
+      const userBase = join(root, "attacker-userbase");
+      const marker = join(root, "pth-loaded");
+      const attackEnv: NodeJS.ProcessEnv = { ...process.env, PYTHONUSERBASE: userBase };
+      delete attackEnv.PYTHONNOUSERSITE;
+      const userSite = spawnSync(
+        "python3",
+        ["-c", "import site; print(site.getusersitepackages())"],
+        { encoding: "utf-8", env: attackEnv },
+      );
+      expect(userSite.status, userSite.stderr).toBe(0);
+      const sitePackages = userSite.stdout.trim();
+      mkdirSync(sitePackages, { recursive: true });
+      writeFileSync(
+        join(sitePackages, "attacker.pth"),
+        `import pathlib; pathlib.Path(${JSON.stringify(marker)}).write_text("loaded")\n`,
+      );
+      const vulnerable = spawnSync("python3", ["-c", "pass"], { env: attackEnv });
+      expect(vulnerable.status).toBe(0);
+      expect(existsSync(marker)).toBe(true);
+      rmSync(marker);
 
-    const procRoot = join(root, "proc");
-    mkdirSync(join(procRoot, "1"), { recursive: true });
-    writeFileSync(
-      join(procRoot, "1", "cmdline"),
-      Buffer.from("/opt/openshell/bin/openshell-sandbox\0--managed\0"),
-    );
-    const managedHelper = join(root, "managed-gateway-control.py");
-    writeFileSync(
-      managedHelper,
-      [
-        "#!/usr/bin/env python3",
-        "import json",
-        "import sys",
-        'print(json.dumps({"isolated": sys.flags.isolated, "args": sys.argv[1:]}))',
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    const isolated = spawnSync(CONTROL_HELPER, [action, VALID_NONCE], {
-      encoding: "utf-8",
-      env: {
-        ...attackEnv,
-        NEMOCLAW_TEST_GATEWAY_CONTROL_PROC_ROOT: procRoot,
-        NEMOCLAW_TEST_MANAGED_GATEWAY_CONTROL_HELPER: managedHelper,
-        NEMOCLAW_TEST_GATEWAY_CONTROL_CALLER_UID: "0",
-      },
-    });
-    expect(isolated.status, isolated.stderr).toBe(0);
-    expect(JSON.parse(isolated.stdout)).toEqual({
-      isolated: 1,
-      args: [action, VALID_NONCE],
-    });
-    expect(existsSync(marker)).toBe(false);
-  });
+      const procRoot = join(root, "proc");
+      mkdirSync(join(procRoot, "1"), { recursive: true });
+      writeFileSync(
+        join(procRoot, "1", "cmdline"),
+        Buffer.from("/opt/openshell/bin/openshell-sandbox\0--managed\0"),
+      );
+      const managedHelper = join(root, "managed-gateway-control.py");
+      writeFileSync(
+        managedHelper,
+        [
+          "#!/usr/bin/env python3",
+          "import json",
+          "import sys",
+          'print(json.dumps({"isolated": sys.flags.isolated, "args": sys.argv[1:]}))',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const isolated = spawnSync(CONTROL_HELPER, [action, VALID_NONCE], {
+        encoding: "utf-8",
+        env: {
+          ...attackEnv,
+          NEMOCLAW_TEST_GATEWAY_CONTROL_PROC_ROOT: procRoot,
+          NEMOCLAW_TEST_MANAGED_GATEWAY_CONTROL_HELPER: managedHelper,
+          NEMOCLAW_TEST_GATEWAY_CONTROL_CALLER_UID: "0",
+        },
+      });
+      expect(isolated.status, isolated.stderr).toBe(0);
+      expect(JSON.parse(isolated.stdout)).toEqual({
+        isolated: 1,
+        args: [action, VALID_NONCE],
+      });
+      expect(existsSync(marker)).toBe(false);
+    },
+  );
 
   it.each([
     ["bad action", ["replace", VALID_NONCE], "SUPERVISOR_INVALID_ACTION"],
