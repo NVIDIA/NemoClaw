@@ -302,6 +302,7 @@ Use the recovery guidance that matches the reported check:
 - Verify the sandbox name when its registry entry is missing.
 - Follow the printed OpenShell gateway recovery steps when the gateway schema is incompatible.
 - Refresh the named OpenShell credential or rerun `$$nemoclaw onboard` when rebuild reports an expired provider credential.
+- Re-register the provider or rerun `$$nemoclaw onboard` with the correct credential when the provider no longer exposes the recorded credential key, then retry `rebuild`.
 - Restore gateway connectivity and authentication when rebuild cannot verify the recorded provider.
 - Restore access to the current OpenShell policy when rebuild reports that the live policy cannot be read, then rerun `rebuild`. NemoClaw does not reconstruct policy from registry state.
 - Replace literal policy credentials with supported OpenShell credential bindings or resolver placeholders when rebuild refuses the policy handoff. NemoClaw stops before it creates the handoff or changes sandbox resources.
