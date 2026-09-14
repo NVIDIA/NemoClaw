@@ -12,8 +12,8 @@ export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 3 as const;
 export const MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION = 1 as const;
 export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID =
   "openshell-v0-0-24-mxc-v0-7-0-rc1-qualification" as const;
-export const MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID =
-  "openshell-v0-0-59-dev-927-mr105-mxc-v0-8-0-qualification" as const;
+export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID =
+  "openshell-combined-bbe31651-mxc-v0-8-0-qualification" as const;
 
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -73,7 +73,7 @@ export type MxcOpenShellDistributionAcceptance = "qualification" | "accepted";
 
 export type MxcOpenShellDistributionProfileId =
   | typeof MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID
-  | typeof MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID;
+  | typeof MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID;
 
 export interface MxcOpenShellQualificationGatewayConfiguration {
   readonly content: string;
@@ -178,41 +178,40 @@ export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE = cloneA
   },
 });
 
-/** Qualification-only MR !105 review fixes after merging MR !108. */
-export const MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE =
-  cloneAndDeepFreeze({
-    profileId: MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-    acceptance: "qualification" as const,
-    compatibility: {
-      nativeArchitecture: "arm64" as const,
+/** Qualification-only combined upstream runtime and tooling package. */
+export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE = cloneAndDeepFreeze({
+  profileId: MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+  acceptance: "qualification" as const,
+  compatibility: {
+    nativeArchitecture: "arm64" as const,
+    backend: "process_container" as const,
+    mxcVersion: "0.8.0",
+    networkMode: "egress-proxy" as const,
+  },
+  expectation: {
+    distribution: {
+      version: "0.0.117-dev.181+gbbe31651e",
+      revision: "bbe31651ed1cb90e8eb42dc31f5b651a0b3bb66a",
+      sha256: "a2b346b8930474541d41ac94d55b88518ff6b02732cca029410d582cb1db45ce",
+    },
+    components: {
+      cliSha256: "cbf51dd6f27dc62e94af75efb6c8c8cdf0cd470f756d625f2214422ce589a7d7",
+      gatewaySha256: "86b5c673278cb63b70c196359f50ae3bf0823ce2a8555eb3ae41db9d2517bdd7",
+      wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+    },
+    gateway: {
+      configSha256: "b7188bec20ef2cb7a31a63addbe6ad3720ceebf7fbdfa778c8f727e096c026bb",
+      driver: "mxc" as const,
       backend: "process_container" as const,
-      mxcVersion: "0.8.0",
-      networkMode: "egress-proxy" as const,
     },
-    expectation: {
-      distribution: {
-        version: "0.0.59-dev.927+g01053b261",
-        revision: "01053b261ab38f5a9458f331009a374805fe28ec",
-        sha256: "21f216568f4884a5bcfedf43620dde64455c21e88c7d012a99bc4c9fafcb93d9",
-      },
-      components: {
-        cliSha256: "459f4cb5fabbb2bdb52e3d3d8f1690cdf9ed2e854e2c84182d5c9088ff19dfd1",
-        gatewaySha256: "f8c35961f08290282ef18b3fb2c59bc8ec43c328e9e411e8afc83300b65a4bff",
-        wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
-      },
-      gateway: {
-        configSha256: "cafc36920c9caba0a1c540c00e91b3f8ecec95e02fbe7c30cf9ca6603fcb79a4",
-        driver: "mxc" as const,
-        backend: "process_container" as const,
-      },
-    },
-  });
+  },
+});
 
 const DISTRIBUTION_PROFILES = {
   [MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID]:
     MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
-  [MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID]:
-    MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE,
+  [MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID]:
+    MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE,
 } as const;
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -486,13 +485,7 @@ export function createMxcOpenShellDistributionAuthority(
   );
 }
 
-/**
- * Render the only gateway configuration authorized for a provider-owned inactive
- * Windows qualification profile and bind its digest to an opaque authority.
- *
- * The caller supplies run-local paths and a loopback target port, but cannot
- * supply configuration text, security semantics, or an accepted digest.
- */
+/** Render provider-owned settings; callers supply paths and ports, not policy or digests. */
 export function createMxcOpenShellQualificationGatewayConfiguration(
   inputValue: unknown,
 ): MxcOpenShellQualificationGatewayConfiguration {
@@ -579,6 +572,9 @@ export function createMxcOpenShellQualificationGatewayConfiguration(
     `TMP=${sandboxTempDirectory}`,
   ];
   const content = [
+    ...(profile.compatibility.networkMode === "egress-proxy"
+      ? ["[openshell]", "version = 2", ""]
+      : []),
     "[openshell.drivers.mxc]",
     `wxc_exec_path = ${tomlWindowsPath(wxcExecPath)}`,
     'backend = "process_container"',

@@ -14,7 +14,7 @@ import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-st
 import { assessWindowsMxcProcessContainerCandidate } from "../../../src/lib/onboard/windows-mxc/host-qualification.ts";
 import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
-  MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
   createMxcOpenShellQualificationGatewayConfiguration,
   type MxcOpenShellAttachmentReceipt,
   type MxcOpenShellDistributionAuthority,
@@ -999,7 +999,7 @@ export function createWindowsMxcGatewayConfiguration(input: {
 }): MxcOpenShellQualificationGatewayConfiguration {
   return createMxcOpenShellQualificationGatewayConfiguration({
     ...input,
-    distributionProfileId: MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+    distributionProfileId: MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
   });
 }
 

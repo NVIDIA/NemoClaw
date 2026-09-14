@@ -9,8 +9,8 @@ import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
   MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
   MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE,
+  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
   MxcOpenShellAttachmentError,
   createMxcOpenShellDistributionAuthority,
   createMxcOpenShellQualificationGatewayConfiguration,
@@ -96,8 +96,8 @@ describe("inactive OpenShell MXC installation attachment", () => {
     });
   });
 
-  it("binds the dev.927 qualification package to provider-rendered run-local configuration (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
+  it("binds the combined qualification package to provider-rendered run-local configuration (#10585)", () => {
+    const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
     const configured = createMxcOpenShellQualificationGatewayConfiguration({
       agentPath: "C:\\openclaw\\node.exe",
       distributionRevision: profile.expectation.distribution.revision,
@@ -116,10 +116,10 @@ describe("inactive OpenShell MXC installation attachment", () => {
         distribution: profile.expectation.distribution,
         components: profile.expectation.components,
         gateway: { ...profile.expectation.gateway, configSha256 },
-        distributionRoot: "C:\\OpenShell-dev.927",
+        distributionRoot: "C:\\OpenShell-combined",
         mxcRoot: "C:\\mxc-sdk",
-        cliPath: "C:\\OpenShell-dev.927\\openshell.exe",
-        gatewayPath: "C:\\OpenShell-dev.927\\openshell-gateway.exe",
+        cliPath: "C:\\OpenShell-combined\\openshell.exe",
+        gatewayPath: "C:\\OpenShell-combined\\openshell-gateway.exe",
         wxcExecPath: "C:\\mxc-sdk\\bin\\arm64\\wxc-exec.exe",
         gatewayConfigPath: "C:\\qualification\\gateway.toml",
       },
@@ -127,7 +127,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
 
     expect(configured.distributionAuthority).toMatchObject({
       acceptance: "qualification",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+      profileId: MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
     });
     expect(receipt.gateway.configSha256).toBe(configSha256);
     expect(receipt.acceptance).toBe("qualification");
@@ -136,8 +136,8 @@ describe("inactive OpenShell MXC installation attachment", () => {
 
   describe.each([
     {
-      name: "MR 105 review-fix",
-      profileId: "openshell-v0-0-59-dev-927-mr105-mxc-v0-8-0-qualification",
+      name: "combined upstream",
+      profileId: "openshell-combined-bbe31651-mxc-v0-8-0-qualification",
       previousProfileId: "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
       previousDistribution: {
         version: "0.0.59-dev.925+g28fc07191",
@@ -147,17 +147,17 @@ describe("inactive OpenShell MXC installation attachment", () => {
       observation: {
         ...mxcOpenShellAttachmentFixture().observation,
         distribution: {
-          version: "0.0.59-dev.927+g01053b261",
-          revision: "01053b261ab38f5a9458f331009a374805fe28ec",
-          sha256: "21f216568f4884a5bcfedf43620dde64455c21e88c7d012a99bc4c9fafcb93d9",
+          version: "0.0.117-dev.181+gbbe31651e",
+          revision: "bbe31651ed1cb90e8eb42dc31f5b651a0b3bb66a",
+          sha256: "a2b346b8930474541d41ac94d55b88518ff6b02732cca029410d582cb1db45ce",
         },
         components: {
-          cliSha256: "459f4cb5fabbb2bdb52e3d3d8f1690cdf9ed2e854e2c84182d5c9088ff19dfd1",
-          gatewaySha256: "f8c35961f08290282ef18b3fb2c59bc8ec43c328e9e411e8afc83300b65a4bff",
+          cliSha256: "cbf51dd6f27dc62e94af75efb6c8c8cdf0cd470f756d625f2214422ce589a7d7",
+          gatewaySha256: "86b5c673278cb63b70c196359f50ae3bf0823ce2a8555eb3ae41db9d2517bdd7",
           wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
         },
         gateway: {
-          configSha256: "cafc36920c9caba0a1c540c00e91b3f8ecec95e02fbe7c30cf9ca6603fcb79a4",
+          configSha256: "b7188bec20ef2cb7a31a63addbe6ad3720ceebf7fbdfa778c8f727e096c026bb",
           driver: "mxc",
           backend: "process_container",
         },
@@ -222,7 +222,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   );
 
   it("rejects caller configuration hashes instead of letting observations mint authority (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
+    const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
     expect(() =>
       createMxcOpenShellQualificationGatewayConfiguration({
         agentPath: "C:\\openclaw\\node.exe",
@@ -240,7 +240,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   });
 
   it("rejects drift from provider-rendered configuration before attachment (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
+    const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
     const configured = createMxcOpenShellQualificationGatewayConfiguration({
       agentPath: "C:\\openclaw\\node.exe",
       distributionRevision: profile.expectation.distribution.revision,
@@ -263,10 +263,10 @@ describe("inactive OpenShell MXC installation attachment", () => {
             ...profile.expectation.gateway,
             configSha256: "6".repeat(64),
           },
-          distributionRoot: "C:\\OpenShell-dev.927",
+          distributionRoot: "C:\\OpenShell-combined",
           mxcRoot: "C:\\mxc-sdk",
-          cliPath: "C:\\OpenShell-dev.927\\openshell.exe",
-          gatewayPath: "C:\\OpenShell-dev.927\\openshell-gateway.exe",
+          cliPath: "C:\\OpenShell-combined\\openshell.exe",
+          gatewayPath: "C:\\OpenShell-combined\\openshell-gateway.exe",
           wxcExecPath: "C:\\mxc-sdk\\bin\\arm64\\wxc-exec.exe",
           gatewayConfigPath: "C:\\qualification\\gateway.toml",
         },
@@ -277,7 +277,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   it.each([
     ["openshell-not-provider-owned", /profile is not provider-owned/u],
     [
-      MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+      MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
       /does not match the provider-owned profile/u,
     ],
   ])(
