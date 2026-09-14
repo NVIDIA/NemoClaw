@@ -357,6 +357,49 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     }
   });
 
+  it("retries cleanup from a UUID quarantine after recursive removal fails", async () => {
+    const tmpHome = fs.mkdtempSync(
+      path.join(process.cwd(), "nemoclaw-uninstall-quarantine-retry-"),
+    );
+    const port = 9123;
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
+    let failedQuarantineRoot: string | null = null;
+    const failQuarantineRemoval: typeof fs.rmSync = (target) => {
+      failedQuarantineRoot = String(target);
+      throw new Error("injected quarantine removal failure");
+    };
+    const rmSync: typeof fs.rmSync = (target, options) =>
+      failedQuarantineRoot === null && String(target).startsWith(`${detachedRoot}.cleanup-`)
+        ? failQuarantineRemoval(target, options)
+        : fs.rmSync(target, options);
+    try {
+      const first = await runInterruptedUninstall(tmpHome, port, {
+        initialStateRoot: () => detachedRoot,
+        rmSync,
+      });
+
+      expect(first.outcome.exitCode).toBe(1);
+      expect(failedQuarantineRoot).not.toBeNull();
+      expect(fs.existsSync(detachedRoot)).toBe(false);
+      expect(fs.existsSync(failedQuarantineRoot!)).toBe(true);
+      expect(first.errors.join("\n")).toContain(
+        `Unable to remove abandoned interrupted-uninstall state at ${failedQuarantineRoot!}`,
+      );
+
+      const second = await runInterruptedUninstall(tmpHome, port);
+
+      expect(second.outcome.exitCode, second.errors.join("\n")).toBe(0);
+      expect(fs.existsSync(failedQuarantineRoot!)).toBe(false);
+      expect(
+        fs
+          .readdirSync(tmpHome)
+          .some((entry) => entry.startsWith(`${path.basename(detachedRoot)}.cleanup-`)),
+      ).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
   it("does not merge abandoned staging into newer selected state", async () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-newer-state-"));
     const port = 9123;

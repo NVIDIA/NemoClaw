@@ -3610,6 +3610,8 @@ function removeStateRootBeforeFinalCleanup(
 }
 
 const INTERRUPTED_UNINSTALL_STAGING_PREFIX = ".nemoclaw-uninstall-staging-";
+const INTERRUPTED_UNINSTALL_QUARANTINE_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function interruptedUninstallStagingTrustFailure(stat: fs.Stats): string | null {
   if (stat.isSymbolicLink() || !stat.isDirectory()) return "it is not a regular directory";
@@ -3636,31 +3638,51 @@ function interruptedUninstallStagingRoot(paths: UninstallPaths, runtime: Uninsta
   return stagingRoot;
 }
 
+function interruptedUninstallRecoveryRoots(stagingRoot: string): string[] {
+  const parent = path.dirname(stagingRoot);
+  const stagingName = path.basename(stagingRoot);
+  const quarantinePrefix = `${stagingName}.cleanup-`;
+  return fs
+    .readdirSync(parent)
+    .filter(
+      (entry) =>
+        entry === stagingName ||
+        (entry.startsWith(quarantinePrefix) &&
+          INTERRUPTED_UNINSTALL_QUARANTINE_ID.test(entry.slice(quarantinePrefix.length))),
+    )
+    .sort(
+      (left, right) =>
+        Number(right === stagingName) - Number(left === stagingName) || left.localeCompare(right),
+    )
+    .map((entry) => path.join(parent, entry));
+}
+
 function recoverAbandonedInterruptedUninstallState(
-  stagingRoot: string,
+  recoveryRoot: string,
+  quarantineBaseRoot: string,
   paths: UninstallPaths,
   preservedEntries: readonly string[],
   runtime: UninstallRuntime,
 ): boolean {
   let stat: fs.Stats;
   try {
-    stat = fs.lstatSync(stagingRoot);
+    stat = fs.lstatSync(recoveryRoot);
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") return true;
     runtime.warn(
-      `Unable to inspect abandoned interrupted-uninstall state at ${stagingRoot}: ${formatError(error)}. It was preserved for manual recovery.`,
+      `Unable to inspect abandoned interrupted-uninstall state at ${recoveryRoot}: ${formatError(error)}. It was preserved for manual recovery.`,
     );
     return false;
   }
   const trustFailure = interruptedUninstallStagingTrustFailure(stat);
   if (trustFailure) {
     runtime.warn(
-      `Abandoned interrupted-uninstall state at ${stagingRoot} is not trusted because ${trustFailure}. It was preserved for manual recovery.`,
+      `Abandoned interrupted-uninstall state at ${recoveryRoot} is not trusted because ${trustFailure}. It was preserved for manual recovery.`,
     );
     return false;
   }
   const presentPreservedEntries = preservedEntries.filter((entry) =>
-    pathEntryExists(path.join(stagingRoot, entry), runtime),
+    pathEntryExists(path.join(recoveryRoot, entry), runtime),
   );
   if (presentPreservedEntries.length > 0) {
     try {
@@ -3685,7 +3707,7 @@ function recoverAbandonedInterruptedUninstallState(
           .filter((entry) => !preservedTopLevelEntries.has(entry));
         if (unexpectedEntries.length > 0) {
           runtime.warn(
-            `Unable to recover preserved state because newer selected state exists at ${paths.nemoclawStateDir}. Cleanup stopped with abandoned state at ${stagingRoot}.`,
+            `Unable to recover preserved state because newer selected state exists at ${paths.nemoclawStateDir}. Cleanup stopped with abandoned state at ${recoveryRoot}.`,
           );
           return false;
         }
@@ -3695,17 +3717,17 @@ function recoverAbandonedInterruptedUninstallState(
       assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), paths.nemoclawStateDir);
     } catch (error) {
       runtime.warn(
-        `Unable to prepare selected state for interrupted-uninstall recovery: ${formatError(error)}. Cleanup stopped with abandoned state at ${stagingRoot}.`,
+        `Unable to prepare selected state for interrupted-uninstall recovery: ${formatError(error)}. Cleanup stopped with abandoned state at ${recoveryRoot}.`,
       );
       return false;
     }
   }
   for (const entry of presentPreservedEntries) {
-    const source = path.join(stagingRoot, entry);
+    const source = path.join(recoveryRoot, entry);
     const destination = path.join(paths.nemoclawStateDir, entry);
     if (pathEntryExists(destination, runtime)) {
       runtime.warn(
-        `Unable to recover preserved ${entry} because state already exists at ${destination}. Cleanup stopped with abandoned state at ${stagingRoot}.`,
+        `Unable to recover preserved ${entry} because state already exists at ${destination}. Cleanup stopped with abandoned state at ${recoveryRoot}.`,
       );
       return false;
     }
@@ -3713,7 +3735,7 @@ function recoverAbandonedInterruptedUninstallState(
       fs.renameSync(source, destination);
     } catch (error) {
       runtime.warn(
-        `Unable to recover preserved ${entry}: ${formatError(error)}. Cleanup stopped with abandoned state at ${stagingRoot}.`,
+        `Unable to recover preserved ${entry}: ${formatError(error)}. Cleanup stopped with abandoned state at ${recoveryRoot}.`,
       );
       return false;
     }
@@ -3723,12 +3745,12 @@ function recoverAbandonedInterruptedUninstallState(
       `Recovered preserved state from an interrupted uninstall: ${presentPreservedEntries.join(", ")}`,
     );
   }
-  const quarantineRoot = `${stagingRoot}.cleanup-${randomUUID()}`;
+  const quarantineRoot = `${quarantineBaseRoot}.cleanup-${randomUUID()}`;
   try {
-    fs.renameSync(stagingRoot, quarantineRoot);
+    fs.renameSync(recoveryRoot, quarantineRoot);
   } catch (error) {
     runtime.warn(
-      `Unable to detach abandoned interrupted-uninstall state at ${stagingRoot}: ${formatError(error)}. It was preserved for manual recovery.`,
+      `Unable to detach abandoned interrupted-uninstall state at ${recoveryRoot}: ${formatError(error)}. It was preserved for manual recovery.`,
     );
     return false;
   }
@@ -3764,16 +3786,17 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
   preservedEntries: readonly string[],
 ): boolean {
   let stagingRoot: string;
+  let recoveryRoots: string[];
   try {
     stagingRoot = interruptedUninstallStagingRoot(paths, runtime);
-    fs.lstatSync(stagingRoot);
+    recoveryRoots = interruptedUninstallRecoveryRoots(stagingRoot);
   } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return true;
     runtime.warn(
       `Unable to inspect interrupted-uninstall recovery state before cleanup: ${formatError(error)}. The selected state was preserved.`,
     );
     return false;
   }
+  if (recoveryRoots.length === 0) return true;
 
   let migrationLock: GatewayStateMigrationLockHandle;
   try {
@@ -3788,11 +3811,14 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
   let recovered = false;
   let released = true;
   try {
-    recovered = recoverAbandonedInterruptedUninstallState(
-      stagingRoot,
-      paths,
-      preservedEntries,
-      runtime,
+    recovered = recoveryRoots.every((recoveryRoot) =>
+      recoverAbandonedInterruptedUninstallState(
+        recoveryRoot,
+        stagingRoot,
+        paths,
+        preservedEntries,
+        runtime,
+      ),
     );
   } finally {
     try {
@@ -3839,7 +3865,13 @@ function removeInterruptedStateRootAfterFinalCleanup(
     return false;
   }
   if (
-    !recoverAbandonedInterruptedUninstallState(detachedStateRoot, paths, preservedEntries, runtime)
+    !recoverAbandonedInterruptedUninstallState(
+      detachedStateRoot,
+      detachedStateRoot,
+      paths,
+      preservedEntries,
+      runtime,
+    )
   ) {
     return false;
   }
