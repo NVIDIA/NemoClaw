@@ -25,6 +25,7 @@ import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
   assistantTextRepairErrors,
   assistantTextRepairPrompt,
+  advisorTurnFlowDiagnostics,
   type AdvisorContextToolResult,
   type AdvisorPromptTurn,
   type AdvisorTurnFlowEvent,
@@ -347,11 +348,21 @@ export async function runReadOnlyAdvisor(
   const promptTurns = normalizePromptTurns(options.promptTurns);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
+  let currentTurnDiagnosticFlow: AdvisorTurnFlowEvent[] = [];
+  let currentTurnRepairAttempts = {
+    assistantText: false,
+    atomicTerminal: false,
+    terminalSubmit: false,
+  };
+  const recordTurnFlow = (event: AdvisorTurnFlowEvent): void => {
+    currentTurnFlow.push(event);
+    currentTurnDiagnosticFlow.push(event);
+  };
   const customTools = [
     ...createRepoConfinedReadOnlyTools(
       options.cwd,
       (observation) => {
-        currentTurnFlow.push({ type: "read", ...observation });
+        recordTurnFlow({ type: "read", ...observation });
       },
       options.additionalReadRoots,
     ),
@@ -444,7 +455,7 @@ export async function runReadOnlyAdvisor(
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     if (event.type === "message_update") {
       if (event.assistantMessageEvent.type === "text_delta") {
-        currentTurnFlow.push({ type: "text", text: event.assistantMessageEvent.delta });
+        recordTurnFlow({ type: "text", text: event.assistantMessageEvent.delta });
         currentTurnText?.append(event.assistantMessageEvent.delta);
         raw.append(event.assistantMessageEvent.delta);
         return;
@@ -468,12 +479,12 @@ export async function runReadOnlyAdvisor(
       return;
     }
     if (event.type === "tool_execution_start") {
-      currentTurnFlow.push({ type: "tool_start", toolName: event.toolName });
+      recordTurnFlow({ type: "tool_start", toolName: event.toolName });
       raw.append(`\n[${options.logPrefix}] tool_start ${event.toolName}\n`);
       return;
     }
     if (event.type === "tool_execution_end") {
-      currentTurnFlow.push({
+      recordTurnFlow({
         type: "tool_end",
         toolName: event.toolName,
         isError: event.isError,
@@ -551,6 +562,12 @@ export async function runReadOnlyAdvisor(
       currentTurnError = undefined;
       successfulToolNames = new Set();
       currentTurnFlow = [];
+      currentTurnDiagnosticFlow = [];
+      currentTurnRepairAttempts = {
+        assistantText: false,
+        atomicTerminal: false,
+        terminalSubmit: false,
+      };
       turnTextBuffers.push(currentTurnText);
       const turnIndex = `${index + 1}/${promptTurns.length}`;
       options.onTurnStart?.(turn);
@@ -588,6 +605,7 @@ export async function runReadOnlyAdvisor(
           if (
             repairableAssistantText(turn, initialFlow, tools, successfulToolNames, currentTurnError)
           ) {
+            currentTurnRepairAttempts.assistantText = true;
             contextTools.deactivate();
             session.setActiveToolsByName([]);
             currentTurnFlow = [];
@@ -609,6 +627,7 @@ export async function runReadOnlyAdvisor(
             currentTurnError,
           );
           if (repairToolName) {
+            currentTurnRepairAttempts.atomicTerminal = true;
             contextTools.deactivate();
             session.setActiveToolsByName([repairToolName]);
             currentTurnFlow = [];
@@ -643,6 +662,7 @@ export async function runReadOnlyAdvisor(
             currentTurnError,
           );
           if (submitRepairToolName) {
+            currentTurnRepairAttempts.terminalSubmit = true;
             const originalSubmitFlow = currentTurnFlow;
             contextTools.deactivate();
             session.setActiveToolsByName([
@@ -695,6 +715,19 @@ export async function runReadOnlyAdvisor(
       options.logProgress(
         `Advisor SDK turn ${turnIndex} settled: ${turn.name} status=${settlement.turn.status} textBytes=${turnTextBytes}`,
       );
+      if (settlement.turn.error) {
+        const diagnostics = advisorTurnFlowDiagnostics(
+          currentTurnDiagnosticFlow,
+          tools.requiredToolNames,
+          availableToolNames,
+        );
+        options.logProgress(
+          `Advisor SDK turn failure diagnostics: ${JSON.stringify({
+            ...diagnostics,
+            repairAttempts: currentTurnRepairAttempts,
+          })}`,
+        );
+      }
       if (settlement.turn.error) {
         turnErrors.push(`${turn.name}: ${settlement.turn.error}`);
       }

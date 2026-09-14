@@ -105,6 +105,89 @@ export type AdvisorTurnFlowEvent =
   | { type: "tool_start"; toolName: string }
   | { type: "tool_end"; toolName: string; isError: boolean };
 
+export type AdvisorTurnFlowDiagnostics = {
+  textEvents: number;
+  readEvents: number;
+  toolStarts: number;
+  toolEnds: number;
+  toolFailures: number;
+  failedToolNames: string[];
+  unmatchedToolEndNames: string[];
+  unsettledToolNames: string[];
+  missingRequiredToolNames: string[];
+};
+
+export function advisorTurnFlowDiagnostics(
+  events: AdvisorTurnFlowEvent[],
+  requiredToolNames: string[],
+  availableToolNames: ReadonlySet<string>,
+): AdvisorTurnFlowDiagnostics {
+  const openCalls = new Map<string, number>();
+  const failedToolNames = new Set<string>();
+  const unmatchedToolEndNames = new Set<string>();
+  let textEvents = 0;
+  let readEvents = 0;
+  let toolStarts = 0;
+  let toolEnds = 0;
+  let toolFailures = 0;
+
+  const diagnosticName = (toolName: string): string =>
+    availableToolNames.has(toolName) ? toolName : "<unknown>";
+
+  for (const event of events) {
+    if (event.type === "text") {
+      textEvents += 1;
+      continue;
+    }
+    if (event.type === "read") {
+      readEvents += 1;
+      continue;
+    }
+    const toolName = diagnosticName(event.toolName);
+    if (event.type === "tool_start") {
+      toolStarts += 1;
+      openCalls.set(toolName, (openCalls.get(toolName) ?? 0) + 1);
+      continue;
+    }
+    toolEnds += 1;
+    if (event.isError) {
+      toolFailures += 1;
+      failedToolNames.add(toolName);
+    }
+    const openCount = openCalls.get(toolName) ?? 0;
+    if (openCount === 0) {
+      unmatchedToolEndNames.add(toolName);
+      continue;
+    }
+    openCalls.set(toolName, openCount - 1);
+  }
+
+  const unsettledToolNames = [...openCalls]
+    .filter(([, count]) => count > 0)
+    .map(([toolName]) => toolName)
+    .sort();
+  return {
+    textEvents,
+    readEvents,
+    toolStarts,
+    toolEnds,
+    toolFailures,
+    failedToolNames: [...failedToolNames].sort(),
+    unmatchedToolEndNames: [...unmatchedToolEndNames].sort(),
+    unsettledToolNames,
+    missingRequiredToolNames: missingRequiredAdvisorToolNames(
+      requiredToolNames,
+      new Set(
+        events.flatMap((event) =>
+          event.type === "tool_end" && !event.isError && availableToolNames.has(event.toolName)
+            ? [event.toolName]
+            : [],
+        ),
+      ),
+    ).sort(),
+  };
+}
+
 export function resolveAdvisorTurnTools(
   turn: AdvisorPromptTurn,
   contextToolNames: string[],

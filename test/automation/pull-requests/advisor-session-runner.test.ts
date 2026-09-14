@@ -56,6 +56,7 @@ const sdk = vi.hoisted(() => {
     emitAnalysisError: false,
     emitCommitProse: false,
     emitRepairProse: false,
+    failOptionalRead: false,
     omitAnalysis: false,
     omitAnalysisPrompts: 0,
     prompts: [] as string[],
@@ -74,6 +75,7 @@ const sdk = vi.hoisted(() => {
     state.emitAnalysisError = false;
     state.emitCommitProse = false;
     state.emitRepairProse = false;
+    state.failOptionalRead = false;
     state.omitAnalysis = false;
     state.omitAnalysisPrompts = 0;
     state.prompts = [];
@@ -169,10 +171,13 @@ const sdk = vi.hoisted(() => {
           : Promise.resolve());
         const requiredReadPath = /^- (.+)$/mu.exec(prompt.split("Required files:\n")[1] ?? "")?.[1];
         const readTool = state.customTools.find(
-          (tool) => requiredReadPath && activeToolNames.includes(tool.name) && tool.name === "read",
+          (tool) => activeToolNames.includes(tool.name) && tool.name === "read",
         );
         await (readTool && requiredReadPath
           ? executeReadTool(readTool, requiredReadPath, emit)
+          : Promise.resolve());
+        await (readTool && state.failOptionalRead
+          ? executeReadTool(readTool, "missing-optional-evidence", emit)
           : Promise.resolve());
         const repairTools = state.customTools.filter(
           (tool) => isRepairPrompt && activeToolNames.includes(tool.name) && tool !== terminalTool,
@@ -357,6 +362,7 @@ async function run(
   promptTurns: AdvisorPromptTurn[],
   prepare?: (directory: string) => void,
   additionalReadRoots: string[] = [],
+  logProgress: (message: string) => void = () => {},
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
@@ -374,7 +380,7 @@ async function run(
     maxCaptureBytes: 64 * 1024,
     credentialEnv: "TEST_ADVISOR_KEY",
     logPrefix: "test-advisor",
-    logProgress: () => {},
+    logProgress,
     customTools: [
       customTool("turn_action"),
       customTool("draft_action"),
@@ -635,6 +641,24 @@ describe("advisor session runner", () => {
     expect(result.raw).not.toContain("terminal_submit_repair_start");
     expect(sdk.state.activeToolCalls).toContainEqual([]);
     expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("logs tool-flow diagnostics when an optional read blocks prose repair", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.failOptionalRead = true;
+    const progress: string[] = [];
+
+    const result = await run([analysisTurn("investigate")], undefined, [], (message) =>
+      progress.push(message),
+    );
+
+    expect(result.fatalError).toBe("investigate omitted required analysis");
+    expect(progress).toContainEqual(
+      expect.stringContaining(
+        'Advisor SDK turn failure diagnostics: {"textEvents":0,"readEvents":0,"toolStarts":2,"toolEnds":2,"toolFailures":1,"failedToolNames":["read"]',
+      ),
+    );
+    expect(progress.join("\n")).not.toContain("missing-optional-evidence");
   });
 
   it("repairs omitted required recording tools before submit (#9963)", async () => {
