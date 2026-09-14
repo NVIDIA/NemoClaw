@@ -16,23 +16,19 @@ const JSON5_MODULE = path.resolve(import.meta.dirname, "../../../../nemoclaw/nod
 describe("nemoclaw-start one-shot command setup", () => {
   it("reads the live gateway port from strict JSON and JSON5 config", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-gateway-port-"));
+    const configPath = path.join(tmpDir, "openclaw.json");
     const readConfiguredGatewayPort = extractShellFunctionFromSource(
       source,
       "_read_configured_gateway_port",
-    ).replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE);
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-gateway-port-"));
-    const configPath = path.join(tmpDir, "openclaw.json");
+    )
+      .replaceAll("/opt/nemoclaw/node_modules/json5", JSON5_MODULE)
+      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
     const readPort = () =>
-      spawnSync(
-        "bash",
-        [
-          "-c",
-          `${readConfiguredGatewayPort}\n_read_configured_gateway_port "$1"`,
-          "bash",
-          configPath,
-        ],
-        { encoding: "utf8", timeout: 5000 },
-      );
+      spawnSync("bash", ["-c", `${readConfiguredGatewayPort}\n_read_configured_gateway_port`], {
+        encoding: "utf8",
+        timeout: 5000,
+      });
 
     try {
       fs.writeFileSync(configPath, JSON.stringify({ gateway: { port: 18791 } }));

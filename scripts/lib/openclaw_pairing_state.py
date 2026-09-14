@@ -196,7 +196,6 @@ def sqlite_database_metadata(database_fd):
 
 
 def _open_wal_descriptors(state_dir, state_fd, sqlite_state_fd):
-    wal_fd = -1
     shared_memory_fd = -1
     try:
         wal_fd = os.open("openclaw.sqlite-wal", _file_flags(), dir_fd=sqlite_state_fd)

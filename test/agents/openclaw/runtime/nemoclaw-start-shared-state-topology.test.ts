@@ -29,18 +29,18 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
   const source = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("pins SQLite temporary files inside owner-only OpenClaw state for OpenShell", () => {
+    const tmp = fs.mkdtempSync(path.join(process.cwd(), ".tmp-openclaw-sqlite-"));
+    const sqliteTmp = path.join(tmp, "state", "tmp");
     const block = sourceBlock(
       source,
       "prepare_openshell_sqlite_tmpdir() {",
       "# ── Main ─────────────────────────────────────────────────────────",
-    );
-    const tmp = fs.mkdtempSync(path.join(process.cwd(), ".tmp-openclaw-sqlite-"));
-    const sqliteTmp = path.join(tmp, "state", "tmp");
+    ).replaceAll("/sandbox/.openclaw/tmp", sqliteTmp);
     try {
       const result = runBash([
         'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%u" ]; then id -u; else command stat "$@"; fi; }',
         block,
-        `prepare_openshell_sqlite_tmpdir ${JSON.stringify(sqliteTmp)}`,
+        "prepare_openshell_sqlite_tmpdir",
         'printf "%s\\n" "$SQLITE_TMPDIR"',
       ]);
 
@@ -53,21 +53,18 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
   });
 
   it("refuses a symlinked SQLite temporary directory", () => {
+    const tmp = fs.mkdtempSync(path.join(process.cwd(), ".tmp-openclaw-sqlite-"));
+    const outside = path.join(tmp, "outside");
+    const sqliteTmp = path.join(tmp, "sqlite-tmp");
     const block = sourceBlock(
       source,
       "prepare_openshell_sqlite_tmpdir() {",
       "# ── Main ─────────────────────────────────────────────────────────",
-    );
-    const tmp = fs.mkdtempSync(path.join(process.cwd(), ".tmp-openclaw-sqlite-"));
-    const outside = path.join(tmp, "outside");
-    const sqliteTmp = path.join(tmp, "sqlite-tmp");
+    ).replaceAll("/sandbox/.openclaw/tmp", sqliteTmp);
     fs.mkdirSync(outside);
     fs.symlinkSync(outside, sqliteTmp);
     try {
-      const result = runBash([
-        block,
-        `prepare_openshell_sqlite_tmpdir ${JSON.stringify(sqliteTmp)}`,
-      ]);
+      const result = runBash([block, "prepare_openshell_sqlite_tmpdir"]);
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("Refusing unsafe OpenClaw SQLite temporary directory");

@@ -441,7 +441,7 @@ emit_startup_error() {
 }
 
 _read_configured_gateway_port() {
-  local node_bin config_path="${1:-/sandbox/.openclaw/openclaw.json}"
+  local node_bin config_path="/sandbox/.openclaw/openclaw.json"
   node_bin="$(command -v node 2>/dev/null)" || return 1
   "$node_bin" - "$config_path" <<'NODEPORT'
 const fs = require("fs");
@@ -5827,7 +5827,7 @@ handle_openclaw_gateway_control_request() {
 # the agent-owned OpenClaw state tree; do not redirect unrelated process temp
 # files.
 prepare_openshell_sqlite_tmpdir() {
-  local sqlite_tmpdir="${1:-/sandbox/.openclaw/tmp}"
+  local sqlite_tmpdir="/sandbox/.openclaw/tmp"
   if [ -L "$sqlite_tmpdir" ] || { [ -e "$sqlite_tmpdir" ] && [ ! -d "$sqlite_tmpdir" ]; }; then
     echo "[SECURITY] Refusing unsafe OpenClaw SQLite temporary directory: $sqlite_tmpdir" >&2
     return 1
@@ -5849,20 +5849,20 @@ run_requested_openclaw_post_upgrade_doctor() {
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     return 0
   fi
-  [ -f "$marker" ] && [ ! -L "$marker" ] || {
+  if [ ! -f "$marker" ] || [ -L "$marker" ]; then
     echo "[SECURITY] Refusing unsafe post-upgrade doctor marker" >&2
     return 1
-  }
+  fi
   marker_metadata="$(stat -c '%u %a %h' "$marker" 2>/dev/null)" || return 1
   read -r marker_owner marker_mode marker_links <<EOF
 $marker_metadata
 EOF
-  [ "$marker_owner" = "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
-    && [ "$marker_mode" = "600" ] \
-    && [ "$marker_links" = "1" ] || {
+  if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
+    || [ "$marker_mode" != "600" ] \
+    || [ "$marker_links" != "1" ]; then
     echo "[SECURITY] Refusing untrusted post-upgrade doctor marker" >&2
     return 1
-  }
+  fi
   {
     IFS= read -r marker_value || return 1
     if IFS= read -r extra || [ -n "$extra" ]; then
