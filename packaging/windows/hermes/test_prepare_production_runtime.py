@@ -44,6 +44,11 @@ class PartitionControls(unittest.TestCase):
             MODULE.GIT_DOCUMENTATION_SOURCE + "LICENSE.adoc": b"license retained",
             MODULE.GIT_DOCUMENTATION_SOURCE + "legal/topic.adoc": b"legal retained",
             "git/usr/share/man/man1/git-help.1": b"manual retained",
+            "ffmpeg/bin/ffmpeg.exe": b"messaging transcode retained",
+            "ffmpeg/bin/ffprobe.exe": b"messaging probe retained",
+            "ffmpeg/bin/ffplay.exe": b"unused interactive player",
+            "ffmpeg/doc/index.html": b"development documentation",
+            "ffmpeg/LICENSE": b"ffmpeg license retained",
             "hermes-agent/skills/topic.adoc": b"unrelated dynamic resource retained",
             "hermes-agent/website/static/api/model-catalog.json": b"{}",
             "hermes-agent/website/LICENSE": b"website license retained in archive",
@@ -85,11 +90,15 @@ class PartitionControls(unittest.TestCase):
                 self.root, self.inventory, self.base / "diagnostics"
             )
         removed = {row["path"] for row in result["files"]}
-        self.assertEqual(len(removed), 10)
+        self.assertEqual(len(removed), 15)
         self.assertFalse((self.root / "hermes-agent/.github").exists())
         self.assertFalse((self.root / "hermes-agent/website").exists())
         self.assertTrue((self.root / "THIRD-PARTY-LICENSES.tar.gz").is_file())
-        self.assertEqual(result["installedLicenseArchive"]["content"]["files"], 1)
+        self.assertTrue((self.root / "ffmpeg/bin/ffmpeg.exe").is_file())
+        self.assertTrue((self.root / "ffmpeg/bin/ffprobe.exe").is_file())
+        self.assertFalse((self.root / "ffmpeg/bin/ffplay.exe").exists())
+        self.assertTrue((self.root / "ffmpeg/LICENSE").is_file())
+        self.assertEqual(result["installedLicenseArchive"]["content"]["files"], 2)
         for row in result["archives"]:
             path = self.base / "diagnostics" / row["file"]
             self.assertEqual(
