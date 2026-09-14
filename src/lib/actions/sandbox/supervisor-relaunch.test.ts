@@ -55,7 +55,12 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       .mockReturnValueOnce("old-container-id")
       .mockReturnValue("new-container-id"),
     inspectContainer: vi.fn(() => ({
-      Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
+      Config: {
+        Env: [
+          "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+          "OPENCLAW_GATEWAY_URL=wss://gateway.example.test:443",
+        ],
+      },
     })),
     confirmMissingSupervisor: vi.fn(() => true),
     restartRestoredManagedGateway: vi.fn(() => true),
@@ -152,6 +157,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     const serialized = options?.openshellSandboxCommand.join(" ") ?? "";
     expect(serialized).toContain("NEMOCLAW_DASHBOARD_PORT=18789");
+    expect(serialized).toContain("OPENCLAW_GATEWAY_URL=wss://gateway.example.test:443");
     expect(serialized).toMatch(/nemoclaw-start$/);
     expect(serialized).not.toContain("s3cr3t-token");
     expect(serialized).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
@@ -297,7 +303,8 @@ describe("relaunchManagedSupervisorSession", () => {
     });
 
     expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
-    expect(deps.resolveContainer).not.toHaveBeenCalled();
+    expect(deps.resolveContainer).toHaveBeenCalledWith("alpha", "docker");
+    expect(deps.inspectContainer).toHaveBeenCalledWith("old-container-id");
     expect(deps.recreate).not.toHaveBeenCalled();
   });
 
