@@ -188,15 +188,15 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(serialized(resolveJob)).not.toContain('repair-resolve.mts\\" recover');
   });
 
-  // source-shape-contract: security -- A failed create can still allocate a sandbox, so cleanup must always attempt idempotent deletion
-  it("always cleans up the repair sandbox after a create attempt (#10791)", () => {
-    const cleanup = (workflow.jobs.resolve.steps ?? []).find((step) =>
-      step.run?.includes('repair-resolve.mts" delete'),
+  // source-shape-contract: security -- The gateway and sandbox must share one owned lifecycle so later failures cannot strand either process
+  it("owns inference and repair cleanup in one lifecycle command (#10791)", () => {
+    const resolve = (workflow.jobs.resolve.steps ?? []).find((step) =>
+      step.run?.includes('repair-resolve.mts" resolve'),
     );
 
-    expect(cleanup).toBeDefined();
-    expect(cleanup?.if).toBe("${{ always() }}");
-    expect(cleanup?.if).not.toContain("steps.create.outcome");
+    expect(resolve).toBeDefined();
+    expect(resolve?.env?.CLEANUP_RECEIPT_FILE).toBe("${{ runner.temp }}/cleanup.json");
+    expect(serialized(workflow.jobs.resolve)).not.toContain('repair-resolve.mts\\" configure');
   });
 
   // source-shape-contract: security -- Cleanup evidence must survive every candidate or deletion failure without gaining credentials or write authority
@@ -221,10 +221,14 @@ describe("manual PR Review Advisor repair workflow", () => {
     const validated = (workflow.jobs.validate.steps ?? []).find((step) =>
       String(step.with?.name ?? "").startsWith("advisor-repair-validated-"),
     );
+    const dependency = (workflow.jobs["reviewed-dependency"].steps ?? []).find((step) =>
+      String(step.with?.name ?? "").startsWith("advisor-repair-reviewed-dependency-"),
+    );
 
     expect(selection?.with?.["retention-days"]).toBe(31);
     expect(candidate?.with?.["retention-days"]).toBe(31);
     expect(validated?.with?.["retention-days"]).toBe(31);
+    expect(dependency?.with?.["retention-days"]).toBe(31);
   });
 
   // source-shape-contract: security -- A model-declared no-repair outcome must never cross into candidate execution or protected publication

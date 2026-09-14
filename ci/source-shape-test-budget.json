@@ -58,7 +58,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
-      "test": "always cleans up the repair sandbox after a create attempt (#10791)",
+      "test": "owns inference and repair cleanup in one lifecycle command (#10791)",
       "category": "security"
     },
     {

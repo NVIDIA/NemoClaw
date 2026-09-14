@@ -269,8 +269,8 @@ describe("PR Review Advisor trusted validation", () => {
     );
     expect(sandboxExecs).toHaveLength(plan.length);
     expect(
-      sandboxExecs.map(([, arguments_]) => arguments_[arguments_.lastIndexOf("--") + 1]),
-    ).toEqual(plan.map(({ executable }) => executable));
+      sandboxExecs.map(([, arguments_]) => arguments_.slice(arguments_.lastIndexOf("--") + 1)),
+    ).toEqual(plan.map(({ executable, arguments: arguments_ }) => [executable, ...arguments_]));
     expect(run.mock.calls.some(([command]) => command === "npm")).toBe(false);
     const commandEnvironments = JSON.stringify(run.mock.calls.map(([, , options]) => options.env));
     expect(commandEnvironments).not.toContain("github-secret");

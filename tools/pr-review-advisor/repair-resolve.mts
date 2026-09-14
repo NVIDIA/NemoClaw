@@ -19,7 +19,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-  configureOpenShellInference,
   createOpenShellSandbox,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
@@ -27,6 +26,7 @@ import {
   execOpenShellSandbox,
   type OpenShellTools,
   required,
+  startOwnedOpenShellInference,
 } from "../openshell-agent/runtime.mts";
 import { readBoundedFile } from "../post-merge-docs/contract.mts";
 import {
@@ -232,15 +232,50 @@ export function prepareAdvisorRepairInputs(input: {
   return selection;
 }
 
-export async function configureAdvisorRepairInference(
+export async function resolveAdvisorRepairLifecycle(
   env: NodeJS.ProcessEnv,
+  receiptFile: string,
   tools: OpenShellTools = defaultOpenShellTools,
-): Promise<void> {
-  await configureOpenShellInference(
+): Promise<"proposed" | "blocked"> {
+  const inference = startOwnedOpenShellInference(
     env,
     { gatewayId: "pr-review-advisor-repair", modelId: RESOLVER_MODEL_ID, providerName: "terra" },
     tools,
   );
+  let outcome: "proposed" | "blocked" | undefined;
+  let primaryError: unknown;
+  try {
+    await inference.configure;
+    delete env.OPENAI_API_KEY;
+    createAdvisorRepairSandbox(env, tools);
+    runAdvisorRepairTask(env, tools);
+    downloadAdvisorRepairCandidate(env, tools);
+    outcome = exportRepair(env);
+  } catch (error) {
+    primaryError = error;
+  }
+
+  const cleanupErrors: string[] = [];
+  try {
+    deleteAdvisorRepairSandbox(env, receiptFile, tools);
+  } catch (error) {
+    cleanupErrors.push(`sandbox cleanup failed: ${sanitizeDiagnostic(error)}`);
+  }
+  try {
+    await inference.stop();
+  } catch (error) {
+    cleanupErrors.push(`gateway cleanup failed: ${sanitizeDiagnostic(error)}`);
+  }
+
+  if (primaryError !== undefined || cleanupErrors.length > 0) {
+    const diagnostics = [
+      ...(primaryError === undefined ? [] : [sanitizeDiagnostic(primaryError)]),
+      ...cleanupErrors,
+    ];
+    throw new RepairError(diagnostics.join("; "));
+  }
+  if (outcome === undefined) throw new RepairError("repair lifecycle produced no outcome");
+  return outcome;
 }
 
 export function createAdvisorRepairSandbox(
@@ -489,26 +524,12 @@ async function main(): Promise<void> {
         configDirectory: required(process.env.RESOLVER_CONFIG_DIR, "RESOLVER_CONFIG_DIR"),
       });
       return;
-    case "configure":
-      await configureAdvisorRepairInference(process.env);
-      return;
-    case "create":
-      createAdvisorRepairSandbox(process.env);
-      return;
-    case "run":
-      runAdvisorRepairTask(process.env);
-      return;
-    case "download":
-      downloadAdvisorRepairCandidate(process.env);
-      return;
-    case "export":
-      console.log(exportRepair(process.env));
-      return;
-    case "delete":
-      deleteAdvisorRepairSandbox(
-        process.env,
-        required(process.env.CLEANUP_RECEIPT_FILE, "CLEANUP_RECEIPT_FILE"),
-        defaultOpenShellTools,
+    case "resolve":
+      console.log(
+        await resolveAdvisorRepairLifecycle(
+          process.env,
+          required(process.env.CLEANUP_RECEIPT_FILE, "CLEANUP_RECEIPT_FILE"),
+        ),
       );
       return;
     default:

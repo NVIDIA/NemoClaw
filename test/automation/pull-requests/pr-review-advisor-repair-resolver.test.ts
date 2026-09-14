@@ -18,6 +18,7 @@ import {
   exportAdvisorRepairPatch,
   materializeAdvisorRepairWorkspace,
   prepareAdvisorRepairInputs,
+  resolveAdvisorRepairLifecycle,
   runAdvisorRepairTask,
 } from "../../../tools/pr-review-advisor/repair-resolve.mts";
 
@@ -173,6 +174,65 @@ describe("PR Review Advisor two-turn resolver", () => {
     expect(calls[1]?.options.env).not.toHaveProperty("GITHUB_TOKEN");
     expect(calls[0]?.options.env).not.toHaveProperty("PR_REVIEW_ADVISOR_API_KEY");
     expect(calls[1]?.options.env).not.toHaveProperty("PR_REVIEW_ADVISOR_API_KEY");
+  });
+
+  it("stops the owned gateway when a later repair phase fails (#10791)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-lifecycle-"));
+    temporaryDirectories.push(directory);
+    const stop = vi.fn(async () => {
+      throw new Error("gateway stop failed");
+    });
+    const run = vi.fn<OpenShellTools["run"]>((command, arguments_) => {
+      switch (`${command}:${arguments_[0] ?? ""}:${arguments_[1] ?? ""}`) {
+        case "which:openshell-sandbox:":
+          return "/trusted/bin/openshell-sandbox";
+        case "openshell:gateway:info":
+          return "healthy";
+        case "openshell:sandbox:exec":
+          throw new Error("repair turn failed");
+        case "openshell:sandbox:list":
+          return "advisor-repair-456-1";
+        default:
+          return "";
+      }
+    });
+    const tools: OpenShellTools = {
+      run,
+      runAsync: () => ({ cancel: () => {}, completion: Promise.resolve() }),
+      start: () => stop,
+      wait: async () => {},
+    };
+
+    await expect(
+      resolveAdvisorRepairLifecycle(
+        {
+          ARTIFACT_DIR: path.join(directory, "artifact"),
+          HOME: directory,
+          OPENAI_API_KEY: "model-secret",
+          OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
+          PATH: "/usr/bin",
+          PI_IMAGE: `example.invalid/pi@sha256:${"a".repeat(64)}`,
+          REPAIR_BASE_DIR: path.join(directory, "base"),
+          REPAIR_DOWNLOAD_DIR: path.join(directory, "download"),
+          RESOLUTION_WORKDIR: path.join(directory, "workspace"),
+          RESOLVER_CONFIG_DIR: path.join(directory, "config"),
+          RUNNER_TEMP: directory,
+          SANDBOX_NAME: "advisor-repair-456-1",
+          SELECTION_FILE: path.join(directory, "selection.json"),
+          SOURCE_REPOSITORY: path.join(directory, "source"),
+          TRUSTED_CHECKOUT: "/trusted",
+        },
+        path.join(directory, "cleanup.json"),
+        tools,
+      ),
+    ).rejects.toThrow("repair turn failed; gateway cleanup failed: gateway stop failed");
+
+    expect(stop).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "delete", "advisor-repair-456-1"],
+      expect.anything(),
+    );
   });
 
   it("materializes exact blobs without candidate attributes or symlinks (#10791)", () => {

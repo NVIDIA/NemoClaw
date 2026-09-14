@@ -284,32 +284,15 @@ jobs:
             NEMOCLAW_NON_INTERACTIVE=1 \
             bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
 
-      - name: Configure the host inference boundary
-        env:
-          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" configure
-
-      - id: create
-        name: Create the credential-free repair sandbox
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" create
-
-      - name: Run exactly two repair turns
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" run
-
       - id: export
-        name: Download and export the untrusted proposal
-        env:
-          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
-        run: |
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" download
-          outcome="$(node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" export)"
-          printf 'outcome=%s\n' "$outcome" >>"$GITHUB_OUTPUT"
-
-      - name: Delete the repair sandbox
-        if: ${{ always() }}
+        name: Resolve, download, and export with owned cleanup
         env:
           CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/cleanup.json
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" delete
+          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+        run: |
+          outcome="$(node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" resolve)"
+          printf 'outcome=%s\n' "$outcome" >>"$GITHUB_OUTPUT"
 
       - name: Upload the cleanup receipt
         if: ${{ always() }}
@@ -439,7 +422,7 @@ jobs:
           name: advisor-repair-reviewed-dependency-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/openshell-sdk/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 31
 
   validate:
     name: Validate without credentials or write authority
