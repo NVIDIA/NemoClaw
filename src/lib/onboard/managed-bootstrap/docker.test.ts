@@ -372,6 +372,8 @@ describe("Docker managed bootstrap adapter", () => {
     fake.deps.runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
       .mockImplementationOnce(() => {
         expect(fake.journal?.phase).toBe("shared-state-committed");
         expect(fake.original).toBeNull();
@@ -450,7 +452,7 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events.indexOf("journal:completion")).toBeGreaterThan(
       fake.events.indexOf(`start:${NEW_ID}`),
     );
-    expect(vi.mocked(fake.deps.runOpenshell!)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fake.deps.runOpenshell!)).toHaveBeenCalledTimes(3);
     const finalized = await adapter.finalizeBootstrap({
       outcome: "commit",
       handle,
@@ -471,6 +473,8 @@ describe("Docker managed bootstrap adapter", () => {
     expect(vi.mocked(fake.deps.runOpenshell!).mock.calls.map(([args]) => args.slice(0, 2))).toEqual(
       [
         ["sandbox", "stop"],
+        ["sandbox", "start"],
+        ["sandbox", "exec"],
         ["sandbox", "exec"],
       ],
     );
@@ -518,6 +522,8 @@ describe("Docker managed bootstrap adapter", () => {
     fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
     fake.deps.runOpenshell = vi
       .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 1, stderr: "injected readiness failure" })
       .mockReturnValue({ status: 0 });
@@ -612,6 +618,8 @@ describe("Docker managed bootstrap adapter", () => {
     fake.deps.errorPhaseDebouncePolls = 1;
     fake.deps.runOpenshell = vi
       .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockImplementation(() => {
         assert(fake.replacement?.State);

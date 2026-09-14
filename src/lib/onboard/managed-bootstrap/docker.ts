@@ -4333,9 +4333,36 @@ export function createDockerManagedBootstrapAdapter(
           "Managed bootstrap Docker completion receipt disappeared at the bootstrap-complete fence.",
         );
       }
-      // Keep OpenShell stopped while the rollback backup still carries the
-      // same driver identity labels. The finalizer removes that backup after
-      // shared-state commit, then performs the single authoritative start.
+      // Publish the replacement through OpenShell before commit. Calling the
+      // buffered readiness probe against a merely Docker-started replacement
+      // can race its implicit StartSandbox transition and terminate the new
+      // supervisor. The replacement remains running through finalization.
+      runRequiredOpenShellLifecycleCommand(
+        deps,
+        ["sandbox", "start", handle.sandbox.sandboxName],
+        supervisorReconnectTimeoutSecs,
+      );
+      if (
+        !(await waitForRequiredOpenShellSupervisorReconnect(
+          handle.sandbox.sandboxName,
+          supervisorReconnectTimeoutSecs,
+          deps,
+        ))
+      ) {
+        throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
+      }
+      const afterHandoffJournal = deps.journalStore.load(journal.bootstrapIdentity);
+      if (
+        !afterHandoffJournal ||
+        !sameDockerBootstrapJournal(afterHandoffJournal, bootstrapCompleteJournal)
+      ) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          runtimeId: journal.replacementRuntimeId,
+          detail: "durable transaction authority changed during the OpenShell readiness handoff",
+        });
+      }
+      assertCompletedCutoverRuntimeState(afterHandoffJournal, deps);
       return bootstrapCompleteJournal.commitReceipt;
     },
 
