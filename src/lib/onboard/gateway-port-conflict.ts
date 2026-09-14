@@ -3,7 +3,6 @@
 
 import { printPortConflictReport } from "./port-conflict-report";
 import type { CheckPortOpts, PortProbeResult } from "./preflight";
-import { getPortConflictServiceHints } from "./remediation";
 
 type CheckPortAvailable = (port: number, opts?: CheckPortOpts) => Promise<PortProbeResult>;
 type DockerGatewayPortListenerClassifier = (portCheck: PortProbeResult) => boolean;
@@ -52,7 +51,7 @@ export async function failFastOnForeignGatewayPortConflict({
   getGatewayPortCheckOptions,
   isDockerDriverGatewayPortListener,
   exitProcess = (code) => process.exit(code),
-  serviceHints = getPortConflictServiceHints(),
+  serviceHints = [],
   writeError,
 }: GatewayPortConflictDeps): Promise<void> {
   // External ownership was resolved and bound by the caller before reaching

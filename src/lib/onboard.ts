@@ -1255,7 +1255,6 @@ async function preflight(
         label,
         envVar,
         portCheck,
-        serviceHints: getPortConflictServiceHints(),
       });
       process.exit(1);
     }
