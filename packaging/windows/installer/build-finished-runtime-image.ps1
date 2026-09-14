@@ -29,6 +29,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Pa
 }
 $files = @(Get-ChildItem -LiteralPath $RuntimeRoot -Recurse -File -Force)
 $logicalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+$topLevelNames = @($files | ForEach-Object {
+    ([IO.Path]::GetRelativePath($RuntimeRoot, $_.FullName) -split '[\\/]')[0]
+} | Sort-Object -Unique)
 $sourceManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()
 $requiredStagingBytes = $logicalBytes + 1GB
 $stagingDrive = Get-PSDrive -PSProvider FileSystem |
@@ -90,7 +93,10 @@ try {
         $detail = ((Get-Content -LiteralPath $copyLog -Tail 40) -join ' | ')
         throw "Runtime image population failed with status ${copyStatus}: $detail"
     }
-    $mountedFiles = @(Get-ChildItem -LiteralPath $mount -Recurse -File -Force)
+    $mountedFiles = @($topLevelNames | ForEach-Object {
+        $item = Get-Item -LiteralPath (Join-Path $mount $_) -Force
+        if ($item.PSIsContainer) { Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Force } else { $item }
+    })
     $mountedBytes = [long](($mountedFiles | Measure-Object -Property Length -Sum).Sum)
     if ($mountedFiles.Count -ne $files.Count -or $mountedBytes -ne $logicalBytes -or
         (Get-FileHash -LiteralPath (Join-Path $mount 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sourceManifestSha256) {
