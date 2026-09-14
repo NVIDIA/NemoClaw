@@ -38,7 +38,7 @@ OpenTofu, and production provider). They use only the local gRPC fixture:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test deployment -- --ignored
+  cargo test -p nemoclaw-e2e --test deployment --test fabric_deployment -- --ignored
 ```
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply,
