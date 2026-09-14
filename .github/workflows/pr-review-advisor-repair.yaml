@@ -209,14 +209,14 @@ jobs:
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
     env:
-      ARTIFACT_DIR: ${{ runner.temp }}/repair-artifact
+      ARTIFACT_DIR: ${{ github.workspace }}/.repair/artifact
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
-      REPAIR_BASE_DIR: ${{ runner.temp }}/repair-base/repo
-      REPAIR_DOWNLOAD_DIR: ${{ runner.temp }}/repair-download
-      RESOLUTION_WORKDIR: ${{ runner.temp }}/repair-workspace
-      RESOLVER_CONFIG_DIR: ${{ runner.temp }}/pi-config
+      REPAIR_BASE_DIR: ${{ github.workspace }}/.repair/base/repo
+      REPAIR_DOWNLOAD_DIR: ${{ github.workspace }}/.repair/download
+      RESOLUTION_WORKDIR: ${{ github.workspace }}/.repair/workspace
+      RESOLVER_CONFIG_DIR: ${{ github.workspace }}/.repair/pi-config
       SANDBOX_NAME: advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}
-      SELECTION_DIR: ${{ runner.temp }}/selection
+      SELECTION_DIR: ${{ github.workspace }}/.repair/selection
       SOURCE_REPOSITORY: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
@@ -356,7 +356,7 @@ jobs:
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
     env:
-      INPUT_DIR: ${{ runner.temp }}/input
+      INPUT_DIR: ${{ github.workspace }}/.repair/input
       SOURCE_REPOSITORY: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
@@ -433,10 +433,10 @@ jobs:
       contents: write
       pull-requests: read
     env:
-      SELECTION_DIR: ${{ runner.temp }}/selection
+      SELECTION_DIR: ${{ github.workspace }}/.repair/selection
       SOURCE_REPOSITORY: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
-      VALIDATED_DIR: ${{ runner.temp }}/validated
+      VALIDATED_DIR: ${{ github.workspace }}/.repair/validated
     steps:
       - name: Checkout trusted publisher code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -24,6 +24,9 @@ function checkoutSteps(job: WorkflowJob): WorkflowStep[] {
 const checkoutCases = Object.entries(workflow.jobs).flatMap(([jobName, job]) =>
   checkoutSteps(job).map((checkout, index) => [jobName, index, checkout] as const),
 );
+const jobEnvironmentCases = Object.entries(workflow.jobs).map(
+  ([jobName, job]) => [jobName, job.env] as const,
+);
 
 describe("manual PR Review Advisor repair workflow", () => {
   // source-shape-contract: security -- A manual-only entrypoint and denied ambient permissions prevent unreviewed automatic repair execution
@@ -99,4 +102,19 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(publish).toContain("needs.validate.outputs.artifact-id");
     expect([resolve, validate, publish].join("\n")).not.toContain("pattern:");
   });
+
+  it.each(jobEnvironmentCases)(
+    "uses contexts available while GitHub compiles the %s job environment (#10791)",
+    (_jobName, env) => {
+      expect(JSON.stringify(env ?? {})).not.toContain("runner.temp");
+    },
+  );
+
+  // source-shape-contract: security -- Job-level repair paths must use a context GitHub permits while compiling the workflow
+  it.each(["resolve", "validate", "publish"])(
+    "uses isolated workspace paths for the %s job (#10791)",
+    (jobName) => {
+      expect(JSON.stringify(workflow.jobs[jobName].env)).toContain("github.workspace");
+    },
+  );
 });

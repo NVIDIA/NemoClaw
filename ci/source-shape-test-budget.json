@@ -42,6 +42,11 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "uses isolated workspace paths for the %s job (#10791)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"
