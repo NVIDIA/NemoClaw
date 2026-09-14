@@ -161,6 +161,11 @@ describe("CLI inference route observation", () => {
       { status: 1, output: "protobuf decode error secret" },
       { kind: "schema", reason: "protocol_mismatch" },
     ],
+    [
+      "status-zero protocol",
+      { status: 0, output: "protobuf decode: invalid wire type secret" },
+      { kind: "schema", reason: "protocol_mismatch" },
+    ],
   ])("keeps a %s failure typed and redacted", async (_, captured, error) => {
     const result = await createCliOpenShellInferenceRouteObserver(
       vi.fn().mockResolvedValue(captured),

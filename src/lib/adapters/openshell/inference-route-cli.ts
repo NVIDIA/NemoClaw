@@ -100,7 +100,6 @@ function routeError(
     return { kind: "timeout", message: "OpenShell inference route observation timed out." };
   }
   const effectiveStatus = result.status === 0 && /^\s*Error:/imu.test(output) ? 1 : result.status;
-  if (effectiveStatus === 0 && !result.error) return null;
   if (/invalid wire type|proto(?:buf)?(?: decode| schema| wire)/iu.test(output)) {
     return {
       kind: "schema",
@@ -108,6 +107,7 @@ function routeError(
       message: "The OpenShell CLI and gateway inference schemas do not match.",
     };
   }
+  if (effectiveStatus === 0 && !result.error) return null;
   if (
     /\b(?:authentication failed|unauthorized|forbidden|permission denied|requires admin privileges|missing gateway auth token|device identity required|invalid token|expired token)\b/iu.test(
       output,

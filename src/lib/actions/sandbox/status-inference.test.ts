@@ -328,6 +328,25 @@ describe("sandbox status inference.local route health (#6192)", () => {
     });
   });
 
+  it("uses the configured status timeout for live route observation (#9809)", async () => {
+    vi.stubEnv("NEMOCLAW_STATUS_PROBE_TIMEOUT_MS", "123");
+    const deps = snapshotDeps({
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+
+    await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: 123,
+    });
+  });
+
   it("does not apply the recorded API family to a different live route", async () => {
     const deps = snapshotDeps({
       provider: "compatible-endpoint",

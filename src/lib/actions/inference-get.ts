@@ -407,6 +407,9 @@ function formatLookupFailure(
   if (error.kind === "transport") {
     return `OpenShell could not reach gateway '${gatewayName}' for the inference route lookup. ${recovery}`;
   }
+  if (error.kind === "validation") {
+    return `NemoClaw rejected the inference route lookup for gateway '${gatewayName}' before observation. ${recovery}`;
+  }
   if (error.kind === "command" && error.reason !== "indeterminate") {
     const detail = error.message.replace(
       "OpenShell inference route observation",

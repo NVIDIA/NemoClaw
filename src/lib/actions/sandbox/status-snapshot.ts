@@ -9,7 +9,10 @@ import type {
   OpenShellInferenceRouteObserver,
   OpenShellInferenceRouteResult,
 } from "../../adapters/openshell/inference-route";
-import { captureOpenshellForStatus } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshellForStatus,
+  getStatusProbeTimeoutMs,
+} from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import { retryUntilAsync } from "../../core/retry";
 
@@ -543,6 +546,7 @@ export async function collectSandboxStatusSnapshot(
         createCliOpenShellInferenceRouteObserver(captureOpenshellForStatus);
       liveResult = await observer.observeInferenceRoute({
         target: { kind: "named", gatewayName },
+        timeoutMs: getStatusProbeTimeoutMs(),
       });
     } catch {
       // Invalid persisted gateway bindings and failed reads stay fail-closed:
