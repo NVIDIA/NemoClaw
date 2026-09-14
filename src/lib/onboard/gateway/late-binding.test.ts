@@ -54,7 +54,9 @@ describe("gateway lifecycle late binding", () => {
       pid: 5444,
       stopCommand: "systemctl --user stop openshell-gateway",
     }));
-    const usesSelectedState = vi.fn(() => false);
+    const readProcessEnvironment = vi.fn(
+      () => "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=another-gateway",
+    );
     const checkGatewayPortAvailable = vi
       .fn()
       .mockResolvedValueOnce({ ok: true })
@@ -132,8 +134,8 @@ describe("gateway lifecycle late binding", () => {
         getTrustedActiveOpenShellGatewayUserServiceStopTarget: serviceTarget,
         getInstalledOpenshellVersion: () => "0.0.0",
         isDockerDriverGatewayHttpReady: async () => false,
+        isDockerDriverGatewayProcess: () => true,
         isDockerDriverGatewayProcessAlive: () => false,
-        isDockerDriverGatewayPidUsingSelectedState: usesSelectedState,
         isDockerDriverGatewayStateInUse: stateInUse,
         isGatewayHealthy: () => false,
         isGatewayTcpReady: async () => false,
@@ -143,6 +145,10 @@ describe("gateway lifecycle late binding", () => {
         rememberDockerDriverGatewayPid: vi.fn(),
         resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
         resolveOpenShellSandboxBinary: () => null,
+        runner: {
+          runCapture: readProcessEnvironment,
+          runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
+        },
         runCaptureOpenshell: () => "",
         sleepSeconds: vi.fn(),
       });
@@ -163,7 +169,10 @@ describe("gateway lifecycle late binding", () => {
       expect(lines.join("\n")).not.toContain("sudo lsof -iTCP -sTCP:LISTEN -P -n");
       expect(lines.join("\n")).not.toContain("systemctl --user stop openshell-gateway");
       expect(serviceTarget).toHaveBeenCalledOnce();
-      expect(usesSelectedState).toHaveBeenCalledWith(5444);
+      expect(readProcessEnvironment).toHaveBeenCalledWith(
+        ["ps", "eww", "-p", "5444", "-o", "command="],
+        { ignoreError: true },
+      );
       expect(stateInUse).toHaveBeenCalledOnce();
     } finally {
       spawnSpy.mockRestore();
@@ -450,8 +459,8 @@ describe("gateway lifecycle late binding", () => {
       getGatewayPortListenerRawScan: () => ({ complete: true, pids: [] }),
       getInstalledOpenshellVersion: () => "0.0.0",
       isDockerDriverGatewayHttpReady: async () => true,
+      isDockerDriverGatewayProcess: () => true,
       isDockerDriverGatewayProcessAlive: () => false,
-      isDockerDriverGatewayPidUsingSelectedState: () => false,
       isDockerDriverGatewayStateInUse: () => false,
       isGatewayHealthy: () => true,
       isGatewayTcpReady: async () => true,
@@ -461,6 +470,10 @@ describe("gateway lifecycle late binding", () => {
       rememberDockerDriverGatewayPid: vi.fn(),
       resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
       resolveOpenShellSandboxBinary: () => null,
+      runner: {
+        runCapture: () => "",
+        runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
+      },
       runCaptureOpenshell,
       sleepSeconds: vi.fn(),
       verifySandboxBridgeGatewayReachableOrExit: verifyReachability,

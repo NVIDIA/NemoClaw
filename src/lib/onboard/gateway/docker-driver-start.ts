@@ -20,6 +20,10 @@ import {
 import { waitForStandaloneDockerDriverGateway } from "../docker-driver-gateway-readiness";
 import * as dockerDriverGatewayRuntimeMarker from "../docker-driver-gateway-runtime-marker";
 import {
+  createDockerDriverGatewayStateOwnership,
+  type DockerDriverGatewayStateOwnership,
+} from "./state-ownership";
+import {
   getTrustedActiveOpenShellGatewayUserServiceStopTarget,
   type TrustedActiveOpenShellGatewayUserServiceStopTarget,
 } from "../docker-driver-gateway-service";
@@ -55,8 +59,8 @@ export interface DockerDriverGatewayStartDeps {
   getTrustedActiveOpenShellGatewayUserServiceStopTarget?: typeof getTrustedActiveOpenShellGatewayUserServiceStopTarget;
   getInstalledOpenshellVersion: typeof import("../openshell-version").getInstalledOpenshellVersion;
   isDockerDriverGatewayHttpReady: DynamicGatewayHelpers["isDockerDriverGatewayHttpReady"];
+  isDockerDriverGatewayProcess: GatewayRuntimeHelpers["isDockerDriverGatewayProcess"];
   isDockerDriverGatewayProcessAlive: GatewayRuntimeHelpers["isDockerDriverGatewayProcessAlive"];
-  isDockerDriverGatewayPidUsingSelectedState: GatewayRuntimeHelpers["isDockerDriverGatewayPidUsingSelectedState"];
   isDockerDriverGatewayStateInUse: GatewayRuntimeHelpers["isDockerDriverGatewayStateInUse"];
   isGatewayHealthy(status: string, namedInfo: string, activeInfo: string): boolean;
   isGatewayTcpReady: DynamicGatewayHelpers["isGatewayTcpReady"];
@@ -66,6 +70,7 @@ export interface DockerDriverGatewayStartDeps {
   rememberDockerDriverGatewayPid: GatewayRuntimeHelpers["rememberDockerDriverGatewayPid"];
   resolveOpenShellGatewayBinary: GatewayRuntimeHelpers["resolveOpenShellGatewayBinary"];
   resolveOpenShellSandboxBinary: GatewayRuntimeHelpers["resolveOpenShellSandboxBinary"];
+  runner: Pick<typeof import("../../runner"), "runCapture" | "runCaptureEx">;
   runCaptureOpenshell(
     args: string[],
     options?: {
@@ -113,8 +118,8 @@ export async function resolveSelectedGatewayServiceStopCommand(
     | "checkGatewayPortAvailable"
     | "getGatewayPortListenerRawScan"
     | "getTrustedActiveOpenShellGatewayUserServiceStopTarget"
-    | "isDockerDriverGatewayPidUsingSelectedState"
-  >,
+  > &
+    Pick<DockerDriverGatewayStateOwnership, "isDockerDriverGatewayPidUsingSelectedState">,
 ): Promise<string | null> {
   const resolveServiceTarget =
     deps.getTrustedActiveOpenShellGatewayUserServiceStopTarget ??
@@ -143,6 +148,16 @@ export async function resolveSelectedGatewayServiceStopCommand(
 export function createDockerDriverGatewayStart(
   deps: DockerDriverGatewayStartDeps,
 ): DockerDriverGatewayStart {
+  const stateOwnership = createDockerDriverGatewayStateOwnership({
+    getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
+    isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
+    isExistingDockerDriverGatewayStateInUse: deps.isDockerDriverGatewayStateInUse,
+    isPidAlive: deps.isPidAlive,
+    resolveOpenShellGatewayBinary: deps.resolveOpenShellGatewayBinary,
+    runCapture: deps.runner.runCapture,
+    runCaptureEx: deps.runner.runCaptureEx,
+  });
+
   async function startDockerDriverGateway({
     exitOnFailure = true,
     output,
@@ -405,11 +420,15 @@ export function createDockerDriverGatewayStart(
         (output?.log ?? console.log)("  ✓ Docker-driver gateway is healthy");
         return;
       }
-      const gatewayServiceStopCommand = await resolveSelectedGatewayServiceStopCommand(deps);
+      const gatewayServiceStopCommand = await resolveSelectedGatewayServiceStopCommand({
+        ...deps,
+        isDockerDriverGatewayPidUsingSelectedState:
+          stateOwnership.isDockerDriverGatewayPidUsingSelectedState,
+      });
       reportDockerDriverGatewayStartFailure(logPath, childExit, {
         exitOnFailure,
         gatewayPort: deps.gatewayPort(),
-        isGatewayStateInUse: deps.isDockerDriverGatewayStateInUse,
+        isGatewayStateInUse: stateOwnership.isDockerDriverGatewayStateInUse,
         launchLogOffset: log.startOffset,
         resolveGatewayStopCommand: () => gatewayServiceStopCommand,
         ...(output ? { printError: (message?: string) => output.error(message ?? "") } : {}),
