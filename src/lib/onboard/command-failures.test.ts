@@ -43,6 +43,70 @@ describe("onboarding command failures", () => {
     expect(failure.stack).toContain("Retry after correcting permissions.");
   });
 
+  it("recursively redacts an Error cause while preserving both identities", async () => {
+    const payload = "nested-cause-key-payload".repeat(20);
+    const pem = [
+      "-----BEGIN " + "PRIVATE KEY-----",
+      payload,
+      "-----END " + "PRIVATE KEY-----",
+    ].join("\n");
+    const cause = new Error(`Nested failure\n${pem}\nInspect the rejected executable.`);
+    const failure = new Error("Onboarding failed", { cause });
+
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw failure;
+        },
+        error: vi.fn(),
+        exit: exitWithCode,
+      }),
+    ).rejects.toBe(failure);
+
+    expect(failure.cause).toBe(cause);
+    expect(cause.message).not.toContain(payload);
+    expect(cause.stack).not.toContain(payload);
+    expect(cause.message).not.toContain("PRIVATE KEY");
+    expect(cause.message).toContain("<REDACTED>");
+    expect(cause.message).toContain("Inspect the rejected executable.");
+  });
+
+  it("recursively redacts AggregateError entries while preserving their identities", async () => {
+    const payload = "aggregate-key-payload".repeat(20);
+    const pem = [
+      "-----BEGIN " + "RSA PRIVATE KEY-----",
+      payload,
+      "-----END " + "RSA PRIVATE KEY-----",
+    ].join("\n");
+    const nested = new Error(`Nested failure\n${pem}\nRetry the recovery.`);
+    const entries: unknown[] = [nested, `String failure\n${pem}\nInspect the gateway.`];
+    const failure = new AggregateError(entries, "Onboarding cleanup failed");
+    const aggregateEntries = failure.errors;
+
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw failure;
+        },
+        error: vi.fn(),
+        exit: exitWithCode,
+      }),
+    ).rejects.toBe(failure);
+
+    expect(failure.errors).toBe(aggregateEntries);
+    expect(failure.errors[0]).toBe(nested);
+    expect(nested.message).not.toContain(payload);
+    expect(nested.stack).not.toContain(payload);
+    expect(String(failure.errors[1])).not.toContain(payload);
+    expect(String(failure.errors[1])).not.toContain("PRIVATE KEY");
+    expect(String(failure.errors[1])).toContain("<REDACTED>");
+    expect(String(failure.errors[1])).toContain("Inspect the gateway.");
+  });
+
   it("redacts a complete private-key block before reporting a typed onboarding error", async () => {
     const payload = "synthetic-key-payload".repeat(20);
     const pem = [

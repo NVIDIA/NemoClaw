@@ -538,6 +538,25 @@ function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string)
   return 1;
 }
 
+/** Redact nested command failures in place so rethrows preserve every Error identity. */
+function redactOnboardCommandFailure(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof value === "string") return redactOnboardErrorText(value);
+  if (!(value instanceof Error) || seen.has(value)) return value;
+  seen.add(value);
+
+  value.message = redactOnboardErrorText(value.message);
+  value.stack = value.stack && redactOnboardErrorText(value.stack);
+  if ("cause" in value) {
+    value.cause = redactOnboardCommandFailure(value.cause, seen);
+  }
+  if (value instanceof AggregateError && Array.isArray(value.errors)) {
+    for (const [index, nested] of value.errors.entries()) {
+      value.errors[index] = redactOnboardCommandFailure(nested, seen);
+    }
+  }
+  return value;
+}
+
 /** Preserve cancellation and failure behavior without exposing secrets through CLI errors. */
 function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
   const cancellationCode = promptCancellationCode(error);
@@ -578,11 +597,7 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // print a clear message and exit non-zero instead of either crashing with
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
   if (cancellationCode !== "EOF") {
-    if (error instanceof Error) {
-      error.message = redactOnboardErrorText(error.message);
-      error.stack = error.stack && redactOnboardErrorText(error.stack);
-    }
-    throw error;
+    throw redactOnboardCommandFailure(error);
   }
   return reportOnboardCommandError(deps, "  Installation cancelled");
 }
