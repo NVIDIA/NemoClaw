@@ -42,3 +42,8 @@ Generated bundles, build inputs and images are ignored by Git. The model snapsho
 and prepared PLE data belong to the deployment's persistent volume, not the build
 context. See [the runtime notice](../runtimes/qwen38/NOTICE.md) for provenance and
 source locations inside the image.
+
+Keep a bundle immutable while a deployment operation uses it. The development
+builder replaces `dist/<platform>`; copy it to a dedicated location for a long
+live experiment before rebuilding. Repository text uses LF on every platform so
+source-derived provider versions do not change with checkout newline conversion.
