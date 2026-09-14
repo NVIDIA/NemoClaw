@@ -4,3 +4,5 @@ mod models;
 pub use models::*;
 mod service;
 pub use service::{Service, ServiceSpec};
+mod backend;
+pub use backend::OllamaBackend;

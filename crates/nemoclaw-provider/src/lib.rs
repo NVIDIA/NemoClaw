@@ -52,6 +52,20 @@ pub fn plan_update(
             None => {}
         }
     }
+    if definition.kind == "ollama_model" {
+        proposed.insert(
+            "digest".into(),
+            if definition
+                .fields
+                .iter()
+                .all(|field| prior.get(*field) == proposed.get(*field))
+            {
+                prior.get("digest").cloned().unwrap_or(Value::Unknown)
+            } else {
+                Value::Unknown
+            },
+        );
+    }
     let replacements = definition
         .fields
         .iter()

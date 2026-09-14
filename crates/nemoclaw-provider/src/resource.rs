@@ -25,6 +25,9 @@ impl ResourceAdapter {
             destroying: Arc::new(AtomicBool::new(false)),
         }
     }
+    fn computed_digest(&self) -> bool {
+        self.definition.kind == "ollama_model"
+    }
     fn observed_running(&self) -> bool {
         matches!(
             self.definition.kind,
@@ -36,7 +39,10 @@ impl ResourceAdapter {
             .iter()
             .map(|(k, v)| match v {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
-                Value::Unknown | Value::Null if k == "running" && self.observed_running() => {
+                Value::Unknown | Value::Null
+                    if (k == "running" && self.observed_running())
+                        || (k == "digest" && self.computed_digest()) =>
+                {
                     Ok((k.clone(), String::new()))
                 }
                 Value::Null if optional(k) => Ok((k.clone(), String::new())),
@@ -48,7 +54,14 @@ impl ResourceAdapter {
             .collect()
     }
     fn checked(&self, prior: &Row, observed: Row) -> Result<Row, ObservationError> {
-        for field in self.definition.fields.iter().copied().chain(["id"]) {
+        for field in self
+            .definition
+            .fields
+            .iter()
+            .copied()
+            .chain(["id"])
+            .chain(self.computed_digest().then_some("digest"))
+        {
             if observed
                 .get(field)
                 .is_none_or(|value| value.is_empty() && !optional(field))
@@ -130,12 +143,14 @@ impl Resource for ResourceAdapter {
             .iter()
             .copied()
             .chain(["id"])
+            .chain(self.computed_digest().then_some("digest"))
             .map(|name| {
                 (
                     name.into(),
                     Attribute {
                         attr_type: AttributeType::String,
                         constraint: if name == "id"
+                            || (name == "digest" && self.computed_digest())
                             || (name == "running" && self.observed_running())
                         {
                             AttributeConstraint::Computed
@@ -199,6 +214,9 @@ impl Resource for ResourceAdapter {
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty)> {
         proposed.insert("id".into(), Value::Unknown);
+        if self.computed_digest() {
+            proposed.insert("digest".into(), Value::Unknown);
+        }
         if self.observed_running() {
             proposed.insert("running".into(), Value::Unknown);
         }

@@ -1,0 +1,123 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+use super::{Models, ServiceSpec};
+use crate::{
+    Error, ObservationError,
+    backend::{Backend, Mutation, Row},
+    docker::Engine,
+};
+use std::time::Duration;
+
+/// Shared provider and export observations for an explicitly configured engine.
+pub struct OllamaBackend {
+    engine: Engine,
+}
+impl OllamaBackend {
+    pub fn new(engine: Engine) -> Self {
+        Self { engine }
+    }
+    pub fn supports(kind: &str) -> bool {
+        matches!(kind, "ollama" | "ollama_model")
+    }
+    async fn observe(&self, kind: &str, row: &Row, apply: bool) -> Result<Option<Row>, Error> {
+        let field = |name: &str| {
+            row.get(name)
+                .filter(|v| !v.is_empty())
+                .cloned()
+                .ok_or(ObservationError::Incomplete)
+        };
+        let mut result = row.clone();
+        if kind == "ollama" {
+            let spec = ServiceSpec {
+                name: field("name")?,
+                owner: field("owner")?,
+                generation: field("generation")?,
+                image: field("image")?,
+                network: field("network")?,
+                bind_address: field("bind_address")?,
+            };
+            let id = row.get("id").map(String::as_str).unwrap_or("");
+            let service = if apply {
+                if field("running")? != "true" {
+                    return Err(Error::Conflict("this slice declares Ollama running"));
+                }
+                Some(self.engine.ensure_ollama(&spec, id).await?)
+            } else {
+                self.engine.observe_ollama(&spec, id).await?
+            };
+            return Ok(service.map(|service| {
+                result.insert("id".into(), service.id);
+                result.insert("running".into(), service.running.to_string());
+                result
+            }));
+        }
+        if kind != "ollama_model" {
+            return Err(ObservationError::Incomplete.into());
+        }
+        let service_id = field("service_id")?;
+        let endpoint = field("endpoint")?;
+        let name = field("model")?;
+        let service = self.engine.bound_ollama(&service_id, &endpoint).await?;
+        if !service.running {
+            return Err(Error::Conflict(
+                "Ollama service is stopped; model inventory is unknown; no model mutation is authorized",
+            ));
+        }
+        let models = Models::new(&endpoint)?;
+        let model = if apply {
+            let ready = async {
+                loop {
+                    match models.read(&name).await {
+                        Ok(_) => return Ok(()),
+                        Err(Error::OllamaStarting) => {
+                            tokio::time::sleep(Duration::from_millis(200)).await
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(30), ready).await.map_err(|_| Error::Conflict("Ollama inventory did not become available; model installation was not attempted"))??;
+            Some(models.ensure(&name).await?)
+        } else {
+            models.read(&name).await?
+        };
+        Ok(model.map(|model| {
+            result.insert("id".into(), format!("{service_id}/model"));
+            result.insert("digest".into(), model.digest);
+            result
+        }))
+    }
+}
+fn diagnostic(error: Error) -> ObservationError {
+    match error {
+        Error::Observation(error) => error,
+        Error::State(message) | Error::Conflict(message) => ObservationError::Backend(message),
+        Error::PartialRuntime => ObservationError::Backend(
+            "Ollama process is absent but owned persistent storage remains",
+        ),
+        _ => ObservationError::Incomplete,
+    }
+}
+#[async_trait::async_trait]
+impl Backend for OllamaBackend {
+    async fn read(
+        &self,
+        kind: &str,
+        prior: &Row,
+        _: bool,
+    ) -> Result<Option<Row>, ObservationError> {
+        self.observe(kind, prior, false).await.map_err(diagnostic)
+    }
+    async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+        match self.observe(kind, desired, true).await {
+            Ok(Some(row)) => Mutation::complete(row),
+            Ok(None) => Mutation::failed(ObservationError::Incomplete),
+            Err(error) => Mutation::failed(diagnostic(error)),
+        }
+    }
+    async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+        Err(ObservationError::Backend(
+            "managed Ollama deletion is not supported; persistent data is retained",
+        ))
+    }
+}

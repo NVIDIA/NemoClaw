@@ -6,7 +6,9 @@ use async_trait::async_trait;
 use nemoclaw_sdk::{
     ObservationError,
     config::{Credential, Gateway, TLS},
+    docker::Engine,
     managed::ManagedBackend,
+    ollama::OllamaBackend,
     openshell::{EnvironmentSecrets, OpenShell},
 };
 use serde::{Deserialize, Serialize};
@@ -40,8 +42,18 @@ fn text(value: Value<String>) -> String {
     }
 }
 #[derive(Default)]
-struct ConfiguredBackend(RwLock<Option<OpenShell>>);
+struct ConfiguredBackend(RwLock<Option<OpenShell>>, RwLock<Option<Engine>>);
 impl ConfiguredBackend {
+    fn ollama(&self) -> Result<OllamaBackend, ObservationError> {
+        self.1
+            .read()
+            .map_err(|_| ObservationError::Query)?
+            .clone()
+            .map(OllamaBackend::new)
+            .ok_or(ObservationError::Backend(
+                "managed Ollama engine is not configured",
+            ))
+    }
     fn client(&self) -> Result<OpenShell, ObservationError> {
         self.0
             .read()
@@ -61,11 +73,20 @@ impl Backend for ConfiguredBackend {
         if ManagedBackend::supports(kind) {
             return ManagedBackend.read(kind, prior, removing).await;
         }
+        if OllamaBackend::supports(kind) {
+            return self.ollama()?.read(kind, prior, removing).await;
+        }
         self.client()?.read(kind, prior, removing).await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
         if ManagedBackend::supports(kind) {
             return ManagedBackend.ensure(kind, desired).await;
+        }
+        if OllamaBackend::supports(kind) {
+            return match self.ollama() {
+                Ok(backend) => backend.ensure(kind, desired).await,
+                Err(error) => Mutation::failed(error),
+            };
         }
         match self.client() {
             Ok(client) => client.ensure(kind, desired).await,
@@ -80,6 +101,9 @@ impl Backend for ConfiguredBackend {
     ) -> Result<(), ObservationError> {
         if ManagedBackend::supports(kind) {
             return ManagedBackend.remove(kind, prior, destroying).await;
+        }
+        if OllamaBackend::supports(kind) {
+            return self.ollama()?.remove(kind, prior, destroying).await;
         }
         self.client()?.remove(kind, prior, destroying).await
     }
@@ -135,6 +159,25 @@ impl Provider for NemoClawProvider {
         _: String,
         config: ProviderConfig,
     ) -> Option<()> {
+        let endpoint = text(config.ollama_engine);
+        let engine = if endpoint.is_empty() {
+            None
+        } else {
+            match Engine::connect(&endpoint) {
+                Ok(engine) => Some(engine),
+                Err(error) => {
+                    diags.root_error("Ollama engine configuration", error.to_string());
+                    return None;
+                }
+            }
+        };
+        match self.backend.1.write() {
+            Ok(mut slot) => *slot = engine,
+            Err(_) => {
+                diags.root_error_short("Provider configuration lock failed");
+                return None;
+            }
+        }
         let mut gateway = Gateway {
             management: "external".into(),
             endpoint: text(config.endpoint),
@@ -184,6 +227,24 @@ impl Provider for NemoClawProvider {
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
         let definitions = [
+            Definition::new(
+                "ollama",
+                &[
+                    "name",
+                    "owner",
+                    "generation",
+                    "image",
+                    "network",
+                    "bind_address",
+                    "running",
+                ],
+                &["running"],
+            ),
+            Definition::new(
+                "ollama_model",
+                &["service_id", "endpoint", "model"],
+                &["model"],
+            ),
             Definition::new("managed_gateway", &["spec", "running"], &["running"]),
             Definition::new("inference_service", &["spec", "running"], &["running"]),
             Definition::new("gateway_storage", &["spec"], &[]),
