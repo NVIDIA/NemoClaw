@@ -81,6 +81,11 @@ describe("gateway user service stop command ownership (#11720)", () => {
     expect(getOpenShellGatewayServiceStopCommand(opts)).toBe(STOP_COMMAND);
   });
 
+  it("keeps the stop command when the reported state is empty", () => {
+    const { opts } = stopCommandOptions(activeState(""));
+    expect(getOpenShellGatewayServiceStopCommand(opts)).toBe(STOP_COMMAND);
+  });
+
   it("keeps the stop command when the state query returns unexpected metadata", () => {
     const { opts } = stopCommandOptions({ status: 0, stdout: "MainPID=42\n" });
     expect(getOpenShellGatewayServiceStopCommand(opts)).toBe(STOP_COMMAND);

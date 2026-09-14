@@ -761,13 +761,8 @@ export function hasOpenShellGatewayUserService(
   return resolveOpenShellGatewayUserService(opts) !== null;
 }
 
-/** systemd states in which stopping the unit still changes what runs. */
-const ENGAGED_SYSTEMD_ACTIVE_STATES = new Set([
-  "active",
-  "activating",
-  "deactivating",
-  "reloading",
-]);
+/** systemd states that positively prove the unit owns no gateway process. */
+const DISENGAGED_SYSTEMD_ACTIVE_STATES = new Set(["inactive", "failed"]);
 
 /**
  * False only when systemd positively reports the resolved unit as inactive or
@@ -779,7 +774,8 @@ const ENGAGED_SYSTEMD_ACTIVE_STATES = new Set([
  * frees nothing (#11720). Any other outcome — an unreadable state, a failed
  * query, an unavailable user manager, no `systemctl` at all — leaves the unit
  * treated as engaged, because those cases cannot prove it owns nothing and the
- * fallback flows already depend on the stop being offered.
+ * fallback flows already depend on the stop being offered. An empty state value
+ * is indeterminate for the same reason and keeps the unit engaged.
  */
 function isOpenShellGatewayUserServiceEngaged(
   service: OpenShellGatewayUserServiceTarget,
@@ -798,7 +794,7 @@ function isOpenShellGatewayUserServiceEngaged(
   if (!result.ok) return true;
   const properties = parseSystemctlShow(result.stdout ?? "", ["ActiveState"]);
   if (!properties) return true;
-  return ENGAGED_SYSTEMD_ACTIVE_STATES.has(properties.ActiveState);
+  return !DISENGAGED_SYSTEMD_ACTIVE_STATES.has(properties.ActiveState);
 }
 
 /**
