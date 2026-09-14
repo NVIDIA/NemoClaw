@@ -272,6 +272,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
   it.each([
     ["has no expiration map", undefined],
+    ["has an explicit non-expiring value", { NVIDIA_INFERENCE_API_KEY: 0 }],
     ["is absent from another credential's expiration map", { OTHER_API_KEY: 1_000 }],
     ["has a future expiration", { NVIDIA_INFERENCE_API_KEY: 8_640_000_000_000_000 }],
   ])(

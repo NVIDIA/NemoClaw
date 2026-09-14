@@ -86,6 +86,7 @@ import {
   isRebuildRecoveryCleanupOnly,
   markRebuildRecoveryCleanupOnly,
   openRebuildRecreateJournal,
+  assertRebuildRecoverySource,
   recordRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
@@ -272,8 +273,7 @@ async function rebuildSandboxUnlocked(
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
       // Older manifests and a crash immediately after marker creation can lack
       // the MCP handoff. Re-observe only while the journal remains pre-delete
-      // and live-state preflight still sees the source. Journal opening below
-      // proves its exact identity before MCP preparation mutates anything.
+      // and the journaled source identity is verified before MCP inspection.
       const canRecapturePreparedRecoveryMcp = Boolean(
         recoveryManifest &&
         recoveryManifest.rebuildMcpHandoff === undefined &&
@@ -299,6 +299,18 @@ async function rebuildSandboxUnlocked(
         !retainedMcpHandoff
       ) {
         return bail("The retained rebuild MCP recovery handoff is invalid.");
+      }
+      if (canRecapturePreparedRecoveryMcp && activeRecoveryTransaction) {
+        const target = {
+          sandboxName,
+          gatewayName: recreateOptions.targetGatewayName,
+          gatewayPort: recreateOptions.targetGatewayPort,
+        };
+        assertRebuildRecoverySource(
+          activeRecoveryTransaction,
+          target,
+          recreateOptions.runtimeSelection,
+        );
       }
       const observedMcp =
         retainedMcpHandoff ??

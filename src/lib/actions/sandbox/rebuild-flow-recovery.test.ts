@@ -4,12 +4,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
+import { mcpBridgeSource } from "../../../../test/helpers/rebuild-flow-harness";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
   makeActiveTeamsMessagingPlan,
@@ -524,6 +525,64 @@ describe("rebuildSandbox flow: recovery", () => {
       expect(restarted.onboardSpy.mock.invocationCallOrder[0]).toBeGreaterThan(
         restarted.runOpenshellSpy.mock.invocationCallOrder[deleteCall]!,
       );
+    },
+  );
+
+  it.each(LIVE_SOURCE_PHASES)(
+    "refuses foreign MCP state after preflight from a '%s' recovery journal without its handoff (#10394)",
+    async (phase) => {
+      const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+      const interrupted = createRebuildFlowHarness({
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [],
+        },
+      });
+      interrupted.prepareMcpBridgesForRebuildSpy.mockRejectedValueOnce(
+        new Error("interrupted before MCP preparation"),
+      );
+
+      await expect(
+        interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Failed to preserve MCP bridges before rebuild");
+
+      const recoveryManifest = JSON.parse(
+        fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+      ) as ReturnType<typeof makePreparedRecoveryManifest>;
+      expect(recoveryManifest).not.toHaveProperty("rebuildMcpHandoff");
+      const checkpoint = interrupted.session.checkpoint as {
+        sandboxRecreate?: { phase?: string };
+      };
+      const recreateCheckpoint = checkpoint.sandboxRecreate as { phase?: string };
+      expect(recreateCheckpoint).toBeDefined();
+      expect(recreateCheckpoint.phase).toBe("planned");
+      recreateCheckpoint.phase = phase;
+      expect(recreateCheckpoint.phase).toBe(phase);
+
+      const restarted = createRebuildFlowHarness({
+        preDeleteLatestManifest: recoveryManifest,
+        captureOpenshell: sandboxGetProbes([FOREIGN_PROBE]),
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [],
+        },
+      });
+      restarted.session.checkpoint = checkpoint;
+      const inspectMcp = vi.mocked(mcpBridgeSource.inspectAgentMcpSources);
+      inspectMcp.mockClear();
+
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest,
+        }),
+      ).rejects.toThrow(/not the (recorded|journaled) source/);
+
+      expect(inspectMcp).not.toHaveBeenCalled();
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
     },
   );
 
