@@ -35,6 +35,7 @@ const KNOWN_PHASES = new Set([
   "NotReady",
   "Pending",
   "Provisioning",
+  "Stopped",
   "Terminating",
 ]);
 const CANONICAL_PHASES = new Map(

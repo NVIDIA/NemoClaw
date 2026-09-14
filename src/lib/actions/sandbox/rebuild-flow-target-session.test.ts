@@ -8,9 +8,85 @@ import {
   installRebuildFlowTestHooks,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
+import type { ServingProfileProvenance } from "../../inference/serving/profile-provenance";
+
+const savedProfileProvenance: ServingProfileProvenance = {
+  schemaVersion: 1,
+  catalogDigest: `sha256:${"1".repeat(64)}`,
+  preset: {
+    id: "vllm.dgx-spark-gb10.single.example",
+    digest: `sha256:${"2".repeat(64)}`,
+    displayName: "Example Spark profile",
+    supportState: "experimental",
+  },
+  recipe: {
+    id: "vllm.dgx-spark-gb10.single.example",
+    digest: `sha256:${"3".repeat(64)}`,
+    backend: "vllm",
+  },
+  model: { id: "example/model", revision: "revision-1" },
+  runtimeImage: null,
+  estimatedImageDownloadBytes: null,
+  estimatedModelDownloadBytes: null,
+};
 
 describe("rebuildSandbox flow: target session", () => {
   installRebuildFlowTestHooks();
+
+  it.each(["alpha", "other"])(
+    "preserves saved profile metadata with current session %s (#11417)",
+    async (sessionSandboxName) => {
+      let recreatedProvenance: unknown;
+      const harness = createRebuildFlowHarness({
+        sessionSandboxName,
+        sandboxEntry: {
+          provider: "vllm-local",
+          model: "example/model",
+          servingProfileProvenance: savedProfileProvenance,
+        },
+        onboard: (session) => {
+          recreatedProvenance = session.servingProfileProvenance;
+        },
+      });
+      harness.session.provider = "vllm-local";
+      harness.session.model = "example/model";
+      // Stale session metadata must not replace the sandbox's saved metadata.
+      harness.session.servingProfileProvenance = {
+        ...savedProfileProvenance,
+        catalogDigest: `sha256:${"4".repeat(64)}`,
+      };
+
+      await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+
+      expect(recreatedProvenance).toEqual(savedProfileProvenance);
+    },
+  );
+
+  it.each(["alpha", "other"])(
+    "keeps missing profile metadata absent with current session %s (#11417)",
+    async (sessionSandboxName) => {
+      let recreatedProvenance: unknown;
+      const harness = createRebuildFlowHarness({
+        sessionSandboxName,
+        sandboxEntry: {
+          provider: "vllm-local",
+          model: "example/model",
+          servingProfileProvenance: undefined,
+        },
+        onboard: (session) => {
+          recreatedProvenance = session.servingProfileProvenance;
+        },
+      });
+      harness.session.provider = "vllm-local";
+      harness.session.model = "example/model";
+      harness.session.servingProfileProvenance = savedProfileProvenance;
+
+      await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+
+      expect(recreatedProvenance).toBeNull();
+    },
+  );
+
   it("isolates ambient onboard-selection env during recreate, then restores it (#5735)", async () => {
     const restoreEnv = snapshotEnv([
       "NEMOCLAW_AGENT",

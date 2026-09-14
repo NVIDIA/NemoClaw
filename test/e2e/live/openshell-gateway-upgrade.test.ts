@@ -365,6 +365,8 @@ async function runInstallerPayload(
   requireBackupEvidence = false,
 ): Promise<ShellProbeResult> {
   const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
+  const backupRoot = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SURVIVOR_SANDBOX);
+  const existingBackupNames = fs.existsSync(backupRoot) ? fs.readdirSync(backupRoot) : [];
   const result = await bash(host, `bash ${quotedInstallerArgs}`, {
     artifactName: `${label.replace(/[^a-z0-9_.-]+/gi, "-")}-installer`,
     captureLimitBytes: 1024 * 1024,
@@ -386,7 +388,8 @@ async function runInstallerPayload(
   const backupEvidence = await writeGatewayUpgradeBackupEvidence(
     artifacts,
     `${label}-backup-handoff.json`,
-    path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SURVIVOR_SANDBOX),
+    backupRoot,
+    existingBackupNames,
   );
   const evidenceValid =
     !requireBackupEvidence ||

@@ -99,11 +99,11 @@ describe("OpenShell gateway upgrade boundary", () => {
     });
   });
 
-  it("retains both gateway probes without replacing an installer failure", async () => {
+  it("retains both gateway probes when one exits nonzero", async () => {
     const capture = vi
       .fn()
-      .mockRejectedValueOnce(new Error("probe failed"))
-      .mockResolvedValueOnce({});
+      .mockResolvedValueOnce({ exitCode: 1 })
+      .mockResolvedValueOnce({ exitCode: 0 });
     const sandboxName = "name with spaces; literal-argument";
 
     await expect(captureGatewayUpgradeProbeEvidence(sandboxName, capture)).resolves.toBe(false);
@@ -154,7 +154,9 @@ describe("OpenShell gateway upgrade boundary", () => {
           }),
           { mode: 0o600 },
         );
-        const result = gatewayUpgradeBackupEvidence(path.dirname(backup));
+        const priorName = "2026-09-13";
+        fs.mkdirSync(path.join(path.dirname(backup), priorName));
+        const result = gatewayUpgradeBackupEvidence(path.dirname(backup), [priorName]);
         expect(result).toEqual({
           backups: [
             {

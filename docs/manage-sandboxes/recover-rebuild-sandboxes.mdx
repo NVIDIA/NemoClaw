@@ -129,7 +129,8 @@ $$nemoclaw <sandbox-name> doctor
 ```
 
 Save both results.
-The expected status line is `Portable lifecycle phase: active`.
+The expected status line is `Saved Portable lifecycle phase: active`.
+Status also prints `Runtime and agent health: not probed`.
 The expected doctor line is `Portable lifecycle: agent=Hermes; phase=active`.
 These results prove only that the lifecycle receipt and sandbox registry agree.
 They do not prove that the Podman runner returned to stopped.
@@ -302,7 +303,7 @@ Use the recovery guidance that matches the reported check:
 - Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
 - Set the live OpenShell inference route to the sandbox's recorded provider and model when rebuild reports route drift.
 
-<AgentOnly variant="openclaw,hermes,deepagents">
+<AgentOnly variant="openclaw,hermes">
   Prepared legacy gateway recovery has one exception. When the recorded gateway lists the retained
   sandbox but cannot render its old provider-backed specification, NemoClaw reuses the
   digest-verified pre-upgrade policy handoff. It does not recapture the live policy at the deletion

@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { readRebuildPolicyHandoff, type RebuildManifest } from "../../../src/lib/state/sandbox";
 import { shellQuote } from "../fixtures/clients/command.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
@@ -63,10 +64,18 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
 }
 
 /** Retain bounded lifecycle and handoff metadata, never policy or manifest contents. */
-export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<string, unknown>[] } {
+export function gatewayUpgradeBackupEvidence(
+  root: string,
+  existingNames: readonly string[] = [],
+): { backups: Record<string, unknown>[] } {
   const backups: Record<string, unknown>[] = [];
   try {
-    for (const name of fs.readdirSync(root).sort().slice(-3)) {
+    const existing = new Set(existingNames);
+    for (const name of fs
+      .readdirSync(root)
+      .filter((entry) => !existing.has(entry))
+      .sort()
+      .slice(-3)) {
       const report: Record<string, unknown> = {};
       backups.push(report);
       try {
@@ -104,24 +113,7 @@ export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<st
           handoff.file === `rebuild-policy-handoff.${handoff.sha256}.yaml`;
         report.handoffFileValid = valid;
         if (!valid) continue;
-        const descriptor = fs.openSync(
-          path.join(directory, handoff.file),
-          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-        );
-        try {
-          const info = fs.fstatSync(descriptor);
-          const currentUid = process.getuid?.();
-          report.handoffValid =
-            info.isFile() &&
-            info.nlink === 1 &&
-            (currentUid === undefined || info.uid === currentUid) &&
-            (info.mode & 0o777) === 0o600 &&
-            info.size <= 8 * 1024 * 1024 &&
-            createHash("sha256").update(fs.readFileSync(descriptor)).digest("hex") ===
-              handoff.sha256;
-        } finally {
-          fs.closeSync(descriptor);
-        }
+        report.handoffValid = readRebuildPolicyHandoff(manifest as RebuildManifest) !== null;
       } catch (error) {
         report.errorCode = (error as NodeJS.ErrnoException).code ?? "invalid-metadata";
       }
@@ -150,8 +142,9 @@ export async function writeGatewayUpgradeBackupEvidence(
   artifacts: { writeJson(name: string, value: unknown): Promise<unknown> },
   name: string,
   root: string,
+  existingNames: readonly string[] = [],
 ): Promise<{ backups: Record<string, unknown>[] }> {
-  const evidence = gatewayUpgradeBackupEvidence(root);
+  const evidence = gatewayUpgradeBackupEvidence(root, existingNames);
   await artifacts.writeJson(name, evidence);
   return evidence;
 }
@@ -159,14 +152,14 @@ export async function writeGatewayUpgradeBackupEvidence(
 /** Collect both read-only probes without replacing an installer failure. */
 export async function captureGatewayUpgradeProbeEvidence(
   sandboxName: string,
-  capture: (name: string, args: readonly string[]) => Promise<unknown>,
+  capture: (name: string, args: readonly string[]) => Promise<Pick<ShellProbeResult, "exitCode">>,
 ): Promise<boolean> {
   const probes = [
     ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
     ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
   ] as const;
   const results = await Promise.allSettled(probes.map(async ([name, args]) => capture(name, args)));
-  return results.every((result) => result.status === "fulfilled");
+  return results.every((result) => result.status === "fulfilled" && result.value.exitCode === 0);
 }
 
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
