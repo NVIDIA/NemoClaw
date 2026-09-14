@@ -291,7 +291,7 @@ export function qualifyHermesPortableOperatingAuthority(
         podmanAuthorityDeps,
       ));
   const initial = capture();
-  const assertFiles = startupOperation
+  const assertFiles = reuseQualification
     ? createHermesPortableOperatingFileProof(initial.receipt, env)
     : undefined;
   const canReuseFiles = () =>
