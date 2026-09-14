@@ -6,7 +6,7 @@
  *
  * Host fingerprint only proves 127.0.0.1:8081. The registered sandbox route
  * is host.openshell.internal:8081 (the OpenShell Docker bridge). A
- * loopback-only Docker publish or 127.0.0.1-only host bind blackholes that hop
+ * loopback-only Docker publish or 127.0.0.1-only host bind can leave that hop unreachable
  * (#11626). Reuse the generic host-service probe (#3340 / #4564).
  */
 
@@ -53,7 +53,7 @@ export function formatLlamaCppSandboxUnreachableMessage(
   return [
     `  ✗ Sandbox containers cannot reach the ${SERVICE_LABEL} at ${HOST_INTERNAL_NAME}:${port}.`,
     `    Host-side 127.0.0.1:${port} passed. The sandbox route uses the OpenShell Docker bridge IP.`,
-    `    A loopback-only Docker publish (-p 127.0.0.1:${port}:${port}) or a 127.0.0.1-only host bind blackholes SYN packets to that hop.`,
+    `    A loopback-only Docker publish (-p 127.0.0.1:${port}:${port}) or a 127.0.0.1-only host bind can make this sandbox route unreachable.`,
     "    Publish the port on the Docker gateway IP as well, for example:",
     `      docker run ... ${gatewayBind} ...`,
     "    Binding 0.0.0.0 also works and exposes the port more widely.",
