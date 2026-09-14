@@ -1424,6 +1424,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia",
       NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1",
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
       NEMOCLAW_E2E_SECURITY_POSTURE: "1",
