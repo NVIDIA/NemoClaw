@@ -184,6 +184,55 @@ describe("advisor session context tool flow", () => {
     ).toEqual([]);
   });
 
+  it("requires non-empty specialist evidence before analysis (#10791)", () => {
+    const requiredPath = "/workspace/specialist.diff";
+    const tools = resolveAdvisorTurnTools(
+      {
+        ...contextTurn("review", "{}"),
+        requiredReadOneOfPaths: [requiredPath],
+        requireAssistantText: true,
+      },
+      ["pr_review_context"],
+      new Set(["pr_review_context"]),
+    );
+    const contextEvents: AdvisorTurnFlowEvent[] = [
+      { type: "tool_start", toolName: "pr_review_context" },
+      { type: "tool_end", toolName: "pr_review_context", isError: false },
+    ];
+    const nonEmptyRead: AdvisorTurnFlowEvent = {
+      type: "read",
+      path: requiredPath,
+      offset: 1,
+      endOffset: 1,
+      fileSize: 9,
+      reachesEnd: true,
+    };
+
+    expect(advisorTurnFlowErrors("review", [...contextEvents, analysisEvent], tools)).toContain(
+      "review omitted specialist evidence read",
+    );
+    expect(
+      advisorTurnFlowErrors("review", [...contextEvents, analysisEvent, nonEmptyRead], tools),
+    ).toContain("review emitted text before specialist evidence read");
+    expect(
+      advisorTurnFlowErrors(
+        "review",
+        [...contextEvents, { ...nonEmptyRead, endOffset: 0 }, analysisEvent],
+        tools,
+      ),
+    ).toContain("review omitted specialist evidence read");
+    expect(
+      advisorTurnFlowErrors(
+        "review",
+        [...contextEvents, { ...nonEmptyRead, fileSize: 0, endOffset: null }, analysisEvent],
+        tools,
+      ),
+    ).toContain("review omitted specialist evidence read");
+    expect(
+      advisorTurnFlowErrors("review", [...contextEvents, nonEmptyRead, analysisEvent], tools),
+    ).toEqual([]);
+  });
+
   it("rejects an atomic commit configuration with context or extra tools (#6446)", () => {
     const turn: AdvisorPromptTurn = {
       ...contextTurn("invalid-atomic", "{}"),

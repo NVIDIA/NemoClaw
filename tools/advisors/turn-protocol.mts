@@ -453,7 +453,10 @@ export function advisorTurnFlowErrors(
     }
   }
   const oneOfReads = events.flatMap((event, index) =>
-    event.type === "read" && tools.requiredReadOneOfPaths?.includes(event.path)
+    event.type === "read" &&
+    tools.requiredReadOneOfPaths?.includes(event.path) &&
+    event.fileSize > 0 &&
+    (event.endOffset === null || event.endOffset >= event.offset)
       ? [{ event, index }]
       : [],
   );

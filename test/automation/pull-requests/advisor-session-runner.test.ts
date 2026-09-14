@@ -57,6 +57,7 @@ const sdk = vi.hoisted(() => {
     emitCommitProse: false,
     emitRepairProse: false,
     failOptionalRead: false,
+    omitRequiredRead: false,
     omitAnalysis: false,
     omitAnalysisPrompts: 0,
     prompts: [] as string[],
@@ -76,6 +77,7 @@ const sdk = vi.hoisted(() => {
     state.emitCommitProse = false;
     state.emitRepairProse = false;
     state.failOptionalRead = false;
+    state.omitRequiredRead = false;
     state.omitAnalysis = false;
     state.omitAnalysisPrompts = 0;
     state.prompts = [];
@@ -173,7 +175,7 @@ const sdk = vi.hoisted(() => {
         const readTool = state.customTools.find(
           (tool) => activeToolNames.includes(tool.name) && tool.name === "read",
         );
-        await (readTool && requiredReadPath
+        await (readTool && requiredReadPath && !state.omitRequiredRead
           ? executeReadTool(readTool, requiredReadPath, emit)
           : Promise.resolve());
         await (readTool && state.failOptionalRead
@@ -463,6 +465,25 @@ describe("advisor session runner", () => {
     expect(result.raw.indexOf("tool_end read ok")).toBeLessThan(
       result.raw.indexOf("analysis for Review review-evidence"),
     );
+  });
+
+  it("rejects specialist analysis that omits required evidence (#10791)", async () => {
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-evidence-"));
+    tempDirs.push(evidenceDir);
+    const evidenceFile = path.join(evidenceDir, "specialist.diff");
+    fs.writeFileSync(evidenceFile, "diff evidence");
+    const evidencePath = fs.realpathSync(evidenceFile);
+    sdk.state.omitRequiredRead = true;
+
+    const result = await run([evidenceAnalysisTurn("review-evidence", evidencePath)], undefined, [
+      evidenceDir,
+    ]);
+
+    expect(result.fatalError).toBe("review-evidence omitted specialist evidence read");
+    expect(result.turnErrors.join("; ")).toContain(
+      "review-evidence omitted specialist evidence read",
+    );
+    expect(sdk.state.readContents).toEqual([]);
   });
 
   it("leaves the global transport unchanged for hosted advisor inference", async () => {
