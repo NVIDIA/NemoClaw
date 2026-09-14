@@ -117,6 +117,27 @@ describe("Portable startup evidence lifetime", () => {
     },
   );
 
+  it("permanently expires reuse when its original gate is disabled (#11574)", async () => {
+    const environment = { ...env };
+    await withMcpLifecycleLock(
+      "alpha",
+      () =>
+        withHermesPortableStartupOperation(
+          "alpha",
+          stateDir,
+          () => {
+            expect(currentHermesPortableStartupOperation("alpha")).toBeDefined();
+            environment.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE = "0";
+            expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+            environment.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE = "1";
+            expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+          },
+          environment,
+        ),
+      { stateDir },
+    );
+  });
+
   it("cannot create reusable evidence without the matching lifecycle lock (#11574)", async () => {
     await withHermesPortableStartupOperation(
       "alpha",

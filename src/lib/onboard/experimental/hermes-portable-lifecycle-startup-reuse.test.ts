@@ -12,6 +12,7 @@ import {
 } from "../../state/mcp-lifecycle-lock-acquisition";
 import { withHermesPortableStartupOperation } from "./hermes-portable-startup-operation";
 import {
+  buildHermesPortableOpenShellEnv,
   recoverHermesPortableSandboxLifecycle,
   stopHermesPortableSandboxLifecycle,
 } from "./hermes-portable-lifecycle";
@@ -84,7 +85,15 @@ describe("Portable lifecycle startup handoff", () => {
       );
     const execReadiness = () =>
       fixture.captureOpenShell.mock.calls.some(([args]) => args.at(-1) === "true");
-    return { fixture, deps, recover, stop, run, execReadiness };
+    return {
+      fixture,
+      deps,
+      recover,
+      stop,
+      run,
+      execReadiness,
+      commandEnv: buildHermesPortableOpenShellEnv(deps.env, receipt.runtimeAuthority),
+    };
   }
 
   it("hands completed startup to the next probe while rechecking live authority (#11574)", async () => {
@@ -101,6 +110,28 @@ describe("Portable lifecycle startup handoff", () => {
         true,
       );
       expect(h.fixture.launchOpenShell).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("hands startup to a probe using its exact sanitized command environment (#11574)", async () => {
+    const h = setup();
+    await h.run(async () => {
+      await h.recover();
+      Object.assign(h.deps, { env: h.commandEnv });
+      h.fixture.captureOpenShell.mockClear();
+      await expect(h.recover()).resolves.toEqual({ kind: "already-running" });
+      expect(h.execReadiness()).toBe(false);
+    });
+  });
+
+  it("does not treat a modified command environment as the startup environment (#11574)", async () => {
+    const h = setup();
+    await h.run(async () => {
+      await h.recover();
+      Object.assign(h.deps, { env: { ...h.commandEnv, UNEXPECTED_STARTUP_VALUE: "changed" } });
+      h.fixture.captureOpenShell.mockClear();
+      await expect(h.recover()).resolves.toEqual({ kind: "already-running" });
+      expect(h.execReadiness()).toBe(true);
     });
   });
 

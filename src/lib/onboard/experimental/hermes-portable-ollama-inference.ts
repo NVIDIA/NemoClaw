@@ -842,6 +842,8 @@ function inferenceLifecycleRow(
 export type HermesPortableOllamaReadinessRuntimeDisposition = Readonly<{
   kind: "running-current" | "stopped";
   assertCurrent: () => void;
+  /** Reobserve the exact runtime using the same still-current published authority. */
+  reinspect?: () => HermesPortableOllamaReadinessRuntimeDisposition;
 }>;
 
 interface HermesPortableOllamaReadinessRuntimeDeps {
@@ -938,18 +940,22 @@ export function inspectHermesPortableOllamaReadinessRuntime(
     }
     input.assertCallerCurrent();
   };
-  assertCurrent();
-  const inspected = deps.inspectRuntime({
-    engine: inspectionAuthority.engine,
-    persistedEngineAuthority: persisted,
-    serializedReceipt,
-    assertCurrent,
-  });
-  assertCurrent();
-  return Object.freeze({
-    kind: inspected.running ? "running-current" : "stopped",
-    assertCurrent,
-  });
+  const reinspect = (): HermesPortableOllamaReadinessRuntimeDisposition => {
+    assertCurrent();
+    const inspected = deps.inspectRuntime({
+      engine: inspectionAuthority.engine,
+      persistedEngineAuthority: persisted,
+      serializedReceipt,
+      assertCurrent,
+    });
+    assertCurrent();
+    return Object.freeze({
+      kind: inspected.running ? "running-current" : "stopped",
+      assertCurrent,
+      reinspect,
+    });
+  };
+  return reinspect();
 }
 
 function restoreStoppedRuntime(
@@ -995,7 +1001,16 @@ export async function recoverHermesPortableOllamaInference(
       preparedAuthorityInspectionCount,
     });
   try {
-    if (await tryReuseHermesPortableOllamaStartup(input, deps)) {
+    if (
+      await tryReuseHermesPortableOllamaStartup(input, {
+        ...deps,
+        measureEntry: (stage, operation) => {
+          if (stage === "exactRuntimeInspection") preparedAuthorityInspectionCount += 1;
+          return recoveryTiming.measureEntry(stage, operation);
+        },
+        measureAsync: recoveryTiming.measureAsync,
+      })
+    ) {
       recoveryTiming.finishEntryAuthority();
       recoveryTiming.finish("reused", timingCounts());
       return "reused";

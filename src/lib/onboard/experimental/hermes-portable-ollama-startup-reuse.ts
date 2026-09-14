@@ -18,6 +18,14 @@ import { currentHermesPortableStartupOperation } from "./hermes-portable-startup
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
 interface StartupReuseDeps {
+  readonly measureEntry?: <T>(
+    stage: "operatingAuthority" | "exactRuntimeInspection",
+    operation: () => T,
+  ) => T;
+  readonly measureAsync?: <T>(
+    stage: "route" | "dependency",
+    operation: () => Promise<T>,
+  ) => Promise<T>;
   readonly readReceipt: typeof readHermesPortableLifecycleReceipt;
   readonly qualifyOperatingAuthority: typeof qualifyHermesPortableOperatingAuthority;
   readonly inspectReadinessRuntime: typeof inspectHermesPortableOllamaReadinessRuntime;
@@ -40,6 +48,10 @@ export async function tryReuseHermesPortableOllamaStartup(
   ) {
     return false;
   }
+  const measureEntry =
+    deps.measureEntry ?? (<T>(_stage: string, operation: () => T) => operation());
+  const measureAsync =
+    deps.measureAsync ?? (<T>(_stage: string, operation: () => Promise<T>) => operation());
   const currentScope = () => currentHermesPortableStartupOperation(input.sandboxName) === scope;
   input.assertCallerCurrent?.();
   const snapshot = deps.readReceipt(input.sandboxName, stateDir);
@@ -47,9 +59,11 @@ export async function tryReuseHermesPortableOllamaStartup(
   const expectedSnapshot = structuredClone(snapshot);
   const expectedEnv = { ...env };
   const expectedEntry = structuredClone(input.entry);
-  const operating = deps.qualifyOperatingAuthority(
-    snapshot as typeof snapshot & { readonly receipt: HermesPortableConfiguredReceipt },
-    { env },
+  const operating = measureEntry("operatingAuthority", () =>
+    deps.qualifyOperatingAuthority(
+      snapshot as typeof snapshot & { readonly receipt: HermesPortableConfiguredReceipt },
+      { env },
+    ),
   );
   const assertCurrent = () => {
     input.assertCallerCurrent?.();
@@ -69,22 +83,24 @@ export async function tryReuseHermesPortableOllamaStartup(
     input.assertCallerTransactionCurrent?.();
   };
   const inspect = () =>
-    deps.inspectReadinessRuntime({
-      intent: "connect-probe-only",
-      sandboxName: input.sandboxName,
-      entry: input.entry,
-      operatingReceipt: operating.receipt,
-      readRegistry: input.readRegistry,
-      assertCallerCurrent: assertCurrent,
-      env,
-      stateDir,
-    });
+    measureEntry("exactRuntimeInspection", () =>
+      deps.inspectReadinessRuntime({
+        intent: "connect-probe-only",
+        sandboxName: input.sandboxName,
+        entry: input.entry,
+        operatingReceipt: operating.receipt,
+        readRegistry: input.readRegistry,
+        assertCallerCurrent: assertCurrent,
+        env,
+        stateDir,
+      }),
+    );
   assertCurrent();
   const initial = inspect();
   if (initial.kind !== "running-current" || !currentScope()) return false;
   let verified;
   try {
-    verified = await input.verifyRoute();
+    verified = await measureAsync("route", input.verifyRoute);
   } catch {
     // A missing route can require the existing rollback-safe recovery path.
     assertCurrent();
@@ -98,11 +114,16 @@ export async function tryReuseHermesPortableOllamaStartup(
   if (!currentScope()) return false;
   let dependency: HermesPortableOllamaPreparedProbeDependency | null = null;
   try {
-    dependency = (await input.prepareProbeDependency?.()) ?? null;
+    dependency = await measureAsync(
+      "dependency",
+      async () => (await input.prepareProbeDependency?.()) ?? null,
+    );
     assertCurrent();
     // Re-inspect after the async route/dependency boundaries: retained file proof
     // alone cannot establish that the same container is still running.
-    const completed = inspect();
+    const completed = initial.reinspect
+      ? measureEntry("exactRuntimeInspection", initial.reinspect)
+      : inspect();
     completed.assertCurrent();
     if (completed.kind !== "running-current" || !currentScope()) {
       const rollback = dependency;

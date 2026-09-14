@@ -70,6 +70,15 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(result.kind).toBe("running-current");
     expect(createInspectionAuthority).toHaveBeenCalledOnce();
     expect(inspectRuntime).toHaveBeenCalledOnce();
+    inspectRuntime.mockReturnValueOnce({ running: false, receipt: harness.receipt });
+    expect(result.reinspect?.().kind).toBe("stopped");
+    expect(createInspectionAuthority).toHaveBeenCalledOnce();
+    expect(inspectRuntime).toHaveBeenCalledTimes(2);
+    assertPublishedCurrent.mockImplementation(() => {
+      throw new Error("publication changed");
+    });
+    expect(result.reinspect).toThrow("publication changed");
+    expect(inspectRuntime).toHaveBeenCalledTimes(2);
     expect(assertEngineCurrent).toHaveBeenCalled();
     expect(assertCallerCurrent).toHaveBeenCalled();
     expect(harness.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
