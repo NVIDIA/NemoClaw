@@ -154,6 +154,7 @@ pub(crate) mod native {
     const DELETE_ACCESS: u32 = READ_ACCESS | 0x0001_0000;
     const DIRECTORY: u32 = 0x10;
     const REPARSE: u32 = 0x400;
+    const MOUNT_POINT_TAG: u32 = 0xa000_0003;
 
     #[repr(C)]
     struct Guid {
@@ -355,6 +356,27 @@ pub(crate) mod native {
         share: u32,
         disposition: u32,
     ) -> Result<Handle, &'static str> {
+        open_mode_kind(
+            parent,
+            name,
+            directory,
+            access,
+            share,
+            disposition,
+            None,
+            false,
+        )
+    }
+    fn open_mode_kind(
+        parent: Option<&Handle>,
+        name: &str,
+        directory: bool,
+        access: u32,
+        share: u32,
+        disposition: u32,
+        accepted_reparse_tag: Option<u32>,
+        follow_reparse: bool,
+    ) -> Result<Handle, &'static str> {
         let mut wide = name.encode_utf16().collect::<Vec<_>>();
         if wide.is_empty() || wide.len() > 16000 {
             return Err("runtime-path");
@@ -368,7 +390,12 @@ pub(crate) mod native {
             length: std::mem::size_of::<ObjectAttributes>() as u32,
             root: parent.map_or(null_mut(), |v| v.0),
             name: &mut unicode,
-            flags: 0x40 | if parent.is_some() { 0x1000 } else { 0 },
+            flags: 0x40
+                | if parent.is_some() && !follow_reparse {
+                    0x1000
+                } else {
+                    0
+                },
             security: null_mut(),
             quality: null_mut(),
         };
@@ -384,7 +411,9 @@ pub(crate) mod native {
                 0,
                 share,
                 disposition,
-                0x0020_0020 | if directory { 1 } else { 0x40 },
+                (if follow_reparse { 0 } else { 0x0020_0000 })
+                    | 0x20
+                    | if directory { 1 } else { 0x40 },
                 null(),
                 0,
             )
@@ -408,12 +437,42 @@ pub(crate) mod native {
                 std::mem::size_of::<AttributeTag>() as u32,
             )
         } == 0
-            || tag.attributes & REPARSE != 0
             || (tag.attributes & DIRECTORY != 0) != directory
         {
             return Err("runtime-reparse");
         }
+        match accepted_reparse_tag {
+            Some(expected) if tag.attributes & REPARSE != 0 && tag.tag == expected => {}
+            None if tag.attributes & REPARSE == 0 => {}
+            _ => return Err("runtime-reparse"),
+        }
         Ok(handle)
+    }
+
+    fn open_runtime_root(parent: Option<&Handle>, id: &str) -> Result<Handle, &'static str> {
+        if !lower_hex(id, 64) {
+            return Err("runtime-identity");
+        }
+        match open(parent, id, true, DIR_ACCESS, 3) {
+            Ok(handle) => Ok(handle),
+            Err("runtime-reparse") => {
+                let mount = open_mode_kind(
+                    parent,
+                    id,
+                    true,
+                    DIR_ACCESS,
+                    3,
+                    1,
+                    Some(MOUNT_POINT_TAG),
+                    false,
+                )?;
+                verify_security(&mount)?;
+                let volume = open_mode_kind(parent, id, true, DIR_ACCESS, 3, 1, None, true)?;
+                verify_security(&volume)?;
+                Ok(volume)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn sid_string(sid: *const c_void) -> Result<String, &'static str> {
@@ -597,7 +656,11 @@ pub(crate) mod native {
             }
             let mut handles = open_installation(installation)?;
             for component in ["runtimes", id] {
-                let handle = open(handles.last(), component, true, DIR_ACCESS, 3)?;
+                let handle = if component == id {
+                    open_runtime_root(handles.last(), component)?
+                } else {
+                    open(handles.last(), component, true, DIR_ACCESS, 3)?
+                };
                 verify_security(&handle)?;
                 handles.push(handle);
             }
@@ -876,14 +939,13 @@ pub(crate) mod native {
                 content_components(relative)?
             };
             let mut parents = Vec::new();
-            for part in parts {
-                let handle = open(
-                    parents.last().or_else(|| self.handles.last()),
-                    part,
-                    true,
-                    DIR_ACCESS,
-                    3,
-                )?;
+            for (index, part) in parts.iter().enumerate() {
+                let parent = parents.last().or_else(|| self.handles.last());
+                let handle = if index == 1 && parts[0] == "runtimes" {
+                    open_runtime_root(parent, part)?
+                } else {
+                    open(parent, part, true, DIR_ACCESS, 3)?
+                };
                 verify_security(&handle)?;
                 parents.push(handle);
             }
@@ -898,9 +960,13 @@ pub(crate) mod native {
         ) -> Result<ContentFile<'a>, &'static str> {
             let parts = content_components(relative)?;
             let mut parents = Vec::new();
-            for part in &parts[..parts.len() - 1] {
+            for (index, part) in parts[..parts.len() - 1].iter().enumerate() {
                 let parent = parents.last().or_else(|| self.handles.last());
-                let handle = open(parent, part, true, DIR_ACCESS, 3)?;
+                let handle = if index == 1 && parts[0] == "runtimes" {
+                    open_runtime_root(parent, part)?
+                } else {
+                    open(parent, part, true, DIR_ACCESS, 3)?
+                };
                 verify_security(&handle)?;
                 parents.push(handle);
             }

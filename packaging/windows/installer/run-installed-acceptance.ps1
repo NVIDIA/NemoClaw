@@ -46,7 +46,7 @@ foreach ($file in $build.files) {
   }
 }
 $timings = [ordered]@{ schemaVersion = 1; sourceRevision = $ArtifactSourceRevision; artifactSourceRevision = $ArtifactSourceRevision; controllerSourceRevision = $controllerSource; currentHeadQualification = $false; mode = $Mode; measurement = 'fresh-runner-installed-preview'; agent = $Agent;
-  hostPreparationRunBeforeInstall = $false; upgradeMeasured = $false; installTargetMilliseconds = 30000; installTargetSatisfied = $false; compiledMsi = $build.compiledMsi; stages = [ordered]@{} }
+  hostPreparationRunBeforeInstall = $false; upgradeMeasured = $false; installTargetMilliseconds = 30000; installTargetSatisfied = $false; primaryException = $null; nativeRuntimeFailure = $null; compiledMsi = $build.compiledMsi; stages = [ordered]@{} }
 function Invoke-OwnedSetup([string]$Action, [string]$Log) {
   $info = [Diagnostics.ProcessStartInfo]::new()
   $info.FileName = $setup; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
@@ -91,6 +91,20 @@ try {
   } else { $timings['compiledRuntimeControls'] = 'Hermes acceptance validated capabilities, SEA identity and held runtime tuple.' }
 } catch { $primary = $_ }
 finally {
+  # MSI records the helper's actual exit code even when Burn cannot retain its
+  # stderr. Capture the bounded classification before uninstall adds another
+  # transaction to the same evidence directory.
+  try {
+    $runtimeFailures = @()
+    foreach ($log in @(Get-ChildItem -LiteralPath $work -Filter 'install*.log' -File)) {
+      foreach ($match in @(Select-String -LiteralPath $log.FullName -Pattern 'CustomAction (NativeRuntime[A-Za-z]+) returned actual error code ([0-9]+)' -AllMatches)) {
+        foreach ($capture in $match.Matches) {
+          $runtimeFailures += @{ log = $log.Name; action = $capture.Groups[1].Value; exitCode = [int]$capture.Groups[2].Value }
+        }
+      }
+    }
+    if ($runtimeFailures.Count -gt 0) { $timings.nativeRuntimeFailure = $runtimeFailures[-1] }
+  } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; native runtime failure classification also failed.' } }
   # Enumerate only after launch samples, so counting does not warm startup paths.
   try {
     if (Test-Path -LiteralPath $installation) {
@@ -135,6 +149,7 @@ $timings.installTargetSatisfied = $timings.stages.Contains('-install') -and
 if (-not $timings.installTargetSatisfied -and $null -eq $primary) {
   try { throw 'The installed preview missed its measured30-second installation target.' } catch { $primary = $_ }
 }
+$timings.primaryException = if ($null -eq $primary) { $null } else { $primary.Exception.Message }
 try { [IO.File]::WriteAllText("$work\installed-stage-timings.json", ($timings | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false)) }
 catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; timing evidence also could not be saved.' } }
 if ($null -ne $primary) { throw $primary }
