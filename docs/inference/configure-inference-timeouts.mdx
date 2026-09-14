@@ -140,6 +140,10 @@ $$nemoclaw <sandbox-name> recover
 ```
 
 A valid finite, nonnegative recovery override takes precedence over internal per-agent and per-call-site budgets.
+During legacy keepalive recovery, NemoClaw restores state and verifies the gateway before the final OpenShell handoff.
+The additional OpenShell readiness wait runs after that handoff, when the previous container has already been removed.
+If this wait fails, automatic rollback is unavailable and the primary dashboard or API host forward remains stopped.
+Follow the printed host recovery guidance.
 
 </AgentOnly>
 
