@@ -39,6 +39,7 @@ import {
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   legacyGatewayUpgradeHostFirewallOptions,
+  isGatewayUpgradeBackupEvidenceValid,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
@@ -361,6 +362,7 @@ async function runInstallerPayload(
   logName: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[] = [],
+  requireBackupEvidence = false,
 ): Promise<ShellProbeResult> {
   const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
   const result = await bash(host, `bash ${quotedInstallerArgs}`, {
@@ -372,7 +374,7 @@ async function runInstallerPayload(
   });
   artifacts.addRedactionValues(redactionValues);
   await artifacts.writeText(logName, resultText(result));
-  await captureGatewayUpgradeProbeEvidence(SURVIVOR_SANDBOX, (name, args) =>
+  const probesCaptured = await captureGatewayUpgradeProbeEvidence(SURVIVOR_SANDBOX, (name, args) =>
     bash(host, ["openshell", ...args].map(shellQuote).join(" "), {
       artifactName: `${label}-sandbox-${name}`,
       captureLimitBytes: 16 * 1024,
@@ -381,15 +383,18 @@ async function runInstallerPayload(
       timeoutMs: 15_000,
     }),
   );
-  await writeGatewayUpgradeBackupEvidence(
+  const backupEvidence = await writeGatewayUpgradeBackupEvidence(
     artifacts,
     `${label}-backup-handoff.json`,
     path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SURVIVOR_SANDBOX),
   );
+  const evidenceValid =
+    !requireBackupEvidence ||
+    (probesCaptured && isGatewayUpgradeBackupEvidenceValid(backupEvidence));
   expect(
-    result.exitCode,
-    `${label} NemoClaw installer returned an unexpected exit code:\n${resultText(result)}`,
-  ).toBe(0);
+    result.exitCode === 0 && evidenceValid,
+    `${label} NemoClaw installer or required recovery evidence failed:\n${resultText(result)}`,
+  ).toBe(true);
   return result;
 }
 
@@ -530,6 +535,7 @@ async function installCurrentNemoclawUpgrade(
     "current-install.log",
     currentEnv,
     redactionValues,
+    true,
   );
 
   const openshellVersion = await bash(host, `openshell --version`, {

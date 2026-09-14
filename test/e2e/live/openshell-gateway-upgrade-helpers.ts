@@ -62,7 +62,7 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
   }
 }
 
-/** Retain bounded handoff metadata, never policy or manifest contents. */
+/** Retain bounded lifecycle and handoff metadata, never policy or manifest contents. */
 export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<string, unknown>[] } {
   const backups: Record<string, unknown>[] = [];
   try {
@@ -72,7 +72,30 @@ export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<st
       try {
         const directory = path.join(root, name);
         const payload = fs.readFileSync(path.join(directory, "rebuild-manifest.json"), "utf8");
-        const handoff = JSON.parse(payload).rebuildPolicyHandoff;
+        const manifest = JSON.parse(payload);
+        report.manifestValid =
+          manifest.sandboxName === path.basename(root) &&
+          manifest.timestamp === name &&
+          manifest.backupPath === directory &&
+          manifest.backupComplete === true;
+        const recoveryPath = path.join(directory, ".nemoclaw-rebuild-recovery.json");
+        if (fs.existsSync(recoveryPath)) {
+          const recovery = JSON.parse(fs.readFileSync(recoveryPath, "utf8"));
+          report.recoveryPhase =
+            recovery?.schemaVersion === 3 &&
+            typeof recovery.transactionId === "string" &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+              recovery.transactionId,
+            ) &&
+            recovery.sandboxName === manifest.sandboxName &&
+            recovery.backupTimestamp === manifest.timestamp &&
+            recovery.gatewayName === "nemoclaw" &&
+            recovery.gatewayPort === 8080 &&
+            (recovery.phase === "restore" || recovery.phase === "cleanup")
+              ? recovery.phase
+              : "invalid";
+        } else report.recoveryPhase = "complete";
+        const handoff = manifest.rebuildPolicyHandoff;
         report.handoffPresent = handoff !== null && typeof handoff === "object";
         if (!report.handoffPresent) continue;
         const valid =
@@ -109,25 +132,41 @@ export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<st
   return { backups };
 }
 
+/** Accept one new backup with either active valid handoff authority or completed cleanup. */
+export function isGatewayUpgradeBackupEvidenceValid(evidence: {
+  backups: Record<string, unknown>[];
+}): boolean {
+  const [backup] = evidence.backups;
+  return (
+    evidence.backups.length === 1 &&
+    backup?.manifestValid === true &&
+    ((backup.recoveryPhase === "restore" && backup.handoffValid === true) ||
+      (backup.recoveryPhase === "complete" && backup.handoffPresent === false))
+  );
+}
+
 /** Write the required handoff report or fail the E2E evidence contract. */
 export async function writeGatewayUpgradeBackupEvidence(
   artifacts: { writeJson(name: string, value: unknown): Promise<unknown> },
   name: string,
   root: string,
-): Promise<void> {
-  await artifacts.writeJson(name, gatewayUpgradeBackupEvidence(root));
+): Promise<{ backups: Record<string, unknown>[] }> {
+  const evidence = gatewayUpgradeBackupEvidence(root);
+  await artifacts.writeJson(name, evidence);
+  return evidence;
 }
 
 /** Collect both read-only probes without replacing an installer failure. */
 export async function captureGatewayUpgradeProbeEvidence(
   sandboxName: string,
   capture: (name: string, args: readonly string[]) => Promise<unknown>,
-): Promise<void> {
+): Promise<boolean> {
   const probes = [
     ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
     ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
   ] as const;
-  await Promise.allSettled(probes.map(async ([name, args]) => capture(name, args)));
+  const results = await Promise.allSettled(probes.map(async ([name, args]) => capture(name, args)));
+  return results.every((result) => result.status === "fulfilled");
 }
 
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {

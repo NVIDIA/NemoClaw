@@ -22,6 +22,7 @@ import {
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   legacyGatewayUpgradeHostFirewallOptions,
+  isGatewayUpgradeBackupEvidenceValid,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
@@ -105,7 +106,7 @@ describe("OpenShell gateway upgrade boundary", () => {
       .mockResolvedValueOnce({});
     const sandboxName = "name with spaces; literal-argument";
 
-    await expect(captureGatewayUpgradeProbeEvidence(sandboxName, capture)).resolves.toBeUndefined();
+    await expect(captureGatewayUpgradeProbeEvidence(sandboxName, capture)).resolves.toBe(false);
     expect(capture.mock.calls).toEqual([
       ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
       ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
@@ -131,12 +132,34 @@ describe("OpenShell gateway upgrade boundary", () => {
         });
         fs.writeFileSync(
           path.join(backup, "rebuild-manifest.json"),
-          JSON.stringify({ rebuildPolicyHandoff: { file, sha256 }, unrelatedSecret: content }),
+          JSON.stringify({
+            sandboxName: "alpha",
+            timestamp: "2026-09-14",
+            backupPath: backup,
+            backupComplete: true,
+            rebuildPolicyHandoff: { file, sha256 },
+            unrelatedSecret: content,
+          }),
+        );
+        fs.writeFileSync(
+          path.join(backup, ".nemoclaw-rebuild-recovery.json"),
+          JSON.stringify({
+            schemaVersion: 3,
+            transactionId: "d15ea5ed-0000-4000-8000-000000000000",
+            sandboxName: "alpha",
+            backupTimestamp: "2026-09-14",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+            phase: "restore",
+          }),
+          { mode: 0o600 },
         );
         const result = gatewayUpgradeBackupEvidence(path.dirname(backup));
         expect(result).toEqual({
           backups: [
             {
+              manifestValid: true,
+              recoveryPhase: "restore",
               handoffPresent: true,
               handoffFileValid: true,
               handoffValid: valid,
@@ -144,11 +167,24 @@ describe("OpenShell gateway upgrade boundary", () => {
           ],
         });
         expect(JSON.stringify(result)).not.toContain("secret-canary");
+        expect(isGatewayUpgradeBackupEvidenceValid(result)).toBe(valid);
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
       }
     },
   );
+
+  it("accepts handoff absence only after the new backup reaches completed cleanup", () => {
+    expect([
+      isGatewayUpgradeBackupEvidenceValid({
+        backups: [{ manifestValid: true, recoveryPhase: "complete", handoffPresent: false }],
+      }),
+      isGatewayUpgradeBackupEvidenceValid({
+        backups: [{ manifestValid: true, recoveryPhase: "restore", handoffPresent: false }],
+      }),
+      isGatewayUpgradeBackupEvidenceValid({ backups: [] }),
+    ]).toEqual([true, false, false]);
+  });
 
   it("fails when the required handoff artifact cannot be written", async () => {
     const writeJson = vi.fn().mockRejectedValue(new Error("artifact storage unavailable"));
