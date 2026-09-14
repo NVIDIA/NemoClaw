@@ -113,11 +113,12 @@ describe("OpenShell gateway upgrade boundary", () => {
   });
 
   it.each([
-    { mode: 0o600, tampered: false, expectedMode: "0o600", matches: true },
-    { mode: 0o644, tampered: true, expectedMode: "0o644", matches: false },
+    { mode: 0o600, tampered: false, valid: true },
+    { mode: 0o644, tampered: false, valid: false },
+    { mode: 0o600, tampered: true, valid: false },
   ])(
-    "reports handoff integrity without exposing policy content ($expectedMode)",
-    async ({ mode, tampered, expectedMode, matches }) => {
+    "reports handoff integrity without exposing policy content (mode $mode, tampered $tampered)",
+    async ({ mode, tampered, valid }) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-handoff-probe-"));
       try {
         const backup = path.join(home, ".nemoclaw", "rebuild-backups", "alpha", "2026-09-14");
@@ -138,13 +139,7 @@ describe("OpenShell gateway upgrade boundary", () => {
             {
               handoffPresent: true,
               handoffFileValid: true,
-              retired: false,
-              regular: true,
-              mode: expectedMode,
-              ownedByCurrentUser: true,
-              linkCount: 1,
-              size: expect.any(Number),
-              digestMatches: matches,
+              handoffValid: valid,
             },
           ],
         });

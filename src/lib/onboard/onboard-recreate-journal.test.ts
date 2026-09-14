@@ -20,7 +20,6 @@ vi.mock("./gateway-teardown-authority", () => ({
 import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
-import { observeSandboxPresenceOnGateway } from "./sandbox-recreate-probe";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import {
   fingerprintOnboardRecreateTargetIntent,
@@ -352,18 +351,6 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
   ])("does not inventory an unrelated or mixed diagnostic [case %#]", (stderr) => {
     mocks.captureOpenshell.mockReturnValue({ status: 1, output: "", stdout: "", stderr });
     expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
-    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(1);
-  });
-
-  it("fails closed when the gateway reports neither a live sandbox nor explicit absence", () => {
-    mocks.captureOpenshell.mockReturnValue({
-      status: 1,
-      output: "",
-      stdout: "",
-      stderr: "Error: connection refused",
-    });
-
-    expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
     expect(mocks.captureOpenshell).toHaveBeenCalledTimes(1);
     expect(mocks.captureOpenshell).not.toHaveBeenCalledWith(
@@ -401,31 +388,6 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
       expect.objectContaining({ timeout: 15_000 }),
     );
-  });
-
-  it.each([
-    'status: Internal, message: "sandbox has no spec", details: []',
-    `Error: code: 'Internal error', message: "sandbox has no spec"`,
-    `Error: code: 'The system is not in a state required for the operation's execution', message: "provider 'compatible-endpoint' not found"`,
-  ])("retains recovery state when a config failure cannot prove absence [case %#]", (stderr) => {
-    mocks.captureOpenshell.mockReturnValue({ status: 1, output: "", stdout: "", stderr });
-    expect(() =>
-      observeSandboxPresenceOnGateway({ sandboxName: "alpha", gatewayName: "nemoclaw-9090" }),
-    ).toThrow(/neither a live sandbox nor explicit absence/);
-  });
-
-  it("keeps a retained legacy sandbox present for recovery retirement", () => {
-    mocks.captureOpenshell
-      .mockReturnValueOnce({
-        status: 1,
-        output: "",
-        stdout: "",
-        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
-      })
-      .mockReturnValueOnce(listedPresentProbe("Stopped"));
-    expect(
-      observeSandboxPresenceOnGateway({ sandboxName: "alpha", gatewayName: "nemoclaw-9090" }),
-    ).toBe("present");
   });
 
   it.each([

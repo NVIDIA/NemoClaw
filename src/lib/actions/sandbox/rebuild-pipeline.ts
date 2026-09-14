@@ -839,12 +839,8 @@ async function rebuildSandboxUnlocked(
           // path only after digest-verifying the policy handoff bound to the
           // prepared recovery manifest, so there is no live policy to recapture.
           if (staleRecovery) return validation;
-          // Installer recovery deliberately freezes the source policy before a
-          // legacy gateway upgrade. The replacement gateway can list the retained
-          // sandbox while being unable to render its old provider-backed spec, so
-          // a live delete-edge recapture is neither authoritative nor available.
-          // Revalidate the exact retained handoff instead; mutation still stops
-          // before deletion.
+          // Prepared legacy recovery freezes source policy before the gateway upgrade.
+          // Revalidate that handoff instead of recapturing unreadable live state.
           if (preparedBackupRecovery) {
             return backup.backupManifest && readRebuildPolicyHandoff(backup.backupManifest)
               ? validation

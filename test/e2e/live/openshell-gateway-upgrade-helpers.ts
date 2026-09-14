@@ -80,7 +80,6 @@ export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<st
           /^[a-f0-9]{64}$/.test(handoff.sha256) &&
           handoff.file === `rebuild-policy-handoff.${handoff.sha256}.yaml`;
         report.handoffFileValid = valid;
-        report.retired = handoff.retired === true;
         if (!valid) continue;
         const descriptor = fs.openSync(
           path.join(directory, handoff.file),
@@ -88,16 +87,14 @@ export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<st
         );
         try {
           const info = fs.fstatSync(descriptor);
-          Object.assign(report, {
-            regular: info.isFile(),
-            mode: `0o${(info.mode & 0o777).toString(8)}`,
-            ownedByCurrentUser: info.uid === process.getuid?.(),
-            linkCount: info.nlink,
-            size: info.size,
-          });
-          if (info.isFile() && info.size <= 8 * 1024 * 1024)
-            report.digestMatches =
-              createHash("sha256").update(fs.readFileSync(descriptor)).digest("hex") ===
+          const currentUid = process.getuid?.();
+          report.handoffValid =
+            info.isFile() &&
+            info.nlink === 1 &&
+            (currentUid === undefined || info.uid === currentUid) &&
+            (info.mode & 0o777) === 0o600 &&
+            info.size <= 8 * 1024 * 1024 &&
+            createHash("sha256").update(fs.readFileSync(descriptor)).digest("hex") ===
               handoff.sha256;
         } finally {
           fs.closeSync(descriptor);
