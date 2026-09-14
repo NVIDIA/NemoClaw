@@ -57,13 +57,18 @@ describe("sandbox status inference.local route health (#6192)", () => {
               output: `Name: alpha\nPhase: ${options.lookupPhase ?? "Ready"}\n`,
             },
       ),
-      captureOpenshellForStatusImpl: vi.fn(
-        async () =>
-          ({
-            status: 0,
-            output: `Gateway inference:\n  Provider: ${options.liveProvider ?? provider}\n  Model: ${options.liveModel ?? "nvidia/nemotron"}\n`,
-          }) as never,
-      ),
+      inferenceRouteObserver: {
+        observeInferenceRoute: vi.fn(async () => ({
+          ok: true as const,
+          value: {
+            state: "configured" as const,
+            route: {
+              provider: options.liveProvider ?? provider,
+              model: options.liveModel ?? "nvidia/nemotron",
+            },
+          },
+        })),
+      },
       getSandboxStatusPreflightImpl: vi.fn(async (): Promise<SandboxStatusPreflightResult> => ({
         failure: null,
         failureLayer: null,
@@ -180,7 +185,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(report.phase).toBe("Stopped");
     expect(report.failureLayer).toBeNull();
     expect(report.inferenceHealth).toBeNull();
-    expect(deps.captureOpenshellForStatusImpl).not.toHaveBeenCalled();
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
     expect(deps.probeProviderHealthImpl).not.toHaveBeenCalled();
     expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
   });

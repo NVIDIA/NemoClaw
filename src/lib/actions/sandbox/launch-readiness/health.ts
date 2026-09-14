@@ -16,6 +16,8 @@ import {
   type SandboxRecreateObserver,
 } from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
+import { createCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
+import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
   buildSandboxInferenceRouteProbeRequest,
   type InferenceRouteProbeAgent,
@@ -54,6 +56,7 @@ export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: LaunchReadinessBoundCapture;
+  inferenceRouteObserver?: OpenShellInferenceRouteObserver;
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
   forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
@@ -73,6 +76,13 @@ export type LaunchReadinessBoundCapture = (
   options?: NonNullable<Parameters<typeof captureOpenshell>[1]>,
 ) => LaunchReadinessCaptureResult;
 
+/** Bind the route observer to the same capture owner as the other readiness reads. */
+export function createLaunchReadinessInferenceRouteObserver(
+  capture: LaunchReadinessBoundCapture,
+): OpenShellInferenceRouteObserver {
+  return createCliOpenShellInferenceRouteObserver(capture);
+}
+
 /** Route every OpenShell-backed readiness observation through one bound capture owner. */
 export function createBoundLaunchReadinessDeps(
   capture: LaunchReadinessBoundCapture,
@@ -85,6 +95,7 @@ export function createBoundLaunchReadinessDeps(
         ignoreError: options?.ignoreError ?? true,
         timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
+    inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
       isSandboxGatewayRunningForStatus(sandboxName, gatewayName, {

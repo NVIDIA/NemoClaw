@@ -11,6 +11,7 @@ import {
   reserveManagedLlamaCppOwner,
 } from "../inference/llama-cpp/managed-state";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
+import type { OpenShellInferenceRouteResult } from "../adapters/openshell/inference-route";
 
 vi.mock("../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
@@ -32,17 +33,51 @@ function createDeps(
   status: number | null = 0,
 ): InferenceGetDeps & {
   log: ReturnType<typeof vi.fn>;
-  captureOpenshell: ReturnType<typeof vi.fn>;
+  observeInferenceRoute: ReturnType<typeof vi.fn>;
   getSandboxTargetGatewayName: ReturnType<typeof vi.fn>;
   listSandboxes: ReturnType<typeof vi.fn>;
 } {
-  const captureOpenshell = vi.fn(() => ({ status, output }));
+  const provider = output.match(/Provider:\s*([^\r\n]+)/u)?.[1] ?? null;
+  const model = output.match(/Model:\s*([^\r\n]+)/u)?.[1] ?? null;
+  const routeResult: OpenShellInferenceRouteResult =
+    status === null
+      ? {
+          ok: false,
+          error: {
+            kind: "command",
+            reason: "indeterminate",
+            message:
+              "OpenShell inference route observation ended before an exit status was available.",
+          },
+        }
+      : status !== 0
+        ? {
+            ok: false,
+            error: {
+              kind: "command",
+              reason: "failed",
+              message: `OpenShell inference route observation failed with exit status ${String(status)}.`,
+            },
+          }
+        : /Not configured/iu.test(output)
+          ? { ok: true, value: { state: "unconfigured" } }
+          : provider && model
+            ? { ok: true, value: { state: "configured", route: { provider, model } } }
+            : {
+                ok: false,
+                error: {
+                  kind: "schema",
+                  reason: provider || model ? "partial_route" : "malformed_output",
+                  message: "OpenShell returned an unrecognized inference route observation.",
+                },
+              };
+  const observeInferenceRoute = vi.fn(async () => routeResult);
   const getSandboxTargetGatewayName = vi.fn(() => "nemoclaw");
   const listSandboxes = vi.fn(() => []);
   const log = vi.fn();
   return {
-    captureOpenshell: captureOpenshell as unknown as InferenceGetDeps["captureOpenshell"] &
-      ReturnType<typeof vi.fn>,
+    inferenceRouteObserver: { observeInferenceRoute },
+    observeInferenceRoute,
     getSandboxTargetGatewayName:
       getSandboxTargetGatewayName as unknown as InferenceGetDeps["getSandboxTargetGatewayName"] &
         ReturnType<typeof vi.fn>,
@@ -180,10 +215,10 @@ describe("runInferenceGet", () => {
       model: "nvidia/model",
     });
 
-    expect(deps.captureOpenshell).toHaveBeenCalledWith(
-      ["inference", "get", "-g", "nemoclaw"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(deps.observeInferenceRoute).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: expect.any(Number),
+    });
     expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
       "Provider: nvidia-prod",
       "Model:    nvidia/model",
@@ -889,10 +924,10 @@ describe("runInferenceGet", () => {
     );
 
     expect(deps.getSandboxTargetGatewayName).toHaveBeenCalledWith("beta");
-    expect(deps.captureOpenshell).toHaveBeenCalledWith(
-      ["inference", "get", "-g", "nemoclaw-19090"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(deps.observeInferenceRoute).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw-19090" },
+      timeoutMs: expect.any(Number),
+    });
   });
 
   it("fails closed when a named sandbox has an invalid gateway binding", async () => {
@@ -907,7 +942,7 @@ describe("runInferenceGet", () => {
         "NemoClaw could not resolve the sandbox's recorded gateway.\n\nRepair or remove the 'beta' sandbox registration, then rerun inference get.",
     });
     await expect(lookup).rejects.not.toThrow(/secret-invalid-gateway|31337/);
-    expect(deps.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -932,7 +967,7 @@ describe("runInferenceGet", () => {
       await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
         message: expect.stringContaining(recovery),
       });
-      expect(deps.captureOpenshell).not.toHaveBeenCalled();
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
     },
   );
 
@@ -1006,11 +1041,12 @@ describe("runInferenceGet", () => {
   it("reports the gateway and timeout without command output (#10671)", async () => {
     const deps = createDeps("", null);
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
-    deps.captureOpenshell.mockReturnValue({
-      status: null,
-      output: "secret stderr must not be rendered",
-      error: Object.assign(new Error("secret timeout detail"), { code: "ETIMEDOUT" }),
-      signal: "SIGKILL",
+    deps.observeInferenceRoute.mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "timeout",
+        message: "OpenShell inference route observation timed out.",
+      },
     });
 
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
@@ -1034,11 +1070,13 @@ describe("runInferenceGet", () => {
   it("reports sandbox diagnosis guidance when a lookup has no exit status (#10671)", async () => {
     const deps = createDeps("", null);
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
-    deps.captureOpenshell.mockReturnValue({
-      status: null,
-      output: "secret stderr must not be rendered",
-      error: new Error("secret execution detail"),
-      signal: null,
+    deps.observeInferenceRoute.mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "indeterminate",
+        message: "OpenShell inference route observation ended before an exit status was available.",
+      },
     });
 
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({

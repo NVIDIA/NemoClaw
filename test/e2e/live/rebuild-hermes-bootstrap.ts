@@ -3,8 +3,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createCliOpenShellInferenceRouteObserver } from "../../../src/lib/adapters/openshell/inference-route-cli";
+import { namedOpenShellGateway } from "../../../src/lib/adapters/openshell/sandbox-observer";
 import { loadAgent } from "../../../src/lib/agent/defs";
-import { parseGatewayInference } from "../../../src/lib/inference/config";
 import {
   type CreateSandboxDashboardPortInput,
   type CreateSandboxDashboardPortResult,
@@ -337,18 +338,29 @@ export async function requireRebuildHermesHostedInferenceRoute(
   artifactName: string,
   redactionValues: string[],
 ): Promise<{ provider: string; model: string }> {
-  const routeProbe = await host.command(
-    host.openshellCommandPath,
-    ["inference", "get", "-g", "nemoclaw"],
-    {
+  let routeProbe: ShellProbeResult | undefined;
+  const observed = await createCliOpenShellInferenceRouteObserver(async (args) => {
+    routeProbe = await host.command(host.openshellCommandPath, args, {
       artifactName,
       env: envFactory(apiKey),
       redactionValues,
       timeoutMs: 2 * 60_000,
-    },
-  );
-  assertExitZero(routeProbe, "inspect NemoClaw hosted inference route");
-  const route = parseGatewayInference(resultText(routeProbe));
+    });
+    return {
+      status: routeProbe.exitCode,
+      output: resultText(routeProbe),
+      stdout: routeProbe.stdout,
+      stderr: routeProbe.stderr,
+      ...(routeProbe.timedOut
+        ? { error: Object.assign(new Error("route observation timed out"), { code: "ETIMEDOUT" }) }
+        : {}),
+    };
+  }).observeInferenceRoute({
+    target: namedOpenShellGateway("nemoclaw"),
+    timeoutMs: 2 * 60_000,
+  });
+  assertExitZero(routeProbe!, "inspect NemoClaw hosted inference route");
+  const route = observed.ok && observed.value.state === "configured" ? observed.value.route : null;
   const normalizedExpectedModel = expectedModel.trim();
   if (
     !normalizedExpectedModel ||
