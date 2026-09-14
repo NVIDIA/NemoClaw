@@ -7,5 +7,6 @@ pub use storage::*;
 mod observation;
 pub use observation::*;
 mod capacity;
+mod gateway_storage;
 mod keys;
 mod mutation;

@@ -71,3 +71,37 @@ async fn retained_inference_volume_preserves_its_reference_binding() {
     assert_eq!(observed, 1);
     assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
+
+#[tokio::test]
+#[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE; reads retained owned gateway storage only"]
+async fn retained_gateway_storage_preserves_its_reference_binding() {
+    let path = std::path::PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_RUNTIME_STATE").expect("explicit state file"),
+    );
+    assert!(path.is_absolute());
+    let bytes = std::fs::read(&path).unwrap();
+    let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let mut observed = 0;
+    for resource in state["resources"].as_array().unwrap() {
+        if resource["type"] != "nemoclaw_gateway_storage" {
+            continue;
+        }
+        let instances = resource["instances"].as_array().unwrap();
+        assert_eq!(instances.len(), 1);
+        let attributes = &instances[0]["attributes"];
+        let spec: Spec = serde_json::from_str(attributes["spec"].as_str().unwrap()).unwrap();
+        let engine = Engine::connect(&spec.gateway.engine).unwrap();
+        let id = attributes["id"].as_str().unwrap();
+        assert_eq!(
+            engine
+                .gateway_storage(&spec, id, false)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(id)
+        );
+        observed += 1;
+    }
+    assert_eq!(observed, 1);
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}

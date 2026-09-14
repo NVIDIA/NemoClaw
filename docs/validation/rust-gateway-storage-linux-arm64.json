@@ -1,0 +1,21 @@
+{
+  "observedAt": "2026-09-14T19:48:21.360923+00:00",
+  "platform": "linux_arm64",
+  "referenceRevision": "b549ccd43e6102b72aa9c65ee17abfe3c429fc0b",
+  "test": "retained_gateway_storage_preserves_its_reference_binding",
+  "result": "passed",
+  "runtimeEffects": 0,
+  "stateUnchanged": true,
+  "stateSHA256": "150d8d094b0528f989d7fc26a9aae939bb6a0800db10d5f7c6ec38857cf07f50",
+  "sourceSHA256": {
+    "crates/nemoclaw-sdk/tests/managed_live.rs": "a7cba423fd7f7e3e34861b20ef9b652dfe10a8b71f8471b92e651eb8996c5480",
+    "crates/nemoclaw-sdk/src/managed/gateway_storage.rs": "564f66c2e860682dfc487c8d3a7aee13e95909416ec1ba7a6a833be55d0cb8a9",
+    "crates/nemoclaw-sdk/src/managed/keys.rs": "1d44555f3e01c613a59922d09d960b478dd7901246609aba21d49f53f86bd93c",
+    "Cargo.lock": "90708b9ec7d0e17b0250a49b4fd0f088f43994bc2f692acd392534ac463bb02c"
+  },
+  "limits": [
+    "Confirms retained gateway database volume, bridge, initializer configuration and signing identity.",
+    "Confirms the persisted encryption key is readable and exactly 32 bytes; no private key data is recorded.",
+    "Does not establish gateway process readiness or agent inference."
+  ]
+}
