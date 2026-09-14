@@ -46,6 +46,7 @@ class PartitionControls(unittest.TestCase):
             "git/usr/share/man/man1/git-help.1": b"manual retained",
             "hermes-agent/skills/topic.adoc": b"unrelated dynamic resource retained",
             "hermes-agent/website/static/api/model-catalog.json": b"{}",
+            "hermes-agent/website/LICENSE": b"website license retained in archive",
             "licenses/package/shape.d.ts": b"license directory retained",
             "browsers/chromium/ABOUT": b"inventory-only license retained",
             "hermes-agent/venv/Lib/site-packages/pkg.dist-info/METADATA": b"metadata retained",
@@ -71,7 +72,11 @@ class PartitionControls(unittest.TestCase):
                 for p in self.root.rglob("*")
                 if p.is_dir()
             ),
-            "licenseFiles": ["hermes-agent/tests/LICENSE", "browsers/chromium/ABOUT"],
+            "licenseFiles": [
+                "hermes-agent/tests/LICENSE",
+                "hermes-agent/website/LICENSE",
+                "browsers/chromium/ABOUT",
+            ],
         }
 
     def test_partition_archives_exact_bytes_before_removing_fixture_files(self):
@@ -80,11 +85,11 @@ class PartitionControls(unittest.TestCase):
                 self.root, self.inventory, self.base / "diagnostics"
             )
         removed = {row["path"] for row in result["files"]}
-        self.assertEqual(len(removed), 9)
+        self.assertEqual(len(removed), 10)
         self.assertFalse((self.root / "hermes-agent/.github").exists())
         self.assertFalse((self.root / "hermes-agent/website").exists())
         self.assertTrue((self.root / "THIRD-PARTY-LICENSES.tar.gz").is_file())
-        self.assertEqual(result["installedLicenseArchive"]["content"]["files"], 0)
+        self.assertEqual(result["installedLicenseArchive"]["content"]["files"], 1)
         for row in result["archives"]:
             path = self.base / "diagnostics" / row["file"]
             self.assertEqual(

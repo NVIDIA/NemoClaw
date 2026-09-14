@@ -165,7 +165,10 @@ def make_plan(payload, protected=()):
             removed.append({**row, "group": group, "reason": reason})
         else:
             kept.append(row)
-    if not union.issubset({row["path"] for row in kept}):
+    kept_paths = {row["path"] for row in kept}
+    removed_paths = {row["path"] for row in removed}
+    archived_licenses = union & removed_paths
+    if not union.issubset(kept_paths | archived_licenses):
         raise ValueError("The union of license inventories was not retained")
     return {
         "before": totals(rows),
@@ -178,6 +181,7 @@ def make_plan(payload, protected=()):
             "retainedUnion": len(union),
         },
         "files": removed,
+        "archivedLicenseFiles": sorted(archived_licenses),
     }
 
 
@@ -257,12 +261,8 @@ def partition_copy(root, payload, diagnostics, protected=()):
         checked_bytes(root, row)
     for row in plan["files"]:
         (root / row["path"]).unlink()
-    license_rows = [
-        row
-        for row in plan["files"]
-        if LICENSE.search(relative(row["path"]).name)
-        or any(p.lower() in ("licenses", "license", "legal") for p in relative(row["path"]).parts[:-1])
-    ]
+    archived_license_paths = set(plan["archivedLicenseFiles"])
+    license_rows = [row for row in plan["files"] if row["path"] in archived_license_paths]
     license_archive = root / "THIRD-PARTY-LICENSES.tar.gz"
     with license_archive.open("xb") as destination:
         with gzip.GzipFile(fileobj=destination, mode="wb", filename="", mtime=0) as compressed:
