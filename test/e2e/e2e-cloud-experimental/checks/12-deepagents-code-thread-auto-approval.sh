@@ -197,7 +197,8 @@ proc abort_tui {markers marker code} {
   exit $code
 }
 
-set remote_script {cd /sandbox && /usr/local/bin/dcode -m "$1"; status=$?; printf "\nNEMOCLAW_AUTORUN_TUI_EXIT:%s\n" "$status"}
+# Exercise direct tool approvals; interpreter-mediated calls bypass these gates.
+set remote_script {cd /sandbox && /usr/local/bin/dcode --no-interpreter -m "$1"; status=$?; printf "\nNEMOCLAW_AUTORUN_TUI_EXIT:%s\n" "$status"}
 set cmd [list openshell sandbox exec --name $sandbox --tty -- env HOME=/sandbox TERM=xterm-256color bash -lc $remote_script nemoclaw-e2e $first_prompt]
 spawn {*}$cmd
 
