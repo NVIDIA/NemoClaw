@@ -117,7 +117,14 @@ impl Engine {
         path: &str,
         files: &[(&str, &[u8], u32)],
     ) -> Result<(), Error> {
-        let bytes = archive(files)?;
+        self.write_archive(id, path, archive(files)?).await
+    }
+    pub(crate) async fn write_archive(
+        &self,
+        id: &str,
+        path: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), Error> {
         self.api
             .upload_to_container(
                 id,

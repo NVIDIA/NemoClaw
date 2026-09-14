@@ -1,0 +1,123 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+use crate::docker::fixture::Fixture;
+use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
+struct Gate(bool);
+#[async_trait::async_trait]
+impl CapacityGate for Gate {
+    async fn check(
+        &self,
+        _: &Engine,
+        _: &Spec,
+        _: Option<&RuntimeObservation>,
+    ) -> Result<(), Error> {
+        if self.0 {
+            Ok(())
+        } else {
+            Err(Error::Conflict("fixture capacity rejection"))
+        }
+    }
+}
+#[derive(Default)]
+struct State {
+    container: Option<Value>,
+    volume: Option<Value>,
+    network: Value,
+    starts: usize,
+    creates: usize,
+    removes: usize,
+    exit_on_start: bool,
+    lose_create: bool,
+}
+#[tokio::test]
+async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identity() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let data = &fixtures[3];
+    let spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
+    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":data["config"],"HostConfig":data["hostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/data","RW":true}]});
+    let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{super::super::OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge()}]}});
+    let state = Arc::new(Mutex::new(State {
+        container: Some(container.clone()),
+        volume: Some(volume),
+        network,
+        exit_on_start: true,
+        ..Default::default()
+    }));
+    let shared = state.clone();
+    let service = spec.service.clone().unwrap();
+    let template = container.clone();
+    let fixture=Fixture::start(move |request|{
+        let mut state=shared.lock().unwrap();
+        let (status,value)=match (request.method.as_str(),request.path.split('?').next().unwrap()) {
+            ("GET","/info")=>(200,json!({"ID":"engine"})),
+            ("GET",path) if path.starts_with("/images/")=>(200,json!({"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.backend":service.backend,"org.nemoclaw.model":service.model.revision}}})),
+            ("GET",path) if path.starts_with("/networks/")=>(200,state.network.clone()),
+            ("GET",path) if path.starts_with("/volumes/")=>state.volume.clone().map(|v|(200,v)).unwrap_or((404,json!({"message":"missing"}))),
+            ("GET",path) if path.starts_with("/containers/")=>state.container.clone().map(|v|(200,v)).unwrap_or((404,json!({"message":"missing"}))),
+            ("POST","/containers/create")=>{
+                state.creates+=1;let request:Value=serde_json::from_slice(&request.body).unwrap();let mut created=template.clone();
+                created["Id"]=json!("replacement");created["Config"]=request.clone();created["HostConfig"]=request["HostConfig"].clone();
+                state.container=Some(created);if std::mem::take(&mut state.lose_create){return None;}(201,json!({"Id":"replacement","Warnings":[]}))
+            }
+            ("POST",path) if path.ends_with("/start")=>{state.starts+=1;let running=!state.exit_on_start;state.container.as_mut().unwrap()["State"]["Running"]=json!(running);(204,Value::Null)},
+            ("POST",path) if path.ends_with("/stop")=>{state.container.as_mut().unwrap()["State"]["Running"]=json!(false);(204,Value::Null)},
+            ("DELETE",path) if path.starts_with("/containers/")=>{state.removes+=1;state.container=None;(204,Value::Null)},
+            _=>panic!("unexpected runtime mutation {} {}",request.method,request.path),
+        };Some((status,if status==204 {Vec::new()} else {serde_json::to_vec(&value).unwrap()}))
+    }).await;
+    let engine = fixture.engine_for(&spec.gateway.engine);
+    assert!(
+        engine
+            .ensure_runtime_checked(&spec, "", &Gate(false))
+            .await
+            .is_err()
+    );
+    assert_eq!(state.lock().unwrap().starts, 0);
+    let first = engine
+        .ensure_runtime_checked(&spec, "", &Gate(true))
+        .await
+        .unwrap();
+    assert!(!first.running);
+    assert_eq!(state.lock().unwrap().starts, 1);
+    engine.observe_runtime(&spec, &first.id).await.unwrap();
+    assert_eq!(state.lock().unwrap().starts, 1);
+    state.lock().unwrap().exit_on_start = false;
+    let recovered = engine
+        .ensure_runtime_checked(&spec, &first.id, &Gate(true))
+        .await
+        .unwrap();
+    assert!(recovered.running);
+    assert_eq!(recovered.id, first.id);
+    engine
+        .ensure_runtime_checked(&spec, &first.id, &Gate(false))
+        .await
+        .unwrap();
+    assert_eq!(state.lock().unwrap().starts, 2);
+    engine.remove_runtime(&spec, &first.id).await.unwrap();
+    engine.remove_runtime(&spec, &first.id).await.unwrap();
+    assert_eq!(state.lock().unwrap().removes, 1);
+    assert!(state.lock().unwrap().volume.is_some());
+    assert!(
+        engine
+            .ensure_runtime_checked(&spec, &first.id, &Gate(true))
+            .await
+            .is_err()
+    );
+    state.lock().unwrap().lose_create = true;
+    assert!(
+        engine
+            .ensure_runtime_checked(&spec, "", &Gate(true))
+            .await
+            .is_err()
+    );
+    let recreated = engine
+        .ensure_runtime_checked(&spec, "", &Gate(true))
+        .await
+        .unwrap();
+    assert!(recreated.running);
+    assert!(recreated.id.contains("/replacement/"));
+    assert_eq!(state.lock().unwrap().creates, 1);
+}
