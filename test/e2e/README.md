@@ -1805,3 +1805,7 @@ These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first
 sandbox build, avoids warming Docker layers before a duplicate performance
 test, and makes `full-e2e` the source of truth for the hard cold-path contract.
+
+## DGX Station Express
+
+The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
