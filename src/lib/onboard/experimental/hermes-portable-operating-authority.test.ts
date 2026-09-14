@@ -17,6 +17,12 @@ import {
   type HermesPortableReceiptSnapshot,
 } from "./hermes-portable-receipt";
 import { qualifyHermesPortableOperatingAuthority } from "./hermes-portable-operating-authority";
+import * as podmanAdapter from "../../adapters/podman";
+import * as openshellAdapter from "../../adapters/openshell/resolve-shared";
+import * as podmanAuthority from "./hermes-portable-podman-authority";
+import * as fileProof from "./hermes-portable-operating-file-proof";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withHermesPortableStartupOperation } from "./hermes-portable-startup-operation";
 
 const SHA = "a".repeat(64);
 let root: string;
@@ -171,6 +177,61 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
 describe("Hermes Portable schema-8 operation authority", () => {
+  it("reuses one qualified generation within startup and fully rechecks after expiry (#11574)", async () => {
+    const durable = snapshot();
+    const env = {
+      ...environment(),
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: "1",
+    };
+    const captureSocket = vi
+      .spyOn(podmanAdapter, "capturePodmanSocketAuthority")
+      .mockReturnValue(socket("99"));
+    const captureOpenShell = vi
+      .spyOn(openshellAdapter, "captureHermesPortableOpenShellExecutableAuthority")
+      .mockReturnValue(durable.receipt.openshellExecutableAuthority);
+    const capturePodman = vi
+      .spyOn(podmanAuthority, "captureHermesPortablePodmanExecutableAuthority")
+      .mockReturnValue(durable.receipt.podmanExecutableAuthority);
+    const assertFiles = vi.fn();
+    vi.spyOn(fileProof, "createHermesPortableOperatingFileProof").mockReturnValue(assertFiles);
+    let now = 0;
+    await withMcpLifecycleLock(
+      "alpha",
+      () =>
+        withHermesPortableStartupOperation(
+          "alpha",
+          root,
+          () => {
+            const first = qualifyHermesPortableOperatingAuthority(durable, { env });
+            const followingProbe = qualifyHermesPortableOperatingAuthority(
+              structuredClone(durable),
+              { env: { ...env } },
+            );
+            expect(followingProbe).toBe(first);
+            first.assertCurrent();
+            first.assertTransactionCurrent();
+            expect(capturePodman).toHaveBeenCalledOnce();
+            expect(captureOpenShell).toHaveBeenCalledOnce();
+            expect(assertFiles).toHaveBeenCalledTimes(3);
+            expect(captureSocket).toHaveBeenCalledTimes(4);
+            now = 60_000;
+            first.assertCurrent();
+            expect(capturePodman).toHaveBeenCalledTimes(2);
+            expect(captureOpenShell).toHaveBeenCalledTimes(2);
+            captureSocket.mockReturnValue(socket("100"));
+            expect(first.assertCurrent).toThrow(
+              "operation-local filesystem or runtime identity changed",
+            );
+          },
+          env,
+          () => now,
+        ),
+      { stateDir: root },
+    );
+    vi.restoreAllMocks();
+  });
+
   it("keeps schema-7 authority durable unless requalification is explicit (#10423)", () => {
     const durable = snapshot(false);
     const captureSocketAuthority = vi.fn(() => socket("99"));

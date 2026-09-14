@@ -413,11 +413,14 @@ function qualifyOperatingCommandAuthority(
     authority.snapshot as typeof authority.snapshot & {
       readonly receipt: { readonly phase: "active" };
     },
-    options.verificationOnly
-      ? {
-          capturePodmanExecutableAuthority: captureHermesPortablePodmanExecutableFileAuthority,
-        }
-      : {},
+    {
+      env,
+      ...(options.verificationOnly
+        ? {
+            capturePodmanExecutableAuthority: captureHermesPortablePodmanExecutableFileAuthority,
+          }
+        : {}),
+    },
   );
   const commandAuthority = buildHermesPortableOpenShellCommandAuthority(
     operatingAuthority.receipt,
