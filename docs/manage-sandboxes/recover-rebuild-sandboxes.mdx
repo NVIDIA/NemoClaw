@@ -304,10 +304,8 @@ Use the recovery guidance that matches the reported check:
 - Set the live OpenShell inference route to the sandbox's recorded provider and model when rebuild reports route drift.
 
 <AgentOnly variant="openclaw,hermes">
-  Prepared legacy gateway recovery has one exception. When the recorded gateway lists the retained
-  sandbox but cannot render its old provider-backed specification, NemoClaw reuses the
-  digest-verified pre-upgrade policy handoff. It does not recapture the live policy at the deletion
-  boundary, and it stops before deletion if the handoff is missing or changed.
+  Prepared backup recovery reuses its digest-verified pre-upgrade policy handoff at the deletion boundary.
+  It does not recapture the live policy, and it stops before deletion if the handoff is missing or changed.
 </AgentOnly>
 
 A gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
