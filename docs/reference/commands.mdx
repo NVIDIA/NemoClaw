@@ -178,6 +178,83 @@ Print the installed NemoClaw CLI version.
 $$nemoclaw --version
 ```
 
+<AgentOnly variant="hermes">
+
+### `nemoclaw-acp`
+
+Use `nemoclaw-acp` to connect an external Agent Client Protocol (ACP) client to a managed Hermes sandbox.
+The hosted installer installs this host-side executable with NemoClaw.
+The current managed contract requires OpenShell 0.0.116, Hermes 0.20.6, and `agent-client-protocol` 0.9.0.
+The host must provide the system SSH client at `/usr/bin/ssh`.
+It supports Linux and macOS hosts, including Linux under WSL2 where NemoClaw supports Hermes and OpenShell.
+Native Windows is not supported.
+
+Configure the ACP client to start `nemoclaw-acp` as a standard input and output server.
+The command reads ACP messages from standard input, reserves standard output for ACP messages, and writes lifecycle diagnostics to standard error.
+
+```bash
+nemoclaw-acp --sandbox <sandbox-name> [--gateway <nemoclaw-gateway-name>] [--timeout <seconds>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--sandbox <name>` | Select the registered managed Hermes sandbox. This option is required. |
+| `--gateway <name>` | Select the owning NemoClaw gateway when the sandbox name is registered on more than one gateway. |
+| `--timeout <seconds>` | End the ACP session after a positive integer from `1` through `86,400` seconds. When omitted, the adapter sets no session deadline. |
+| `--help`, `-h` | Print command usage. |
+| `--version`, `-v` | Print the installed NemoClaw version. |
+
+Before it starts the session, `nemoclaw-acp` revalidates the sandbox registration, recovers an unreachable recorded gateway, and verifies the live sandbox identity and runtime versions.
+It accepts only a ready sandbox created from the managed Hermes image by the installed NemoClaw version.
+It rejects a missing, ambiguous, stopped, custom-image, stale, or incompatible target before it starts `hermes-acp`.
+Gateway identity, authentication, schema, timeout, and other observation failures remain blocked and do not authorize recovery.
+Unset `OPENSHELL_GATEWAY_ENDPOINT` before starting the adapter so an ambient endpoint cannot replace the recorded gateway authority.
+For a stale or incompatible managed sandbox, [update NemoClaw and the sandbox](../manage-sandboxes/operate-sandboxes/update-sandboxes), then retry the adapter.
+
+For example, start the adapter for a uniquely registered sandbox:
+
+```bash
+nemoclaw-acp --sandbox my-hermes-sandbox
+```
+
+OpenShell retains custody of its credentials and the sandbox's inference credentials.
+The adapter does not forward credential-bearing environment variables to the SSH process.
+It requests one SSH configuration for the selected gateway and sandbox, validates the fixed SSH target, writes the configuration to a mode `0600` temporary file, and gives only that file path to the system SSH client.
+After success, failure, cancellation, timeout, or client disconnect, the adapter attempts to remove the private `nemoclaw-acp-ssh-*` directory under the host temporary directory.
+Removal is best effort.
+If the operating system refuses removal, the directory can remain and the command does not report its exact path.
+Remote diagnostic content does not enter the ACP stream or pass through to the client.
+
+The adapter preserves the remote `hermes-acp` exit status unless it is `255`, which identifies an SSH transport failure.
+The adapter itself uses these exit statuses:
+
+| Status | Result |
+| --- | --- |
+| `1` | The adapter could not launch safely, the system SSH client could not start, or the ACP client disconnected. |
+| `2` | The command options are invalid. |
+| `69` | The required host platform, OpenShell version, or `/usr/bin/ssh` is unavailable. |
+| `78` | The managed Hermes or ACP SDK runtime is incompatible. |
+| `124` | The 30-second compatibility probe or the configured session timeout expired. |
+| `130` | The host sent `SIGINT`. |
+| `143` | The host sent `SIGTERM`. |
+| `255` | The OpenShell SSH transport failed. |
+
+Read standard error to distinguish adapter-generated failures.
+An expected client disconnect exits with status `1` without an additional diagnostic.
+The remote process can return a status that also appears in this table.
+
+Client disconnect, cancellation, timeout, and transport failure terminate the corresponding remote `hermes-acp` process.
+
+If the OpenShell gateway restarts during a session, that session ends with a nonzero status.
+Start `nemoclaw-acp` again to recover the recorded gateway and create a new ACP session.
+After `nemohermes <sandbox-name> rebuild` completes, start a new adapter session so NemoClaw can verify the rebuilt sandbox's recorded identity.
+
+The installer publishes a NemoClaw-managed `nemoclaw-acp` shim under `~/.local/bin` when the active npm prefix does not already provide the executable there.
+If `~/.local/bin/nemoclaw-acp` already exists and is not a NemoClaw-managed shim, installation stops and leaves the existing entry unchanged.
+Move or remove the conflicting entry, then rerun the installer.
+
+</AgentOnly>
+
 ### `$$nemoclaw completion`
 
 Generate a tab-completion script for Bash, Zsh, or Fish from the commands and flags available in the installed CLI. The script completes public global commands, the sandbox-first `$$nemoclaw <name> ...` grammar, flags, shell choices, and locally registered sandbox names. If you omit the shell name, `$$nemoclaw completion` detects the target from `$SHELL` and defaults to Bash when it cannot identify Zsh or Fish. The generated script is bound to the CLI name that created it, so install a separate script for each CLI alias you use. It loads sandbox names from the local registry the first time completion runs and caches them for the rest of that shell session.
