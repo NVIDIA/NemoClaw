@@ -1,0 +1,30 @@
+{
+  "observedAt": "2026-09-14T20:11:36.049892+00:00",
+  "platform": "linux_arm64",
+  "test": "managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu",
+  "result": "passed",
+  "OpenTofu": "1.12.6",
+  "experimentUID": "435d6941-9513-470b-9598-441deda2aff0",
+  "durationSeconds": 32.71,
+  "assertions": [
+    "Plan preserved container and volume observations.",
+    "Initial gateway storage and gateway creation completed through the verified Rust provider bundle.",
+    "Gateway reported the required version and compute driver.",
+    "Unchanged apply planned no changes and retained both durable IDs.",
+    "Destroy removed only the gateway process and retained gateway storage.",
+    "Explicit reapply reused storage identity and created a new process identity.",
+    "Final destroy left the gateway process absent and retained initialized storage."
+  ],
+  "sourceSHA256": {
+    "crates/nemoclaw-sdk/src/compile_runtime.rs": "b369eb8a3595aa17151b89787441dfb7b28b259df2261a1862e3fc0abbf795c7",
+    "crates/nemoclaw-sdk/src/deployment/runtime.rs": "7b1f430f3d1957c06d09e3f2e871eeca8cea80242b0babb956f09053acabf3e8",
+    "crates/nemoclaw-sdk/src/deployment/mod.rs": "aca7864a75fedce4d1b2bd0e02516dc108485b2da2d32c1bfba38f3ad8f08d2a",
+    "crates/nemoclaw-sdk/src/deployment/tests.rs": "af329a8873f2e1918676c1ec6614c795ac51e7aa219534eb23443f381eb42f9f",
+    "Cargo.lock": "d02f963733c871e41b02a0ff7af1a12d4f5944e7f66eda1e18a514b3b4a92ea6"
+  },
+  "limits": [
+    "Only the managed gateway stage; no inference model or sandbox was provisioned.",
+    "Retained workspace, model storage and unrelated containers were untouched.",
+    "Linux ARM64 qualification only."
+  ]
+}

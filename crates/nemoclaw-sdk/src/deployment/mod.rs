@@ -5,6 +5,7 @@
 mod tests;
 
 mod plan;
+mod runtime;
 use crate::{
     CancellationToken, Error,
     backend::{Backend, Row},
@@ -151,7 +152,17 @@ impl Deployment {
                 "unfinished apply has different intent; reapply its original configuration",
             ));
         }
-        self.require_external(&document)?;
+        self.require_no_ollama(&document)?;
+        let (runtime_changes, deferred) = self
+            .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
+            .await?;
+        if deferred {
+            let mut result = OperationResult::planned(runtime_changes);
+            result
+                .deferred
+                .push("OpenShell registration and sandbox require the managed gateway".into());
+            return Ok(result);
+        }
         let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
         let bindings = store.bindings()?;
         let targets = compile::targets(&document, &record.generations)?;
@@ -183,7 +194,9 @@ impl Deployment {
         let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
             .await?;
-        let mut result = OperationResult::planned(check_plan(&plan, &allowed, &bindings)?);
+        let mut changes = runtime_changes;
+        changes.extend(check_plan(&plan, &allowed, &bindings)?);
+        let mut result = OperationResult::planned(changes);
         if !apply {
             if fresh {
                 store.save(&record)?;
@@ -228,15 +241,16 @@ impl Deployment {
         (self.progress)(Progress::Readiness);
         client.ready(&sandbox, cancel).await?;
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.inference_ready(&sandbox)=>result?}
+        if document.spec.inference_providers[0].service.is_some() {
+            result.agent_response = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.agent_response(&sandbox)=>result?};
+        }
         record.succeeded = true;
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
     }
-    fn require_external(&self, document: &Document) -> Result<(), Error> {
-        if document.spec.gateway.management == "managed"
-            || document.spec.inference_providers[0].ollama.is_some()
-        {
+    fn require_no_ollama(&self, document: &Document) -> Result<(), Error> {
+        if document.spec.inference_providers[0].ollama.is_some() {
             return Err(Error::Conflict(
                 "managed runtime orchestration is not implemented in this Rust slice yet",
             ));
@@ -348,7 +362,8 @@ impl Deployment {
                 "export requires established bindings; reconcile unfinished operations first",
             ));
         }
-        self.require_external(&record.document)?;
+        self.require_no_ollama(&record.document)?;
+        self.export_runtime(&store, &record, cancel).await?;
         (self.progress)(Progress::Exporting);
         let client = OpenShell::connect(&record.document.spec.gateway, self.secrets.clone())?;
         let bindings = store.bindings()?;
@@ -379,7 +394,16 @@ impl Deployment {
                     if observed["provider_type"] != expected["provider_type"] {
                         return Err(Error::Conflict("provider type drift requires inspection"));
                     }
-                    document.spec.inference_providers[0].endpoint = observed["endpoint"].clone();
+                    if document.spec.inference_providers[0].service.is_some() {
+                        if observed["endpoint"] != document.inference_endpoint()
+                            || !observed["credential_env"].is_empty()
+                        {
+                            return Err(Error::Conflict("managed inference registration drifted"));
+                        }
+                    } else {
+                        document.spec.inference_providers[0].endpoint =
+                            observed["endpoint"].clone();
+                    }
                     document.spec.inference_providers[0].credential =
                         (!observed["credential_env"].is_empty()).then(|| Credential {
                             env: observed["credential_env"].clone(),
@@ -423,105 +447,7 @@ impl Deployment {
         cancel: &CancellationToken,
         preview: bool,
     ) -> Result<OperationResult, Error> {
-        let (bundle, store) = self.open()?;
-        let mut record = store.load()?.ok_or(Error::Conflict(
-            "destroy requires existing deployment state",
-        ))?;
-        if record.pending {
-            return Err(Error::Conflict(
-                "unfinished apply may have unbound effects; reconcile its original configuration before destroy",
-            ));
-        }
-        self.require_external(&record.document)?;
-        let bindings = store.bindings()?;
-        let retained: BTreeSet<String> = bindings
-            .keys()
-            .filter(|key| key.as_str() == "nemoclaw_workspace.deployment")
-            .cloned()
-            .collect();
-        let mut result = OperationResult::planned(Vec::new());
-        result.retained = retained.iter().cloned().collect();
-        if record.destroyed {
-            if !preview {
-                result.outcome = Outcome::Destroyed;
-            }
-            return Ok(result);
-        }
-        if bindings.is_empty() {
-            if record.succeeded || record.destroying {
-                return Err(Error::Conflict(
-                    "established state is missing; destroy cannot infer unbound resources",
-                ));
-            }
-        } else {
-            if retained.is_empty() {
-                return Err(Error::Conflict(
-                    "destroy requires the retained workspace binding",
-                ));
-            }
-            let allowed = allowed(&compile::targets(&record.document, &record.generations)?);
-            if bindings
-                .keys()
-                .any(|address| !allowed.contains_key(address))
-            {
-                return Err(Error::Conflict(
-                    "destroy encountered an undeclared resource binding",
-                ));
-            }
-            let mut graph = compile::compile(
-                &record.document,
-                &record.generations,
-                &bundle.manifest.version,
-            )?;
-            graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-            graph["resource"]
-                .as_object_mut()
-                .expect("compiled resources")
-                .retain(|kind, _| kind == "nemoclaw_workspace");
-            self.prepare(&bundle, &store, &graph)?;
-            self.tofu(
-                &bundle,
-                &store,
-                &record.document,
-                &["init", "-upgrade", "-input=false", "-no-color"],
-                cancel,
-            )
-            .await?;
-            let plan = self
-                .saved_plan(&bundle, &store, &record.document, "destroy.plan", cancel)
-                .await?;
-            result.changes = check_destroy_plan(&plan, &allowed, &bindings, &retained)?;
-        }
-        if preview {
-            return Ok(result);
-        }
-        record.destroying = true;
-        record.succeeded = false;
-        store.save(&record)?;
-        (self.progress)(Progress::Destroying);
-        if !bindings.is_empty() {
-            self.tofu(
-                &bundle,
-                &store,
-                &record.document,
-                &[
-                    "apply",
-                    "-input=false",
-                    "-no-color",
-                    "-parallelism=1",
-                    "destroy.plan",
-                ],
-                cancel,
-            )
-            .await?;
-        }
-        record.destroy_runtime = true;
-        record.destroying = false;
-        record.destroyed = true;
-        record.plan_digest.clear();
-        store.save(&record)?;
-        result.outcome = Outcome::Destroyed;
-        Ok(result)
+        self.teardown_stages(cancel, preview).await
     }
 }
 fn allowed(targets: &[Target]) -> BTreeMap<String, Row> {
