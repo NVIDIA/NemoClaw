@@ -1462,7 +1462,7 @@ process.exit(0);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.agentType).toBe("langchain-deepagents-code");
       expect(backup.manifest?.stateDirs).toEqual([".state", "agent/skills"]);
-      expect(backup.manifest?.stateFiles.map(({ path: statePath }) => statePath)).toEqual([
+      expect(backup.manifest?.stateFiles?.map(({ path: statePath }) => statePath)).toEqual([
         "config.toml",
         "hooks.json",
       ]);
