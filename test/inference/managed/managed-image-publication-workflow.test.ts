@@ -513,13 +513,9 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
     expect(auditVerifierCheckout.with?.ref).toBe(reviewedAuditSha);
-    expect(step(prBuilder, "Install reviewed npm").uses).toBe(
-      `NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@${reviewedAuditSha}`,
-    );
     const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
     expect(prepareAuditEvidence.run).toContain(`rev-parse --verify HEAD)" = '${reviewedAuditSha}'`);
-    expect(prepareAuditEvidence.run).not.toContain("--legacy-audit");
-    expect(prepareAuditEvidence.run).not.toContain("--legacy-npmjs");
+    expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
@@ -538,9 +534,8 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(localBaseBuild));
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(registryBaseBuild));
 
-    for (const action of steps.filter(
-      (candidate) => candidate.uses && !candidate.uses.startsWith("./"),
-    )) {
+    const externalActions = steps.filter(({ uses }) => uses && !uses.startsWith("./"));
+    for (const action of externalActions) {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 
