@@ -215,7 +215,6 @@ test.skipIf(process.platform !== "linux")(
         "install the released Shields CLI and create a real sandbox",
         "write durable user data and create the released recovery backup",
         "raise and prove Shields are up",
-        "switch the host to the candidate CLI",
         "detect legacy posture and fail closed before mutation",
         "recover through the production managed sandbox upgrade",
         "verify user data runtime usability and legacy-state retirement",
@@ -327,8 +326,6 @@ test.skipIf(process.platform !== "linux")(
     expectExitZero(shieldsStatus, "released shields status");
     expect(resultText(shieldsStatus)).toContain("Shields: UP (lockdown active)");
 
-    progress.phase("switch the host to the candidate CLI");
-
     progress.phase("detect legacy posture and fail closed before mutation");
     const detected = await candidateNemoclaw(host, ["list"], "candidate-retirement-notice");
     expectExitZero(detected, "candidate retirement notice");
@@ -343,51 +340,12 @@ test.skipIf(process.platform !== "linux")(
     expect(blocked.exitCode).not.toBe(0);
 
     progress.phase("recover through the production managed sandbox upgrade");
-    const trace = await artifacts.writeText(
-      "gateway-probe-trace.cjs",
-      `const cp = require('node:child_process');
-const net = require('node:net');
-const gatewayProbes = new Set(['status -g nemoclaw', 'gateway info -g nemoclaw', 'gateway info']);
-const spawnSync = cp.spawnSync;
-cp.spawnSync = function (file, args, options) {
-  const result = spawnSync.apply(this, arguments);
-  const selected = (String(file).endsWith('/openshell') && gatewayProbes.has(args.join(' '))) || file === 'lsof';
-  selected && console.error('gateway-probe', JSON.stringify({file, args, status: result.status, error: result.error?.code, stdout: String(result.stdout), stderr: String(result.stderr)}));
-  return result;
-};
-const listen = net.Server.prototype.listen;
-net.Server.prototype.listen = function (port, host) {
-  this.once('error', error => console.error('gateway-bind', port, host, error.code));
-  this.once('listening', () => console.error('gateway-bind', port, host, 'available'));
-  return listen.apply(this, arguments);
-};
-require('node:module').syncBuiltinESMExports();
-`,
-    );
     const upgrade = await candidateNemoclaw(
       host,
       ["upgrade-sandboxes", "--auto"],
       "candidate-upgrade-retired-shields",
       50 * 60_000,
-      {
-        NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
-        NODE_OPTIONS: `--require=${trace}`,
-      },
-    );
-    await bash(
-      host,
-      `set +e
-command -v lsof
-openshell status -g nemoclaw
-openshell gateway info -g nemoclaw
-lsof -nP -iTCP:8080 -sTCP:LISTEN
-sudo -n lsof -nP -iTCP:8080 -sTCP:LISTEN
-systemctl --user show nemoclaw-openshell-gateway.service --property=MainPID,ActiveState,SubState
-for pid in $(lsof -ti :8080 -sTCP:LISTEN); do
-  ps -p "$pid" -o pid=,uid=,comm=
-  readlink "/proc/$pid/exe"
-done`,
-      { artifactName: "gateway-after-upgrade", timeoutMs: 60_000 },
+      { NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1" },
     );
     expectExitZero(upgrade, "candidate managed upgrade of retired Shields sandbox");
 
