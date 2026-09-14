@@ -24,6 +24,7 @@ function executableAuthorityHarness() {
   let executableInode = 10n;
   let executableBytes = Buffer.from("openshell-binary");
   let parentInode = 20n;
+  /** Keep ownership and modes trusted while tests vary identity and content independently. */
   const stat = (kind: "directory" | "file", inode: bigint, size = 0n): PodmanExecutableStat => ({
     dev: 1n,
     ino: inode,
@@ -53,13 +54,16 @@ function executableAuthorityHarness() {
   };
   return {
     deps,
+    /** Model replacement at the same executable path after authority capture. */
     replaceBinary: () => {
       executableInode += 1n;
       executableBytes = Buffer.from("replacement-binary");
     },
+    /** Preserve metadata while changing content to exercise digest verification. */
     changeDigest: () => {
       executableBytes = Buffer.alloc(executableBytes.byteLength, 0x78);
     },
+    /** Model a replaced parent without changing the executable itself. */
     rotateParent: () => {
       parentInode += 1n;
     },

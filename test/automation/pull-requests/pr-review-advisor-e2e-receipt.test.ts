@@ -211,6 +211,7 @@ describe("Advisor E2E receipts", () => {
       [
         receipt("first", {
           ...empty,
+          noAdditionalE2eReason: null,
           unresolvedRecommendations: ["No trusted target covers the new device."],
         }),
         receipt("second"),

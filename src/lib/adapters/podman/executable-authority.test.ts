@@ -21,6 +21,7 @@ const DIRECTORY_INODES = new Map([
   ["/", 103n],
 ]);
 
+/** Model a trusted executable unless a test overrides a specific authority invariant. */
 function executableStat(
   overrides: Partial<{
     ctimeNs: bigint;
@@ -48,6 +49,7 @@ function executableStat(
   };
 }
 
+/** Keep parent identities stable so permission and replacement tests fail for their intended reason. */
 function directoryStat(
   filePath: string,
   overrides: Partial<{ dev: bigint; ino: bigint; mode: bigint; uid: bigint }> = {},
@@ -66,6 +68,7 @@ function directoryStat(
   };
 }
 
+/** Isolate filesystem access while preserving the production authority checks. */
 function authorityDeps(
   overrides: Partial<PodmanExecutableAuthorityDeps> = {},
 ): PodmanExecutableAuthorityDeps {

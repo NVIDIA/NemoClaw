@@ -61,6 +61,7 @@ import {
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
   isOnboardDeferredExitError,
+  redactOnboardError,
   redactOnboardErrorText,
   redactOnboardDiagnosticText,
 } from "./session-bootstrap";
@@ -578,10 +579,7 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // print a clear message and exit non-zero instead of either crashing with
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
   if (cancellationCode !== "EOF") {
-    if (error instanceof Error) {
-      error.message = redactOnboardErrorText(error.message);
-      error.stack = error.stack && redactOnboardErrorText(error.stack);
-    }
+    if (error instanceof Error) redactOnboardError(error);
     throw error;
   }
   return reportOnboardCommandError(deps, "  Installation cancelled");
