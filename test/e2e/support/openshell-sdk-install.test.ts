@@ -24,10 +24,13 @@ const installScript = profile.jobs.run.steps.find(
   (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
 )!.run!;
 
-const externalGateway = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+const e2eWorkflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
   jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
 };
-const externalGatewayInstallScript = externalGateway.jobs["external-gateway-health"]!.steps.find(
+const externalGatewayInstallScript = e2eWorkflow.jobs["external-gateway-health"]!.steps.find(
+  (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
+)!.run!;
+const hermesInstallScript = e2eWorkflow.jobs["hermes-e2e"]!.steps.find(
   (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
 )!.run!;
 
@@ -211,6 +214,8 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
       script: externalGatewayInstallScript,
       lockedSdkVersion: "1.0.0",
     },
+    { name: "Hermes active SDK", script: hermesInstallScript, lockedSdkVersion: "0.9.0" },
+    { name: "Hermes replacement SDK", script: hermesInstallScript, lockedSdkVersion: "1.0.0" },
   ])(
     "installs the lock-selected SDK and dependencies offline for $name",
     testTimeoutOptions(90_000),
