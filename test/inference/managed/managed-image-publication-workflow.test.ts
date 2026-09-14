@@ -750,8 +750,15 @@ describe("complete managed-image publication workflow", () => {
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/**",
+        "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
+      ]),
+    );
+    expect(readWorkflow("base-image.yaml").on?.push?.paths).toEqual(
+      expect.arrayContaining([
+        "test/e2e/fixtures/gateway-runtime-start.ts",
+        "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
     );
     expect(activation.needs).toBe("pr-build-and-entrypoint");
