@@ -12,6 +12,11 @@ pub(crate) struct Fixture {
     task: tokio::task::JoinHandle<()>,
 }
 impl Fixture {
+    pub fn engine_for(&self, logical_endpoint: &str) -> super::Engine {
+        let mut engine = super::Engine::connect(&self.endpoint).unwrap();
+        engine.endpoint = logical_endpoint.into();
+        engine
+    }
     pub async fn start(
         mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
     ) -> Self {

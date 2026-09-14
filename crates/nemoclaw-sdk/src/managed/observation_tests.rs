@@ -1,0 +1,140 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+use crate::docker::fixture::Fixture;
+use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
+fn reference() -> (Spec, Value, Value, Value) {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixture = &fixtures[3];
+    let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+    let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":fixture["config"],"HostConfig":fixture["hostConfig"],"State":{"Running":true,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Source":"/var/lib/docker/volumes/fixture/_data","Destination":"/data","RW":true}]});
+    let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge()}]}});
+    (spec, container, volume, network)
+}
+#[tokio::test]
+async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_partial_results() {
+    let (spec, container, volume, network) = reference();
+    let state = Arc::new(Mutex::new((
+        Some(container),
+        Some(volume),
+        Some(network),
+        false,
+    )));
+    let shared = state.clone();
+    let fixture = Fixture::start(move |request| {
+        assert_eq!(request.method, "GET", "observation mutated Docker");
+        let state = shared.lock().unwrap();
+        let (code, value) = if request.path == "/info" {
+            (200, json!({"ID":"engine"}))
+        } else if request.path.starts_with("/containers/") {
+            state
+                .0
+                .clone()
+                .map(|v| (200, v))
+                .unwrap_or((404, json!({"message":"missing"})))
+        } else if request.path.starts_with("/volumes/") {
+            if state.3 {
+                (503, json!({"message":"failed"}))
+            } else {
+                state
+                    .1
+                    .clone()
+                    .map(|v| (200, v))
+                    .unwrap_or((404, json!({"message":"missing"})))
+            }
+        } else if request.path.starts_with("/networks/") {
+            state
+                .2
+                .clone()
+                .map(|v| (200, v))
+                .unwrap_or((404, json!({"message":"missing"})))
+        } else if request.path.starts_with("/images/") {
+            (200, json!({"Id":"sha256:runtime","Config":{"Env":[]}}))
+        } else {
+            panic!("unexpected path {}", request.path)
+        };
+        Some((code, serde_json::to_vec(&value).unwrap()))
+    })
+    .await;
+    let engine = fixture.engine_for(&spec.gateway.engine);
+    let observed = engine.observe_runtime(&spec, "").await.unwrap().unwrap();
+    assert_eq!(observed.id, "engine/container/2026-09-14T00:00:00Z/network");
+    assert!(observed.running);
+    let original = state.lock().unwrap().0.clone().unwrap();
+    for pointer in [
+        "/Config/Image",
+        "/Config/Env",
+        "/HostConfig/Privileged",
+        "/HostConfig/Memory",
+        "/HostConfig/RestartPolicy/Name",
+        "/HostConfig/CapDrop",
+        "/Mounts/0/Name",
+        "/Config/Labels/nemoclaw.nvidia.com~1generation",
+    ] {
+        let mut changed = original.clone();
+        *changed.pointer_mut(pointer).unwrap() = match pointer {
+            "/HostConfig/Privileged" => json!(true),
+            "/HostConfig/Memory" => json!(1),
+            "/Config/Env" => json!(["UNDECLARED=1"]),
+            "/HostConfig/CapDrop" => json!([]),
+            _ => json!("drift"),
+        };
+        state.lock().unwrap().0 = Some(changed);
+        assert!(
+            engine.observe_runtime(&spec, &observed.id).await.is_err(),
+            "{pointer}"
+        );
+    }
+    state.lock().unwrap().0 = Some(original);
+    state.lock().unwrap().3 = true;
+    assert!(engine.observe_runtime(&spec, &observed.id).await.is_err());
+    state.lock().unwrap().0 = None;
+    assert!(engine.observe_removal(&spec, &observed.id).await.is_err());
+    state.lock().unwrap().3 = false;
+    assert!(engine.observe_runtime(&spec, &observed.id).await.is_err());
+    assert!(matches!(
+        engine.observe_runtime(&spec, "").await,
+        Err(Error::PartialRuntime)
+    ));
+    assert!(
+        engine
+            .observe_removal(&spec, &observed.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    state.lock().unwrap().1 = None;
+    assert!(engine.observe_runtime(&spec, "").await.unwrap().is_none());
+}
+
+#[test]
+fn gateway_identity_includes_signing_key_and_persisted_encryption_key() {
+    let base = "engine/container/created/network";
+    let signing = b"public signing key";
+    let key = [7_u8; 32];
+    let signing_hash: String = Sha256::digest(signing)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let key_hash: String = Sha256::digest(key)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        gateway_identity(base, signing, None, 0).unwrap(),
+        format!("{base}/{signing_hash}")
+    );
+    assert_eq!(
+        gateway_identity(base, signing, Some(&key), 2).unwrap(),
+        format!("{base}/{signing_hash}/{key_hash}")
+    );
+    assert!(gateway_identity(base, signing, None, 2).is_err());
+    assert!(gateway_identity(base, signing, Some(b"short"), 2).is_err());
+    assert!(gateway_identity(base, b"", Some(&key), 2).is_err());
+    assert_ne!(
+        gateway_identity(base, signing, Some(&key), 2).unwrap(),
+        gateway_identity(base, signing, Some(&[8; 32]), 2).unwrap()
+    );
+}
