@@ -980,14 +980,26 @@ describe("privileged sandbox exec routing", () => {
   });
 
   it("clears interpreter and dynamic-loader injection variables for root control", () => {
+    const replacementId = "a".repeat(64);
+    const backupId = "b".repeat(64);
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
-        dockerCapture: () => "immutable-alpha-id\topenshell-alpha\n",
+        dockerCapture: (args) =>
+          args[0] === "inspect"
+            ? `${backupId} exited false false false`
+            : `${replacementId}\topenshell-alpha\n${backupId}\topenshell-alpha-nemoclaw-gpu-backup-123\n`,
       },
       ({ privilegedSandboxExecArgv }) => {
-        const argv = privilegedSandboxExecArgv("alpha", ["/trusted/control"], false, true);
+        const argv = privilegedSandboxExecArgv(
+          "alpha",
+          ["/trusted/control"],
+          false,
+          true,
+          replacementId,
+          backupId,
+        );
         expect(argv.slice(0, 1)).toEqual(["exec"]);
         expect(argv).toContain("LD_PRELOAD=");
         expect(argv).toContain("LD_LIBRARY_PATH=");
@@ -996,22 +1008,21 @@ describe("privileged sandbox exec routing", () => {
         expect(argv).toContain("PYTHONUSERBASE=");
         expect(argv).toContain("PYTHONNOUSERSITE=1");
         expect(argv).toContain("BASH_ENV=");
-        expect(argv.slice(-4)).toEqual([
-          "--user",
-          "root",
-          "immutable-alpha-id",
-          "/trusted/control",
-        ]);
+        expect(argv.slice(-4)).toEqual(["--user", "root", replacementId, "/trusted/control"]);
       },
     );
   });
 
   it("refuses privileged execution when the pinned container identity changed", () => {
+    const backupId = "b".repeat(64);
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
-        dockerCapture: () => "current-container-id\topenshell-alpha\n",
+        dockerCapture: (args) =>
+          args[0] === "inspect"
+            ? `${backupId} exited false false false`
+            : `${"c".repeat(64)}\topenshell-alpha\n${backupId}\topenshell-alpha-nemoclaw-gpu-backup-123\n`,
       },
       ({ isPinnedSandboxContainerIdentityChangedError, privilegedSandboxExecArgv }) => {
         let refusal: unknown;
@@ -1021,7 +1032,8 @@ describe("privileged sandbox exec routing", () => {
             ["/trusted/control"],
             false,
             true,
-            "previous-container-id",
+            "a".repeat(64),
+            backupId,
           );
         } catch (error) {
           refusal = error;

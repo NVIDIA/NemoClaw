@@ -42,6 +42,7 @@ export function selectDockerPrivilegedSandboxTarget(
   sandboxName: string,
   labeledContainerRows: string,
   registeredNames: readonly string[] = [sandboxName],
+  retainedDockerBackupId?: string,
 ): string | null {
   const names = Array.from(new Set([...registeredNames, sandboxName])).sort(
     (left, right) => right.length - left.length || left.localeCompare(right),
@@ -59,11 +60,12 @@ export function selectDockerPrivilegedSandboxTarget(
         "refusing lifecycle execution.",
     );
   }
-  if (candidates.length > 1) {
+  const targets = candidates.filter(({ id }) => id !== retainedDockerBackupId);
+  if (targets.length > 1 || candidates.length - targets.length > 1) {
     throw new Error(
       `Multiple OpenShell containers are labeled for sandbox '${sandboxName}'; ` +
         "refusing ambiguous lifecycle execution.",
     );
   }
-  return candidates[0]?.id ?? null;
+  return targets[0]?.id ?? null;
 }

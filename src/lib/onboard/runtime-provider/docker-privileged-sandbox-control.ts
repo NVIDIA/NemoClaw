@@ -53,6 +53,7 @@ type SandboxEntry = import("../../state/registry").SandboxEntry;
 function findDirectSandboxContainer(
   sandboxName: string,
   registeredSandboxNames: readonly string[],
+  retainedDockerBackupId?: string,
 ): string | null {
   let output: string;
   try {
@@ -77,7 +78,31 @@ function findDirectSandboxContainer(
       { cause: error },
     );
   }
-  return selectDockerPrivilegedSandboxTarget(sandboxName, output, registeredSandboxNames);
+  if (
+    retainedDockerBackupId &&
+    output.split(/\r?\n/u).some((line) => line.trim().startsWith(`${retainedDockerBackupId}\t`))
+  ) {
+    const state = dockerCapture(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        "{{.Id}} {{.State.Status}} {{.State.Running}} {{.State.Paused}} {{.State.Restarting}}",
+        retainedDockerBackupId,
+      ],
+      { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
+    );
+    if (state.trim() !== `${retainedDockerBackupId} exited false false false`) {
+      throw new PinnedSandboxResourceIdentityChangedError(sandboxName);
+    }
+  }
+  return selectDockerPrivilegedSandboxTarget(
+    sandboxName,
+    output,
+    registeredSandboxNames,
+    retainedDockerBackupId,
+  );
 }
 
 function expectedDirectContainerPattern(sandboxName: string): string {
@@ -99,15 +124,32 @@ function portableTarget(sandboxName: string, sandbox: SandboxEntry) {
 function resolveDockerTarget(
   input: Pick<
     RuntimeProviderPrivilegedSandboxCommandInput,
-    "registeredSandboxNames" | "sandbox" | "sandboxName"
+    | "registeredSandboxNames"
+    | "sandbox"
+    | "sandboxName"
+    | "expectedResourceHandle"
+    | "retainedDockerBackupId"
   >,
 ): RuntimeProviderPrivilegedSandboxTarget {
   const portable = portableTarget(input.sandboxName, input.sandbox);
+  if (
+    input.retainedDockerBackupId !== undefined &&
+    (portable ||
+      !/^[a-f0-9]{64}$/u.test(input.retainedDockerBackupId) ||
+      !/^[a-f0-9]{64}$/u.test(input.expectedResourceHandle ?? "") ||
+      input.retainedDockerBackupId === input.expectedResourceHandle)
+  ) {
+    throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
+  }
   if (portable) {
     portable.assertRuntimeAuthority();
     return Object.freeze({ providerId: "docker", resourceHandle: portable.containerId });
   }
-  const containerId = findDirectSandboxContainer(input.sandboxName, input.registeredSandboxNames);
+  const containerId = findDirectSandboxContainer(
+    input.sandboxName,
+    input.registeredSandboxNames,
+    input.retainedDockerBackupId,
+  );
   if (!containerId) {
     throw new DirectSandboxContainerNotFoundError(
       `No running direct OpenShell sandbox container found for '${input.sandboxName}' ` +
@@ -116,6 +158,9 @@ function resolveDockerTarget(
         `${input.sandboxName}' and named ${expectedDirectContainerPattern(input.sandboxName)}. ` +
         "Is the sandbox running?",
     );
+  }
+  if (input.expectedResourceHandle !== undefined && input.expectedResourceHandle !== containerId) {
+    throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
   }
   return Object.freeze({ providerId: "docker", resourceHandle: containerId });
 }

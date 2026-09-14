@@ -26,6 +26,7 @@ export interface PrivilegedSandboxCommandOptions {
   readonly input?: string | Buffer;
   readonly sanitizeEnvironment?: boolean;
   readonly expectedResourceHandle?: string;
+  readonly retainedDockerBackupId?: string;
   readonly timeout?: number;
   readonly maxOutputBytes?: number;
 }
@@ -82,9 +83,14 @@ export function withPrivilegedSandboxExecutionLease<T>(
 
 export function resolvePrivilegedSandboxTarget(
   sandboxName: string,
+  options: Pick<
+    PrivilegedSandboxCommandOptions,
+    "expectedResourceHandle" | "retainedDockerBackupId"
+  > = {},
 ): RuntimeProviderPrivilegedSandboxTarget {
   const { sandbox, control } = privilegedSandboxControl(sandboxName);
   return control.resolveTarget({
+    ...options,
     registeredSandboxNames: registeredSandboxNames(sandboxName),
     sandbox,
     sandboxName,
@@ -92,8 +98,15 @@ export function resolvePrivilegedSandboxTarget(
 }
 
 /** Retained name for Docker compatibility code that only needs an opaque runtime handle. */
-export function resolveDirectSandboxContainer(sandboxName: string, _driver: string | null): string {
-  return resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+export function resolveDirectSandboxContainer(
+  sandboxName: string,
+  _driver: string | null,
+  options: Pick<
+    PrivilegedSandboxCommandOptions,
+    "expectedResourceHandle" | "retainedDockerBackupId"
+  > = {},
+): string {
+  return resolvePrivilegedSandboxTarget(sandboxName, options).resourceHandle;
 }
 
 export function executePrivilegedSandboxCommand(
@@ -119,6 +132,9 @@ export function executePrivilegedSandboxCommand(
     ...(options.expectedResourceHandle !== undefined
       ? { expectedResourceHandle: options.expectedResourceHandle }
       : {}),
+    ...(options.retainedDockerBackupId !== undefined
+      ? { retainedDockerBackupId: options.retainedDockerBackupId }
+      : {}),
     ...(options.maxOutputBytes ? { maxOutputBytes: options.maxOutputBytes } : {}),
   });
 }
@@ -130,6 +146,7 @@ export function privilegedSandboxExecArgv(
   stdin = false,
   sanitizeEnvironment = false,
   expectedContainerId?: string,
+  retainedDockerBackupId?: string,
 ): string[] {
   const { sandbox, control } = privilegedSandboxControl(sandboxName);
   if (!control.buildLegacyDockerArgv) {
@@ -145,6 +162,7 @@ export function privilegedSandboxExecArgv(
     sanitizeEnvironment,
     ...(stdin ? { input: Buffer.alloc(0) } : {}),
     ...(expectedContainerId !== undefined ? { expectedResourceHandle: expectedContainerId } : {}),
+    ...(retainedDockerBackupId !== undefined ? { retainedDockerBackupId } : {}),
   });
 }
 

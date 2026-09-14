@@ -54,6 +54,7 @@ type ManagedSupervisorFinalizeOutcome = DockerGpuPatchFinalizeOutcome & {
 
 export type ManagedSupervisorRelaunch = {
   containerId: string;
+  retainedDockerBackupId?: string;
   finalize(supervisorReady: boolean): Promise<ManagedSupervisorFinalizeOutcome>;
 };
 
@@ -65,7 +66,7 @@ export type ManagedSupervisorRelaunchDeps = {
   resolveContainer?: typeof resolveDirectSandboxContainer;
   inspectContainer?: (containerId: string) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
-  restartRestoredManagedGateway?: (containerId: string) => boolean;
+  restartRestoredManagedGateway?: (containerId: string, retainedDockerBackupId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
   sleep?: (seconds: number) => void;
   restoreState?: typeof sandboxState.restoreSandboxState;
@@ -336,7 +337,10 @@ export function relaunchManagedSupervisorSession(
       let replacementOwned = false;
       try {
         replacementOwned = sameContainerId(
-          resolveContainer(sandboxName, driver),
+          resolveContainer(sandboxName, driver, {
+            expectedResourceHandle: result.newContainerId,
+            retainedDockerBackupId: result.oldContainerId,
+          }),
           result.newContainerId,
         );
       } catch {
@@ -357,7 +361,7 @@ export function relaunchManagedSupervisorSession(
       let restoredManagedGatewayReady = false;
       try {
         restoredManagedGatewayReady =
-          restartRestoredManagedGateway?.(result.newContainerId) === true;
+          restartRestoredManagedGateway?.(result.newContainerId, result.oldContainerId) === true;
       } catch {
         restoredManagedGatewayReady = false;
       }
@@ -397,6 +401,7 @@ export function relaunchManagedSupervisorSession(
     };
     return {
       containerId: result.newContainerId,
+      retainedDockerBackupId: result.oldContainerId,
       finalize(supervisorReady) {
         if (completion) {
           if (completion.supervisorReady !== supervisorReady) {

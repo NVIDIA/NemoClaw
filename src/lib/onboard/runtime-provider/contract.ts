@@ -380,6 +380,8 @@ export interface RuntimeProviderPrivilegedSandboxCommandInput {
   readonly input?: Buffer;
   readonly sanitizeEnvironment: boolean;
   readonly expectedResourceHandle?: string;
+  /** Exact stopped Docker rollback copy retained by the current recreation transaction. */
+  readonly retainedDockerBackupId?: string;
   readonly timeoutMs: number;
   readonly maxOutputBytes?: number;
 }
@@ -430,7 +432,11 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
-      "registeredSandboxNames" | "sandbox" | "sandboxName"
+      | "registeredSandboxNames"
+      | "sandbox"
+      | "sandboxName"
+      | "expectedResourceHandle"
+      | "retainedDockerBackupId"
     >,
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(

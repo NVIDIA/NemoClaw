@@ -394,6 +394,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       "probe",
       210000,
       "replacement-container-id",
+      undefined,
     );
     expect(finalize).toHaveBeenCalledOnce();
     expect(finalize).toHaveBeenCalledWith(false);
@@ -437,6 +438,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       "probe",
       210000,
       "replacement-container-id",
+      undefined,
     );
     expect(finalize).toHaveBeenCalledWith(false);
   });
@@ -501,12 +503,14 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       "probe",
       210000,
       "replacement-container-id",
+      "old-container-id",
     );
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledWith(
       "recovered-box",
       "restart",
       210000,
       "replacement-container-id",
+      "old-container-id",
     );
     expect(order).toEqual(["restore-state", "post-restore-restart", "commit-container"]);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
@@ -1212,6 +1216,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         "probe",
         15000,
         "replacement-container-id",
+        undefined,
       );
       expect(finalize).toHaveBeenCalledWith(true);
       expect(probeTiming.setForwardAction).toHaveBeenCalledOnce();

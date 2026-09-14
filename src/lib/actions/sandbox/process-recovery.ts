@@ -275,6 +275,7 @@ function executeGatewaySupervisorActionPinned(
   action: "restart" | "recover" | "probe",
   timeout: number,
   expectedContainerId?: string,
+  retainedDockerBackupId?: string,
 ): ManagedGatewaySupervisorActionResult | null {
   const nonce = randomBytes(32).toString("hex");
   try {
@@ -287,6 +288,7 @@ function executeGatewaySupervisorActionPinned(
         {
           sanitizeEnvironment: true,
           expectedResourceHandle: targetContainerId,
+          ...(retainedDockerBackupId !== undefined ? { retainedDockerBackupId } : {}),
           timeout,
         },
       );
@@ -1012,9 +1014,15 @@ async function recoverSandboxProcesses(
               effectivePinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
               "SUPERVISOR_NOT_RUNNING",
             ),
-          restartRestoredManagedGateway: (containerId) => {
+          restartRestoredManagedGateway: (containerId, retainedDockerBackupId) => {
             const restarted = parseManagedGatewayControlCompletion(
-              effectivePinnedGatewaySupervisorAction(sandboxName, "restart", 210000, containerId),
+              effectivePinnedGatewaySupervisorAction(
+                sandboxName,
+                "restart",
+                210000,
+                containerId,
+                retainedDockerBackupId,
+              ),
             );
             if (restarted?.disposition !== "ok") return false;
             const settleSeconds = readNonNegativeNumberEnv(
@@ -1031,7 +1039,13 @@ async function recoverSandboxProcesses(
               (name) =>
                 confirmRecoveredSandboxGatewayManaged(name, {
                   requestGatewaySupervisorActionImpl: (name, action) =>
-                    effectivePinnedGatewaySupervisorAction(name, action, 210000, containerId),
+                    effectivePinnedGatewaySupervisorAction(
+                      name,
+                      action,
+                      210000,
+                      containerId,
+                      retainedDockerBackupId,
+                    ),
                 }),
               sleepSeconds,
               settleSeconds,
@@ -1944,7 +1958,13 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     const relaunch = recovery.kind === "relaunched" ? recovery.relaunch : null;
     const requestManagedProbe = relaunch
       ? (name: string, action: "restart" | "recover" | "probe", timeout = 210000) =>
-          effectivePinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId)
+          effectivePinnedGatewaySupervisorAction(
+            name,
+            action,
+            timeout,
+            relaunch.containerId,
+            relaunch.retainedDockerBackupId,
+          )
       : effectiveGatewaySupervisorAction;
     const relaunchedManagedHealth = {
       failure: null as ReturnType<typeof classifyGatewayRestartFailure> | null,

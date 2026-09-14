@@ -563,7 +563,10 @@ describe("relaunchManagedSupervisorSession", () => {
       stateRestored: true,
     });
     expect(order).toEqual(["restore-state", "restart-restored-gateway", "commit-container"]);
-    expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
+    expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith(
+      "new-container-id",
+      "old-container-id",
+    );
     expect(deps.finalize).toHaveBeenCalledWith(
       {
         finalHandoffTimeoutSecs: 900,
