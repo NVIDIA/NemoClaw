@@ -64,6 +64,7 @@ export type ManagedSupervisorRelaunchDeps = {
   confirmMissingSupervisor?: (containerId: string) => boolean;
   restartRestoredManagedGateway?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
+  captureRestoreAuthority?: typeof sandboxState.captureSnapshotRestoreAuthority;
   sleep?: (seconds: number) => void;
   restoreState?: typeof sandboxState.restoreSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
@@ -247,6 +248,8 @@ export function relaunchManagedSupervisorSession(
     deps.backupState ??
     ((name: string) => backupSandboxStateWithManagedAuthority(name, {}, { getSandbox }));
   const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
+  const captureRestoreAuthority =
+    deps.captureRestoreAuthority ?? sandboxState.captureSnapshotRestoreAuthority;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
   const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
   const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
@@ -314,6 +317,15 @@ export function relaunchManagedSupervisorSession(
       return null;
     }
     const backupManifest = backup.manifest;
+    const restoreAuthority = captureRestoreAuthority(backupManifest.backupPath, backupManifest);
+    if (!restoreAuthority) {
+      try {
+        removeBackup(sandboxName, backupManifest.backupPath);
+      } catch {
+        // Preserve the content-authority failure that stopped recreation.
+      }
+      return null;
+    }
     pendingStateBackupPath = backupManifest.backupPath;
     if (!quiet) {
       console.log("  Recreating the sandbox container with its managed startup command...");
@@ -364,7 +376,15 @@ export function relaunchManagedSupervisorSession(
       }
       let stateRestored = false;
       try {
-        stateRestored = restoreState(sandboxName, backupManifest.backupPath).success;
+        stateRestored = restoreState(sandboxName, backupManifest.backupPath, {
+          authority: restoreAuthority,
+          validateBeforeMutation: () => {
+            const selected = resolveContainer(sandboxName, driver, result.newContainerId);
+            if (!sameContainerId(selected, result.newContainerId)) {
+              throw new Error("replacement container identity changed");
+            }
+          },
+        }).success;
       } catch {
         stateRestored = false;
       }

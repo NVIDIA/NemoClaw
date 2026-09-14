@@ -74,13 +74,21 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       backedUpFiles: [],
       failedFiles: [],
     })) as never,
-    restoreState: vi.fn(() => ({
-      success: true,
-      restoredDirs: ["workspace"],
-      failedDirs: [],
-      restoredFiles: [],
-      failedFiles: [],
+    captureRestoreAuthority: vi.fn(() => ({
+      schemaVersion: 1 as const,
+      backupPath: "/tmp/rebuild-backups/alpha/recovery",
+      contentSha256: "snapshot-content-sha256",
     })),
+    restoreState: vi.fn((_name, _path, options) => {
+      options?.validateBeforeMutation?.();
+      return {
+        success: true,
+        restoredDirs: ["workspace"],
+        failedDirs: [],
+        restoredFiles: [],
+        failedFiles: [],
+      };
+    }),
     removeBackup: vi.fn(() => true),
     commandExecutor: {
       runBuffered: vi.fn(async () => ({
@@ -196,7 +204,15 @@ describe("relaunchManagedSupervisorSession", () => {
       stateBackupRemoved: true,
     });
     expect(deps.resolveContainer).toHaveBeenNthCalledWith(2, "alpha", "docker", "new-container-id");
-    expect(deps.restoreState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
+    expect(deps.restoreState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery", {
+      authority: {
+        schemaVersion: 1,
+        backupPath: "/tmp/rebuild-backups/alpha/recovery",
+        contentSha256: "snapshot-content-sha256",
+      },
+      validateBeforeMutation: expect.any(Function),
+    });
+    expect(deps.resolveContainer).toHaveBeenNthCalledWith(3, "alpha", "docker", "new-container-id");
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
@@ -527,6 +543,14 @@ describe("relaunchManagedSupervisorSession", () => {
       "/tmp/rebuild-backups/alpha/partial-recovery",
     );
     expect(deps.recreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses recreation when exact snapshot content authority is unavailable", () => {
+    const deps = baseDeps({ captureRestoreAuthority: vi.fn(() => null) });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(deps.recreate).not.toHaveBeenCalled();
+    expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
   });
 
   it("rolls back the container transaction when state restore fails", async () => {

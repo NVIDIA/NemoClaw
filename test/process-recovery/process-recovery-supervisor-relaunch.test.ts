@@ -143,6 +143,11 @@ function composedRelaunchTransaction(
                 failedFiles: [],
               }) as never,
           ),
+          captureRestoreAuthority: vi.fn(() => ({
+            schemaVersion: 1 as const,
+            backupPath: "/tmp/rebuild-backups/recovery-box/recovery",
+            contentSha256: "snapshot-content-sha256",
+          })),
           restoreState: vi.fn(() => {
             order.push("restore-state");
             return {
