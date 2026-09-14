@@ -21,6 +21,7 @@ import {
 import {
   assertExactSandboxImage,
   assertOpenClawHeartbeatStart,
+  managedOpenClawHeartbeatLogProbe,
   assertFailedBootstrapOwnerCleanupRetention,
   assertFailedSandboxOwnerCleanupRetention,
   createProtectedManagedImageBootstrapInput,
@@ -143,12 +144,103 @@ describe("protected managed-image runtime contract", () => {
     ).toThrow("provider-owned mount projection");
   });
 
+  it("reads the structured heartbeat interval without exporting log credentials", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-log-"));
+    try {
+      const log = path.join(root, "openclaw-2026-09-13.log");
+      fs.writeFileSync(
+        log,
+        JSON.stringify({
+          "0": JSON.stringify({ subsystem: "gateway/heartbeat" }),
+          "1": { intervalMs: 120000, apiKey: "fixture-secret" },
+          "2": "heartbeat: started",
+        }) + "\n",
+      );
+      const probe = managedOpenClawHeartbeatLogProbe()
+        .replace('"/tmp/openclaw"', JSON.stringify(root))
+        .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+      const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("heartbeat-interval-ms=120000");
+      expect(result.stderr).toBe("");
+      fs.writeFileSync(log, "malformed fixture-secret");
+      const failed = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(failed.status).toBe(1);
+      expect(failed.stdout).toBe("");
+      expect(failed.stderr).toBe("heartbeat-evidence-unavailable");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { reason: "unrelated subsystem", subsystem: "gateway/other", create: fs.copyFileSync },
+    { reason: "symlink log", subsystem: "gateway/heartbeat", create: fs.symlinkSync },
+  ])("rejects heartbeat evidence from a $reason", ({ subsystem, create }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-denial-"));
+    try {
+      const source = path.join(root, "source.log");
+      fs.writeFileSync(
+        source,
+        JSON.stringify({
+          "0": JSON.stringify({ subsystem }),
+          "1": { intervalMs: 120000, apiKey: "fixture-secret" },
+          "2": "heartbeat: started",
+        }) + "\n",
+      );
+      create(source, path.join(root, "openclaw-2026-09-13.log"));
+      const probe = managedOpenClawHeartbeatLogProbe()
+        .replace('"/tmp/openclaw"', JSON.stringify(root))
+        .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+      const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("heartbeat-evidence-unavailable");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { separateLogs: false, intervals: [120000, 1800000] },
+    { separateLogs: false, intervals: [1800000, 120000] },
+    { separateLogs: true, intervals: [120000, 1800000] },
+    { separateLogs: true, intervals: [1800000, 120000] },
+  ])(
+    "rejects conflicting heartbeat intervals $intervals with separateLogs=$separateLogs",
+    ({ separateLogs, intervals }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-conflict-"));
+      try {
+        intervals.forEach((intervalMs, index) => {
+          const name = separateLogs ? `openclaw-2026-09-${13 + index}.log` : "openclaw.log";
+          fs.appendFileSync(
+            path.join(root, name),
+            JSON.stringify({
+              "0": JSON.stringify({ subsystem: "gateway/heartbeat" }),
+              "1": { intervalMs, apiKey: "fixture-secret" },
+              "2": "heartbeat: started",
+            }) + "\n",
+          );
+        });
+        const probe = managedOpenClawHeartbeatLogProbe()
+          .replace('"/tmp/openclaw"', JSON.stringify(root))
+          .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+        const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+        expect(result.status).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe("heartbeat-evidence-unavailable");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10262)", () => {
     const containerId = "a".repeat(64);
     const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
       status: 0,
-      stdout: '{"1":{"intervalMs":120000},"2":"heartbeat: started"}\n',
       stderr: "",
+      stdout: "heartbeat-interval-ms=120000",
     }));
 
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow();
@@ -159,9 +251,9 @@ describe("protected managed-image runtime contract", () => {
         "--user",
         "sandbox",
         containerId,
-        "/bin/sh",
-        "-c",
-        "cat /tmp/openclaw*/openclaw*.log",
+        "node",
+        "-e",
+        managedOpenClawHeartbeatLogProbe(),
       ],
       {},
       15_000,
@@ -169,7 +261,7 @@ describe("protected managed-image runtime contract", () => {
 
     runCommand.mockReturnValue({
       status: 0,
-      stdout: '{"1":{"intervalMs":1800000},"2":"heartbeat: started"}\n',
+      stdout: "heartbeat-interval-ms=1800000",
       stderr: "",
     });
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
@@ -187,7 +279,7 @@ describe("protected managed-image runtime contract", () => {
     }));
 
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
-      "could not read managed OpenClaw startup logs (status=1, spawnError=false)",
+      "managed OpenClaw structured heartbeat evidence unavailable",
     );
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(secret);
     const diagnostic = managedImageFailureDetail(
