@@ -129,7 +129,7 @@ function harness(
     access: vi.fn(),
     captureOpenShell,
     createTempConfig,
-    openshellVersion: vi.fn(() => "0.0.106"),
+    openshellVersion: vi.fn(() => "0.0.116"),
     platform: "linux",
     resolveOpenshell: () => "/usr/bin/openshell",
     spawnSsh,

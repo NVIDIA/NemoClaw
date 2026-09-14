@@ -3,9 +3,15 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { captureOpenshell } = vi.hoisted(() => ({ captureOpenshell: vi.fn() }));
+const { captureOpenshell, enableAuditLogs } = vi.hoisted(() => ({
+  captureOpenshell: vi.fn(),
+  enableAuditLogs: vi.fn(),
+}));
 
 vi.mock("../../adapters/openshell/runtime", () => ({ captureOpenshell }));
+vi.mock("../../adapters/openshell/sandbox-settings-cli", () => ({
+  cliOpenShellSandboxSettings: { enableAuditLogs },
+}));
 
 import {
   maybeEmitPolicyDenialHint,
@@ -25,9 +31,8 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
   });
 
   it("enables audit and reads the bounded OpenShell log tail through the runtime adapter", async () => {
-    captureOpenshell
-      .mockReturnValueOnce({ output: "", status: 0 })
-      .mockReturnValueOnce({ output: DENIED_LINE, status: 0 });
+    enableAuditLogs.mockResolvedValue({ ok: true, value: undefined });
+    captureOpenshell.mockReturnValueOnce({ output: DENIED_LINE, status: 0 });
     const stderr: string[] = [];
 
     const hint = await maybeEmitPolicyDenialHint(
@@ -44,27 +49,13 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
       "nemoclaw-8091",
     );
 
+    expect(enableAuditLogs).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      sandboxName: "runtime-sandbox",
+      timeoutMs: POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
+    });
     expect(captureOpenshell).toHaveBeenNthCalledWith(
       1,
-      [
-        "settings",
-        "set",
-        "-g",
-        "nemoclaw-8091",
-        "runtime-sandbox",
-        "--key",
-        "ocsf_json_enabled",
-        "--value",
-        "true",
-      ],
-      expect.objectContaining({
-        ignoreError: true,
-        includeStderr: true,
-        timeout: POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
-      }),
-    );
-    expect(captureOpenshell).toHaveBeenNthCalledWith(
-      2,
       [
         "logs",
         "-g",
@@ -89,9 +80,8 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
     const timeout = Object.assign(new Error("OpenShell log read timed out"), {
       code: "ETIMEDOUT",
     });
-    captureOpenshell
-      .mockReturnValueOnce({ output: "", status: 0 })
-      .mockReturnValueOnce({ error: timeout, output: "", status: null });
+    enableAuditLogs.mockResolvedValue({ ok: true, value: undefined });
+    captureOpenshell.mockReturnValueOnce({ error: timeout, output: "", status: null });
     const sleep = vi.fn(async () => {});
 
     const hint = await maybeEmitPolicyDenialHint(
@@ -104,7 +94,7 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
     );
 
     expect(hint).toBeNull();
-    expect(captureOpenshell).toHaveBeenCalledTimes(2);
+    expect(captureOpenshell).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
   });
 });

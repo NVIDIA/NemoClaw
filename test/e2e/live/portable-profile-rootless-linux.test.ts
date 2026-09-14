@@ -62,7 +62,7 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
-import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
+import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import {
   cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
@@ -760,7 +760,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
 
     lifecycleEvidence = await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
       const gatewayEvidence: {
-        forwardRecovery: ReturnType<typeof recoverHermesPortableLaunchForwards> | null;
+        forwardRecovery: Awaited<ReturnType<typeof recoverHermesPortableLaunchForwards>> | null;
         verificationCount: number;
       } = { forwardRecovery: null, verificationCount: 0 };
       const requireCompatibleStartupAuthority = () => {
@@ -779,7 +779,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         verifyGateway: async () => {
           gatewayEvidence.verificationCount += 1;
           requireCompatibleStartupAuthority();
-          gatewayEvidence.forwardRecovery = recoverHermesPortableLaunchForwards(
+          gatewayEvidence.forwardRecovery = await recoverHermesPortableLaunchForwards(
             createHermesPortableForwardRecoveryInput({
               assertCurrent: requireCompatibleStartupAuthority,
               assertRollbackCurrent: requireCompatibleStartupAuthority,
@@ -1199,7 +1199,7 @@ async function main(progress: TestProgress): Promise<void> {
       gatewayPort: 8080,
       stateDir,
       podmanSocketPath: `${runtimeDir}/podman/podman.sock`,
-      getDockerSupervisorImage: () => OPENSHELL_V0106_QUALIFICATION.supervisorImage,
+      getDockerSupervisorImage: () => OPENSHELL_V0116_QUALIFICATION.supervisorImage,
       resolveSandboxBin: () => sandboxBin,
     });
     assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://${PORTABLE_HOST_GATEWAY_IP}:8080`);

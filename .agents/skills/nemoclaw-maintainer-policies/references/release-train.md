@@ -62,6 +62,10 @@ The daily cutoff is the maintainer-defined point where the release tag is prepar
 
 At cutoff:
 
+Start [independent readiness checks](../../nemoclaw-maintainer-cut-release-tag/references/candidate-evidence.md#start-independent-checks-at-kickoff)
+at kickoff. Overlap authorized documentation preparation with image waits. This changes preparation
+order, not the candidate evidence or maintainer decisions required below.
+
 1. List merged PRs carrying the target version label.
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.

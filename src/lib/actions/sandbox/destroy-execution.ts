@@ -7,7 +7,6 @@ import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/co
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
-import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
   preparePortableDemoSandboxDestroyAuthority,
@@ -120,10 +119,6 @@ function emptyMcpDestroyPreparation(
 ): McpDestroyPreparation {
   return {
     entries: [],
-    detachedProviderEntries: [],
-    scrubbedAdapterEntries: [],
-    destroyAlreadyPrepared: false,
-    destroyAlreadyPending: false,
     ...(runtimeSelection ? { runtimeSelection } : {}),
   };
 }
@@ -135,7 +130,7 @@ async function prepareMcpDestroy(
   force: boolean,
   runtimeSelection?: McpDestroyPreparation["runtimeSelection"],
 ): Promise<McpDestroyPreparation> {
-  if (Object.keys(sandbox?.mcp?.bridges ?? {}).length === 0) {
+  if (!sandbox) {
     return emptyMcpDestroyPreparation(runtimeSelection);
   }
   const preparation = sandboxConfirmedAbsent
@@ -145,13 +140,9 @@ async function prepareMcpDestroy(
       })
     : await prepareMcpBridgesForDestroy(sandboxName, {
         force,
+        sandbox,
         ...(runtimeSelection ? { runtimeSelection } : {}),
       });
-  if (sandboxConfirmedAbsent && preparation.entries.length > 0) {
-    console.warn(
-      `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
-    );
-  }
   return preparation;
 }
 
@@ -185,18 +176,7 @@ async function finalizeMcpDestroy(
   preparation: McpDestroyPreparation,
   force: boolean,
 ): Promise<void> {
-  try {
-    await finalizeMcpBridgesAfterSandboxDelete(sandboxName, preparation, { force });
-  } catch (error) {
-    const detail = redactDestroyError(error);
-    console.error(
-      `  Sandbox '${sandboxName}' is gone, but authenticated MCP provider cleanup is incomplete: ${detail}`,
-    );
-    console.error(
-      "  MCP cleanup state was preserved. Re-run destroy to finish without requiring the host MCP secret environment variable.",
-    );
-    throw error;
-  }
+  await finalizeMcpBridgesAfterSandboxDelete(sandboxName, preparation, { force });
 }
 
 export async function executeSandboxDestroy({
@@ -527,7 +507,7 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
       };
     }
-    const detachProviders = (): DetachSandboxProvidersResult =>
+    const detachProviders = (): Promise<DetachSandboxProvidersResult> =>
       runSandboxProviderPreDeleteCleanup(sandboxName, {
         runOpenshell: selectedRunOpenshell,
         redact,
@@ -545,8 +525,11 @@ export async function executeSandboxDestroy({
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
       : runtimeProvider?.cleanup.supported === true && sandbox
-        ? runtimeProvider.cleanup.prepareDestroy({ sandbox, sandboxName }, { detachProviders })
-        : detachProviders();
+        ? await runtimeProvider.cleanup.prepareDestroy(
+            { sandbox, sandboxName },
+            { detachProviders },
+          )
+        : await detachProviders();
     // The final identity proof runs immediately before OpenShell delete. A
     // runtime administrator remains a trusted host authority; this closes the
     // multi-step window without claiming a cross-runtime transaction.

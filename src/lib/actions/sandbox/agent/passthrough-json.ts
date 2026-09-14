@@ -1,19 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
 import {
   openClawAgentIncompleteTurnSignal,
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
 } from "../../../openclaw/agent-json-provenance";
-import { wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
-import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
-  type AgentDispatchRunner,
-  agentDispatchDeadlineSeconds,
+  type OpenClawAgentDispatchDeps,
+  runOpenClawAgentDispatch,
   isSilentAgentDispatch,
-  runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
@@ -31,13 +27,9 @@ export type AgentJsonPassthroughProcess = {
   stderr: { write(s: string): unknown };
 };
 
-export type AgentJsonPassthroughDeps = {
-  getOpenshellBinary?: () => string;
-  getGatewayName?: (sandboxName: string) => string | null;
-  stdinIsTty?: () => boolean;
+export type AgentJsonPassthroughDeps = OpenClawAgentDispatchDeps & {
   provenanceLines?: (raw: string) => string[];
   incompleteTurnSignal?: (raw: string) => OpenClawIncompleteTurnSignal | null;
-  runDispatch?: AgentDispatchRunner;
 };
 
 function writeProvenanceBlock(
@@ -55,26 +47,7 @@ export async function runAgentJsonPassthrough(
   proc: AgentJsonPassthroughProcess = process,
   deps: AgentJsonPassthroughDeps = {},
 ): Promise<never> {
-  const gatewayName = (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName);
-  const runDispatch: AgentDispatchRunner =
-    deps.runDispatch ??
-    ((request) =>
-      runAgentDispatch(
-        request,
-        createCliOpenShellSandboxSessionExecutor({
-          resolveBinary: deps.getOpenshellBinary,
-          stdinIsTty: deps.stdinIsTty,
-        }),
-      ));
-  const result = await runDispatch({
-    kind: "command",
-    sandboxName,
-    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
-    command: wrapOpenClawAgentCommandWithRuntimeEnv(command),
-    tty: false,
-    output: "capture",
-    timeoutSeconds: agentDispatchDeadlineSeconds(command),
-  });
+  const result = await runOpenClawAgentDispatch(sandboxName, command, deps);
   const { stderr, stdout } = result;
 
   // Ahead of the stdout write so machine-readable stdout stays byte-empty and

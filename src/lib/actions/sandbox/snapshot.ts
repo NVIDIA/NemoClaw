@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
 import {
   namedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyReader,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import {
   captureOpenshell,
@@ -31,7 +31,7 @@ import {
 } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
-import { listMessagingProviderSuffixes } from "../../messaging/channels";
+import { deleteSandboxProviderRegistrations } from "../../onboard/sandbox-provider-cleanup";
 import {
   findAvailableDashboardPort,
   getRegistryOccupiedDashboardPorts,
@@ -50,7 +50,6 @@ import {
   createExactTempFileCleanup,
   secureTempFile,
 } from "../../onboard/temp-files";
-import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
@@ -96,7 +95,6 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
-  getMcpProviderInspectionRuntimeSelection,
   isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
@@ -107,7 +105,6 @@ import {
   readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
-  restoreDeepAgentsManagedMcpProjection,
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
@@ -120,18 +117,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
-function deepAgentsManagedProjectionRecoveryCommand(sandboxName: string): string {
-  const script = [
-    "projection=/sandbox/.deepagents/.nemoclaw-mcp.json",
-    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then printf "Managed MCP projection recovery stopped because %s is no longer a directory. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
-    "recovery_dir=$(mktemp -d /sandbox/.nemoclaw-mcp.json.recovery.XXXXXX)",
-    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then rmdir -- "$recovery_dir"; printf "Managed MCP projection recovery stopped because %s changed before it could be moved. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
-    'mv -- "$projection" "$recovery_dir/projection"',
-    'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
-  ].join(" && ");
-  return `${CLI_NAME} ${shellQuote(sandboxName)} exec -- sh -c ${shellQuote(script)}`;
-}
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -400,7 +385,7 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const policyRead = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+  const policyRead = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(gatewayName),
     sandboxName: srcEntry.name,
     scope: "base",
@@ -683,8 +668,8 @@ async function autoCreateSandboxFromSource(
 // `stopHostServices`), Ollama model unload, gateway teardown \u2014 are
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
-function deleteSandboxForRestore(name: string): void {
-  withMcpLifecycleLockSync(name, () => {
+async function deleteSandboxForRestore(name: string): Promise<void> {
+  await withMcpLifecycleLock(name, async () => {
     const sbMeta = registry.getSandbox(name);
     if (!sbMeta) {
       console.error(
@@ -761,12 +746,7 @@ function deleteSandboxForRestore(name: string): void {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
-    for (const suffix of listMessagingProviderSuffixes()) {
-      runOpenshell(["provider", "delete", `${name}${suffix}`], {
-        ignoreError: true,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
-    }
+    await deleteSandboxProviderRegistrations(name, "messaging", { runOpenshell });
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
@@ -805,11 +785,11 @@ function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
 
 type PendingSnapshotCloneRecovery = "not-pending" | "finalized" | "removed";
 
-function reconcilePendingSnapshotClone(
+async function reconcilePendingSnapshotClone(
   targetSandbox: string,
   sourceEntry: SandboxEntry,
   sourceGatewayName: string,
-): PendingSnapshotCloneRecovery {
+): Promise<PendingSnapshotCloneRecovery> {
   const pending = registry.getSandbox(targetSandbox);
   if (
     !pending ||
@@ -839,7 +819,7 @@ function reconcilePendingSnapshotClone(
   }
   const liveNames = parseLiveSandboxNames(list.output || "");
   if (!liveNames.has(targetSandbox)) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
 
@@ -853,7 +833,7 @@ function reconcilePendingSnapshotClone(
   }
   const liveIdentityFingerprint = fingerprintSandboxLiveIdentity(get.output || "");
   if (liveIdentityFingerprint !== pending.lifecycleLiveIdentityFingerprint) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
   if (!isSandboxReady(list.output || "", targetSandbox)) {
@@ -865,7 +845,7 @@ function reconcilePendingSnapshotClone(
     (pending.agent || "openclaw") === "openclaw" &&
     !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
   ) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
   if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
@@ -1363,7 +1343,7 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
-      const pendingRecovery = reconcilePendingSnapshotClone(
+      const pendingRecovery = await reconcilePendingSnapshotClone(
         targetSandbox,
         lockedSourceEntry,
         lockedGatewayName,
@@ -1406,7 +1386,7 @@ async function runSnapshotRestoreUnlocked(
           if (targetEntry) {
             verifyRestoreDestinationOnOwnGateway(targetSandbox);
           }
-          deleteSandboxForRestore(targetSandbox);
+          await deleteSandboxForRestore(targetSandbox);
           requireLiveSandboxesOnSandboxGateway(
             sandboxName,
             "  Failed to re-select source sandbox gateway after deleting destination.",
@@ -1481,21 +1461,12 @@ async function runSnapshotRestoreUnlocked(
         console.error(
           `  Removing incomplete clone '${targetSandbox}' while its exact provider ownership is still registered.`,
         );
-        deleteSandboxForRestore(targetSandbox);
+        await deleteSandboxForRestore(targetSandbox);
         snapshotExit(1);
       }
     }
   }
   await withMcpLifecycleLock(targetSandbox, async () => {
-    const snapshotTarget = registry.getSandbox(targetSandbox);
-    const repairsManagedDeepAgentsProjection =
-      snapshotTarget?.agent === "langchain-deepagents-code" && !snapshotTarget.fromDockerfile;
-    const managedDeepAgentsEntries = repairsManagedDeepAgentsProjection
-      ? Object.values(snapshotTarget.mcp?.bridges ?? {}).filter(
-          (entry) =>
-            entry.agent === "langchain-deepagents-code" && entry.adapter === "deepagents-config",
-        )
-      : [];
     const validateProviderRestoreBeforeMutation =
       preparedRuntimeRestore || preparedHostLocalInferenceRestore
         ? () => {
@@ -1542,43 +1513,6 @@ async function runSnapshotRestoreUnlocked(
       );
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
-    }
-    if (
-      repairsManagedDeepAgentsProjection &&
-      snapshotRestoreAuthority &&
-      validateProviderRestoreBeforeMutation
-    ) {
-      const authorityError = sandboxState.validateSnapshotRestoreMutation(backupPath, {
-        authority: snapshotRestoreAuthority,
-        validateBeforeMutation: validateProviderRestoreBeforeMutation,
-      });
-      if (authorityError) {
-        console.error(`  Cannot restore provider snapshot '${sandboxName}': ${authorityError}.`);
-        console.error(`  Destination '${targetSandbox}' was not changed.`);
-        snapshotExit(1);
-      }
-    }
-    if (repairsManagedDeepAgentsProjection) {
-      try {
-        const currentTarget = registry.getSandbox(targetSandbox);
-        if (!currentTarget) {
-          throw new Error(`target '${targetSandbox}' is no longer registered`);
-        }
-        const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
-        await restoreDeepAgentsManagedMcpProjection(
-          targetSandbox,
-          managedDeepAgentsEntries,
-          runtimeSelection,
-        );
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        const recoveryCommand = deepAgentsManagedProjectionRecoveryCommand(targetSandbox);
-        throw new SnapshotCommandError([
-          `Snapshot files were not restored into '${targetSandbox}'.`,
-          `The managed Deep Agents MCP projection at '/sandbox/.deepagents/.nemoclaw-mcp.json' could not be repaired: ${detail}`,
-          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${recoveryCommand}\`. The command prints the unused recovery location. Then rerun the snapshot restore command.`,
-        ]);
-      }
     }
     if (targetSandbox !== sandboxName) {
       console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);

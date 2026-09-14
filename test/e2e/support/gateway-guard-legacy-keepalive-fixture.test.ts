@@ -10,6 +10,7 @@ import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuMode,
 } from "../../../src/lib/onboard/docker-gpu-patch.ts";
+import { openshellMainProcessSpecEnvValue } from "../../../src/lib/onboard/docker-startup-command-env.ts";
 import {
   createLegacyKeepaliveFixture,
   type LegacyKeepaliveFixtureDeps,
@@ -22,6 +23,10 @@ const NEW_CONTAINER_ID = "b".repeat(64);
 const MANAGED_RUNTIME_STARTUP_COMMAND =
   "env CHAT_UI_URL=http://127.0.0.1:18789 NEMOCLAW_DASHBOARD_PORT=18789 NEMOCLAW_SANDBOX_NAME=e2e-2701 /usr/local/bin/nemoclaw-start";
 const MANAGED_RUNTIME_COMMAND_ENV = `OPENSHELL_SANDBOX_COMMAND=${MANAGED_RUNTIME_STARTUP_COMMAND}`;
+const MANAGED_RUNTIME_PROCESS_SPEC_ENV = `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(
+  MANAGED_RUNTIME_STARTUP_COMMAND.split(" "),
+  false,
+)}`;
 const OPEN_SHELL_IDENTITY_ENV = [
   "OPENSHELL_OCI_IMAGE_USER=sandbox",
   "OPENSHELL_SANDBOX_UID=",
@@ -31,7 +36,7 @@ const FIXTURE_PATH = fileURLToPath(
   new URL("../live/gateway-guard-legacy-keepalive-fixture.ts", import.meta.url),
 );
 
-function successfulResult() {
+function deferredResult() {
   return {
     applied: true as const,
     oldContainerId: OLD_CONTAINER_ID,
@@ -44,7 +49,26 @@ function successfulResult() {
       device: "",
       args: [],
     },
+    backupRemoved: false,
+  };
+}
+
+function successfulFinalization() {
+  return {
     backupRemoved: true,
+    rolledBack: false,
+    replacementStoppedForCommit: true,
+    replacementRestarted: true,
+    lifecycleStopAcknowledged: true,
+    finalHandoffAcknowledged: true,
+    lastSandboxPhase: "Ready",
+  };
+}
+
+function lifecycleDeps() {
+  return {
+    runOpenshell: vi.fn(() => ({ status: 0 })),
+    finalize: vi.fn(async () => successfulFinalization()),
   };
 }
 
@@ -189,7 +213,8 @@ describe("gateway guard legacy keepalive fixture", () => {
 
   it("recreates only the pinned sandbox container with the reviewed supervisor and legacy workload (#9364)", async () => {
     const dockerCapture = vi.fn(() => managedRuntimeInspect());
-    const recreate = vi.fn(
+    const lifecycle = lifecycleDeps();
+    const recreateMock = vi.fn(
       async (_, deps: Parameters<LegacyKeepaliveFixtureDeps["recreate"]>[1]) => {
         const rewritten = JSON.parse(
           deps?.dockerCapture?.(["inspect", "--type", "container", OLD_CONTAINER_ID], {
@@ -201,16 +226,17 @@ describe("gateway guard legacy keepalive fixture", () => {
           Cmd: ["--workdir", "/sandbox"],
           Env: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="],
         });
-        return successfulResult();
+        return deferredResult();
       },
-    ) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
+    );
+    const recreate = recreateMock as unknown as LegacyKeepaliveFixtureDeps["recreate"];
 
     const result = await createLegacyKeepaliveFixture(
       {
         sandboxName: "e2e-2701",
         expectedContainerId: OLD_CONTAINER_ID,
       },
-      { recreate, dockerCapture },
+      { recreate, dockerCapture, ...lifecycle },
     );
 
     expect(result.newContainerId).toBe(NEW_CONTAINER_ID);
@@ -221,6 +247,7 @@ describe("gateway guard legacy keepalive fixture", () => {
         expectedOldContainerId: OLD_CONTAINER_ID,
         openshellSandboxCommand: ["sleep", "infinity"],
         timeoutSecs: 180,
+        waitForSupervisor: false,
       },
       {
         commandExecutor: expect.objectContaining({ runBuffered: expect.any(Function) }),
@@ -229,6 +256,87 @@ describe("gateway guard legacy keepalive fixture", () => {
         runOpenshell: expect.any(Function),
       },
     );
+    expect(lifecycle.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "e2e-2701"],
+      expect.objectContaining({ ignoreError: true, timeout: 180_000 }),
+    );
+    expect(lifecycle.finalize).toHaveBeenCalledWith(
+      {
+        result: deferredResult(),
+        supervisorReady: true,
+        sandboxName: "e2e-2701",
+        finalHandoffTimeoutSecs: 180,
+      },
+      expect.objectContaining({
+        commandExecutor: expect.objectContaining({ runBuffered: expect.any(Function) }),
+        runCaptureOpenshell: expect.any(Function),
+        runOpenshell: lifecycle.runOpenshell,
+      }),
+    );
+    expect(lifecycle.runOpenshell.mock.invocationCallOrder[0]).toBeLessThan(
+      recreateMock.mock.invocationCallOrder[0]!,
+    );
+    expect(recreateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      lifecycle.finalize.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("fails before Docker mutation when OpenShell cannot stop the sandbox", async () => {
+    const recreate = vi.fn(async () =>
+      deferredResult(),
+    ) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
+    const lifecycle = lifecycleDeps();
+    lifecycle.runOpenshell.mockReturnValue({ status: 1 });
+
+    await expect(
+      createLegacyKeepaliveFixture(
+        { sandboxName: "e2e-2701", expectedContainerId: OLD_CONTAINER_ID },
+        { recreate, ...lifecycle },
+      ),
+    ).rejects.toThrow("could not stop the sandbox through OpenShell before recreation");
+    expect(recreate).not.toHaveBeenCalled();
+    expect(lifecycle.finalize).not.toHaveBeenCalled();
+  });
+
+  it("resumes the OpenShell lifecycle when deferred recreation fails before commit", async () => {
+    const recreate = vi.fn(async () => {
+      throw new Error("recreation failed; pre-patch sandbox restored");
+    }) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
+    const lifecycle = lifecycleDeps();
+
+    await expect(
+      createLegacyKeepaliveFixture(
+        { sandboxName: "e2e-2701", expectedContainerId: OLD_CONTAINER_ID },
+        { recreate, ...lifecycle },
+      ),
+    ).rejects.toThrow("recreation failed; pre-patch sandbox restored");
+    expect(lifecycle.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "e2e-2701"],
+      expect.objectContaining({ ignoreError: true, timeout: 180_000 }),
+    );
+    expect(lifecycle.finalize).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when OpenShell does not acknowledge the final handoff", async () => {
+    const recreate = vi.fn(async () =>
+      deferredResult(),
+    ) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
+    const lifecycle = lifecycleDeps();
+    lifecycle.finalize.mockResolvedValue({
+      ...successfulFinalization(),
+      backupRemoved: false,
+      finalHandoffAcknowledged: false,
+      lastSandboxPhase: "Stopped",
+    });
+
+    await expect(
+      createLegacyKeepaliveFixture(
+        { sandboxName: "e2e-2701", expectedContainerId: OLD_CONTAINER_ID },
+        { recreate, ...lifecycle },
+      ),
+    ).rejects.toThrow("did not acknowledge the final replacement handoff");
   });
 
   it("accepts the inspected OpenShell-managed runtime process contract before legacy recreation (#9364)", () => {
@@ -241,6 +349,47 @@ describe("gateway guard legacy keepalive fixture", () => {
       Cmd: ["--workdir", "/sandbox"],
       Env: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="],
     });
+  });
+
+  it("accepts the OpenShell 0.0.116 main-process contract before legacy recreation", () => {
+    const rewritten = JSON.parse(
+      rewriteManagedInspectForLegacyKeepalive(
+        managedRuntimeInspect({
+          environment: [MANAGED_RUNTIME_PROCESS_SPEC_ENV, ...OPEN_SHELL_IDENTITY_ENV],
+        }),
+        OLD_CONTAINER_ID,
+      ),
+    );
+
+    expect(rewritten[0].Config.Env).toEqual([
+      MANAGED_RUNTIME_PROCESS_SPEC_ENV,
+      "OPENSHELL_SANDBOX_UID=",
+      "OPENSHELL_SANDBOX_GID=",
+    ]);
+  });
+
+  it.each([
+    {
+      name: "conflicting legacy and 0.0.116 process transports",
+      environment: [MANAGED_RUNTIME_COMMAND_ENV, MANAGED_RUNTIME_PROCESS_SPEC_ENV],
+    },
+    {
+      name: "a malformed 0.0.116 process transport",
+      environment: ['OPENSHELL_MAIN_PROCESS_SPEC={"version":1}'],
+    },
+    {
+      name: "an unreviewed 0.0.116 process workload",
+      environment: [
+        `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(["sleep", "infinity"], false)}`,
+      ],
+    },
+  ])("rejects $name before legacy recreation", ({ environment }) => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(
+        managedRuntimeInspect({ environment }),
+        OLD_CONTAINER_ID,
+      ),
+    ).toThrow("requires the reviewed managed-image or OpenShell-managed runtime process contract");
   });
 
   it("removes only the post-legacy OCI workspace marker before keepalive recreation (#9364)", () => {
@@ -520,25 +669,26 @@ describe("gateway guard legacy keepalive fixture", () => {
 
   it.each([
     {
-      name: "an unremoved backup",
-      result: { ...successfulResult(), backupRemoved: false },
-      error: "left the original container backup in place",
+      name: "a prematurely removed backup",
+      result: { ...deferredResult(), backupRemoved: true },
+      error: "crossed the backup commit point before OpenShell handoff",
     },
     {
       name: "a replacement with the wrong mode",
       result: {
-        ...successfulResult(),
-        mode: { ...successfulResult().mode, kind: "cdi" as const },
+        ...deferredResult(),
+        mode: { ...deferredResult().mode, kind: "cdi" as const },
       },
       error: "did not use startup-command mode",
     },
     {
       name: "an unchanged container identity",
-      result: { ...successfulResult(), newContainerId: OLD_CONTAINER_ID },
+      result: { ...deferredResult(), newContainerId: OLD_CONTAINER_ID },
       error: "did not replace the container",
     },
   ])("fails closed for $name", async ({ result, error }) => {
     const recreate = vi.fn(async () => result) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
+    const lifecycle = lifecycleDeps();
 
     await expect(
       createLegacyKeepaliveFixture(
@@ -546,14 +696,14 @@ describe("gateway guard legacy keepalive fixture", () => {
           sandboxName: "e2e-2701",
           expectedContainerId: OLD_CONTAINER_ID,
         },
-        { recreate },
+        { recreate, ...lifecycle },
       ),
     ).rejects.toThrow(error);
   });
 
   it("rejects an abbreviated container ID before recreation", async () => {
     const recreate = vi.fn(async () =>
-      successfulResult(),
+      deferredResult(),
     ) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
 
     await expect(
@@ -568,17 +718,21 @@ describe("gateway guard legacy keepalive fixture", () => {
     expect(recreate).not.toHaveBeenCalled();
   });
 
-  it("loads the real recreation dependency through the standalone tsx entrypoint", () => {
+  it("loads the real lifecycle dependencies through the standalone tsx entrypoint", () => {
     const result = spawnSync(
       process.execPath,
       ["--import", "tsx", FIXTURE_PATH, "fixture-import-probe", "f".repeat(64)],
-      { encoding: "utf8" },
+      {
+        encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_OPENSHELL_BIN: process.execPath },
+      },
     );
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "Could not find OpenShell Docker container for sandbox 'fixture-import-probe'.",
+      "legacy keepalive fixture could not stop the sandbox through OpenShell before recreation",
     );
     expect(result.stderr).not.toContain("deps.recreate is not a function");
+    expect(result.stderr).not.toContain("finalize is not a function");
   });
 });

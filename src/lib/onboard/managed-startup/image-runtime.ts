@@ -933,28 +933,9 @@ function sealHermesConfiguration(
   const envPath = "/sandbox/.hermes/.env";
   const config = readStableRegularFile(configPath, 4 * 1024 * 1024);
   const env = readStableRegularFile(envPath, 512 * 1024);
-  const digest = execute(
-    [
-      "/opt/hermes/.venv/bin/python3",
-      "-I",
-      "/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
-      "--guard",
-      "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
-      "--config",
-      configPath,
-    ],
-    "root",
-    configurationEnvironment,
-    applicationRuntime,
-    true,
-  ).stdout.trim();
-  if (!SHA256_RE.test(digest)) {
-    fail("Hermes MCP digest helper returned an invalid digest");
-  }
   const hashText = [
     `${createHash("sha256").update(config).digest("hex")}  ${configPath}`,
     `${createHash("sha256").update(env).digest("hex")}  ${envPath}`,
-    `# nemoclaw-hermes-mcp-state-v1 intended=${digest} applied=${digest}`,
     "",
   ].join("\n");
   atomicWriteRootFile("/etc/nemoclaw/hermes.config-hash", hashText, 0o444);

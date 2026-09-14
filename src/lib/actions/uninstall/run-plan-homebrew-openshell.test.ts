@@ -21,8 +21,8 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function runUninstallPlan(deps: UninstallRunDeps) {
-  return runUninstallPlanBase(
+async function runUninstallPlan(deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(
     { assumeYes: true, deleteModels: false, keepOpenShell: false },
     {
       resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
@@ -40,7 +40,7 @@ function runUninstallPlan(deps: UninstallRunDeps) {
   );
 }
 
-function uninstallOpenShell(options: {
+async function uninstallOpenShell(options: {
   brewAvailable: boolean;
   brewStatus: number | null;
   platform?: NodeJS.Platform;
@@ -56,7 +56,7 @@ function uninstallOpenShell(options: {
     removed.push(target);
     return ok();
   };
-  const result = runUninstallPlan({
+  const result = await runUninstallPlan({
     commandExists: (command) =>
       command === "openshell" || (command === "brew" && options.brewAvailable),
     env: { HOME: home } as NodeJS.ProcessEnv,
@@ -82,8 +82,8 @@ function uninstallOpenShell(options: {
   return { calls, executablePaths, logs, remaining: [...existing], removed, result };
 }
 
-it("retains a Homebrew-managed OpenShell and reports its removal command (#8882)", () => {
-  const { calls, executablePaths, logs, remaining, removed, result } = uninstallOpenShell({
+it("retains a Homebrew-managed OpenShell and reports its removal command (#8882)", async () => {
+  const { calls, executablePaths, logs, remaining, removed, result } = await uninstallOpenShell({
     brewAvailable: true,
     brewStatus: 0,
   });
@@ -117,8 +117,8 @@ it.each([
     brewStatus: null,
     report: `Kept OpenShell executables because Homebrew did not confirm ${FORMULA}. Check the formula before removing OpenShell.`,
   },
-])("retains OpenShell when $label (#8882)", ({ brewAvailable, brewStatus, report }) => {
-  const { calls, executablePaths, logs, remaining, removed, result } = uninstallOpenShell({
+])("retains OpenShell when $label (#8882)", async ({ brewAvailable, brewStatus, report }) => {
+  const { calls, executablePaths, logs, remaining, removed, result } = await uninstallOpenShell({
     brewAvailable,
     brewStatus,
   });
@@ -132,8 +132,8 @@ it.each([
   expect(logs).toContain(report);
 });
 
-it("removes managed OpenShell executables on Linux (#8882)", () => {
-  const { executablePaths, remaining, removed, result } = uninstallOpenShell({
+it("removes managed OpenShell executables on Linux (#8882)", async () => {
+  const { executablePaths, remaining, removed, result } = await uninstallOpenShell({
     brewAvailable: false,
     brewStatus: 0,
     platform: "linux",

@@ -231,7 +231,12 @@ function tryRemove(
   }
 }
 
-function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acquired {
+// Yield only while contended, before owning a generation, so async callers can let holders resume.
+function* acquisitionAttempts(
+  directory: string,
+  exact: boolean,
+  deps: RegistryLockDeps,
+): Generator<void, Acquired, void> {
   const readIdentity = deps.readProcessIdentity ?? processIdentity;
   const initialIdentity = readIdentity(process.pid);
   if (exact && (initialIdentity === null || process.getuid?.() === undefined))
@@ -240,8 +245,6 @@ function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acq
   const alive = deps.isProcessAlive ?? isProcessAlive;
   const retries = deps.maxRetries ?? LOCK_MAX_RETRIES;
   const now = deps.now ?? Date.now;
-  const sleep = new Int32Array(new SharedArrayBuffer(4));
-  const wait = deps.wait ?? (() => Atomics.wait(sleep, 0, 0, LOCK_RETRY_MS));
   fs.mkdirSync(path.dirname(directory), { recursive: true });
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
@@ -282,7 +285,7 @@ function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acq
         )
       )
         continue;
-      wait();
+      yield;
       continue;
     }
 
@@ -333,6 +336,18 @@ function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acq
     return { ...generation, ownerFile, processFile, processRecord: record };
   }
   throw new ProcessBoundLockContentionError(directory, retries);
+}
+
+function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acquired {
+  const attempts = acquisitionAttempts(directory, exact, deps);
+  const sleep = new Int32Array(new SharedArrayBuffer(4));
+  const wait = deps.wait ?? (() => Atomics.wait(sleep, 0, 0, LOCK_RETRY_MS));
+  let step = attempts.next();
+  while (!step.done) {
+    wait();
+    step = attempts.next();
+  }
+  return step.value;
 }
 
 function release(acquired: Acquired): void {
@@ -398,6 +413,26 @@ export function withProcessBoundRegistryLockAt<T>(
   deps: RegistryLockDeps = {},
 ): T {
   return withAcquired(`${registryFile}.lock`, true, operation, deps);
+}
+export async function withProcessBoundRegistryLockAtAsync<T>(
+  registryFile: string,
+  operation: () => T | Promise<T>,
+  deps: RegistryLockDeps = {},
+): Promise<T> {
+  const attempts = acquisitionAttempts(`${registryFile}.lock`, true, deps);
+  const wait =
+    deps.wait ?? (() => new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_MS)));
+  let step = attempts.next();
+  while (!step.done) {
+    await wait();
+    step = attempts.next();
+  }
+  const lock = step.value;
+  try {
+    return await operation();
+  } finally {
+    release(lock);
+  }
 }
 export function acquireProcessBoundLockAt(
   lockDirectory: string,

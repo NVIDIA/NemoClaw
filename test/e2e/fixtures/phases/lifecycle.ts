@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import { buildGatewayRuntimeStartScript } from "../gateway-runtime-start.ts";
+import { REPO_ROOT } from "../paths.ts";
 import { assertExitZero, outputContainsReadySandbox } from "../clients/command.ts";
 import type { GatewayClient, HostGatewayRuntime } from "../clients/gateway.ts";
 import type { HostCliClient } from "../clients/host.ts";
@@ -50,8 +52,14 @@ const NEMOCLAW_OPENSHELL_INSTALLER = fileURLToPath(
   new URL("../../../../scripts/install-openshell.sh", import.meta.url),
 );
 const USER_SERVICE_STAGE_RESULT_PREFIX = "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=";
+const USER_SERVICE_STOP_RESULT_PREFIX = "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=";
 
 type UserServiceStageResult = "upstream" | "existing" | "staged";
+type UserServiceSelection =
+  | "homebrew:homebrew.mxcl.openshell"
+  | "homebrew:sh.brew.openshell"
+  | "systemd:nemoclaw-openshell-gateway.service"
+  | "systemd:openshell-gateway.service";
 
 export function buildOpenShellGatewayUserServiceStageScript(): string {
   return [
@@ -123,29 +131,42 @@ export function buildOpenShellGatewayUserServiceRemovalScript(): string {
   ].join("\n");
 }
 
+export function buildOpenShellGatewayUserServiceStopScript(): string {
+  return [
+    "set -eu",
+    "installer=$1",
+    'if [ ! -f "$installer" ] || [ -L "$installer" ]; then',
+    '  printf "NemoClaw installer is unavailable: %s\\n" "$installer" >&2',
+    "  exit 1",
+    "fi",
+    'source "$installer"',
+    "selection=",
+    "if stop_active_openshell_gateway_user_service selection; then",
+    '  case "$selection" in',
+    "    homebrew:homebrew.mxcl.openshell|homebrew:sh.brew.openshell|systemd:nemoclaw-openshell-gateway.service|systemd:openshell-gateway.service|unavailable) ;;",
+    "    *) exit 1 ;;",
+    "  esac",
+    `  printf '%s%s\\n' '${USER_SERVICE_STOP_RESULT_PREFIX}' "$selection"`,
+    "  exit 0",
+    "else",
+    "  status=$?",
+    `  if [ "$status" -eq 1 ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    '  exit "$status"',
+    "fi",
+  ].join("\n");
+}
+
 export function buildOpenShellGatewayUserServiceRestartScript(): string {
   return [
     "set -eu",
-    'if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1 && brew list --formula openshell >/dev/null 2>&1; then',
-    '  brew info --json=v2 openshell | grep -Eq \'"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"\' || exit 1',
-    "  brew services restart openshell",
-    "  exit 0",
+    "installer=$1",
+    "selection=$2",
+    'if [ ! -f "$installer" ] || [ -L "$installer" ]; then',
+    '  printf "NemoClaw installer is unavailable: %s\\n" "$installer" >&2',
+    "  exit 1",
     "fi",
-    `if ! command -v systemctl >/dev/null 2>&1; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
-    "service=openshell-gateway",
-    'if ! systemctl --user cat "$service" >/dev/null 2>&1; then',
-    '  case "${XDG_CONFIG_HOME:-}" in',
-    '    /*) config_home="$XDG_CONFIG_HOME" ;;',
-    '    *) config_home="$HOME/.config" ;;',
-    "  esac",
-    '  unit="$config_home/systemd/user/nemoclaw-openshell-gateway.service"',
-    `  if [ ! -f "$unit" ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
-    `  grep -Fxq '${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}' "$unit" || exit ${USER_SERVICE_UNAVAILABLE_EXIT}`,
-    "  service=nemoclaw-openshell-gateway",
-    "fi",
-    'systemctl --user is-enabled "$service" >/dev/null',
-    "systemctl --user daemon-reload",
-    'systemctl --user restart "$service"',
+    'source "$installer"',
+    'restart_selected_openshell_gateway_user_service "$selection"',
   ].join("\n");
 }
 
@@ -230,6 +251,7 @@ function instanceName(instance: NemoClawInstance | string): string {
 export class LifecyclePhaseFixture {
   private postRebootUserServiceStage: UserServiceStageResult | undefined;
   private readonly runtimeProvider: RuntimeProviderPrerequisite;
+  private stoppedOpenShellGatewayUserService: UserServiceSelection | null = null;
 
   constructor(
     private readonly host: HostCliClient,
@@ -417,6 +439,7 @@ export class LifecyclePhaseFixture {
    *     created one);
    *   - `docker start` the labeled container so the sandbox returns
    *     to a usable state for any teardown that expects it live;
+   *   - restart a gateway user service when normal recovery did not;
    *   - remove a user service staged only for this source-checkout
    *     fixture after the sandbox cleanup has used it.
    */
@@ -489,7 +512,6 @@ export class LifecyclePhaseFixture {
     const previousRuntime = await this.restartGatewayRuntime({
       delayMs: 0,
       requireUserService: true,
-      sandboxName: instance.sandboxName,
     });
     steps.push({
       id: `gateway-restart:${previousRuntime?.kind ?? "user-service"}`,
@@ -596,15 +618,7 @@ export class LifecyclePhaseFixture {
         timeoutMs: 30_000,
       },
     );
-    await this.host.command(
-      "sh",
-      ["-lc", "command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true"],
-      {
-        artifactName: "lifecycle-gateway-stop",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 60_000,
-      },
-    );
+    if (await this.stopOpenShellGatewayUserService()) return runtime;
 
     const pidFileStop = await this.host.command(
       "sh",
@@ -664,57 +678,101 @@ export class LifecyclePhaseFixture {
     return runtime;
   }
 
-  async startGatewayRuntime(
-    previousRuntime: HostGatewayRuntime | null,
-    options: { requireUserService?: boolean; sandboxName?: string } = {},
-  ): Promise<ShellProbeResult> {
-    if (options.sandboxName && options.requireUserService !== true) {
-      return await this.host.nemoclaw([options.sandboxName, "status"], {
-        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
+  private async stopOpenShellGatewayUserService(): Promise<boolean> {
+    const pendingSelection = this.stoppedOpenShellGatewayUserService;
+    const result = await this.host.command(
+      "bash",
+      [
+        "-c",
+        buildOpenShellGatewayUserServiceStopScript(),
+        "stop-openshell-gateway-user-service",
+        NEMOCLAW_INSTALLER,
+      ],
+      {
+        artifactName: "lifecycle-gateway-user-service-stop",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
+      },
+    );
+    if (result.exitCode === 0) {
+      const match = result.stdout.match(
+        new RegExp(
+          `(?:^|\\n)${USER_SERVICE_STOP_RESULT_PREFIX}` +
+            `(homebrew:(?:homebrew\\.mxcl|sh\\.brew)\\.openshell|systemd:nemoclaw-openshell-gateway\\.service|systemd:openshell-gateway\\.service|unavailable)(?:\\n|$)`,
+          "u",
+        ),
+      );
+      if (!match) {
+        throw new Error("OpenShell gateway user service stop did not report its selection.");
+      }
+      if (match[1] === "unavailable") return pendingSelection !== null;
+      const selection = match[1] as UserServiceSelection;
+      this.stoppedOpenShellGatewayUserService = selection;
+      this.cleanup.add(`lifecycle.gateway-user-service-restart:${selection}`, async () => {
+        if (this.stoppedOpenShellGatewayUserService !== selection) return;
+        await this.startOpenShellGatewayUserService({ requireAvailable: true });
       });
+      return true;
     }
+    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) return pendingSelection !== null;
+    throw new Error(
+      `OpenShell gateway user service stop failed during lifecycle qualification: ` +
+        `${result.stderr || result.stdout || `exit ${String(result.exitCode)}`}`,
+    );
+  }
+
+  async startGatewayRuntime(
+    options: { requireUserService?: boolean; sandboxName?: string } = {},
+  ): Promise<ShellProbeResult> {
     const userServiceStart = await this.startOpenShellGatewayUserService({
       requireAvailable: options.requireUserService,
     });
     if (userServiceStart) return userServiceStart;
-    if (options.sandboxName) {
-      return await this.host.nemoclaw([options.sandboxName, "status"], {
-        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
+    if (!options.sandboxName?.trim()) {
+      throw new Error("Gateway recovery requires the registered sandbox name.");
+    }
+    // The fixture knows it stopped this gateway. Observational recovery can
+    // refuse an unreachable gateway whose identity the CLI cannot report.
+    return await this.host.command(
+      process.execPath,
+      ["-e", buildGatewayRuntimeStartScript(), options.sandboxName],
+      {
+        artifactName: "lifecycle-gateway-start",
+        cwd: REPO_ROOT,
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
-      });
-    }
-    if (previousRuntime?.kind === "pid") {
-      return await this.host.nemoclaw(["status"], {
-        artifactName: "lifecycle-gateway-recover-through-nemoclaw-status",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      });
-    }
-    return await this.host.command("openshell", ["gateway", "start", "--name", "nemoclaw"], {
-      artifactName: "lifecycle-gateway-start",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
+      },
+    );
   }
 
   private async startOpenShellGatewayUserService(options: {
     requireAvailable?: boolean;
   }): Promise<ShellProbeResult | null> {
+    if (!this.stoppedOpenShellGatewayUserService) {
+      if (!options.requireAvailable) return null;
+      throw new Error(
+        `OpenShell gateway user service is not available for reboot lifecycle recovery.`,
+      );
+    }
+    const selection = this.stoppedOpenShellGatewayUserService;
     const result = await this.host.command(
-      "sh",
-      ["-lc", buildOpenShellGatewayUserServiceRestartScript()],
+      "bash",
+      [
+        "-c",
+        buildOpenShellGatewayUserServiceRestartScript(),
+        "restart-openshell-gateway-user-service",
+        NEMOCLAW_INSTALLER,
+        selection,
+      ],
       {
         artifactName: "lifecycle-gateway-user-service-restart",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       },
     );
-    if (result.exitCode === 0) return result;
-    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT && !options.requireAvailable) {
-      return null;
+    if (result.exitCode === 0) {
+      this.stoppedOpenShellGatewayUserService = null;
+      return result;
     }
     if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) {
       throw new Error(
@@ -730,6 +788,9 @@ export class LifecyclePhaseFixture {
   async restartGatewayRuntime(
     options: { delayMs?: number; requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<HostGatewayRuntime | null> {
+    if (options.requireUserService !== true && !options.sandboxName?.trim()) {
+      throw new Error("Gateway restart requires a sandbox name or a required user service.");
+    }
     const previousRuntime = await this.stopGatewayRuntime();
     if (this.gateway) {
       await this.gateway.expectHostRuntimeStopped({
@@ -740,10 +801,11 @@ export class LifecyclePhaseFixture {
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
-    await this.startGatewayRuntime(previousRuntime, {
+    const start = await this.startGatewayRuntime({
       requireUserService: options.requireUserService,
       sandboxName: options.sandboxName,
     });
+    assertExitZero(start, "restart OpenShell gateway runtime");
     return previousRuntime;
   }
 

@@ -31,3 +31,9 @@ export function shouldManageDashboardForAgent(agent: DashboardRuntimeAgent): boo
   if (!agent || !isTerminalAgent(agent)) return true;
   return getAgentDeclaredForwardPorts(agent).length > 0;
 }
+
+export function canReuseDashboardForwardForAgent(
+  agent: { name: string } | null | undefined,
+): boolean {
+  return agent == null || agent.name === "openclaw" || agent.name === "hermes";
+}

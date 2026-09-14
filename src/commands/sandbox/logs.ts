@@ -44,7 +44,7 @@ export default class SandboxLogsCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxLogsCommand);
-    showSandboxLogs(args.sandboxName, {
+    await showSandboxLogs(args.sandboxName, {
       follow: flags.follow === true,
       lines: String(flags.tail),
       since: flags.since ?? null,

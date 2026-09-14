@@ -17,6 +17,7 @@ const a2aNeutralPatch = fs.readFileSync(path.join(root, "agents", "hermes", "a2a
 const probeSource = fs.readFileSync(probes, "utf8");
 const imageProbePath = "/opt/nemoclaw-hermes-config/image-build-probes.py";
 const commands = [
+  "auxiliary-token-limit",
   "cron-backup",
   "cron-create",
   "cron-reopen",

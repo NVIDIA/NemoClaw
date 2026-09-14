@@ -419,6 +419,8 @@ export interface CreateSandboxDashboardPortInput {
   // sandbox on a different `NEMOCLAW_GATEWAY_PORT`, which the per-gateway
   // forward-list view cannot see.
   registryOccupiedPorts?: ReadonlyMap<string, string>;
+  /** Proves an otherwise-unlisted direct ForwardTcp listener belongs to this sandbox. */
+  ownsExistingForward?: (port: number) => boolean;
 }
 
 export interface CreateSandboxDashboardPortResult {
@@ -434,6 +436,8 @@ export interface DashboardPortReservation {
 
 export interface DashboardPortReservationScope {
   current: DashboardPortReservation | null;
+  deferOwnedForwardPort(port: number): void;
+  rebindAfterOwnedForwardDelete(options?: ReservePortAfterOwnedForwardDeleteOptions): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -558,6 +562,45 @@ function isAddressInUse(error: unknown): boolean {
   return typeof error === "object" && error !== null && Reflect.get(error, "code") === "EADDRINUSE";
 }
 
+const OWNED_FORWARD_RELEASE_ATTEMPTS = 6;
+const OWNED_FORWARD_RELEASE_INTERVAL_MS = 1_000;
+
+export interface ReservePortAfterOwnedForwardDeleteOptions {
+  reservePort?: (port: number) => Promise<DashboardPortReservation>;
+  sleep?: (milliseconds: number) => void | Promise<void>;
+}
+
+function sleepForOwnedForwardRelease(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+/**
+ * Rebind a port after deleting the sandbox that owned its direct ForwardTcp
+ * listener. Sandbox absence and detached-listener exit are separate events, so
+ * tolerate only the bounded EADDRINUSE convergence window; every other bind
+ * error remains immediately fatal.
+ */
+export async function reservePortAfterOwnedForwardDelete(
+  port: number,
+  options: ReservePortAfterOwnedForwardDeleteOptions = {},
+): Promise<DashboardPortReservation> {
+  const reservePort = options.reservePort ?? reserveDashboardPort;
+  const sleep = options.sleep ?? sleepForOwnedForwardRelease;
+  let lastCollision: unknown;
+  for (let attempt = 1; attempt <= OWNED_FORWARD_RELEASE_ATTEMPTS; attempt += 1) {
+    try {
+      return await reservePort(port);
+    } catch (error) {
+      if (!isAddressInUse(error)) throw error;
+      lastCollision = error;
+    }
+    if (attempt < OWNED_FORWARD_RELEASE_ATTEMPTS) {
+      await sleep(OWNED_FORWARD_RELEASE_INTERVAL_MS);
+    }
+  }
+  throw lastCollision;
+}
+
 /**
  * Select and bind a dashboard port before sandbox preparation begins. If a
  * listener wins the gap between the allocation probe and bind, classify that
@@ -575,12 +618,21 @@ export async function reserveCreateSandboxDashboardPort(
   );
   const forwardOwner = getOccupiedPorts(input.forwardListOutput);
   while (true) {
+    let exactOwnedForward = false;
+    const findAvailablePort = input.findAvailablePort ?? findAvailableDashboardPort;
     const result = resolveCreateSandboxDashboardPort({
       ...input,
       registryOccupiedPorts: occupied,
+      findAvailablePort: (...args) => {
+        if (input.ownsExistingForward?.(args[1]) === true) {
+          exactOwnedForward = true;
+          return args[1];
+        }
+        return findAvailablePort(...args);
+      },
       warn: undefined,
     });
-    if (forwardOwner.get(String(result.effectivePort)) === input.sandboxName) {
+    if (exactOwnedForward || forwardOwner.get(String(result.effectivePort)) === input.sandboxName) {
       if (result.effectivePort !== result.preferredPort) {
         input.warn?.(
           `  ! Port ${result.preferredPort} is taken. Using port ${result.effectivePort} instead.`,
@@ -607,11 +659,21 @@ export async function reserveCreateSandboxDashboardPort(
 export async function withDashboardPortReservationScope<T>(
   operation: (scope: DashboardPortReservationScope) => Promise<T>,
 ): Promise<T> {
+  let deferredOwnedForwardPort: number | null = null;
   const scope: DashboardPortReservationScope = {
     current: null,
+    deferOwnedForwardPort: (port) => {
+      if (scope.current === null) deferredOwnedForwardPort = port;
+    },
+    rebindAfterOwnedForwardDelete: async (options) => {
+      if (scope.current !== null || deferredOwnedForwardPort === null) return;
+      scope.current = await reservePortAfterOwnedForwardDelete(deferredOwnedForwardPort, options);
+      deferredOwnedForwardPort = null;
+    },
     release: async () => {
       const reservation = scope.current;
       scope.current = null;
+      deferredOwnedForwardPort = null;
       await reservation?.release();
     },
   };

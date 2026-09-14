@@ -135,7 +135,6 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/selector-aliases.mts",
         "tools/e2e/target-catalogue.mts",
-        "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
@@ -1090,5 +1089,30 @@ jobs:
   it("rejects non-object advisor output", () => {
     expect(() => normalizeE2eTargetAdvisorResult("nope", metadata())).toThrow(/non-object/);
     expect(() => normalizeE2eTargetAdvisorResult([], metadata())).toThrow(/non-object/);
+  });
+});
+
+describe("Brev recommendation normalization", () => {
+  it("preserves the Brev floor when the model selects no E2E coverage", () => {
+    const changed = metadata({ changedFiles: ["src/lib/actions/sandbox/forward-recovery.ts"] });
+    const emptyAdvice = {
+      required: [],
+      optional: [],
+      confidence: "low",
+      noTargetE2eReason: "No tests needed.",
+    };
+    const targets = normalizeE2eTargetAdvisorResult(emptyAdvice, changed);
+    const coverage = normalizeE2eCoverageResult({}, changed);
+    expect(trustedE2eRecommendationInventory().allowedJobIds).toContain("staging-brev-launchable");
+    expect(targets.required).toContainEqual(
+      expect.objectContaining({
+        id: "staging-brev-launchable",
+        workflow: "e2e.yaml",
+        selectorType: "job",
+        required: true,
+      }),
+    );
+    expect(coverage.requiredTests.map(({ id }) => id)).toContain("staging-brev-launchable");
+    expect(targets.noTargetE2eReason).toBeNull();
   });
 });
