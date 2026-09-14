@@ -9,6 +9,16 @@ import {
 } from "../../../../test/support/connect-flow-test-harness";
 
 const originalIsTTY = process.stdout.isTTY;
+const inferenceAdapter = requireDist(
+  "../../src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.js",
+) as typeof import("./probe/hermes-portable-inference-recovery");
+const realConnectRecovery = inferenceAdapter.recoverHermesPortableInferenceForConnect;
+const inferenceEngine = requireDist(
+  "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
+) as typeof import("../../onboard/experimental/hermes-portable-ollama-inference");
+const forwardRecovery = requireDist(
+  "../../src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.js",
+) as typeof import("./probe/hermes-portable-forward-recovery");
 function harness(options: Parameters<typeof createConnectHarness>[0] = {}) {
   return createConnectHarness({
     agentName: "hermes",
@@ -47,18 +57,42 @@ describe("Hermes Portable interactive inference recovery", () => {
 
   it("recovers the managed route before preparing an interactive session (#11757)", async () => {
     const h = harness({ inferenceProbeResponses: ["BROKEN 503", "OK 200"] });
+    h.recoverHermesPortableOllamaInferenceSpy.mockImplementation(realConnectRecovery);
+    const engine = vi
+      .spyOn(inferenceEngine, "recoverHermesPortableOllamaInference")
+      .mockImplementation(async (input) => {
+        await input.verifyRoute();
+        (await input.prepareProbeDependency?.())?.release();
+        return "recovered";
+      });
+    const prepareForwards = vi.spyOn(forwardRecovery, "prepareHermesPortableLaunchForwards");
     await expect(prepare()).resolves.toMatchObject({
       hermesPortable: true,
       sb: { provider: "ollama-local", model: "qwen3-vl:4b" },
     });
     expect(h.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
     expect(h.ensureOllamaAuthProxySpy).not.toHaveBeenCalled();
+    expect(engine).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        intent: "connect-interactive",
+        sandboxName: "alpha",
+        entry: expect.objectContaining({
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "generation-1",
+          provider: "ollama-local",
+          model: "qwen3-vl:4b",
+        }),
+      }),
+    );
+    expect(prepareForwards).toHaveBeenCalledOnce();
   });
 
   it("keeps healthy interactive inference on verification without recovery (#11757)", async () => {
     const h = harness({ inferenceProbeResponses: ["OK 200"] });
+    const prepareForwards = vi.spyOn(forwardRecovery, "prepareHermesPortableLaunchForwards");
     await expect(prepare()).resolves.toMatchObject({ hermesPortable: true });
     expect(h.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(prepareForwards).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -78,6 +112,7 @@ describe("Hermes Portable interactive inference recovery", () => {
       expect(h.errorSpy.mock.calls.flat().join("\n")).toContain(
         "Hermes Portable inference recovery",
       );
+      expect(h.errorSpy.mock.calls.flat().join("\n")).toContain("nemoclaw alpha doctor");
       expect(h.errorSpy.mock.calls.flat().join("\n")).not.toContain(
         "nested recovery diagnostic canary",
       );
@@ -126,5 +161,26 @@ describe("Hermes Portable interactive inference recovery", () => {
     await expect(prepare()).rejects.toThrow("process.exit(1)");
     expect(h.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
     expect(h.launchForwardServiceSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves the probe-only intent for the probe consumer (#11757)", async () => {
+    const h = harness({ inferenceProbeResponses: ["OK 200"] });
+    await h.connectSandbox("alpha", { probeOnly: true });
+    expect(h.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "connect-probe-only" }),
+    );
+  });
+
+  it("refuses interactive handoff when the real recovery adapter's engine fails (#11757)", async () => {
+    const h = harness({ inferenceProbeResponses: ["BROKEN 503"] });
+    h.recoverHermesPortableOllamaInferenceSpy.mockImplementation(realConnectRecovery);
+    const engine = vi
+      .spyOn(inferenceEngine, "recoverHermesPortableOllamaInference")
+      .mockRejectedValue(new Error("engine failure canary"));
+    const prepareForwards = vi.spyOn(forwardRecovery, "prepareHermesPortableLaunchForwards");
+    await expect(prepare()).rejects.toThrow("process.exit(1)");
+    expect(engine).toHaveBeenCalledOnce();
+    expect(prepareForwards).not.toHaveBeenCalled();
+    expect(h.errorSpy.mock.calls.flat().join("\n")).not.toContain("engine failure canary");
   });
 });

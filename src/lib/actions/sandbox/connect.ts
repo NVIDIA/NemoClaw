@@ -143,8 +143,9 @@ import {
 import {
   classifyHermesPortableInferenceConnectRecoveryFailure,
   inspectHermesPortableInferenceReadinessRuntimeForConnectProbe,
-  recoverHermesPortableInferenceForConnectProbe,
+  recoverHermesPortableInferenceForConnect,
   type HermesPortableInferenceConnectRecoveryFailure,
+  type HermesPortableInferenceConnectRecoveryInput,
 } from "./probe/hermes-portable-inference-recovery";
 import {
   runTerminalAgentConnectProbe,
@@ -382,7 +383,7 @@ async function runSandboxConnectProbe(
   if (hermesPortable) {
     if (probeOnly !== true) throw new Error("Hermes inference recovery requires probe-only mode");
     const route = await measureAsync("inference", () =>
-      verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(sandboxName, agent, undefined, {
+      verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(sandboxName, agent, undefined, {
         commandAuthority: hermesPortableCommandAuthority,
         probeTiming,
       }),
@@ -561,7 +562,7 @@ function failHermesPortableInferenceRecovery(
       break;
   }
   console.error(
-    `  Error: Hermes Portable inference recovery for '${sandboxName}' failed. ${detail}`,
+    `  Error: Hermes Portable inference recovery for '${sandboxName}' failed. ${detail} Run \`${CLI_NAME} ${sandboxName} doctor\` to inspect the recorded state.`,
   );
   process.exit(1);
 }
@@ -1013,13 +1014,14 @@ type HermesPortableProbeRouteResult = {
 };
 
 type HermesPortableProbeRouteOptions = {
+  readonly intent?: HermesPortableInferenceConnectRecoveryInput["intent"];
   readonly commandAuthority?: HermesPortableReadinessCommandAuthority;
   readonly probeTiming?: ProbeTimingRecorder;
   readonly validateVerified?: (entry: SandboxEntry) => void;
 };
 
-/** Verify the recorded route and resume published Ollama only for probe-only recovery. */
-async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+/** Verify the recorded route and resume published Ollama under the requested connect intent. */
+async function verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   expectedAuthority?: HermesPortableActiveLifecycleAuthority,
@@ -1052,7 +1054,8 @@ async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
   let verified: SandboxEntry | null = null;
   let preparedForwards: PreparedHermesPortableForwardRecovery | null = null;
   try {
-    await recoverHermesPortableInferenceForConnectProbe({
+    await recoverHermesPortableInferenceForConnect({
+      intent: options.intent ?? "connect-probe-only",
       sandboxName,
       authority,
       readRegistry: registry.getSandbox,
@@ -1156,10 +1159,11 @@ async function prepareHermesPortableInteractiveInference(
       );
     }
   }
-  return await verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+  return await verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(
     sandboxName,
     agent,
     authority,
+    { intent: "connect-interactive" },
   );
 }
 
