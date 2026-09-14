@@ -99,8 +99,7 @@ export function createCliOpenShellGatewayObserver(
           request.runtimeSelection?.gatewayName === name &&
           statusError?.kind === "transport" &&
           statusError.reason === "unreachable" &&
-          infoError?.kind === "transport" &&
-          infoError.reason === "unreachable";
+          (named || infoError?.kind === "transport" || infoError?.kind === "command");
         // Only known absence and unreachable responses describe resource state. Other failures are not absence.
         for (const [error, absent, legacy] of [
           [statusError, absentStatus, false],
@@ -109,6 +108,7 @@ export function createCliOpenShellGatewayObserver(
           if (
             error &&
             !(error.kind === "transport" && error.reason === "unreachable") &&
+            !(error === infoError && selectedGatewayUnreachable) &&
             !(error.kind === "command" && error.reason === "failed" && (absent || legacy))
           )
             return failed(error, activeGateway);
