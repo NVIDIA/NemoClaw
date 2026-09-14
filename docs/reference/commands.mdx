@@ -2931,6 +2931,8 @@ The export keeps its original success or failure result, so a cleanup warning af
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
 Host-side wrapper around `openshell sandbox download` that checks the live sandbox.
+For a registered sandbox, it sends the transfer and source checks to the sandbox's recorded OpenShell gateway.
+It waits for the OpenShell transfer process, verification, publication, and cleanup before it returns.
 The command confirms before and after transfer that the source remains a file or directory.
 Symbolic links, source-type changes, and other special source types are refused.
 A directory source is refused when any member is a symbolic link or another special file, and the host destination is not created for a refused source.
@@ -2974,6 +2976,8 @@ $$nemoclaw my-assistant download /sandbox/.deepagents/.state/ ./deepagents-state
 
 Host-side wrapper around `openshell sandbox upload`.
 It confirms that the sandbox is live and resolves relative host source paths from the caller's working directory.
+For a registered sandbox, it sends the transfer to the sandbox's recorded OpenShell gateway.
+It waits for the OpenShell transfer process to close before it returns.
 OpenShell performs the transfer.
 With no `sandbox-dest`, the destination defaults to `/sandbox/` inside the sandbox.
 
