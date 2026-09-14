@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { createPromptValidatedSandboxName } from "./sandbox-agent";
+import { assertProviderlessSandboxAgent, createPromptValidatedSandboxName } from "./sandbox-agent";
 
 describe("sandbox name prompt", () => {
   it("waits for a validated-name checkpoint before returning it to onboarding (#8687)", async () => {
@@ -72,5 +72,35 @@ describe("sandbox name prompt", () => {
       "NEMOCLAW_SANDBOX_NAME",
       "reviewed-name",
     );
+  });
+});
+
+describe("providerless agent validation", () => {
+  it.each(["openclaw", "hermes"])("accepts matching %s intent (#11548)", (name) => {
+    expect(() => assertProviderlessSandboxAgent({ name }, name)).not.toThrow();
+    expect(() => assertProviderlessSandboxAgent({ name })).not.toThrow();
+  });
+
+  it("retains the default OpenClaw identity (#11548)", () => {
+    expect(() => assertProviderlessSandboxAgent(null, "openclaw")).not.toThrow();
+  });
+
+  it.each(["pi", "langchain-deepagents-code", "unknown", ""])(
+    "rejects unqualified agent '%s' (#11548)",
+    (name) => {
+      expect(() => assertProviderlessSandboxAgent({ name })).toThrow("no qualified integration");
+    },
+  );
+
+  it.each([{}, { name: null }, { name: 1 }])("rejects malformed agent %j (#11548)", (agent) => {
+    expect(() => assertProviderlessSandboxAgent(agent)).toThrow("no qualified integration");
+  });
+
+  it.each([
+    ["openclaw", "hermes"],
+    ["hermes", "openclaw"],
+    ["hermes", "pi"],
+  ])("rejects requested %s and resolved %s disagreement (#11548)", (name, resolved) => {
+    expect(() => assertProviderlessSandboxAgent({ name }, resolved)).toThrow("agents agree");
   });
 });

@@ -1091,3 +1091,28 @@ jobs:
     expect(() => normalizeE2eTargetAdvisorResult([], metadata())).toThrow(/non-object/);
   });
 });
+
+describe("Brev recommendation normalization", () => {
+  it("preserves the Brev floor when the model selects no E2E coverage", () => {
+    const changed = metadata({ changedFiles: ["src/lib/actions/sandbox/forward-recovery.ts"] });
+    const emptyAdvice = {
+      required: [],
+      optional: [],
+      confidence: "low",
+      noTargetE2eReason: "No tests needed.",
+    };
+    const targets = normalizeE2eTargetAdvisorResult(emptyAdvice, changed);
+    const coverage = normalizeE2eCoverageResult({}, changed);
+    expect(trustedE2eRecommendationInventory().allowedJobIds).toContain("staging-brev-launchable");
+    expect(targets.required).toContainEqual(
+      expect.objectContaining({
+        id: "staging-brev-launchable",
+        workflow: "e2e.yaml",
+        selectorType: "job",
+        required: true,
+      }),
+    );
+    expect(coverage.requiredTests.map(({ id }) => id)).toContain("staging-brev-launchable");
+    expect(targets.noTargetE2eReason).toBeNull();
+  });
+});

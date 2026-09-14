@@ -43,7 +43,9 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      * registered as default (#4614).
      */
     setDefaultSandbox(sandboxName: string): void;
-    createExternalComponentActivationProof?(sandboxName: string): ExternalComponentActivationProof;
+    createExternalComponentActivationProof?(
+      sandboxName: string,
+    ): ExternalComponentActivationProof | Promise<ExternalComponentActivationProof>;
     createExternalComponentActivationId?(): string;
     activateExternalComponent?(
       component: PreparedExternalComponent,
@@ -218,7 +220,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     ) {
       throw new Error("External component activation is unavailable.");
     }
-    const proof = deps.createExternalComponentActivationProof(sandboxName);
+    const proof = await deps.createExternalComponentActivationProof(sandboxName);
     const activationId = deps.createExternalComponentActivationId();
     const evidence = (resultClass: "failed" | "ambiguous") => ({
       schemaVersion: 1 as const,

@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { vi } from "vitest";
 
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
 import {
@@ -11,7 +12,14 @@ import {
   SANDBOX_ID,
 } from "../helpers/live-policy-fixture";
 
-import { runWithEnv, runWithInput, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
+import {
+  runWithEnvAsync,
+  runWithInputAsync,
+  testTimeoutOptions,
+  writeSandboxRegistry,
+} from "./helpers";
+
+vi.setConfig({ maxConcurrency: 4 });
 
 function readOpenShellPolicy(home: string): string {
   return fs.readFileSync(path.join(home, "applied-policy.yaml"), "utf8");
@@ -58,12 +66,14 @@ function writePolicyMutationOpenshellStub(home: string): string {
   return openshell;
 }
 
-describe("CLI dispatch", () => {
-  it("connect help uses native oclif usage through the public sandbox route", ({ testHome }) => {
+describe.concurrent("CLI dispatch", () => {
+  it("connect help uses native oclif usage through the public sandbox route", async ({
+    testHome,
+  }) => {
     const { home } = testHome;
     writeSandboxRegistry(home);
 
-    const connect = runWithEnv("alpha connect --help", testHome.environment());
+    const connect = await runWithEnvAsync("alpha connect --help", testHome.environment());
 
     expect(connect.code).toBe(0);
     expect(connect.out).toContain("Usage: nemoclaw alpha connect");
@@ -73,32 +83,32 @@ describe("CLI dispatch", () => {
   it(
     "keeps public compatibility help routes for sandbox command families",
     testTimeoutOptions(30_000),
-    ({ testHome }) => {
+    async ({ testHome }) => {
       const { home } = testHome;
       writeSandboxRegistry(home);
 
-      const logs = runWithEnv("alpha logs --help", testHome.environment());
+      const logs = await runWithEnvAsync("alpha logs --help", testHome.environment());
       expect(logs.code).toBe(0);
       expect(logs.out).toContain("$ nemoclaw alpha logs");
       expect(logs.out).not.toContain("$ nemoclaw sandbox logs");
       expect(logs.out).toContain("--tail");
 
-      const policy = runWithEnv("alpha policy-add --help", testHome.environment());
+      const policy = await runWithEnvAsync("alpha policy-add --help", testHome.environment());
       expect(policy.code).toBe(0);
       expect(policy.out).toContain("$ nemoclaw alpha policy add");
       expect(policy.out).not.toContain("$ nemoclaw sandbox policy add");
 
-      const hosts = runWithEnv("alpha hosts-add --help", testHome.environment());
+      const hosts = await runWithEnvAsync("alpha hosts-add --help", testHome.environment());
       expect(hosts.code).toBe(0);
       expect(hosts.out).toContain("$ nemoclaw alpha hosts-add");
       expect(hosts.out).not.toContain("$ nemoclaw sandbox hosts add");
 
-      const channels = runWithEnv("alpha channels add --help", testHome.environment());
+      const channels = await runWithEnvAsync("alpha channels add --help", testHome.environment());
       expect(channels.code).toBe(0);
       expect(channels.out).toContain("$ nemoclaw alpha channels add");
       expect(channels.out).not.toContain("$ nemoclaw sandbox channels add");
 
-      const config = runWithEnv("alpha config get --help", testHome.environment());
+      const config = await runWithEnvAsync("alpha config get --help", testHome.environment());
       expect(config.code).toBe(0);
       expect(config.out).toContain("$ nemoclaw alpha config get");
       expect(config.out).not.toContain("$ nemoclaw sandbox config get");
@@ -106,29 +116,35 @@ describe("CLI dispatch", () => {
     },
   );
 
-  it("keeps public mutation dry-runs and native sandbox command routes", ({ testHome }) => {
+  it("keeps public mutation dry-runs and native sandbox command routes", async ({ testHome }) => {
     const { home } = testHome;
     writeSandboxRegistry(home);
 
-    const policy = runWithEnv("alpha policy-add github --dry-run", testHome.environment());
+    const policy = await runWithEnvAsync(
+      "alpha policy-add github --dry-run",
+      testHome.environment(),
+    );
     expect(policy.code).toBe(0);
     expect(policy.out).toContain("--dry-run: no changes applied.");
 
-    const channels = runWithEnv("alpha channels add telegram --dry-run", testHome.environment());
+    const channels = await runWithEnvAsync(
+      "alpha channels add telegram --dry-run",
+      testHome.environment(),
+    );
     expect(channels.code).toBe(0);
     expect(channels.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
 
-    const snapshots = runWithEnv("sandbox snapshot list alpha", testHome.environment());
+    const snapshots = await runWithEnvAsync("sandbox snapshot list alpha", testHome.environment());
     expect(snapshots.code).toBe(0);
     expect(snapshots.out).toContain("No snapshots found for 'alpha'.");
   });
 
-  it("keeps public policy-add/remove built-in mutation routes", ({ testHome }) => {
+  it("keeps public policy-add/remove built-in mutation routes", async ({ testHome }) => {
     const { home } = testHome;
     writeSandboxRegistry(home, managedSandboxEntry("alpha"));
     const openshell = writePolicyMutationOpenshellStub(home);
 
-    const add = runWithEnv(
+    const add = await runWithEnvAsync(
       "alpha policy-add github --yes",
       testHome.environment({
         NEMOCLAW_OPENSHELL_BIN: openshell,
@@ -138,7 +154,7 @@ describe("CLI dispatch", () => {
     expect(add.out).toContain("Applied preset: github");
     expect(readOpenShellPolicy(home)).toContain("github:");
 
-    const remove = runWithEnv(
+    const remove = await runWithEnvAsync(
       "alpha policy-remove github -y",
       testHome.environment({
         NEMOCLAW_OPENSHELL_BIN: openshell,
@@ -149,14 +165,14 @@ describe("CLI dispatch", () => {
     expect(readOpenShellPolicy(home)).not.toContain("github:");
   });
 
-  it("keeps public policy-add non-interactive missing-preset failure before mutation", ({
+  it("keeps public policy-add non-interactive missing-preset failure before mutation", async ({
     testHome,
   }) => {
     const { home } = testHome;
     writeSandboxRegistry(home);
     const openshell = writePolicyMutationOpenshellStub(home);
 
-    const result = runWithEnv(
+    const result = await runWithEnvAsync(
       "alpha policy-add",
       testHome.environment({
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -169,14 +185,14 @@ describe("CLI dispatch", () => {
     expect(readOpenShellPolicy(home)).toBe("version: 1\nnetwork_policies: {}\n");
   });
 
-  it("keeps public policy-add missing-preset failure when stdin contains probe output", ({
+  it("keeps public policy-add missing-preset failure when stdin contains probe output", async ({
     testHome,
   }) => {
     const { home } = testHome;
     writeSandboxRegistry(home);
     const openshell = writePolicyMutationOpenshellStub(home);
 
-    const result = runWithInput(
+    const result = await runWithInputAsync(
       "alpha policy-add",
       "/usr/bin/dmesg\n3",
       testHome.environment({
@@ -191,17 +207,17 @@ describe("CLI dispatch", () => {
     expect(readOpenShellPolicy(home)).toBe("version: 1\nnetwork_policies: {}\n");
   });
 
-  it("sandbox channels start rejects a sandbox missing from the registry (#4584)", ({
+  it("sandbox channels start rejects a sandbox missing from the registry (#4584)", async ({
     testHome,
   }) => {
     const { home } = testHome;
     writeSandboxRegistry(home);
 
-    const startMissing = runWithEnv(
+    const startMissing = await runWithEnvAsync(
       "sandbox channels start does-not-exist telegram",
       testHome.environment(),
     );
-    const stopMissing = runWithEnv(
+    const stopMissing = await runWithEnvAsync(
       "sandbox channels stop does-not-exist telegram",
       testHome.environment(),
     );

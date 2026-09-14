@@ -421,6 +421,12 @@ Uninstall warns that those records cannot be recovered automatically on reinstal
 
 The CLI command runs the version-pinned `uninstall.sh` that shipped with the installed CLI, so it does not fetch anything over the network at uninstall time.
 
+If gateway-registration removal fails and Docker is unavailable, restore Docker access before you retry the same uninstall command.
+On Docker Desktop for Windows, enable WSL integration for the distribution.
+Save work in all WSL sessions, run `wsl --shutdown` from PowerShell, and reopen the distribution.
+Run `docker info` to confirm access before you retry.
+The failed uninstall preserves its gateway service and state for recovery.
+
 If the CLI is missing or broken, use the hosted script:
 
 ```bash

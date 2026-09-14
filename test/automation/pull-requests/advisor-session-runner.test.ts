@@ -56,6 +56,7 @@ const sdk = vi.hoisted(() => {
     emitAnalysisError: false,
     emitCommitProse: false,
     emitRepairProse: false,
+    failOptionalRead: false,
     omitAnalysis: false,
     omitAnalysisPrompts: 0,
     prompts: [] as string[],
@@ -74,6 +75,7 @@ const sdk = vi.hoisted(() => {
     state.emitAnalysisError = false;
     state.emitCommitProse = false;
     state.emitRepairProse = false;
+    state.failOptionalRead = false;
     state.omitAnalysis = false;
     state.omitAnalysisPrompts = 0;
     state.prompts = [];
@@ -169,10 +171,13 @@ const sdk = vi.hoisted(() => {
           : Promise.resolve());
         const requiredReadPath = /^- (.+)$/mu.exec(prompt.split("Required files:\n")[1] ?? "")?.[1];
         const readTool = state.customTools.find(
-          (tool) => requiredReadPath && activeToolNames.includes(tool.name) && tool.name === "read",
+          (tool) => activeToolNames.includes(tool.name) && tool.name === "read",
         );
         await (readTool && requiredReadPath
           ? executeReadTool(readTool, requiredReadPath, emit)
+          : Promise.resolve());
+        await (readTool && state.failOptionalRead
+          ? executeReadTool(readTool, "missing-optional-evidence", emit)
           : Promise.resolve());
         const repairTools = state.customTools.filter(
           (tool) => isRepairPrompt && activeToolNames.includes(tool.name) && tool !== terminalTool,
@@ -295,7 +300,6 @@ import {
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
 } from "../../../tools/advisors/session.mts";
-import { buildSpecialistInvestigateTurn } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const tempDirs: string[] = [];
 
@@ -358,6 +362,7 @@ async function run(
   promptTurns: AdvisorPromptTurn[],
   prepare?: (directory: string) => void,
   additionalReadRoots: string[] = [],
+  logProgress: (message: string) => void = () => {},
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
@@ -375,7 +380,7 @@ async function run(
     maxCaptureBytes: 64 * 1024,
     credentialEnv: "TEST_ADVISOR_KEY",
     logPrefix: "test-advisor",
-    logProgress: () => {},
+    logProgress,
     customTools: [
       customTool("turn_action"),
       customTool("draft_action"),
@@ -593,10 +598,16 @@ describe("advisor session runner", () => {
 
   it("rejects multiple submit attempts during terminal-submit repair", async () => {
     sdk.state.terminalResponses = ["fail-once", "fail-then-success"];
-    const result = await run([submitTurn("prepare-and-submit")]);
+    const progress: string[] = [];
+    const result = await run([submitTurn("prepare-and-submit")], undefined, [], (message) =>
+      progress.push(message),
+    );
 
     expect(result.fatalError).toContain("terminal-submit repair must make exactly 1");
     expect(sdk.state.prompts).toHaveLength(2);
+    expect(progress.join("\n")).toContain(
+      '"repairAttempts":{"assistantText":false,"atomicTerminal":false,"terminalSubmit":true}',
+    );
   });
 
   it("rejects prose during preparatory terminal-submit repair", async () => {
@@ -617,6 +628,60 @@ describe("advisor session runner", () => {
     expect(result.fatalError).toBeUndefined();
     expect(result.raw).toContain("terminal_submit_repair_start");
     expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("accepts tool-disabled analysis repair after a successful terminal submit", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.terminalResponses = ["success"];
+    const result = await run([
+      {
+        ...submitTurn("prepare-and-submit"),
+        requireAssistantText: true,
+        assistantTextRepairPrompt: "Return the required analysis.",
+      },
+    ]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("assistant_text_repair_start prepare-and-submit");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.activeToolCalls).toContainEqual([]);
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("logs tool-flow diagnostics when an optional read blocks prose repair", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.failOptionalRead = true;
+    const progress: string[] = [];
+
+    const result = await run([analysisTurn("investigate")], undefined, [], (message) =>
+      progress.push(message),
+    );
+
+    expect(result.fatalError).toBe("investigate omitted required analysis");
+    expect(progress).toContainEqual(
+      expect.stringContaining(
+        'Advisor SDK turn failure diagnostics: {"textEvents":0,"readEvents":0,"toolStarts":2,"toolEnds":2,"toolFailures":1,"failedToolNames":["read"]',
+      ),
+    );
+    expect(progress.join("\n")).not.toContain("missing-optional-evidence");
+  });
+
+  it("retains diagnostics when analysis repair also omits prose", async () => {
+    sdk.state.omitAnalysisPrompts = 2;
+    const progress: string[] = [];
+
+    const result = await run([analysisTurn("investigate")], undefined, [], (message) =>
+      progress.push(message),
+    );
+
+    expect(result.fatalError).toBe("investigate assistant-text repair omitted required analysis");
+    expect(sdk.state.prompts).toHaveLength(2);
+    expect(progress).toContainEqual(
+      expect.stringContaining(
+        'Advisor SDK turn failure diagnostics: {"textEvents":0,"readEvents":0,"toolStarts":1,"toolEnds":1,"toolFailures":0,"failedToolNames":[],"unmatchedToolEndNames":[],"unsettledToolNames":[],"missingRequiredToolNames":[],"repairAttempts":{"assistantText":true,"atomicTerminal":false,"terminalSubmit":false}}',
+      ),
+    );
   });
 
   it("repairs omitted required recording tools before submit (#9963)", async () => {
@@ -668,7 +733,13 @@ describe("advisor session runner", () => {
 
   it("fails closed after one unsuccessful atomic-terminal repair (#6446)", async () => {
     sdk.state.terminalResponses = ["omit", "omit"];
-    const result = await run([analysisTurn("only-analysis"), commitTurn("only-commit")]);
+    const progress: string[] = [];
+    const result = await run(
+      [analysisTurn("only-analysis"), commitTurn("only-commit")],
+      undefined,
+      [],
+      (message) => progress.push(message),
+    );
 
     expect(result.fatalError).toContain(
       "only-commit atomic-terminal repair must commit turn_action successfully once",
@@ -679,6 +750,9 @@ describe("advisor session runner", () => {
       ),
     ]);
     expect(sdk.state.prompts).toHaveLength(3);
+    expect(progress.join("\n")).toContain(
+      '"repairAttempts":{"assistantText":false,"atomicTerminal":true,"terminalSubmit":false}',
+    );
   });
 
   it("rejects prose during the tool-only atomic-terminal repair (#6446)", async () => {

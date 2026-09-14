@@ -75,9 +75,9 @@ describe("policy channel remove/enable flows", () => {
     const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(((args: string[]) =>
       args.includes("cat") ? { status: 1, stderr: "missing" } : { status: 0 }) as never);
-    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["whatsapp"]);
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["whatsapp"]);
     vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "whatsapp" } as never]);
-    const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
+    const removePreset = vi.spyOn(policies, "removePreset").mockResolvedValue(true);
     const rebuildSandbox = vi
       .spyOn(policyChannelDependencies, "rebuildSandbox")
       .mockResolvedValue(undefined);
@@ -139,7 +139,7 @@ describe("policy channel remove/enable flows", () => {
     } as SandboxEntry);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["wechat"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
-    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["wechat"]);
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["wechat"]);
 
     await expect(removeSandboxChannel("alpha", { channel: "wechat" })).rejects.toThrow(
       "process.exit(1)",
@@ -260,7 +260,7 @@ describe("policy channel remove/enable flows", () => {
     const updateSandboxSpy = vi.spyOn(registry, "updateSandbox");
     const applyPresetSpy = vi.spyOn(policies, "applyPreset");
     const rebuildSpy = vi.spyOn(policyChannelDependencies, "rebuildSandbox");
-    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
+    vi.spyOn(policies, "getPresetContentGatewayState").mockResolvedValue("absent");
     await expect(
       startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
     ).resolves.toBeUndefined();
@@ -285,7 +285,7 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
-    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("match");
+    vi.spyOn(policies, "getPresetContentGatewayState").mockResolvedValue("match");
 
     await expect(
       startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),

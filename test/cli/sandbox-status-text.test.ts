@@ -5,19 +5,21 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   healthyInferenceRouteStubLines,
   inferenceInvocationStubLines,
-  runWithEnv,
+  runWithEnvAsync,
   testTimeoutOptions,
   writeHealthyDockerStub,
   writeSandboxRegistry,
 } from "./helpers";
 
-describe("CLI sandbox status text output", () => {
-  it("sandbox <name> status surfaces docker_unreachable header and suppresses stale Inference probe", () => {
+vi.setConfig({ maxConcurrency: 4 });
+
+describe.concurrent("CLI sandbox status text output", () => {
+  it("sandbox <name> status surfaces docker_unreachable header and suppresses stale Inference probe", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-docker-unreachable-"),
     );
@@ -57,7 +59,7 @@ describe("CLI sandbox status text output", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
+    const r = await runWithEnvAsync("alpha status", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -74,7 +76,7 @@ describe("CLI sandbox status text output", () => {
     expect((r.out.match(/Failure layer: docker_unreachable/g) || []).length).toBe(1);
   });
 
-  it("sandbox <name> status reports unknown runtime when a registered agent cannot load", () => {
+  it("sandbox <name> status reports unknown runtime when a registered agent cannot load", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-missing-agent-"),
     );
@@ -118,7 +120,7 @@ describe("CLI sandbox status text output", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
+    const r = await runWithEnvAsync("alpha status", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -130,7 +132,7 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).not.toContain("OpenClaw: running");
   });
 
-  it("sandbox <name> status reports the Deep Agents Code terminal harness (#5718)", () => {
+  it("sandbox <name> status reports the Deep Agents Code terminal harness (#5718)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-dcode-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
@@ -173,7 +175,7 @@ describe("CLI sandbox status text output", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("dcode-station status", {
+    const r = await runWithEnvAsync("dcode-station status", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -187,7 +189,7 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).not.toContain("OpenClaw: running");
   });
 
-  it("sandbox <name> status warns when a terminal runtime cgroup records an OOM kill (#5796)", () => {
+  it("sandbox <name> status warns when a terminal runtime cgroup records an OOM kill (#5796)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-dcode-oom-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
@@ -247,7 +249,7 @@ describe("CLI sandbox status text output", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
+    const r = await runWithEnvAsync("alpha status", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -262,7 +264,7 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).toContain("Run `nemoclaw alpha rebuild` to restore.");
   });
 
-  it("sandbox <name> status reports served inference, its reachability hop, and an unprobed upstream when openshellDriver is not docker", () => {
+  it("sandbox <name> status reports served inference, its reachability hop, and an unprobed upstream when openshellDriver is not docker", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-non-docker-driver-"),
     );
@@ -302,7 +304,7 @@ describe("CLI sandbox status text output", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
+    const r = await runWithEnvAsync("alpha status", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -319,7 +321,7 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).toContain("Inference (upstream): not probed");
   });
 
-  it("sandbox <name> status surfaces sandbox_container_stopped when the per-sandbox container exists but is not running", () => {
+  it("sandbox <name> status surfaces sandbox_container_stopped when the per-sandbox container exists but is not running", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-container-stopped-"),
     );
@@ -372,7 +374,7 @@ describe("CLI sandbox status text output", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
+    const r = await runWithEnvAsync("alpha status", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -466,7 +468,7 @@ describe("CLI sandbox status text output", () => {
         { mode: 0o755 },
       );
 
-      const r = runWithEnv("alpha status", {
+      const r = await runWithEnvAsync("alpha status", {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -498,7 +500,7 @@ describe("CLI sandbox status text output", () => {
   it(
     "status surfaces a paused Docker-driver container hint without rewriting Phase: Error",
     testTimeoutOptions(30_000),
-    () => {
+    async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-paused-"));
       const localBin = path.join(home, "bin");
       fs.mkdirSync(localBin, { recursive: true });
@@ -557,7 +559,7 @@ describe("CLI sandbox status text output", () => {
         { mode: 0o755 },
       );
 
-      const r = runWithEnv(
+      const r = await runWithEnvAsync(
         "alpha status",
         {
           HOME: home,
@@ -575,7 +577,7 @@ describe("CLI sandbox status text output", () => {
       expect(r.out).not.toContain("rebuild --yes");
 
       // The structured report exposes the paused flag for automation consumers.
-      const j = runWithEnv(
+      const j = await runWithEnvAsync(
         "alpha status --json",
         {
           HOME: home,
@@ -592,7 +594,7 @@ describe("CLI sandbox status text output", () => {
   it.each(["missing", "present"] as const)(
     "sandbox <name> status reports clean Stopped state with a %s live lookup (#11025)",
     testTimeoutOptions(30_000),
-    (gatewayState) => {
+    async (gatewayState) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-stopped-"));
       const localBin = path.join(home, "bin");
       const stoppedState = path.join(home, "docker-stopped");
@@ -607,7 +609,7 @@ describe("CLI sandbox status text output", () => {
           "#!/usr/bin/env bash",
           ...(gatewayState === "missing"
             ? [
-                `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'NotFound: sandbox not found'; exit 1; fi`,
+                `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'Error: code: "Some requested entity was not found", message: "sandbox not found"'; exit 1; fi`,
               ]
             : []),
           `if [ "$1" = "sandbox" ] && [ "$2" = "stop" ]; then touch ${JSON.stringify(stoppedState)}; exit 0; fi`,
@@ -617,7 +619,7 @@ describe("CLI sandbox status text output", () => {
           "  echo '  Id: abc'",
           "  echo '  Name: alpha'",
           "  echo '  Namespace: openshell'",
-          "  echo '  Phase: Provisioning'",
+          "  echo '  Phase: Stopped'",
           "  exit 0",
           "fi",
           'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
@@ -670,7 +672,7 @@ describe("CLI sandbox status text output", () => {
         { mode: 0o755 },
       );
 
-      const stopped = runWithEnv(
+      const stopped = await runWithEnvAsync(
         "alpha stop",
         {
           HOME: home,
@@ -680,7 +682,7 @@ describe("CLI sandbox status text output", () => {
       );
       expect(stopped.code, stopped.out).toBe(0);
 
-      const r = runWithEnv(
+      const r = await runWithEnvAsync(
         "alpha status",
         {
           HOME: home,
@@ -700,7 +702,7 @@ describe("CLI sandbox status text output", () => {
       expect(r.out).not.toContain("rebuild --yes");
       expect(r.out).not.toContain("The sandbox is alive but the");
 
-      const j = runWithEnv(
+      const j = await runWithEnvAsync(
         "alpha status --json",
         {
           HOME: home,

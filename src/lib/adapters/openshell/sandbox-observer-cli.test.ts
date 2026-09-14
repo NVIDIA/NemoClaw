@@ -35,6 +35,21 @@ function captured(
   };
 }
 
+function sandboxListJson(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify([
+    {
+      id: "sandbox-alpha",
+      name: "alpha",
+      labels: {},
+      resource_version: 1,
+      created_at: "2026-09-14T00:00:00Z",
+      phase: "Provisioning",
+      current_policy_version: 1,
+      ...overrides,
+    },
+  ]);
+}
+
 describe("CLI OpenShell sandbox observer", () => {
   it("targets a named gateway and returns typed list observations (#9803)", async () => {
     const capture = vi.fn(() =>
@@ -82,6 +97,7 @@ describe("CLI OpenShell sandbox observer", () => {
           "gamma unknown 1m ago\n" +
           "delta Ready 2026-03-24 10:00:00 Provisioning\n" +
           "epsilon 1m Running\n" +
+          "zeta 1m stopped\n" +
           "Error: command failed\n" +
           "No sandboxes found.",
       ),
@@ -92,6 +108,7 @@ describe("CLI OpenShell sandbox observer", () => {
         { name: "gamma", phase: "Unknown", readiness: "terminal" },
         { name: "delta", phase: "Provisioning", readiness: "not_ready" },
         { name: "epsilon", phase: "Running", readiness: "ready" },
+        { name: "zeta", phase: "Stopped", readiness: "not_ready" },
       ],
     });
   });
@@ -174,10 +191,79 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it.each([
+    'status: Internal, message: "sandbox has no spec", details: []',
+    `Error: code: 'The system is not in a state required for the operation's execution', message: "provider 'compatible-endpoint' not found"`,
+  ])("uses structured inventory for an unreadable legacy sandbox", async (diagnostic) => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce(captured(1, "", diagnostic))
+      .mockResolvedValueOnce(captured(0, sandboxListJson()));
+    const lookup = createCliOpenShellSandboxLookup({ capture });
+
+    await expect(
+      lookup({
+        sandboxName: "alpha",
+        target: namedOpenShellGateway("nemoclaw"),
+        timeoutMs: 1_234,
+      }),
+    ).resolves.toEqual({
+      result: {
+        ok: true,
+        value: {
+          state: "present",
+          sandbox: { name: "alpha", phase: "Provisioning", readiness: "not_ready" },
+        },
+      },
+      displayOutput: "",
+    });
+    expect(capture).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: 1_234,
+      },
+    );
+  });
+
+  it("does not report deletion when legacy inventory lacks the sandbox", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce(
+        captured(1, "", 'status: Internal, message: "sandbox has no spec", details: []'),
+      )
+      .mockResolvedValueOnce(captured(0, "[]"));
+    const lookup = createCliOpenShellSandboxLookup({ capture });
+
+    await expect(
+      lookup({ sandboxName: "alpha", target: selectedOpenShellGateway() }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message:
+            "OpenShell could not confirm the unreadable legacy sandbox in gateway inventory.",
+        },
+      },
+      displayOutput: "",
+    });
+  });
+
   it("keeps a missing sandbox distinct from authentication failure (#9803)", async () => {
     const capture = vi
       .fn()
-      .mockReturnValueOnce(captured(1, "", "sandbox has no spec: NotFound"))
+      .mockReturnValueOnce(
+        captured(
+          1,
+          "",
+          `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
+        ),
+      )
       .mockReturnValueOnce(
         captured(1, "", "Error: authentication failed: sandbox not found: bearer value"),
       );

@@ -36,7 +36,11 @@ interface ExternalComponentProofDeps {
     readonly lifecycleGeneration?: string;
     readonly lifecycleLiveIdentityFingerprint?: string;
   } | null;
-  inspectPolicy(name: string, operation: string, gatewayName: string): PolicyContext;
+  inspectPolicy(
+    name: string,
+    operation: string,
+    gatewayName: string,
+  ): PolicyContext | Promise<PolicyContext>;
   listSandboxes(gatewayName: string): string;
 }
 
@@ -50,11 +54,11 @@ interface ProofSnapshot {
   readonly sandboxIdentityFingerprint: string;
 }
 
-function captureProofSnapshotUnchecked(
+async function captureProofSnapshotUnchecked(
   sandboxName: string,
   expectedGatewayName: string,
   deps: ExternalComponentProofDeps,
-): ProofSnapshot {
+): Promise<ProofSnapshot> {
   const entry = deps.getSandbox(sandboxName);
   if (
     !entry ||
@@ -76,7 +80,7 @@ function captureProofSnapshotUnchecked(
   if (fingerprint !== entry.lifecycleLiveIdentityFingerprint) {
     throw new ExternalComponentProofError();
   }
-  const policy = deps.inspectPolicy(
+  const policy = await deps.inspectPolicy(
     sandboxName,
     "verify external component activation policy",
     expectedGatewayName,
@@ -109,28 +113,28 @@ function captureProofSnapshotUnchecked(
   };
 }
 
-function captureProofSnapshot(
+async function captureProofSnapshot(
   sandboxName: string,
   expectedGatewayName: string,
   deps: ExternalComponentProofDeps,
-): ProofSnapshot {
+): Promise<ProofSnapshot> {
   try {
-    return captureProofSnapshotUnchecked(sandboxName, expectedGatewayName, deps);
+    return await captureProofSnapshotUnchecked(sandboxName, expectedGatewayName, deps);
   } catch {
     throw new ExternalComponentProofError();
   }
 }
 
-export function createExternalComponentActivationProof(
+export async function createExternalComponentActivationProof(
   sandboxName: string,
   gatewayName: string,
   deps: ExternalComponentProofDeps,
-): ExternalComponentActivationProof {
-  const initial = captureProofSnapshot(sandboxName, gatewayName, deps);
+): Promise<ExternalComponentActivationProof> {
+  const initial = await captureProofSnapshot(sandboxName, gatewayName, deps);
   return {
     ...initial,
-    revalidate: () => {
-      if (!isDeepStrictEqual(captureProofSnapshot(sandboxName, gatewayName, deps), initial)) {
+    revalidate: async () => {
+      if (!isDeepStrictEqual(await captureProofSnapshot(sandboxName, gatewayName, deps), initial)) {
         throw new ExternalComponentProofError();
       }
     },

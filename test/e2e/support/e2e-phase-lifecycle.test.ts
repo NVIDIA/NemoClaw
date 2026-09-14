@@ -14,6 +14,7 @@ import {
   HostCliClient,
   SandboxClient,
 } from "../fixtures/clients/index.ts";
+import { buildGatewayRuntimeStartScript } from "../fixtures/gateway-runtime-start.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
@@ -39,6 +40,9 @@ interface CleanupCall {
   name: string;
   run: () => Promise<void> | void;
 }
+
+const stoppedGatewayUserService =
+  "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=systemd:nemoclaw-openshell-gateway.service\n";
 
 function shellResult(exitCode: number, output = ""): ShellProbeResult {
   return {
@@ -244,17 +248,14 @@ describe("LifecyclePhaseFixture.preparePostReboot", () => {
 });
 
 describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", () => {
-  it("stops the labeled container, restarts the gateway service, then runs status", async () => {
+  it("uses non-login helpers to stop and restart the gateway service before status (#10947)", async () => {
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
     const prepared = await preparedPostRebootFixture(runner, cleanup, "staged");
     runner.enqueue(shellResult(0, "openshell-cluster-e2e-cloud-oc\n")); // discover
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(0)); // gateway stop
-    runner.enqueue(shellResult(0)); // pid stop
-    runner.enqueue(shellResult(0, "gateway-id\topenshell-cluster-nemoclaw\n")); // discover
-    runner.enqueue(shellResult(0)); // container stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
@@ -278,11 +279,8 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
       "docker container ps --all --filter label=openshell.ai/sandbox-name=e2e-cloud-oc --format {{.Names}}",
       "docker container stop openshell-cluster-e2e-cloud-oc",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
-      "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
-      expect.stringContaining("sh -lc pid_file="),
-      "docker container ps --format {{.ID}}\t{{.Names}}",
-      "docker container stop gateway-id",
-      expect.stringContaining('systemctl --user cat "$service"'),
+      expect.stringContaining("stop_active_openshell_gateway_user_service"),
+      expect.stringContaining("restart_selected_openshell_gateway_user_service"),
       "openshell status",
       "docker container start openshell-cluster-e2e-cloud-oc",
       "openshell sandbox list",
@@ -291,7 +289,45 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     expect(cleanup.calls.map((call) => call.name)).toEqual([
       "lifecycle.remove-staged-gateway-user-service",
       "lifecycle.runtime-start:openshell-cluster-e2e-cloud-oc",
+      "lifecycle.gateway-user-service-restart:systemd:nemoclaw-openshell-gateway.service",
     ]);
+    const userServiceCommands = runner.calls.filter((call) =>
+      ["lifecycle-gateway-user-service-stop", "lifecycle-gateway-user-service-restart"].includes(
+        call.options?.artifactName ?? "",
+      ),
+    );
+    expect(userServiceCommands.map((call) => call.args[0])).toEqual(["-c", "-c"]);
+  });
+
+  it("restarts the selected gateway service during cleanup after recovery fails (#10947)", async () => {
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup);
+    runner.enqueue(shellResult(0, "container-1\n")); // discover
+    runner.enqueue(shellResult(0)); // docker stop
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
+    runner.enqueue(shellResult(1, "restart failed")); // normal user service restart
+
+    await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
+      /user service restart failed.*restart failed/,
+    );
+
+    const serviceCleanup = cleanup.calls.find((call) =>
+      call.name.startsWith("lifecycle.gateway-user-service-restart:"),
+    );
+    expect(serviceCleanup?.name).toBe(
+      "lifecycle.gateway-user-service-restart:systemd:nemoclaw-openshell-gateway.service",
+    );
+    runner.enqueue(shellResult(0)); // cleanup user service restart
+    await serviceCleanup!.run();
+    await serviceCleanup!.run();
+
+    expect(
+      runner.calls.filter(
+        (call) => call.options?.artifactName === "lifecycle-gateway-user-service-restart",
+      ),
+    ).toHaveLength(2);
   });
 
   it("fails when status cannot prove post-reboot recovery", async () => {
@@ -301,9 +337,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0, "container-1\n")); // discover
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(0)); // gateway stop
-    runner.enqueue(shellResult(0)); // pid stop
-    runner.enqueue(shellResult(0)); // container stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
@@ -322,9 +356,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0, "container-1\n")); // discover
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(0)); // gateway stop
-    runner.enqueue(shellResult(0)); // pid stop
-    runner.enqueue(shellResult(0)); // container stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
@@ -384,9 +416,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0, "container-1\n")); // discover
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(0)); // gateway stop
-    runner.enqueue(shellResult(0)); // pid stop
-    runner.enqueue(shellResult(0)); // container stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
     runner.enqueue(shellResult(75, "")); // no managed user service available
 
     await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
@@ -394,7 +424,9 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     );
 
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual(
-      expect.arrayContaining([expect.stringContaining('systemctl --user cat "$service"')]),
+      expect.arrayContaining([
+        expect.stringContaining("restart_selected_openshell_gateway_user_service"),
+      ]),
     );
   });
 });
@@ -408,9 +440,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // docker rename
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(0)); // gateway stop
-    runner.enqueue(shellResult(0)); // pid stop
-    runner.enqueue(shellResult(0)); // container stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
@@ -439,10 +469,11 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
       }),
     );
 
-    // Cleanup queue now has both docker-start and docker-rename-back.
+    // Cleanup queue also restores the user service if normal recovery does not.
     expect(cleanup.calls.map((call) => call.name.split(":")[0])).toEqual([
       "lifecycle.runtime-start",
       "lifecycle.runtime-rename-back",
+      "lifecycle.gateway-user-service-restart",
     ]);
   });
 });
@@ -497,25 +528,24 @@ describe("LifecyclePhaseFixture rebuild helpers", () => {
 });
 
 describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
-  it("stops PID/container runtimes, starts the previous runtime shape, and polls health", async () => {
+  it("falls back to PID/container controls when the selected user service is inactive (#10947)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(0)); // gateway stop
+    runner.enqueue(shellResult(75)); // selected user service is inactive
     runner.enqueue(shellResult(0)); // pid stop
     runner.enqueue(shellResult(0)); // container stop
     runner.enqueue(shellResult(1, "")); // expectHostRuntimeStopped pid probe
     runner.enqueue(shellResult(0, "")); // expectHostRuntimeStopped container probe
     runner.enqueue(shellResult(0)); // lifecycle-gateway-stopped true artifact
-    runner.enqueue(shellResult(75, "")); // no user service available
-    runner.enqueue(shellResult(0, "status recovered\n")); // start through nemoclaw status
+    runner.enqueue(shellResult(0, "gateway started\n")); // start the registered gateway through its existing startup owner
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // waitForGatewayConnected
     const cleanup = new FakeCleanup();
     const host = new HostCliClient(runner);
     const sandbox = new SandboxClient(runner);
     const fx = new LifecyclePhaseFixture(host, sandbox, cleanup, new GatewayClient(host, sandbox));
 
-    await expect(fx.restartGatewayRuntime({ delayMs: 0 })).resolves.toEqual({
+    await expect(fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" })).resolves.toEqual({
       kind: "pid",
       id: "12345",
     });
@@ -524,14 +554,13 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
       expect.stringContaining("sh -lc pid_file="),
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
-      "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
+      expect.stringContaining("bash -c set -eu"),
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",
       "true ",
-      expect.stringContaining("sh -lc set -eu"),
-      "nemoclaw status",
+      `${process.execPath} -e ${buildGatewayRuntimeStartScript()} e2e-x`,
       "openshell status",
     ]);
   });
@@ -562,7 +591,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
   it("stops only the exact gateway container when a sandbox has the gateway-name prefix", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(0)); // gateway stop
+    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=unavailable\n"));
     runner.enqueue(shellResult(0)); // pid stop
     runner.enqueue(shellResult(0, "gateway-id\topenshell-cluster-nemoclaw\n")); // discover
     runner.enqueue(shellResult(0)); // container stop
@@ -580,22 +609,164 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(discovery?.args).toEqual(["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]);
   });
 
-  it("can recover a PID runtime through sandbox-specific status", async () => {
+  it("stops a supported user service without invoking legacy runtime controls (#10947)", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "status recovered\n"));
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
+
+    await fixture(runner, new FakeCleanup()).stopGatewayRuntime();
+
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "lifecycle-gateway-forward-stop",
+      "lifecycle-gateway-user-service-stop",
+    ]);
+  });
+
+  it.each(["homebrew:homebrew.mxcl.openshell", "homebrew:sh.brew.openshell"])(
+    "passes the exact Homebrew user-service selection to restart: %s (#10947)",
+    async (selection) => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      runner.enqueue(shellResult(0)); // forward stop
+      runner.enqueue(shellResult(0, `NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=${selection}\n`)); // user service stop
+      const fx = fixture(runner, cleanup);
+
+      await fx.stopGatewayRuntime();
+
+      expect(cleanup.calls.map((call) => call.name)).toEqual([
+        `lifecycle.gateway-user-service-restart:${selection}`,
+      ]);
+      runner.enqueue(shellResult(0)); // selected user service restart
+      await cleanup.calls[0]!.run();
+      const restart = runner.calls.find(
+        (call) => call.options?.artifactName === "lifecycle-gateway-user-service-restart",
+      );
+      expect(restart?.args.at(-1)).toBe(selection);
+    },
+  );
+
+  it("preserves a pending user-service restart when a repeated stop finds it inactive (#10947)", async () => {
+    const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
+    const fx = fixture(runner, cleanup);
+    runner.enqueue(shellResult(0)); // first forward stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // first user service stop
+    runner.enqueue(shellResult(0)); // repeated forward stop
+    runner.enqueue(shellResult(75)); // stopped service is inactive
+
+    await fx.stopGatewayRuntime();
+    await fx.stopGatewayRuntime();
+
+    expect(cleanup.calls.map((call) => call.name)).toEqual([
+      "lifecycle.gateway-user-service-restart:systemd:nemoclaw-openshell-gateway.service",
+    ]);
+    expect(runner.calls).toHaveLength(4);
+    runner.enqueue(shellResult(0)); // pending user service restart
+    await cleanup.calls[0]!.run();
+    expect(runner.calls.at(-1)?.args.at(-1)).toBe("systemd:nemoclaw-openshell-gateway.service");
+  });
+
+  it("reports a user-service stop failure without invoking legacy controls (#10947)", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(1, "Failed to connect to bus"));
+
+    await expect(fixture(runner, new FakeCleanup()).stopGatewayRuntime()).rejects.toThrow(
+      /user service stop failed.*Failed to connect to bus/,
+    );
+    expect(runner.calls).toHaveLength(2);
+  });
+
+  it("reports a failed gateway restart before waiting for health", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(75)); // no selected user service
+    runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0, "")); // no gateway container
+    runner.enqueue(shellResult(1, "gateway recovery failed"));
+    const fx = fixture(runner, new FakeCleanup());
+
+    await expect(fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" })).rejects.toThrow(
+      /restart OpenShell gateway runtime/,
+    );
+    expect(runner.calls.at(-1)).toMatchObject({
+      command: process.execPath,
+      args: ["-e", buildGatewayRuntimeStartScript(), "e2e-x"],
+    });
+    expect(runner.calls).toHaveLength(5);
+  });
+
+  it.each([75, 1])(
+    "preserves the selected service for cleanup when restart exits %i",
+    async (exitCode) => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      const fx = fixture(runner, cleanup);
+      runner.enqueue(shellResult(0)); // forward stop
+      runner.enqueue(shellResult(0, stoppedGatewayUserService));
+      runner.enqueue(shellResult(exitCode, "service restart failed"));
+
+      await expect(fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" })).rejects.toThrow(
+        /user service.*(?:not available|restart failed)/,
+      );
+      expect(runner.calls).toHaveLength(3);
+      expect(runner.calls.at(-1)?.args.at(-1)).toBe("systemd:nemoclaw-openshell-gateway.service");
+      expect(cleanup.calls).toHaveLength(1);
+
+      runner.enqueue(shellResult(0));
+      await cleanup.calls[0]!.run();
+      expect(runner.calls.at(-1)?.args.at(-1)).toBe("systemd:nemoclaw-openshell-gateway.service");
+      expect(runner.calls).toHaveLength(4);
+      await cleanup.calls[0]!.run();
+      expect(runner.calls).toHaveLength(4);
+    },
+  );
+
+  it("rejects gateway recovery without a selected service or registered sandbox name", async () => {
+    const runner = new FakeRunner();
+    await expect(fixture(runner, new FakeCleanup()).startGatewayRuntime()).rejects.toThrow(
+      /registered sandbox name/,
+    );
+    expect(runner.calls).toHaveLength(0);
+  });
+
+  it.each([undefined, "", " "])(
+    "rejects missing restart identity before stopping any runtime: %s",
+    async (sandboxName) => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      await expect(
+        fixture(runner, cleanup).restartGatewayRuntime({ sandboxName, delayMs: 0 }),
+      ).rejects.toThrow(/sandbox name or a required user service/);
+      expect(runner.calls).toHaveLength(0);
+      expect(cleanup.calls).toHaveLength(0);
+    },
+  );
+
+  it("requires the selected user service when the lifecycle requests it", async () => {
+    const runner = new FakeRunner();
+    const fx = fixture(runner, new FakeCleanup());
+
+    await expect(fx.startGatewayRuntime({ requireUserService: true })).rejects.toThrow(
+      /user service is not available/,
+    );
+    expect(runner.calls).toHaveLength(0);
+  });
+
+  it("starts the registered gateway through its startup owner when no service was stopped", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "gateway started\n"));
 
     await expect(
-      fixture(runner, cleanup).startGatewayRuntime(
-        { kind: "pid", id: "12345" },
-        {
-          sandboxName: "e2e-survival",
-        },
-      ),
-    ).resolves.toMatchObject({ exitCode: 0 });
-
-    expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
-      "nemoclaw e2e-survival status",
+      fixture(runner, new FakeCleanup()).startGatewayRuntime({ sandboxName: "e2e-x" }),
+    ).resolves.toMatchObject({
+      exitCode: 0,
+    });
+    expect(runner.calls).toEqual([
+      expect.objectContaining({
+        command: process.execPath,
+        args: ["-e", buildGatewayRuntimeStartScript(), "e2e-x"],
+      }),
     ]);
   });
 });

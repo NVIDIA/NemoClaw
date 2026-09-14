@@ -230,6 +230,7 @@ test(
       ],
     });
 
+    lifecycle.trackInstallerGatewayUserService();
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-info-sandbox-survival",
       scenarioLabel: "sandbox survival",

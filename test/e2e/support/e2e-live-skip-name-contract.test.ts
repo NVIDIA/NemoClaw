@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import { target } from "../registry/builder.ts";
-import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestTitle } from "../registry/runtime-support.ts";
 import type { TargetDefinition } from "../registry/types.ts";
 

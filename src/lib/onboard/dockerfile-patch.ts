@@ -57,8 +57,6 @@ const NODE_RUNTIME_REFRESH_INSTRUCTION =
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
-type LooseObject = Record<string, unknown>;
-
 export function encodeDockerJsonArg(value: unknown): string {
   return Buffer.from(JSON.stringify(value ?? {}), "utf8").toString("base64");
 }
@@ -311,14 +309,19 @@ export function patchStagedDockerfile(
   options: PatchStagedDockerfileOptions = {},
 ): PatchedDockerfileMetadata {
   const sanitizedModel = sanitizeDockerArg(model);
+  const providerless =
+    model === "" && !provider && !preferredInferenceApi && !inferenceBaseUrlOverride;
   const sandboxInference = getSandboxInferenceConfig(
     sanitizedModel,
     provider,
     preferredInferenceApi,
   );
-  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = sandboxInference;
-  const inferenceBaseUrl =
-    inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
+  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = providerless
+    ? { providerKey: "", primaryModelRef: "", inferenceApi: "", inferenceCompat: null }
+    : sandboxInference;
+  const inferenceBaseUrl = providerless
+    ? ""
+    : inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
   const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
