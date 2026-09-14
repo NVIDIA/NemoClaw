@@ -310,6 +310,14 @@ _hooks_config = None
 def _load_hooks(): return []
 def _run_single_hook(command, event, payload_bytes): return None
 `,
+  "hooks/manager.py": `from __future__ import annotations
+
+class HooksManager:
+    @classmethod
+    def create(cls, *args, **kwargs): return cls()
+    @classmethod
+    def inert(cls): return cls()
+`,
   "client/non_interactive.py": `from __future__ import annotations
 
 async def run_non_interactive(*args, **kwargs):
@@ -352,6 +360,7 @@ function makePatchFixture(version = "0.1.55"): PatchFixture {
   const sourcePaths = Object.entries(PACKAGE_SOURCES).map(([relativePath, source]) =>
     writeFixtureFile(packageDir, relativePath, source),
   );
+  writeFixtureFile(packageDir, "approval_mode.py", "class ApprovalMode:\n    pass");
   writeFixtureFile(
     root,
     `deepagents_code-${version}.dist-info/METADATA`,
@@ -779,7 +788,9 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
       fixture.sourcePaths
         .filter(
           (sourcePath) =>
-            !sourcePath.endsWith("/__init__.py") && !sourcePath.endsWith("/onboarding.py"),
+            !sourcePath.endsWith("/__init__.py") &&
+            !sourcePath.endsWith("/onboarding.py") &&
+            !sourcePath.endsWith("/hooks/legacy.py"),
         )
         .every(
           (file) =>
@@ -792,6 +803,9 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     ).toHaveLength(1);
     // Retain onboarding in the full-package snapshot to prove it stays untouched and idempotent.
     expect(firstBytes[path.join(fixture.packageDir, "onboarding.py")]).not.toContain(
+      HARDENING_MARKER,
+    );
+    expect(firstBytes[path.join(fixture.packageDir, "hooks/legacy.py")]).not.toContain(
       HARDENING_MARKER,
     );
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
