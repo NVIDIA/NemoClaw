@@ -25,3 +25,5 @@ tempfile.workspace = true
 getrandom.workspace = true
 process-wrap.workspace = true
 tokio-util.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true

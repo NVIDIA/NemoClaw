@@ -113,3 +113,5 @@ mod process;
 pub use tokio_util::sync::CancellationToken;
 mod deployment;
 pub use deployment::{Change, Deployment, OperationResult, Outcome, Progress};
+
+pub mod snapshot;
