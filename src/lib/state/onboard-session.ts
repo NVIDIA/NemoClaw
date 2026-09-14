@@ -870,7 +870,8 @@ function parseExternalComponentActivation(
     !activationId ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(activationId) ||
     !componentId ||
-    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(componentId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u.test(componentId) ||
+    componentId.startsWith("openshell/") ||
     !lifecycleGeneration ||
     !validSafeEvidence(lifecycleGeneration) ||
     !sandboxIdentityFingerprint ||

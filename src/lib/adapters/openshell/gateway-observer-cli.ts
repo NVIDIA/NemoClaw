@@ -35,6 +35,10 @@ function gatewayName(output: string): string | null {
   return names.length === 1 && isValidName(names[0]) ? names[0] : null;
 }
 
+function hasGatewayDeclaration(output: string): boolean {
+  return /^\s*Gateway:/m.test(output);
+}
+
 function failed(
   error: OpenShellSandboxError,
   activeGateway: string | null = null,
@@ -85,7 +89,8 @@ export function createCliOpenShellGatewayObserver(
         const statusText = stripOpenShellCliAnsi(status.output);
         const infoText = stripOpenShellCliAnsi(info.output);
         const activeGateway = gatewayName(statusText);
-        const named = gatewayName(infoText) === name;
+        const namedGateway = gatewayName(infoText);
+        const named = namedGateway === name;
         const connected = /^\s*Status:\s*Connected\b/im.test(statusText);
         const unsupported = /^\s*gateway info is not supported by this gateway version\s*$/i.test(
           infoText,
@@ -106,6 +111,20 @@ export function createCliOpenShellGatewayObserver(
             !(error.kind === "command" && error.reason === "failed" && (absent || legacy))
           )
             return failed(error, activeGateway);
+        }
+        if (
+          request.runtimeSelection &&
+          ((hasGatewayDeclaration(statusText) && activeGateway !== name) ||
+            (hasGatewayDeclaration(infoText) && namedGateway !== name))
+        ) {
+          return failed(
+            {
+              kind: "transport",
+              reason: "identity_mismatch",
+              message: "OpenShell gateway identity does not match the recorded runtime.",
+            },
+            activeGateway,
+          );
         }
         if (connected && activeGateway === name && absentInfo) {
           return failed(
