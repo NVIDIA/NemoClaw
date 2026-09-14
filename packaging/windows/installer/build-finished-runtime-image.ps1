@@ -30,6 +30,18 @@ if (-not (Test-Path -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Pa
 $files = @(Get-ChildItem -LiteralPath $RuntimeRoot -Recurse -File -Force)
 $logicalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
 $sourceManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()
+$requiredStagingBytes = $logicalBytes + 1GB
+$stagingDrive = Get-PSDrive -PSProvider FileSystem |
+    Where-Object { $_.Free -gt $requiredStagingBytes } |
+    Sort-Object -Property Free -Descending |
+    Select-Object -First 1
+if ($null -eq $stagingDrive) { throw 'No runner filesystem has enough free space for the finished runtime image.' }
+[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($OutputImage)) | Out-Null
+$workingImage = if ([string]::Equals([IO.Path]::GetPathRoot($OutputImage), $stagingDrive.Root, [StringComparison]::OrdinalIgnoreCase)) {
+    $OutputImage
+} else {
+    Join-Path $stagingDrive.Root ('NemoClawRuntime-' + [guid]::NewGuid().ToString('N') + '.vhdx')
+}
 $maximumMiB = [Math]::Max(4096, [Math]::Ceiling(($logicalBytes + 536870912) / 1MB))
 $mount = Join-Path $env:RUNNER_TEMP ('nemoclaw-image-' + [guid]::NewGuid().ToString('N'))
 $diskpart = Join-Path $env:SystemRoot 'System32\diskpart.exe'
@@ -50,11 +62,10 @@ $receipt = [ordered]@{
 }
 $primary = $null
 try {
-    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($OutputImage)) | Out-Null
     [IO.Directory]::CreateDirectory($mount) | Out-Null
     @(
-        "create vdisk file=`"$OutputImage`" maximum=$maximumMiB type=expandable"
-        "select vdisk file=`"$OutputImage`""
+        "create vdisk file=`"$workingImage`" maximum=$maximumMiB type=expandable"
+        "select vdisk file=`"$workingImage`""
         'attach vdisk'
         'create partition primary'
         'format fs=ntfs quick unit=4096 label=NemoClawRuntime'
@@ -85,10 +96,13 @@ try {
         (Get-FileHash -LiteralPath (Join-Path $mount 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sourceManifestSha256) {
         throw 'The mounted runtime manifest differs after image population.'
     }
-    @("select vdisk file=`"$OutputImage`"", 'detach vdisk', 'compact vdisk', 'exit') |
+    @("select vdisk file=`"$workingImage`"", 'detach vdisk', 'compact vdisk', 'exit') |
         Set-Content -LiteralPath $detach -Encoding ascii
     & $diskpart /s $detach | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Runtime image detach failed with status $LASTEXITCODE." }
+    if (-not [string]::Equals($workingImage, $OutputImage, [StringComparison]::OrdinalIgnoreCase)) {
+        Move-Item -LiteralPath $workingImage -Destination $OutputImage
+    }
     $receipt['image'] = @{
         file = [IO.Path]::GetFileName($OutputImage)
         bytes = (Get-Item -LiteralPath $OutputImage).Length
@@ -102,12 +116,15 @@ try {
     $primary = $_
     $receipt['error'] = $_.Exception.Message
 } finally {
-    if (Test-Path -LiteralPath $OutputImage) {
+    if (Test-Path -LiteralPath $workingImage) {
         try {
-            @("select vdisk file=`"$OutputImage`"", 'detach vdisk noerr', 'exit') |
+            @("select vdisk file=`"$workingImage`"", 'detach vdisk noerr', 'exit') |
                 Set-Content -LiteralPath $detach -Encoding ascii
             & $diskpart /s $detach | Out-Null
         } catch { if ($null -eq $primary) { $primary = $_ } }
+    }
+    if ($workingImage -ne $OutputImage -and (Test-Path -LiteralPath $workingImage)) {
+        Remove-Item -LiteralPath $workingImage -Force
     }
     foreach ($path in @($script, $detach)) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
     if (Test-Path -LiteralPath $mount) { Remove-Item -LiteralPath $mount -Force -Recurse }
