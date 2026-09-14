@@ -105,29 +105,37 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
     pid === undefined
       ? "$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=$s.Status.ToString();signerSubject=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''};signerThumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress"
       : "$p=Get-Process -Id ([int]$env:NEMOCLAW_EDGE_INSPECT_PID) -ErrorAction Stop;[ordered]@{pid=$p.Id;path=$p.Path;creationFiletime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress";
-  const result = await execFileAsync(
-    powershell,
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-    {
-      env: {
-        ...process.env,
-        PSModulePath: path.win32.join(
-          systemRoot,
-          "System32",
-          "WindowsPowerShell",
-          "v1.0",
-          "Modules",
-        ),
-        ...(pid === undefined
-          ? { NEMOCLAW_EDGE_INSPECT_PATH: file }
-          : { NEMOCLAW_EDGE_INSPECT_PID: String(pid) }),
+  let result;
+  try {
+    result = await execFileAsync(
+      powershell,
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      {
+        env: {
+          ...process.env,
+          PSModulePath: path.win32.join(
+            systemRoot,
+            "System32",
+            "WindowsPowerShell",
+            "v1.0",
+            "Modules",
+          ),
+          ...(pid === undefined
+            ? { NEMOCLAW_EDGE_INSPECT_PATH: file }
+            : { NEMOCLAW_EDGE_INSPECT_PID: String(pid) }),
+        },
+        windowsHide: true,
+        timeout: 15_000,
+        maxBuffer: 64 * 1024,
+        encoding: "utf8",
       },
-      windowsHide: true,
-      timeout: 15_000,
-      maxBuffer: 64 * 1024,
-      encoding: "utf8",
-    },
-  );
+    );
+  } catch (error: any) {
+    const stderr = typeof error?.stderr === "string" ? error.stderr.slice(0, 4096) : "";
+    throw new Error(
+      `Microsoft Edge identity probe failed (${Number(error?.code) || 1})${stderr ? `: ${stderr}` : "."}`,
+    );
+  }
   return JSON.parse(result.stdout.trim());
 }
 
