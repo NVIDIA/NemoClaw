@@ -81,17 +81,24 @@ describe("PR review advisor", () => {
     expect(
       [
         "testDepth.suggestedTests and staticTestInventory are internal starting points for selecting existing validation, not proof that coverage is absent or authorization to add or modify tests.",
-        "Prefer, in order: cite existing coverage unchanged; strengthen an existing owner's input or oracle; broaden an existing owner and replace weaker or redundant coverage; add a new test only when no existing owner can express the behavior without losing another distinct contract; or state why automated coverage does not apply.",
+        "Prefer improving or replacing existing coverage when its input or oracle can detect the defect.",
+        "Recommend new coverage only for a distinct behavior gap that no existing owner can express without losing another contract, and explain why.",
+        "Choose the smallest coverage change that detects the defect and remove overlap it makes redundant.",
         "A changed source file without a changed test file does not establish a gap.",
-        "classify each finding's coverage as Existing, Strengthen, Replace, Add, or Not applicable.",
-        "state the expected net change in test cases, assertions, and test files.",
         "Review every invariant listed in riskPlan against the diff and checked-in test evidence under the general regression-evidence rule above. After applying that rule, report a finding when a changed invariant lacks applicable checked-in regression evidence, unless a more specific finding already covers the same gap.",
         "Selecting an existing E2E selector identifies applicable validation; only its revision-bound result can validate the PR. It does not authorize adding or modifying E2E tests, assertions, fixtures, selectors, matrix entries, jobs, or workflow fan-out.",
-        "When existing live proof has a gap, first strengthen its input or oracle or replace overlapping assertions and fixtures.",
+        "Improve existing live proof when it already reaches the changed boundary; remove overlapping proof when that preserves the contract.",
         "Propose a new live E2E test only when the changed behavior crosses a real external boundary that no existing live proof reaches.",
         "If a real boundary gap is outside the accepted scope of the current PR, record it as a limitation instead of asking this PR to add coverage.",
-        "missingRegressionTest that begins with exactly one coverage action: `Existing:`, `Strengthen:`, `Replace:`, `Add:`, or `Not applicable:`",
+        "missingRegressionTest that identifies existing evidence or the smallest coverage change needed.",
       ].filter((clause) => !prompt.includes(clause)),
+    ).toEqual([]);
+
+    expect(
+      [
+        "classify each finding's coverage",
+        "expected net change in test cases, assertions, and test files",
+      ].filter((clause) => prompt.includes(clause)),
     ).toEqual([]);
   });
 

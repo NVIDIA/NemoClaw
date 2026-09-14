@@ -191,8 +191,8 @@ guidance. No component combines findings or makes merge decisions. Specialist re
 They do not replace required human review or change repository merge gates.
 
 The canonical coverage-decision contract lives in `trusted-guidance.mts`. It asks specialists to
-exhaust existing coverage before recommending more and to make the net test growth and redundant
-coverage explicit. Keep action labels and required finding details in that single executable owner.
+find the nearest test owner, prefer improving or replacing existing coverage, and justify any new
+coverage as the smallest way to detect a distinct behavior gap.
 
 Each specialist also records all additional E2E recommendations through a validated tool.
 The receipt preserves the deterministic floor, optional coverage, explicit empty decisions, and unresolved coverage.
