@@ -37,12 +37,16 @@ import {
   SANDBOX_BASE_RESOLUTION_SCHEMA,
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
+  type SandboxBaseImageValidationContext,
   SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
   versionGte,
 } from "../sandbox-base-image";
-import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
+import {
+  hermesSandboxBaseImageHasSecurityInventory,
+  sandboxBaseImageHasSecurityInventory,
+} from "../sandbox-base-image/security-inventory";
 import { getAgentSandboxBaseImageEnvVar } from "./base-image-env";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
@@ -328,11 +332,16 @@ function createAgentBaseImageResolutionOptions(
   options: EnsureAgentBaseImageOptions,
 ): ResolveBaseImageOptions {
   const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;
   const validationOptions =
     agent.name === "hermes"
       ? {
-          validateImage: (imageRef: string) =>
-            hermesBaseImageSupportsMcp(imageRef) && sandboxBaseImageHasSecurityInventory(imageRef),
+          validateImage: (imageRef: string, context?: SandboxBaseImageValidationContext) =>
+            hermesBaseImageSupportsMcp(imageRef) &&
+            hermesSandboxBaseImageHasSecurityInventory(
+              imageRef,
+              context?.source === "pinned" && context.pinnedRemoteRef === pinnedRemoteRef,
+            ),
           validationDescription:
             "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
         }
@@ -342,7 +351,6 @@ function createAgentBaseImageResolutionOptions(
             validationDescription: "the immutable security package inventory",
           }
         : createDeepAgentsCodeBaseImageResolutionOptions(agent, dockerfilePath);
-  const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;
   return {
     imageName,
     dockerfilePath,
@@ -417,7 +425,12 @@ export function bindLocalAgentBaseImageToPinnedProvenance(
   ) {
     return null;
   }
-  if (resolutionOptions.validateImage && !resolutionOptions.validateImage(imageRef)) return null;
+  if (
+    resolutionOptions.validateImage &&
+    !resolutionOptions.validateImage(imageRef, { source: "pinned", pinnedRemoteRef })
+  ) {
+    return null;
+  }
   const digest = resolvedRemoteRef.slice(resolvedRemoteRef.indexOf("@") + 1);
   const metadata = createSandboxBaseImageResolutionMetadata(
     resolutionOptions,

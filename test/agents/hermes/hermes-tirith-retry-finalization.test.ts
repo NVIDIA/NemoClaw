@@ -170,7 +170,6 @@ describe("agents/hermes/start.sh Tirith retry finalization", () => {
   it("runs reset-aware retry preparation in the root startup path", () => {
     const run = runTirithFinalizer([
       "refresh_hermes_runtime_config_hashes() { :; }",
-      "inspect_hermes_mcp_integrity() { :; }",
       "HERMES_HASH_FILE=/etc/nemoclaw/hermes.config-hash",
       "prepare_hermes_lazy_dependencies() { :; }",
       "ensure_hermes_config_root_mode() { :; }",

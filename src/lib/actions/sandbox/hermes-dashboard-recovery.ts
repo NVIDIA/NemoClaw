@@ -31,14 +31,14 @@ export function getHermesDashboardRecoveryConfig(
   };
 }
 
-export function ensureHermesDashboardPortForwardIfEnabled(
+export async function ensureHermesDashboardPortForwardIfEnabled(
   sandboxName: string,
   deps: {
     getRecoveryConfig?: RecoveryConfigReader;
     isPortForwardHealthy(sandboxName: string, port: number): SandboxForwardHealth;
-    ensurePortForward(sandboxName: string, port: number): boolean;
+    ensurePortForward(sandboxName: string, port: number): boolean | Promise<boolean>;
   },
-): boolean | null {
+): Promise<boolean | null> {
   const dashboard = (deps.getRecoveryConfig ?? getHermesDashboardRecoveryConfig)(sandboxName);
   if (dashboard === null) return null;
   const forwardHealth = deps.isPortForwardHealthy(sandboxName, dashboard.publicPort);

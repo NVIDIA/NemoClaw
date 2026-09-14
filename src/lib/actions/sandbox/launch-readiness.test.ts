@@ -802,7 +802,7 @@ describe("launch readiness validation", () => {
     };
     routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
     const currentDeps = await createAcceptedLease();
-    currentDeps.inferenceProbe = vi.fn(async (_sandboxName, _agent, gatewayName) => ({
+    currentDeps.inferenceProbe = vi.fn(async (_sandboxName, _agent, _gatewayName) => ({
       healthy: true,
       broken: false,
       httpStatus: 299,

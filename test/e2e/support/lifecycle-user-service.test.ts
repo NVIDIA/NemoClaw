@@ -191,6 +191,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
     const installerCleanupSentinel = path.join(root, "installer-cleanup-sentinel");
 
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(installerCleanupSentinel, "fixture-owned\n");
     fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(
@@ -213,7 +214,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       env.NEMOCLAW_INSTALLER_STAGED = installerCleanupSentinel;
       const staged = execFileSync(
         "bash",
-        ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+        ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
         { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
       );
 
@@ -222,7 +223,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       expect(fs.readFileSync(unit, "utf8")).toContain(`ExecStart=${bin}/openshell-gateway`);
       expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
 
-      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRemovalScript()], {
+      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceRemovalScript()], {
         env,
         killSignal: "SIGKILL",
         timeout: 30_000,
@@ -250,6 +251,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(path.join(bin, "systemctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
     try {
@@ -260,7 +262,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       });
       const output = execFileSync(
         "bash",
-        ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+        ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
         { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
       );
 
@@ -283,6 +285,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
     const unit = path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service");
 
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(
       path.join(bin, "systemctl"),
@@ -305,7 +308,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       expect(() =>
         execFileSync(
           "bash",
-          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
           { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
         ),
       ).toThrow();
@@ -325,6 +328,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.mkdirSync(unitDir, { recursive: true });
     fs.writeFileSync(unit, "[Service]\nExecStart=/tmp/foreign\n");
     fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
@@ -344,7 +348,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       expect(() =>
         execFileSync(
           "bash",
-          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
           { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
         ),
       ).toThrow();
