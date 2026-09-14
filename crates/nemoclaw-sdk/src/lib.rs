@@ -121,3 +121,5 @@ pub mod spark;
 pub mod ollama;
 
 pub mod docker;
+
+pub mod managed;
