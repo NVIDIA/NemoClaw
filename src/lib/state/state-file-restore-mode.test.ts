@@ -41,15 +41,20 @@ afterEach(() => {
 
 describe("state-file restore modes", () => {
   it("restores an OpenClaw config with the mutable managed-guard mode", () => {
-    const { configPath, stateDir, status } = runRestore(true);
+    const { configPath, stateDir, status } = runRestore(true, (dir) =>
+      fs.writeFileSync(path.join(dir, STATE_FILE.path), "{}\n", { mode: 0o600 }),
+    );
 
     expect(status).toBe(0);
-    expect(mode(configPath)).toBe(0o660);
-    expect(mode(`${configPath}.last-good`)).toBe(0o660);
-    expect(mode(path.join(stateDir, ".config-hash"))).toBe(0o660);
+    expect(mode(configPath)).toBe(0o600);
+    expect(mode(`${configPath}.last-good`)).toBe(0o600);
+    expect(mode(path.join(stateDir, ".config-hash"))).toBe(0o600);
 
     // A sandbox that cannot publish the config hash must not report a restore.
-    const blocked = runRestore(true, (dir) => fs.mkdirSync(path.join(dir, ".config-hash")));
+    const blocked = runRestore(true, (dir) => {
+      fs.writeFileSync(path.join(dir, STATE_FILE.path), "{}\n", { mode: 0o600 });
+      fs.mkdirSync(path.join(dir, ".config-hash"));
+    });
     expect(blocked.status).not.toBe(0);
   });
 

@@ -101,12 +101,9 @@ export function buildStateFileRestoreCommand(
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
     'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
     'cat > "$tmp"',
-    // The managed OpenClaw restart preflight accepts only the exact mutable
-    // sandbox:sandbox 0660 configuration posture. Apply that mode to the
-    // staged inode before the atomic swap so the gateway and its trusted
-    // controller never observe the restored config with the generic 0640
-    // state-file mode.
-    refreshOpenClawConfigHash ? 'chmod 660 "$tmp"' : 'chmod 640 "$tmp"',
+    // Preserve the fresh runtime's config mode: the non-root OpenShell
+    // workload requires 0600, while the shared gateway runtime uses 0660.
+    refreshOpenClawConfigHash ? 'chmod --reference="$dst" "$tmp"' : 'chmod 640 "$tmp"',
   ];
 
   if (refreshOpenClawConfigHash) {
@@ -118,7 +115,7 @@ export function buildStateFileRestoreCommand(
       '[ ! -L "$last_good" ] || { echo "refusing symlinked last-good target: $last_good" >&2; exit 13; }',
       'anchor_tmp="$(mktemp "${parent}/.nemoclaw-lastgood.XXXXXX")" || { echo "failed to stage last-good anchor" >&2; exit 14; }',
       'cat "$tmp" > "$anchor_tmp" || { echo "failed to write last-good anchor" >&2; exit 14; }',
-      'chmod 660 "$anchor_tmp" 2>/dev/null || true',
+      'chmod --reference="$tmp" "$anchor_tmp"',
       'mv -f "$anchor_tmp" "$last_good" || { echo "failed to install last-good anchor" >&2; exit 14; }',
     );
   }
@@ -130,7 +127,7 @@ export function buildStateFileRestoreCommand(
       'hash_file="${parent}/.config-hash"',
       '[ ! -L "$hash_file" ] || { echo "refusing symlinked config hash target: $hash_file" >&2; exit 12; }',
       '(cd "$parent" && sha256sum "$(basename "$dst")" > .config-hash)',
-      'chmod 660 "$hash_file" 2>/dev/null || true',
+      'chmod --reference="$dst" "$hash_file"',
     );
   }
 

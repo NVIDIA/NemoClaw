@@ -38,7 +38,7 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
 
     // The .config-hash is still refreshed after the swap.
     expect(cmd).toContain("sha256sum");
-    expect(cmd).toContain('chmod 660 "$tmp"');
+    expect(cmd).toContain('chmod --reference="$dst" "$tmp"');
   });
 
   it("does not touch the .last-good anchor for non-OpenClaw state restores", () => {
