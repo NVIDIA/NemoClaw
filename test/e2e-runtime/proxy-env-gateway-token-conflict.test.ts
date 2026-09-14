@@ -72,6 +72,9 @@ function runReconcile(scenario: Scenario): {
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
       "_TOOL_REDIRECTS=()",
+      scenario.sourceUrl
+        ? `OPENCLAW_GATEWAY_URL=${shellQuote(scenario.sourceUrl)}`
+        : "unset OPENCLAW_GATEWAY_URL",
       `OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.intended)}`,
       "write_runtime_shell_env",
       "",
@@ -89,7 +92,6 @@ function runReconcile(scenario: Scenario): {
     scenario.shadowStatusCommands
       ? "function return { builtin return 0; }; function exit { builtin return 0; }; function echo { builtin return 0; }"
       : "",
-    scenario.sourceUrl ? `OPENCLAW_GATEWAY_URL=${shellQuote(scenario.sourceUrl)}` : "",
   ].filter(Boolean);
   const sourceAndPrint = [
     `. ${shellQuote(envFile)}`,
