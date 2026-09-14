@@ -58,6 +58,16 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "retains cleanup evidence independently of repair success (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "records blocked outcomes without validating or publishing them (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
       "test": "uses isolated workspace paths for the %s job (#10791)",
       "category": "security"
     },

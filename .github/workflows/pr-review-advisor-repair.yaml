@@ -267,6 +267,7 @@ jobs:
       contents: read
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      outcome: ${{ steps.export.outputs.outcome }}
     env:
       ARTIFACT_DIR: ${{ github.workspace }}/.repair/artifact
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
@@ -345,18 +346,29 @@ jobs:
       - name: Run exactly two repair turns
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" run
 
-      - name: Download and export the untrusted proposal
+      - id: export
+        name: Download and export the untrusted proposal
         env:
           SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
         run: |
           node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" download
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" export
+          outcome="$(node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" export)"
+          printf 'outcome=%s\n' "$outcome" >>"$GITHUB_OUTPUT"
 
       - name: Delete the repair sandbox
         if: ${{ always() }}
         env:
           CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/cleanup.json
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" delete
+
+      - name: Upload the cleanup receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cleanup.json
+          if-no-files-found: error
+          retention-days: 1
 
       - id: upload
         name: Upload the untrusted repair artifact
@@ -427,6 +439,7 @@ jobs:
     needs:
       - select
       - resolve
+    if: ${{ needs.resolve.result == 'success' && needs.resolve.outputs.outcome == 'proposed' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -503,7 +516,7 @@ jobs:
     needs:
       - select
       - validate
-    if: ${{ inputs.repair_publish && vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true' }}
+    if: ${{ needs.validate.result == 'success' && inputs.repair_publish && vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true' }}
     environment: advisor-repair-publish
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -622,6 +635,7 @@ jobs:
           PUBLISH_RESULT: ${{ needs.publish.result }}
           RECOVER_RESULT: ${{ needs.recover.result }}
           RESOLVE_RESULT: ${{ needs.resolve.result }}
+          REPAIR_OUTCOME: ${{ needs.resolve.outputs.outcome }}
           SELECT_RESULT: ${{ needs.select.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
         run: |
@@ -633,6 +647,7 @@ jobs:
             echo "- Recover: $RECOVER_RESULT"
             echo "- Claim: $CLAIM_RESULT"
             echo "- Resolve: $RESOLVE_RESULT"
+            echo "- Repair outcome: ${REPAIR_OUTCOME:-unavailable}"
             echo "- Validate: $VALIDATE_RESULT"
             echo "- Publish: $PUBLISH_RESULT"
           } >>"$GITHUB_STEP_SUMMARY"

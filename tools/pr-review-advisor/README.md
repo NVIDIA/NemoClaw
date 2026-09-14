@@ -78,6 +78,10 @@ work, so do not rerun the same attempt blindly. The workflow then:
 4. Optionally publishes one verified commit with a compare-and-swap update after rechecking that the
    PR head, discussion, and review state have not changed.
 
+If the resolver cannot produce a safe patch, it restores all edits and records a bounded `blocked`
+proposal; validation and publication stay unavailable for that outcome. The resolve job retains its
+sandbox-cleanup receipt independently so cleanup evidence survives candidate or deletion failures.
+
 Publication requires all three controls: the dispatch input `repair_publish`, the repository
 variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`, and approval for the protected
 `advisor-repair-publish` environment. Only the protected publisher receives `contents: write`; it

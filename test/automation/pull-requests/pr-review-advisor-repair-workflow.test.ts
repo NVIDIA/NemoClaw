@@ -137,6 +137,25 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(cleanup?.if).not.toContain("steps.create.outcome");
   });
 
+  // source-shape-contract: security -- Cleanup evidence must survive every candidate or deletion failure without gaining credentials or write authority
+  it("retains cleanup evidence independently of repair success (#10791)", () => {
+    const cleanupUpload = (workflow.jobs.resolve.steps ?? []).find((step) =>
+      String(step.with?.name ?? "").startsWith("advisor-repair-cleanup-"),
+    );
+
+    expect(cleanupUpload?.if).toBe("${{ always() }}");
+    expect(cleanupUpload?.with?.path).toBe("${{ runner.temp }}/cleanup.json");
+    expect(cleanupUpload?.with?.["retention-days"]).toBe(1);
+  });
+
+  // source-shape-contract: security -- A model-declared no-repair outcome must never cross into candidate execution or protected publication
+  it("records blocked outcomes without validating or publishing them (#10791)", () => {
+    expect(workflow.jobs.resolve.outputs?.outcome).toContain("steps.export.outputs.outcome");
+    expect(workflow.jobs.validate.if).toContain("needs.resolve.outputs.outcome == 'proposed'");
+    expect(workflow.jobs.publish.if).toContain("needs.validate.result == 'success'");
+    expect(serialized(workflow.jobs.audit)).toContain("needs.resolve.outputs.outcome");
+  });
+
   it.each(jobEnvironmentCases)(
     "uses contexts available while GitHub compiles the %s job environment (#10791)",
     (_jobName, env) => {

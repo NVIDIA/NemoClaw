@@ -14,6 +14,7 @@ import {
   type RepairSelection,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
 import {
+  exportAdvisorRepairPatch,
   materializeAdvisorRepairWorkspace,
   prepareAdvisorRepairInputs,
   reconcilePreviousAdvisorRepairSandboxes,
@@ -338,6 +339,58 @@ describe("PR Review Advisor two-turn resolver", () => {
     expect(serialized).not.toContain("NVIDIA/NemoClaw");
     expect(serialized).not.toContain("a".repeat(40));
     expect(serialized).not.toContain("sha256:");
+  });
+
+  it("exports a bounded blocked outcome without inventing an empty patch (#10791)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-blocked-"));
+    temporaryDirectories.push(directory);
+    const source = path.join(directory, "source");
+    const base = path.join(directory, "base");
+    const candidate = path.join(directory, "candidate");
+    const artifact = path.join(directory, "artifact");
+    fs.mkdirSync(source);
+    fs.mkdirSync(path.join(base, "docs"), { recursive: true });
+    fs.mkdirSync(path.join(candidate, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(base, "docs/example.mdx"), "before\n");
+    fs.writeFileSync(path.join(candidate, "docs/example.mdx"), "before\n");
+    execFileSync("git", ["init", "--initial-branch=main"], { cwd: source });
+    execFileSync("git", ["config", "user.name", "Repair Test"], { cwd: source });
+    execFileSync("git", ["config", "user.email", "repair@example.test"], { cwd: source });
+    fs.mkdirSync(path.join(source, "docs"));
+    fs.writeFileSync(path.join(source, "docs/example.mdx"), "before\n");
+    execFileSync("git", ["add", "."], { cwd: source });
+    execFileSync("git", ["commit", "-m", "test: add source"], { cwd: source });
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: source,
+      encoding: "utf8",
+    }).trim();
+    const selected = selection(headSha);
+    const selectionFile = path.join(directory, "selection.json");
+    const proposalFile = path.join(directory, "proposal.json");
+    fs.writeFileSync(selectionFile, JSON.stringify(selected));
+    fs.writeFileSync(
+      proposalFile,
+      JSON.stringify({
+        version: 1,
+        findingIds: selected.findingIds,
+        unresolvedFindingIds: selected.findingIds,
+        changedPaths: [],
+        summary: "No safe bounded repair was available.",
+        outcome: "blocked",
+      }),
+    );
+
+    expect(
+      exportAdvisorRepairPatch({
+        artifactDirectory: artifact,
+        baseDirectory: base,
+        candidateDirectory: candidate,
+        proposalFile,
+        selectionFile,
+        sourceRepository: source,
+      }),
+    ).toBe("blocked");
+    expect(fs.readdirSync(artifact)).toEqual(["proposal.json"]);
   });
 
   it.each(["9".repeat(40), `sha256:${"9".repeat(64)}`])(

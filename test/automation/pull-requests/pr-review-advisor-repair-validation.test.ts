@@ -100,6 +100,8 @@ describe("PR Review Advisor trusted validation", () => {
     expect(readme).toContain("Manual repair validation is a separate credential-free boundary");
     expect(readme).toContain("PR-derived tests through `npm run test:changed`");
     expect(readme).toContain("remain disabled by `npm ci --ignore-scripts`");
+    expect(readme).toContain("records a bounded `blocked`");
+    expect(readme).toContain("sandbox-cleanup receipt independently");
   });
 
   it("reconstructs, runs a secret-free plan, and seals an immutable receipt (#10791)", () => {

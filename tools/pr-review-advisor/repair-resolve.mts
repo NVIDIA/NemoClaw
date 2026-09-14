@@ -463,7 +463,7 @@ export function exportAdvisorRepairPatch(input: {
   proposalFile: string;
   selectionFile: string;
   sourceRepository: string;
-}): void {
+}): "proposed" | "blocked" {
   const selection = parseSelection(readJson(input.selectionFile));
   const proposal = parseProposal(readJson(input.proposalFile, 512 * 1024), selection);
   const base = regularFileInventory(input.baseDirectory);
@@ -476,6 +476,22 @@ export function exportAdvisorRepairPatch(input: {
     changedPaths.some((file) => !selection.selectedPaths.includes(file))
   )
     throw new RepairError("sandbox changes do not match the selected proposal paths");
+  mkdirSync(input.artifactDirectory, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    path.join(input.artifactDirectory, "proposal.json"),
+    readBoundedFile(input.proposalFile, 512 * 1024),
+    { flag: "wx", mode: 0o600 },
+  );
+  if (proposal.outcome === "blocked") {
+    if (
+      changedPaths.length ||
+      proposal.unresolvedFindingIds.join("\0") !== proposal.findingIds.join("\0")
+    )
+      throw new RepairError(
+        "a blocked repair must restore all edits and leave every finding unresolved",
+      );
+    return "blocked";
+  }
   for (const file of changedPaths) {
     const source = path.join(input.candidateDirectory, file);
     const destination = path.join(input.sourceRepository, file);
@@ -529,21 +545,16 @@ export function exportAdvisorRepairPatch(input: {
   ) as Buffer;
   if (!patch.length || patch.length > MAX_REPAIR_PATCH_BYTES)
     throw new RepairError("repair patch is empty or exceeds the limit");
-  mkdirSync(input.artifactDirectory, { recursive: true, mode: 0o700 });
   writeFileSync(path.join(input.artifactDirectory, "repair.patch"), patch, {
     flag: "wx",
     mode: 0o600,
   });
-  writeFileSync(
-    path.join(input.artifactDirectory, "proposal.json"),
-    readBoundedFile(input.proposalFile, 512 * 1024),
-    { flag: "wx", mode: 0o600 },
-  );
+  return "proposed";
 }
 
-function exportRepair(env: NodeJS.ProcessEnv): void {
+function exportRepair(env: NodeJS.ProcessEnv): "proposed" | "blocked" {
   const download = required(env.REPAIR_DOWNLOAD_DIR, "REPAIR_DOWNLOAD_DIR");
-  exportAdvisorRepairPatch({
+  return exportAdvisorRepairPatch({
     artifactDirectory: required(env.ARTIFACT_DIR, "ARTIFACT_DIR"),
     baseDirectory: required(env.REPAIR_BASE_DIR, "REPAIR_BASE_DIR"),
     candidateDirectory: path.join(download, "repo"),
@@ -590,7 +601,7 @@ async function main(): Promise<void> {
       downloadAdvisorRepairCandidate(process.env);
       return;
     case "export":
-      exportRepair(process.env);
+      console.log(exportRepair(process.env));
       return;
     case "delete":
       deleteAdvisorRepairSandbox(
