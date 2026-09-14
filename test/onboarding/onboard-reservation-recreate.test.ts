@@ -11,6 +11,7 @@ import {
   trailingJsonPayload,
   workspaceEnv,
 } from "../helpers/onboard-child-process-harness";
+import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
@@ -32,6 +33,7 @@ describe("onboard sandbox recreate reservation safety", () => {
     {
       name: "preserves a current-session pending route reservation across a not-ready recreate",
       reservationSessionId: "session-owner",
+      lingeringForward: false,
       expectedRemoval: false,
       replaceBeforeCleanup: false,
       expectedRetainedReservation: {
@@ -44,6 +46,7 @@ describe("onboard sandbox recreate reservation safety", () => {
     {
       name: "removes a foreign-session pending route reservation before a not-ready recreate",
       reservationSessionId: "session-other",
+      lingeringForward: false,
       expectedRemoval: true,
       replaceBeforeCleanup: false,
       expectedRetainedReservation: null,
@@ -51,6 +54,7 @@ describe("onboard sandbox recreate reservation safety", () => {
     {
       name: "removes an unstamped pending route reservation before a not-ready recreate",
       reservationSessionId: null,
+      lingeringForward: false,
       expectedRemoval: true,
       replaceBeforeCleanup: false,
       expectedRetainedReservation: null,
@@ -58,6 +62,7 @@ describe("onboard sandbox recreate reservation safety", () => {
     {
       name: "preserves a replacement written after stale reservation classification",
       reservationSessionId: "session-other",
+      lingeringForward: false,
       expectedRemoval: false,
       replaceBeforeCleanup: true,
       expectedRetainedReservation: {
@@ -68,11 +73,30 @@ describe("onboard sandbox recreate reservation safety", () => {
         model: "replacement-model",
       },
     },
+    {
+      name: "rejects recreation before port rebind when a deleted sandbox forward remains reachable",
+      reservationSessionId: "session-owner",
+      lingeringForward: true,
+      expectedRemoval: false,
+      replaceBeforeCleanup: false,
+      expectedRetainedReservation: {
+        name: "my-assistant",
+        gpuEnabled: false,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      },
+    },
   ] as const)(
     "$name (#6562)",
-    { timeout: 60_000 },
+    testTimeoutOptions(60_000),
     async (
-      { reservationSessionId, expectedRemoval, replaceBeforeCleanup, expectedRetainedReservation },
+      {
+        reservationSessionId,
+        expectedRemoval,
+        replaceBeforeCleanup,
+        expectedRetainedReservation,
+        lingeringForward,
+      },
       context,
     ) => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
@@ -105,7 +129,27 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   lifecycleState: "created",
   phase: "NotReady",
 });
-const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
+const lingeringForward = ${JSON.stringify(lingeringForward)};
+// Forward ownership uses the same standalone gateway as the teardown fixture.
+// Keep host service discovery outside this caller-level recreation test.
+const gatewayAuthority = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/gateway-teardown-authority.ts"))});
+gatewayAuthority.resolveGatewayForwardAuthority = gatewayAuthority.resolveGatewayTeardownAuthority;
+const gatewayHost = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/gateway-host-runtime.ts"))});
+const createGatewayHostRuntime = gatewayHost.createGatewayHostRuntime;
+gatewayHost.createGatewayHostRuntime = (deps) => ({
+  ...createGatewayHostRuntime(deps),
+  getGatewayForwardRuntimeAuthority: () => ({ gatewayEndpoint: "https://127.0.0.1:8080" }),
+});
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture(lingeringForward);
+let sourceDeleted = false;
+const listener = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/local-forward-listener.ts"))});
+const probeListener = listener.probeLocalForwardListener;
+listener.probeLocalForwardListener = (...args) => {
+  const reachable = probeListener(...args);
+  if (sourceDeleted && reachable) events.push({ kind: "oldForwardReachable" });
+  return reachable;
+};
+
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
@@ -113,7 +157,8 @@ runner.run = (command) => {
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete")) {
     createdSandbox.delete();
-    forwardService.release();
+    sourceDeleted = true;
+    if (!lingeringForward) forwardService.release();
     return { status: 0 };
   }
   const sandboxResult = createdSandbox.run(command);
@@ -259,6 +304,23 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+const orchestration = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/sandbox-create/orchestration.ts"))});
+const createOrchestrator = orchestration.createSandboxWithBaseImageResolution;
+orchestration.createSandboxWithBaseImageResolution = (runtime) => {
+  const create = createOrchestrator(runtime);
+  return (...args) => {
+    for (const [index, kind] of [[6, "dashboardRebind"], [7, "hermesRebind"]]) {
+      const scope = args[index];
+      const rebind = scope.rebindAfterOwnedForwardDelete.bind(scope);
+      scope.rebindAfterOwnedForwardDelete = (...rebindArgs) => {
+        events.push({ kind });
+        return rebind(...rebindArgs);
+      };
+    }
+    return create(...args);
+  };
+};
+
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -314,14 +376,14 @@ const { createSandbox } = require(${onboardPath});
           NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
           NEMOCLAW_SANDBOX_PREBUILD: "1",
         }),
-        timeoutMs: 30_000,
+        timeoutMs: execTimeout(30_000),
         context,
       });
 
       assert.equal(
         result.status,
-        replaceBeforeCleanup ? 1 : 0,
-        result.stderr ||
+        replaceBeforeCleanup || lingeringForward ? 1 : 0,
+        result.output ||
           result.error?.message ||
           "onboarding subprocess returned an unexpected status",
       );
@@ -332,12 +394,17 @@ const { createSandbox } = require(${onboardPath});
         events: Array<{ kind: string; cmd?: string; name?: string; removed?: boolean }>;
         retainedReservation: { reservationSessionId?: string; model?: string } | null;
       }>(result.stdout);
-      assert.equal(payload.sandboxName, replaceBeforeCleanup ? null : "my-assistant");
+      assert.equal(
+        payload.sandboxName,
+        replaceBeforeCleanup || lingeringForward ? null : "my-assistant",
+      );
       assert.match(
         payload.error ?? "completed",
-        replaceBeforeCleanup
-          ? /pending create recovery state.*--resume.*only when that session retains authority/u
-          : /^completed$/u,
+        lingeringForward
+          ? /sandbox 'my-assistant'.*host forwards did not exit/u
+          : replaceBeforeCleanup
+            ? /pending create recovery state.*--resume.*only when that session retains authority/u
+            : /^completed$/u,
       );
 
       const events = payload.events;
@@ -359,8 +426,19 @@ const { createSandbox } = require(${onboardPath});
         events.some(
           (event) => event.kind === "spawn" && (event.cmd ?? "").includes("sandbox create"),
         ),
-        !replaceBeforeCleanup,
-        "must refuse before creating after the reservation snapshot changes",
+        !replaceBeforeCleanup && !lingeringForward,
+        "must refuse replacement creation after reservation drift or unreleased forwards",
+      );
+      assert.ok(
+        !lingeringForward || events.some((event) => event.kind === "oldForwardReachable"),
+        "the lingering forward must be observed after source deletion",
+      );
+      assert.deepEqual(
+        events.filter((event) => event.kind === "dashboardRebind" || event.kind === "hermesRebind"),
+        lingeringForward || replaceBeforeCleanup
+          ? []
+          : [{ kind: "dashboardRebind" }, { kind: "hermesRebind" }],
+        "only a safe recreation may rebind either reservation scope",
       );
       assert.deepEqual(payload.retainedReservation, expectedRetainedReservation);
     },
