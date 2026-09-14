@@ -51,6 +51,8 @@ describe("onboard helpers", () => {
       const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
@@ -224,6 +226,8 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "hermes-sandbox",
 });
@@ -451,6 +455,8 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -616,6 +622,8 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -729,6 +737,8 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});

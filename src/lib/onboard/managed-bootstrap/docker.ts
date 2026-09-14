@@ -1528,6 +1528,13 @@ async function restoreOriginal(
     transaction.replacementRuntimeId,
     deps,
   );
+  if (replacement) assertTransactionReplacement(transaction, replacement);
+  // Keep OpenShell stopped during rollback's Docker swap, as activation does.
+  runRequiredOpenShellLifecycleCommand(
+    deps,
+    ["sandbox", "stop", transaction.sandbox.sandboxName],
+    DOCKER_GPU_PATCH_TIMEOUT_MS / 1000,
+  );
   if (replacement) {
     removeExactReplacement(transaction, replacement, deps);
   }
@@ -2140,6 +2147,25 @@ export function createDockerManagedBootstrapAdapter(
   dependencies: DockerManagedBootstrapDeps,
 ): DockerManagedBootstrapAdapter {
   const deps = resolveDeps(dependencies);
+  const finalizeSharedState = (journal: DockerBootstrapTransaction, supervisorReady: boolean) =>
+    finalizeDockerManagedStartupSharedState(
+      {
+        transaction: recoveredManagedSharedStateTransaction(journal),
+        supervisorReady,
+        retainContainerAfterRollback: true,
+      },
+      {
+        ...deps,
+        dockerStop: (id, options) => {
+          runRequiredOpenShellLifecycleCommand(
+            deps,
+            ["sandbox", "stop", journal.sandbox.sandboxName],
+            DOCKER_GPU_PATCH_TIMEOUT_MS / 1000,
+          );
+          return deps.dockerStop(id, options);
+        },
+      },
+    );
   const finalizationContext = (handle: ManagedBootstrapHeldWorkloadHandle) =>
     Object.freeze({
       bootstrapIdentity: handle.bootstrapIdentity,
@@ -2401,19 +2427,9 @@ export function createDockerManagedBootstrapAdapter(
     }
     throw failure;
   };
-  const finalizePendingSharedStateRollback = (
-    journal: DockerBootstrapTransaction,
-    transaction: ReturnType<typeof managedSharedStateTransaction>,
-  ): void => {
+  const finalizePendingSharedStateRollback = (journal: DockerBootstrapTransaction): void => {
     try {
-      finalizeDockerManagedStartupSharedState(
-        {
-          transaction,
-          supervisorReady: false,
-          retainContainerAfterRollback: true,
-        },
-        deps,
-      );
+      finalizeSharedState(journal, false);
     } catch (error) {
       if (error instanceof DockerManagedStartupSharedStateRestoreError) {
         failAfterSharedStateRestoreError(journal, error);
@@ -2863,14 +2879,7 @@ export function createDockerManagedBootstrapAdapter(
     if (sharedStatus === "pending") {
       let outcome;
       try {
-        outcome = finalizeDockerManagedStartupSharedState(
-          {
-            transaction: sharedTransaction,
-            supervisorReady: true,
-            retainContainerAfterRollback: true,
-          },
-          deps,
-        );
+        outcome = finalizeSharedState(journal, true);
       } catch (error) {
         if (error instanceof DockerManagedStartupSharedStateCommitIndeterminateError) {
           throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -3020,7 +3029,7 @@ export function createDockerManagedBootstrapAdapter(
         );
       }
       if (sharedStatus === "pending") {
-        finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
+        finalizePendingSharedStateRollback(activeJournal);
       }
     } else if (journal.phase !== "rollback-authorized") {
       activeJournal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
@@ -3341,7 +3350,7 @@ export function createDockerManagedBootstrapAdapter(
       }
       activeJournal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
       if (!sharedStateAlreadyRolledBack && sharedStatus === "pending") {
-        finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
+        finalizePendingSharedStateRollback(activeJournal);
       }
     } else {
       if (!originalAtTargetRecoverable && !originalAtBackupRecoverable) {
@@ -3392,7 +3401,7 @@ export function createDockerManagedBootstrapAdapter(
           });
         }
         if (sharedStatus === "pending") {
-          finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
+          finalizePendingSharedStateRollback(activeJournal);
         }
       }
     }
@@ -3703,14 +3712,7 @@ export function createDockerManagedBootstrapAdapter(
       if (sharedStatus === "pending") {
         let outcome;
         try {
-          outcome = finalizeDockerManagedStartupSharedState(
-            {
-              transaction: sharedTransaction,
-              supervisorReady: true,
-              retainContainerAfterRollback: true,
-            },
-            deps,
-          );
+          outcome = finalizeSharedState(journal, true);
         } catch (error) {
           if (error instanceof DockerManagedStartupSharedStateCommitIndeterminateError) {
             throw new ManagedBootstrapCommitStateIndeterminateError({

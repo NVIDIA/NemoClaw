@@ -588,7 +588,7 @@ describe("rebuild destroy phase", () => {
       .mockReturnValueOnce({
         status: 1,
         stdout: "",
-        stderr: 'status: Internal, message: "sandbox has no spec"',
+        stderr: "sandbox alpha not found",
       });
     const onDeleted = vi.fn();
 
@@ -613,6 +613,18 @@ describe("rebuild destroy phase", () => {
   });
 
   it.each([
+    [
+      "retained legacy sandbox without a readable spec",
+      { status: 1, stdout: "", stderr: 'status: Internal, message: "sandbox has no spec"' },
+    ],
+    [
+      "current OpenShell legacy config failure",
+      {
+        status: 1,
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      },
+    ],
     [
       "bare NotFound output",
       {

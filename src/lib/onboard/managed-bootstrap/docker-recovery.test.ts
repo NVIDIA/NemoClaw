@@ -800,7 +800,16 @@ describe("Docker managed bootstrap restart recovery", () => {
       replacement,
       timeoutSecs: 1,
     });
-    fake.deps.runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    vi.mocked(fake.deps.runOpenshell!)
+      .mockImplementationOnce((args) => {
+        expect(args.slice(0, 4)).toEqual(["sandbox", "exec", "-n", "alpha"]);
+        return { status: 0 };
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toEqual(["sandbox", "stop", "alpha"]);
+        fake.events.push("openshell:stop");
+        return { status: 0 };
+      });
 
     const restarted = createDockerManagedBootstrapAdapter(fake.deps);
     const recovery = await restarted.recoverUnfinishedTransactions();
@@ -811,6 +820,7 @@ describe("Docker managed bootstrap restart recovery", () => {
       receipts: [],
       failures: [{ sourcePhase: "owner-cleanup-required", code: "provider-recovery-failed" }],
     });
+    expectEventBefore(fake.events, "openshell:stop", `stop:${NEW_ID}`);
     expectEventBefore(fake.events, "journal:bootstrap-complete", "journal:rollback-authorized");
     expect(fake.original?.State?.Running).toBe(false);
     expect(fake.replacement).toBeNull();
