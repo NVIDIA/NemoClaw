@@ -596,7 +596,13 @@ export async function runReadOnlyAdvisor(
             await Promise.race([session.prompt(prompt), timeoutPromise]);
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
-          await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
+          await promptAndWait(
+            promptWithRequiredContextTools(
+              turn.prompt,
+              contextToolNames,
+              tools.requiredReadOneOfPaths,
+            ),
+          );
           const initialFlow = currentTurnFlow;
           // A configured assistant-text repair is a separate, tool-disabled continuation. Preserve
           // the original flow for terminal-submit validation so the harness's own repair prose is

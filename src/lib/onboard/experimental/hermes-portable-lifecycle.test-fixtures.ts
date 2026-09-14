@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import type { SandboxEntry } from "../../state/registry";
 
 export function directoryChain(directory: string): string[] {
   const parent = path.dirname(directory);
@@ -43,4 +44,38 @@ export function openshellMutationCalls(
   return capture.mock.calls.filter(
     (call) => (call[0] as readonly string[]).slice(0, 2).join(":") === `sandbox:${operation}`,
   );
+}
+
+export function rebindAfterSandboxStart<T>(
+  capture: (args: readonly string[]) => T,
+  reboundResult: T,
+) {
+  let started = false;
+  let rebound = false;
+  return (args: readonly string[]): T => {
+    if (args[0] === "sandbox" && args[1] === "start") started = true;
+    if (started && !rebound && args[0] === "sandbox" && args[1] === "list") {
+      rebound = true;
+      return reboundResult;
+    }
+    return capture(args);
+  };
+}
+
+export function driftRegistryAfterStartup(
+  readRegistry: (sandboxName: string) => SandboxEntry | null,
+  started: () => boolean,
+) {
+  let drifted = false;
+  return {
+    readRegistry(sandboxName: string) {
+      const entry = readRegistry(sandboxName);
+      if (!drifted && started() && entry) {
+        drifted = true;
+        return { ...entry, lifecycleGeneration: "f".repeat(64) };
+      }
+      return entry;
+    },
+    didDrift: () => drifted,
+  };
 }
