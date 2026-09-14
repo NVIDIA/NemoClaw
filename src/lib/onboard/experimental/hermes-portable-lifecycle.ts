@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { createOpenShellOperationDeadline } from "../../adapters/openshell/operation-deadline";
 import { TextDecoder } from "node:util";
+import { redactOnboardCommandDiagnosticText } from "../diagnostics/redaction";
 
 import {
   fingerprintOpenShellSandboxId,
@@ -372,7 +373,7 @@ export interface HermesPortableLifecycleRecoveryTimingEvidence {
   readonly startupLaunchCount: number;
   readonly rollbackCount: number;
   readonly totalMs: number;
-  readonly containerAction: "reused" | "started";
+  readonly containerAction: "unknown" | "reused" | "start-attempted" | "started";
   readonly result: "already-running" | "recovered" | "failed";
 }
 
@@ -404,7 +405,9 @@ type HermesPortableCurrentnessTimingRecorder = {
 type HermesPortableLifecycleTimingRecorder = {
   readonly measure: <T>(stage: HermesPortableLifecycleTimingStage, operation: () => T) => T;
   readonly increment: (counter: HermesPortableLifecycleTimingCounter) => void;
-  readonly setContainerAction: (action: "reused" | "started") => void;
+  readonly setContainerAction: (
+    action: HermesPortableLifecycleRecoveryTimingEvidence["containerAction"],
+  ) => void;
   readonly finish: (result: HermesPortableLifecycleRecoveryTimingEvidence["result"]) => void;
 };
 
@@ -491,7 +494,9 @@ function createHermesPortableLifecycleTimingRecorder(
       measure: <T>(_stage: HermesPortableLifecycleTimingStage, operation: () => T): T =>
         operation(),
       increment: (_counter: HermesPortableLifecycleTimingCounter): void => undefined,
-      setContainerAction: (_action: "reused" | "started"): void => undefined,
+      setContainerAction: (
+        _action: HermesPortableLifecycleRecoveryTimingEvidence["containerAction"],
+      ): void => undefined,
       finish: (_result: HermesPortableLifecycleRecoveryTimingEvidence["result"]): void => undefined,
     });
   }
@@ -499,7 +504,7 @@ function createHermesPortableLifecycleTimingRecorder(
   const startedAt = safeTimingNow(now);
   const durations = new Map<HermesPortableLifecycleTimingStage, number>();
   const counts = new Map<HermesPortableLifecycleTimingCounter, number>();
-  let containerAction: HermesPortableLifecycleRecoveryTimingEvidence["containerAction"] = "reused";
+  let containerAction: HermesPortableLifecycleRecoveryTimingEvidence["containerAction"] = "unknown";
   let finished = false;
   const elapsed = (start: number | null, end: number | null): number => {
     if (start === null || end === null) return 0;
@@ -1553,7 +1558,7 @@ export function recoverHermesPortableSandboxLifecycle(
   primaryFailureClass = "container-start";
   const wasRunning = qualified.container.authority.running;
   const needsStart = !wasRunning || qualified.openShellPhase === "Stopped";
-  timing.setContainerAction(wasRunning ? "reused" : "started");
+  timing.setContainerAction(wasRunning ? "reused" : "unknown");
   let rollbackAuthority = qualified;
   let startedByRecovery = false;
   try {
@@ -1574,6 +1579,7 @@ export function recoverHermesPortableSandboxLifecycle(
           qualified.assertTransactionCurrent();
         }
         timing.increment("containerStart");
+        timing.setContainerAction(wasRunning ? "reused" : "start-attempted");
         // Both retained capture routes apply commandBudget immediately before execution.
         const startResult = timing.measure("containerStart", () =>
           captureRetainedLifecycleCommand(
@@ -1584,11 +1590,13 @@ export function recoverHermesPortableSandboxLifecycle(
           ),
         );
         if (startResult.status !== 0 || startResult.error) {
-          throw (
-            startResult.error ??
-            new Error(
-              `Hermes portable OpenShell start failed with status ${String(startResult.status)}`,
-            )
+          const details = redactOnboardCommandDiagnosticText(
+            [startResult.error?.message, startResult.stderr, startResult.stdout]
+              .filter(Boolean)
+              .join("\n"),
+          );
+          throw new Error(
+            `Hermes portable OpenShell start failed with status ${String(startResult.status)}${details ? `:\n${details}` : ""}`,
           );
         }
         startedByRecovery = !wasRunning;
@@ -1644,6 +1652,7 @@ export function recoverHermesPortableSandboxLifecycle(
       if (!isRunning) {
         fail("OpenShell start did not start the receipt-owned container");
       }
+      timing.setContainerAction(wasRunning ? "reused" : "started");
     }
     primaryFailureClass = "openshell-exec-readiness";
     const commandEnv = deps.env ?? process.env;
