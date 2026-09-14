@@ -48,3 +48,18 @@ fn supported_commands_are_top_level_and_destroy_preview_accepts_no_input_file() 
             .success()
     );
 }
+
+#[test]
+fn prototype_bundle_flag_selects_an_explicit_bundle() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["export", "--bundle"])
+        .arg(directory.path())
+        .arg("--state-dir")
+        .arg(directory.path().join("state"))
+        .output()
+        .unwrap();
+    // Missing bundle contents is an operation failure (1), not a rejected flag (2).
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+}

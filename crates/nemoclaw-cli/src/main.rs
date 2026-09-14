@@ -15,7 +15,7 @@ use tokio::io::AsyncReadExt;
 struct Cli {
     #[arg(long, global = true, default_value = ".nemoclaw")]
     state_dir: PathBuf,
-    #[arg(long, global = true)]
+    #[arg(long = "bundle", alias = "bundle-dir", global = true)]
     bundle_dir: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
