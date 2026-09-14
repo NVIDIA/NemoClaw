@@ -147,10 +147,18 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
     };
     #[derive(Deserialize)]
     struct Instance {
+        #[serde(default)]
+        index_key: serde_json::Value,
+        #[serde(default)]
+        deposed: serde_json::Value,
         attributes: StateBinding,
     }
     #[derive(Deserialize)]
     struct Resource {
+        #[serde(default)]
+        module: Option<String>,
+        #[serde(default)]
+        mode: Option<String>,
         r#type: String,
         name: String,
         instances: Vec<Instance>,
@@ -163,7 +171,10 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
         .map_err(|_| Error::State("OpenTofu state is unreadable; retain it for recovery"))?;
     let mut bindings = BTreeMap::new();
     for resource in state.resources {
-        if resource.instances.len() != 1 {
+        if resource.instances.len() != 1
+            || resource.module.is_some()
+            || resource.mode.as_ref().is_some_and(|mode| mode != "managed")
+        {
             return Err(Error::State("unexpected resource instances in state"));
         }
         let instance = resource
@@ -172,7 +183,9 @@ pub(crate) fn bindings(directory: &Path) -> Result<BTreeMap<String, StateBinding
             .next()
             .expect("checked length");
         let address = format!("{}.{}", resource.r#type, resource.name);
-        if instance.attributes.id.is_empty()
+        if !instance.index_key.is_null()
+            || !instance.deposed.is_null()
+            || instance.attributes.id.is_empty()
             || bindings.insert(address, instance.attributes).is_some()
         {
             return Err(Error::State("duplicate or unbound resource in state"));

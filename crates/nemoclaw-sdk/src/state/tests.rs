@@ -59,3 +59,27 @@ fn duplicate_unbound_and_multiple_instances_are_rejected() {
         "physical"
     );
 }
+
+#[test]
+fn module_indexed_and_deposed_state_cannot_alias_a_root_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let ordinary = serde_json::json!({"type":"nemoclaw_workspace","name":"deployment","mode":"managed","instances":[{"attributes":{"id":"physical"}}]});
+    for failure in ["module", "data", "index", "deposed"] {
+        let mut resource = ordinary.clone();
+        match failure {
+            "module" => resource["module"] = serde_json::json!("module.foreign"),
+            "data" => resource["mode"] = serde_json::json!("data"),
+            "index" => resource["instances"][0]["index_key"] = serde_json::json!(0),
+            _ => resource["instances"][0]["deposed"] = serde_json::json!("deadbeef"),
+        }
+        std::fs::write(
+            dir.path().join("terraform.tfstate"),
+            serde_json::json!({"resources":[resource]}).to_string(),
+        )
+        .unwrap();
+        assert!(
+            bindings(dir.path()).is_err(),
+            "{failure} must not become a root binding"
+        );
+    }
+}
