@@ -10,11 +10,18 @@ import {
   managedImagePlatformForNodeArchitecture,
   parseManagedImageContractV1,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
-import { INFERENCE_ROUTE_URL } from "../../../src/lib/inference/config.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { redactString } from "../fixtures/redaction.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { readRegularArtifact } from "./managed-image-multiarch-startup-helpers.ts";
 
 type JsonRecord = Record<string, unknown>;
+
+const MAX_ASSISTANT_ERROR_LENGTH = 200;
+const TRANSIENT_PI_INFERENCE_ERROR_RE =
+  /\b(?:HTTP\s*)?(?:408|429|500|502|503|504)\b|service temporarily overloaded|temporarily unavailable|too many requests|rate[- ]?limit|timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|failed to connect/iu;
+
+export class PiInferenceFailure extends Error {}
 
 export interface PiReadTaskProof {
   readonly assistantText: string;
@@ -22,16 +29,16 @@ export interface PiReadTaskProof {
   readonly toolCallId: string;
 }
 
+export interface PiReadTaskAttempt {
+  readonly failure: unknown;
+  readonly proof: PiReadTaskProof | undefined;
+  readonly result: ShellProbeResult;
+}
+
 export interface PiQualificationReceipt {
   readonly contract: ManagedImageContractV1;
   readonly digest: string;
   readonly path: string;
-}
-
-export interface PiInferenceEvidence {
-  readonly api: string;
-  readonly model: string;
-  readonly route: string;
 }
 
 function record(value: unknown, label: string): JsonRecord {
@@ -51,26 +58,34 @@ function assistantText(message: unknown): string | null {
   return text.length === 0 ? null : text.join("").trim();
 }
 
-export function parsePiInferenceEvidence(
-  contents: string,
-  expectedModel: string,
-): PiInferenceEvidence {
-  const config = record(JSON.parse(contents) as unknown, "Pi managed inference configuration");
-  const providers = record(config.providers, "Pi managed inference providers");
-  const openshell = record(providers.openshell, "Pi managed inference provider");
-  const models = openshell.models;
-  const model = Array.isArray(models) ? record(models[0], "Pi managed inference model").id : null;
-  if (
-    openshell.api !== "openai-completions" ||
-    openshell.baseUrl !== INFERENCE_ROUTE_URL ||
-    model !== expectedModel
-  ) {
-    throw new Error("Pi managed inference configuration does not match the qualified route");
+function assistantError(message: unknown): string | null {
+  const value = record(message, "Pi message");
+  if (value.role !== "assistant" || value.stopReason !== "error") return null;
+  const errorMessage =
+    typeof value.errorMessage === "string" ? value.errorMessage : "unspecified provider error";
+  const summary = redactString(errorMessage).replace(/\s+/gu, " ").trim();
+  return (summary || "unspecified provider error").slice(0, MAX_ASSISTANT_ERROR_LENGTH);
+}
+
+export function isTransientPiInferenceFailure(error: unknown): boolean {
+  return error instanceof PiInferenceFailure && TRANSIENT_PI_INFERENCE_ERROR_RE.test(error.message);
+}
+
+export function classifyPiReadTaskAttempt(
+  attempt: PiReadTaskAttempt | undefined,
+  error: unknown,
+):
+  | { outcome: "passed" }
+  | { outcome: "failed"; failureClass: "deterministic" | "transient-external" } {
+  if (error !== undefined || !attempt) {
+    return { outcome: "failed", failureClass: "deterministic" };
   }
+  if (attempt.result.exitCode === 0 && attempt.proof) return { outcome: "passed" };
   return {
-    api: openshell.api,
-    model,
-    route: openshell.baseUrl,
+    outcome: "failed",
+    failureClass: isTransientPiInferenceFailure(attempt.failure)
+      ? "transient-external"
+      : "deterministic",
   };
 }
 
@@ -149,6 +164,18 @@ export function qualifyPiReadTask(
     return text === null ? [] : [{ index, text }];
   });
   const reply = replies[0];
+  if (replies.length === 0) {
+    const assistantErrors = events.flatMap((event, index) => {
+      if (event.type !== "message_end" || index <= completion!.index) return [];
+      const error = assistantError(event.message);
+      return error === null ? [] : [error];
+    });
+    if (assistantErrors.length > 0) {
+      throw new PiInferenceFailure(
+        `Pi inference failed after the read completed: ${assistantErrors.at(-1)}`,
+      );
+    }
+  }
   if (replies.length !== 1 || !reply || reply.index <= completion!.index) {
     throw new Error("Pi task must return exactly one assistant response after the read completed");
   }

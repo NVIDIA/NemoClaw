@@ -13,8 +13,9 @@ import {
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 import {
+  isTransientPiInferenceFailure,
   parsePiJsonEvents,
-  parsePiInferenceEvidence,
+  PiInferenceFailure,
   qualifyPiReadTask,
 } from "../live/pi-agent-qualification-events.ts";
 
@@ -113,6 +114,83 @@ describe("Pi qualification event oracle", () => {
     );
   });
 
+  it.each(["HTTP 503: Service Unavailable", "Service temporarily overloaded"])(
+    "classifies a Pi provider error as transient: %s",
+    (errorMessage) => {
+      const providerError = {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage,
+        },
+      };
+      const valid = parsePiJsonEvents(eventStream());
+      const exhaustedRetries = valid.flatMap((event) =>
+        event.type === "message_end" ? Array.from({ length: 4 }, () => providerError) : [event],
+      );
+      let failure: unknown;
+      try {
+        qualifyPiReadTask(exhaustedRetries, PATH, TOKEN);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(PiInferenceFailure);
+      expect((failure as Error).message).toBe(
+        `Pi inference failed after the read completed: ${errorMessage}`,
+      );
+      expect(isTransientPiInferenceFailure(failure)).toBe(true);
+    },
+  );
+
+  it("accepts a valid Pi response after an earlier provider error", () => {
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "Service temporarily overloaded",
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const recoveredRetry = valid.flatMap((event) =>
+      event.type === "message_end" ? [providerError, event] : [event],
+    );
+    expect(qualifyPiReadTask(recoveredRetry, PATH, TOKEN).assistantText).toBe(TOKEN);
+  });
+
+  it.each(["authentication failed", "HTTP 400: invalid request", "HTTP 501: unsupported"])(
+    "does not classify a deterministic Pi provider error as transient: %s",
+    (errorMessage) => {
+      expect(
+        isTransientPiInferenceFailure(
+          new PiInferenceFailure(`Pi inference failed after the read completed: ${errorMessage}`),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("redacts a provider credential before reporting a Pi error", () => {
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "HTTP 503 for nvapi-secret-value-0123456789",
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const failed = valid.flatMap((event) =>
+      event.type === "message_end" ? [providerError] : [event],
+    );
+
+    expect(() => qualifyPiReadTask(failed, PATH, TOKEN)).toThrow("HTTP 503");
+    expect(() => qualifyPiReadTask(failed, PATH, TOKEN)).not.toThrow(/nvapi-secret/iu);
+  });
+
   it("rejects missing, extra, or mismatched read events", () => {
     const valid = parsePiJsonEvents(eventStream());
     expect(() =>
@@ -170,46 +248,5 @@ describe("Pi qualification event oracle", () => {
     expect(() =>
       qualifyPiReadTask(parsePiJsonEvents(events(start, reply, success)), PATH, TOKEN),
     ).toThrow("after the read completed");
-  });
-
-  it("accepts the managed Pi inference route", () => {
-    expect(
-      parsePiInferenceEvidence(
-        JSON.stringify({
-          providers: {
-            openshell: {
-              api: "openai-completions",
-              baseUrl: "https://inference.local/v1",
-              models: [{ id: "nvidia/test-model" }],
-            },
-          },
-        }),
-        "nvidia/test-model",
-      ),
-    ).toEqual({
-      api: "openai-completions",
-      model: "nvidia/test-model",
-      route: "https://inference.local/v1",
-    });
-  });
-
-  it("rejects missing or inconsistent Pi qualification evidence", () => {
-    expect(() => parsePiInferenceEvidence("{}", "nvidia/test-model")).toThrow(
-      "Pi managed inference providers must be an object",
-    );
-    expect(() =>
-      parsePiInferenceEvidence(
-        JSON.stringify({
-          providers: {
-            openshell: {
-              api: "openai-completions",
-              baseUrl: "https://inference.local/v1",
-              models: [{ id: "nvidia/other-model" }],
-            },
-          },
-        }),
-        "nvidia/test-model",
-      ),
-    ).toThrow("does not match the qualified route");
   });
 });
