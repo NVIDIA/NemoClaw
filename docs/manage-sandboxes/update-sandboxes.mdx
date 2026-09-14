@@ -95,6 +95,8 @@ If registration removal fails, the installer warns that onboarding will replace 
 If neither fallback can verify and stop the process, the installer stops after backup, preserves every sandbox backup, and reports the failed operation.
 After the automatic path retires an out-of-range gateway, it forces installation of the OpenShell version pinned by the prepared source before sandbox recovery.
 This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement.
+After the installer replaces the packaged gateway, it waits up to 30 seconds for the gateway port to bind before sandbox recovery begins.
+If the gateway does not bind, the installer stops and preserves the backups.
 If the forced installation fails, the installer does not stage a gateway service or start sandbox recovery, preserves the backups, and reports how to retry.
 
 ## Resume a Manually Prepared Upgrade
