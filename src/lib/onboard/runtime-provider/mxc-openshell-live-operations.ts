@@ -11,7 +11,10 @@ import type {
   RuntimeProviderNativeArtifactRecoveryOutcome,
   RuntimeProviderNativeArtifactVerifyAndCreateOutcome,
 } from "./contract";
-import type { MxcOpenShellAttachmentReceipt } from "./mxc-openshell-attachment";
+import {
+  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+  type MxcOpenShellAttachmentReceipt,
+} from "./mxc-openshell-attachment";
 import {
   requireIssuedMxcOpenShellCreateRequest,
   type MxcOpenShellCreateRequest,
@@ -305,7 +308,10 @@ function listCommand(
       ...baseArguments(gatewayName, workspace),
       "sandbox",
       "list",
-      "--limit",
+      attachment.distributionProfileId ===
+      MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID
+        ? "--page-size"
+        : "--limit",
       "2",
       "--selector",
       `${LABEL_REQUEST}=${labelDigest(request.requestSha256)}`,
@@ -382,6 +388,26 @@ function record(
     throw new MxcOpenShellLiveOperationsError(`${label} is invalid`, operation, "invalid-output");
   }
   return value as Record<string, unknown>;
+}
+
+function parseSandboxListing(
+  result: MxcOpenShellLiveCommandResult,
+  attachment: MxcOpenShellAttachmentReceipt,
+  operation: "list" | "confirm",
+): unknown[] {
+  const label = `sandbox recovery ${operation === "list" ? "listing" : "confirmation"}`;
+  let value = parseJson(result, label, operation);
+  if (
+    attachment.distributionProfileId === MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID
+  ) {
+    const page = record(value, label, operation);
+    // A partial page cannot prove absence or authorize deletion of a unique match.
+    value = page.next_page_token === "" ? page.sandboxes : null;
+  }
+  if (!Array.isArray(value)) {
+    throw new MxcOpenShellLiveOperationsError(`${label} is invalid`, operation, "invalid-output");
+  }
+  return value;
 }
 
 function sandboxRecord(
@@ -675,14 +701,7 @@ export function createMxcOpenShellLiveOperations(
             },
             "list",
           );
-          const listed = parseJson(before, "sandbox recovery listing", "list");
-          if (!Array.isArray(listed)) {
-            throw new MxcOpenShellLiveOperationsError(
-              "sandbox recovery listing is invalid",
-              "list",
-              "invalid-output",
-            );
-          }
+          const listed = parseSandboxListing(before, attachment, "list");
           const matches = listed.map((entry, index) =>
             sandboxRecord(entry, `sandbox recovery item ${index}`, "list"),
           );
@@ -742,14 +761,7 @@ export function createMxcOpenShellLiveOperations(
           },
           "confirm",
         );
-        const relisted = parseJson(after, "sandbox recovery confirmation", "confirm");
-        if (!Array.isArray(relisted)) {
-          throw new MxcOpenShellLiveOperationsError(
-            "sandbox recovery confirmation is invalid",
-            "confirm",
-            "invalid-output",
-          );
-        }
+        const relisted = parseSandboxListing(after, attachment, "confirm");
         if (relisted.length !== 0) {
           const error = new MxcOpenShellLiveOperationsError(
             "sandbox recovery confirmation found retained resources",

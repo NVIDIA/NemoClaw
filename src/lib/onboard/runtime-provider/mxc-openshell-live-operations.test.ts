@@ -13,7 +13,12 @@ import type {
 } from "./contract";
 import { createMxcNativeArtifactBootstrapSurface } from "./mxc-bootstrap";
 import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
-import { qualifyMxcOpenShellAttachment } from "./mxc-openshell-attachment";
+import {
+  qualifyMxcOpenShellAttachment,
+  createMxcOpenShellDistributionAuthority,
+  resolveMxcOpenShellDistributionAuthority,
+  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE,
+} from "./mxc-openshell-attachment";
 import {
   projectMxcOpenShellCreateRequest,
   type MxcOpenShellCreateRequest,
@@ -124,9 +129,17 @@ async function request(lifecycleGeneration = "generation-7") {
   return projectMxcOpenShellCreateRequest(plan!);
 }
 
-function fixture() {
+function fixture(combined = false) {
   const source = mxcOpenShellAttachmentFixture();
-  return qualifyMxcOpenShellAttachment(source.authority, source.observation);
+  const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
+  return qualifyMxcOpenShellAttachment(
+    combined
+      ? resolveMxcOpenShellDistributionAuthority(
+          createMxcOpenShellDistributionAuthority(profile.profileId),
+        )
+      : source.authority,
+    combined ? { ...source.observation, ...profile.expectation } : source.observation,
+  );
 }
 
 function result(stdout: unknown, status = 0): MxcOpenShellLiveCommandResult {
@@ -185,9 +198,9 @@ function sandbox(
   };
 }
 
-function operations(boundary: Partial<MxcOpenShellLiveHostBoundary>) {
+function operations(boundary: Partial<MxcOpenShellLiveHostBoundary>, attachment = fixture()) {
   return createMxcOpenShellLiveOperations({
-    attachment: fixture(),
+    attachment,
     gatewayName: "windows-mxc",
     workspace: "default",
     policy: {
@@ -205,6 +218,145 @@ function operations(boundary: Partial<MxcOpenShellLiveHostBoundary>) {
 }
 
 describe("inactive OpenShell MXC live operations", () => {
+  it("confirms combined-profile absence through the complete paginated listing (#8178)", async () => {
+    const liveRequest = await request();
+    const run = vi
+      .fn<MxcOpenShellLiveHostBoundary["run"]>()
+      .mockResolvedValueOnce(result("", 1))
+      .mockResolvedValueOnce(result({ sandboxes: [], next_page_token: "" }));
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>();
+    await expect(
+      operations({ run, deleteExact }, fixture(true)).recoverCreate(liveRequest),
+    ).resolves.toEqual({ status: "absent" });
+    expect(run.mock.calls[1]![0].command.arguments).toEqual([
+      "--gateway",
+      "windows-mxc",
+      "--workspace",
+      "default",
+      "sandbox",
+      "list",
+      "--page-size",
+      "2",
+      "--selector",
+      `nemoclaw-request-sha256=${labelDigest(liveRequest.requestSha256)}`,
+      "--output",
+      "json",
+    ]);
+    expect(deleteExact).not.toHaveBeenCalled();
+  });
+
+  it("confirms exact combined-profile deletion with an empty final page (#8178)", async () => {
+    const liveRequest = await request();
+    const attachment = fixture(true);
+    const owned = sandbox(liveRequest, "Ready", {
+      "nemoclaw-attachment-sha256": labelDigest(attachment.authoritySha256),
+    });
+    const run = vi
+      .fn<MxcOpenShellLiveHostBoundary["run"]>()
+      .mockResolvedValueOnce(result(owned))
+      .mockResolvedValueOnce(result({ sandboxes: [], next_page_token: "" }));
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>(async () => result(""));
+    await expect(
+      operations({ run, deleteExact }, attachment).recoverCreate(liveRequest),
+    ).resolves.toMatchObject({ status: "removed", authoritySha256: liveRequest.authoritySha256 });
+    expect(deleteExact.mock.calls[0]![0]).toMatchObject({
+      sandboxId: owned.id,
+      request: liveRequest,
+    });
+  });
+
+  it.each([
+    { page: [] },
+    { page: null },
+    { page: {} },
+    { page: { sandboxes: [] } },
+    { page: { sandboxes: [], next_page_token: null } },
+    { page: { sandboxes: [], next_page_token: "more" } },
+    { page: { sandboxes: [], next_page_token: " " } },
+    { page: { sandboxes: {}, next_page_token: "" } },
+  ])(
+    "rejects incomplete or malformed combined-profile listing $page before deletion (#8178)",
+    async ({ page }) => {
+      const run = vi
+        .fn<MxcOpenShellLiveHostBoundary["run"]>()
+        .mockResolvedValueOnce(result("", 1))
+        .mockResolvedValueOnce(result(page));
+      const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>();
+      await expect(
+        operations({ run, deleteExact }, fixture(true)).recoverCreate(await request()),
+      ).rejects.toThrow(/listing is invalid/u);
+      expect(deleteExact).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { page: { sandboxes: [], next_page_token: "more" }, status: 0 },
+    { page: { sandboxes: [] }, status: 0 },
+    { page: { sandboxes: [], next_page_token: "" }, status: 1 },
+    { page: { sandboxes: [], next_page_token: "" }, status: null },
+  ])(
+    "rejects unproven combined-profile deletion with response $page and status $status (#8178)",
+    async ({ page, status }) => {
+      const liveRequest = await request();
+      const attachment = fixture(true);
+      const owned = sandbox(liveRequest, "Ready", {
+        "nemoclaw-attachment-sha256": labelDigest(attachment.authoritySha256),
+      });
+      const run = vi
+        .fn<MxcOpenShellLiveHostBoundary["run"]>()
+        .mockResolvedValueOnce(result(owned))
+        .mockResolvedValueOnce({ ...result(page), status });
+      const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>(async () =>
+        result(""),
+      );
+      const recordFailure = vi.fn<MxcOpenShellLiveHostBoundary["recordFailure"]>();
+      await expect(
+        operations({ run, deleteExact, recordFailure }, attachment).recoverCreate(liveRequest),
+      ).rejects.toThrow(/sandbox recovery confirmation/u);
+      expect(recordFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: "confirm", sandboxId: owned.id }),
+      );
+    },
+  );
+
+  it("retains a sandbox still listed after combined-profile deletion (#8178)", async () => {
+    const liveRequest = await request();
+    const attachment = fixture(true);
+    const owned = sandbox(liveRequest, "Ready", {
+      "nemoclaw-attachment-sha256": labelDigest(attachment.authoritySha256),
+    });
+    const run = vi
+      .fn<MxcOpenShellLiveHostBoundary["run"]>()
+      .mockResolvedValueOnce(result(owned))
+      .mockResolvedValueOnce(result({ sandboxes: [owned], next_page_token: "" }));
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>(async () => result(""));
+    await expect(
+      operations({ run, deleteExact }, attachment).recoverCreate(liveRequest),
+    ).resolves.toMatchObject({ status: "retained" });
+  });
+
+  it("rejects ambiguous combined-profile matches without deleting either sandbox (#8178)", async () => {
+    const liveRequest = await request();
+    const attachment = fixture(true);
+    const owned = {
+      ...sandbox(liveRequest, "Ready", {
+        "nemoclaw-attachment-sha256": labelDigest(attachment.authoritySha256),
+      }),
+      workspace: "default",
+    };
+    const run = vi
+      .fn<MxcOpenShellLiveHostBoundary["run"]>()
+      .mockResolvedValueOnce(result("", 1))
+      .mockResolvedValueOnce(
+        result({ sandboxes: [owned, { ...owned, id: "other-id" }], next_page_token: "" }),
+      );
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>();
+    await expect(
+      operations({ run, deleteExact }, attachment).recoverCreate(liveRequest),
+    ).rejects.toThrow(/recovery identity is ambiguous/u);
+    expect(deleteExact).not.toHaveBeenCalled();
+  });
+
   it("binds one verified create to the exact attachment, request, policy, and gateway (#8178)", async () => {
     const liveRequest = await request();
     const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
