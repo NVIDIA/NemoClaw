@@ -16,7 +16,7 @@ fn service() -> Service {
 }
 #[tokio::test]
 async fn protection_kills_owned_child_when_readiness_never_responds() {
-    for scenario in ["pressure", "observation", "operator"] {
+    for scenario in ["pressure", "observation", "operator", "closed"] {
         let mut command = CommandWrap::with_new("/bin/sleep", |command| {
             command.arg("100");
         });
@@ -28,7 +28,7 @@ async fn protection_kills_owned_child_when_readiness_never_responds() {
         let trip = CancellationToken::new();
         if scenario == "operator" {
             trip.cancel();
-        } else {
+        } else if scenario != "closed" {
             for _ in 0..5 {
                 let sample = if scenario == "observation" {
                     Err(Error::State("fixture memory failure"))
@@ -41,6 +41,9 @@ async fn protection_kills_owned_child_when_readiness_never_responds() {
                 };
                 samples_tx.send(sample).await.unwrap();
             }
+        }
+        if scenario == "closed" {
+            drop(samples_tx);
         }
         let report = |_: &str, _: &str, _: u32| Ok(());
         let result = tokio::time::timeout(
@@ -59,7 +62,14 @@ async fn protection_kills_owned_child_when_readiness_never_responds() {
         )
         .await
         .unwrap();
-        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        let expected = match scenario {
+            "pressure" => "available=1073741824 free=1073741824",
+            "observation" => "memory observation failed",
+            "closed" => "memory sample stream closed",
+            _ => "tripped by operator",
+        };
+        assert!(error.contains(expected), "{scenario}: {error}");
         assert!(child.wait().await.is_ok());
         assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
     }

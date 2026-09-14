@@ -98,6 +98,18 @@ fn memory_requires_complete_consistent_observation() {
     }
 }
 #[test]
+fn available_memory_may_be_below_free_memory_after_kernel_reserves() {
+    let capacity =
+        read_memory(b"MemTotal: 120 kB\nMemAvailable: 90 kB\nMemFree: 100 kB\n".as_slice())
+            .unwrap();
+    assert_eq!(capacity.available, 90 * 1024);
+    assert_eq!(capacity.free, 100 * 1024);
+    assert!(
+        read_memory(b"MemTotal: 120 kB\nMemAvailable: 90 kB\nMemFree: 130 kB\n".as_slice())
+            .is_err()
+    );
+}
+#[test]
 fn pinned_manifest_and_preparation_identity_match_reference() {
     assert_eq!(
         hex(Sha256::digest(include_bytes!("model.json"))),

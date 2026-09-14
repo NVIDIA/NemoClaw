@@ -41,7 +41,15 @@ pub(crate) async fn supervise(
             sample=monitors.samples.recv()=>{
                 match sample {
                     Some(Ok(memory)) if !watch.sample(memory.available,memory.free)=>{},
-                    _=>break Err(Error::Conflict("host memory protection stopped inference; explicit apply required")),
+                    Some(Ok(memory))=>break Err(Error::Execution {
+                        operation: "memory protection".into(),
+                        diagnostic: format!("host memory pressure stopped inference: available={} free={}; explicit apply required", memory.available, memory.free),
+                    }),
+                    Some(Err(error))=>break Err(Error::Execution {
+                        operation: "memory protection".into(),
+                        diagnostic: format!("memory observation failed: {error}; inference stopped; explicit apply required"),
+                    }),
+                    None=>break Err(Error::Conflict("memory sample stream closed; inference stopped; explicit apply required")),
                 }
             }
         }

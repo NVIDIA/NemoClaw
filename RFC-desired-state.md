@@ -127,6 +127,13 @@ thread stack. Public plan/apply now heap-allocate their orchestration future,
 with a tested per-operation stack-size budget. SDK qualification must exercise
 its public API directly as well as its CLI consumer.
 
+The live watchdog run also exposed an inherited observation assumption:
+`MemAvailable` is an estimate after kernel reserves, so it may be less than
+`MemFree`. Validate each against total memory independently. The old supervisor
+reported pressure and sampling failure identically; that message could not
+establish the cause of its live stop. Distinct diagnostics and measured pressure
+values are required for recovery evidence. See the [kernel memory field definitions](https://www.kernel.org/doc/html/v6.5/filesystems/proc.html).
+
 ## Acceptance evidence
 
 [Validation records](docs/validation/) distinguish deterministic failure tests,

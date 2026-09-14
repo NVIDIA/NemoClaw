@@ -87,7 +87,7 @@ pub fn read_memory(reader: impl Read) -> Result<Capacity, Error> {
         free: values["MemFree:"],
         ..Default::default()
     };
-    if result.total == 0 || result.available > result.total || result.free > result.available {
+    if result.total == 0 || result.available > result.total || result.free > result.total {
         return Err(Error::State("inconsistent host memory observation"));
     }
     Ok(result)
