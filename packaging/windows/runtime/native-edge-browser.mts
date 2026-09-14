@@ -103,7 +103,7 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
   );
   const script =
     pid === undefined
-      ? "$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=$s.Status.ToString();signerSubject=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''};signerThumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress"
+      ? "try{$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH -ErrorAction Stop;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName -ErrorAction Stop;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=$s.Status.ToString();signerSubject=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''};signerThumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress}catch{[ordered]@{probeError=$_.Exception.Message;probeType=$_.Exception.GetType().FullName}|ConvertTo-Json -Compress}"
       : "$p=Get-Process -Id ([int]$env:NEMOCLAW_EDGE_INSPECT_PID) -ErrorAction Stop;[ordered]@{pid=$p.Id;path=$p.Path;creationFiletime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress";
   let result;
   try {
@@ -136,7 +136,10 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
       `Microsoft Edge identity probe failed (${Number(error?.code) || 1})${stderr ? `: ${stderr}` : "."}`,
     );
   }
-  return JSON.parse(result.stdout.trim());
+  const value = JSON.parse(result.stdout.trim());
+  if (typeof value?.probeError === "string")
+    throw new Error(`Microsoft Edge identity probe: ${value.probeError.slice(0, 2048)}`);
+  return value;
 }
 
 export async function detectNativeEdge(environment: NodeJS.ProcessEnv = process.env) {
