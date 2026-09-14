@@ -185,42 +185,17 @@ validate_tmp_permissions() {
 }
 
 # ── Capability dropping ──────────────────────────────────────────
-# CIS Docker Benchmark 5.3: containers should not run with default caps.
-# OpenShell manages the container runtime so we cannot pass --cap-drop=ALL
-# to docker run. Instead, drop dangerous capabilities from the bounding set
-# at startup using capsh. The bounding set limits what caps any child process
-# (gateway, sandbox, agent) can ever acquire.
+# OpenShell full enforcement clears the child bounding set before launch.
+# Skip compatibility handling only when all five capability sets are empty.
+# Do not infer enforcement from runtime environment values.
 #
-# Dropped (issue #3280): cap_sys_admin, cap_sys_ptrace plus the historical
-# set (cap_net_raw, cap_dac_override, cap_sys_chroot, cap_fsetid,
-# cap_setfcap, cap_mknod, cap_audit_write, cap_net_bind_service).
-# Dashboard listens on a high port (default 18789, validated >=1024 in
-# nemoclaw-start.sh), so cap_net_bind_service is unconditionally unused.
+# Direct-root entrypoints can still need capsh. Their retained bounding caps
+# (chown, fowner, setuid, setgid, kill) support initialization and supervised
+# shutdown; init_step_down_prefixes can remove them when changing user.
+# NEMOCLAW_REQUIRE_CAP_DROP=1 retains fail-closed verification for unavailable
+# drops. The default preserves the legacy warn-and-continue behavior.
 #
-# Kept (each load-bearing — do not drop without an entrypoint refactor):
-#   cap_chown, cap_fowner — needed to chown/chmod files we did not create
-#     after dropping cap_dac_override (see #2659).
-#   cap_setuid, cap_setgid — required by setpriv to step down from root into
-#     the sandbox/gateway UIDs during entrypoint privilege separation.
-#   cap_kill — root PID 1 terminates stepped-down gateway and sandbox child
-#     processes during supervised shutdown. The managed-image security test
-#     separately verifies that sandbox cannot signal gateway-user processes.
-# When the runtime cannot drop the bounding set (no CAP_SETPCAP, or capsh
-# missing), the default is to warn and continue. Set NEMOCLAW_REQUIRE_CAP_DROP=1
-# to make that case fail-closed instead — see enforce_cap_drop_if_required.
-#
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/797
-#      https://github.com/NVIDIA/NemoClaw/issues/3280
-#      https://github.com/NVIDIA/OpenShell/issues/1452 (connect-shell scope)
-#
-# Usage:
-#   drop_capabilities /usr/local/bin/nemoclaw-start "$@"
-#
-# Single source of truth for the dangerous capabilities the entrypoint drops
-# and (in strict mode) verifies are gone. "bit:name" pairs; bit numbers per
-# /usr/include/linux/capability.h. Both the capsh --drop list and
-# dangerous_caps_in_capbnd() derive from this array, so the drop-set and the
-# strict-mode verify-set cannot drift apart (issue #3280).
+# Single drop/verification list, with bit numbers from linux/capability.h.
 DANGEROUS_CAPS=(
   "21:cap_sys_admin"
   "19:cap_sys_ptrace"
@@ -243,33 +218,72 @@ dangerous_caps_drop_list() {
   printf '%s' "$out"
 }
 
-# The first argument is the absolute path to the entrypoint script to
-# re-exec via capsh. Remaining arguments are forwarded.
+# Use built-ins: exec'ing a reader can lower its permitted/effective set and
+# hide capabilities still held by this shell. The caller supplies the fixed
+# procfs path; an explicit file argument also permits deterministic fixtures.
+read_capability_state() {
+  local key value rest bit seen=0 all_zero=1 cap_bnd_hex=""
+  while IFS=$' \t' read -r key value rest; do
+    case "$key" in
+      CapInh:) bit=1 ;;
+      CapPrm:) bit=2 ;;
+      CapEff:) bit=4 ;;
+      CapBnd:)
+        bit=8
+        cap_bnd_hex="$value"
+        ;;
+      CapAmb:) bit=16 ;;
+      *) continue ;;
+    esac
+    [ $((seen & bit)) -eq 0 ] || return 1
+    seen=$((seen | bit))
+    case "$value" in
+      "" | *[!0]*) all_zero=0 ;;
+    esac
+    [ -z "$rest" ] || all_zero=0
+  done <"$1" || return 1
+  printf '%s:%s\n' "$cap_bnd_hex" "$((seen == 31 && all_zero == 1))"
+}
+
+# The first argument is the absolute entrypoint path; remaining args are forwarded.
 drop_capabilities() {
   local entrypoint="$1"
   shift
 
-  if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; then
-    # capsh --drop requires CAP_SETPCAP in the bounding set. OpenShell's
-    # sandbox runtime may strip it, so check before attempting the drop.
-    if capsh --has-p=cap_setpcap 2>/dev/null; then
-      export NEMOCLAW_CAPS_DROPPED=1
-      exec capsh \
-        --drop="$(dangerous_caps_drop_list)" \
-        -- -c "exec $entrypoint \"\$@\"" -- "$@"
+  local cap_state cap_bnd_hex present reason=""
+  if ! cap_state="$(read_capability_state /proc/self/status 2>/dev/null)"; then
+    reason="could not read bounding set from /proc/self/status"
+  else
+    cap_bnd_hex="${cap_state%:*}"
+    [ "${cap_state##*:}" = 1 ] && return 0
+    if [ -z "$cap_bnd_hex" ]; then
+      reason="could not read bounding set from /proc/self/status"
+    elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+      reason="could not parse bounding set (CapBnd=${cap_bnd_hex})"
+    elif [ -n "$present" ]; then
+      reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
     fi
-    # CAP_SETPCAP missing (or the exec above failed): the drop could not run.
-    # Surface the residual bounding-set caps in the log.
-    report_residual_capabilities || true
-  elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
-    echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
   fi
 
-  # Opt-in fail-closed gate (issue #3280). Deliberately runs on EVERY path,
-  # including when NEMOCLAW_CAPS_DROPPED is already set: it verifies the actual
-  # bounding set rather than trusting that sentinel, so an inherited marker
-  # cannot mask a drop that never happened.
-  enforce_cap_drop_if_required
+  # Keep one capsh attempt for legacy entrypoints even when /proc is unreadable.
+  # The sentinel prevents re-execution loops; it never proves a successful drop.
+  if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] \
+    && command -v capsh >/dev/null 2>&1 \
+    && capsh --has-p=cap_setpcap 2>/dev/null; then
+    export NEMOCLAW_CAPS_DROPPED=1
+    # capsh expands the positional parameters in its child shell.
+    # shellcheck disable=SC2016
+    exec capsh \
+      --drop="$(dangerous_caps_drop_list)" \
+      -- -c 'exec "$0" "$@"' "$entrypoint" "$@"
+  fi
+
+  [ -z "$reason" ] && return 0
+  if [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ]; then
+    echo "[SECURITY] Refusing to start sandbox: ${reason}" >&2
+    exit 1
+  fi
+  echo "[SECURITY WARNING] Cannot drop bounding-set capabilities with capsh: ${reason}" >&2
 }
 
 # Pure decode: given a CapBnd hex string, echo the comma-separated list of the
@@ -299,83 +313,6 @@ dangerous_caps_in_capbnd() {
   printf '%s' "$present"
 }
 
-# Opt-in fail-closed enforcement (issue #3280). When NEMOCLAW_REQUIRE_CAP_DROP=1
-# the sandbox refuses to start unless the bounding set is provably free of the
-# dangerous capabilities. It verifies by reading the ACTUAL CapBnd — NOT by
-# trusting the NEMOCLAW_CAPS_DROPPED sentinel, which an inherited environment
-# could forge to bypass the gate.
-#
-# DEFAULT (unset) IS WARN-AND-CONTINUE — no host loses the ability to boot. This
-# is the lesson of #4266/#4341: a default-fail-closed drop broke EVERY host that
-# does not grant CAP_SETPCAP (GitHub runners, Brev shadecloud, Colossus Ubuntu
-# 24.04, Docker Desktop, WSL) and was reverted within hours. Inverting the
-# default to opt-in keeps that regression off by default.
-#
-# Scope: the AGENT process tree only. A `nemoclaw connect` shell is spawned by
-# the container runtime outside that tree and inherits the container's OCI
-# bounding set; tightening that requires cap_drop at sandbox create, tracked
-# upstream in NVIDIA/OpenShell#1452.
-#
-# Test seam: NEMOCLAW_PROC_STATUS overrides the status source so unit tests can
-# feed a known CapBnd fixture without a real /proc.
-enforce_cap_drop_if_required() {
-  [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ] || return 0
-
-  local status_path="${NEMOCLAW_PROC_STATUS:-/proc/self/status}"
-  local cap_bnd_hex present reason=""
-  cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' "$status_path" 2>/dev/null || true)
-  if [ -z "$cap_bnd_hex" ]; then
-    # Cannot verify → in strict mode, refuse rather than assume safety.
-    reason="could not read bounding set from ${status_path} — cannot verify drop"
-  elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
-    # Non-empty but unparseable CapBnd is equally unverifiable → refuse.
-    reason="could not parse bounding set (CapBnd=${cap_bnd_hex}) — cannot verify drop"
-  elif [ -n "$present" ]; then
-    reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
-  fi
-  [ -n "$reason" ] || return 0
-
-  cat >&2 <<'EOF'
-
-┌─ [SECURITY] Refusing to start sandbox: bounding-set capability drop failed ──
-│
-│ NEMOCLAW_REQUIRE_CAP_DROP=1 is set, so NemoClaw refuses to start a sandbox
-│ that still holds dangerous bounding-set capabilities. The runtime could not
-│ drop them (capsh or CAP_SETPCAP unavailable on this host), so they remain.
-│
-│ To run anyway with the weaker (warn-only) posture, unset the variable:
-│   unset NEMOCLAW_REQUIRE_CAP_DROP
-│
-│ Tracking: https://github.com/NVIDIA/NemoClaw/issues/3280
-└──────────────────────────────────────────────────────────────────────────────
-EOF
-  echo "[SECURITY] ${reason}" >&2
-  exit 1
-}
-
-# Emit a loud diagnostic when capsh-based dropping is unavailable so that
-# residual dangerous bounding-set caps surface in logs instead of being
-# silently inherited from the container runtime. Called from the
-# CAP_SETPCAP-missing fallback path of drop_capabilities() (issue #3280).
-report_residual_capabilities() {
-  echo "[SECURITY] CAP_SETPCAP not available — cannot drop bounding-set caps via capsh" >&2
-
-  local status_path="${NEMOCLAW_PROC_STATUS:-/proc/self/status}"
-  local cap_bnd_hex present
-  if ! cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' "$status_path" 2>/dev/null) \
-    || [ -z "$cap_bnd_hex" ]; then
-    echo "[SECURITY] Could not read ${status_path} — residual caps unknown" >&2
-    return 0
-  fi
-  echo "[SECURITY] Residual CapBnd=${cap_bnd_hex}" >&2
-
-  if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
-    echo "[SECURITY] Could not parse CapBnd=${cap_bnd_hex} — residual caps unknown" >&2
-  elif [ -n "$present" ]; then
-    echo "[SECURITY] Dangerous caps remain in bounding set: ${present}" >&2
-  fi
-}
-
 # ── Privilege step-down (issue #3280 follow-up) ──────────────────
 # Uses `setpriv` for every root-to-user transition. When CAP_SETPCAP is
 # available, setpriv also strips the load-bearing caps (cap_setuid,
@@ -395,7 +332,7 @@ report_residual_capabilities() {
 # If CAP_SETPCAP is unavailable, setpriv still changes identity and initializes
 # supplementary groups, but cannot remove the remaining load-bearing caps from
 # the bounding set. That case is logged consistently with
-# report_residual_capabilities. If setpriv itself is unavailable, the prefix
+# drop_capabilities. If setpriv itself is unavailable, the prefix
 # invokes a fail-closed helper instead of risking execution as root.
 # File-scope array declarations: bash 3.2 (macOS) does not accept `declare -g`,
 # but plain assignment at file scope is global by default. Inside
@@ -457,7 +394,9 @@ init_step_down_prefixes() {
   # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
   STEP_DOWN_PREFIX_GATEWAY=("${gateway_prefix[@]}")
 }
-init_step_down_prefixes
+if [ "$(id -u)" -eq 0 ]; then
+  init_step_down_prefixes
+fi
 
 # ── Config integrity check ──────────────────────────────────────
 # The config hash was pinned at build time. If it doesn't match,

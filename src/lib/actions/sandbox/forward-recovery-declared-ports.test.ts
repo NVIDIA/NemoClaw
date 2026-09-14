@@ -115,7 +115,7 @@ describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => 
     { endpoint: "http://127.0.0.1:19080", expectedTlsDir: undefined },
     { endpoint: "https://[::1]:19080", expectedTlsDir: "/external/gateway/tls" },
   ])(
-    "launches against the exact external endpoint $endpoint",
+    "preserves the endpoint $endpoint and ownership allowance (#11652)",
     async ({ endpoint, expectedTlsDir }) => {
       mocks.resolveGatewayForwardAuthority.mockReturnValue(externalGatewayOwner(endpoint));
       const { createHermesPortableForwardRecoveryInput } = await import("./forward-recovery");
@@ -150,6 +150,20 @@ describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => 
       });
       expect(sourceEnvironment?.OPENSHELL_LOCAL_TLS_DIR).toBe(expectedTlsDir);
       expect(sourceEnvironment).not.toHaveProperty("OPENSHELL_TOKEN");
+      const target = {
+        executable: input.forwardService.executablePath,
+        gatewayEndpoint: endpoint,
+        gatewayName: input.gatewayName,
+        workspace: "default",
+        sandboxName: input.sandboxName,
+        localHost: "127.0.0.1" as const,
+        localPort: 18_789,
+        targetHost: "127.0.0.1" as const,
+        targetPort: 18_789,
+      };
+      const remainingMs = vi.fn(() => 25);
+      expect(input.deps.isForwardServiceOwner!(target, { remainingMs })).toBe(true);
+      expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledWith(target, { remainingMs });
     },
   );
 
