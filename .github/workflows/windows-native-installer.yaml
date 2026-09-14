@@ -351,10 +351,13 @@ jobs:
           [IO.File]::WriteAllText($config, '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>', [Text.UTF8Encoding]::new($false))
           & dotnet tool install wix --version 5.0.2 --tool-path $tools --configfile $config
           if ($LASTEXITCODE -ne 0) { throw 'The pinned WiX tool could not be prepared.' }
-          $imageArguments = @()
+          $imageArguments = @{}
           if ($env:SELECTED_AGENT -ceq 'hermes') {
             $identity = Get-Content -LiteralPath "$work\assembled\runtime-identity.json" -Raw | ConvertFrom-Json
-            $imageArguments = @('-RuntimeImage', "$work\runtime-image\$($identity.runtimeId).vhdx", '-RuntimeImageReceipt', "$work\runtime-image\runtime-image.json")
+            $imageArguments = @{
+              RuntimeImage = "$work\runtime-image\$($identity.runtimeId).vhdx"
+              RuntimeImageReceipt = "$work\runtime-image\runtime-image.json"
+            }
           }
           & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\build-immutable-package.ps1" `
             -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -SourceRevision $env:GITHUB_SHA -ProductVersion $env:PRODUCT_VERSION `
