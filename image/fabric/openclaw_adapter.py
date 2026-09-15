@@ -25,24 +25,47 @@ NODE = '/usr/local/bin/node'
 CLI = '/app/openclaw.mjs'
 
 
+def tool_disclosure(inference):
+    modes = set()
+    for agent in (inference or {}).get('agents', []):
+        tools = agent.get('tools')
+        if tools == {'allow': ['read']}:
+            continue
+        if tools is None and 'tools' not in agent:
+            modes.add('progressive')
+        elif (isinstance(tools, dict) and set(tools) == {'disclosure'}
+              and tools['disclosure'] in ('progressive', 'direct')):
+            modes.add(tools['disclosure'])
+        else:
+            raise ValueError('invalid agent tools')
+    if len(modes) > 1:
+        raise ValueError('OpenClaw agents must share a disclosure mode')
+    return next(iter(modes), 'progressive')
+
+
+def tool_search(inference):
+    return (False if tool_disclosure(inference) == 'direct' else
+            {'mode': 'tools', 'searchDefaultLimit': 8, 'maxSearchLimit': 20})
+
+
 def agent_entries(name, inference):
     agents = inference.get('agents') if inference else None
     if agents is None:
         return {name: {}}
     if not isinstance(agents, list) or not agents or agents[0].get('name') != name:
         raise ValueError('invalid agent roster')
+    tool_disclosure(inference)
     entries = {}
     for agent in agents:
         if (not isinstance(agent, dict) or set(agent) - {'name', 'tools'}
                 or not isinstance(agent.get('name'), str)
                 or not re.fullmatch(r'[a-z][a-z0-9-]{0,39}', agent['name'])
-                or agent['name'] in entries
-                or ('tools' in agent and agent['tools'] != {'allow': ['read']})):
+                or agent['name'] in entries):
             raise ValueError('invalid agent policy')
         agent_name = agent['name']
         entries[agent_name] = {
             'workspace': '/sandbox/workspace' if agent_name == name else f'/sandbox/workspaces/{agent_name}',
-            **({'tools': {'allow': ['read']}} if 'tools' in agent else {}),
+            **({'tools': {'allow': ['read']}} if agent.get('tools') == {'allow': ['read']} else {}),
         }
     return entries
 
@@ -64,7 +87,8 @@ def native_configuration(name, inference=None):
         'memory': {'search': {'enabled': False}},
         'cron': {'enabled': False},
         'update': {'checkOnStart': False, 'auto': {'enabled': False}},
-        'tools': {'profile': 'coding', 'exec': {'host': 'gateway', 'mode': 'full'}},
+        'tools': {'profile': 'coding', 'exec': {'host': 'gateway', 'mode': 'full'},
+                  'toolSearch': tool_search(inference)},
     }
 
     if inference is not None and 'agents' in inference:
@@ -90,6 +114,7 @@ def contains(actual, required):
 
 def owned_configuration(name, inference=None):
     config = {
+        'tools': {'toolSearch': tool_search(inference)},
         'gateway': {'mode': 'local', 'bind': 'loopback', 'port': 18789},
         'models': {'providers': {'openshell': {
             'baseUrl': 'https://inference.local/v1', 'api': 'openai-completions',

@@ -47,5 +47,47 @@ class NativeInference(unittest.TestCase):
             self.assertEqual(path.read_bytes(), before)
 
 
+
+class ToolDisclosure(unittest.TestCase):
+    def test_native_disclosure_defaults_and_read_only_policy(self):
+        from openclaw_adapter import native_configuration
+        self.assertEqual(native_configuration('primary')['tools']['toolSearch'],
+                         {'mode': 'tools', 'searchDefaultLimit': 8, 'maxSearchLimit': 20})
+        for mode in ('direct', 'progressive'):
+            options = {'api': 'openai-completions', 'tuning': {}, 'agents': [
+                {'name': 'primary', 'tools': {'disclosure': mode}},
+                {'name': 'reader', 'tools': {'allow': ['read']}}]}
+            native = native_configuration('primary', options)
+            self.assertEqual(native['tools']['toolSearch'] is False, mode == 'direct')
+            self.assertEqual(native['agents']['entries']['reader']['tools'], {'allow': ['read']})
+            self.assertNotIn('tools', native['agents']['entries']['primary'])
+        options['agents'].append({'name': 'conflicting', 'tools': {'disclosure': 'direct'}})
+        with self.assertRaises(ValueError):
+            native_configuration('primary', options)
+
+    def test_disclosure_drift_is_rejected_without_overwriting_native_state(self):
+        import json
+        from pathlib import Path
+        import tempfile
+        from unittest.mock import patch
+        import openclaw_adapter as adapter
+        for mode in ('direct', 'progressive'):
+            options = {'api': 'openai-completions', 'tuning': {}, 'agents': [
+                {'name': 'primary', 'tools': {'disclosure': mode}}]}
+            with tempfile.TemporaryDirectory() as directory, patch.object(adapter, 'ROOT', Path(directory)):
+                runtime = adapter.OpenClawRuntime()
+                runtime.name, runtime.home, runtime.inference = 'primary', Path(directory), options
+                runtime.initialize_configuration()
+                path = Path(directory) / 'openclaw.json'
+                native = json.loads(path.read_text())
+                native['tools']['toolSearch'] = mode == 'direct'
+                path.write_text(json.dumps(native))
+                before = path.read_bytes()
+                self.assertFalse(adapter.configuration_matches('primary', options))
+                with self.assertRaises(RuntimeError):
+                    runtime.initialize_configuration()
+                self.assertEqual(path.read_bytes(), before)
+
+
 if __name__ == '__main__':
     unittest.main()

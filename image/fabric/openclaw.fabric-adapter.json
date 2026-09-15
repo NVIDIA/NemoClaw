@@ -70,18 +70,37 @@
                   "pattern": "^[a-z][a-z0-9-]{0,39}$"
                 },
                 "tools": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "allow"
-                  ],
-                  "properties": {
-                    "allow": {
-                      "const": [
-                        "read"
-                      ]
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "allow"
+                      ],
+                      "properties": {
+                        "allow": {
+                          "const": [
+                            "read"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "disclosure"
+                      ],
+                      "properties": {
+                        "disclosure": {
+                          "enum": [
+                            "progressive",
+                            "direct"
+                          ]
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
