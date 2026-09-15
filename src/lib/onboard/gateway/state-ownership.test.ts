@@ -119,6 +119,32 @@ describe("docker-driver gateway selected-state ownership", () => {
     expect(processScan).not.toHaveBeenCalled();
   });
 
+  it("continues the complete scan when a reused recorded PID owns different state", () => {
+    const processScan = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+    const ownership = makeOwnership({
+      getDockerDriverGatewayPid: () => 4242,
+      readProcessEnvironment: () => ({
+        NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir("/another/state"),
+      }),
+      runCaptureEx: processScan,
+    });
+
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(false);
+    expect(processScan).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when recorded-PID environment evidence is unavailable", () => {
+    const processScan = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+    const ownership = makeOwnership({
+      getDockerDriverGatewayPid: () => 4242,
+      readProcessEnvironment: () => null,
+      runCaptureEx: processScan,
+    });
+
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
+    expect(processScan).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       label: "legacy default namespace with the exact database path",

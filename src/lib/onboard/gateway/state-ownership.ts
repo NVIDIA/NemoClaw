@@ -79,7 +79,16 @@ export function createDockerDriverGatewayStateOwnership(
           requireDockerDriverEnv: false,
         })
       ) {
-        return true;
+        const processEnv = readProcessEnvironment(recordedPid);
+        if (!processEnv) return true;
+        if (
+          processEnvironmentUsesSelectedGatewayState(
+            processEnv,
+            deps.getDockerDriverGatewayStateDir(),
+          )
+        ) {
+          return true;
+        }
       }
     } catch {
       return true;
