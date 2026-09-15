@@ -580,10 +580,11 @@ async function runRequestedPullRequestReview(
       );
     // The bounded GitHub response is intentionally serialized as read-only Advisor context into
     // this process-owned, mode-0600 temporary file.
+    // lgtm[js/http-to-file-access]
     fs.writeFileSync(contextPath, serializePreparedGitHubContext(context), {
       flag: "wx",
       mode: 0o600,
-    }); // lgtm[js/http-to-file-access]
+    });
     const contextHead = (context.pullRequest as { head?: { sha?: unknown } } | undefined)?.head
       ?.sha;
     const contextBase = (context.pullRequest as { base?: { sha?: unknown } } | undefined)?.base
