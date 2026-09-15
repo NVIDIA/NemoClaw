@@ -243,6 +243,18 @@ impl Provider for NemoClawProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
         let definitions = [
             Definition::new(
+                "ollama_storage",
+                &[
+                    "name",
+                    "owner",
+                    "generation",
+                    "image",
+                    "network",
+                    "bind_address",
+                ],
+                &[],
+            ),
+            Definition::new(
                 "ollama",
                 &[
                     "name",

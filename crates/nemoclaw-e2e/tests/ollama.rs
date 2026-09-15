@@ -16,6 +16,9 @@ struct State {
     installed: bool,
     fail_inventory: bool,
     creates: usize,
+    starts: usize,
+    fail_start: bool,
+    deletes: usize,
     pulls: usize,
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -68,8 +71,9 @@ async fn managed_ollama_bundle_preserves_models_across_noop_export_and_failed_ob
             ("GET",p) if p.starts_with("/containers/")=>state.container.clone().map(|v|(200,v)).unwrap_or((404,json!({}))),
             ("GET",p) if p.starts_with("/volumes/")=>state.volume.clone().map(|v|(200,v)).unwrap_or((404,json!({}))),
             ("POST","/volumes/create")=>{let r:Value=serde_json::from_slice(&request.body).unwrap();let v=json!({"Name":r["Name"],"Labels":r["Labels"],"Driver":"local","Scope":"local","Options":{},"CreatedAt":"created","Mountpoint":"/fixture"});state.volume=Some(v.clone());(201,v)},
-            ("POST",p) if p.starts_with("/containers/create")=>{state.creates+=1;let r:Value=serde_json::from_slice(&request.body).unwrap();let name=r["HostConfig"]["Mounts"][0]["Source"].as_str().unwrap().trim_end_matches("-models");state.container=Some(json!({"Id":"container","Name":format!("/{name}"),"Config":r,"HostConfig":r["HostConfig"],"State":{"Running":false},"Mounts":[{"Type":"volume","Name":format!("{name}-models"),"Destination":"/root/.ollama","RW":true}]}));(201,json!({"Id":"container","Warnings":[]}))},
-            ("POST","/containers/container/start")=>{state.container.as_mut().unwrap()["State"]["Running"]=json!(true);(204,json!({}))},
+            ("POST",p) if p.starts_with("/containers/create")=>{state.creates+=1;let r:Value=serde_json::from_slice(&request.body).unwrap();let name=r["HostConfig"]["Mounts"][0]["Source"].as_str().unwrap().trim_end_matches("-models");state.container=Some(json!({"Id":format!("container-{}",state.creates),"Name":format!("/{name}"),"Config":r,"HostConfig":r["HostConfig"],"State":{"Running":false},"Mounts":[{"Type":"volume","Name":format!("{name}-models"),"Destination":"/root/.ollama","RW":true}]}));(201,json!({"Id":"container","Warnings":[]}))},
+            ("POST",p) if p.ends_with("/start")=>{if state.fail_start { return Some((503,b"{}".to_vec())); } state.starts+=1;state.container.as_mut().unwrap()["State"]["Running"]=json!(true);(204,json!({}))},
+            ("DELETE",p) if p.starts_with("/containers/")=>{state.deletes+=1;state.container=None;(204,json!({}))},
             _=>panic!("unexpected Docker effect {} {}",request.method,request.path),
         };Some((status,serde_json::to_vec(&value).unwrap()))
     }).await;
@@ -101,7 +105,7 @@ async fn managed_ollama_bundle_preserves_models_across_noop_export_and_failed_ob
             .unwrap()
             .changes
             .len(),
-        6
+        7
     );
     assert_eq!(shared.lock().unwrap().creates, 0);
     assert_eq!(shared.lock().unwrap().pulls, 0);
@@ -116,6 +120,28 @@ async fn managed_ollama_bundle_preserves_models_across_noop_export_and_failed_ob
             .changes
             .is_empty()
     );
+    let established = shared.lock().unwrap().container.clone().unwrap()["Id"].clone();
+    let retained_volume = shared.lock().unwrap().volume.clone();
+    shared.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(false);
+    let recovery = deployment.plan(&document, &cancel).await.unwrap();
+    assert!(!recovery.deferred.is_empty());
+    assert_eq!(recovery.changes.len(), 1);
+    assert_eq!(recovery.changes[0].resource, "nemoclaw_ollama.service");
+    assert_eq!(shared.lock().unwrap().starts, 1);
+    shared.lock().unwrap().fail_start = true;
+    assert!(deployment.apply(&document, &cancel).await.is_err());
+    assert_eq!(
+        shared.lock().unwrap().container.as_ref().unwrap()["Id"],
+        established
+    );
+    assert_eq!(shared.lock().unwrap().volume, retained_volume);
+    shared.lock().unwrap().fail_start = false;
+    deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(
+        shared.lock().unwrap().container.as_ref().unwrap()["Id"],
+        established
+    );
+    assert_eq!(shared.lock().unwrap().pulls, 1);
     let original = std::fs::read(directory.path().join("terraform.tfstate")).unwrap();
     shared.lock().unwrap().fail_inventory = true;
     assert!(deployment.plan(&document, &cancel).await.is_err());
@@ -125,9 +151,29 @@ async fn managed_ollama_bundle_preserves_models_across_noop_export_and_failed_ob
         original,
         std::fs::read(directory.path().join("terraform.tfstate")).unwrap()
     );
-    assert!(deployment.destroy(&cancel).await.is_err());
+    // Teardown verifies Docker identities/storage, but never needs model inventory:
+    // model bytes are retained, including when their API is unavailable.
+    shared.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(false);
+    let preview = deployment.plan_destroy(&cancel).await.unwrap();
+    assert!(
+        preview
+            .retained
+            .contains(&"nemoclaw_ollama_storage.models".into())
+    );
+    assert_eq!(shared.lock().unwrap().deletes, 0);
+    deployment.destroy(&cancel).await.unwrap();
+    assert!(shared.lock().unwrap().container.is_none());
+    assert_eq!(shared.lock().unwrap().volume, retained_volume);
+    shared.lock().unwrap().fail_inventory = false;
+    deployment.apply(&document, &cancel).await.unwrap();
+    assert_ne!(
+        shared.lock().unwrap().container.as_ref().unwrap()["Id"],
+        established
+    );
+    assert_eq!(shared.lock().unwrap().volume, retained_volume);
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     let state = shared.lock().unwrap();
-    assert_eq!(state.creates, 1);
+    assert_eq!(state.creates, 2);
     assert_eq!(state.pulls, 1);
     server.abort();
 }

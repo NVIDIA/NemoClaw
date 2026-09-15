@@ -144,6 +144,11 @@ pub fn compile(
             "generation":generation(generations,"ollama")?,"image":ollama.image,"network":ollama.network,
             "bind_address":authority,"running":"true","lifecycle":{"prevent_destroy":true}
         }});
+        let mut storage = resources["nemoclaw_ollama"]["service"].clone();
+        storage.as_object_mut().unwrap().remove("running");
+        resources["nemoclaw_ollama_storage"] = json!({"models": storage});
+        resources["nemoclaw_ollama"]["service"]["depends_on"] =
+            json!(["nemoclaw_ollama_storage.models"]);
         resources["nemoclaw_ollama_model"] = json!({"inference":{
             "service_id":"${nemoclaw_ollama.service.id}","endpoint":inference.endpoint,
             "model":document.spec.sandboxes[0].agents[0].inference.routes[0].overrides.model,

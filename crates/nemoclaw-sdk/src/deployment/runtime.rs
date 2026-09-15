@@ -407,7 +407,14 @@ impl Deployment {
                 "unfinished apply may have unbound effects; reconcile its original configuration before destroy",
             ));
         }
-        self.require_no_ollama(&record.document)?;
+        if record.document.spec.inference_providers[0].ollama.is_some()
+            && store.bindings()?.contains_key("nemoclaw_ollama.service")
+            && !store.bindings()?.contains_key(super::ollama::STORAGE)
+        {
+            return Err(Error::Conflict(
+                "apply once to establish independent Ollama storage binding before destroy",
+            ));
+        }
         let runtime = if record.document.has_runtime() {
             Some(Store::open(&store.directory.join("runtime"))?)
         } else {
@@ -419,6 +426,9 @@ impl Deployment {
             .contains_key("nemoclaw_workspace.deployment")
         {
             result.retained.push("nemoclaw_workspace.deployment".into());
+        }
+        if store.bindings()?.contains_key(super::ollama::STORAGE) {
+            result.retained.push(super::ollama::STORAGE.into());
         }
         if let Some(stage) = &runtime {
             let bindings = stage.bindings()?;
@@ -509,10 +519,17 @@ impl Deployment {
             compile::targets(&record.document, &record.generations)?
         };
         let mut expected = allowed(&targets);
+        if !runtime {
+            super::ollama::extend_allowed(&record.document, &record.generations, &mut expected)?;
+        }
         let retained: BTreeSet<String> = if runtime {
             [GATEWAY_STORAGE.into(), MODEL_STORAGE.into()].into()
         } else {
-            ["nemoclaw_workspace.deployment".into()].into()
+            [
+                "nemoclaw_workspace.deployment".into(),
+                super::ollama::STORAGE.into(),
+            ]
+            .into()
         };
         if !runtime && !bindings.contains_key("nemoclaw_workspace.deployment") {
             return Err(Error::Conflict(
@@ -564,8 +581,18 @@ impl Deployment {
                 let (kind, name) = address
                     .split_once('.')
                     .ok_or(Error::State("invalid resource address"))?;
-                let mut attrs = serde_json::to_value(&expected[address])
-                    .map_err(|_| Error::State("cannot encode retained resource"))?;
+                let retained_values = if address == super::ollama::STORAGE {
+                    compile::compile(
+                        &record.document,
+                        &record.generations,
+                        &bundle.manifest.version,
+                    )?["resource"]["nemoclaw_ollama_storage"]["models"]
+                        .clone()
+                } else {
+                    serde_json::to_value(&expected[address])
+                        .map_err(|_| Error::State("cannot encode retained resource"))?
+                };
+                let mut attrs = retained_values;
                 attrs["lifecycle"] = json!({"prevent_destroy":true});
                 graph["resource"][kind][name] = attrs;
             }

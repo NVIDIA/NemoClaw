@@ -17,7 +17,10 @@
         "name": "nc-8bb56695710753e3-ollama",
         "network": "nc-prototype-slice",
         "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b",
-        "running": "true"
+        "running": "true",
+        "depends_on": [
+          "nemoclaw_ollama_storage.models"
+        ]
       }
     },
     "nemoclaw_ollama_model": {
@@ -84,6 +87,19 @@
           "prevent_destroy": true
         },
         "name": "nc-8bb56695710753e3",
+        "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b"
+      }
+    },
+    "nemoclaw_ollama_storage": {
+      "models": {
+        "bind_address": "172.20.0.1:11436",
+        "generation": "ollama-generation",
+        "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "nc-8bb56695710753e3-ollama",
+        "network": "nc-prototype-slice",
         "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b"
       }
     }

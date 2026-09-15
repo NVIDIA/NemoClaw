@@ -5,6 +5,7 @@ use crate::{
     compile::Generations,
     ollama::{OllamaBackend, ServiceSpec},
 };
+pub(super) const STORAGE: &str = "nemoclaw_ollama_storage.models";
 const SERVICE: &str = "nemoclaw_ollama.service";
 const MODEL: &str = "nemoclaw_ollama_model.inference";
 fn specification(document: &Document, generations: &Generations) -> Result<ServiceSpec, Error> {
@@ -51,6 +52,7 @@ pub(super) fn extend_allowed(
         ]
         .into(),
     );
+    allowed.insert(STORAGE.into(), allowed[SERVICE].clone());
     allowed.insert(MODEL.into(), Row::new());
     Ok(())
 }
@@ -71,6 +73,95 @@ impl Deployment {
                 bindings.get(SERVICE).map(|b| b.id.as_str()).unwrap_or(""),
             )
             .await
+    }
+    /// A stopped parent has no authoritative model API. Plan only its repair,
+    /// then refresh the complete graph after explicit apply restores that API.
+    pub(super) async fn recover_ollama(
+        &self,
+        bundle: &Bundle,
+        store: &Store,
+        document: &Document,
+        record: &mut Record,
+        apply: bool,
+        cancel: &CancellationToken,
+    ) -> Result<(Vec<Change>, bool), Error> {
+        let Some(config) = &document.spec.inference_providers[0].ollama else {
+            return Ok((Vec::new(), false));
+        };
+        let bindings = store.bindings()?;
+        let Some(binding) = bindings.get(SERVICE) else {
+            return Ok((Vec::new(), false));
+        };
+        let observed = self
+            .engines
+            .resolve(&config.engine)?
+            .observe_ollama(&specification(document, &record.generations)?, &binding.id)
+            .await?
+            .ok_or(Error::Conflict(
+                "bound Ollama is absent; recovery requires inspection",
+            ))?;
+        if observed.running {
+            return Ok((Vec::new(), false));
+        }
+        self.tofu(
+            bundle,
+            store,
+            document,
+            &[
+                "plan",
+                "-input=false",
+                "-no-color",
+                "-parallelism=1",
+                "-target=nemoclaw_ollama.service",
+                "-out=ollama-recovery.plan",
+            ],
+            cancel,
+        )
+        .await?;
+        let bytes = self
+            .tofu(
+                bundle,
+                store,
+                document,
+                &["show", "-json", "ollama-recovery.plan"],
+                cancel,
+            )
+            .await?;
+        let plan: Plan = serde_json::from_slice(&bytes)
+            .map_err(|_| Error::State("invalid Ollama recovery plan"))?;
+        let mut allowed = BTreeMap::new();
+        extend_allowed(document, &record.generations, &mut allowed)?;
+        allowed.remove(MODEL);
+        let bindings = bindings
+            .into_iter()
+            .filter(|(key, _)| allowed.contains_key(key))
+            .collect();
+        let changes = check_plan(&plan, &allowed, &bindings)?;
+        if !apply {
+            return Ok((changes, true));
+        }
+        record.document = document.clone();
+        record.digest = document.digest();
+        record.pending = true;
+        record.succeeded = false;
+        record.plan_digest =
+            crate::bundle::hash_file(&store.directory.join("ollama-recovery.plan"))?;
+        store.save(record)?;
+        self.tofu(
+            bundle,
+            store,
+            document,
+            &[
+                "apply",
+                "-input=false",
+                "-no-color",
+                "-parallelism=1",
+                "ollama-recovery.plan",
+            ],
+            cancel,
+        )
+        .await?;
+        Ok((changes, false))
     }
     pub(super) async fn export_ollama(
         &self,
@@ -97,7 +188,7 @@ impl Deployment {
             ));
         }
         let spec = specification(document, generations)?;
-        let row = [
+        let row: Row = [
             ("id".into(), id.clone()),
             ("name".into(), spec.name),
             ("owner".into(), spec.owner),
@@ -108,11 +199,20 @@ impl Deployment {
         ]
         .into();
         let backend = OllamaBackend::new(self.engines.resolve(&config.engine)?);
+        let storage = bindings.get(STORAGE).ok_or(Error::Conflict(
+            "Ollama storage binding is missing; apply before export",
+        ))?;
+        let mut storage_row = row.clone();
+        storage_row.insert("id".into(), storage.id.clone());
+        backend
+            .read("ollama_storage", &storage_row, false)
+            .await?
+            .ok_or(Error::Conflict("Ollama storage is absent"))?;
         backend
             .read("ollama", &row, false)
             .await?
             .ok_or(Error::Conflict("owned Ollama service is absent"))?;
-        let row = [
+        let row: Row = [
             ("id".into(), format!("{id}/model")),
             ("service_id".into(), id.clone()),
             ("endpoint".into(), provider.endpoint.clone()),

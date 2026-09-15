@@ -211,6 +211,16 @@ impl Deployment {
             cancel,
         )
         .await?;
+        let (recovery_changes, deferred) = self
+            .recover_ollama(&bundle, &store, &document, &mut record, apply, cancel)
+            .await?;
+        let mut runtime_changes = runtime_changes;
+        runtime_changes.extend(recovery_changes);
+        if deferred {
+            let mut result = OperationResult::planned(runtime_changes);
+            result.deferred.push("Model inventory and the complete deployment plan require recovery of the stopped Ollama service".into());
+            return Ok(result);
+        }
         (self.progress)(Progress::Planning);
         let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
@@ -301,14 +311,6 @@ impl Deployment {
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
-    }
-    fn require_no_ollama(&self, document: &Document) -> Result<(), Error> {
-        if document.spec.inference_providers[0].ollama.is_some() {
-            return Err(Error::Conflict(
-                "managed Ollama destroy is not supported; its combined service and storage resource retains persistent data",
-            ));
-        }
-        Ok(())
     }
     async fn preflight(
         &self,
