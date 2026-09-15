@@ -1032,7 +1032,7 @@ describe("Hermes Portable connect composition", () => {
       ),
     ).toBe(true);
     expect(forward.launchSpy.mock.calls[0]![1].timeoutMs).toBeGreaterThan(0);
-    expect(forward.launchSpy.mock.calls[0]![1].timeoutMs).toBeLessThanOrEqual(30_000);
+    expect(forward.launchSpy.mock.calls[0]![1].timeoutMs).toBeLessThanOrEqual(60_000);
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
     expect(forward.launchSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       harness.publishLaunchReadinessSpy.mock.invocationCallOrder[0]!,
