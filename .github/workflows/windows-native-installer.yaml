@@ -779,11 +779,12 @@ jobs:
       - name: Verify the actual system root and contained Node access
         shell: pwsh
         run: |
-          & packaging/windows/host-preparation/test-system-root-mxc.ps1 `
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -File "$env:GITHUB_WORKSPACE\packaging\windows\host-preparation\test-system-root-mxc.ps1" `
             -HelperPath "$env:RUNNER_TEMP\host-preparation-helper\NemoClawHostPreparation.exe" `
             -MxcDirectory "$env:RUNNER_TEMP\system-drive-inputs\package\bin\arm64" `
             -NodePath "$env:RUNNER_TEMP\system-drive-inputs\node\node.exe" `
             -ArtifactDirectory "$env:RUNNER_TEMP\system-root-mxc-proof"
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows PowerShell 5.1 system-drive proof failed.' }
       - name: Preserve fixed-purpose preparation evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
