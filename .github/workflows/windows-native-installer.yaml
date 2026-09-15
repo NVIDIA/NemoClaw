@@ -973,20 +973,33 @@ jobs:
           $install = "$output\install"
           $null = New-Item -ItemType Directory -Path "$install\bin"
           Copy-Item -LiteralPath "$output\target\aarch64-pc-windows-msvc\release\NemoClaw.exe" -Destination "$install\bin\NemoClaw.exe"
-          $negativeOutput = & "$install\bin\NemoClaw.exe" --edge-offline-trust "$install\bin\NemoClaw.exe" 2>&1
-          $negativeExitCode = $LASTEXITCODE
-          $negativeText = ($negativeOutput | Out-String).Trim()
-          [IO.File]::WriteAllText("$output\unsigned-denial.json", (@{schemaVersion=1;classification='native-edge-unsigned-denial';exitCode=$negativeExitCode;message=$negativeText}|ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
-          if ($negativeExitCode -eq 0 -or $negativeText -notmatch '(?i)0x800b0100') { throw "The native Edge identity owner returned an unexpected unsigned-file result (exit=$negativeExitCode; message=$negativeText)." }
-          $processIdentity = & "$install\bin\NemoClaw.exe" --edge-process-identity $PID | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or $processIdentity.pid -ne $PID -or [string]$processIdentity.creationFiletime -cnotmatch '^[0-9]{15,20}$') { throw 'The native process identity owner did not bind the live process generation.' }
           $env:NEMOCLAW_NATIVE_INSTALL_ROOT = $install
           node --experimental-strip-types --input-type=module -e @'
+          import assert from "node:assert/strict";
+          import { spawnSync } from "node:child_process";
           import fs from "node:fs";
           import path from "node:path";
           import { detectNativeEdge } from "./packaging/windows/runtime/native-edge-browser.mts";
           if (process.platform !== "win32" || process.arch !== "arm64") throw new Error("Expected native Windows ARM64 Node.");
           try {
+            const launcher = path.join(process.env.NEMOCLAW_NATIVE_INSTALL_ROOT, "bin", "NemoClaw.exe");
+            const denial = spawnSync(launcher, ["--edge-offline-trust", launcher], { encoding: "utf8", windowsHide: true });
+            const denialReceipt = { schemaVersion: 1, classification: "native-edge-unsigned-denial", exitCode: denial.status, stdout: denial.stdout.trim(), stderr: denial.stderr.trim() };
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "native-edge-prerequisite", "unsigned-denial.json"), JSON.stringify(denialReceipt, null, 2) + "\n", { flag: "wx" });
+            assert.equal(denial.error, undefined);
+            assert.equal(denial.signal, null);
+            assert.equal(denial.status, 2);
+            assert.equal(denial.stdout, "");
+            assert.match(denial.stderr, /^Microsoft Edge native identity verification failed \(0x[0-9a-f]{8}\)\.\r?\n$/u);
+            const generationResult = spawnSync(launcher, ["--edge-process-identity", String(process.pid)], { encoding: "utf8", windowsHide: true });
+            assert.equal(generationResult.error, undefined);
+            assert.equal(generationResult.signal, null);
+            assert.equal(generationResult.status, 0);
+            assert.equal(generationResult.stderr, "");
+            const generation = JSON.parse(generationResult.stdout);
+            assert.equal(generation.pid, process.pid);
+            assert.equal(generation.path.toLowerCase(), process.execPath.toLowerCase());
+            assert.match(generation.creationFiletime, /^[0-9]{15,20}$/u);
             const identity = await detectNativeEdge();
             fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "native-edge-prerequisite", "edge-identity.json"), JSON.stringify({ ...identity, executed: false }, null, 2) + "\n", { flag: "wx" });
           } catch (error) {
