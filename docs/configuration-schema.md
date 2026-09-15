@@ -7,6 +7,8 @@ The [YAML field reference](reference/configuration.md) and [JSON Schema](../sche
 Edit their Rust sources, then regenerate both artifacts.
 CI rejects stale output.
 
+For editing a deployment, use [editor schema assistance](usage.md#editor-schema-assistance).
+
 ```mermaid
 flowchart LR
     Types["Rust types and field descriptions"] --> Schema["Generated JSON Schema"]

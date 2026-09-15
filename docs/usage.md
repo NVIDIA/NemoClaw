@@ -71,6 +71,25 @@ Filesystem enforcement uses OpenShell's `best_effort` Landlock mode and depends 
 Unavailable Landlock restrictions are not enforced.
 The [validation evidence](validation/README.md) records policy tests, not a security qualification.
 
+## Editor Schema Assistance
+
+The maintained examples select their schema with a comment:
+
+```yaml
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+```
+
+An editor using [YAML Language Server](https://github.com/redhat-developer/yaml-language-server) can provide field completion, hover descriptions, and schema diagnostics.
+The path is relative to the YAML file.
+When copying an example elsewhere, update the path to the matching schema file.
+Use the schema from the same source revision as your CLI; the experimental API version alone does not identify that revision.
+
+Keep `$schema` in the comment; a YAML field named `$schema` is an unknown configuration field and is rejected.
+Exported YAML omits comments, so add the association again if you want editor assistance for an export.
+
+Editor validation does not replace SDK parsing or deployment checks.
+See [validation beyond the schema](reference/configuration.md#validation-beyond-the-schema) for those limits.
+
 ## Updates and Recovery
 
 Change the route's `overrides.model` to update inference without replacing the sandbox.
