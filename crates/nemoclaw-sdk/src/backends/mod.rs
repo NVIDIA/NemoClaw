@@ -14,6 +14,9 @@ impl Backend {
         model_directory: &str,
         total: u64,
     ) -> Result<Vec<String>, Error> {
+        if service.backend == crate::recipes::huggingface::BACKEND {
+            return crate::recipes::huggingface::arguments(service, model_directory, total);
+        }
         match self {
             Self::Vllm => {
                 let recipe = crate::recipes::resolve(service)?;

@@ -52,11 +52,44 @@ impl Engine {
                     .f_bavail
                     .checked_mul(stat.f_frsize)
                     .ok_or(Error::State("Docker storage capacity overflow"))?;
-                let mut download = crate::recipes::qwen38::model_manifest().bytes()?;
-                let mut preparation = crate::recipes::qwen38::PREPARED_BYTES;
+                let generic = service.backend == crate::recipes::huggingface::BACKEND;
+                let directory = if generic {
+                    crate::recipes::huggingface::directory(service)
+                } else {
+                    format!("models/{}", service.model.revision)
+                };
+                let manifest = if generic {
+                    let cached = if let Some(observed) = observed {
+                        self.read_file(
+                            &observed.container_id,
+                            &format!(
+                                "/data/{directory}/{}",
+                                crate::recipes::huggingface::MANIFEST_FILE
+                            ),
+                            4 << 20,
+                        )
+                        .await?
+                    } else {
+                        None
+                    };
+                    match cached {
+                        Some(bytes) => {
+                            crate::recipes::huggingface::decode_manifest(service, &bytes)?
+                        }
+                        None => crate::recipes::huggingface::resolve_manifest(service).await?,
+                    }
+                } else {
+                    crate::recipes::qwen38::model_manifest()
+                };
+                let mut download = manifest.bytes()?;
+                let mut preparation = if generic {
+                    0
+                } else {
+                    crate::recipes::qwen38::PREPARED_BYTES
+                };
                 if let Some(observed) = observed {
-                    for file in crate::recipes::qwen38::model_manifest().files {
-                        let base = format!("/data/models/{}/{}", service.model.revision, file.name);
+                    for file in manifest.files {
+                        let base = format!("/data/{directory}/{}", file.name);
                         for suffix in ["", ".nemoclaw-partial"] {
                             if let Some(stat) = self
                                 .stat_file(&observed.container_id, &format!("{base}{suffix}"))
@@ -75,19 +108,23 @@ impl Engine {
                             }
                         }
                     }
-                    let path = format!(
-                        "/data/prepared/{}/{}",
-                        crate::recipes::qwen38::preparation_key(),
-                        crate::recipes::qwen38::PREPARED_FILE
-                    );
-                    if let Some(stat) = self.stat_file(&observed.container_id, &path).await? {
-                        if !regular_stat(&stat) || stat.size <= 0 || stat.size as u64 > preparation
-                        {
-                            return Err(Error::Conflict(
-                                "retained preparation progress is unobservable or corrupt",
-                            ));
+                    if !generic {
+                        let path = format!(
+                            "/data/prepared/{}/{}",
+                            crate::recipes::qwen38::preparation_key(),
+                            crate::recipes::qwen38::PREPARED_FILE
+                        );
+                        if let Some(stat) = self.stat_file(&observed.container_id, &path).await? {
+                            if !regular_stat(&stat)
+                                || stat.size <= 0
+                                || stat.size as u64 > preparation
+                            {
+                                return Err(Error::Conflict(
+                                    "retained preparation progress is unobservable or corrupt",
+                                ));
+                            }
+                            preparation -= stat.size as u64;
                         }
-                        preparation -= stat.size as u64;
                     }
                 }
                 service.check_capacity(
@@ -97,7 +134,7 @@ impl Engine {
                     preparation,
                 )
             };
-            tokio::time::timeout(std::time::Duration::from_secs(20), work)
+            tokio::time::timeout(std::time::Duration::from_secs(150), work)
                 .await
                 .map_err(|_| Error::State("host capacity observation timed out"))?
         }

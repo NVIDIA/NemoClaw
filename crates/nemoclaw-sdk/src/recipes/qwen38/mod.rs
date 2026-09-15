@@ -76,6 +76,12 @@ pub(crate) fn validate(service: &Service) -> Result<(), crate::config::ConfigErr
             && service.model.revision == "925d7be6c14c6c9442ef83e8f05b5a3c39304f69",
         "Spark requires qualified backend, pinned model, and immutable image",
     )?;
+    require(
+        service.memory.gpu_memory_gib == 0
+            && service.serving.tool_parser.is_empty()
+            && service.serving.reasoning_parser.is_empty(),
+        "Qwen3.8 recipe owns GPU budget and parser settings",
+    )?;
     let serving = &service.serving;
     require(
         (1024..=65535).contains(&serving.port)

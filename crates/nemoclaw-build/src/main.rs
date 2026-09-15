@@ -26,6 +26,7 @@ enum Action {
         platform: Option<String>,
     },
     SparkRuntime,
+    VllmRuntime,
 }
 #[derive(Deserialize)]
 struct Artifact {
@@ -234,6 +235,7 @@ async fn main() -> Result<()> {
         Action::Bundle { platform } => {
             bundle(&pins, &platform.unwrap_or(bundle::platform()?)).await
         }
-        Action::SparkRuntime => runtime::build_runtime(&pins).await,
+        Action::SparkRuntime => runtime::build_runtime(&pins, false).await,
+        Action::VllmRuntime => runtime::build_runtime(&pins, true).await,
     }
 }

@@ -53,7 +53,7 @@ async fn run_owned(
     trip: &CancellationToken,
 ) -> Result<(), Error> {
     let recipe = nemoclaw_sdk::recipes::resolve(spec)?;
-    let prepared = crate::recipe::prepare(recipe, Path::new(ROOT), cancel).await?;
+    let prepared = crate::recipe::prepare(recipe, spec, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(
             "memory protection tripped by operator; explicit apply required",

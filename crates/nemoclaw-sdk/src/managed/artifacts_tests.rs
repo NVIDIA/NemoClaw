@@ -144,12 +144,21 @@ async fn unavailable_artifacts_are_errors_not_runtime_absence() {
             Some((code, b"{}".to_vec()))
         })
         .await;
-        assert!(
-            Engine::connect(&fixture.endpoint)
-                .unwrap()
-                .verify_artifacts(&observed())
-                .await
-                .is_err()
-        );
+        for generic in [false, true] {
+            let mut observation = observed();
+            if generic {
+                let service = observation.spec.service.as_mut().unwrap();
+                service.backend = "vllm".into();
+                service.model.repository = "owner/model".into();
+                service.model.revision = "a".repeat(40);
+            }
+            assert!(
+                Engine::connect(&fixture.endpoint)
+                    .unwrap()
+                    .verify_artifacts(&observation)
+                    .await
+                    .is_err()
+            );
+        }
     }
 }

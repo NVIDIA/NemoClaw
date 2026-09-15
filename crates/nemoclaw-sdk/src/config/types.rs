@@ -200,6 +200,10 @@ pub struct Model {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Serving {
+    #[serde(rename = "toolParser", skip_serializing_if = "String::is_empty")]
+    pub tool_parser: String,
+    #[serde(rename = "reasoningParser", skip_serializing_if = "String::is_empty")]
+    pub reasoning_parser: String,
     #[serde(rename = "port")]
     pub port: i64,
     #[serde(rename = "contextTokens")]
@@ -217,6 +221,8 @@ pub struct Serving {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Memory {
+    #[serde(rename = "gpuMemoryGiB", skip_serializing_if = "is_zero")]
+    pub gpu_memory_gib: i64,
     #[serde(rename = "hostReserveGiB")]
     pub host_reserve_gib: i64,
     #[serde(rename = "kvCacheGiB")]
@@ -229,4 +235,8 @@ pub struct Memory {
     pub free_gate_gib: i64,
     #[serde(rename = "consecutiveSamples")]
     pub consecutive_samples: i64,
+}
+
+fn is_zero(value: &i64) -> bool {
+    *value == 0
 }

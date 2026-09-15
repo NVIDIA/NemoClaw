@@ -142,7 +142,8 @@ impl Engine {
                 .and_then(|config| config.labels.as_ref())
                 .ok_or(ObservationError::Incomplete)?;
             if labels.get("org.nemoclaw.backend") != Some(&service.backend)
-                || labels.get("org.nemoclaw.model") != Some(&service.model.revision)
+                || (service.backend != crate::recipes::huggingface::BACKEND
+                    && labels.get("org.nemoclaw.model") != Some(&service.model.revision))
             {
                 return Err(Error::Conflict(
                     "image does not contain the pinned Spark backend",

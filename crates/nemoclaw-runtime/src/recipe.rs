@@ -83,11 +83,13 @@ impl PreparationRunner for PackagedTools {
 }
 pub(crate) async fn prepare(
     recipe: Recipe,
+    service: &nemoclaw_sdk::config::Service,
     root: &Path,
     cancel: &CancellationToken,
 ) -> Result<PreparedModel, Error> {
     match recipe {
         Recipe::Qwen38V1 => prepare_qwen38(recipe, root, cancel).await,
+        Recipe::HuggingFace => prepare_generic(service, root, cancel).await,
     }
 }
 async fn prepare_qwen38(
@@ -95,7 +97,7 @@ async fn prepare_qwen38(
     root: &Path,
     cancel: &CancellationToken,
 ) -> Result<PreparedModel, Error> {
-    let manifest = recipe.manifest();
+    let manifest = recipe.manifest()?;
     let model = root.join("models").join(&manifest.revision);
     report("downloading", "verifying exact model snapshot", 0)?;
     let client = snapshot::Client::new()?;
@@ -133,5 +135,59 @@ async fn prepare_qwen38(
         "VLLM_PLE_PACKED_TABLE_DIR",
         prepared.join(recipe.preparation_key()).into_os_string(),
     );
+    Ok(PreparedModel { model, environment })
+}
+
+async fn prepare_generic(
+    service: &nemoclaw_sdk::config::Service,
+    root: &Path,
+    cancel: &CancellationToken,
+) -> Result<PreparedModel, Error> {
+    use nemoclaw_sdk::recipes::huggingface as hf;
+    let model = snapshot::directory(root, &hf::directory(service))?;
+    let marker = model.join(hf::MANIFEST_FILE);
+    let manifest = match std::fs::symlink_metadata(&marker) {
+        Ok(meta) if meta.is_file() && meta.len() <= 4 << 20 => hf::decode_manifest(
+            service,
+            &std::fs::read(&marker).map_err(|_| Error::State("cannot read retained manifest"))?,
+        )?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            report("downloading", "resolving selected immutable model", 0)?;
+            let manifest = tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), m=hf::resolve_manifest(service)=>m? };
+            let mut file = tempfile::NamedTempFile::new_in(&model)
+                .map_err(|_| Error::State("cannot retain manifest"))?;
+            use std::io::Write;
+            file.write_all(
+                &serde_json::to_vec(&manifest).map_err(|_| Error::State("invalid manifest"))?,
+            )
+            .map_err(|_| Error::State("cannot retain manifest"))?;
+            file.as_file()
+                .sync_all()
+                .map_err(|_| Error::State("cannot sync manifest"))?;
+            file.persist(&marker)
+                .map_err(|_| Error::State("cannot publish manifest"))?;
+            manifest
+        }
+        _ => return Err(Error::State("retained manifest is unobservable or invalid")),
+    };
+    report("downloading", "verifying selected model snapshot", 0)?;
+    let client = snapshot::Client::new()?;
+    tokio::time::timeout(
+        Duration::from_secs(8 * 3600),
+        client.ensure(&model, &manifest, cancel, &|file| {
+            let _ = report("downloading", file, 0);
+        }),
+    )
+    .await
+    .map_err(|_| Error::State("model download exceeded budget; partial data retained"))??;
+    let environment = [
+        ("HF_HUB_OFFLINE", "1"),
+        ("TRANSFORMERS_OFFLINE", "1"),
+        ("HF_HOME", "/data/huggingface"),
+        ("VLLM_CACHE_ROOT", "/data/vllm-cache"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k, v.into()))
+    .collect();
     Ok(PreparedModel { model, environment })
 }

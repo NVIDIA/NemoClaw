@@ -62,8 +62,31 @@ impl Engine {
     /// or starting a container. Only the runtime publishes completed receipts.
     pub async fn verify_artifacts(&self, observed: &RuntimeObservation) -> Result<(), Error> {
         let work = async {
-            let manifest = spark::model_manifest();
-            let model = format!("/data/models/{}", manifest.revision);
+            let service = observed
+                .spec
+                .service
+                .as_ref()
+                .ok_or(Error::State("missing inference specification"))?;
+            let generic = service.backend == crate::recipes::huggingface::BACKEND;
+            let (manifest, model) = if generic {
+                let model = format!("/data/{}", crate::recipes::huggingface::directory(service));
+                let bytes = self
+                    .read_file(
+                        &observed.container_id,
+                        &format!("{model}/{}", crate::recipes::huggingface::MANIFEST_FILE),
+                        4 << 20,
+                    )
+                    .await?
+                    .ok_or(Error::State("selected model manifest is unobservable"))?;
+                (
+                    crate::recipes::huggingface::decode_manifest(service, &bytes)?,
+                    model,
+                )
+            } else {
+                let m = spark::model_manifest();
+                let p = format!("/data/models/{}", m.revision);
+                (m, p)
+            };
             let bytes = self
                 .read_file(
                     &observed.container_id,
@@ -74,10 +97,13 @@ impl Engine {
                 .ok_or(Error::State("complete model snapshot is unobservable"))?;
             let receipt: Receipt = serde_json::from_slice(&bytes)
                 .map_err(|_| Error::State("invalid model completion receipt"))?;
-            validate_snapshot(&receipt)?;
+            validate_snapshot_manifest(&receipt, &manifest)?;
             for file in &receipt.files {
                 self.verify_artifact_file(&observed.container_id, &model, file)
                     .await?;
+            }
+            if generic {
+                return Ok(());
             }
             let prepared = format!("/data/prepared/{}", spark::preparation_key());
             let bytes = self
@@ -116,8 +142,14 @@ impl Engine {
         verify_stat(file, &stat)
     }
 }
+#[cfg(all(test, unix))]
 fn validate_snapshot(receipt: &Receipt) -> Result<(), Error> {
-    let manifest = spark::model_manifest();
+    validate_snapshot_manifest(receipt, &spark::model_manifest())
+}
+fn validate_snapshot_manifest(
+    receipt: &Receipt,
+    manifest: &crate::snapshot::Manifest,
+) -> Result<(), Error> {
     if receipt.manifest != manifest.key()
         || receipt.files.len() != manifest.files.len()
         || receipt

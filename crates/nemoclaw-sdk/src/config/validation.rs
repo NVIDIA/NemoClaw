@@ -247,7 +247,8 @@ impl Document {
         )?;
         require(
             provider.service.is_none()
-                || (route.overrides.model == MODEL_NAME && sandbox.runtime.provider == "docker"),
+                || (route.overrides.model == provider.service.as_ref().unwrap().served_model()
+                    && sandbox.runtime.provider == "docker"),
             "Spark requires its pinned served model and Docker sandbox",
         )?;
         if let Some(ollama) = &provider.ollama {

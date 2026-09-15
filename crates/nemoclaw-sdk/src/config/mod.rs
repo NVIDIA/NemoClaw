@@ -162,6 +162,13 @@ impl Agent {
     }
 }
 impl Service {
+    pub fn served_model(&self) -> &str {
+        if self.backend == crate::recipes::huggingface::BACKEND {
+            &self.model.repository
+        } else {
+            MODEL_NAME
+        }
+    }
     pub fn defaults(&mut self) {
         for (value, default) in [
             (&mut self.serving.port, 18888),

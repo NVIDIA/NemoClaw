@@ -215,3 +215,24 @@ The agent schema has only `name`, `harness`, and `inference`. A constant
 the same `fabric-<harness>` runtime identity and OpenTofu resource graph.
 Configuration digests change because the serialized document changes; old
 retained intent is not automatically migrated.
+
+## Model choice is data, not a compiled recipe constant
+
+The generic `vllm` backend accepts a public Hugging Face repository and immutable
+commit without a model allowlist. Runtime image compatibility is bound to the
+backend, not to a model revision label. The served model name follows the
+repository, and model storage identity includes both repository and revision.
+
+The model resolver discovers a checksummed inference snapshot. Plan may read
+remote metadata but cannot download weights into runtime storage or prepare a
+model. Apply retains the manifest and resumable downloads; subsequent observation
+uses that retained manifest and completion receipts. Authentication, transport,
+partial inventories and changed artifacts are errors, never resource absence.
+
+The experiment keeps the PLE recipe for Qwen3.8 separate from ordinary safetensors
+loading. A different model must not inherit its memory estimate, MTP, parser,
+cache dtype or preparation tools. Generic serving declares a total GPU budget
+and optional native parsers; the existing hardware profile and resident memory
+protection remain shared. Compatibility still depends on the selected image,
+model architecture and available capacity. Supporting arbitrary repository names
+does not establish support for remote model code or every checkpoint format.

@@ -37,7 +37,7 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
             &service,
             &capacity,
             true,
-            recipe.manifest().bytes().unwrap(),
+            recipe.manifest().unwrap().bytes().unwrap(),
             recipe.prepared_bytes(),
         )
         .unwrap();
