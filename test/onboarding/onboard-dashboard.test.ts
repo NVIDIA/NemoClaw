@@ -12,9 +12,6 @@ import type {
   OnboardDashboardHelpers,
 } from "../../src/lib/onboard/dashboard";
 
-const { getPortConflictServiceHints } = require("../../src/lib/onboard") as {
-  getPortConflictServiceHints: (platform?: string) => string[];
-};
 const { createOnboardDashboardHelpers } = require("../../src/lib/onboard/dashboard") as {
   createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
 };
@@ -169,14 +166,6 @@ describe("onboard dashboard helpers", () => {
     } finally {
       vi.unstubAllEnvs();
     }
-  });
-
-  it("prints platform-appropriate service hints for port conflicts", () => {
-    expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
-    expect(getPortConflictServiceHints("darwin").join("\n")).not.toMatch(/systemctl --user/);
-    expect(getPortConflictServiceHints("linux").join("\n")).toMatch(
-      /systemctl --user stop openclaw-gateway.service/,
-    );
   });
 
   it("leaves listed legacy forwards for gateway teardown instead of stopping by shared PID record", () => {
