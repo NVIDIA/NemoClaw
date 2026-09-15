@@ -1,0 +1,321 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawn } from "node:child_process";
+import type { StdioOptions } from "node:child_process";
+
+import { spawnExitCode } from "../../core/process-exit";
+import { ROOT } from "../../runner";
+import {
+  assertCliOpenShellSandboxName,
+  assertCliOpenShellTarget,
+  runCliOpenShellBufferedCommand,
+} from "./sandbox-command-cli";
+import type { OpenShellBufferedCommandRunner } from "./sandbox-command-cli";
+import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
+import { buildOpenShellSubprocessEnv } from "./runtime";
+import type {
+  OpenShellSandboxLogError,
+  OpenShellSandboxLogFollowSession,
+  OpenShellSandboxLogOutcome,
+  OpenShellSandboxLogOutput,
+  OpenShellSandboxLogRequest,
+  OpenShellSandboxLogs,
+} from "./sandbox-logs";
+
+const LOG_OUTPUT_LIMIT_BYTES = 1024 * 1024;
+
+type LogChildOutput = {
+  on(event: "data", listener: (chunk: Buffer | string) => void): unknown;
+  on(event: "end", listener: () => void): unknown;
+  on(event: "error", listener: (error: Error) => void): unknown;
+  pause(): void;
+  resume(): void;
+  destroy(): void;
+  setEncoding(encoding: BufferEncoding): void;
+};
+
+export type OpenShellLogChild = {
+  stdout: LogChildOutput | null;
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  killed: boolean;
+  kill(signal: NodeJS.Signals): boolean;
+  on(event: "error", listener: (error: Error) => void): unknown;
+  on(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): unknown;
+};
+
+export type OpenShellLogSpawner = (
+  binary: string,
+  args: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; stdio: StdioOptions },
+) => OpenShellLogChild;
+
+export type CliOpenShellSandboxLogsDeps = Readonly<{
+  resolveBinary?: () => string | null;
+  runBuffered?: OpenShellBufferedCommandRunner;
+  spawnChild?: OpenShellLogSpawner;
+  environment?: NodeJS.ProcessEnv;
+  hostCwd?: string;
+  outputLimitBytes?: number;
+  timeoutMilliseconds?: number;
+}>;
+
+function targetArgs(request: OpenShellSandboxLogRequest): string[] {
+  return request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+}
+
+export function buildCliOpenShellSandboxLogArgs(
+  request: OpenShellSandboxLogRequest,
+  follow: boolean,
+): string[] {
+  if (request.source === "gateway") {
+    const args = [
+      "sandbox",
+      "exec",
+      ...targetArgs(request),
+      "-n",
+      request.sandboxName,
+      "--",
+      "tail",
+      "-n",
+      request.lines,
+    ];
+    if (follow) args.push("-f");
+    args.push("/tmp/gateway.log");
+    return args;
+  }
+  const args = [
+    "logs",
+    ...targetArgs(request),
+    request.sandboxName,
+    "-n",
+    request.lines,
+    "--source",
+    "all",
+  ];
+  if (request.since) args.push("--since", request.since);
+  if (follow) args.push("--tail");
+  return args;
+}
+
+function validateRequest(
+  request: OpenShellSandboxLogRequest,
+  environment: NodeJS.ProcessEnv,
+): void {
+  if (
+    !/^\d+$/u.test(request.lines) ||
+    !Number.isFinite(request.timeoutMs) ||
+    request.timeoutMs <= 0 ||
+    /[\0\r\n]/u.test(request.since ?? "") ||
+    (request.source === "gateway" && request.since !== null)
+  ) {
+    throw new Error("Invalid OpenShell sandbox log request");
+  }
+  assertCliOpenShellSandboxName(request.sandboxName);
+  assertCliOpenShellTarget(request.target, environment);
+}
+
+function failed(error: OpenShellSandboxLogError, exitCode = 1): OpenShellSandboxLogOutcome {
+  return { kind: "failed", error, exitCode };
+}
+
+function terminationReason(
+  signal: NodeJS.Signals | null | undefined,
+): Extract<OpenShellSandboxLogOutcome, { kind: "completed" }>["termination"] {
+  if (signal === "SIGPIPE") return "broken_pipe";
+  if (signal === "SIGHUP") return "hangup";
+  if (signal === "SIGINT") return "interrupted";
+  if (signal === "SIGTERM") return "terminated";
+  return signal ? "other_signal" : undefined;
+}
+
+function classifyError(error: Error): OpenShellSandboxLogError {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ENOENT") return { kind: "unavailable", message: error.message };
+  if (code === "ETIMEDOUT") return { kind: "timeout", message: error.message };
+  if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+    return { kind: "capture", message: error.message };
+  }
+  return { kind: "invocation", message: error.message };
+}
+
+function outputView(output: LogChildOutput): OpenShellSandboxLogOutput {
+  output.setEncoding("utf8");
+  return {
+    onChunk(listener) {
+      output.on("data", (chunk) => listener(String(chunk)));
+    },
+    onEnd(listener) {
+      output.on("end", listener);
+    },
+    onError(listener) {
+      output.on("error", listener);
+    },
+    pause: () => output.pause(),
+    resume: () => output.resume(),
+    close: () => output.destroy(),
+  };
+}
+
+function immediateFailure(error: OpenShellSandboxLogError): OpenShellSandboxLogFollowSession {
+  return {
+    output: null,
+    cancel() {},
+    completion: Promise.resolve({ outcome: failed(error) }),
+  };
+}
+
+export function createCliOpenShellSandboxLogs(
+  deps: CliOpenShellSandboxLogsDeps = {},
+): OpenShellSandboxLogs {
+  const resolveBinary = deps.resolveBinary ?? resolveOpenshellBinaryOrNull;
+  const runBuffered = deps.runBuffered ?? runCliOpenShellBufferedCommand;
+  const hostCwd = deps.hostCwd ?? ROOT;
+  return {
+    async read(request) {
+      const environment = deps.environment ?? buildOpenShellSubprocessEnv();
+      try {
+        validateRequest(request, environment);
+      } catch (error) {
+        return {
+          content: "",
+          diagnostic: "",
+          outcome: failed({
+            kind: "configuration",
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        };
+      }
+      let binary: string | null;
+      try {
+        binary = resolveBinary();
+      } catch (error) {
+        return {
+          content: "",
+          diagnostic: "",
+          outcome: failed(classifyError(error instanceof Error ? error : new Error(String(error)))),
+        };
+      }
+      if (!binary) {
+        return {
+          content: "",
+          diagnostic: "",
+          outcome: failed({ kind: "unavailable", message: "OpenShell binary not found" }),
+        };
+      }
+      let result: Awaited<ReturnType<OpenShellBufferedCommandRunner>>;
+      try {
+        result = await runBuffered(binary, buildCliOpenShellSandboxLogArgs(request, false), {
+          environment,
+          hostCwd,
+          outputLimitBytes: deps.outputLimitBytes ?? LOG_OUTPUT_LIMIT_BYTES,
+          timeoutKillSignal: "SIGKILL",
+          timeoutMilliseconds:
+            request.source === "gateway"
+              ? (deps.timeoutMilliseconds ?? request.timeoutMs)
+              : undefined,
+        });
+      } catch (error) {
+        return {
+          content: "",
+          diagnostic: "",
+          outcome: failed(classifyError(error instanceof Error ? error : new Error(String(error)))),
+        };
+      }
+      if (result.error) {
+        return {
+          content: result.stdout,
+          diagnostic: result.stderr,
+          outcome: failed(classifyError(result.error)),
+        };
+      }
+      if (result.timedOut) {
+        return {
+          content: result.stdout,
+          diagnostic: result.stderr,
+          outcome: failed({
+            kind: "timeout",
+            message: "OpenShell log read timed out (ETIMEDOUT)",
+          }),
+        };
+      }
+      return {
+        content: result.stdout,
+        diagnostic: result.stderr,
+        outcome: {
+          kind: "completed",
+          exitCode: spawnExitCode(result),
+          ...(terminationReason(result.signal)
+            ? { termination: terminationReason(result.signal) }
+            : {}),
+        },
+      };
+    },
+    follow(request) {
+      const environment = deps.environment ?? buildOpenShellSubprocessEnv();
+      try {
+        validateRequest(request, environment);
+      } catch (error) {
+        return immediateFailure({
+          kind: "configuration",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      let binary: string | null;
+      try {
+        binary = resolveBinary();
+      } catch (error) {
+        return immediateFailure(
+          classifyError(error instanceof Error ? error : new Error(String(error))),
+        );
+      }
+      if (!binary) {
+        return immediateFailure({ kind: "unavailable", message: "OpenShell binary not found" });
+      }
+      const spawnChild: OpenShellLogSpawner =
+        deps.spawnChild ??
+        ((file, args, options) => spawn(file, [...args], options) as OpenShellLogChild);
+      let child: OpenShellLogChild;
+      try {
+        child = spawnChild(binary, buildCliOpenShellSandboxLogArgs(request, true), {
+          cwd: hostCwd,
+          env: environment,
+          stdio: request.source === "gateway" ? ["inherit", "pipe", "inherit"] : "inherit",
+        });
+      } catch (error) {
+        return immediateFailure(
+          classifyError(error instanceof Error ? error : new Error(String(error))),
+        );
+      }
+      const completion = new Promise<{ outcome: OpenShellSandboxLogOutcome }>((resolve) => {
+        child.on("error", (error) => {
+          resolve({ outcome: failed(classifyError(error)) });
+        });
+        child.on("exit", (code, signal) => {
+          resolve({
+            outcome: {
+              kind: "completed",
+              exitCode: spawnExitCode({ status: code, signal }),
+              ...(terminationReason(signal) ? { termination: terminationReason(signal) } : {}),
+            },
+          });
+        });
+      });
+      return {
+        output: child.stdout ? outputView(child.stdout) : null,
+        completion,
+        cancel(reason) {
+          if (!child.killed && child.exitCode === null && child.signalCode === null) {
+            child.kill(reason === "interrupt" ? "SIGINT" : "SIGTERM");
+          }
+        },
+      };
+    },
+  };
+}
+
+export const cliOpenShellSandboxLogs = createCliOpenShellSandboxLogs();

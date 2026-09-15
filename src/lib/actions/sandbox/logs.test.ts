@@ -4,7 +4,11 @@
 import { EventEmitter, once } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import type { LogProbeResult } from "../../domain/sandbox/logs";
+import type {
+  OpenShellSandboxLogFollowSession,
+  OpenShellSandboxLogRequest,
+  OpenShellSandboxLogs,
+} from "../../adapters/openshell/sandbox-logs";
 import { showSandboxLogsWithDeps } from "./logs";
 
 vi.mock("../../runner", () => ({ ROOT: process.cwd() }));
@@ -15,34 +19,44 @@ class ExitError extends Error {
   }
 }
 
+function failExit(code: number): never {
+  throw new ExitError(code);
+}
+
 type CapturedLogsRun = {
-  calls: { args: string[]; options: Record<string, unknown> }[];
   errors: string[];
   exitCode: number | null;
-  spawns: { command: string; args: string[]; options: Record<string, unknown> }[];
+  follows: OpenShellSandboxLogRequest[];
+  reads: OpenShellSandboxLogRequest[];
+  stderr: string;
   stdout: string;
 };
 
-type SandboxLogsDeps = NonNullable<Parameters<typeof showSandboxLogsWithDeps>[2]>;
-type SpawnFn = NonNullable<SandboxLogsDeps["spawn"]>;
+type FakeLogProbeResult = {
+  status: number | null;
+  stdout?: string;
+  stderr?: string;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+};
 
-function createExitedChild(): ReturnType<SpawnFn> {
-  const child = new EventEmitter() as ReturnType<SpawnFn>;
-  Object.assign(child, {
-    killed: false,
-    exitCode: null,
-    signalCode: null,
-    kill: vi.fn(() => true),
-  });
-  const originalOn = child.on.bind(child);
-  child.on = ((eventName: string, listener: (...args: unknown[]) => void) => {
-    originalOn(eventName, listener);
-    if (eventName === "exit") {
-      listener(0, null);
-    }
-    return child;
-  }) as typeof child.on;
-  return child;
+function outcome(result: FakeLogProbeResult) {
+  return result.error
+    ? {
+        kind: "failed" as const,
+        error: { kind: "invocation" as const, message: result.error.message },
+        exitCode: 1,
+      }
+    : {
+        kind: "completed" as const,
+        exitCode: result.status ?? 1,
+        ...(result.signal
+          ? {
+              termination:
+                result.signal === "SIGPIPE" ? ("broken_pipe" as const) : ("terminated" as const),
+            }
+          : {}),
+      };
 }
 
 function restoreProcessSignalListeners(
@@ -58,11 +72,13 @@ function restoreProcessSignalListeners(
 
 async function captureLogsRun(
   options: Parameters<typeof showSandboxLogsWithDeps>[1],
-  results: Record<string, LogProbeResult>,
+  results: Record<string, FakeLogProbeResult>,
   overrides: Partial<Parameters<typeof showSandboxLogsWithDeps>[2]> = {},
 ): Promise<CapturedLogsRun> {
-  const calls: CapturedLogsRun["calls"] = [];
-  const spawns: CapturedLogsRun["spawns"] = [];
+  const followsLogs = typeof options === "boolean" ? options : options.follow;
+  const reads: OpenShellSandboxLogRequest[] = [];
+  const follows: OpenShellSandboxLogRequest[] = [];
+  const stderr: string[] = [];
   const stdout: string[] = [];
   const errors: string[] = [];
   let exitCode: number | null = null;
@@ -72,28 +88,38 @@ async function captureLogsRun(
     errors.push(args.map(String).join(" "));
   });
 
-  const runOpenshell = vi.fn((args: string[], callOptions = {}) => {
-    calls.push({ args, options: callOptions as Record<string, unknown> });
-    return results[args[0]] ?? { status: 0 };
-  });
-  const spawn = ((command: string, args: readonly string[], callOptions = {}) => {
-    spawns.push({
-      command,
-      args: [...args],
-      options: callOptions as Record<string, unknown>,
-    });
-    return createExitedChild();
-  }) as unknown as SpawnFn;
+  const logs: OpenShellSandboxLogs = {
+    async read(request) {
+      reads.push(request);
+      const result = results[request.source === "gateway" ? "sandbox" : "logs"] ?? {
+        status: 0,
+      };
+      return {
+        content: String(result.stdout ?? ""),
+        diagnostic: String(result.stderr ?? ""),
+        outcome: outcome(result),
+      };
+    },
+    follow(request) {
+      follows.push(request);
+      return {
+        output: null,
+        cancel() {},
+        completion: Promise.resolve({
+          outcome: { kind: "completed", exitCode: 0 },
+        }),
+      };
+    },
+  };
 
   try {
     await showSandboxLogsWithDeps("alpha", options, {
       exit: (code) => {
         exitCode = code;
-        throw new ExitError(code);
+        return followsLogs ? (undefined as never) : failExit(code);
       },
       isDockerRuntimeDown: () => false,
-      getOpenshellBinary: () => "openshell",
-      runOpenshell,
+      logs,
       enableAuditLogs: async () => {
         const result = results.settings ?? { status: 0 };
         return result.status === 0
@@ -103,12 +129,15 @@ async function captureLogsRun(
               error: { kind: "command", reason: "failed", message: "settings unavailable" },
             };
       },
-      spawn,
       writeStdout: (chunk) => {
         stdout.push(chunk);
       },
+      writeStderr: (chunk) => {
+        stderr.push(chunk);
+      },
       ...overrides,
     });
+    await (followsLogs ? new Promise<void>((resolve) => setImmediate(resolve)) : Promise.resolve());
   } catch (error) {
     if (!(error instanceof ExitError)) throw error;
   } finally {
@@ -117,7 +146,7 @@ async function captureLogsRun(
     restoreProcessSignalListeners("SIGTERM", sigtermListeners);
   }
 
-  return { calls, errors, exitCode, spawns, stdout: stdout.join("") };
+  return { errors, exitCode, follows, reads, stderr: stderr.join(""), stdout: stdout.join("") };
 }
 
 describe("showSandboxLogsWithDeps", () => {
@@ -135,9 +164,23 @@ describe("showSandboxLogsWithDeps", () => {
     // The gateway line names no subsystem, so the relay attributes it; the
     // OpenShell line already carries its own tag and is passed through (#10340).
     expect(result.stdout).toBe("[1] [gateway] gateway\n[2] openshell\n");
-    expect(result.calls.map((call) => call.args)).toEqual([
-      ["sandbox", "exec", "-n", "alpha", "--", "tail", "-n", "50", "/tmp/gateway.log"],
-      ["logs", "alpha", "-n", "50", "--source", "all"],
+    expect(result.reads).toEqual([
+      {
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        source: "gateway",
+        lines: "50",
+        since: null,
+        timeoutMs: 5000,
+      },
+      {
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        source: "openshell",
+        lines: "50",
+        since: null,
+        timeoutMs: 5000,
+      },
     ]);
   });
 
@@ -152,8 +195,15 @@ describe("showSandboxLogsWithDeps", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("[3] openshell only\n");
-    expect(result.calls.map((call) => call.args)).toEqual([
-      ["logs", "alpha", "-n", "200", "--source", "all", "--since", "5m"],
+    expect(result.reads).toEqual([
+      {
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        source: "openshell",
+        lines: "200",
+        since: "5m",
+        timeoutMs: 5000,
+      },
     ]);
   });
 
@@ -166,11 +216,24 @@ describe("showSandboxLogsWithDeps", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.calls.map((call) => call.args)).toEqual([]);
-    expect(result.spawns.map((call) => call.command)).toEqual(["openshell", "openshell"]);
-    expect(result.spawns.map((call) => call.args)).toEqual([
-      ["sandbox", "exec", "-n", "alpha", "--", "tail", "-n", "50", "-f", "/tmp/gateway.log"],
-      ["logs", "alpha", "-n", "50", "--source", "all", "--tail"],
+    expect(result.reads).toEqual([]);
+    expect(result.follows).toEqual([
+      {
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        source: "gateway",
+        lines: "50",
+        since: null,
+        timeoutMs: 5000,
+      },
+      {
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        source: "openshell",
+        lines: "50",
+        since: null,
+        timeoutMs: 5000,
+      },
     ]);
   });
 
@@ -183,9 +246,16 @@ describe("showSandboxLogsWithDeps", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.calls.map((call) => call.args)).toEqual([]);
-    expect(result.spawns.map((call) => call.args)).toEqual([
-      ["logs", "alpha", "-n", "200", "--source", "all", "--since", "5m", "--tail"],
+    expect(result.reads).toEqual([]);
+    expect(result.follows).toEqual([
+      {
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        source: "openshell",
+        lines: "200",
+        since: "5m",
+        timeoutMs: 5000,
+      },
     ]);
   });
 
@@ -195,13 +265,14 @@ describe("showSandboxLogsWithDeps", () => {
       { follow: false, lines: "200", since: null },
       {
         settings: { status: 7, stderr: "settings unavailable\n" },
-        sandbox: { status: null, error: timeout },
+        sandbox: { status: null, stderr: "gateway diagnostic\n", error: timeout },
         logs: { status: 0, stdout: "[4] openshell fallback\n" },
       },
     );
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("[4] openshell fallback\n");
+    expect(result.stderr).toBe("gateway diagnostic\n");
     expect(result.errors.join("\n")).toContain(
       "failed to enable OpenShell audit logs for sandbox 'alpha'",
     );
@@ -225,7 +296,8 @@ describe("showSandboxLogsWithDeps", () => {
 
     expect(result.exitCode).toBe(1);
     expect(guidance).toHaveBeenCalledWith("alpha", { retryCommand: "logs" });
-    expect(result.calls).toEqual([]);
+    expect(result.reads).toEqual([]);
+    expect(result.follows).toEqual([]);
   });
 
   it("surfaces a sparse gateway breadcrumb when OpenShell output dominates the tail", async () => {
@@ -252,19 +324,75 @@ describe("showSandboxLogsWithDeps", () => {
   });
 });
 
-type StreamingChild = { child: ReturnType<SpawnFn>; stdout: PassThrough };
+type FakeFollowChild = EventEmitter & {
+  kill: ReturnType<typeof vi.fn<(signal: NodeJS.Signals) => boolean>>;
+};
 
-function createStreamingChild(): StreamingChild {
+type StreamingChild = {
+  child: FakeFollowChild;
+  session: OpenShellSandboxLogFollowSession;
+  stdout: PassThrough;
+};
+
+function createStreamingChild(withOutput = true): StreamingChild {
   const stdout = new PassThrough();
-  const child = new EventEmitter() as ReturnType<SpawnFn>;
-  Object.assign(child, {
-    killed: false,
-    exitCode: null,
-    signalCode: null,
-    kill: vi.fn(() => true),
-    stdout,
+  const child = Object.assign(new EventEmitter(), {
+    kill: vi.fn<(signal: NodeJS.Signals) => boolean>(() => true),
   });
-  return { child, stdout };
+  const completion = new Promise<Awaited<OpenShellSandboxLogFollowSession["completion"]>>(
+    (resolve) => {
+      child.on("error", (error: Error) => {
+        resolve({
+          outcome: {
+            kind: "failed",
+            error: { kind: "invocation", message: error.message },
+            exitCode: 1,
+          },
+        });
+      });
+      child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+        resolve({
+          outcome: {
+            kind: "completed",
+            exitCode: signal === "SIGPIPE" ? 141 : signal ? 143 : (code ?? 1),
+            ...(signal
+              ? {
+                  termination:
+                    signal === "SIGPIPE"
+                      ? ("broken_pipe" as const)
+                      : signal === "SIGINT"
+                        ? ("interrupted" as const)
+                        : ("terminated" as const),
+                }
+              : {}),
+          },
+        });
+      });
+    },
+  );
+  const session: OpenShellSandboxLogFollowSession = {
+    completion,
+    output: withOutput
+      ? {
+          onChunk(listener) {
+            stdout.on("data", (chunk) => listener(String(chunk)));
+          },
+          onEnd(listener) {
+            stdout.on("end", listener);
+          },
+          onError(listener) {
+            stdout.on("error", listener);
+          },
+          pause: () => stdout.pause(),
+          resume: () => stdout.resume(),
+          close: () => stdout.destroy(),
+        }
+      : null,
+    cancel: (reason) => {
+      child.kill(reason === "interrupt" ? "SIGINT" : "SIGTERM");
+    },
+  };
+  return { child, session, stdout };
 }
 
 type FollowRun = {
@@ -287,7 +415,7 @@ async function startFollowRun(
   const written: string[] = [];
   let spawnCount = 0;
   const gateway = createStreamingChild();
-  const openshell = options.keepOpenshellRunning ? createStreamingChild() : null;
+  const openshell = options.keepOpenshellRunning ? createStreamingChild(false) : null;
   const output = options.output ?? createCapturedOutput(written);
   const sigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
   const sigtermListeners = process.listeners("SIGTERM") as NodeJS.SignalsListener[];
@@ -296,10 +424,19 @@ async function startFollowRun(
     settle = resolve;
   });
 
-  const spawn = ((_command: string, _args: readonly string[], _callOptions = {}) => {
-    spawnCount += 1;
-    return spawnCount === 1 ? gateway.child : (openshell?.child ?? createExitedChild());
-  }) as unknown as SpawnFn;
+  const logs: OpenShellSandboxLogs = {
+    read: vi.fn(),
+    follow() {
+      spawnCount += 1;
+      return spawnCount === 1
+        ? gateway.session
+        : (openshell?.session ?? {
+            output: null,
+            cancel() {},
+            completion: Promise.resolve({ outcome: { kind: "completed", exitCode: 0 } }),
+          });
+    },
+  };
 
   await showSandboxLogsWithDeps(
     "alpha",
@@ -312,10 +449,8 @@ async function startFollowRun(
         return undefined as never;
       }) as never,
       isDockerRuntimeDown: () => false,
-      getOpenshellBinary: () => "openshell",
-      runOpenshell: vi.fn(() => ({ status: 0 })),
+      logs,
       enableAuditLogs: async () => ({ ok: true, value: undefined }),
-      spawn,
       stdout: output,
     },
   );
@@ -544,6 +679,7 @@ describe("follow-mode log source attribution (#10340)", () => {
 
     Object.assign(openshell.child, { signalCode: "SIGPIPE" });
     openshell.child.emit("exit", null, "SIGPIPE");
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(run.gateway.child.kill).toHaveBeenCalledWith("SIGTERM");
     run.gateway.stdout.end();
