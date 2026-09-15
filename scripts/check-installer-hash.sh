@@ -128,7 +128,9 @@ check_openshell_release_assets() {
         }
         ;;
       formula)
-        if [[ "$asset" != "openshell.rb" || "$source" != "https://github.com/NVIDIA/OpenShell/releases/download/v${parsed_version}/${asset}" ]]; then
+        if [[ "$asset" != "openshell.rb" ||
+          ( "$source" != "https://github.com/NVIDIA/OpenShell/releases/download/v${parsed_version}/${asset}" &&
+            "$source" != "https://github.com/NVIDIA/OpenShell/releases/download/dev/${asset}" ) ]]; then
           echo "  STALE: trusted parser returned an invalid OpenShell formula record."
           return 1
         fi
@@ -214,8 +216,8 @@ check_openshell_release_assets() {
       echo "  STALE: trusted parser did not return exactly one OpenShell v${release_version} formula record."
       return 1
     fi
+    release_base="${formula_url%/openshell.rb}"
 
-    release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${release_version}"
     echo "Checking OpenShell v${release_version} release assets..."
     for spec in "${manifest_specs[@]}"; do
       manifest="${spec%%:*}"
