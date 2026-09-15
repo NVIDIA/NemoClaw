@@ -181,8 +181,8 @@ impl Document {
                 "managed service excludes endpoint, Ollama, and external credentials",
             )?;
             require(
-                gateway.management == "managed",
-                "Spark service requires a managed gateway",
+                gateway.management == "managed" || service.placement.is_some(),
+                "service requires a managed gateway or explicit placement",
             )?;
             service.validate()?;
         } else {
@@ -248,8 +248,9 @@ impl Document {
         require(
             provider.service.is_none()
                 || (route.overrides.model == provider.service.as_ref().unwrap().served_model()
-                    && sandbox.runtime.provider == "docker"),
-            "Spark requires its pinned served model and Docker sandbox",
+                    && (sandbox.runtime.provider == "docker"
+                        || provider.service.as_ref().unwrap().placement.is_some())),
+            "service requires its declared served model and compatible sandbox placement",
         )?;
         if let Some(ollama) = &provider.ollama {
             let url = Url::parse(&provider.endpoint)
@@ -320,6 +321,47 @@ impl Gateway {
 }
 impl Service {
     pub fn validate(&self) -> Result<(), ConfigError> {
+        require(
+            self.placement.is_some() == self.publication.is_some(),
+            "service placement and publication must be declared together",
+        )?;
+        if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
+            require(
+                placement.engine.starts_with("ssh://"),
+                "explicit service placement requires SSH Docker",
+            )?;
+            require(
+                crate::docker::Engine::validate_endpoint(&placement.engine).is_ok(),
+                "invalid service engine",
+            )?;
+            let network: ipnet::Ipv4Net = placement
+                .network_cidr
+                .parse()
+                .map_err(|_| ConfigError("invalid service network"))?;
+            require(
+                network.prefix_len() == 24
+                    && network.addr() == network.network()
+                    && private(network.addr().into()),
+                "service network requires a private IPv4 /24",
+            )?;
+            validate_endpoint(&publication.endpoint, false)?;
+            let endpoint = url::Url::parse(&publication.endpoint).unwrap();
+            let address: std::net::Ipv4Addr = publication
+                .bind_address
+                .parse()
+                .map_err(|_| ConfigError("invalid service bind address"))?;
+            require(
+                private(address.into())
+                    && !address.is_loopback()
+                    && !network.contains(&address)
+                    && endpoint.scheme() == "http"
+                    && endpoint.host_str() == Some(publication.bind_address.as_str())
+                    && endpoint.port() == Some(self.serving.port as u16)
+                    && endpoint.path() == "/v1",
+                "service publication must match its private bind address, serving port and /v1 path",
+            )?;
+        }
+
         require(
             IMAGE.is_match(&self.image),
             "Spark requires qualified backend, pinned model, and immutable image",

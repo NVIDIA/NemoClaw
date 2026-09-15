@@ -175,13 +175,13 @@ impl Engine {
         if let Some(network) = self.network(&spec.network()).await? {
             return verify_network(spec, &network);
         }
-        if spec.kind != GATEWAY_KIND {
+        if spec.kind != GATEWAY_KIND && spec.service.as_ref().is_none_or(|s| s.placement.is_none())
+        {
             return Err(Error::Conflict("managed gateway network is absent"));
         }
         let networks = self.api.list_networks(None).await.map_err(remote)?;
         let desired = spec
-            .gateway
-            .network_cidr
+            .network_cidr()
             .parse::<ipnet::Ipv4Net>()
             .map_err(|_| Error::Conflict("invalid gateway subnet"))?;
         for network in networks {
@@ -201,7 +201,7 @@ impl Engine {
                 }
             }
         }
-        let request:NetworkCreateRequest=serde_json::from_value(json!({"Name":spec.network(),"Driver":"bridge","Labels":spec.labels()?,"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge()}]}})).map_err(|_|Error::State("invalid compiled gateway network"))?;
+        let request:NetworkCreateRequest=serde_json::from_value(json!({"Name":spec.network(),"Driver":"bridge","Labels":spec.labels()?,"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge()}]}})).map_err(|_|Error::State("invalid compiled gateway network"))?;
         self.api.create_network(request).await.map_err(remote)?;
         let network = self
             .network(&spec.network())

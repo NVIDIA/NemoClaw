@@ -71,8 +71,8 @@ pub(crate) fn verify_network(spec: &Spec, network: &NetworkInspect) -> Result<()
         || network.enable_ipv6.unwrap_or(false)
         || ipam.driver.as_deref() != Some("default")
         || config.len() != 1
-        || config[0].subnet.as_deref() != Some(&spec.gateway.network_cidr)
-        || config[0].gateway.as_deref() != Some(&spec.gateway.bridge())
+        || config[0].subnet.as_deref() != Some(spec.network_cidr())
+        || config[0].gateway.as_deref() != Some(&spec.bridge())
     {
         return Err(Error::Conflict(
             "managed bridge identity, ownership or configuration drifted",
@@ -255,7 +255,7 @@ impl Engine {
         id: &str,
     ) -> Result<Option<RuntimeObservation>, Error> {
         spec.validate()?;
-        if self.endpoint() != spec.gateway.engine {
+        if self.endpoint() != spec.engine() {
             return Err(Error::Conflict(
                 "runtime engine differs from its explicit specification",
             ));

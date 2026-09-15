@@ -33,7 +33,7 @@ impl Storage {
             || !regex::Regex::new(r"^[a-f0-9]{32}$")
                 .unwrap()
                 .is_match(&self.generation)
-            || !self.engine.starts_with("unix:///")
+            || crate::docker::Engine::validate_endpoint(&self.engine).is_err()
         {
             return Err(Error::Conflict(
                 "storage lacks explicit ownership, generation, or engine",

@@ -61,7 +61,9 @@ impl Spec {
                 "managed resource lacks ownership or generation",
             ));
         }
-        self.gateway.validate_managed()?;
+        if self.service.as_ref().is_none_or(|s| s.placement.is_none()) {
+            self.gateway.validate_managed()?;
+        }
         if self.kind == GATEWAY_KIND && self.service.is_none() && self.layout <= 2 {
             return Ok(());
         }
@@ -72,6 +74,31 @@ impl Spec {
             return service.validate().map_err(Into::into);
         }
         Err(Error::Conflict("invalid managed runtime kind or layout"))
+    }
+    pub fn engine(&self) -> &str {
+        self.service
+            .as_ref()
+            .and_then(|s| s.placement.as_ref())
+            .map_or(&self.gateway.engine, |p| &p.engine)
+    }
+    pub fn network_cidr(&self) -> &str {
+        self.service
+            .as_ref()
+            .and_then(|s| s.placement.as_ref())
+            .map_or(&self.gateway.network_cidr, |p| &p.network_cidr)
+    }
+    pub fn bridge(&self) -> String {
+        if let Some(p) = self.service.as_ref().and_then(|s| s.placement.as_ref()) {
+            let net: ipnet::Ipv4Net = p.network_cidr.parse().expect("validated network");
+            return std::net::Ipv4Addr::from(u32::from(net.network()) + 1).to_string();
+        }
+        self.gateway.bridge()
+    }
+    pub fn runtime_service(&self) -> Service {
+        let mut service = self.service.clone().expect("validated service");
+        service.placement = None;
+        service.publication = None;
+        service
     }
     pub fn json(&self) -> Result<String, Error> {
         self.validate()?;
@@ -138,7 +165,7 @@ impl Spec {
             config["Cmd"] = json!([]);
             config["Env"] = json!([format!(
                 "NEMOCLAW_SPARK_SPEC={}",
-                serde_json::to_string(service).expect("service JSON")
+                serde_json::to_string(&self.runtime_service()).expect("service JSON")
             )]);
             host["NetworkMode"] = json!(self.network());
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":"/data"}]);
@@ -147,7 +174,7 @@ impl Spec {
             host["MemorySwap"] = json!(104 * GIB);
             host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
             host["Ulimits"] = json!([{"Name":"memlock","Soft":-1,"Hard":-1},{"Name":"stack","Soft":67108864,"Hard":67108864}]);
-            host["PortBindings"] = json!({format!("{}/tcp",service.serving.port):[{"HostIp":self.gateway.bridge(),"HostPort":service.serving.port.to_string()}]});
+            host["PortBindings"] = json!({format!("{}/tcp",service.serving.port):[{"HostIp":service.publication.as_ref().map(|p|p.bind_address.clone()).unwrap_or_else(||self.bridge()),"HostPort":service.serving.port.to_string()}]});
         }
         config["HostConfig"] = host;
         serde_json::from_value(config)

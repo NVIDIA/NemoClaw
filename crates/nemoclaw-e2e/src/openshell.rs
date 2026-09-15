@@ -13,6 +13,7 @@ use tonic::{Request, Response, Status, body::Body};
 
 #[derive(Default)]
 pub struct State {
+    pub driver: Option<String>,
     pub workspaces: HashMap<String, p::Workspace>,
     pub providers: HashMap<String, p::Provider>,
     pub routes: HashMap<String, p::SetInferenceRouteRequest>,
@@ -361,13 +362,13 @@ impl tower::Service<http::Request<Body>> for InferenceService {
     }
 }
 fn gateway_info(
-    _: &mut State,
+    state: &mut State,
     _: p::GetGatewayInfoRequest,
 ) -> Result<p::GetGatewayInfoResponse, Status> {
     Ok(p::GetGatewayInfoResponse {
         gateway_version: "0.0.116".into(),
         compute_drivers: vec![p::ComputeDriverInfo {
-            name: "docker".into(),
+            name: state.driver.clone().unwrap_or_else(|| "docker".into()),
             ..Default::default()
         }],
         ..Default::default()

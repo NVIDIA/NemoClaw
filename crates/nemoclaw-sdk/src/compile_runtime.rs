@@ -10,7 +10,7 @@ pub fn runtime_targets(
     generations: &Generations,
 ) -> Result<Vec<Target>, Error> {
     document.validate()?;
-    if document.spec.gateway.management != "managed" {
+    if !document.has_runtime() {
         return Ok(Vec::new());
     }
     let gateway = Spec {
@@ -29,10 +29,14 @@ pub fn runtime_targets(
         address: format!("nemoclaw_{kind}.runtime"),
         values: Row::from([("spec".into(), spec)]),
     };
-    let mut result = vec![
-        target(GATEWAY_STORAGE_KIND, storage.json()?),
-        target(GATEWAY_KIND, gateway.json()?),
-    ];
+    let mut result = if document.spec.gateway.management == "managed" {
+        vec![
+            target(GATEWAY_STORAGE_KIND, storage.json()?),
+            target(GATEWAY_KIND, gateway.json()?),
+        ]
+    } else {
+        Vec::new()
+    };
     if let Some(service) = document.spec.inference_providers[0].service.as_ref() {
         let spec = Spec {
             layout: 0,
@@ -40,14 +44,18 @@ pub fn runtime_targets(
             name: format!("{}-inference", document.workspace()),
             owner: document.metadata.uid.clone(),
             generation: generation(generations, SERVICE_KIND)?.into(),
-            gateway: document.spec.gateway.clone(),
+            gateway: if service.placement.is_some() {
+                Default::default()
+            } else {
+                document.spec.gateway.clone()
+            },
             service: Some(service.clone()),
         };
         let storage = Storage {
             name: format!("{}-inference-data", document.workspace()),
             owner: spec.owner.clone(),
             generation: spec.generation.clone(),
-            engine: spec.gateway.engine.clone(),
+            engine: spec.engine().to_owned(),
         };
         result.push(target(STORAGE_KIND, storage.json()?));
         result.push(target(SERVICE_KIND, spec.json()?));
@@ -69,10 +77,19 @@ pub fn compile_runtime(
             }
             GATEWAY_KIND => attrs["depends_on"] = json!(["nemoclaw_gateway_storage.runtime"]),
             SERVICE_KIND => {
-                attrs["depends_on"] = json!([
-                    "nemoclaw_managed_gateway.runtime",
-                    "nemoclaw_inference_storage.runtime"
-                ])
+                attrs["depends_on"] = if document.spec.gateway.management == "managed"
+                    && document.spec.inference_providers[0]
+                        .service
+                        .as_ref()
+                        .is_some_and(|s| s.placement.is_none())
+                {
+                    json!([
+                        "nemoclaw_managed_gateway.runtime",
+                        "nemoclaw_inference_storage.runtime"
+                    ])
+                } else {
+                    json!(["nemoclaw_inference_storage.runtime"])
+                }
             }
             _ => unreachable!(),
         }

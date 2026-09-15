@@ -84,3 +84,12 @@ fn ssh_connections_reject_credentials_options_and_unsupported_paths() {
         assert!(Engine::connect(endpoint).is_err(), "accepted {endpoint:?}");
     }
 }
+
+#[test]
+fn engine_endpoint_syntax_can_be_validated_without_opening_a_transport() {
+    for endpoint in ["unix:///var/run/docker.sock", "ssh://operator@gpu-box:2222"] {
+        Engine::validate_endpoint(endpoint).unwrap();
+    }
+    assert!(Engine::validate_endpoint("ssh://user:password@host").is_err());
+    assert!(Engine::validate_endpoint("tcp://host:2375").is_err());
+}

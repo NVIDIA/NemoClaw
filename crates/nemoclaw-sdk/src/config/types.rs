@@ -176,6 +176,10 @@ pub struct Overrides {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Service {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<ServicePlacement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication: Option<ServicePublication>,
     #[serde(rename = "backend")]
     pub backend: String,
     #[serde(rename = "image")]
@@ -239,4 +243,17 @@ pub struct Memory {
 
 fn is_zero(value: &i64) -> bool {
     *value == 0
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ServicePlacement {
+    pub engine: String,
+    pub network_cidr: String,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ServicePublication {
+    pub endpoint: String,
+    pub bind_address: String,
 }

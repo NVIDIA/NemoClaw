@@ -3,7 +3,6 @@
 use super::*;
 use crate::{
     ObservationError,
-    docker::Engine,
     managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, SERVICE_KIND, STORAGE_KIND, Spec, Storage},
 };
 use std::time::Duration;
@@ -81,7 +80,7 @@ fn bound_spec(want: &Spec, binding: Option<&StateBinding>) -> Result<Spec, Error
         || old.name != want.name
         || old.owner != want.owner
         || old.generation != want.generation
-        || old.gateway.engine != want.gateway.engine
+        || old.engine() != want.engine()
     {
         return Err(Error::Conflict(
             "bound runtime identity differs from retained intent",
@@ -95,7 +94,7 @@ struct Preflight {
     gateway_running: bool,
 }
 async fn preflight(
-    engine: &Engine,
+    engines: &crate::docker::Connections,
     targets: &[Target],
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<Preflight, Error> {
@@ -118,6 +117,7 @@ async fn preflight(
         .iter()
         .filter(|target| matches!(target.kind.as_str(), STORAGE_KIND | GATEWAY_STORAGE_KIND))
     {
+        let engine = crate::managed::runtime_engine(engines, &target.kind, &target.values)?;
         let id = bindings
             .get(&target.address)
             .map(|b| b.id.as_str())
@@ -132,7 +132,7 @@ async fn preflight(
         let observed = if target.kind == STORAGE_KIND {
             let spec: Storage = serde_json::from_str(&target.values["spec"])
                 .map_err(|_| Error::State("invalid compiled storage"))?;
-            spec.observe(engine, id).await?
+            spec.observe(&engine, id).await?
         } else {
             let spec: Spec = serde_json::from_str(&target.values["spec"])
                 .map_err(|_| Error::State("invalid compiled gateway storage"))?;
@@ -151,6 +151,7 @@ async fn preflight(
     {
         let want: Spec = serde_json::from_str(&target.values["spec"])
             .map_err(|_| Error::State("invalid compiled runtime"))?;
+        let engine = crate::managed::runtime_engine(engines, &target.kind, &target.values)?;
         let old = bound_spec(&want, bindings.get(&target.address))?;
         result
             .expected
@@ -193,7 +194,7 @@ impl Deployment {
         apply: bool,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
-        if document.spec.gateway.management != "managed" {
+        if !document.has_runtime() {
             return Ok((Vec::new(), false));
         }
         for kind in [GATEWAY_KIND, SERVICE_KIND] {
@@ -207,8 +208,10 @@ impl Deployment {
         let stage = Store::open(&store.directory.join("runtime"))?;
         let bindings = stage.bindings()?;
         let targets = compile::runtime_targets(document, &record.generations)?;
-        let engine = self.engines.resolve(&document.spec.gateway.engine)?;
-        let checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=preflight(&engine,&targets,&bindings)=>result?};
+        let mut checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=preflight(&self.engines,&targets,&bindings)=>result?};
+        if document.spec.gateway.management == "external" {
+            checked.gateway_running = true;
+        }
         self.prepare(
             bundle,
             &stage,
@@ -290,9 +293,10 @@ impl Deployment {
         };
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(90),gateway)=>result.map_err(|_|Error::State("managed gateway readiness failed; identity and data retained"))??};
         let bindings = stage.bindings()?;
-        let engine = self.engines.resolve(&document.spec.gateway.engine)?;
         let inference = async {
             for target in targets.iter().filter(|t| t.kind == SERVICE_KIND) {
+                let engine =
+                    crate::managed::runtime_engine(&self.engines, &target.kind, &target.values)?;
                 let spec: Spec = serde_json::from_str(&target.values["spec"])
                     .map_err(|_| Error::State("invalid runtime specification"))?;
                 let binding = bindings.get(&target.address).ok_or(Error::State(
@@ -331,7 +335,7 @@ impl Deployment {
         record: &Record,
         cancel: &CancellationToken,
     ) -> Result<(), Error> {
-        if record.document.spec.gateway.management != "managed" {
+        if !record.document.has_runtime() {
             return Ok(());
         }
         let stage = Store::open(&store.directory.join("runtime"))?;
@@ -342,9 +346,10 @@ impl Deployment {
                 "export requires all managed runtime bindings",
             ));
         }
-        let engine = self.engines.resolve(&record.document.spec.gateway.engine)?;
         let work = async {
             for target in targets {
+                let engine =
+                    crate::managed::runtime_engine(&self.engines, &target.kind, &target.values)?;
                 let binding = bindings.get(&target.address).ok_or(Error::Conflict(
                     "export requires established runtime identity",
                 ))?;
@@ -403,7 +408,7 @@ impl Deployment {
             ));
         }
         self.require_no_ollama(&record.document)?;
-        let runtime = if record.document.spec.gateway.management == "managed" {
+        let runtime = if record.document.has_runtime() {
             Some(Store::open(&store.directory.join("runtime"))?)
         } else {
             None
@@ -517,7 +522,7 @@ impl Deployment {
         for target in &targets {
             if runtime && matches!(target.kind.as_str(), GATEWAY_KIND | SERVICE_KIND) {
                 if bindings.contains_key(&target.address)
-                    && (!bindings.contains_key(GATEWAY_STORAGE)
+                    && ((target.kind == GATEWAY_KIND && !bindings.contains_key(GATEWAY_STORAGE))
                         || (target.kind == SERVICE_KIND && !bindings.contains_key(MODEL_STORAGE)))
                 {
                     return Err(Error::Conflict(

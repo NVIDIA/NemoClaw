@@ -49,9 +49,7 @@ struct ConfiguredBackend(
 );
 impl ConfiguredBackend {
     fn managed(&self, kind: &str, row: &Row) -> Result<ManagedBackend, ObservationError> {
-        let endpoint = nemoclaw_sdk::managed::connection_endpoint(kind, row)?;
-        self.2
-            .resolve(&endpoint)
+        nemoclaw_sdk::managed::runtime_engine(&self.2, kind, row)
             .map(ManagedBackend::new)
             .map_err(|_| ObservationError::Backend("engine connection unavailable"))
     }

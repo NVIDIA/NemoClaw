@@ -4,7 +4,7 @@ use super::Engine;
 use crate::Error;
 
 impl Engine {
-    pub(super) fn connect_ssh(endpoint: &str) -> Result<Self, Error> {
+    pub(super) fn validate_ssh(endpoint: &str) -> Result<(), Error> {
         let invalid = || {
             Error::Conflict(
                 "SSH engine requires ssh://[user@]host[:port] without passwords, paths or options",
@@ -32,6 +32,11 @@ impl Engine {
         {
             return Err(invalid());
         }
+        Ok(())
+    }
+
+    pub(super) fn connect_ssh(endpoint: &str) -> Result<Self, Error> {
+        Self::validate_ssh(endpoint)?;
         #[cfg(unix)]
         {
             let target = endpoint.to_owned();

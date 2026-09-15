@@ -13,4 +13,4 @@ mod keys;
 mod mutation;
 pub use artifacts::RuntimeStatus;
 mod backend;
-pub use backend::{GATEWAY_STORAGE_KIND, ManagedBackend, connection_endpoint};
+pub use backend::{GATEWAY_STORAGE_KIND, ManagedBackend, connection_endpoint, runtime_engine};

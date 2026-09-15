@@ -84,7 +84,7 @@ impl Engine {
         create: bool,
     ) -> Result<Option<String>, Error> {
         spec.validate()?;
-        if spec.kind != GATEWAY_KIND || spec.layout != 0 || self.endpoint() != spec.gateway.engine {
+        if spec.kind != GATEWAY_KIND || spec.layout != 0 || self.endpoint() != spec.engine() {
             return Err(Error::Conflict(
                 "invalid gateway storage specification or engine",
             ));

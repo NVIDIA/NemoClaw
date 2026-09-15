@@ -9,7 +9,7 @@ impl Engine {
         observed: Option<&RuntimeObservation>,
     ) -> Result<(), Error> {
         spec.validate()?;
-        if self.endpoint() != spec.gateway.engine {
+        if self.endpoint() != spec.engine() {
             return Err(Error::Conflict(
                 "capacity engine differs from runtime specification",
             ));

@@ -19,14 +19,22 @@ pub struct Engine {
     pub(crate) host_observer: std::sync::Arc<dyn crate::hardware::HostObserver>,
 }
 impl Engine {
-    pub fn connect(endpoint: &str) -> Result<Self, Error> {
+    /// Validate configuration without opening a platform-specific transport.
+    pub fn validate_endpoint(endpoint: &str) -> Result<(), Error> {
         if endpoint.starts_with("ssh://") {
-            return Self::connect_ssh(endpoint);
+            return Self::validate_ssh(endpoint);
         }
         if !endpoint.starts_with("unix:///") || endpoint.contains(['\0', '?', '#']) {
             return Err(Error::Conflict(
-                "managed runtimes require an explicit local Unix engine socket",
+                "managed runtimes require an explicit Unix socket or SSH engine endpoint",
             ));
+        }
+        Ok(())
+    }
+    pub fn connect(endpoint: &str) -> Result<Self, Error> {
+        Self::validate_endpoint(endpoint)?;
+        if endpoint.starts_with("ssh://") {
+            return Self::connect_ssh(endpoint);
         }
         #[cfg(unix)]
         {

@@ -213,7 +213,23 @@ pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationE
     } else {
         Ok(specification(kind, encoded)
             .map_err(diagnostic)?
-            .gateway
-            .engine)
+            .engine()
+            .to_owned())
     }
+}
+
+/// Select the resource's execution target before observing or mutating it.
+pub fn runtime_engine(
+    connections: &crate::docker::Connections,
+    kind: &str,
+    row: &Row,
+) -> Result<Engine, Error> {
+    let engine = connections.resolve(&connection_endpoint(kind, row)?)?;
+    if kind == SERVICE_KIND
+        && engine.endpoint().starts_with("ssh://")
+        && !engine.host_observer_explicit
+    {
+        return Ok(engine.with_host_observer(std::sync::Arc::new(crate::hardware::SshHost)));
+    }
+    Ok(engine)
 }

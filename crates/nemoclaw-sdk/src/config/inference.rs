@@ -10,6 +10,14 @@ pub struct InferenceConnection {
     pub credential: Option<Credential>,
 }
 impl Document {
+    pub fn has_runtime(&self) -> bool {
+        self.spec.gateway.management == "managed"
+            || self
+                .spec
+                .inference_providers
+                .iter()
+                .any(|p| p.service.is_some())
+    }
     /// Resolve an already validated document. Managed inference retains the
     /// existing same-host publication; external inference uses its explicit URL.
     /// Reachability must be checked through the sandbox, not the CLI host.
@@ -17,6 +25,9 @@ impl Document {
         let provider = &self.spec.inference_providers[0];
         let endpoint = match &provider.service {
             None => provider.endpoint.clone(),
+            Some(service) if service.publication.is_some() => {
+                service.publication.as_ref().unwrap().endpoint.clone()
+            }
             Some(service) => format!(
                 "http://{}:{}/v1",
                 self.spec.gateway.bridge(),

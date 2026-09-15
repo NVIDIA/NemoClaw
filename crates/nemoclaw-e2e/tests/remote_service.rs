@@ -1,0 +1,154 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+#![cfg(unix)]
+use nemoclaw_e2e::openshell::Fixture;
+use nemoclaw_sdk::{config::Document, spark};
+use serde_json::{Value, json};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
+
+fn save(root: &Path, name: &str, value: &Value) {
+    fs::write(root.join(name), serde_json::to_vec(value).unwrap()).unwrap();
+}
+fn read(root: &Path, name: &str) -> Value {
+    serde_json::from_slice(&fs::read(root.join(name)).unwrap()).unwrap()
+}
+async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: bool) -> Vec<u8> {
+    let mut process = tokio::process::Command::new(bundle.join("bin/nemoclaw"));
+    process
+        .arg("--state-dir")
+        .arg(root.join("deployment"))
+        .arg(command);
+    if !file.is_empty() {
+        process.arg("--file").arg(root.join(file));
+    }
+    let output = process
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                root.join("bin").display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .env("NEMOCLAW_TEST_REMOTE", root)
+        .output()
+        .await
+        .unwrap();
+    if !output.status.success() {
+        eprintln!("{command}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    assert_eq!(
+        output.status.success(),
+        success,
+        "{command}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
+async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir(root.join("bin")).unwrap();
+    fs::write(
+        root.join("bin/ssh"),
+        include_bytes!("fixtures/remote_ssh.py"),
+    )
+    .unwrap();
+    fs::set_permissions(root.join("bin/ssh"), fs::Permissions::from_mode(0o700)).unwrap();
+    let gateway = Fixture::start().await;
+    gateway.state.lock().unwrap().driver = Some("podman".into());
+    let document = Document::parse(
+        include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
+    )
+    .unwrap();
+    let mut value = serde_json::to_value(document).unwrap();
+    value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
+    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    value["spec"]["inferenceProviders"][0]["service"]["placement"] =
+        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
+    value["spec"]["inferenceProviders"][0]["service"]["publication"] =
+        json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
+    save(root, "config.yaml", &value);
+    let manifest = spark::model_manifest();
+    let mut files = json!({});
+    let mut stats = json!({});
+    let mut receipt = serde_json::to_value(&manifest.files).unwrap();
+    for file in receipt.as_array_mut().unwrap() {
+        file["modified"] = json!(1);
+        let path = format!(
+            "/data/models/{}/{}",
+            manifest.revision,
+            file["name"].as_str().unwrap()
+        );
+        stats[path] = json!({"name":file["name"],"size":file["size"],"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
+    }
+    files[format!("/data/models/{}/.nemoclaw-complete.json", manifest.revision)] =
+        json!({"manifest":manifest.key(),"files":receipt});
+    let mut prepared = Vec::new();
+    for name in [
+        spark::PREPARED_FILE.to_string(),
+        format!("{}.json", spark::PREPARED_FILE),
+    ] {
+        prepared.push(json!({"name":name,"size":1,"sha256":"a".repeat(64),"modified":1}));
+        stats[format!("/data/prepared/{}/{name}", spark::preparation_key())] = json!({"name":name,"size":1,"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
+    }
+    files[format!("/data/prepared/{}/complete.json", spark::preparation_key())] =
+        json!({"key":spark::preparation_key(),"files":prepared});
+    files["/data/status.json"] =
+        json!({"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42});
+    let service = &value["spec"]["inferenceProviders"][0]["service"];
+    save(
+        root,
+        "fixture.json",
+        &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.backend":service["backend"],"org.nemoclaw.model":service["model"]["revision"]}}}}),
+    );
+    save(root, "engine.json", &json!({"effects":0,"creates":0}));
+    save(root, "control.json", &json!({"capacity_failure":true}));
+    run(root, &bundle, "plan", "config.yaml", false).await;
+    assert_eq!(read(root, "engine.json")["effects"], 0);
+    save(root, "control.json", &json!({"low_capacity":true}));
+    run(root, &bundle, "plan", "config.yaml", false).await;
+    assert_eq!(read(root, "engine.json")["effects"], 0);
+    save(root, "control.json", &json!({}));
+    run(root, &bundle, "plan", "config.yaml", true).await;
+    assert_eq!(read(root, "engine.json")["effects"], 0);
+    save(root, "control.json", &json!({"startup_failure":true}));
+    run(root, &bundle, "apply", "config.yaml", false).await;
+    assert_eq!(read(root, "engine.json")["creates"], 1);
+    let volume = read(root, "engine.json")["volume"].clone();
+    save(root, "control.json", &json!({}));
+    run(root, &bundle, "apply", "config.yaml", true).await;
+    let stable = read(root, "engine.json");
+    let state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
+    run(root, &bundle, "apply", "config.yaml", true).await;
+    let exported = run(root, &bundle, "export", "", true).await;
+    fs::write(root.join("export.yaml"), exported).unwrap();
+    run(root, &bundle, "apply", "export.yaml", true).await;
+    assert_eq!(read(root, "engine.json"), stable);
+    for control in [
+        json!({"transport_failure":true}),
+        json!({"daemon":"other-engine"}),
+    ] {
+        save(root, "control.json", &control);
+        run(root, &bundle, "plan", "config.yaml", false).await;
+        assert_eq!(
+            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+            state
+        );
+        assert_eq!(read(root, "engine.json"), stable);
+    }
+    save(root, "control.json", &json!({}));
+    run(root, &bundle, "destroy", "", true).await;
+    let after = read(root, "engine.json");
+    assert!(after["container"].is_null());
+    assert_eq!(after["volume"], volume);
+    assert_eq!(after["creates"], 1);
+    assert_eq!(after["network"], stable["network"]);
+}
