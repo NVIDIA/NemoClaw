@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[test]
 #[ignore = "requires explicit retained runtime state, OpenTofu and production provider paths; reads owned storage only"]
-fn rust_provider_refreshes_retained_go_storage_without_changes() {
+fn provider_refreshes_retained_storage_without_changes() {
     let path = |name| PathBuf::from(std::env::var_os(name).expect("explicit qualification path"));
     let tofu = path("NEMOCLAW_TEST_TOFU");
     let provider = path("NEMOCLAW_TEST_PROVIDER");

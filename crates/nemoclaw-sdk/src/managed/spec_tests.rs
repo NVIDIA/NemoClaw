@@ -70,8 +70,8 @@ fn managed_specs_reject_missing_ownership_or_unknown_runtime_layout() {
     }
 }
 
-// Docker treats absent and null optional device maps equivalently; Go emits
-// null maps while Bollard omits them. Preserve every non-null launch value.
+// Docker treats absent and null optional device maps equivalently.
+// Preserve every non-null launch value.
 fn without_null_members(mut value: serde_json::Value) -> serde_json::Value {
     match &mut value {
         serde_json::Value::Object(map) => {

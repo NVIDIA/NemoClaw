@@ -14,7 +14,7 @@ Use Conventional Commits and SPDX Apache-2.0 source headers.
 Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` for the implemented workspace.
 
 Preserve other worktrees and live resources.
-Push this branch to `origin/v1`; never force-push or change `origin/v1-poc`.
+Push this branch to `origin/v1`; never force-push.
 Do not publish packages or images.
 
 Live tests require explicit configuration and must touch only their owned resources.

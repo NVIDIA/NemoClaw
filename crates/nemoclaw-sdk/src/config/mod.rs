@@ -107,7 +107,7 @@ impl Document {
         serde_saphyr::to_string(self).map_err(|_| ConfigError("cannot serialize configuration"))
     }
     pub fn digest(&self) -> String {
-        // Preserve Go encoding/json's struct order, omissions, and HTML escapes.
+        // Field order, omissions, and HTML escaping are part of the document digest contract.
         let json = serde_json::to_string(self)
             .expect("configuration contains only serializable values")
             .replace('&', "\\u0026")

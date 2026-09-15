@@ -50,5 +50,4 @@ Qualify the provider against the pinned OpenTofu binary and use an explicitly ve
 Keep deterministic tests separate from opt-in live qualification, and identify the tested revision, platform, and environment.
 Compilation alone does not establish state migration or platform qualification.
 
-The Go `v1-poc` implementation at `b549ccd43e6102b72aa9c65ee17abfe3c429fc0b` remains the historical comparison.
-[Retained validation records](../validation/README.md) describe tested contracts and their limits; they do not impose ongoing Go compatibility.
+[Retained validation records](../validation/README.md) describe tested contracts and their limits.

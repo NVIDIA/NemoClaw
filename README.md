@@ -9,7 +9,7 @@ OpenTofu owns graph execution and resource state.
 
 This independent `v1` branch follows the [accepted experiment](docs/design/scope.md).
 Project adoption remains a separate decision.
-[Validation evidence and limits](docs/validation/README.md) identify tested configurations and the pinned Go comparison.
+[Validation evidence and limits](docs/validation/README.md) identify tested configurations.
 
 ## Start Here
 

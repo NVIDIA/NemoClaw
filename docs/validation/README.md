@@ -1,16 +1,16 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Rust Parity Evidence
+# Validation Evidence
 
-The comparison is the Go `v1-poc` implementation at `b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`.
-This is an experimental implementation, not a claim that every backend works on every host or that the Go limitations have been removed.
+These records qualify specific behaviors, revisions, and environments of the experimental Rust implementation.
+They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
 | Contract | Evidence |
 |---|---|
 | SDK and CLI plan/apply/export/destroy; ownership, identity, drift, partial creation, failed observations, interrupted destroy | Workspace behavioral tests and real OpenTofu protocol/lifecycle tests in [native platform qualification](rust-native-platforms.json) |
-| Strict schema, defaults, resource addresses, digests and agent launch contracts | Fixtures derived from the pinned reference in `crates/nemoclaw-sdk/tests/fixtures`; reference examples have parser and compatibility assertions |
+| Strict schema, defaults, resource addresses, digests and agent launch contracts | Checked-in fixtures in `crates/nemoclaw-sdk/tests/fixtures` and behavioral tests for maintained YAML examples |
 | Managed gateway and retained signing/encryption identity | [Gateway lifecycle](rust-managed-gateway-linux-arm64.json), [gateway storage](rust-gateway-storage-linux-arm64.json) |
 | Fresh Spark download/preparation, real OpenClaw response, no-op, export/reapply, capacity rejection, watchdog stop/recovery, image-only replacement | [Spark lifecycle](rust-spark-linux-arm64.json) |
 | Model-specific runtime sources, licenses, and repeatable local artifact build | [Final runtime reproduction](rust-runtime-memory-fix-linux-arm64.json) |
@@ -26,8 +26,6 @@ Commit bodies retain the test-first implementation decisions.
 These records describe their named revisions, including earlier schemas and runtime images.
 They do not assert that the current checkout reran each live experiment.
 
-The parity baseline workspace check passed 99 deterministic tests, with 17 explicit integration/live tests excluded from the ordinary run.
-Formatting and strict workspace Clippy passed.
 The retained platform and live records identify the separate execution gates; ignored tests are not counted as passes.
 
 The Rust Ollama recovery change adds independent storage and permits destroy with retained model data.
@@ -37,9 +35,6 @@ Refer to [destroy behavior](../usage.md#destroy).
 Native channel credentials and persistent sandbox mounts are not provisioned by this schema.
 Invocation replay and conversation recovery are not provided.
 Native bundle tests do not establish Podman or GPU compatibility across all operating systems.
-
-Reading retained Go storage is not a full state-migration qualification.
-No comparative maintenance-cost reduction has been measured.
 
 The selected-model experiment additionally qualifies Fabric OpenClaw with a managed gateway and managed vLLM inference.
 It does not extend that live result to every Fabric harness or model.
@@ -59,9 +54,4 @@ It also records the deterministic verification and provider failure boundaries.
 [Built-in recipe removal](rust-recipe-removal-linux-arm64.json) records rebuilt runtime artifacts, rejected compatibility paths, and agent replies from both the inline recipe and ordinary vLLM.
 The record identifies the tested source revision and retained-data checks.
 
-## Earlier Storage and Artifact Records
-
-These records retain intermediate checks without superseding the lifecycle evidence above:
-
-- [Read-only provider storage qualification](rust-provider-storage-linux-arm64.json).
-- [Initial runtime artifact build](rust-runtime-artifact-linux-arm64.json).
+The [initial runtime artifact build](rust-runtime-artifact-linux-arm64.json) records an intermediate build without superseding the lifecycle evidence above.

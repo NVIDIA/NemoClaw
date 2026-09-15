@@ -141,7 +141,7 @@ Source-derived provider versions prevent stale installations from being reused a
 The public SDK does not embed OpenTofu or expose its raw graph as a user configuration mechanism.
 
 Refresh and export share typed readers.
-The pinned Go reference retired osquery in favor of the owning OpenShell, Docker, and model APIs; the Rust port follows that boundary.
+Observations use the owning OpenShell, Docker, and model APIs.
 The relevant observations are resource identities, configuration, policy, and complete model inventories.
 
 A host inventory collector would not replace the owning APIs for these checks.
@@ -190,7 +190,7 @@ An independent offline rebuild from another extraction directory produced an ide
 The archive must include OpenShell protobuf inputs omitted by Cargo vendoring, and the build must use that exact vendor layout to avoid dependency-path differences.
 Source packaging and dependency maintenance count toward the architecture's cost.
 
-The Ollama recovery experiment changed the inherited Go resource boundary.
+Ollama recovery separates the service from its storage.
 `nemoclaw_ollama_storage.models` now tracks persistent storage independently; the existing service and model addresses remain unchanged.
 Existing deployments must apply once to establish the independently verified storage binding before destroy.
 Storage still uses the original labels and configuration digest, so this change does not establish image or network migration semantics.
@@ -221,12 +221,11 @@ Image replacement changed only the inference process identity.
 Initial loading took 670 seconds, confirming the need for a multi-minute loading budget with headroom.
 Deterministic fixtures cover interrupted preparation, failed startup, and failed observations; live interrupted downloads resumed without losing their storage or binding.
 
-The [parity matrix](../validation/README.md) covers the supported Fabric and native agent interfaces, real Ollama reconciliation, five native bundle targets, and their documented limitations.
-The Rust implementation now meets that pinned experimental scope.
+The [validation matrix](../validation/README.md) covers the supported Fabric and native agent interfaces, real Ollama reconciliation, five native bundle targets, and their documented limitations.
 No reduction in maintained code or overall maintenance cost has been measured.
 
 Live qualification also found a compatibility boundary absent from YAML shape: Hermes rejects the DGX Spark service's 32K context at startup because it requires at least 64K.
-Its retained Go-compatible Ollama/Qwen3 path passed a short native response; that does not establish long-context capability.
+Its Ollama/Qwen3 path passed a short native response; that does not establish long-context capability.
 Do not falsify model metadata or widen isolation policy to make readiness pass.
 
 Backend/agent compatibility needs evidence beyond successful provider registration.

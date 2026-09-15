@@ -7,8 +7,6 @@
 Callers supply a verified runtime bundle, a persistent state directory, and a cancellation token.
 The SDK runs bundled OpenTofu and its provider as child processes; it is not an embedded OpenTofu engine.
 
-No Go toolchain or FFI is required.
-
 ```rust
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
 use std::path::Path;
