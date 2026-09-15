@@ -506,10 +506,22 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 
-const [mode, sessionRoot, baselinePath, expectedTurnsText, ptyMonitorRoot, runId] =
-  process.argv.slice(1);
+const [
+  mode,
+  sessionRoot,
+  baselinePath,
+  expectedTurnsText,
+  ptyMonitorRoot,
+  runId,
+  firstUserIdentifier = "",
+  secondUserIdentifier = "",
+] = process.argv.slice(1);
 const baselineTemporaryPath = baselinePath + ".tmp";
 const ptyMonitorSocketPath = path.join(ptyMonitorRoot, "pty-input-mode.sock");
+const expectedUserIdentifiers = [firstUserIdentifier, secondUserIdentifier];
+const expectedUserIdentifiersConfigured = expectedUserIdentifiers.every((value) =>
+  /^[0-9a-f]{16}$/.test(value),
+);
 const MAX_BASELINE_BYTES = 1024 * 1024;
 const MAX_PTY_RESPONSE_BYTES = 1024;
 const PTY_RESPONSE_TIMEOUT_MS = 3_000;
@@ -575,6 +587,10 @@ function validPtyResponse(response) {
 
 function validateRunContext() {
   if (!/^[0-9a-f]{32}$/.test(runId || "")) finish(2, "run_id_invalid");
+  requireEvidence(
+    expectedUserIdentifiers.every((value) => value === "") || expectedUserIdentifiersConfigured,
+    "expected_user_identifiers_invalid",
+  );
   if (baselinePath !== "/tmp/nemoclaw-launch-session-" + runId + ".json") {
     finish(2, "baseline_path_invalid");
   }
@@ -1130,6 +1146,19 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
+function structuredContentText(message) {
+  return [message.content]
+    .flat()
+    .flatMap((item) => {
+      return typeof item === "string"
+        ? [item]
+        : item && typeof item.text === "string"
+          ? [item.text]
+          : [];
+    })
+    .join("\n");
+}
+
 const providerUnavailableCodes = new Set(["500", "502", "503", "504", "529"]);
 const providerUnavailableError = /^(?:litellm\.)?(?:InternalServerError|ServiceUnavailableError)(?::|$)/;
 const providerNonRetryableError =
@@ -1180,6 +1209,7 @@ function appendedMessages(fileName, baseline) {
     if (role !== "user" && role !== "assistant") continue;
     messages.push({
       role,
+      contentText: structuredContentText(record.message),
       hasStructuredContent: hasStructuredContent(record.message),
       providerUnavailable: isStructuredProviderUnavailable(record.message),
     });
@@ -1201,6 +1231,7 @@ function structuredMessages(events, sessionId) {
       ? [
           {
             role,
+            contentText: structuredContentText(message),
             hasStructuredContent: hasStructuredContent(message),
             providerUnavailable: isStructuredProviderUnavailable(message),
           },
@@ -1213,17 +1244,27 @@ function appendedSqliteSessions(baseline) {
   const snapshot = readSqliteTranscriptSnapshot(
     baseline ? "sqlite_session_store_removed" : undefined,
   );
-  return snapshot ? appendedExistingSqliteSessions(snapshot, baseline) : null;
+  requireEvidence(
+    baseline || !snapshot || expectedUserIdentifiersConfigured,
+    "sqlite_session_store_appeared",
+  );
+  return snapshot
+    ? baseline
+      ? appendedExistingSqliteSessions(snapshot, baseline)
+      : Array.from(snapshot.sessions, ([sessionId, events]) => ({
+          sessionId,
+          messages: structuredMessages(events, sessionId),
+        })).filter((session) => session.messages.length > 0)
+    : null;
 }
 
 function appendedExistingSqliteSessions(snapshot, baseline) {
   requireEvidence(
-    !baseline ||
-      (snapshot.identity.dev === baseline.dev && snapshot.identity.ino === baseline.ino),
+    snapshot.identity.dev === baseline.dev && snapshot.identity.ino === baseline.ino,
     "sqlite_session_store_replaced",
   );
   const priorBySession = new Map(
-    (baseline?.sessions ?? []).map((entry) => [entry.sessionId, entry]),
+    baseline.sessions.map((entry) => [entry.sessionId, entry]),
   );
   for (const prior of priorBySession.values()) {
     const current = snapshot.sessions.get(prior.sessionId) ?? [];
@@ -1278,6 +1319,15 @@ function qualifyStructuredTurns(changedSessions, expectedTurns) {
     if (message.role !== expectedRoles[index]) {
       finish(2, "message_order_invalid", { sessionId });
     }
+    const expectedUserIdentifier =
+      message.role === "user" && expectedUserIdentifiersConfigured
+        ? expectedUserIdentifiers[Math.floor(index / 2)]
+        : null;
+    requireEvidence(
+      !expectedUserIdentifier || message.contentText.includes(expectedUserIdentifier),
+      "user_message_mismatch",
+      { sessionId },
+    );
     if (!message.hasStructuredContent && !message.providerUnavailable) {
       finish(2, "message_content_empty", { sessionId });
     }
@@ -1449,7 +1499,9 @@ session_evidence() {
     "$baseline_path" \
     "$expected_turns" \
     "$pty_monitor_root" \
-    "$NEMOCLAW_LAUNCH_RUN_ID"
+    "$NEMOCLAW_LAUNCH_RUN_ID" \
+    "$NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER" \
+    "$NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER"
 }
 
 wait_for_turn_count() {
@@ -1649,11 +1701,20 @@ export interface OpenClawLaunchSessionOptions {
   beforeLaunchTurns?: () => Promise<void> | void;
 }
 
-function uniqueTurnInputs(): { first: string; second: string } {
+function uniqueTurnInputs(): {
+  first: string;
+  firstIdentifier: string;
+  second: string;
+  secondIdentifier: string;
+} {
   const fragment = randomUUID().replaceAll("-", "");
+  const firstIdentifier = fragment.slice(0, 16);
+  const secondIdentifier = fragment.slice(16);
   return {
-    first: `Reply briefly without using tools. Request identifier: ${fragment.slice(0, 16)}.`,
-    second: `Reply briefly again without using tools. Request identifier: ${fragment.slice(16)}.`,
+    first: `Reply briefly without using tools. Request identifier: ${firstIdentifier}.`,
+    firstIdentifier,
+    second: `Reply briefly again without using tools. Request identifier: ${secondIdentifier}.`,
+    secondIdentifier,
   };
 }
 
@@ -1682,11 +1743,13 @@ export async function runOpenClawLaunchSession(
         NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
         NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
         NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
+        NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER: inputs.firstIdentifier,
         NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
         NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
         NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
         NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
+        NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER: inputs.secondIdentifier,
         NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
         NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
         NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,

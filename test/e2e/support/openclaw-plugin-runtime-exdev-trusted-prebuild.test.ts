@@ -8,10 +8,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  buildForwardServiceArgs,
-  isForwardServiceListenerOwner,
-  type ForwardServiceTarget,
-} from "../../../src/lib/adapters/openshell/forward-service.ts";
+  buildCliOpenShellForwardServiceArgs,
+  createCliOpenShellForwardAdapter,
+} from "../../../src/lib/adapters/openshell/forward-cli.ts";
+import type { OpenShellForwardIdentity } from "../../../src/lib/adapters/openshell/forward.ts";
 import { patchStagedDockerfile } from "../../../src/lib/onboard/dockerfile-patch.ts";
 import { ordinaryOpenClawPairingIncompleteMessage } from "../../../src/lib/onboard/machine/finalization-deps.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -46,10 +46,10 @@ const RECREATE_OPERATION = "openclaw-plugin-runtime-exdev.recreate-pairing";
 function canonicalListenerProbe(commandLine: string) {
   return vi
     .fn()
-    .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
-    .mockReturnValueOnce({ status: 0, stdout: `${process.execPath}\n/mach_kernel\n` })
-    .mockReturnValueOnce({ status: 0, stdout: commandLine })
-    .mockReturnValueOnce({ status: 0, stdout: "4321\n" });
+    .mockResolvedValueOnce({ status: 0, stdout: "4321\n", stderr: "" })
+    .mockResolvedValueOnce({ status: 0, stdout: `${process.execPath}\n/mach_kernel\n`, stderr: "" })
+    .mockResolvedValueOnce({ status: 0, stdout: commandLine, stderr: "" })
+    .mockResolvedValueOnce({ status: 0, stdout: "4321\n", stderr: "" });
 }
 
 afterEach(() => vi.unstubAllEnvs());
@@ -324,7 +324,7 @@ describe("trusted EXDEV immutable image handoff", () => {
     });
   });
 
-  it("selects the canonical CLI as the owner of a canonical listener (#11547)", () => {
+  it("selects the canonical CLI as the owner of a canonical listener (#11547)", async () => {
     const wrapper = "/tmp/openshell-wrapper";
     const components = {
       cli: process.execPath,
@@ -335,18 +335,30 @@ describe("trusted EXDEV immutable image handoff", () => {
       { PATH: "/usr/bin", NEMOCLAW_OPENSHELL_BIN: wrapper },
       components,
     );
-    const target: ForwardServiceTarget = {
-      executable: String(environment.NEMOCLAW_OPENSHELL_BIN),
+    const forward: OpenShellForwardIdentity = {
       gatewayEndpoint: "https://127.0.0.1:8080",
       gatewayName: "nemoclaw",
       localHost: "127.0.0.1",
-      localPort: 18_789,
+      port: 18_789,
       sandboxName: "e2e-oc-exdev",
-      targetHost: "127.0.0.1",
-      targetPort: 18_789,
       workspace: "default",
     };
-    const canonicalCommand = [components.cli, ...buildForwardServiceArgs(target)].join(" ");
+    const canonicalCommand = [components.cli, ...buildCliOpenShellForwardServiceArgs(forward)].join(
+      " ",
+    );
+    const observeWithExecutable = async (executable: string) =>
+      await createCliOpenShellForwardAdapter({
+        environment: {},
+        executable,
+        gatewayEndpoint: forward.gatewayEndpoint,
+        hostProbe: canonicalListenerProbe(`${canonicalCommand}\n`),
+        platform: "darwin",
+        run: async () => ({ status: 0, stdout: "", stderr: "No active forwards." }),
+        runtimeSelection: {
+          gatewayName: forward.gatewayName,
+          workspace: forward.workspace,
+        },
+      }).observeForwards({ forwards: [forward] });
 
     expect(environment).toEqual({
       PATH: "/usr/bin",
@@ -354,21 +366,19 @@ describe("trusted EXDEV immutable image handoff", () => {
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: components.gateway,
       NEMOCLAW_OPENSHELL_SANDBOX_BIN: components.sandbox,
     });
-    expect(
-      isForwardServiceListenerOwner(target, {
-        platform: "darwin",
-        probe: canonicalListenerProbe(`${canonicalCommand}\n`),
-      }),
-    ).toBe(true);
-    expect(
-      isForwardServiceListenerOwner(
-        { ...target, executable: wrapper },
-        {
-          platform: "darwin",
-          probe: canonicalListenerProbe(`${canonicalCommand}\n`),
+    await expect(observeWithExecutable(components.cli)).resolves.toEqual([
+      { state: "owned", forward },
+    ]);
+    await expect(observeWithExecutable(wrapper)).resolves.toEqual([
+      {
+        state: "indeterminate",
+        forward,
+        error: {
+          kind: "ownership",
+          message: "NemoClaw could not prove OpenShell forward ownership.",
         },
-      ),
-    ).toBe(false);
+      },
+    ]);
   });
 
   it("constructs fresh and recreation commands with the same read-only host mount (#11547)", () => {

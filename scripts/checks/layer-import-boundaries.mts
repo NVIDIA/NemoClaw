@@ -34,7 +34,6 @@ const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
   "src/lib/actions/sandbox/status-preflight.ts",
   "src/lib/actions/sandbox/status-snapshot.ts",
   "src/lib/actions/sandbox/stopped-sandbox-backup.ts",
-  "src/lib/actions/sandbox/supervisor-relaunch.ts",
   "src/lib/actions/sandbox/terminal-runtime-health.ts",
   "src/lib/onboard/compute/plan.ts",
   "src/lib/onboard/docker-driver-gateway-env.ts",

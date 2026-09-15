@@ -143,8 +143,10 @@ function withOwnedFixtureFile<T>(
 
 function runEvidenceFixture(input: {
   after: SessionRecords;
+  afterBaseline?: (sessionRoot: string) => void;
   afterFinalNewline?: boolean;
   before?: SessionRecords;
+  expectedUserIdentifiers?: readonly [string, string];
   expectedTurns: number;
 }) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-evidence-"));
@@ -152,6 +154,7 @@ function runEvidenceFixture(input: {
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
   const sessionRoot = join(fixtureRoot, "sessions");
+  const expectedUserIdentifiers = input.expectedUserIdentifiers ?? ["", ""];
   mkdirSync(sessionRoot);
   try {
     writeSessionRecords(sessionRoot, input.before ?? {}, false);
@@ -166,10 +169,12 @@ function runEvidenceFixture(input: {
         "",
         ptyMonitorRoot,
         runId,
+        ...expectedUserIdentifiers,
       ],
       { encoding: "utf8" },
     );
     writeSessionRecords(sessionRoot, input.after, true, input.afterFinalNewline ?? true);
+    (input.afterBaseline ?? (() => undefined))(sessionRoot);
     const qualification = spawnSync(
       process.execPath,
       [
@@ -181,6 +186,7 @@ function runEvidenceFixture(input: {
         String(input.expectedTurns),
         ptyMonitorRoot,
         runId,
+        ...expectedUserIdentifiers,
       ],
       { encoding: "utf8" },
     );
@@ -367,6 +373,58 @@ it("qualifies ordered turns from the OpenClaw 2026.9.1 SQLite transcript store",
   expect(baseline.status).toBe(0);
   expect(baselineDocument.schemaVersion).toBe(2);
   expect(baselineDocument.sqlite.sessions).toHaveLength(1);
+  expect(qualification.status, qualification.stderr).toBe(0);
+});
+
+it("rejects a SQLite transcript store that appears after a JSONL-only baseline", () => {
+  const { baseline, qualification } = runEvidenceFixture({
+    before: { "session-a": [message("user", "prior input")] },
+    after: {},
+    afterBaseline: (sessionRoot) =>
+      createSqliteSessionStore(sessionRoot, [
+        {
+          eventJson: message("user", "new input"),
+          seq: 1,
+          sessionId: "session-b",
+        },
+        {
+          eventJson: message("assistant", "new response"),
+          seq: 2,
+          sessionId: "session-b",
+        },
+      ]),
+    expectedTurns: 1,
+  });
+
+  expect(baseline.status).toBe(0);
+  expect(qualification.status).toBe(2);
+  expect(qualification.stderr).toContain('"reason":"sqlite_session_store_appeared"');
+});
+
+it("qualifies a newly created SQLite store only when its user turn has the launch nonce", () => {
+  const firstIdentifier = "0123456789abcdef";
+  const secondIdentifier = "fedcba9876543210";
+  const { baseline, qualification } = runEvidenceFixture({
+    before: { "session-a": [message("user", "prior input")] },
+    after: {},
+    afterBaseline: (sessionRoot) =>
+      createSqliteSessionStore(sessionRoot, [
+        {
+          eventJson: message("user", `Request identifier: ${firstIdentifier}.`),
+          seq: 1,
+          sessionId: "session-b",
+        },
+        {
+          eventJson: message("assistant", "new response"),
+          seq: 2,
+          sessionId: "session-b",
+        },
+      ]),
+    expectedTurns: 1,
+    expectedUserIdentifiers: [firstIdentifier, secondIdentifier],
+  });
+
+  expect(baseline.status).toBe(0);
   expect(qualification.status, qualification.stderr).toBe(0);
 });
 

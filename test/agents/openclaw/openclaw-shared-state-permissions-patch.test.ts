@@ -411,8 +411,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       expect(patchedAgent.split(AGENT_MARKER)).toHaveLength(2);
       expect(patchedMigration.split(MIGRATION_MARKER)).toHaveLength(2);
       expect(patchedModels.split(MODELS_MARKER)).toHaveLength(2);
-      expect(patchedState).toContain("NEMOCLAW_SHARED_STATE_DIR_MODE = 0o2750");
-      expect(patchedAgent).toContain("NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o2750");
+      expect(patchedState).toContain("NEMOCLAW_SHARED_STATE_DIR_MODE = 0o700");
+      expect(patchedAgent).toContain("NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o700");
       expect(upstreamSecret).toBe(UPSTREAM_SECRET_FILE_SOURCE);
       expect(upstreamFileStore).toBe(UPSTREAM_FILE_STORE_SOURCE);
 
@@ -459,7 +459,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     },
   );
 
-  it("uses gateway-owned group-readable modes for direct NemoClaw containers", async () => {
+  it("keeps gateway state owner-only for direct NemoClaw containers", async () => {
     const fixture = makeFixture();
     try {
       patchOpenClawSharedStatePermissions(fixture.dist);
@@ -476,8 +476,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.writeFileSync(database, "");
       runtime.ensureOpenClawStatePermissions(database, env);
 
-      expect(mode(stateDir)).toBe(0o2750);
-      expect(mode(database)).toBe(0o640);
+      expect(mode(stateDir)).toBe(0o700);
+      expect(mode(database)).toBe(0o600);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -501,15 +501,15 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         OPENCLAW_STATE_DIR: stateDir,
       });
 
-      expect(mode(stateDir)).toBe(0o2750);
-      expect(mode(database)).toBe(0o640);
+      expect(mode(stateDir)).toBe(0o700);
+      expect(mode(database)).toBe(0o600);
     } finally {
       restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
-  it("uses gateway-owned group-readable modes for the per-agent database", async () => {
+  it("keeps the gateway per-agent database owner-only", async () => {
     const fixture = makeFixture();
     try {
       patchOpenClawSharedStatePermissions(fixture.dist);
@@ -529,8 +529,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.writeFileSync(database, "");
       runtime.ensureOpenClawAgentDatabasePermissions(database, options);
 
-      expect(mode(agentDir)).toBe(0o2750);
-      expect(mode(database)).toBe(0o640);
+      expect(mode(agentDir)).toBe(0o700);
+      expect(mode(database)).toBe(0o600);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -704,7 +704,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     }
   });
 
-  it("keeps generated models files group-readable under the split-user marker", async () => {
+  it("keeps generated models files owner-only under the split-user marker", async () => {
     const fixture = makeFixture();
     const previousShared = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
     const previousOpenShell = process.env.OPENSHELL_SANDBOX;
@@ -717,8 +717,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.writeFileSync(modelsFile, "{}", { mode: 0o600 });
 
       await runtime.ensureModelsFileModeForModelsJson(modelsFile);
-      expect(mode(modelsFile)).toBe(0o640);
-      expect(runtime.chmodCalls).toEqual([{ pathname: modelsFile, mode: 0o640 }]);
+      expect(mode(modelsFile)).toBe(0o600);
+      expect(runtime.chmodCalls).toEqual([]);
 
       runtime.resetChmodCalls();
       await runtime.ensureModelsFileModeForModelsJson(modelsFile);
@@ -852,9 +852,9 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.mkdirSync(stateDir, { mode: 0o700 });
       fs.writeFileSync(database, "");
       fs.writeFileSync(wal, "");
-      fs.chmodSync(stateDir, 0o2750);
-      fs.chmodSync(database, 0o640);
-      fs.chmodSync(wal, 0o640);
+      fs.chmodSync(stateDir, 0o700);
+      fs.chmodSync(database, 0o600);
+      fs.chmodSync(wal, 0o600);
       runtime.resetChmodCalls();
 
       runtime.ensureOpenClawStatePermissions(database, {
@@ -863,9 +863,9 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       });
 
       expect(runtime.chmodCalls).toEqual([]);
-      expect(mode(stateDir)).toBe(0o2750);
-      expect(mode(database)).toBe(0o640);
-      expect(mode(wal)).toBe(0o640);
+      expect(mode(stateDir)).toBe(0o700);
+      expect(mode(database)).toBe(0o600);
+      expect(mode(wal)).toBe(0o600);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -882,9 +882,9 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.mkdirSync(stateDir, { mode: 0o700 });
       fs.writeFileSync(database, "");
       fs.writeFileSync(wal, "");
-      fs.chmodSync(stateDir, 0o2750);
-      fs.chmodSync(database, 0o640);
-      fs.chmodSync(wal, 0o640);
+      fs.chmodSync(stateDir, 0o700);
+      fs.chmodSync(database, 0o600);
+      fs.chmodSync(wal, 0o600);
       runtime.resetChmodCalls();
       runtime.setDisappearOnStat(wal);
 
@@ -896,7 +896,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       ).not.toThrow();
 
       expect(fs.existsSync(wal)).toBe(false);
-      expect(runtime.chmodCalls).toEqual([{ target: wal, mode: 0o640 }]);
+      expect(runtime.chmodCalls).toEqual([{ target: wal, mode: 0o600 }]);
       expect(runtime.chmodWarnings).toHaveLength(1);
       expect(runtime.chmodWarnings[0]).toContain(wal);
     } finally {

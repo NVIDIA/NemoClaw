@@ -72,6 +72,28 @@ def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw
     );
 }
 
+function pairingObserverPythonScript(src: string, tmpDir: string): string {
+  const pairingStatePath = path.join(tmpDir, "openclaw_pairing_state.py");
+  fs.copyFileSync(path.join(APPROVAL_POLICY_DIR, "openclaw_pairing_state.py"), pairingStatePath);
+  fs.chmodSync(pairingStatePath, 0o444);
+  return startScriptHeredoc(src, "PYPAIRINGOBSERVER")
+    .replace(
+      "PAIRING_STATE_FILE = '/usr/local/lib/nemoclaw/openclaw_pairing_state.py'",
+      `PAIRING_STATE_FILE = ${JSON.stringify(pairingStatePath)}`,
+    )
+    .replace("or helper.st_uid != 0", `or helper.st_uid != ${process.getuid?.()}`)
+    .replace("DEADLINE = time.monotonic() + 120", "DEADLINE = time.monotonic() + 2")
+    .replace(
+      `finally:
+    try:
+        publish_snapshot(observer_fd, {})
+    finally:
+        os.close(observer_fd)`,
+      `finally:
+    os.close(observer_fd)`,
+    );
+}
+
 function createCanonicalSqlitePairingState(stateDir: string): string {
   const database = path.join(stateDir, "state", "openclaw.sqlite");
   fs.mkdirSync(path.dirname(database), { recursive: true });
@@ -170,6 +192,12 @@ connection.execute(
         request.get('clientMode'), request.get('role'), json.dumps(request.get('roles')),
         json.dumps(request.get('scopes')), request.get('ts', 1),
     ),
+)
+connection.execute(
+    '''INSERT INTO device_auth_tokens
+       (device_id, role, token, scopes_json, updated_at_ms)
+       VALUES (?, 'operator', 'gateway-secret-token', '["operator.pairing"]', 1)''',
+    (request['deviceId'],),
 )
 connection.commit()
 os._exit(0)
@@ -282,18 +310,67 @@ async function expectUnsafeCanonicalState(
 describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("approves a gated initial CLI request from one read-only SQLite snapshot", async () => {
+  it("publishes only bounded credential-free initial pairing fields", () => {
+    const tmpDir = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-observer-")),
+    );
+    const gatewayStateDir = path.join(tmpDir, "gateway-state");
+    const observerDir = path.join(tmpDir, "pairing-observer");
+    createCanonicalSqlitePairingState(gatewayStateDir);
+    fs.mkdirSync(observerDir, { mode: 0o2750 });
+    fs.chmodSync(observerDir, 0o2750);
+
+    try {
+      const run = spawnSync(
+        "python3",
+        [
+          "-c",
+          pairingObserverPythonScript(src, tmpDir),
+          gatewayStateDir,
+          observerDir,
+          String(process.getuid?.()),
+          String(process.getegid?.()),
+        ],
+        { encoding: "utf-8", timeout: 30_000 },
+      );
+
+      expect(run.status, run.stderr).toBe(0);
+      const snapshot = JSON.parse(fs.readFileSync(path.join(observerDir, "pending.json"), "utf-8"));
+      expect(snapshot).toEqual({
+        schemaVersion: 1,
+        pending: {
+          [REQUEST.requestId]: {
+            requestId: REQUEST.requestId,
+            deviceId: REQUEST.deviceId,
+            publicKey: REQUEST.publicKey,
+            clientId: REQUEST.clientId,
+            clientMode: REQUEST.clientMode,
+            role: REQUEST.role,
+            roles: REQUEST.roles,
+            scopes: REQUEST.scopes,
+          },
+        },
+      });
+      expect(JSON.stringify(snapshot)).not.toContain("privateKeyPem");
+      expect(JSON.stringify(snapshot)).not.toContain("authByDevice");
+      expect(JSON.stringify(snapshot)).not.toContain("gateway-secret-token");
+      expect(fs.statSync(path.join(observerDir, "pending.json")).mode & 0o777).toBe(0o640);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 40_000);
+
+  it("approves a gated initial CLI request from the credential-free observer", async () => {
     const tmpDir = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-sqlite-")),
     );
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
-    const gatewayStateDir = path.join(tmpDir, "gateway-state");
+    const observerDir = path.join(tmpDir, "pairing-observer");
     const identityDir = path.join(stateDir, "identity");
     const devicesDir = path.join(stateDir, "devices");
     const approveLog = path.join(tmpDir, "approve-called");
     const database = createCanonicalSqlitePairingState(stateDir);
-    const gatewayDatabase = createCanonicalSqlitePairingState(gatewayStateDir);
     const removeClientPending = spawnSync(
       "python3",
       [
@@ -305,14 +382,36 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
     );
     expect(removeClientPending.status, removeClientPending.stderr).toBe(0);
     const databaseBefore = fs.readFileSync(database);
-    const gatewayDatabaseBefore = fs.readFileSync(gatewayDatabase);
+    fs.mkdirSync(observerDir, { mode: 0o2750 });
+    fs.chmodSync(observerDir, 0o2750);
+    const observerPath = path.join(observerDir, "pending.json");
+    fs.writeFileSync(
+      observerPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        pending: {
+          [REQUEST.requestId]: {
+            requestId: REQUEST.requestId,
+            deviceId: REQUEST.deviceId,
+            publicKey: REQUEST.publicKey,
+            clientId: REQUEST.clientId,
+            clientMode: REQUEST.clientMode,
+            role: REQUEST.role,
+            roles: REQUEST.roles,
+            scopes: REQUEST.scopes,
+          },
+        },
+      }),
+      { mode: 0o640 },
+    );
+    fs.chmodSync(observerPath, 0o640);
+    const observerBefore = fs.readFileSync(observerPath);
     const walProof = spawnSync(
       "python3",
       [
         "-c",
-        "import sqlite3,sys; client,gateway=sys.argv[1:]; assert sqlite3.connect(f'file:{client}?immutable=1', uri=True).execute(\"SELECT COUNT(*) FROM sqlite_master WHERE name='device_identities'\").fetchone()[0] == 0; assert sqlite3.connect(f'file:{client}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_identities').fetchone()[0] == 1; assert sqlite3.connect(f'file:{client}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_pairing_pending').fetchone()[0] == 0; assert sqlite3.connect(f'file:{gateway}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_pairing_pending').fetchone()[0] == 1",
+        "import sqlite3,sys; client=sys.argv[1]; assert sqlite3.connect(f'file:{client}?immutable=1', uri=True).execute(\"SELECT COUNT(*) FROM sqlite_master WHERE name='device_identities'\").fetchone()[0] == 0; assert sqlite3.connect(f'file:{client}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_identities').fetchone()[0] == 1; assert sqlite3.connect(f'file:{client}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_pairing_pending').fetchone()[0] == 0",
         database,
-        gatewayDatabase,
       ],
       { encoding: "utf-8" },
     );
@@ -339,7 +438,8 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           OPENCLAW_STATE_DIR: stateDir,
-          NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR: gatewayStateDir,
+          NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_DIR: observerDir,
+          NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_UID: String(process.getuid?.()),
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
@@ -353,9 +453,8 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
       expect(run.stdout).toContain("[auto-pair] approved initial CLI pairing request=request-1");
       expect(fs.existsSync(approveLog)).toBe(true);
       expect(fs.readFileSync(database)).toEqual(databaseBefore);
-      expect(fs.readFileSync(gatewayDatabase)).toEqual(gatewayDatabaseBefore);
+      expect(fs.readFileSync(observerPath)).toEqual(observerBefore);
       expect(fs.existsSync(`${database}-journal`)).toBe(false);
-      expect(fs.existsSync(`${gatewayDatabase}-journal`)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

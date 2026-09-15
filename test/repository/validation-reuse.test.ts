@@ -58,7 +58,10 @@ describe("validation reuse", () => {
   it("runs the compiler when an input changes while its bytes are read", () => {
     const options = check();
     runCachedCommand(options);
-    const change = changeInputDuringRead();
+    const source = path.join(root, "src/example.ts");
+    const stat = fs.statSync(source);
+    fs.utimesSync(source, stat.atime, new Date(stat.mtimeMs + 1_000));
+    const change = changeInputDuringRead(source);
     runCachedCommand(options);
     expect(change).toHaveBeenCalledOnce();
     expect(options.execute).toHaveBeenCalledTimes(2);
@@ -194,7 +197,7 @@ describe("validation reuse", () => {
     expect(runCachedCommand(options)).toBe(0);
     expect(runCachedCommand(options)).toBe(0);
     expect(options.execute).toHaveBeenCalledTimes(1);
-    expect(options.report).toHaveBeenLastCalledWith(
+    expect(options.report).toHaveBeenCalledWith(
       expect.stringContaining("reused successful validation"),
     );
   });
@@ -255,7 +258,7 @@ describe("validation reuse", () => {
     expect(options.execute).toHaveBeenCalledTimes(3);
   });
 
-  it("reruns when the canonical comparison ref changes", () => {
+  it("reuses identical inputs when the canonical comparison ref changes", () => {
     const options = check();
     runCachedCommand(options);
     fixtureGit(root, "commit", "--allow-empty", "-m", "test: next");
@@ -263,7 +266,7 @@ describe("validation reuse", () => {
     fixtureGit(root, "checkout", "--detach", "HEAD^");
     fixtureGit(root, "update-ref", "refs/remotes/origin/main", next);
     runCachedCommand(options);
-    expect(options.execute).toHaveBeenCalledTimes(2);
+    expect(options.execute).toHaveBeenCalledOnce();
   });
 
   it("reruns when the receipt is malformed", () => {

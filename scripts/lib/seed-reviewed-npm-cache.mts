@@ -13,6 +13,7 @@ import {
   lockedArchives,
   type NpmPlatformTarget,
 } from "../checks/materialize-locked-npm-cache-seed.mts";
+import { REVIEWED_NPM_VERSION } from "./reviewed-npm-identity.mts";
 import {
   readReviewedNpmArchiveFile,
   type ReviewedNpmArchiveRequest,
@@ -57,7 +58,7 @@ type LockedPackage = Readonly<{
 }>;
 
 const INSTALL_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
-const REVIEWED_CI_NPM_VERSIONS = new Set(["10.9.4", "10.9.8", "11.17.0", "11.18.0"]);
+const REVIEWED_CI_NPM_VERSIONS = new Set([REVIEWED_NPM_VERSION]);
 
 function packageNameFromLockLocation(location: string): string {
   const marker = "node_modules/";
@@ -230,7 +231,7 @@ function loadCachePut(): CachePut {
   }).trim();
   if (!REVIEWED_CI_NPM_VERSIONS.has(npmVersion)) {
     throw new Error(
-      `reviewed npm cache seed does not support npm@${npmVersion}; expected npm@10.9.4, npm@10.9.8, npm@11.17.0, or npm@11.18.0`,
+      `reviewed npm cache seed does not support npm@${npmVersion}; expected npm@${REVIEWED_NPM_VERSION}`,
     );
   }
   const npmRoot = execFileSync("npm", ["root", "-g"], {
@@ -358,6 +359,10 @@ export async function seedReviewedNpmCache(
       }),
     );
     const url = packumentUrl(registryOrigin, packageName);
+    // npm view requests full metadata while npm ci and npm pack request the
+    // compact install representation. Keep both Accept variants bound to the
+    // same lock-derived bytes. Consumers that run `npm cache verify` must seed
+    // these variant records afterward because verification keeps one URL entry.
     for (const accept of [INSTALL_ACCEPT, "application/json"]) {
       await put(cachePath, `make-fetch-happen:request-cache:${url}`, packument, {
         metadata: {

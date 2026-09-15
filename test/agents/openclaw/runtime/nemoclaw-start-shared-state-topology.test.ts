@@ -97,7 +97,7 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
   it("keeps gateway-only state variables out of connect shells", () => {
     const block = sourceBlock(
       source,
-      "    # Only the gateway launch receives the read-only shared-state marker.",
+      "    # Only the gateway launch receives the split-state compatibility marker.",
       '    if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then',
     );
     const result = runBash([block]);
@@ -106,6 +106,8 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
     expect(result.stdout.trim().split("\n")).toEqual([
       "unset NEMOCLAW_OPENCLAW_SHARED_STATE",
       "unset NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR",
+      "unset NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_DIR",
+      "unset NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_UID",
     ]);
   });
 });
