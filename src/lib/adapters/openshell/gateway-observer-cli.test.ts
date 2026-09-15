@@ -218,13 +218,39 @@ describe("CLI gateway observation", () => {
     expect(JSON.stringify(result)).not.toContain("secret");
   });
 
-  it("rejects endpoint overrides before executing a probe", async () => {
+  it("classifies a responding endpoint override as an identity mismatch (#11414)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.invalid");
-    const capture = captureFor(connected, info);
-    expect(
-      (await createCliOpenShellGatewayObserver(capture).observeGateway(request)).recoveryBlocked,
-    ).toBe(true);
-    expect(capture).not.toHaveBeenCalled();
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "plain HTTP responder" });
+    await expect(
+      createCliOpenShellGatewayObserver(capture).observeGateway(request),
+    ).resolves.toMatchObject({
+      state: "observation_failed",
+      recoveryBlocked: true,
+      error: { kind: "transport", reason: "identity_mismatch" },
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(capture.mock.calls[0][0]).toEqual(["status"]);
+    expect(capture.mock.calls[0][1]).toMatchObject({
+      env: { OPENSHELL_GATEWAY_ENDPOINT: "https://other.invalid" },
+      replaceEnv: true,
+    });
+    expect(capture.mock.calls[0][1].env).not.toHaveProperty("OPENSHELL_TOKEN");
+  });
+
+  it("classifies an unreachable endpoint override as unreachable (#11414)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.invalid");
+    const capture = vi.fn().mockResolvedValue({
+      status: 1,
+      output: "client error (Connect): Connection refused",
+    });
+    await expect(
+      createCliOpenShellGatewayObserver(capture).observeGateway(request),
+    ).resolves.toMatchObject({
+      state: "observation_failed",
+      recoveryBlocked: true,
+      error: { kind: "transport", reason: "unreachable" },
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
   });
 
   it("uses frozen runtime authority without changing the parent environment (#10514)", async () => {

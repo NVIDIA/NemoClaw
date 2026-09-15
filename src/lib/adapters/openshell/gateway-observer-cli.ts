@@ -3,7 +3,6 @@
 
 import { withSelectedOpenShellCommandOptions } from "./command-argv";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
-import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type { OpenShellGatewayObservation, OpenShellGatewayObserver } from "./gateway-observer";
 import { isValidName } from "../../sandbox-name-contract";
 import { stripAnsi as stripOpenShellCliAnsi } from "./client";
@@ -61,6 +60,33 @@ function failed(
   };
 }
 
+async function observeAmbientEndpoint(
+  capture: CaptureOpenShellCommand,
+  endpoint: string,
+  timeoutMs: number,
+): Promise<OpenShellGatewayObservation> {
+  const result = await capture(["status"], {
+    env: { OPENSHELL_GATEWAY_ENDPOINT: endpoint },
+    ignoreError: true,
+    includeStderr: true,
+    includeStreams: true,
+    replaceEnv: true,
+    timeout: timeoutMs,
+  } as const);
+  const error = gatewayError(result);
+  if (
+    error?.kind === "timeout" ||
+    (error?.kind === "transport" && error.reason === "unreachable")
+  ) {
+    return failed(error);
+  }
+  return failed({
+    kind: "transport",
+    reason: "identity_mismatch",
+    message: "The selected OpenShell endpoint did not prove the recorded gateway identity.",
+  });
+}
+
 export function createCliOpenShellGatewayObserver(
   capture: CaptureOpenShellCommand,
 ): OpenShellGatewayObserver {
@@ -80,7 +106,17 @@ export function createCliOpenShellGatewayObserver(
         });
       }
       try {
-        if (!request.runtimeSelection) assertNoOpenShellGatewayEndpointOverride();
+        if (
+          !request.runtimeSelection &&
+          typeof process.env.OPENSHELL_GATEWAY_ENDPOINT === "string" &&
+          process.env.OPENSHELL_GATEWAY_ENDPOINT.trim()
+        ) {
+          return await observeAmbientEndpoint(
+            capture,
+            process.env.OPENSHELL_GATEWAY_ENDPOINT.trim(),
+            request.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
+          );
+        }
         const opts = withSelectedOpenShellCommandOptions(
           {
             ignoreError: true,
