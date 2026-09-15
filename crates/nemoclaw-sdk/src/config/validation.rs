@@ -370,6 +370,6 @@ impl Service {
             IMAGE.is_match(&self.image),
             "Spark requires qualified backend, pinned model, and immutable image",
         )?;
-        crate::recipes::validate(self)
+        crate::backends::validation::validate(self)
     }
 }

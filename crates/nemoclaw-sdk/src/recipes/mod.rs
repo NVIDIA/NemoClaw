@@ -4,6 +4,3 @@
 pub mod huggingface;
 pub mod inline;
 pub mod preparation;
-pub(crate) fn validate(service: &crate::config::Service) -> Result<(), crate::config::ConfigError> {
-    huggingface::validate(service)
-}
