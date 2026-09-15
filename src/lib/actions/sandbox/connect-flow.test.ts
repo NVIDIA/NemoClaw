@@ -944,7 +944,6 @@ describe("connectSandbox flow", () => {
       portableRecoveryResult: { kind: "recovered" },
     });
     awaitHermesRouteVerification(harness);
-    harness.forwardServiceOwnerSpy.mockReturnValue(true);
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
@@ -1126,17 +1125,22 @@ describe("connectSandbox flow", () => {
           }
         : captureResolved(args, options);
     }) as never);
-    harness.forwardReachabilitySpy.mockImplementation(() => forwardsRestored);
-    harness.launchForwardServiceSpy.mockImplementation((_target, options) => {
+    harness.forwardAdapterObserveSpy.mockImplementation(async ({ forwards }) =>
+      forwards.map((forward: object) => ({
+        state: forwardsRestored ? ("owned" as const) : ("absent" as const),
+        forward,
+      })),
+    );
+    harness.forwardAdapterStartSpy.mockImplementation(async ({ forward }) => {
       forwardsRestored = true;
-      harness.forwardServiceOwnerSpy.mockReturnValue(true);
-      options?.verifyReady?.();
-      options?.retainOwnership?.({
-        terminate: () => {
+      return {
+        state: "started" as const,
+        forward,
+        cleanup: async () => {
           forwardsRestored = false;
-          harness.forwardServiceOwnerSpy.mockReturnValue(false);
+          return { state: "released" as const };
         },
-      });
+      };
     });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -1149,9 +1153,11 @@ describe("connectSandbox flow", () => {
     expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
-    expect(harness.launchForwardServiceSpy).toHaveBeenCalledOnce();
-    expect(forwardRecovery.areSandboxLaunchForwardsHealthy("alpha", "nemoclaw")).toBe(true);
-    expect(harness.launchForwardServiceSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+    expect(harness.forwardAdapterStartSpy).toHaveBeenCalledOnce();
+    await expect(
+      forwardRecovery.areSandboxLaunchForwardsHealthy("alpha", "nemoclaw"),
+    ).resolves.toBe(true);
+    expect(harness.forwardAdapterStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!,
     );
     expect(sandboxVersion.checkAgentVersion).not.toHaveBeenCalled();
@@ -1188,7 +1194,6 @@ describe("connectSandbox flow", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
-    harness.forwardServiceOwnerSpy.mockReturnValue(true);
     harness.recoverPortableDemoLifecycleSpy.mockImplementation(() =>
       harness.recoverPortableDemoLifecycleSpy.mock.calls.length >= 5
         ? { kind: "not-installed" }

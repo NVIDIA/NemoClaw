@@ -244,6 +244,9 @@ async function runSliceProbe(
     const externalComponentPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "onboard", "external-component", "index.ts"),
     );
+    const gatewayServicePath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "docker-driver-gateway-service.ts"),
+    );
 
     fs.writeFileSync(
       scriptPath,
@@ -269,6 +272,9 @@ if (scenario.mode === "active-cancellation") {
     String(process.pid),
   );
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+}
+if (scenario.mode === "dashboard-spawn-failure") {
+  require(${gatewayServicePath}).hasOpenShellGatewayUserService = () => false;
 }
 const dashboardScenario = scenario.mode.startsWith("dashboard-");
 const flowSlices = require(${flowSlicesPath});
@@ -305,25 +311,33 @@ if (dashboardScenario) {
   let dashboardForwardCalls = 0;
   onboardDashboard.createOnboardDashboardHelpers = (deps) => {
     if (scenario.mode === "dashboard-spawn-failure") {
-      const forward = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/forward-service.ts"))});
+      const { createCliOpenShellForwardAdapter } = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/forward-cli.ts"))});
       return createOnboardDashboardHelpers({
         ...deps,
-        getGatewayForwardRuntimeAuthority: undefined,
-        runCaptureOpenshell: () => "SANDBOX BIND PORT PID STATUS",
-        isPortBoundOnHost: () => false,
-        forwardService: {
-          executable: () => ${JSON.stringify(path.join(tmpDir, "missing-openshell"))},
-          resolveGatewayName: () => "nemoclaw",
-          owns: () => false,
-          launch: (target, options) => {
+        getGatewayForwardRuntimeAuthority: () => ({
+          gatewayEndpoint: "https://127.0.0.1:8080",
+          gatewayName: "nemoclaw",
+          workspace: "default",
+        }),
+        resolveForwardGatewayName: () => "nemoclaw",
+        forwardAdapterForAuthority: (authority) => {
+          const adapter = createCliOpenShellForwardAdapter({
+            executable: ${JSON.stringify(path.join(tmpDir, "missing-openshell"))},
+            gatewayEndpoint: authority.gatewayEndpoint,
+            inspect: async () => ({ state: "unbound" }),
+            probePort: async () => ({ state: "unbound" }),
+            run: async () => ({ status: 0, stdout: "No active forwards.", stderr: "" }),
+            runtimeSelection: authority,
+          });
+          return {
+            ...adapter,
+            observeForwards: async ({ forwards }) =>
+              forwards.map((forward) => ({ state: "absent", forward })),
+            startForward: (request) => {
             called.push("forward-launch");
-            return forward.launchForwardService(target, {
-              ...options,
-              isReachable: () => false,
-              timeoutMs: 1000,
-              terminateProcessTree: () => { called.push("terminate-process-tree"); },
-            });
-          },
+              return adapter.startForward({ ...request, timeoutMs: 1000 });
+            },
+          };
         },
       });
     }
@@ -908,13 +922,14 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
     ]);
   });
 
-  it("reports a missing forward executable through the production onboarding action (#11648)", async (context) => {
+  it("reports a sanitized adapter failure for a missing forward executable (#9808, #11648)", async (context) => {
     const called = await runSliceProbe(
       { slice: "final", mode: "dashboard-spawn-failure" },
       context,
     );
     assert.ok(called.includes("forward-launch"), JSON.stringify(called));
-    assert.match(called.at(-1) ?? "", /failure:.*ENOENT/);
+    assert.match(called.at(-1) ?? "", /failure:.*could not prove the forward state/i);
+    assert.doesNotMatch(called.at(-1) ?? "", /ENOENT|missing-openshell/);
     assert.ok(!called.includes("terminate-process-tree"));
     assert.ok(!called.some((entry) => entry.startsWith("registry-port:")));
   }, 60_000);

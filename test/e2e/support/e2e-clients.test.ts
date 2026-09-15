@@ -311,6 +311,29 @@ describe("E2E fixture clients", () => {
     ).resolves.toMatchObject({ valid: false });
   });
 
+  it("matches a forward listener against the caller's gateway and workspace", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "4321\n" });
+    runner.enqueue({ stdout: "/usr/local/bin/openshell\n" });
+    runner.enqueue({ stdout: "/opt/openshell\n" });
+    runner.enqueue({ stdout: "/opt/openshell\n" });
+    runner.enqueue({
+      stdout:
+        "/usr/local/bin/openshell --gateway nemoclaw-19080 --gateway-endpoint https://127.0.0.1:19080 --workspace review forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+    });
+    runner.enqueue({ stdout: "4321\n" });
+
+    await expect(
+      new HostCliClient(runner).inspectOpenShellForwardListener("18789", "alpha", {
+        env: {
+          NEMOCLAW_GATEWAY_PORT: "19080",
+          OPENSHELL_GATEWAY: "nemoclaw-19080",
+          OPENSHELL_WORKSPACE: "review",
+        },
+      }),
+    ).resolves.toMatchObject({ valid: true, pid: 4321 });
+  });
+
   it("composes installation, OpenShell resolution, and launch in authority order", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ stdout: "installation complete\n" });

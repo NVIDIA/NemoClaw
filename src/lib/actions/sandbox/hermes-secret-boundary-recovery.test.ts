@@ -37,44 +37,44 @@ afterEach(() => {
 });
 
 describe("enforceHermesSecretBoundaryOnRunningGateway", () => {
-  it("does nothing for non-Hermes sandboxes", () => {
+  it("does nothing for non-Hermes sandboxes", async () => {
     mockSandboxAgent("openclaw");
     const exec = vi.fn();
 
-    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+    const result = await enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toBeNull();
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("refuses recovery when the Hermes agent definition cannot be loaded", () => {
+  it("refuses recovery when the Hermes agent definition cannot be loaded", async () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn();
 
-    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, null, exec);
+    const result = await enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, null, exec);
 
     expect(result).toEqual({ refused: true, reason: "agent-missing", stderr: "" });
     expect(exec).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("could not be loaded"));
   });
 
-  it("refuses recovery when the privileged controller check cannot run", () => {
+  it("refuses recovery when the privileged controller check cannot run", async () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() => null);
 
-    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+    const result = await enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toEqual({ refused: true, reason: "exec-failed", stderr: "" });
     expect(exec).toHaveBeenCalledWith(SANDBOX, "recover");
   });
 
-  it("refuses recovery when the validator reports raw secret-shaped values", () => {
+  it("refuses recovery when the validator reports raw secret-shaped values", async () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() =>
       makeExecResult("SECRET_BOUNDARY_REFUSED\n", "[SECURITY] raw key\n", 1),
     );
 
-    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+    const result = await enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toEqual({
       refused: true,
@@ -85,20 +85,20 @@ describe("enforceHermesSecretBoundaryOnRunningGateway", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith("  [SECURITY] raw key");
   });
 
-  it("allows recovery when the validator accepts the env file", () => {
+  it("allows recovery when the validator accepts the env file", async () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() => makeExecResult("GATEWAY_PID=4242\n"));
 
-    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+    const result = await enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toEqual({ refused: false });
   });
 
-  it("rejects a legacy-script ALREADY_RUNNING marker on the supervisor protocol", () => {
+  it("rejects a legacy-script ALREADY_RUNNING marker on the supervisor protocol", async () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() => makeExecResult("ALREADY_RUNNING\n"));
 
-    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+    const result = await enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toEqual({
       refused: true,
@@ -108,22 +108,22 @@ describe("enforceHermesSecretBoundaryOnRunningGateway", () => {
     expect(exec).toHaveBeenCalledWith(SANDBOX, "recover");
   });
 
-  it("refuses recovery when an older sandbox image lacks the validator", () => {
+  it("refuses recovery when an older sandbox image lacks the validator", async () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() => makeExecResult("SECRET_BOUNDARY_VALIDATOR_MISSING\n", "missing\n", 1));
 
-    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+    const result = await enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toEqual({ refused: true, reason: "validator-missing", stderr: "missing\n" });
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("validator missing"));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Re-image the sandbox"));
   });
 
-  it("distinguishes unrecognized validator output from infrastructure failures", () => {
+  it("distinguishes unrecognized validator output from infrastructure failures", async () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() => makeExecResult("unexpected output\n", "validator failed\n", 1));
 
-    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+    const result = await enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toEqual({
       refused: true,

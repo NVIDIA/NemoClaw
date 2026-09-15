@@ -78,7 +78,7 @@ type SandboxDestroyExecutionInput = {
   expectedContainerIdentityFingerprint?: string;
   expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
-  verifyForwardPortsReleased?: () => boolean;
+  verifyForwardPortsReleased?: () => boolean | Promise<boolean>;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
@@ -624,7 +624,7 @@ export async function executeSandboxDestroy({
     if (!forcedLocalCleanup) {
       let portsReleased = false;
       try {
-        portsReleased = verifyForwardPortsReleased();
+        portsReleased = await verifyForwardPortsReleased();
       } catch {
         portsReleased = false;
       }

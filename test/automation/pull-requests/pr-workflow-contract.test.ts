@@ -32,6 +32,7 @@ type SdkPackageWorkflow = Readonly<{
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
+const reviewedNpmAction = "./.github/actions/setup-reviewed-npm";
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
@@ -345,7 +346,11 @@ describe("pull request and main workflow contracts", () => {
     ).toBe(true);
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
-    expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
+    expect(stepUses(job)).toEqual([
+      trustedCheckoutAction,
+      trustedSetupNodeAction,
+      reviewedNpmAction,
+    ]);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
       "npm ci --ignore-scripts --no-audit --no-fund",
@@ -525,6 +530,9 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
 
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
   it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
+    expect(
+      requiredWorkflowStep(prWorkflow.jobs["build-typecheck"], "Install dependencies").env,
+    ).toEqual({ NPM_CONFIG_ALLOW_REMOTE: "root" });
     const packageJob = prWorkflow.jobs["openshell-sdk-package"];
     expect(packageJob["timeout-minutes"]).toBe(10);
     expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });

@@ -104,7 +104,29 @@ describe("prepare-e2e workflow boundary", () => {
 
     try {
       expect(validatePrepareE2eAction(actionPath)).toContain(
-        "prepare-e2e must pin Node 22, run npm ci, and conditionally build the CLI",
+        "prepare-e2e must pin reviewed Node and npm, run npm ci, and conditionally build the CLI",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects reviewed npm loaded from the candidate checkout", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "prepare-e2e-reviewed-npm-"));
+    const actionPath = path.join(directory, "action.yaml");
+    const source = fs.readFileSync(
+      path.join(process.cwd(), ".github/actions/prepare-e2e/action.yaml"),
+      "utf8",
+    );
+    const action = YAML.parse(source) as Record<string, unknown>;
+    const runs = action.runs as { steps: WorkflowStep[] };
+    runs.steps.find((step) => step.name === "Install reviewed npm")!.uses =
+      "./.github/actions/setup-reviewed-npm";
+    fs.writeFileSync(actionPath, YAML.stringify(action));
+
+    try {
+      expect(validatePrepareE2eAction(actionPath)).toContain(
+        "prepare-e2e must pin reviewed Node and npm, run npm ci, and conditionally build the CLI",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
