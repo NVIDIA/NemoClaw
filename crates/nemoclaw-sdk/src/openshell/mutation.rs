@@ -24,6 +24,13 @@ impl OpenShell {
         let (kind, endpoint_key, secret_key) = match value(want, "provider_type") {
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
+            "brave"
+                if value(want, "name") == "brave-search"
+                    && value(want, "endpoint") == "https://api.search.brave.com"
+                    && !value(want, "credential_env").is_empty() =>
+            {
+                ("nemoclaw-brave", "", "BRAVE_API_KEY")
+            }
             _ => return Err(ObservationError::Query),
         };
         let credential = match value(want, "credential_env") {
@@ -39,7 +46,16 @@ impl OpenShell {
                 ..Default::default()
             }),
             r#type: kind.into(),
-            config: [(endpoint_key.into(), value(want, "endpoint").into())].into(),
+            profile_workspace: if kind == "nemoclaw-brave" {
+                value(want, "workspace").into()
+            } else {
+                String::new()
+            },
+            config: if endpoint_key.is_empty() {
+                Default::default()
+            } else {
+                [(endpoint_key.into(), value(want, "endpoint").into())].into()
+            },
             credentials: [(secret_key.into(), credential)].into(),
             ..Default::default()
         })
@@ -139,6 +155,14 @@ impl OpenShell {
                 request.set_timeout(std::time::Duration::from_secs(90));
                 self.grpc().delete_sandbox(request).await.map(|_| ())
             }
+            "provider_profile" => self
+                .grpc()
+                .delete_provider_profile(self.request(proto::DeleteProviderProfileRequest {
+                    id: name.into(),
+                    workspace: workspace.into(),
+                }))
+                .await
+                .map(|_| ()),
             "provider" => self
                 .grpc()
                 .delete_provider(self.request(proto::DeleteProviderRequest {
@@ -205,6 +229,7 @@ impl Backend for OpenShell {
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
+            "provider_profile" => &["name", "owner", "generation", "workspace"],
             "provider" => &["name", "owner", "generation", "workspace", "endpoint"],
             "route" => &[
                 "name",
@@ -241,7 +266,7 @@ impl Backend for OpenShell {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        if !destroying || !matches!(kind, "sandbox" | "provider" | "route") {
+        if !destroying || !matches!(kind, "sandbox" | "provider" | "provider_profile" | "route") {
             return Err(ObservationError::Query);
         }
         tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))

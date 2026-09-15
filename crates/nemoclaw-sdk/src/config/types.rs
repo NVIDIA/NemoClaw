@@ -191,6 +191,10 @@ pub struct ManagedOllama {
 #[serde(default, deny_unknown_fields)]
 /// The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.
 pub struct Sandbox {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::Integrations")]
+    /// Optional credential-bearing agent integrations.
+    pub integrations: Option<super::Integrations>,
     #[serde(rename = "name")]
     /// Lowercase sandbox name.
     pub name: String,

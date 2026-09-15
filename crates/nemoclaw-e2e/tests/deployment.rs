@@ -105,6 +105,20 @@ async fn hermes_interfaces_sdk_export_reapply_and_drift() {
     lifecycle(include_str!("../../../examples/hermes-interfaces.yaml")).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn web_search_cli_export_reapply_and_destroy() {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.sandboxes[0].integrations = Some(
+        serde_json::from_value(serde_json::json!({
+            "webSearch":{"provider":"brave","agentRefs":["main"],"credential":{"env":"SEARCH_KEY"}}
+        }))
+        .unwrap(),
+    );
+    lifecycle(&document.yaml().unwrap()).await;
+}
+
 async fn lifecycle(input: &str) {
     lifecycle_with_ownership(input, false).await;
 }
@@ -139,7 +153,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     struct FixtureSecrets;
     impl nemoclaw_sdk::openshell::Secrets for FixtureSecrets {
         fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            assert_eq!(name, "NOUS_API_KEY");
+            assert!(["NOUS_API_KEY", "SEARCH_KEY"].contains(&name));
             Ok("fixture-only-inference-key".into())
         }
     }
@@ -162,7 +176,14 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     let applied = deployment.apply(&document, &cancel).await;
     assert!(applied.is_ok(), "{applied:?}");
     let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(effects, 4);
+    assert_eq!(
+        effects,
+        if document.spec.sandboxes[0].integrations.is_some() {
+            6
+        } else {
+            4
+        }
+    );
     if declare_ownership {
         document.spec.inference_providers[0].management =
             Some(nemoclaw_sdk::config::Management::External);
@@ -215,6 +236,58 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .is_empty()
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    if document.spec.sandboxes[0].integrations.is_some() {
+        let state_bytes = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+        let key = format!("{}/nemoclaw-brave", document.workspace());
+        let profile = fixture.state.lock().unwrap().profiles[&key].clone();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .profiles
+            .get_mut(&key)
+            .unwrap()
+            .endpoints
+            .clear();
+        assert!(deployment.plan(&document, &cancel).await.is_err());
+        assert!(deployment.export(&cancel).await.is_err());
+        assert_eq!(
+            fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            state_bytes
+        );
+        fixture.state.lock().unwrap().profiles.insert(key, profile);
+        let sandbox_key = format!(
+            "{}/{}",
+            document.workspace(),
+            document.spec.sandboxes[0].name
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&sandbox_key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .providers
+            .clear();
+        assert!(deployment.plan(&document, &cancel).await.is_err());
+        assert!(deployment.export(&cancel).await.is_err());
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&sandbox_key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .providers = vec!["brave-search".into()];
+        assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    }
     if document.spec.sandboxes[0].agents.len() > 1 {
         let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
         let mut broadened = document.clone();
@@ -354,7 +427,14 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .policy = original;
     }
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), 3);
+    assert_eq!(
+        preview.changes.len(),
+        if document.spec.sandboxes[0].integrations.is_some() {
+            5
+        } else {
+            3
+        }
+    );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -386,7 +466,11 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .unwrap()
             .changes
             .len(),
-        3
+        if document.spec.sandboxes[0].integrations.is_some() {
+            5
+        } else {
+            3
+        }
     );
 }
 

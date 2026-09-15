@@ -6,6 +6,7 @@ mod tests;
 
 mod agent;
 mod network;
+mod profile;
 pub use network::policy_json;
 mod inference;
 use inference::{INFERENCE_ENV, inference_environment, inference_settings};
@@ -85,6 +86,9 @@ fn provider_row(
     removing: bool,
 ) -> Result<Row, ObservationError> {
     let provider = response.provider.ok_or(ObservationError::Incomplete)?;
+    if provider.r#type == "nemoclaw-brave" {
+        return profile::provider_row(provider, name, removing);
+    }
     if !matches!(provider.r#type.as_str(), "openai" | "anthropic") {
         return Err(ObservationError::Incomplete);
     }
@@ -158,6 +162,15 @@ fn sandbox_row(
         expected_environment.insert(INFERENCE_ENV.into(), inference.clone());
     }
     let policy = policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?;
+    let expected_providers =
+        if inference_settings(&inference, &runtime)?.is_some_and(|s| s.web_search.is_some()) {
+            vec!["brave-search".to_string()]
+        } else {
+            vec![]
+        };
+    if spec.providers != expected_providers {
+        return Err(ObservationError::BindingMismatch);
+    }
     if image.is_empty()
         || spec.command != launch_command(&runtime, proxy.as_ref())
         || environment != expected_environment

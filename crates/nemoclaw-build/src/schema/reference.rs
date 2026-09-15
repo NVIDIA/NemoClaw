@@ -171,8 +171,9 @@ fn guide(name: &str) -> &'static str {
         | "HermesInterfaces" | "HermesDashboard" | "HermesApi" | "HermesTui" => {
             "[Agent interfaces](../interfaces.md)"
         }
-        "Agent" | "AgentExecution" | "AgentObservability" | "OtlpTracing" | "AgentTools"
-        | "AllowedTool" | "ToolDisclosure" => "[Agent runtimes](../agents.md)",
+        "Integrations" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
+        | "AgentObservability" | "OtlpTracing" | "AgentTools" | "AllowedTool"
+        | "ToolDisclosure" => "[Agent runtimes](../agents.md)",
         _ => "[Configuration and credentials](../usage.md#configuration-and-credentials)",
     }
 }

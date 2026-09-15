@@ -147,6 +147,8 @@ pub(crate) struct RuntimeAgent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeInference {
+    #[serde(rename = "webSearch", default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observability: Option<AgentObservability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,6 +165,14 @@ pub(crate) struct RuntimeInference {
 impl RuntimeInference {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
         self.tuning.validate(harness)?;
+        if let Some(search) = &self.web_search {
+            search.validate(
+                harness,
+                self.agents
+                    .iter()
+                    .map(|a| (a.name.as_str(), a.tools.as_ref())),
+            )?;
+        }
         if let Some(observability) = &self.observability {
             observability.validate(harness)?;
         }
@@ -200,7 +210,9 @@ impl Document {
         let provider = &self.spec.inference_providers[0];
         let tuning = &agent.inference.routes[0].overrides.tuning;
         let agents = &self.spec.sandboxes[0].agents;
-        let roster = agents.len() > 1 || agents.iter().any(|a| a.tools.is_some());
+        let roster = self.spec.sandboxes[0].web_search().is_some()
+            || agents.len() > 1
+            || agents.iter().any(|a| a.tools.is_some());
         (provider.api.is_some()
             || tuning != &RouteTuning::default()
             || agent.auth.is_some()
@@ -209,6 +221,7 @@ impl Document {
             || agent.observability.is_some()
             || agent.interfaces.is_some())
         .then(|| RuntimeInference {
+            web_search: self.spec.sandboxes[0].web_search().cloned(),
             observability: agent.observability.clone(),
             execution: agent.execution.clone(),
             interfaces: agent.interfaces.clone(),

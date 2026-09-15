@@ -56,6 +56,9 @@ pub(super) fn constrain(root: &mut Value) {
     property(root, "apiVersion", json!({"const": API_VERSION}));
     property(root, "kind", json!({"const": c::KIND}));
     let defs = root["$defs"].as_object_mut().unwrap();
+    defs["WebSearch"]["properties"]["agentRefs"]["uniqueItems"] = json!(true);
+    defs["WebSearch"]["properties"]["agentRefs"]["items"]["pattern"] =
+        json!("^[a-z][a-z0-9-]{0,39}$");
     for name in ["Metadata", "InferenceProvider", "Sandbox", "Agent"] {
         property(
             defs.get_mut(name).unwrap(),

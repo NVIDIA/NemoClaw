@@ -10,6 +10,9 @@ fn destroy_environment(document: &Document) -> Document {
     for provider in &mut environment.spec.inference_providers {
         provider.credential = None;
     }
+    for sandbox in &mut environment.spec.sandboxes {
+        sandbox.integrations = None;
+    }
     environment
 }
 

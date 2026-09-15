@@ -15,6 +15,7 @@ use tonic::{Request, Response, Status, body::Body};
 pub struct State {
     pub driver: Option<String>,
     pub workspaces: HashMap<String, p::Workspace>,
+    pub profiles: HashMap<String, p::ProviderProfile>,
     pub providers: HashMap<String, p::Provider>,
     pub routes: HashMap<String, p::SetInferenceRouteRequest>,
     pub sandboxes: HashMap<String, p::Sandbox>,
@@ -227,6 +228,15 @@ impl tower::Service<http::Request<Body>> for Service {
                 }
                 "/openshell.v1.OpenShell/CreateWorkspace" => {
                     unary(request, state, create_workspace).await
+                }
+                "/openshell.v1.OpenShell/GetProviderProfile" => {
+                    unary(request, state, get_profile).await
+                }
+                "/openshell.v1.OpenShell/ImportProviderProfiles" => {
+                    unary(request, state, import_profiles).await
+                }
+                "/openshell.v1.OpenShell/DeleteProviderProfile" => {
+                    unary(request, state, delete_profile).await
                 }
                 "/openshell.v1.OpenShell/GetProvider" => {
                     unary(request, state, |state, request| {
@@ -583,4 +593,65 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         }
         std::future::ready(Ok(Response::new(Box::pin(tokio_stream::iter(events)))))
     }
+}
+
+fn get_profile(
+    state: &mut State,
+    q: p::GetProviderProfileRequest,
+) -> Result<p::ProviderProfileResponse, Status> {
+    state.read("provider_profile")?;
+    Ok(p::ProviderProfileResponse {
+        profile: Some(
+            state
+                .profiles
+                .get(&format!("{}/{}", q.workspace, q.id))
+                .ok_or_else(|| Status::not_found("absent"))?
+                .clone(),
+        ),
+    })
+}
+fn import_profiles(
+    state: &mut State,
+    q: p::ImportProviderProfilesRequest,
+) -> Result<p::ImportProviderProfilesResponse, Status> {
+    let mut profiles = vec![];
+    for item in q.profiles {
+        let mut profile = item
+            .profile
+            .ok_or_else(|| Status::invalid_argument("missing profile"))?;
+        let key = format!("{}/{}", q.workspace, profile.id);
+        if state.profiles.contains_key(&key) {
+            return Err(Status::already_exists("collision"));
+        }
+        profile.resource_version = 1;
+        profile.source = "user".into();
+        profile.scope = "workspace".into();
+        state.effects += 1;
+        state.profiles.insert(key, profile.clone());
+        profiles.push(profile);
+    }
+    state.created("provider_profile");
+    if state.lose_create {
+        state.lose_create = false;
+        return Err(Status::unavailable("lost reply"));
+    }
+    Ok(p::ImportProviderProfilesResponse {
+        imported: true,
+        profiles,
+        ..Default::default()
+    })
+}
+fn delete_profile(
+    state: &mut State,
+    q: p::DeleteProviderProfileRequest,
+) -> Result<p::DeleteProviderProfileResponse, Status> {
+    let deleted = state
+        .profiles
+        .remove(&format!("{}/{}", q.workspace, q.id))
+        .is_some();
+    if state.lose_delete {
+        state.lose_delete = false;
+        return Err(Status::unavailable("lost reply"));
+    }
+    Ok(p::DeleteProviderProfileResponse { deleted })
 }

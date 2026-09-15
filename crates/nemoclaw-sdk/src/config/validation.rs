@@ -35,7 +35,7 @@ fn local(ip: IpAddr) -> bool {
 fn host_ip(url: &Url) -> Option<IpAddr> {
     url.host_str()?.trim_matches(['[', ']']).parse().ok()
 }
-fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
+pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
     require(
         value.as_ref().is_none_or(|c| ENV.is_match(&c.env)),
         "credential references require an uppercase environment variable name",
@@ -206,6 +206,19 @@ impl Document {
         sandbox.network.validate()?;
         sandbox.policy_proto()?;
         require(!sandbox.agents.is_empty(), "at least one agent is required")?;
+        if let Some(search) = sandbox.web_search() {
+            require(
+                provider.name != "brave-search",
+                "brave-search is reserved for web search",
+            )?;
+            search.validate(
+                &sandbox.agents[0].harness,
+                sandbox
+                    .agents
+                    .iter()
+                    .map(|a| (a.name.as_str(), a.tools.as_ref())),
+            )?;
+        }
         ToolDisclosure::shared(sandbox.agents.iter().map(|a| a.tools.as_ref()))?;
         let mut names = std::collections::BTreeSet::new();
         for agent in &sandbox.agents {

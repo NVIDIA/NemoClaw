@@ -13,6 +13,7 @@ impl OpenShell {
         let id = match kind {
             "workspace" => self.create_workspace(want).await?,
             "provider" => self.create_provider(want).await?,
+            "provider_profile" => self.create_profile(want).await?,
             "sandbox" => self.create_sandbox(want).await?,
             "route" => {
                 self.set_route(want).await?;
@@ -74,25 +75,37 @@ impl OpenShell {
         }
         let response = self
             .grpc()
-            .create_sandbox(self.request(proto::CreateSandboxRequest {
-                name: name.into(),
-                workspace: workspace.into(),
-                labels,
-                spec: Some(proto::SandboxSpec {
-                    template: Some(proto::SandboxTemplate {
-                        image: value(want, "image").into(),
+            .create_sandbox(
+                self.request(proto::CreateSandboxRequest {
+                    name: name.into(),
+                    workspace: workspace.into(),
+                    labels,
+                    spec: Some(proto::SandboxSpec {
+                        template: Some(proto::SandboxTemplate {
+                            image: value(want, "image").into(),
+                            ..Default::default()
+                        }),
+                        command: launch_command(
+                            value(want, "agent_runtime"),
+                            row_proxy(want)?.as_ref(),
+                        ),
+                        providers: if inference_settings(
+                            value(want, "inference_json"),
+                            value(want, "agent_runtime"),
+                        )?
+                        .is_some_and(|s| s.web_search.is_some())
+                        {
+                            vec!["brave-search".into()]
+                        } else {
+                            vec![]
+                        },
+                        environment: inference_environment(want)?.into_iter().collect(),
+                        policy: Some(row_policy(want)?),
                         ..Default::default()
                     }),
-                    command: launch_command(
-                        value(want, "agent_runtime"),
-                        row_proxy(want)?.as_ref(),
-                    ),
-                    environment: inference_environment(want)?.into_iter().collect(),
-                    policy: Some(row_policy(want)?),
                     ..Default::default()
                 }),
-                ..Default::default()
-            }))
+            )
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();

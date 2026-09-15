@@ -46,6 +46,13 @@ impl Deployment {
                     ))?;
             verify_identity(&expected, &observed)?;
             match target.kind.as_str() {
+                "provider" if target.address == "nemoclaw_provider.web_search" => {
+                    if expected != observed {
+                        return Err(Error::Conflict(
+                            "web search provider drift requires inspection",
+                        ));
+                    }
+                }
                 "provider" => export_provider(&mut document, &expected, &observed)?,
                 "route" => export_route(&mut document, &observed)?,
                 "sandbox" => export_sandbox(&client, &document, &mut expected, &observed).await?,

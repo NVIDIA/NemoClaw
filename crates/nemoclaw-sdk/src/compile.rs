@@ -125,6 +125,34 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             values,
         });
     }
+    if let Some(search) = sandbox.web_search() {
+        for (kind, name) in [
+            ("provider_profile", "nemoclaw-brave"),
+            ("provider", "brave-search"),
+        ] {
+            let mut values: Row = [
+                ("workspace", workspace.as_str()),
+                ("name", name),
+                ("owner", document.metadata.uid.as_str()),
+                ("generation", generation(generations, "provider")?),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+            if kind == "provider" {
+                values.extend([
+                    ("endpoint".into(), "https://api.search.brave.com".into()),
+                    ("credential_env".into(), search.credential.env.clone()),
+                    ("provider_type".into(), "brave".into()),
+                ]);
+            }
+            result.push(Target {
+                kind: kind.into(),
+                address: format!("nemoclaw_{kind}.web_search"),
+                values,
+            });
+        }
+    }
     Ok(result)
 }
 
@@ -191,14 +219,25 @@ pub fn compile(
                     attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
             }
-            attributes["depends_on"] = json!(["nemoclaw_route.primary"]);
+            attributes["depends_on"] = if document.spec.sandboxes[0].web_search().is_some() {
+                json!(["nemoclaw_route.primary", "nemoclaw_provider.web_search"])
+            } else {
+                json!(["nemoclaw_route.primary"])
+            };
+        }
+        if target.address == "nemoclaw_provider.web_search" {
+            attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);
         }
         attributes["lifecycle"] = json!({"prevent_destroy":true});
         let (kind, name) = target
             .address
             .split_once('.')
             .expect("internal resource address");
-        resources[kind] = json!({name:attributes});
+        resources
+            .as_object_mut()
+            .unwrap()
+            .entry(kind)
+            .or_insert_with(|| json!({}))[name] = attributes;
     }
     Ok(
         json!({"terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},"provider":{"nemoclaw":provider},"resource":resources}),

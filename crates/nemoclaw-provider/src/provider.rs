@@ -276,6 +276,11 @@ impl Provider for NemoClawProvider {
             Definition::new("inference_service", &["spec", "running"], &["running"]),
             Definition::new("gateway_storage", &["spec"], &[]),
             Definition::new("inference_storage", &["spec"], &[]),
+            Definition::new(
+                "provider_profile",
+                &["workspace", "name", "owner", "generation"],
+                &[],
+            ),
             Definition::new("workspace", &["name", "owner", "generation"], &[]),
             Definition::new(
                 "provider",

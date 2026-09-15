@@ -120,6 +120,7 @@ impl OpenShell {
         }
         let row = match kind {
             "workspace" => return self.workspace(name, removing).await,
+            "provider_profile" => self.observe_profile(workspace, name).await?,
             "provider" => {
                 let response = authoritative(
                     self.grpc()

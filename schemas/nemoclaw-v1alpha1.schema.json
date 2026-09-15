@@ -1101,6 +1101,20 @@
       ],
       "type": "object"
     },
+    "Integrations": {
+      "additionalProperties": false,
+      "description": "Optional integrations shared by named agents in a sandbox.",
+      "properties": {
+        "webSearch": {
+          "$ref": "#/$defs/WebSearch",
+          "description": "Brave Search with gateway-held credentials and explicit agent grants."
+        }
+      },
+      "required": [
+        "webSearch"
+      ],
+      "type": "object"
+    },
     "ManagedManagement": {
       "description": "NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.",
       "oneOf": [
@@ -2117,6 +2131,10 @@
           "$ref": "#/$defs/Image",
           "description": "Sandbox agent image; omission selects the SDK default."
         },
+        "integrations": {
+          "$ref": "#/$defs/Integrations",
+          "description": "Optional credential-bearing agent integrations."
+        },
         "name": {
           "description": "Lowercase sandbox name.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
@@ -2136,6 +2154,13 @@
         "agents"
       ],
       "type": "object"
+    },
+    "SearchProvider": {
+      "description": "Search provider supported by the managed profile.",
+      "enum": [
+        "brave"
+      ],
+      "type": "string"
     },
     "Service": {
       "additionalProperties": false,
@@ -2594,6 +2619,36 @@
           "type": "string"
         }
       ]
+    },
+    "WebSearch": {
+      "additionalProperties": false,
+      "description": "Web search through the native OpenClaw Brave plugin.",
+      "properties": {
+        "agentRefs": {
+          "description": "Unique names of unrestricted OpenClaw agents permitted to search.",
+          "items": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "credential": {
+          "$ref": "#/$defs/Credential",
+          "description": "Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox."
+        },
+        "provider": {
+          "$ref": "#/$defs/SearchProvider",
+          "description": "Supported search service."
+        }
+      },
+      "required": [
+        "provider",
+        "agentRefs",
+        "credential"
+      ],
+      "type": "object"
     }
   },
   "$id": "urn:nemoclaw:config:v1alpha1",

@@ -4,7 +4,9 @@
 mod agent_inference;
 pub(crate) mod constraints;
 mod execution;
-mod integration_policy;
+pub(crate) mod integration_policy;
+mod integrations;
+pub use integrations::*;
 mod observability;
 pub use observability::*;
 mod inference;
@@ -168,6 +170,9 @@ impl Document {
             if let Some(c) = &provider.credential {
                 names.push(c.env.as_str());
             }
+        }
+        if let Some(search) = self.spec.sandboxes[0].web_search() {
+            names.push(&search.credential.env);
         }
         names
     }

@@ -224,6 +224,7 @@ Paths:
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
 - `spec.inferenceProviders[].credential`
+- `spec.sandboxes[].integrations.webSearch.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -488,6 +489,20 @@ Paths:
 | `snapshot` | [Manifest](#manifest) | No | — | Optional pinned file manifest. When omitted, the SDK resolves the model inventory. When present, its repository and revision must match service.model. |
 | `sourceNotices` | array of string | Yes | — | Nonempty list of absolute paths to retained source notices inside the image. Constraints: minimum items 1; items: pattern `^/`. |
 | `verification` | [Tool](#tool) | Yes | — | Executable that independently verifies prepared data before publication. |
+
+## Integrations
+
+Optional integrations shared by named agents in a sandbox.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].integrations`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `webSearch` | [WebSearch](#websearch) | Yes | — | Brave Search with gateway-held credentials and explicit agent grants. |
 
 ## ManagedManagement
 
@@ -1029,9 +1044,24 @@ Paths:
 |---|---|---|---|---|
 | `agents` | array of [Agent](#agent) | Yes | — | One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent. Constraints: minimum items 1. |
 | `image` | [Image](#image) | No | — | Sandbox agent image; omission selects the SDK default. |
+| `integrations` | [Integrations](#integrations) | No | — | Optional credential-bearing agent integrations. |
 | `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated inference routing. |
 | `runtime` | [Runtime](#runtime) | No | — | Sandbox driver; omission selects Docker. A managed gateway requires Docker. |
+
+## SearchProvider
+
+Search provider supported by the managed profile.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].integrations.webSearch.provider`
+
+Accepted input: string.
+
+Constraints: `"brave"`.
 
 ## Service
 
@@ -1192,3 +1222,19 @@ Paths:
 Accepted input: string or string.
 
 Constraints: `"progressive"` or `"direct"`.
+
+## WebSearch
+
+Web search through the native OpenClaw Brave plugin.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].integrations.webSearch`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `agentRefs` | array of string | Yes | — | Unique names of unrestricted OpenClaw agents permitted to search. Constraints: minimum items 1; items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox. |
+| `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
