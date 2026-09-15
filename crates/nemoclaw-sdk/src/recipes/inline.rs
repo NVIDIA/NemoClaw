@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Data-only recipe contract. Executables run only in the managed runtime.
+pub(crate) mod limits;
 use crate::{
     config::{ConfigError, Service},
     snapshot::Manifest,
 };
+use limits as l;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::LazyLock};
+static TOKEN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(l::TOKEN).unwrap());
+static SHA256: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(l::SHA256).unwrap());
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -21,10 +25,10 @@ pub struct InlineRecipe {
     pub licenses: Vec<String>,
     pub source_notices: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "Manifest")]
     pub snapshot: Option<Manifest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "Reuse")]
     pub reuse: Option<Reuse>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -68,7 +72,7 @@ pub struct Settings {
     #[schemars(default)]
     pub chunked_prefill: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "Compilation")]
     pub compilation: Option<Compilation>,
     #[schemars(default)]
     pub environment: BTreeMap<String, String>,
@@ -100,10 +104,7 @@ fn absolute(path: &str) -> bool {
     path.strip_prefix('/').is_some_and(relative)
 }
 fn digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    SHA256.is_match(value)
 }
 impl InlineRecipe {
     pub fn key(&self, service: &Service) -> String {
@@ -116,36 +117,36 @@ impl InlineRecipe {
     }
     pub fn validate(&self, service: &Service) -> Result<(), ConfigError> {
         let bad = || ConfigError("invalid inline recipe contract or incompatible service");
-        if self.api_version != "nemoclaw.nvidia.com/recipe/v1"
-            || service.backend != "vllm"
-            || !["arm64", "amd64"].contains(&self.compatibility.architecture.as_str())
+        if self.api_version != l::API_VERSION
+            || service.backend != crate::config::constraints::BACKEND
+            || !l::ARCHITECTURES.contains(&self.compatibility.architecture.as_str())
             || self.compatibility.gpu.is_empty()
-            || !(1..=10000).contains(&self.compatibility.min_driver_major)
-            || !(1..=4096).contains(&self.compatibility.min_host_memory_gi_b)
+            || !(1..=l::DRIVER_MAX).contains(&self.compatibility.min_driver_major)
+            || !(1..=l::MEMORY_MAX).contains(&self.compatibility.min_host_memory_gi_b)
             || self
                 .compatibility
                 .image_labels
-                .get("org.nemoclaw.recipe.protocol")
+                .get(l::PROTOCOL_LABEL)
                 .map(String::as_str)
                 != Some("v1")
-            || self
-                .compatibility
-                .image_labels
-                .iter()
-                .any(|(k, v)| !k.starts_with("org.nemoclaw.") || v.is_empty() || v.len() > 256)
+            || self.compatibility.image_labels.iter().any(|(k, v)| {
+                !k.starts_with("org.nemoclaw.") || v.is_empty() || v.len() > l::TOKEN_MAX
+            })
             || self.resources.prepared_bytes == 0
-            || self.resources.prepared_bytes > 1 << 40
+            || self.resources.prepared_bytes > l::PREPARED_MAX
             || self.resources.preparation_memory_gi_b == 0
-            || self.resources.preparation_memory_gi_b > 4096
-            || self.resources.startup_headroom_gi_b > 4096
-            || self.resources.gpu_memory_bytes < 4 * crate::hardware::GIB
-            || self.resources.gpu_memory_bytes > 1 << 42
+            || self.resources.preparation_memory_gi_b > l::MEMORY_MAX
+            || self.resources.startup_headroom_gi_b > l::MEMORY_MAX
+            || self.resources.gpu_memory_bytes < l::GPU_MIN
+            || self.resources.gpu_memory_bytes > l::GPU_MAX
             || service.memory.gpu_memory_gib != 0
         {
             return Err(bad());
         }
         for tool in [&self.preparation, &self.verification] {
-            if !absolute(&tool.executable) || tool.executable.len() > 4096 || !digest(&tool.sha256)
+            if !absolute(&tool.executable)
+                || tool.executable.len() > l::PATH_MAX
+                || !digest(&tool.sha256)
             {
                 return Err(bad());
             }
@@ -174,13 +175,7 @@ impl InlineRecipe {
             return Err(bad());
         }
         let settings = &self.serving;
-        let token = |s: &str| {
-            s.len() <= 256
-                && !s.is_empty()
-                && !s.starts_with('-')
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-/".contains(&b))
-        };
+        let token = |s: &str| s.len() <= l::TOKEN_MAX && TOKEN.is_match(s);
         if !token(&settings.model_name)
             || [
                 &settings.tool_parser,
@@ -198,7 +193,7 @@ impl InlineRecipe {
                 || !key
                     .bytes()
                     .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-                || value.len() > 4096
+                || value.len() > l::PATH_MAX
                 || value.contains('\0')
             {
                 return Err(bad());
@@ -216,11 +211,13 @@ impl InlineRecipe {
             }
         }
         if let Some(c) = &settings.compilation
-            && (c.mode > 3
-                || !["NONE", "FULL_DECODE_ONLY"].contains(&c.cudagraph_mode.as_str())
+            && (c.mode > l::COMPILATION_MODE_MAX
+                || !l::CUDAGRAPH_MODES.contains(&c.cudagraph_mode.as_str())
                 || c.capture_sizes.is_empty()
-                || c.capture_sizes.len() > 64
-                || c.capture_sizes.iter().any(|n| *n == 0 || *n > 65536))
+                || c.capture_sizes.len() > l::CAPTURE_COUNT_MAX
+                || c.capture_sizes
+                    .iter()
+                    .any(|n| *n == 0 || *n > l::CAPTURE_SIZE_MAX))
         {
             return Err(bad());
         }

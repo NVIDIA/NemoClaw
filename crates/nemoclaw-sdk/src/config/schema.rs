@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Authored YAML represented as JSON, before Document::defaults runs.
+mod validation;
 
 pub fn input_schema() -> serde_json::Value {
     let settings = schemars::generate::SchemaSettings::draft2020_12();
@@ -11,6 +12,7 @@ pub fn input_schema() -> serde_json::Value {
     )
     .unwrap();
     remove_serde_defaults(&mut schema);
+    validation::constrain(&mut schema);
     schema
 }
 

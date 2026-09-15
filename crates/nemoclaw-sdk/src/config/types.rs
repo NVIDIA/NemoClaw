@@ -69,10 +69,10 @@ pub struct Gateway {
     #[schemars(default)]
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "Credential")]
     pub credential: Option<Credential>,
     #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "TLS")]
     pub tls: Option<TLS>,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
@@ -97,13 +97,13 @@ pub struct InferenceProvider {
     #[schemars(default)]
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "Credential")]
     pub credential: Option<Credential>,
     #[serde(rename = "ollama", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "ManagedOllama")]
     pub ollama: Option<ManagedOllama>,
     #[serde(rename = "service", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "Service")]
     pub service: Option<Service>,
 }
 
@@ -204,7 +204,7 @@ pub struct Overrides {
     #[serde(rename = "model")]
     pub model: String,
     #[serde(rename = "piModel", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     pub pi_model: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
@@ -213,13 +213,13 @@ pub struct Overrides {
 #[serde(default, deny_unknown_fields)]
 pub struct Service {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "Box<crate::recipes::inline::InlineRecipe>")]
     pub recipe: Option<Box<crate::recipes::inline::InlineRecipe>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "ServicePlacement")]
     pub placement: Option<ServicePlacement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, required)]
+    #[schemars(default, with = "ServicePublication")]
     pub publication: Option<ServicePublication>,
     #[serde(rename = "backend")]
     pub backend: String,
