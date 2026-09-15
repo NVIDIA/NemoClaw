@@ -9,6 +9,10 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 type WorkflowRecord = Record<string, unknown>;
@@ -84,44 +88,6 @@ const PROFILE_JOBS = {
     maxParallel: 2,
   },
 } as const;
-
-const SDK_INSTALL_SCRIPT = [
-  "set -euo pipefail",
-  "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print | sort)",
-  'test "${#archives[@]}" -ge 1',
-  'test "${#archives[@]}" -le 2',
-  'sdk_archive="$(env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\',
-  "  node --input-type=module - \"${archives[@]}\" <<'NODE'",
-  'import { execFileSync } from "node:child_process";',
-  'import { createHash } from "node:crypto";',
-  'import { readFileSync } from "node:fs";',
-  'const sdkName = "@nvidia/openshell-sdk";',
-  'const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));',
-  'const root = lock.packages?.[""];',
-  "const sdk = lock.packages?.[`node_modules/${sdkName}`];",
-  "const requested = root?.optionalDependencies?.[sdkName] ?? root?.dependencies?.[sdkName] ?? root?.devDependencies?.[sdkName];",
-  'if (!sdk || requested !== sdk.version || typeof sdk.resolved !== "string" || !sdk.resolved.startsWith("https://") || typeof sdk.integrity !== "string" || !sdk.integrity.startsWith("sha512-")) throw new Error("OpenShell SDK lock entry is not an exact registry archive");',
-  "const matches = process.argv.slice(2).filter((archive) => {",
-  '  const manifest = JSON.parse(execFileSync("tar", ["-xOf", archive, "package/package.json"], { encoding: "utf8" }));',
-  '  const integrity = `sha512-${createHash("sha512").update(readFileSync(archive)).digest("base64")}`;',
-  "  return manifest.name === sdkName && manifest.version === sdk.version && integrity === sdk.integrity;",
-  "});",
-  'if (matches.length !== 1) throw new Error("OpenShell SDK lock entry does not identify exactly one reviewed archive");',
-  "process.stdout.write(matches[0]);",
-  "NODE",
-  ')"',
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  "  npm ci --ignore-scripts --prefer-offline --no-audit --no-fund",
-  "if [[ ! -e node_modules/@nvidia/openshell-sdk ]]; then",
-  "  install -d node_modules/@nvidia/openshell-sdk",
-  '  tar --extract --gzip --file "$sdk_archive" \\',
-  "    --directory node_modules/@nvidia/openshell-sdk \\",
-  "    --strip-components=1 --no-same-owner --no-same-permissions",
-  "fi",
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '  node --input-type=module -e \'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");\'',
-  "",
-].join("\n");
 
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -540,18 +506,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
   }
-  const sdkInstall = requireStep(
-    errors,
-    workflowSteps,
-    "Install reviewed OpenShell SDK archive without package credentials",
-  );
-  if (
-    !isDeepStrictEqual(sdkInstall, {
-      name: "Install reviewed OpenShell SDK archive without package credentials",
-      shell: "bash",
-      run: SDK_INSTALL_SCRIPT,
-    })
-  ) {
+  const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
     errors.push(
       "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
     );
