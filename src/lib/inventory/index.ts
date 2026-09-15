@@ -247,7 +247,7 @@ function projectIncompleteOnboarding(
     return null;
   }
   return {
-    name: reservation.name,
+    name: safeStatusString(reservation.name) ?? reservation.name,
     status: session.status,
     step: safeStatusString(
       session.failure?.step ?? session.lastStepStarted ?? session.lastCompletedStep,
@@ -368,12 +368,7 @@ export async function getSandboxInventory(
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
     lastOnboardedSandbox: safeStatusString(lastOnboardedSandbox),
-    incompleteOnboarding: incompleteOnboarding
-      ? {
-          ...incompleteOnboarding,
-          name: safeStatusString(incompleteOnboarding.name) || incompleteOnboarding.name,
-        }
-      : null,
+    incompleteOnboarding,
     // Pending rows are internal lifecycle state. They remain readable by their
     // recovery authority, but must not appear as completed sandboxes.
     sandboxes: rows,
@@ -432,19 +427,20 @@ export function renderSandboxInventoryText(
   }
   log("  Sandboxes:");
   for (const sandbox of inventory.sandboxes) {
-    const useLive = sandbox.isDefault && liveInference;
+    const liveModel = sandbox.isDefault ? safeStatusString(liveInference?.model) : null;
+    const liveProvider = sandbox.isDefault ? safeStatusString(liveInference?.provider) : null;
     const def = sandbox.isDefault ? " *" : "";
-    const model = (useLive && liveInference.model) || sandbox.model || "unknown";
-    const provider = (useLive && liveInference.provider) || sandbox.provider || "unknown";
+    const model = liveModel || sandbox.model || "unknown";
+    const provider = liveProvider || sandbox.provider || "unknown";
     const modelDrifted = !!(
-      useLive &&
-      liveInference.model &&
-      liveInference.model !== sandbox.model
+      sandbox.isDefault &&
+      liveInference?.model &&
+      liveModel !== sandbox.model
     );
     const providerDrifted = !!(
-      useLive &&
-      liveInference.provider &&
-      liveInference.provider !== sandbox.provider
+      sandbox.isDefault &&
+      liveInference?.provider &&
+      liveProvider !== sandbox.provider
     );
     // #5714: a gateway-recovered row's GPU state is unknown — the gateway
     // sandbox list does not expose it — so don't assert "CPU sandbox" (which

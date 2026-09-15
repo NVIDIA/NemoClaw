@@ -3,7 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getSandboxInventory, getStatusReport, type SandboxEntry } from "./index";
+import {
+  getSandboxInventory,
+  getStatusReport,
+  listSandboxesCommand,
+  type SandboxEntry,
+} from "./index";
 
 function deferredPolicyReads() {
   const releases = new Map<string, (policies: string[]) => void>();
@@ -96,6 +101,33 @@ describe("inventory row behavior", () => {
     expect(JSON.stringify(inventory)).not.toContain("example-not-a-real-value-1");
   });
 
+  it("redacts matching live gateway inference without reporting false drift", async () => {
+    const lines: string[] = [];
+    const secret = 'api_key="example-not-a-real-value-1"';
+    await listSandboxesCommand({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            model: `configured-alpha ${secret}`,
+            provider: `configured-provider ${secret}`,
+            gpuEnabled: true,
+          },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => ({
+        provider: `configured-provider ${secret}`,
+        model: `configured-alpha ${secret}`,
+      }),
+      loadLastSession: () => null,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines.join("\n")).not.toContain("example-not-a-real-value-1");
+    expect(lines.some((line) => line.includes("onboarded"))).toBe(false);
+  });
+
   it("redacts completed and incomplete onboarding sandbox names", async () => {
     const secret = 'api_key="example-not-a-real-value-1"';
     const sandboxName = `alpha ${secret}`;
@@ -120,8 +152,27 @@ describe("inventory row behavior", () => {
         failure: { step: "inference", interrupted: true },
       }),
     });
+    const incompleteStatus = await getStatusReport({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: sandboxName, pendingRouteReservation: true, reservationSessionId: "session" },
+        ],
+        defaultSandbox: sandboxName,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => ({
+        sessionId: "session",
+        sandboxName,
+        status: "failed",
+        resumable: true,
+        failure: { step: "inference", interrupted: true },
+      }),
+      showServiceStatus: vi.fn(),
+    });
 
     expect(completed.lastOnboardedSandbox).not.toContain("example-not-a-real-value-1");
     expect(incomplete.incompleteOnboarding?.name).not.toContain("example-not-a-real-value-1");
+    expect(incompleteStatus.incompleteOnboarding).toEqual(incomplete.incompleteOnboarding);
+    expect(JSON.stringify(incompleteStatus)).not.toContain("example-not-a-real-value-1");
   });
 });
