@@ -55,6 +55,9 @@ describe("parsePort", () => {
     ["a port below 1024", "80", "1024 and 65535"],
     ["a port above 65535", "70000", "1024 and 65535"],
     ["special characters that could break pgrep patterns", ".*", "Invalid port"],
+    ["a leading-zero port", "08000", "Invalid port"],
+    ["a bare zero", "0", "Invalid port"],
+    ["repeated leading zeros", "007000", "Invalid port"],
   ] as const)("rejects %s", (_label, value, expectedMessage) => {
     process.env[ENV_KEY] = value;
     expect(() => parsePort(ENV_KEY, 8080)).toThrow(expectedMessage);
