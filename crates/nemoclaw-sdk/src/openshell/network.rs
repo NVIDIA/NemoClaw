@@ -115,22 +115,28 @@ mod tests {
             port: 3129,
         };
         let command = launch_command("fabric-openclaw", Some(&proxy));
-        let output = std::process::Command::new(&command[0])
-            .args(&command[1..command.len() - 3])
-            .args([
-                "/usr/bin/printenv",
-                "HTTP_PROXY",
-                "https_proxy",
-                "NO_PROXY",
-                "NODE_USE_ENV_PROXY",
-            ])
-            .env("HTTP_PROXY", "http://injected:3128")
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
-            "http://proxy.internal:3129\nhttp://proxy.internal:3129\nlocalhost,127.0.0.1,::1,proxy.internal\n1\n"
-        );
+        // BSD printenv accepts one variable name; GNU printenv also accepts several.
+        for (key, expected) in [
+            ("HTTP_PROXY", "http://proxy.internal:3129"),
+            ("HTTPS_PROXY", "http://proxy.internal:3129"),
+            ("http_proxy", "http://proxy.internal:3129"),
+            ("https_proxy", "http://proxy.internal:3129"),
+            ("NO_PROXY", "localhost,127.0.0.1,::1,proxy.internal"),
+            ("no_proxy", "localhost,127.0.0.1,::1,proxy.internal"),
+            ("NODE_USE_ENV_PROXY", "1"),
+        ] {
+            let output = std::process::Command::new(&command[0])
+                .args(&command[1..command.len() - 3])
+                .args(["/usr/bin/printenv", key])
+                .env(key, "injected-value")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{key}");
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                format!("{expected}\n"),
+                "{key} must override the injected value",
+            );
+        }
     }
 }
