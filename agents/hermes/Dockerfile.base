@@ -66,15 +66,17 @@ COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HERMES_SKIP_CHMOD=1
 
-# Hermes version pinned for reproducibility. All four values below are
+# Hermes version pinned for reproducibility. All five active values below are
 # managed by scripts/update-hermes-agent.sh — HERMES_VERSION is the GitHub
 # calver tag, HERMES_SEMVER the matching package version from the release's
-# pyproject.toml, HERMES_TARBALL_SHA256 the GitHub tarball checksum, and
+# pyproject.toml, HERMES_COMMIT_SHA the immutable source identity,
+# HERMES_TARBALL_SHA256 the GitHub tarball checksum, and
 # HERMES_NPM_INTEGRITY the `npm view hermes-agent@<semver> dist.integrity`
 # sha512 used as a registry cross-check at build time.
 # Calver tag v2026.8.27 = Hermes Agent v0.20.6.
 ARG HERMES_VERSION=v2026.8.27
 ARG HERMES_SEMVER=0.20.6
+ARG HERMES_COMMIT_SHA=5fc308a70719a83cccdbba4c0e39c23f5a8239d5
 ARG HERMES_TARBALL_SHA256=e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7
 ARG HERMES_NPM_INTEGRITY=sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp acp"
@@ -83,6 +85,18 @@ ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=820563cc3450de582663c8137670
 ARG NEMOCLAW_HERMES_SECURE_DIR_SOURCE_SHA256=ffae3271120cf53eb8a7f574f76758eac3ea172f9ddc22c1056277e37d8d392c
 ARG NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256=1c1a898226bc67b123ec72847d4dcda7abbab1e95958c9e019790d9425e15d69
 ARG NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256=130cf4e76d6f4f16b85517cf8d3d81dfe294aff63d6c561b979971c401f78761
+
+# Keep the selected release behind a sealed identity allowlist. The active
+# defaults remain 0.20.6; 0.21.3 is admitted here only so its later selector
+# change cannot bypass review of the exact tag, commit, semver, and published
+# package identity as one tuple. Source archive bytes remain independently
+# bound by HERMES_TARBALL_SHA256 below.
+RUN hermes_identity="${HERMES_VERSION}|${HERMES_SEMVER}|${HERMES_COMMIT_SHA}|${HERMES_NPM_INTEGRITY}"; \
+    case "$hermes_identity" in \
+        'v2026.8.27|0.20.6|5fc308a70719a83cccdbba4c0e39c23f5a8239d5|sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==') ;; \
+        'v2026.9.14|0.21.3|345cd2b057a452236de401d3534b8502a7465e8d|sha512-LvPt2/1z6hm4pTRJu34F6uAkBVSlSt94QeZp8fMBLFqASU9/wv7iMODSGMzF1WmrpNENXYGMnWN8s9hi/EUM5Q==') ;; \
+        *) echo "ERROR: unreviewed Hermes release identity: $hermes_identity" >&2; exit 1 ;; \
+    esac
 
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
