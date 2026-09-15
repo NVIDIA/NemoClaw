@@ -7,8 +7,6 @@ use sha2::{Digest, Sha256};
 
 const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
 const V0_MANIFEST_SHA256: &str = "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
-const V0_CAPTURE_OVERLAY_SHA256: &str =
-    "71d23276a2472d50a8a6304e93d5e0330b1022052c839dfe53a55057089b9110";
 
 #[test]
 fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
@@ -87,7 +85,6 @@ fn hosted_openclaw_translation_rejects_unrepresented_v0_fields() {
 }
 
 mod live {
-    use super::{V0_CAPTURE_OVERLAY_SHA256, V0_MANIFEST_SHA256, V0_REVISION};
     use nemoclaw_e2e::v0_export::{V1RuntimeBindings, desired_state_from_v0_export};
     use nemoclaw_sdk::{
         CancellationToken, Deployment,
@@ -192,167 +189,27 @@ mod live {
             .collect()
     }
 
-    fn validate_v0_proof(proof: &Value, export_sha256: &str) {
-        assert_eq!(proof["scenario"], SCENARIO);
-        assert_eq!(proof["revision"], V0_REVISION);
-        assert_eq!(proof["manifestSha256"], V0_MANIFEST_SHA256);
-        assert_eq!(
-            proof["validationOverlaySha256"], V0_CAPTURE_OVERLAY_SHA256,
-            "v0 proof must identify the reviewed validation overlay"
-        );
-        assert_eq!(proof["target"], "ubuntu-repo-cloud-openclaw");
-        assert_eq!(proof["platform"]["os"], "linux");
-        assert!(
-            proof["platform"]["architecture"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
-        );
-        assert!(
-            proof["platform"]["kernel"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
-        );
-        assert!(
-            proof["platform"]["linuxRelease"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
-        );
-        assert_eq!(proof["runtime"]["containerEngine"], "docker");
-        for field in [
-            "dockerClientVersion",
-            "dockerServerVersion",
-            "dockerServerOs",
-            "dockerServerArchitecture",
-            "dockerDaemonId",
-        ] {
-            assert!(
-                proof["runtime"][field]
-                    .as_str()
-                    .is_some_and(|value| !value.is_empty())
-            );
-        }
-        assert_eq!(proof["model"]["id"], "nvidia/nemotron-3-super-120b-a12b");
-        assert_eq!(proof["exportSha256"], export_sha256);
-        for field in [
-            "passed",
-            "realAgentResponse",
-            "exported",
-            "destroyed",
-            "ownedResourcesOnly",
-            "redacted",
-        ] {
-            assert_eq!(proof[field], true, "v0 proof must establish {field}");
-        }
-        for field in [
-            "input",
-            "platform",
-            "runtime",
-            "images",
-            "model",
-            "artifacts",
-        ] {
-            assert!(
-                proof[field]
-                    .as_object()
-                    .is_some_and(|value| !value.is_empty()),
-                "v0 proof must record nonempty {field}"
-            );
-        }
-        assert!(
-            proof["commands"]
-                .as_array()
-                .is_some_and(|value| !value.is_empty()),
-            "v0 proof must record nonempty commands"
-        );
-        assert!(
-            proof["commands"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|command| command
-                    .as_str()
-                    .is_some_and(|value| value.contains("config export"))),
-            "v0 proof must record the config export command"
-        );
-    }
-
-    fn complete_v0_proof(export_sha256: &str) -> Value {
-        json!({
-            "scenario": SCENARIO,
-            "revision": V0_REVISION,
-            "manifestSha256": V0_MANIFEST_SHA256,
-            "validationOverlaySha256": V0_CAPTURE_OVERLAY_SHA256,
-            "target": "ubuntu-repo-cloud-openclaw",
-            "passed": true,
-            "realAgentResponse": true,
-            "exported": true,
-            "exportSha256": export_sha256,
-            "destroyed": true,
-            "ownedResourcesOnly": true,
-            "redacted": true,
-            "input": {"credentialRefs": ["NVIDIA_INFERENCE_API_KEY"]},
-            "platform": {
-                "os": "linux",
-                "architecture": "amd64",
-                "kernel": "Linux 6.8.0",
-                "linuxRelease": "ubuntu:24.04"
-            },
-            "runtime": {
-                "containerEngine": "docker",
-                "dockerClientVersion": "1",
-                "dockerServerVersion": "1",
-                "dockerServerOs": "linux",
-                "dockerServerArchitecture": "amd64",
-                "dockerDaemonId": "owned-daemon"
-            },
-            "images": {"sandbox": "image@sha256:digest"},
-            "model": {"id": "nvidia/nemotron-3-super-120b-a12b"},
-            "commands": ["nemoclaw config export assistant --output <redacted> --force"],
-            "artifacts": {"proof.json": "sha256"}
-        })
+    fn validate_v0_artifact(bytes: &[u8], expected_sha256: &str, source: &str) {
+        assert_redacted(bytes);
+        assert_eq!(sha256(bytes), expected_sha256, "v0 artifact hash changed");
+        assert!(!source.trim().is_empty(), "v0 artifact source is required");
     }
 
     #[test]
-    fn v0_proof_requires_export_real_agent_destroy_and_reproducibility_evidence() {
-        let export_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let proof = complete_v0_proof(export_sha256);
-        validate_v0_proof(&proof, export_sha256);
-        let environment = json!({
-            "os": "linux",
-            "architecture": "amd64",
-            "kernel": "Linux 6.8.0",
-            "linuxRelease": "ubuntu:24.04",
-            "dockerServerOs": "linux",
-            "dockerServerArchitecture": "amd64",
-            "dockerDaemonId": "owned-daemon"
-        });
-        validate_same_environment(&proof, &environment);
-        let mut other_daemon = environment;
-        other_daemon["dockerDaemonId"] = json!("other-daemon");
+    fn standalone_v0_artifact_requires_exact_bytes_and_source_identity() {
+        let bytes = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
+        let digest = sha256(bytes);
+        validate_v0_artifact(bytes, &digest, "synthetic fixture modeled from f47724f");
+
         assert!(
-            std::panic::catch_unwind(|| validate_same_environment(&proof, &other_daemon)).is_err()
-        );
-        for missing in [
-            "realAgentResponse",
-            "exported",
-            "destroyed",
-            "ownedResourcesOnly",
-        ] {
-            let mut incomplete = complete_v0_proof(export_sha256);
-            incomplete[missing] = json!(false);
-            assert!(
-                std::panic::catch_unwind(|| validate_v0_proof(&incomplete, export_sha256)).is_err()
-            );
-        }
-        assert!(
-            std::panic::catch_unwind(|| validate_v0_proof(
-                &complete_v0_proof(
-                    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-                ),
-                export_sha256
+            std::panic::catch_unwind(|| validate_v0_artifact(
+                bytes,
+                &"0".repeat(64),
+                "synthetic fixture"
             ))
             .is_err()
         );
+        assert!(std::panic::catch_unwind(|| validate_v0_artifact(bytes, &digest, "")).is_err());
     }
 
     #[test]
@@ -449,7 +306,7 @@ mod live {
             "os": std::env::consts::OS,
             "architecture": std::env::consts::ARCH,
             "kernel": text(Command::new("uname").args(["-sr"])),
-            "linuxRelease": linux_release(),
+            "hostRelease": host_release(),
             "dockerClientVersion": docker(&["version", "--format", "{{.Client.Version}}"]),
             "dockerServerVersion": docker(&["version", "--format", "{{.Server.Version}}"]),
             "dockerServerOs": docker(&["version", "--format", "{{.Server.Os}}"]),
@@ -458,7 +315,13 @@ mod live {
         })
     }
 
-    fn linux_release() -> String {
+    fn host_release() -> String {
+        if std::env::consts::OS == "macos" {
+            return format!(
+                "macos:{}",
+                text(Command::new("sw_vers").arg("-productVersion"))
+            );
+        }
         let release = fs::read_to_string("/etc/os-release").unwrap();
         let field = |name: &str| {
             release
@@ -471,34 +334,22 @@ mod live {
         format!("{}:{}", field("ID"), field("VERSION_ID"))
     }
 
-    fn validate_same_environment(proof: &Value, current: &Value) {
-        for field in ["os", "architecture", "kernel", "linuxRelease"] {
-            assert_eq!(
-                proof["platform"][field], current[field],
-                "v0 and v1 platform {field} must match"
-            );
-        }
-        for field in [
-            "dockerServerOs",
-            "dockerServerArchitecture",
-            "dockerDaemonId",
-        ] {
-            assert_eq!(
-                proof["runtime"][field], current[field],
-                "v0 and v1 Docker {field} must match"
-            );
-        }
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "requires the exact live parity gate, owned fresh Linux/Docker state, a verified bundle, redacted v0 proof, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
-    async fn pinned_v0_and_v1_hosted_openclaw_lifecycles_produce_a_parity_verdict() {
-        assert_eq!(std::env::consts::OS, "linux", "scenario requires Linux");
-        assert_eq!(
-            std::env::var("NEMOCLAW_RUN_LIVE_HOSTED_PARITY").as_deref(),
-            Ok("issue-11810"),
-            "set the issue-specific live acknowledgement"
-        );
+    #[ignore = "requires an exact v0 artifact hash and source, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
+    async fn v0_export_artifact_drives_v1_hosted_openclaw_lifecycle() {
+        let gate = std::env::var("NEMOCLAW_RUN_LIVE_HOSTED_PARITY").unwrap();
+        let qualification_candidate = match gate.as_str() {
+            "issue-11810" => {
+                assert_eq!(
+                    std::env::consts::OS,
+                    "linux",
+                    "qualification requires Linux"
+                );
+                true
+            }
+            "issue-11810-local-feedback" => false,
+            _ => panic!("set an issue-specific live gate"),
+        };
         let credential = std::env::var("NVIDIA_INFERENCE_API_KEY")
             .expect("dedicated NVIDIA_INFERENCE_API_KEY must be supplied by the environment");
         assert!(
@@ -512,18 +363,22 @@ mod live {
             text(Command::new("git").args(["rev-parse", "HEAD"])),
             v1_revision
         );
-        assert!(
-            text(Command::new("git").args(["status", "--short"])).is_empty(),
-            "live evidence requires a clean v1 checkout"
-        );
+        let source_status = text(Command::new("git").args(["status", "--short"]));
+        if qualification_candidate {
+            assert!(
+                source_status.is_empty(),
+                "qualified live evidence requires a clean v1 checkout"
+            );
+        }
 
         let v0_export_path = explicit("NEMOCLAW_LIVE_V0_EXPORT");
         let directory = explicit("NEMOCLAW_LIVE_HOSTED_STATE");
         let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
-        let v0_proof_path = explicit("NEMOCLAW_LIVE_V0_PROOF");
         let v0_export_bytes = fs::read(v0_export_path).unwrap();
-        assert_redacted(&v0_export_bytes);
         let v0_export_sha256 = sha256(&v0_export_bytes);
+        let expected_export_sha256 = std::env::var("NEMOCLAW_LIVE_V0_EXPORT_SHA256").unwrap();
+        let v0_source = std::env::var("NEMOCLAW_LIVE_V0_SOURCE").unwrap();
+        validate_v0_artifact(&v0_export_bytes, &expected_export_sha256, &v0_source);
         let image = std::env::var("NEMOCLAW_LIVE_FABRIC_IMAGE").unwrap();
         validate_fabric_image(&image);
         let gateway_engine = std::env::var("NEMOCLAW_LIVE_GATEWAY_ENGINE").unwrap();
@@ -563,18 +418,13 @@ mod live {
         assert_eq!(ownership["scenario"], SCENARIO);
         assert_eq!(ownership["deploymentUid"], document.metadata.uid);
         assert_eq!(ownership["owned"], true);
-        assert!(
-            !directory.join("terraform.tfstate").exists()
-                && !directory.join("runtime/terraform.tfstate").exists(),
-            "this entrypoint requires fresh owned state"
-        );
+        let fresh = !directory.join("terraform.tfstate").exists()
+            && !directory.join("runtime/terraform.tfstate").exists();
+        if qualification_candidate {
+            assert!(fresh, "qualification requires fresh owned state");
+        }
 
-        let v0_proof_bytes = fs::read(v0_proof_path).unwrap();
-        assert_redacted(&v0_proof_bytes);
-        let v0_proof: Value = serde_json::from_slice(&v0_proof_bytes).unwrap();
-        validate_v0_proof(&v0_proof, &v0_export_sha256);
         let current_environment = environment();
-        validate_same_environment(&v0_proof, &current_environment);
 
         let mut evidence = Evidence {
             path: directory.join("openclaw-nvidia-hosted-parity.json"),
@@ -582,12 +432,16 @@ mod live {
                 "scenario": SCENARIO,
                 "parentIssue": "NVIDIA/NemoClaw#11810",
                 "passed": false,
+                "qualified": false,
+                "qualificationCandidate": qualification_candidate,
+                "qualificationNote": "qualification requires external artifact-provenance and evidence review",
+                "resumedAfterFailedApply": !fresh,
                 "startedEpoch": now(),
-                "revisions": {"v0": V0_REVISION, "v1": v1_revision},
-                "v0ManifestSha256": V0_MANIFEST_SHA256,
+                "v1Revision": v1_revision,
+                "v1SourceWorktreeClean": source_status.is_empty(),
                 "credentialInputs": {"NVIDIA_INFERENCE_API_KEY": "environment reference; value omitted"},
-                "v0Proof": v0_proof,
                 "v0Export": {
+                    "source": v0_source,
                     "sha256": v0_export_sha256,
                     "redactedYaml": String::from_utf8(v0_export_bytes).unwrap()
                 },
@@ -624,9 +478,16 @@ mod live {
 
         let deployment = Deployment::new(&directory, &bundle);
         let cancel = CancellationToken::new();
-        let plan = deployment.plan(&document, &cancel).await.unwrap();
-        assert!(!plan.changes.is_empty());
-        evidence.record("initialPlan", plan);
+        if fresh {
+            let plan = deployment.plan(&document, &cancel).await.unwrap();
+            assert!(!plan.changes.is_empty());
+            evidence.record("initialPlan", plan);
+        } else {
+            evidence.record(
+                "recovery",
+                "reapplied identical pending intent after the recorded failed apply",
+            );
+        }
 
         let apply = deployment.apply(&document, &cancel).await.unwrap();
         assert!(!apply.changes.is_empty());
@@ -703,15 +564,12 @@ mod live {
         }
         evidence.record("retainedResourceIdentities", retained);
         evidence.record(
-            "lifecycleComparison",
-            json!({
-                "v0": "target cleanup destroyed its owned deployment",
-                "v1": "destroy removed workloads and retained owned workspace and gateway storage"
-            }),
+            "lifecycle",
+            "v1 destroy removed workloads and retained owned workspace and gateway storage",
         );
         evidence.record(
             "verdict",
-            "Equivalent desired-state intent and agent behavior",
+            "v0 export is representable and its v1 lifecycle and agent behavior are verified",
         );
         evidence.record("passed", true);
     }

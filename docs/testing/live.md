@@ -107,10 +107,13 @@ A read-only plan cannot observe workspace resources through a stopped gateway an
 
 ## Hosted NVIDIA OpenClaw Parity
 
-The [issue #11810 Linux/Docker scenario](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) translates a live export from the pinned v0 canonical target into a new v1 desired state and compares the v1 export with that translation.
-It requires separate clean v0 and v1 worktrees, a dedicated NVIDIA credential, an owned Docker daemon and deployment identity, a verified immutable v1 bundle, and redacted successful v0 evidence.
+The [issue #11810 Linux/Docker scenario](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) strictly translates a redacted, exact-hash v0 export artifact into a new v1 desired state and compares the v1 export with that translation.
+It requires a dedicated NVIDIA credential, an owned Docker daemon and deployment identity, a verified immutable v1 bundle, explicit v1-only runtime bindings, and an ownership marker.
 
-The v1 ignored test refuses to run without the exact `issue-11810` acknowledgement, an exact-hash v0 export and proof, explicit v1-only runtime bindings, and an ownership marker in a fresh state directory.
+The ignored test accepts the `issue-11810-local-feedback` acknowledgement for non-qualifying Docker Desktop feedback.
+Docker Desktop feedback may require an explicitly recorded operator-owned forwarding layer for the managed gateway and sandbox callback paths; native Linux qualification must not use it.
+The `issue-11810` gate, a clean v1 checkout, and fresh owned state produce a qualification candidate.
+The runner records `qualified: false`; qualification requires external artifact-provenance and evidence review.
 It makes a paid or quota-consuming hosted inference request and destroys only the deployment bound to that state.
 Do not run it as part of an ignored-test aggregate.
 

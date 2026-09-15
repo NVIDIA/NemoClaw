@@ -24,6 +24,73 @@ fn reference() -> (Spec, Value, Value, Value) {
     let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
     (spec, container, volume, network)
 }
+
+#[test]
+fn docker_desktop_socket_proxy_preserves_the_declared_gateway_binding() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixture = &fixtures[0];
+    let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+    let mut container: ContainerInspectResponse = serde_json::from_value(json!({
+        "Id": "container",
+        "Name": format!("/{}", spec.name),
+        "Image": "sha256:runtime",
+        "Config": fixture["config"],
+        "HostConfig": fixture["hostConfig"],
+        "State": {"Running": true, "StartedAt": "2026-09-15T00:00:00Z"},
+        "Mounts": [
+            {
+                "Type": "volume",
+                "Name": spec.volume(),
+                "Source": "/var/lib/docker/volumes/fixture/_data",
+                "Destination": "/var/lib/docker/volumes/fixture/_data",
+                "RW": true
+            },
+            {
+                "Type": "bind",
+                "Source": "/run/host-services/docker.proxy.sock",
+                "Destination": "/var/run/docker.sock",
+                "RW": true
+            }
+        ]
+    }))
+    .unwrap();
+
+    verify_container(
+        &spec,
+        &container,
+        "/var/lib/docker/volumes/fixture/_data",
+        Some(&[]),
+        "sha256:runtime",
+        true,
+    )
+    .unwrap();
+
+    container.mounts.as_mut().unwrap()[1].source = Some("/tmp/foreign.sock".into());
+    assert!(
+        verify_container(
+            &spec,
+            &container,
+            "/var/lib/docker/volumes/fixture/_data",
+            Some(&[]),
+            "sha256:runtime",
+            true,
+        )
+        .is_err()
+    );
+    container.mounts.as_mut().unwrap()[1].source =
+        Some("/run/host-services/docker.proxy.sock".into());
+    assert!(
+        verify_container(
+            &spec,
+            &container,
+            "/var/lib/docker/volumes/fixture/_data",
+            Some(&[]),
+            "sha256:runtime",
+            false,
+        )
+        .is_err()
+    );
+}
 #[tokio::test]
 async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_partial_results() {
     let (spec, container, volume, network) = reference();
