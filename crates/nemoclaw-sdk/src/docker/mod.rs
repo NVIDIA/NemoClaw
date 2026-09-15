@@ -19,6 +19,9 @@ pub struct Engine {
 }
 impl Engine {
     pub fn connect(endpoint: &str) -> Result<Self, Error> {
+        if endpoint.starts_with("ssh://") {
+            return Self::connect_ssh(endpoint);
+        }
         if !endpoint.starts_with("unix:///") || endpoint.contains(['\0', '?', '#']) {
             return Err(Error::Conflict(
                 "managed runtimes require an explicit local Unix engine socket",
@@ -222,3 +225,5 @@ mod two_engines;
 
 mod connections;
 pub use connections::Connections;
+
+mod ssh;

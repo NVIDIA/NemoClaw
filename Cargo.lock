@@ -1537,6 +1537,8 @@ dependencies = [
  "bollard",
  "futures-util",
  "getrandom 0.4.3",
+ "hyper",
+ "hyper-util",
  "ipnet",
  "openshell-core",
  "process-wrap",

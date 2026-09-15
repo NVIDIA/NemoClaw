@@ -58,3 +58,29 @@ fn managed_engine_requires_explicit_local_socket() {
         assert!(Engine::connect(endpoint).is_err());
     }
 }
+
+#[tokio::test]
+#[cfg(unix)]
+async fn ssh_connection_is_lazy_and_requires_explicit_remote_capacity() {
+    let engine = Engine::connect("ssh://operator@gpu-box:2222").unwrap();
+    assert_eq!(engine.endpoint(), "ssh://operator@gpu-box:2222");
+    let error = engine.host_observer.observe(&engine).await.err().unwrap();
+    assert!(error.to_string().contains("remote host capacity"));
+}
+
+#[test]
+fn ssh_connections_reject_credentials_options_and_unsupported_paths() {
+    for endpoint in [
+        "ssh://",
+        "ssh://-oProxyCommand=bad",
+        "ssh://user:secret@host",
+        "ssh://host/run/docker.sock",
+        "ssh://host?key=secret",
+        "ssh://host#fragment",
+        "ssh://user%20name@host",
+        "ssh://host\n",
+        "ssh://-user@host",
+    ] {
+        assert!(Engine::connect(endpoint).is_err(), "accepted {endpoint:?}");
+    }
+}
