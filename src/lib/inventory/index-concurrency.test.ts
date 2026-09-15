@@ -134,26 +134,30 @@ describe("inventory row behavior", () => {
   it("redacts sandbox and inference fields in global status text", async () => {
     const lines: string[] = [];
     const secret = 'api_key="example-not-a-real-value-1"';
+    const storedUrl = "https://stored-user:stored-password@example.com/model";
+    const liveUrl = "https://live-user:live-password@example.com/model";
     await showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
           {
-            name: `alpha ${secret}`,
-            model: `configured-model ${secret}`,
-            provider: `configured-provider ${secret}`,
+            name: "alpha",
+            model: `${storedUrl} ${secret}`,
+            provider: `${storedUrl} ${secret}`,
           },
         ],
-        defaultSandbox: `alpha ${secret}`,
+        defaultSandbox: "alpha",
       }),
       getLiveInference: () => ({
-        model: `live-model ${secret}`,
-        provider: `live-provider ${secret}`,
+        model: `${liveUrl} ${secret}`,
+        provider: `${liveUrl} ${secret}`,
       }),
       showServiceStatus: vi.fn(),
       log: (message = "") => lines.push(message),
     });
 
     expect(lines.join("\n")).not.toContain("example-not-a-real-value-1");
+    expect(lines.join("\n")).not.toMatch(/(?:stored|live)-(?:user|password)/);
+    expect(lines.join("\n")).toContain("onboarded:");
   });
 
   it("redacts URL credentials while preserving raw route drift", async () => {
