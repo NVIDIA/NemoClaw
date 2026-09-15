@@ -636,8 +636,7 @@ ADD --chmod=0444 --checksum=sha256:96a03e2ac0906b035085ec4e2307dd8076fb02673b8f5
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives
 
-# Keep the complete managed-image messaging dependency graph inert for normal
-# Dockerfile builds. Release-image builds select the lock cache stage.
+# Keep the messaging graph inert unless release builds select its lock cache.
 FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS openclaw-managed-messaging-npm-cache-0
 RUN install -d -o root -g root -m 0755 /out/npm-cache
 
@@ -647,7 +646,7 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 COPY agents/openclaw/managed-image-messaging-runtime/package.json agents/openclaw/managed-image-messaging-runtime/package-lock.json /opt/managed-image-messaging-runtime/
-COPY scripts/checks/materialize-locked-npm-cache-seed.mts /scripts/checks/materialize-locked-npm-cache-seed.mts
+COPY scripts/checks/materialize-locked-npm-cache-seed.mts scripts/checks/verify-managed-messaging-offline-install.mts /scripts/checks/
 COPY scripts/lib/seed-reviewed-npm-cache.mts /scripts/lib/seed-reviewed-npm-cache.mts
 COPY --from=openclaw-managed-messaging-npm-archives / /opt/nemoclaw-build-tools/npm-cache-seed/
 RUN --network=none set -eu; \
@@ -667,7 +666,7 @@ RUN --network=none set -eu; \
         --ignore-scripts --omit=dev --legacy-peer-deps \
         --userconfig /dev/null --registry https://registry.npmjs.org/ \
         --cache /out/npm-cache; \
-    npm cache verify --cache /out/npm-cache; \
+    node /scripts/checks/verify-managed-messaging-offline-install.mts --lockfile /opt/managed-image-messaging-runtime/package-lock.json --prefix /opt/managed-image-messaging-runtime; npm cache verify --cache /out/npm-cache; \
     node /scripts/lib/seed-reviewed-npm-cache.mts \
         --packuments-only \
         --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
@@ -1927,11 +1926,9 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
     fi; \
     :
 
-# The reviewed cache stays root-owned and immutable to the sandbox user.
-# Prepare messaging source and runtime metadata before consuming that cache.
-# Add messaging source after the non-messaging install so channel-only changes
-# invalidate only the matching offline plugin layer. Keep this as the single
-# owner; messaging intentionally stays out of openclaw-runtime-payload.
+# Keep the reviewed cache root-owned and immutable. Add messaging source after
+# the core install so channel-only changes invalidate only this plugin layer;
+# messaging intentionally stays out of openclaw-runtime-payload.
 USER root
 COPY src/lib/messaging/ /src/lib/messaging/
 RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
@@ -1945,11 +1942,9 @@ RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 USER sandbox
 
-# npm still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
-# so materialize a sandbox-owned throwaway copy for this RUN and remove it before
-# committing the layer. Never point npm directly at the trusted source cache.
-# Normal images use --phase agent-install; capability-union images select the
-# managed phase instead so each build invokes the messaging applier exactly once.
+# Copy the immutable reviewed cache into sandbox-owned temporary storage because
+# npm needs writable cache tmp space. Remove it before committing the layer.
+# The selected phase keeps exactly one messaging-applier invocation per build.
 # hadolint ignore=DL3059,DL4006
 RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
     if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \

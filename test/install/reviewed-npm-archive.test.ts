@@ -403,6 +403,82 @@ describe("reviewed npm archive", () => {
     ).toThrow("reviewed npm lock has an unowned bundled package");
   });
 
+  it("rejects a missing regular dependency in an authenticated bundled subtree", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "missing-bundled-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            bundleDependencies: ["bundled-child"],
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/@example/reviewed/node_modules/bundled-child": {
+            dependencies: { missing: "3.0.0" },
+            inBundle: true,
+            version: "2.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(() =>
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toThrow(
+      "reviewed npm lock is missing a bundled dependency: node_modules/@example/reviewed/node_modules/bundled-child: missing",
+    );
+  });
+
+  it.each([
+    ["optional", { optionalDependencies: { missing: "3.0.0" } }],
+    ["peer", { peerDependencies: { missing: "3.0.0" } }],
+    [
+      "optional-over-regular",
+      {
+        dependencies: { missing: "3.0.0" },
+        optionalDependencies: { missing: "3.0.0" },
+      },
+    ],
+  ])("allows a missing %s dependency in an authenticated bundled subtree", (_label, edge) => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "allowed-bundled-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            bundleDependencies: ["bundled-child"],
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/@example/reviewed/node_modules/bundled-child": {
+            ...edge,
+            inBundle: true,
+            version: "2.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toEqual([PACKAGE_SPEC]);
+  });
+
   it("validates root-bundled dependencies with their own registry identities", () => {
     const reviewed = cacheRequest();
     const lockfilePath = path.join(reviewed.tempDirectory as string, "root-bundled-lock.json");

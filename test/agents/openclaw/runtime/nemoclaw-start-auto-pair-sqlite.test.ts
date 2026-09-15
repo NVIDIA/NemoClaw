@@ -82,7 +82,10 @@ function pairingObserverPythonScript(src: string, tmpDir: string): string {
       `PAIRING_STATE_FILE = ${JSON.stringify(pairingStatePath)}`,
     )
     .replace("or helper.st_uid != 0", `or helper.st_uid != ${process.getuid?.()}`)
-    .replace("DEADLINE = time.monotonic() + 120", "DEADLINE = time.monotonic() + 2")
+    .replace(
+      "DEADLINE = time.monotonic() + env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)",
+      "DEADLINE = time.monotonic() + 2",
+    )
     .replace(
       `finally:
     try:

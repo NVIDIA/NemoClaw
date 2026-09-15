@@ -2579,7 +2579,23 @@ OBSERVER_FILE = 'pending.json'
 MAX_OBSERVER_BYTES = 256 * 1024
 MAX_PENDING_REQUESTS = 64
 REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
-DEADLINE = time.monotonic() + 120
+
+
+def env_seconds(name, default):
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Match the auto-pair watcher's bootstrap window. The observer exits early
+# once a request has appeared and then disappeared, but must remain available
+# while the watcher is still waiting for the first request to be created.
+DEADLINE = time.monotonic() + env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
 
 
 def load_pairing_state_reader():

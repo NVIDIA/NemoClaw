@@ -330,16 +330,19 @@ function packageNameFromLockLocation(location: string): string {
   return packageName;
 }
 
-type LockDependency = Readonly<{ name: string; optional: boolean }>;
+type LockDependency = Readonly<{
+  kind: "dependency" | "optional" | "peer";
+  name: string;
+}>;
 
 function lockDependencies(
   record: Readonly<Record<string, unknown>>,
   location: string,
 ): readonly LockDependency[] {
-  const dependencies = new Map<string, boolean>();
-  for (const [field, optional] of [
-    ["dependencies", false],
-    ["optionalDependencies", true],
+  const dependencies = new Map<string, LockDependency["kind"]>();
+  for (const [field, kind] of [
+    ["dependencies", "dependency"],
+    ["optionalDependencies", "optional"],
   ] as const) {
     const value = record[field];
     if (value === undefined) continue;
@@ -356,7 +359,7 @@ function lockDependencies(
       }
       // npm gives optionalDependencies precedence when a package appears in
       // both maps, so the later optional map must replace the required entry.
-      dependencies.set(name, optional);
+      dependencies.set(name, kind);
     }
   }
 
@@ -397,11 +400,10 @@ function lockDependencies(
           `reviewed npm lock has invalid peer dependency metadata: ${location || "root package"}: ${name}`,
         );
       }
-      const optional = (peerMeta as Record<string, unknown> | undefined)?.optional === true;
-      if (!dependencies.has(name)) dependencies.set(name, optional);
+      if (!dependencies.has(name)) dependencies.set(name, "peer");
     }
   }
-  return [...dependencies].map(([name, optional]) => ({ name, optional }));
+  return [...dependencies].map(([name, kind]) => ({ kind, name }));
 }
 
 function assertNotProductionDev(
@@ -479,8 +481,16 @@ function reviewedBundledLockLocations(
         current.location,
         dependency.name,
       );
+      if (!dependencyLocation) {
+        if (dependency.kind === "dependency") {
+          throw new Error(
+            `reviewed npm lock is missing a bundled dependency: ${current.location}: ${dependency.name}`,
+          );
+        }
+        continue;
+      }
       if (
-        !dependencyLocation?.startsWith(`${current.ownerLocation}/node_modules/`) ||
+        !dependencyLocation.startsWith(`${current.ownerLocation}/node_modules/`) ||
         packages[dependencyLocation]?.inBundle !== true
       ) {
         continue;
@@ -512,7 +522,7 @@ function productionLockLocations(
     for (const dependency of lockDependencies(current.record, current.location)) {
       const location = resolveLockDependencyLocation(packages, current.location, dependency.name);
       if (!location) {
-        if (dependency.optional) continue;
+        if (dependency.kind !== "dependency") continue;
         throw new Error(
           `reviewed npm lock is missing a production dependency: ${current.location || "root package"}: ${dependency.name}`,
         );

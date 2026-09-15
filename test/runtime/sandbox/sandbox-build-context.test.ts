@@ -248,6 +248,7 @@ describe("sandbox build context staging", () => {
       path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     );
     writeFixture(path.join("scripts", "checks", "materialize-locked-npm-cache-seed.mts"));
+    writeFixture(path.join("scripts", "checks", "verify-managed-messaging-offline-install.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "lib", "corporate-ca-runtime.sh"));
     writeFixture(path.join("scripts", "lib", "entrypoint-env-wrapper.sh"));

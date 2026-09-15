@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   type LockedArchive,
   lockedArchives,
 } from "../../../scripts/checks/materialize-locked-npm-cache-seed.mts";
+import {
+  MANAGED_MESSAGING_NESTED_OVERRIDES,
+  verifyManagedMessagingOfflineInstall,
+} from "../../../scripts/checks/verify-managed-messaging-offline-install.mts";
 
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
@@ -56,6 +61,12 @@ function archiveIdentity(archive: LockedArchive | DockerArchivePin): string {
   return `${archive.archive}\n${archive.resolved}`;
 }
 
+function writeInstalledVersion(root: string, location: string, version: string): void {
+  const packageDirectory = path.join(root, location);
+  fs.mkdirSync(packageDirectory, { recursive: true });
+  fs.writeFileSync(path.join(packageDirectory, "package.json"), `${JSON.stringify({ version })}\n`);
+}
+
 describe("OpenClaw managed messaging offline image build", () => {
   // source-shape-contract: security -- Exact npm overrides bind the offline clean-install graph to reviewed versions embedded in signed plugin archives
   it("binds npm's clean-install view to the versions shipped in reviewed bundles", () => {
@@ -84,6 +95,11 @@ describe("OpenClaw managed messaging offline image build", () => {
         },
       },
     });
+    expect(MANAGED_MESSAGING_NESTED_OVERRIDES).toEqual([
+      "node_modules/@openclaw/discord/node_modules/@discord/embedded-app-sdk/node_modules/uuid",
+      "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/file-type",
+      "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/protobufjs",
+    ]);
   });
 
   it("pins the complete lock graphs below the cold-build layer limit", () => {
@@ -157,7 +173,7 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(commonPins.length + arm64OnlyPins.length).toBe(arm64Lock.length);
   });
 
-  it("verifies and materializes the selected archives with networking disabled", () => {
+  it("runs and verifies the real offline clean install in the managed-image build", () => {
     const cacheStage = dockerfileSection(
       "AS openclaw-managed-messaging-npm-cache-1",
       "FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}",
@@ -172,6 +188,15 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(cacheStage).toContain("RUN --network=none set -eu;");
     expect(cacheStage).toContain("--archive-directory /opt/nemoclaw-build-tools/npm-cache-seed");
     expect(cacheStage).toContain("NPM_CONFIG_OFFLINE=true npm ci");
+    expect(cacheStage).toContain(
+      "scripts/checks/verify-managed-messaging-offline-install.mts /scripts/checks/",
+    );
+    expect(cacheStage).toContain(
+      "node /scripts/checks/verify-managed-messaging-offline-install.mts",
+    );
+    expect(
+      cacheStage.indexOf("verify-managed-messaging-offline-install.mts --lockfile"),
+    ).toBeGreaterThan(cacheStage.indexOf("NPM_CONFIG_OFFLINE=true npm ci"));
     expect(cacheStage).toContain('--os linux --cpu "$npm_target_cpu" --libc glibc');
     expect(cacheStage.indexOf("npm cache verify")).toBeGreaterThan(
       cacheStage.indexOf("NPM_CONFIG_OFFLINE=true npm ci"),
@@ -182,5 +207,39 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(cacheStage).not.toContain("--network=default");
     expect(cacheStage).not.toContain("else \\");
     expect(cacheStage).not.toContain("find /opt/nemoclaw-build-tools/npm-cache-seed");
+  });
+
+  it("rejects nested installed versions that differ from the reviewed lock", () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "managed-messaging-install-test-"));
+    try {
+      writeInstalledVersion(
+        temporary,
+        MANAGED_MESSAGING_NESTED_OVERRIDES[0],
+        runtimeLock.packages[MANAGED_MESSAGING_NESTED_OVERRIDES[0]].version,
+      );
+      writeInstalledVersion(
+        temporary,
+        MANAGED_MESSAGING_NESTED_OVERRIDES[1],
+        runtimeLock.packages[MANAGED_MESSAGING_NESTED_OVERRIDES[1]].version,
+      );
+      writeInstalledVersion(
+        temporary,
+        MANAGED_MESSAGING_NESTED_OVERRIDES[2],
+        runtimeLock.packages[MANAGED_MESSAGING_NESTED_OVERRIDES[2]].version,
+      );
+      verifyManagedMessagingOfflineInstall(
+        path.join(runtimeDirectory, "package-lock.json"),
+        temporary,
+      );
+      writeInstalledVersion(temporary, MANAGED_MESSAGING_NESTED_OVERRIDES[0], "0.0.0");
+      expect(() =>
+        verifyManagedMessagingOfflineInstall(
+          path.join(runtimeDirectory, "package-lock.json"),
+          temporary,
+        ),
+      ).toThrow("managed messaging nested override mismatch");
+    } finally {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    }
   });
 });
