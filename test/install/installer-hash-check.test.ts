@@ -120,6 +120,8 @@ type FixtureMode =
   | "missing-brev-pin"
   | "missing-trusted-formula"
   | "malformed-trusted-formula"
+  | "mismatched-dev-commit-prefix"
+  | "mismatched-dev-formula-url"
   | "mismatched-trusted-formula-url"
   | "multiple-installer-versions"
   | "non-regular-brev-input"
@@ -481,6 +483,16 @@ const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>>
       "",
     ),
   "malformed-trusted-formula": (source) => source.replace(FORMULA_DIGEST, "invalid"),
+  "mismatched-dev-commit-prefix": (source) =>
+    source.replace(
+      'commitSha: "26f2f963936f68c0d5be36b34cda570d8f79f315",',
+      `commitSha: "${"0".repeat(40)}",`,
+    ),
+  "mismatched-dev-formula-url": (source) =>
+    source.replace(
+      "https://github.com/NVIDIA/OpenShell/releases/download/dev/openshell.rb",
+      "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.117/openshell.rb",
+    ),
   "mismatched-trusted-formula-url": (source) =>
     source.replace(
       "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb",
@@ -978,6 +990,14 @@ describe("installer hash verification", () => {
     );
   });
 
+  it("accepts a valid development source identity while checking the stable release", () => {
+    const result = runFixture("complete", undefined, true);
+
+    expect(result.status, result.stdout).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v0.0.116 release assets");
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
   it("accepts the gateway-preparation template with selected OpenShell 0.0.116 (#11212)", () => {
     const version = "0.0.116";
     const root = createFixture(version);
@@ -1109,6 +1129,24 @@ describe("installer hash verification", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(`trusted OpenShell v${version} formula record is invalid`);
     expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("rejects a development source identity when its commit prefix differs", () => {
+    const result = runFixture("mismatched-dev-commit-prefix", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("trusted OpenShell v0.0.117 source identity is invalid");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.116 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("rejects a development formula URL that differs from its release base", () => {
+    const result = runFixture("mismatched-dev-formula-url", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("trusted OpenShell v0.0.117 formula record is invalid");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.116 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
