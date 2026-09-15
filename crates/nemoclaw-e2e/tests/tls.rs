@@ -79,8 +79,8 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
     .into();
     let valid = OpenShell::connect(&gateway, Arc::new(Values(values.clone()))).unwrap();
     let established = valid.ensure("workspace", &desired).await;
-    assert!(established.error.is_none(), "{:?}", established.error);
-    let binding = established.state.unwrap();
+    assert!(established.error().is_none(), "{:?}", established.error());
+    let binding = established.into_parts().0.unwrap();
     for failure in ["bearer", "server trust", "client trust", "missing key"] {
         let mut altered = values.clone();
         match failure {

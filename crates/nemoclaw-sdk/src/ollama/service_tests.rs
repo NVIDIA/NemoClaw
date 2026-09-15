@@ -92,13 +92,19 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
     assert!(
         matches!(backend.read("ollama_model", &model, false).await, Err(ObservationError::Backend(message)) if message.contains("stopped"))
     );
-    assert!(backend.ensure("ollama_model", &model).await.error.is_some());
+    assert!(
+        backend
+            .ensure("ollama_model", &model)
+            .await
+            .error()
+            .is_some()
+    );
     state.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(true);
     state.lock().unwrap().fail_read = true;
     assert!(backend.read("ollama", &row, false).await.is_err());
     let failed = backend.ensure("ollama", &row).await;
-    assert!(failed.error.is_some());
-    assert!(failed.state.is_none());
+    assert!(failed.error().is_some());
+    assert!(failed.state().is_none());
     assert!(engine.ensure_ollama(&spec, &established.id).await.is_err());
     state.lock().unwrap().fail_read = false;
     let volume_before = state.lock().unwrap().volume.clone();

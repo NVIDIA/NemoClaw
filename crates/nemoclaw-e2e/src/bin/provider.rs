@@ -48,9 +48,10 @@ impl Backend for Fixture {
             serde_json::to_vec(&row).unwrap(),
         )
         .unwrap();
-        Mutation {
-            state: Some(row),
-            error: (self.mode() == "create-error").then_some(ObservationError::Transport),
+        if self.mode() == "create-error" {
+            Mutation::partial(row, ObservationError::Transport)
+        } else {
+            Mutation::complete(row)
         }
     }
     async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {

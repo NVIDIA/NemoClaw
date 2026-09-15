@@ -10,12 +10,34 @@ pub type Row = BTreeMap<String, String>;
 
 /// A mutation can establish identity before a later step fails. Retain that
 /// state together with the diagnostic; never hide an established binding.
+/// Construct outcomes through `complete`, `failed`, or `partial` so an outcome
+/// cannot lack both state and a diagnostic.
+///
+/// ```compile_fail
+/// use nemoclaw_sdk::backend::Mutation;
+/// let empty = Mutation { state: None, error: None };
+/// ```
 pub struct Mutation {
-    pub state: Option<Row>,
-    pub error: Option<ObservationError>,
+    state: Option<Row>,
+    error: Option<ObservationError>,
 }
 
 impl Mutation {
+    pub fn partial(state: Row, error: ObservationError) -> Self {
+        Self {
+            state: Some(state),
+            error: Some(error),
+        }
+    }
+    pub fn state(&self) -> Option<&Row> {
+        self.state.as_ref()
+    }
+    pub fn error(&self) -> Option<ObservationError> {
+        self.error
+    }
+    pub fn into_parts(self) -> (Option<Row>, Option<ObservationError>) {
+        (self.state, self.error)
+    }
     pub fn complete(state: Row) -> Self {
         Self {
             state: Some(state),

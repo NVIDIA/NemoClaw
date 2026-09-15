@@ -25,21 +25,21 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
         .collect();
     let targets = targets(&document, &generations).unwrap();
     let workspace = client.ensure("workspace", &targets[0].values).await;
-    assert!(workspace.error.is_none());
-    assert!(workspace.state.is_some());
+    assert!(workspace.error().is_none());
+    assert!(workspace.state().is_some());
     fixture.state.lock().unwrap().lose_create = true;
     let first = client.ensure("provider", &targets[1].values).await;
-    assert!(first.error.is_some());
+    assert!(first.error().is_some());
     let effects = fixture.state.lock().unwrap().effects;
     let recovered = client.ensure("provider", &targets[1].values).await;
-    assert!(recovered.error.is_none());
+    assert!(recovered.error().is_none());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    let mut provider = recovered.state.unwrap();
+    let mut provider = recovered.into_parts().0.unwrap();
     let id = provider["id"].clone();
     provider.insert("endpoint".into(), "https://changed.example/v1".into());
     let updated = client.ensure("provider", &provider).await;
-    assert!(updated.error.is_none());
-    assert_eq!(updated.state.unwrap()["id"], id);
+    assert!(updated.error().is_none());
+    assert_eq!(updated.into_parts().0.unwrap()["id"], id);
     assert_eq!(fixture.state.lock().unwrap().conditional_updates, 1);
     fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unauthenticated));
     let error = client.read("provider", &provider, false).await.unwrap_err();
@@ -52,7 +52,7 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert!(
         client
-            .remove("workspace", &workspace.state.unwrap(), true)
+            .remove("workspace", &workspace.into_parts().0.unwrap(), true)
             .await
             .is_err()
     );
@@ -76,16 +76,16 @@ async fn sandbox_launch_policy_and_route_identity_survive_read_failures() {
     for target in &targets {
         let result = client.ensure(&target.kind, &target.values).await;
         assert!(
-            result.error.is_none(),
+            result.error().is_none(),
             "{}: {:?}",
             target.kind,
-            result.error
+            result.error()
         );
-        rows.push(result.state.unwrap());
+        rows.push(result.into_parts().0.unwrap());
     }
     let effects = fixture.state.lock().unwrap().effects;
     for (target, row) in targets.iter().zip(&rows) {
-        assert!(client.ensure(&target.kind, row).await.error.is_none());
+        assert!(client.ensure(&target.kind, row).await.error().is_none());
     }
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_eq!(rows[2]["id"], format!("{}/primary", rows[0]["id"]));
@@ -158,9 +158,9 @@ async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
     let mut sandbox = None;
     for target in targets(&document, &generations).unwrap() {
         let result = client.ensure(&target.kind, &target.values).await;
-        assert!(result.error.is_none());
+        assert!(result.error().is_none());
         if target.kind == "sandbox" {
-            sandbox = result.state;
+            sandbox = result.into_parts().0;
         }
     }
     fixture.state.lock().unwrap().exec_stalled = true;
@@ -198,7 +198,7 @@ async fn incomplete_desired_ownership_is_rejected_before_any_create() {
         ]
         .into();
         desired.remove(missing);
-        assert!(client.ensure("workspace", &desired).await.error.is_some());
+        assert!(client.ensure("workspace", &desired).await.error().is_some());
         assert_eq!(
             fixture.state.lock().unwrap().effects,
             0,
@@ -228,7 +228,7 @@ async fn failed_readback_retains_each_created_identity_until_explicit_recovery()
                     client
                         .ensure(&target.kind, &target.values)
                         .await
-                        .error
+                        .error()
                         .is_none()
                 );
                 continue;
@@ -236,22 +236,23 @@ async fn failed_readback_retains_each_created_identity_until_explicit_recovery()
             fixture.state.lock().unwrap().fail_after_create =
                 Some((failed_kind, tonic::Code::Unavailable));
             let created = client.ensure(&target.kind, &target.values).await;
-            assert!(created.error.is_some(), "{failed_kind}");
+            assert!(created.error().is_some(), "{failed_kind}");
             let bound = created
-                .state
+                .into_parts()
+                .0
                 .expect("successful create must retain its identity on failed readback");
             assert!(!bound["id"].is_empty());
             let effects = fixture.state.lock().unwrap().effects;
-            assert!(client.ensure(&target.kind, &bound).await.error.is_some());
+            assert!(client.ensure(&target.kind, &bound).await.error().is_some());
             assert_eq!(fixture.state.lock().unwrap().effects, effects);
             fixture.state.lock().unwrap().fail_read = None;
             let recovered = client.ensure(&target.kind, &bound).await;
             assert!(
-                recovered.error.is_none(),
+                recovered.error().is_none(),
                 "{failed_kind}: {:?}",
-                recovered.error
+                recovered.error()
             );
-            assert_eq!(recovered.state.unwrap()["id"], bound["id"]);
+            assert_eq!(recovered.into_parts().0.unwrap()["id"], bound["id"]);
             assert_eq!(fixture.state.lock().unwrap().effects, effects);
             break;
         }
@@ -274,12 +275,12 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
     for target in &targets {
         let result = client.ensure(&target.kind, &target.values).await;
         assert!(
-            result.error.is_none(),
+            result.error().is_none(),
             "{}: {:?}",
             target.kind,
-            result.error
+            result.error()
         );
-        rows.push(result.state.unwrap());
+        rows.push(result.into_parts().0.unwrap());
     }
     let sandbox = &rows[3];
     let key = format!("{}/{}", document.workspace(), sandbox["name"]);
@@ -301,7 +302,7 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
     );
     assert_eq!(spec.environment["NEMOCLAW_PROXY_PORT"], "3128");
     let effects = fixture.state.lock().unwrap().effects;
-    assert!(client.ensure("sandbox", sandbox).await.error.is_none());
+    assert!(client.ensure("sandbox", sandbox).await.error().is_none());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // A loaded revision must match the sandbox specification, not just its status.
     fixture.state.lock().unwrap().active_policy = Some(nemoclaw_sdk::openshell::policy());
@@ -329,7 +330,7 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
         .unwrap()
         .unwrap();
     assert_ne!(observed["policy_json"], sandbox["policy_json"]);
-    assert!(client.ensure("sandbox", sandbox).await.error.is_some());
+    assert!(client.ensure("sandbox", sandbox).await.error().is_some());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture
         .state

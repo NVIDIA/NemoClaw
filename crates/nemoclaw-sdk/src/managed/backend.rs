@@ -191,17 +191,25 @@ mod tests {
             row["id"],
             "engine/nc-0123456789abcdef-inference-data/created"
         );
-        assert_eq!(backend.ensure(STORAGE_KIND, &row).await.state.unwrap(), row);
+        assert_eq!(
+            backend
+                .ensure(STORAGE_KIND, &row)
+                .await
+                .into_parts()
+                .0
+                .unwrap(),
+            row
+        );
         for code in [401, 403, 500, 404] {
             response.lock().unwrap().0 = code;
             assert!(backend.read(STORAGE_KIND, &row, false).await.is_err());
-            assert!(backend.ensure(STORAGE_KIND, &row).await.error.is_some());
+            assert!(backend.ensure(STORAGE_KIND, &row).await.error().is_some());
             assert!(backend.remove(STORAGE_KIND, &row, true).await.is_err());
         }
         response.lock().unwrap().0 = 200;
         response.lock().unwrap().1["Labels"][super::super::OWNER_LABEL] = json!("foreign");
         assert!(backend.read(STORAGE_KIND, &row, false).await.is_err());
-        assert!(backend.ensure(STORAGE_KIND, &row).await.error.is_some());
+        assert!(backend.ensure(STORAGE_KIND, &row).await.error().is_some());
     }
 }
 

@@ -111,10 +111,11 @@ impl ResourceAdapter {
         desired: &Row,
         prior: Option<State>,
     ) -> Option<State> {
-        if let Some(error) = mutation.error {
+        let (state, error) = mutation.into_parts();
+        if let Some(error) = error {
             diags.root_error("Apply incomplete", error.to_string());
         }
-        match mutation.state {
+        match state {
             Some(row) => match self.checked(desired, row) {
                 Ok(row) => Some(row.into_iter().map(|(k, v)| (k, Value::Value(v))).collect()),
                 Err(error) => {

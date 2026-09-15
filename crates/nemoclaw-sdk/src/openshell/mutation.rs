@@ -95,21 +95,12 @@ impl OpenShell {
                     .iter()
                     .any(|(key, v)| key != "id" && row.get(key) != Some(v))
                 {
-                    return Ok(Mutation {
-                        state: Some(row),
-                        error: Some(ObservationError::Incomplete),
-                    });
+                    return Ok(Mutation::partial(row, ObservationError::Incomplete));
                 }
                 Ok(Mutation::complete(row))
             }
-            Ok(None) => Ok(Mutation {
-                state: Some(established),
-                error: Some(ObservationError::Incomplete),
-            }),
-            Err(error) => Ok(Mutation {
-                state: Some(established),
-                error: Some(error),
-            }),
+            Ok(None) => Ok(Mutation::partial(established, ObservationError::Incomplete)),
+            Err(error) => Ok(Mutation::partial(established, error)),
         }
     }
     async fn set_route(&self, want: &Row) -> Result<(), ObservationError> {
