@@ -16,6 +16,17 @@ function fail(message: string): never {
   throw new Error(`NemoClaw native runtime security boundary failed: ${message}`);
 }
 
+export function nativeQualificationLoopbackConfig(probe: unknown, ports: readonly number[]) {
+  if (!ports.length || ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535))
+    fail("qualification loopback ports are invalid");
+  if (!probe || typeof probe !== "object") fail("the MXC qualification probe is invalid");
+  const value = probe as { tier?: unknown; needsDaclAugmentation?: unknown };
+  if (value.tier === "base-container" && value.needsDaclAugmentation === false)
+    return { loopback_ports: [...new Set(ports)] };
+  if (value.tier === "appcontainer-dacl" && value.needsDaclAugmentation === true) return {};
+  fail("the MXC qualification tier is unknown or inconsistent");
+}
+
 export function brokerOperationForRequest(
   method: string | undefined,
   requestTarget: string | undefined,

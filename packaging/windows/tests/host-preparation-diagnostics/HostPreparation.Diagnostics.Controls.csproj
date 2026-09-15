@@ -9,5 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../bootstrapper/NativeHostPreparationDiagnostics.cs" Link="NativeHostPreparationDiagnostics.cs" />
+    <Compile Include="../../bootstrapper/NativeHostPreparation.cs" Link="NativeHostPreparation.cs" />
   </ItemGroup>
 </Project>

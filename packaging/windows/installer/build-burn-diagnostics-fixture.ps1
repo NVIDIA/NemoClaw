@@ -15,7 +15,7 @@ if ($receipt.sourceRevision -cne $env:GITHUB_SHA -or $receipt.status -cne 'candi
 $inputs = Get-Content -LiteralPath (Join-Path $PackageDirectory 'migration-inputs.json') -Raw | ConvertFrom-Json
 if ($inputs.schemaVersion -ne 1 -or $inputs.sourceRevision -cne $env:GITHUB_SHA -or @($inputs.files).Count -gt 32) { throw 'The native UI input receipt is invalid.' }
 foreach ($item in $inputs.files) {
-    if ($item.file -cnotmatch '^build/(bootstrapper/[A-Za-z0-9_.-]+|BootstrapperPayloads\.wxs|payload/mxc/wxc-host-prep\.exe)$') { throw 'Unexpected setup fixture input.' }
+    if ($item.file -cnotmatch '^build/(bootstrapper/[A-Za-z0-9_.-]+|BootstrapperPayloads\.wxs|payload/mxc/wxc-(host-prep|exec)\.exe)$') { throw 'Unexpected setup fixture input.' }
     $file = Join-Path $PackageDirectory $item.file
     $info = Get-Item -LiteralPath $file -Force
     if ($info -isnot [IO.FileInfo] -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $info.Length -ne $item.bytes -or
@@ -59,7 +59,7 @@ foreach ($payload in $payloadXml.SelectNodes('//*[local-name()="Payload"]')) {
 }
 $payloadXml.Save($authoring)
 & $WixPath build -arch arm64 -d "ProductVersion=$ProductVersion" -d "SourceRoot=$SourceRoot" `
-    -d "MsiPath=$msi" -d "WxcHostPrepPath=$nullDevice" -d 'SystemDriveMetadataPreparation=true' `
+    -d "MsiPath=$msi" -d "WxcHostPrepPath=$nullDevice" -d "WxcExecPath=$(Join-Path $PackageDirectory 'build\payload\mxc\wxc-exec.exe')" -d 'SystemDriveMetadataPreparation=true' `
     -d "SystemDrivePrepPath=$fixture" -d "SystemDrivePrepSha256=$fixtureHash" -d "BootstrapperPath=$nativeUi" `
     -d "BootstrapperRoot=$([IO.Path]::GetDirectoryName($nativeUi))" $bundleSource $authoring `
     -pdbtype none -wx -sw1161 -out $setup

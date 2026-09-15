@@ -4,7 +4,8 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets, nativeDistributionAsset } from "./native-assets.mts";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import {
   watchNativeUiSandbox,
   attemptNativeUiCleanup,
@@ -16,7 +17,6 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 
 import { readNativeServiceEnvironment } from "./native-options.mts";
 
@@ -24,6 +24,7 @@ import {
   configureNativeFromStdin,
   normalizeOnboardingConfiguration,
   writeNativeAgentConfiguration,
+  type NativeOnboardingConfiguration,
 } from "./native-setup-configuration.mts";
 
 import { openNativeWebSession } from "./native-web-session.mts";
@@ -47,6 +48,7 @@ import type { NativeInferenceProgress } from "./native-inference-manifest.mts";
 
 import {
   nativeCredentialBinding,
+  nativeQualificationLoopbackConfig,
   readOpenedRegularFile,
   writeNativeGatewayConfig,
 } from "./native-security.mts";
@@ -73,23 +75,24 @@ const TURN_PROOFS = [
 
 const AGENT_CHOICE_PROOF = ["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"];
 
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const sleep = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 const execFileAsync = promisify(execFile);
 
-function fail(message) {
+function fail(message: string): never {
   throw new Error(`NemoClaw native Windows launch failed: ${message}`);
 }
 
-function sha256(file) {
+function sha256(file: string) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-async function withTimeout(promise, timeout, label) {
-  let timeoutId;
+async function withTimeout<T>(promise: Promise<T>, timeout: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
-      new Promise((_, reject) => {
+      new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error(`${label} exceeded its timeout`)), timeout);
       }),
     ]);
@@ -98,27 +101,33 @@ async function withTimeout(promise, timeout, label) {
   }
 }
 
-async function updateWindowsCredential(launcher, configuration) {
-  const { inference: provider, credential } = configuration;
-  const binding = nativeCredentialBinding(configuration);
+async function updateWindowsCredential(
+  launcher: string,
+  configuration: NativeOnboardingConfiguration,
+) {
+  const { inference: provider, credential, endpoint } = configuration;
+  if (endpoint === undefined) fail("The credential endpoint is missing.");
+  const binding = nativeCredentialBinding({ ...configuration, endpoint });
   const operation = credential ? "--credential-write" : "--credential-delete";
-  const result = await new Promise((resolve, reject) => {
-    const child = spawn(launcher, [operation, provider, "--binding", binding], {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout = `${stdout}${chunk.toString("utf8")}`.slice(-4096);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr = `${stderr}${chunk.toString("utf8")}`.slice(-4096);
-    });
-    child.once("error", reject);
-    child.once("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-    child.stdin.end(credential, "utf8");
-  });
+  const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const child = spawn(launcher, [operation, provider, "--binding", binding], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => {
+        stdout = `${stdout}${chunk.toString("utf8")}`.slice(-4096);
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr = `${stderr}${chunk.toString("utf8")}`.slice(-4096);
+      });
+      child.once("error", reject);
+      child.once("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+      child.stdin.end(credential, "utf8");
+    },
+  );
   if (result.code !== 0 || result.stdout)
     throw new Error(
       credential
@@ -127,7 +136,7 @@ async function updateWindowsCredential(launcher, configuration) {
     );
 }
 
-function readNativeAgentConfiguration(agent) {
+function readNativeAgentConfiguration(agent: string) {
   const localAppData = requiredDirectory(
     process.env.LOCALAPPDATA ?? "",
     "Windows local application-data directory",
@@ -153,7 +162,7 @@ function readNativeAgentConfiguration(agent) {
   return { config, stateRoot };
 }
 
-function gatewaySource() {
+export function gatewaySource() {
   return String.raw`import fs, { mkdirSync, writeFileSync } from "node:fs";
 import { startNativeUiTunnel } from "./native-ui-tunnel.mts";
 import { startNativeBrokerTunnel } from "./native-broker-tunnel.mts";
@@ -424,7 +433,7 @@ function resolveEdge() {
     process.env.LOCALAPPDATA,
     ...driveRoots,
   ]
-    .filter(Boolean)
+    .filter((root): root is string => Boolean(root))
     .map((root) => path.join(root, "Microsoft", "Edge", "Application", "msedge.exe"));
   for (const candidate of candidates) {
     if (fs.statSync(candidate, { throwIfNoEntry: false })?.isFile()) return candidate;
@@ -433,11 +442,11 @@ function resolveEdge() {
 }
 
 async function startOnboardingServer(
-  installRoot,
-  openClawUrl,
-  evidenceRoot,
-  qualification,
-  launcher,
+  _installRoot: string,
+  openClawUrl: string,
+  evidenceRoot: string,
+  qualification: boolean,
+  launcher: string,
 ) {
   const onboardingRoot = requiredDirectory(
     nativeDistributionAsset("onboarding"),
@@ -455,8 +464,23 @@ async function startOnboardingServer(
     ["/assets/pi.svg", ["assets/pi.svg", "image/svg+xml"]],
     ["/assets/nemocua.png", ["assets/nemocua.png", "image/png"]],
   ]);
-  let selection = null;
-  let runtimeConfiguration = null;
+  let selection: {
+    schemaVersion: number;
+    agent: string;
+    inference: string;
+    endpoint: string | undefined;
+    model: string;
+    credentialStorage: string;
+    options: Record<string, unknown>;
+  } | null = null;
+  let runtimeConfiguration: {
+    agent: string;
+    inference: string;
+    endpoint: string | undefined;
+    model: string;
+    credentialStored: boolean;
+    configPath: string | null;
+  } | null = null;
   const sessionToken = randomBytes(32).toString("base64url");
   const server = createServer(async (request, response) => {
     try {
@@ -520,7 +544,8 @@ async function startOnboardingServer(
       }
       if (request.method === "GET" && pathname === "/launching.html") {
         const agent = new URL(request.url ?? "/", "http://127.0.0.1").searchParams.get("agent");
-        const displayName = agentNamesForLaunch[agent] ?? "selected agent";
+        const displayName =
+          (agent === null ? undefined : agentNamesForLaunch[agent]) ?? "selected agent";
         response.writeHead(200, {
           "cache-control": "no-store",
           "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
@@ -565,7 +590,7 @@ async function startOnboardingServer(
     }
   });
   const port = await freePort();
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", resolve);
   });
@@ -579,7 +604,7 @@ async function startOnboardingServer(
   };
 }
 
-const agentNamesForLaunch = {
+const agentNamesForLaunch: Record<string, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes Agent",
   "langchain-deepagents-code": "Deep Agents Code",
@@ -588,11 +613,11 @@ const agentNamesForLaunch = {
 };
 
 async function driveBrowser(
-  openClawRoot,
-  onboardingUrl,
-  openClawUrl,
-  evidenceRoot,
-  qualification,
+  openClawRoot: string,
+  onboardingUrl: string | null,
+  openClawUrl: string,
+  evidenceRoot: string,
+  qualification: boolean,
   targetAgent = "openclaw",
   skipOnboarding = false,
 ) {
@@ -620,11 +645,11 @@ async function driveBrowser(
     });
     const page = await context.newPage();
     const demonstratedAgentChoices = [];
-    const disabledAgentChoices = [];
+    const disabledAgentChoices: string[] = [];
     if (skipOnboarding) {
       await page.goto(`${openClawUrl}/chat`, { waitUntil: "domcontentloaded", timeout: 90_000 });
     } else {
-      const onboardingPageUrl = new URL(onboardingUrl);
+      const onboardingPageUrl = new URL(onboardingUrl ?? fail("The onboarding URL is missing."));
       const onboardingOrigin = onboardingPageUrl.origin;
       onboardingPageUrl.searchParams.set("agent", targetAgent);
       if (qualification) onboardingPageUrl.searchParams.set("qualification", "1");
@@ -711,14 +736,16 @@ async function driveBrowser(
     await composer.waitFor({ state: "visible", timeout: 90_000 });
     await page.waitForFunction(
       () => {
-        const input = document.querySelector(".agent-chat__composer-combobox > textarea");
-        return input instanceof HTMLTextAreaElement && !input.disabled;
+        const input = globalThis.document.querySelector(
+          ".agent-chat__composer-combobox > textarea",
+        );
+        return input instanceof globalThis.HTMLTextAreaElement && !input.disabled;
       },
       undefined,
       { timeout: 90_000 },
     );
     await page.evaluate(() => {
-      document.title = "NemoClaw Native Windows · OpenClaw Control UI";
+      globalThis.document.title = "NemoClaw Native Windows · OpenClaw Control UI";
     });
     await page.screenshot({
       path: path.join(evidenceRoot, "web-ui-ready.png"),
@@ -751,10 +778,10 @@ async function driveBrowser(
 }
 
 async function runInitialOnboarding(
-  installRoot,
-  installedOpenClawRoot,
-  initialAgent,
-  evidenceRoot,
+  installRoot: string,
+  installedOpenClawRoot: string,
+  initialAgent: string,
+  evidenceRoot: string,
 ) {
   const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
   const onboarding = await startOnboardingServer(installRoot, "", evidenceRoot, false, launcher);
@@ -769,13 +796,15 @@ async function runInitialOnboarding(
       initialAgent,
     );
   } finally {
-    await new Promise((resolve) => onboarding.server.close(() => resolve()));
+    await new Promise<void>((resolve) => onboarding.server.close(() => resolve()));
   }
   const selection = onboarding.selection();
   const runtimeConfiguration = onboarding.runtimeConfiguration();
   if (
-    !Object.hasOwn(agentNamesForLaunch, selection?.agent) ||
-    runtimeConfiguration?.agent !== selection.agent ||
+    selection === null ||
+    runtimeConfiguration === null ||
+    !Object.hasOwn(agentNamesForLaunch, selection.agent) ||
+    runtimeConfiguration.agent !== selection.agent ||
     typeof runtimeConfiguration.configPath !== "string"
   )
     fail("graphical onboarding did not publish a complete agent configuration");
@@ -801,12 +830,12 @@ async function runInitialOnboarding(
 }
 
 async function runSelectedNonOpenClaw(
-  installRoot,
-  installedNode,
-  installedOpenClawRoot,
-  targetAgent,
-  qualification,
-  evidenceRoot,
+  installRoot: string,
+  _installedNode: string,
+  installedOpenClawRoot: string,
+  targetAgent: string,
+  qualification: boolean,
+  evidenceRoot: string,
 ) {
   const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
   const onboarding = await startOnboardingServer(
@@ -828,7 +857,7 @@ async function runSelectedNonOpenClaw(
       targetAgent,
     );
   } finally {
-    await new Promise((resolve) => onboarding.server.close(() => resolve()));
+    await new Promise<void>((resolve) => onboarding.server.close(() => resolve()));
   }
   const onboardingSelection = onboarding.selection();
   if (onboardingSelection?.agent !== targetAgent)
@@ -867,7 +896,7 @@ async function runSelectedNonOpenClaw(
     child.once("close", (code) => resolve(code ?? 1));
   });
   if (exitCode !== 0) fail(`${agentNamesForLaunch[targetAgent]} native adapter exited ${exitCode}`);
-  const receiptPrefixes = {
+  const receiptPrefixes: Record<string, string> = {
     hermes: "native-windows-hermes-",
     "langchain-deepagents-code": "native-windows-langchain-deepagents-code-",
     pi: "native-windows-pi-",
@@ -950,7 +979,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     "OpenShell gateway",
   );
   const installedOpenClawRoot = requiredDirectory(
-    runtimeLease.agentRoot,
+    runtimeLease.agentRoot ?? fail("sealed OpenClaw runtime is missing"),
     "sealed OpenClaw runtime",
   );
   const installedOpenClawEntry = requiredFile(
@@ -999,13 +1028,18 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
   const launcherPath = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
   const diagnostics = createNativeSessionDiagnostics(
     launcherPath,
-    path.join(
-      requiredDirectory(process.env.LOCALAPPDATA ?? "", "Windows local application-data directory"),
-      "NVIDIA",
-      "NemoClaw",
-      "agents",
-      "openclaw",
-    ),
+    qualification
+      ? selectedEvidenceRoot
+      : path.join(
+          requiredDirectory(
+            process.env.LOCALAPPDATA ?? "",
+            "Windows local application-data directory",
+          ),
+          "NVIDIA",
+          "NemoClaw",
+          "agents",
+          "openclaw",
+        ),
     "openclaw",
   );
   diagnostics.secret(installRoot);
@@ -1053,7 +1087,8 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
           },
         )
       : null;
-    if (configuredIdentity) configuredIdentity.config = resolvedInference.configuration;
+    if (configuredIdentity && resolvedInference)
+      configuredIdentity.config = resolvedInference.configuration;
     const modelId = configuredIdentity?.config.model ?? "native-preview";
     const modelToken = randomBytes(32).toString("base64url");
     const credential = resolvedInference?.credential ?? "";
@@ -1067,15 +1102,15 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
           runtimeLease,
         )
       : null;
-    const ownedRoots = [];
-    const ownedLogs = [];
-    let inferenceBroker = null;
-    let brokerRelay = null;
-    let uiRelay = null;
-    let gateway = null;
-    let create = null;
-    let onboarding = null;
-    let cliEnvironment;
+    const ownedRoots: string[] = [];
+    const ownedLogs: number[] = [];
+    let inferenceBroker: Awaited<ReturnType<typeof startNativeInferenceBroker>> | null = null;
+    let brokerRelay: Awaited<ReturnType<typeof startNativeBrokerRelay>> | null = null;
+    let uiRelay: Awaited<ReturnType<typeof startFileTcpRelay>> | null = null;
+    let gateway: ChildProcess | null = null;
+    let create: ChildProcessByStdio<null, Readable, Readable> | null = null;
+    let onboarding: Awaited<ReturnType<typeof startOnboardingServer>> | null = null;
+    let cliEnvironment: NodeJS.ProcessEnv;
     let sandboxName = "";
     let runRoot = "",
       shareRoot = "",
@@ -1086,7 +1121,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     let gatewayLogPath = "",
       gatewayErrorPath = "";
     let cleanupPromise;
-    let monitor;
+    let monitor: Promise<void> | undefined;
     const monitoring = new AbortController();
     const evidenceRoot = selectedEvidenceRoot;
     const runId = randomBytes(5).toString("hex");
@@ -1114,9 +1149,10 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         [
           "onboarding server",
           async () => {
-            if (!onboarding) return;
-            const closed = new Promise((resolve) => onboarding.server.close(resolve));
-            onboarding.server.closeAllConnections();
+            const server = onboarding?.server;
+            if (!server) return;
+            const closed = new Promise((resolve) => server.close(resolve));
+            server.closeAllConnections();
             await withTimeout(closed, 5000, "Onboarding shutdown");
           },
         ],
@@ -1234,9 +1270,10 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         [
           "inference broker",
           async () => {
-            if (!inferenceBroker) return;
-            const closed = new Promise((resolve) => inferenceBroker.server.close(resolve));
-            inferenceBroker.server.closeAllConnections();
+            const server = inferenceBroker?.server;
+            if (!server) return;
+            const closed = new Promise((resolve) => server.close(resolve));
+            server.closeAllConnections();
             await withTimeout(closed, 5000, "Inference broker shutdown");
           },
         ],
@@ -1312,7 +1349,9 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "openclaw-web");
       const gatewayScript = requiredFile(worker.entry, "prebuilt OpenClaw UI worker");
       const home =
-        configuredIdentity === null ? path.join(shareRoot, "home") : stateSession.stateRoot;
+        configuredIdentity === null
+          ? path.join(shareRoot, "home")
+          : (stateSession ?? fail("Configured state session is unavailable")).stateRoot;
       stateSession?.assertHeld();
       fs.mkdirSync(home, { recursive: true });
       const policyPath = path.join(runRoot, "policy.yaml");
@@ -1379,9 +1418,12 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         },
       );
       cliEnvironment = gatewayEnvironment;
+      const startedGateway = gateway;
       const gatewayFailure = new Promise((_, reject) => {
-        gateway.once("error", () => reject(new Error("The OpenShell gateway could not start.")));
-        gateway.once("exit", () =>
+        startedGateway.once("error", () =>
+          reject(new Error("The OpenShell gateway could not start.")),
+        );
+        startedGateway.once("exit", () =>
           reject(new Error("The OpenShell gateway stopped unexpectedly.")),
         );
       });
@@ -1455,6 +1497,23 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
             cwd: shareRoot,
             host_loopback: configuredIdentity !== null,
             personal_network: configuredIdentity !== null,
+            ...(configuredIdentity === null
+              ? nativeQualificationLoopbackConfig(
+                  JSON.parse(
+                    (
+                      await run(
+                        path.join(installRoot, "mxc", "wxc-exec.exe"),
+                        ["--probe"],
+                        allowlistedWindowsEnvironment(),
+                        "Selecting the qualification network policy",
+                        15_000,
+                        diagnostics,
+                      )
+                    ).stdout,
+                  ),
+                  [uiPort, modelPort ?? fail("Qualification mock model port is unavailable")],
+                )
+              : {}),
           },
         }),
         "--no-tty",
@@ -1535,8 +1594,9 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
           targetAgent,
         );
         onboardingSelection = onboarding.selection();
-        await new Promise((resolve, reject) => {
-          onboarding.server.close((error) => (error ? reject(error) : resolve()));
+        const server = onboarding.server;
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
         });
         onboarding = null;
         if (onboardingSelection?.agent !== "openclaw")

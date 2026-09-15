@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { mkdtemp, mkdir, rm, writeFile, chmod, readFile, access } from "node:fs/promises";
-import { createServer, type AddressInfo, type Socket } from "node:net";
+import net, { createServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -16,6 +16,71 @@ import {
 } from "../../packaging/windows/runtime/native-ui-tunnel.mts";
 
 describe("contained native UI relay failures", () => {
+  it.each(["EACCES", "EPERM"])("rejects a %s connection denial before readiness", async (code) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "native-ui-denial-"));
+    const controller = new AbortController();
+    const denied = Object.assign(new Error("Connection denied"), { code });
+    const connect = vi.spyOn(net, "createConnection").mockImplementation(() => {
+      const socket = new net.Socket();
+      queueMicrotask(() => socket.emit("error", denied));
+      return socket;
+    });
+    let failure: unknown;
+    const tunnel = startNativeUiTunnel({
+      relayRoot: directory,
+      relayToken: "owned-token",
+      uiPort: 12345,
+      signal: controller.signal,
+    }).catch((error: unknown) => {
+      failure = error;
+    });
+    try {
+      await vi.waitFor(() => expect(failure).toBe(denied));
+      expect(connect).toHaveBeenCalledTimes(1);
+      await expect(access(path.join(directory, "ready"))).rejects.toThrow();
+    } finally {
+      controller.abort();
+      await tunnel;
+      connect.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only the owned shutdown token before the UI starts", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "native-ui-startup-stop-"));
+    const controller = new AbortController();
+    const connect = vi.spyOn(net, "createConnection").mockImplementation(() => {
+      const socket = new net.Socket();
+      queueMicrotask(() =>
+        socket.emit("error", Object.assign(new Error("Not ready"), { code: "ECONNREFUSED" })),
+      );
+      return socket;
+    });
+    await writeFile(path.join(directory, "shutdown"), "wrong-token");
+    let stopped = false;
+    const tunnel = startNativeUiTunnel({
+      relayRoot: directory,
+      relayToken: "owned-token",
+      uiPort: 12345,
+      signal: controller.signal,
+    }).then(() => {
+      stopped = true;
+    });
+    void tunnel.catch(() => {});
+    try {
+      await vi.waitFor(() => expect(connect.mock.calls.length).toBeGreaterThanOrEqual(2));
+      expect(stopped).toBe(false);
+      await writeFile(path.join(directory, "shutdown"), "owned-token");
+      await vi.waitFor(() => expect(stopped).toBe(true));
+      await expect(access(path.join(directory, "ready"))).rejects.toThrow();
+    } finally {
+      controller.abort();
+      await tunnel.catch(() => {});
+      connect.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([0, 4096])(
     "reads a regular %i-byte marker through its opened descriptor",
     async (size) => {

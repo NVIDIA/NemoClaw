@@ -25,9 +25,13 @@ product. Packaged Node workloads explicitly set `windows_ui=true` so the
 contained Node process can initialize. Other sandboxes retain MXC's disabled-UI
 default. The derivative also adds per-sandbox `host_loopback`, `host_console`, and
 `personal_network` options. Configured sessions use the Personal network profile:
-MXC's supported outbound-open policy and local-network access. The ordinary
-qualification controls retain their original network policy. Personal does not
-grant access to the Windows user-profile filesystem.
+MXC's supported outbound-open policy and local-network access. Personal does not
+grant access to the Windows user-profile filesystem. Qualification probes the
+installed MXC tier: AppContainer retains its original network policy; BaseContainer
+uses `loopback_ports` for the contained mock model and UI listeners. This emits
+MXC 0.8 TCP rules for only those `127.0.0.1` ports, with other egress and host
+loopback ingress denied. Unknown or inconsistent probes stop qualification.
+Port rules cannot be combined with Personal or legacy host-loopback options.
 
 Configured terminal sessions give the dedicated gateway a real Windows console.
 The gateway verifies all three standard handles before opting into MXC console
@@ -57,12 +61,15 @@ one-shot MXC workload completes, so the qualification command stops that
 client-side watcher after receiving the exact workload result and then deletes
 the sandbox through OpenShell.
 
-The Burn setup runs the pinned Microsoft `wxc-host-prep.exe` system-drive and
-null-device prerequisites through its per-machine elevated engine before
-installing the MSI. These are native executable prerequisites rather than MSI
-custom actions. System-drive preparation supplies shallow-root traversal; the
-null-device setting is required for AppContainer process initialization and
-resets when Windows reboots.
+Before install or repair, Burn queries its bundled, hash-pinned MXC executable
+with `--probe` and records the selected tier. BaseContainer skips both
+AppContainer host prerequisites without changing root or null-device permissions.
+AppContainer+DACL retains system-drive metadata preparation and the pinned MXC
+null-device preparation through Burn's elevated engine. Existing permission
+conflicts still stop preparation. Failed, unknown or inconsistent probes stop
+installation; they do not select a fallback. Uninstall does not require a probe.
+The null-device setting resets when Windows reboots. This prerequisite selection
+does not establish runtime qualification or change the Personal network policy.
 
 The self-contained ARM64 WPF setup presents one custom-framed window for agent
 selection, inference, optional services, installation progress, and completion.
@@ -127,6 +134,10 @@ Web UI file transport uses a native, bounded file owner. It pins the root and
 stream directory handles, performs handle-relative I/O, and refuses reparse
 points, hard links, path traversal, and oversized frames. Its guarded root has
 an explicit MXC filesystem grant and stays pinned through sandbox teardown.
+The contained relay accepts authenticated Stop requests before UI readiness and
+reports connection permission failures without waiting for the readiness timeout.
+Qualification saves redacted diagnostics under its evidence directory, so saving
+does not depend on onboarding-created directories.
 
 Package qualification drives the actual WPF controls for all five agents and
 rejects browser/WebView descendants during setup. It separately submits three

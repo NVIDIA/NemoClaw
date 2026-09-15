@@ -10,7 +10,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
     <SystemDriveMetadataPreparation Condition="'$(SystemDriveMetadataPreparation)' == ''">false</SystemDriveMetadataPreparation>
-    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath);WxcHostPrepPath=$(PayloadRoot)\mxc\wxc-host-prep.exe;BootstrapperPath=$(BootstrapperPath);BootstrapperRoot=$(BootstrapperRoot)</DefineConstants>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath);WxcHostPrepPath=$(PayloadRoot)\mxc\wxc-host-prep.exe;WxcExecPath=$(PayloadRoot)\mxc\wxc-exec.exe;BootstrapperPath=$(BootstrapperPath);BootstrapperRoot=$(BootstrapperRoot)</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- The null-device prerequisite is boot-ephemeral by Windows design, so a
          durable DetectCondition would incorrectly skip it after reboot. -->

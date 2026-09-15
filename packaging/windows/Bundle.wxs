@@ -17,6 +17,7 @@
     Copyright="Copyright (c) 2026 NVIDIA Corporation and affiliates">
     <BootstrapperApplication SourceFile="$(var.BootstrapperPath)">
       <PayloadGroupRef Id="NemoClawBootstrapperPayloads" />
+      <Payload Name="NemoClaw.MxcProbe.exe" SourceFile="$(var.WxcExecPath)" />
     </BootstrapperApplication>
     <Variable Name="NemoClawPreparationAttempt" Type="string" Value="" />
     <!-- Keep transactional rollback; omit the separate per-install OS restore point. -->
