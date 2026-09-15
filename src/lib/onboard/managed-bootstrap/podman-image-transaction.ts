@@ -9,6 +9,7 @@ import type {
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+import { sanitizeReadinessText } from "../../readiness/sanitize";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
@@ -225,7 +226,10 @@ function exactWatcherLease(lease: PodmanGatewayWatcherLease, expectedLeaseId?: s
 }
 
 function commandFailure(result: ContainerEngineCommandResult, action: string): never {
-  const detail = result.error?.message.trim().slice(0, 400);
+  const detail = sanitizeReadinessText(
+    (result.stderr || result.error?.message || "").replace(/\s+/gu, " ").trim(),
+    400,
+  );
   fail(`${action} returned status ${String(result.status)}${detail ? `: ${detail}` : ""}`);
 }
 
