@@ -325,6 +325,18 @@
     {
       "path": ".local/dual-daemon/integrated-workspace.log",
       "sha256": "d1f95e7599dd319f9090d816ddec788d8784596e0eaf56bd5f8c4747e402d150"
+    },
+    {
+      "path": ".local/dual-daemon/final-merge-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".local/dual-daemon/final-merge-clippy.log",
+      "sha256": "3547de248537f45c8f42d11c9090ceca6e90f64b3267aa2f7687619e5b432cc2"
+    },
+    {
+      "path": ".local/dual-daemon/final-merge-workspace.log",
+      "sha256": "f131702ee5ff33873096ee5cb7030f50f4d60c588fe9db93cfce926d7e5091e0"
     }
   ],
   "integration": {
@@ -332,6 +344,17 @@
     "note": "Preserved concurrent Pi-only model validation after live testing. The OpenClaw execution path and runtime artifacts are unchanged.",
     "workspace": {
       "passed": 130,
+      "failed": 0,
+      "ignored": 35
+    },
+    "format": "passed",
+    "strictClippy": "passed"
+  },
+  "finalIntegration": {
+    "sourceRevision": "001cb8f4f929a018530a6024f0ee7aac3dcb5719",
+    "note": "A concurrent Pi model-configuration commit superseded its earlier validation restriction. Preserved it and reran workspace checks; the live OpenClaw qualification remains tied to its recorded bundle and source revision.",
+    "workspace": {
+      "passed": 129,
       "failed": 0,
       "ignored": 35
     },
