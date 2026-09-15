@@ -24,7 +24,10 @@ export interface PreflightGatewaySequenceDeps {
   getGatewayLocalEndpoint(): string;
   stopDashboardForward(): void;
   stopAllDashboardForwards(): void;
-  getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
+  getGatewayClusterImageDrift():
+    | { currentVersion: string; expectedVersion: string }
+    | null
+    | Promise<{ currentVersion: string; expectedVersion: string } | null>;
   exitProcess(code: number): never;
   destroyGateway(): boolean | Promise<boolean>;
   destroyGatewayForReuse(

@@ -66,8 +66,8 @@ describe("rebuild gateway drift preflight", () => {
       gatewayName: registry.getSandbox(name)?.gatewayName ?? "nemoclaw",
     }));
 
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     vi.spyOn(gatewayDrift, "printOpenShellStateRpcIssue").mockImplementation(() => undefined);
     captureOpenshellSpy = vi
       .spyOn(openshellRuntime, "captureOpenshell")
@@ -138,7 +138,7 @@ describe("rebuild gateway drift preflight", () => {
   });
 
   it("rejects gateway image drift before confirming rebuild intent", async () => {
-    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockReturnValue(driftIssue);
+    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockResolvedValue(driftIssue);
     const confirmIntent = vi.fn();
 
     await expect(
@@ -161,7 +161,7 @@ describe("rebuild gateway drift preflight", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
-  it("binds gateway schema preflight to the frozen runtime target (#10514)", () => {
+  it("binds gateway schema preflight to the frozen runtime target (#10514)", async () => {
     const runtimeSelection = {
       gatewayName: "nemoclaw",
       localTlsDir: "/authority/tls",
@@ -169,7 +169,7 @@ describe("rebuild gateway drift preflight", () => {
     };
 
     expect(
-      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
+      await checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
     ).toBe(true);
     expect(gatewayDrift.detectOpenShellStateRpcPreflightIssue).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
@@ -177,12 +177,16 @@ describe("rebuild gateway drift preflight", () => {
     });
   });
 
-  it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", () => {
-    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockReturnValue(driftIssue);
+  it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", async () => {
+    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockResolvedValue(driftIssue);
     const nonThrowingBail = vi.fn();
 
     expect(
-      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), nonThrowingBail as never),
+      await checkRebuildGatewaySchemaPreflight(
+        "alpha",
+        makeSandboxEntry(),
+        nonThrowingBail as never,
+      ),
     ).toBe(false);
 
     const diagnostics = errorSpy.mock.calls.flat().join("\n");

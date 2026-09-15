@@ -22,7 +22,10 @@ export interface PreflightGatewayReuseDeps {
     successMessage: string,
     failureMessage: string,
   ): GatewayReuseState | Promise<GatewayReuseState>;
-  getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
+  getGatewayClusterImageDrift():
+    | { currentVersion: string; expectedVersion: string }
+    | null
+    | Promise<{ currentVersion: string; expectedVersion: string } | null>;
   exitProcess(code: number): never;
 }
 
@@ -124,7 +127,7 @@ export async function reconcilePreflightGatewayReuseState(
   }
 
   if (checkImageDrift) {
-    const imageDrift = deps.getGatewayClusterImageDrift();
+    const imageDrift = await deps.getGatewayClusterImageDrift();
     if (imageDrift) {
       console.log(
         `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,

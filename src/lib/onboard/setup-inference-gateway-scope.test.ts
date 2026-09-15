@@ -187,6 +187,16 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
         ambiguous: false,
         unsupported: false,
         error: { kind: "command", reason: "failed", message: "Denied" },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        ambiguous: false,
+        unsupported: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The named gateway is not registered.",
+        },
       });
     const lifecycle = { selectGateway };
     const error = vi.fn();
@@ -200,10 +210,16 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     await expect(
       selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
     ).rejects.toThrow("exit 1");
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).rejects.toThrow("exit 1");
     expect(selectGateway).toHaveBeenNthCalledWith(1, {
       target: { kind: "named", gatewayName: GATEWAY },
     });
     expect(selectGateway).toHaveBeenNthCalledWith(2, {
+      target: { kind: "named", gatewayName: GATEWAY },
+    });
+    expect(selectGateway).toHaveBeenNthCalledWith(3, {
       target: { kind: "named", gatewayName: GATEWAY },
     });
     expect(error).toHaveBeenCalledWith(expect.stringContaining("No follow-up operations"));

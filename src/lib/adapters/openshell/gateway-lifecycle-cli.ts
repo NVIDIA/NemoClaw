@@ -126,8 +126,19 @@ export function createCliOpenShellGatewayLifecycle(
       isExplicitGatewayRegistrationAbsence(result?.output ?? "", request.target.gatewayName)
     ) {
       const registry = await listGateways(request);
-      if (registry.ok && !registry.names.includes(request.target.gatewayName))
-        return { ok: true, state: "absent" };
+      if (registry.ok && !registry.names.includes(request.target.gatewayName)) {
+        if (operation !== "select") return { ok: true, state: "absent" };
+        return {
+          ok: false,
+          error: {
+            kind: "command",
+            reason: "failed",
+            message: "OpenShell cannot select a gateway that is not registered.",
+          },
+          unsupported: false,
+          ambiguous: false,
+        };
+      }
     }
     // Only the installed CLI's explicit missing verb permits the legacy operation.
     // Authentication, transport and timeout classification takes precedence over matching prose.

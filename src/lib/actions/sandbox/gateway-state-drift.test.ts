@@ -105,7 +105,7 @@ describe("sandbox gateway state drift guard", () => {
     spies.push(
       vi.spyOn(openshellRuntime, "getOpenshellBinary").mockReturnValue("/fixture/openshell"),
       detectPreflightIssueSpy,
-      vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
+      vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null),
       vi
         .spyOn(gatewayDrift, "formatOpenShellStateRpcIssue")
         .mockReturnValue([

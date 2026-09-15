@@ -151,8 +151,8 @@ describe("rebuild resume snapshot repair", () => {
     });
 
     spies.push(
-      vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
-      vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
+      vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null),
+      vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null),
       vi
         .spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority")
         .mockImplementation(resolveGatewayAuthority),

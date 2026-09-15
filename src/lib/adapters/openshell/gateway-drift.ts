@@ -30,7 +30,8 @@ import {
 } from "./client";
 import { resolveOpenshell } from "./resolve";
 import { captureOpenshell, getInstalledOpenshellVersionOrNull } from "./runtime";
-import { buildSelectedOpenShellSubprocessEnv } from "./command-argv";
+import { createCliOpenShellGatewayReuseObserver } from "./gateway-reuse-cli";
+import type { OpenShellGatewayReuseObserver } from "./gateway-reuse";
 import type { OpenShellRuntimeSelection } from "./runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
@@ -88,7 +89,7 @@ export type OpenShellStateRpcIssue =
 export type GatewayDriftDeps = {
   getInstalledOpenshellVersion?: () => string | null;
   getGatewayClusterImageRef?: (gatewayName: string) => string | null;
-  isGatewayClusterActive?: (gatewayName: string) => boolean;
+  isGatewayClusterActive?: (gatewayName: string) => boolean | Promise<boolean>;
   getHostProcessGatewayRuntime?: () => HostProcessGatewayRuntime | null;
 };
 
@@ -170,18 +171,21 @@ export function getGatewayClusterImageRef(
   return imageRef || null;
 }
 
-function parseGatewayEndpointPort(output: string): string | null {
-  const match = stripAnsi(output).match(/^\s*Gateway endpoint:\s+(\S+)\s*$/m);
-  if (!match) return null;
-  try {
-    const url = new URL(match[1]);
-    if (url.port) return url.port;
-    if (url.protocol === "http:") return "80";
-    if (url.protocol === "https:") return "443";
-  } catch {
-    return null;
+function observedGatewayEndpointPort(endpoints: readonly (string | null)[]): string | null {
+  const ports = new Set<string>();
+  for (const endpoint of endpoints) {
+    if (!endpoint) return null;
+    try {
+      const url = new URL(endpoint);
+      if (url.port) ports.add(url.port);
+      else if (url.protocol === "http:") ports.add("80");
+      else if (url.protocol === "https:") ports.add("443");
+      else return null;
+    } catch {
+      return null;
+    }
   }
-  return null;
+  return ports.size === 1 ? [...ports][0] : null;
 }
 
 function getGatewayClusterPublishedHostPorts(
@@ -214,51 +218,41 @@ function getGatewayClusterPublishedHostPorts(
   }
 }
 
-export function isGatewayClusterActiveForGateway(
+export async function isGatewayClusterActiveForGateway(
   gatewayName = DEFAULT_GATEWAY_NAME,
   {
     expectedGatewayPort,
     runtimeSelection,
     timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
+    observer,
   }: {
     expectedGatewayPort?: number;
     runtimeSelection?: OpenShellRuntimeSelection;
     timeoutMs?: number;
+    observer?: OpenShellGatewayReuseObserver;
   } = {},
-): boolean {
+): Promise<boolean> {
   if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) return false;
-  const selectedOptions = runtimeSelection
-    ? {
-        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
-        replaceEnv: true,
-      }
-    : {};
-  const status = captureOpenshell(["status"], {
-    ignoreError: true,
-    ...selectedOptions,
-    timeout: timeoutMs,
+  const observed = await (
+    observer ??
+    createCliOpenShellGatewayReuseObserver((args, options) => captureOpenshell(args, options))
+  ).observeGatewayReuse({
+    target: { kind: "named", gatewayName },
+    expectedGatewayPort,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+    timeoutMs,
   });
-  const gatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
-    ignoreError: true,
-    ...selectedOptions,
-    timeout: timeoutMs,
-  });
-  const activeGatewayInfo = captureOpenshell(["gateway", "info"], {
-    ignoreError: true,
-    ...selectedOptions,
-    timeout: timeoutMs,
-  });
-  if (!isGatewayHealthy(status.output, gatewayInfo.output, activeGatewayInfo.output, gatewayName)) {
+  if (
+    observed.error ||
+    !observed.healthy ||
+    !observed.namedMetadata ||
+    observed.gatewayReuseState !== "healthy"
+  ) {
     return false;
   }
-
-  const endpointPort =
-    parseGatewayEndpointPort(activeGatewayInfo.output) ??
-    parseGatewayEndpointPort(gatewayInfo.output);
+  if (expectedGatewayPort !== undefined && observed.endpointBinding !== "match") return false;
+  const endpointPort = observedGatewayEndpointPort(observed.endpoints);
   if (!endpointPort) return false;
-  if (expectedGatewayPort !== undefined && endpointPort !== String(expectedGatewayPort)) {
-    return false;
-  }
 
   const containerName = getGatewayClusterContainerName(gatewayName);
   const running = dockerContainerInspectFormat("{{.State.Running}}", containerName, {
@@ -270,12 +264,12 @@ export function isGatewayClusterActiveForGateway(
   return getGatewayClusterPublishedHostPorts(containerName, timeoutMs).has(endpointPort);
 }
 
-export function getGatewayClusterImageDrift({
+export async function getGatewayClusterImageDrift({
   gatewayName = DEFAULT_GATEWAY_NAME,
   deps = {},
   runtimeSelection,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
-}: GatewayDriftOptions = {}): GatewayClusterImageDrift | null {
+}: GatewayDriftOptions = {}): Promise<GatewayClusterImageDrift | null> {
   if (isGatewayDriftPreflightDisabled(deps)) {
     return null;
   }
@@ -283,11 +277,17 @@ export function getGatewayClusterImageDrift({
     typeof deps.getInstalledOpenshellVersion === "function"
       ? deps.getInstalledOpenshellVersion()
       : getInstalledOpenshellVersionOrNull({ timeout: timeoutMs });
-  const clusterActive =
-    deps.isGatewayClusterActive?.(gatewayName) ??
-    (typeof deps.getGatewayClusterImageRef === "function"
-      ? true
-      : isGatewayClusterActiveForGateway(gatewayName, { runtimeSelection, timeoutMs }));
+  let clusterActive: boolean;
+  if (deps.isGatewayClusterActive) {
+    clusterActive = await deps.isGatewayClusterActive(gatewayName);
+  } else if (typeof deps.getGatewayClusterImageRef === "function") {
+    clusterActive = true;
+  } else {
+    clusterActive = await isGatewayClusterActiveForGateway(gatewayName, {
+      runtimeSelection,
+      timeoutMs,
+    });
+  }
   if (!clusterActive) {
     return null;
   }
@@ -428,12 +428,12 @@ export function getHostProcessGatewayRuntimeOrNull({
  * `openshell-cluster-*` container to inspect; cluster-image drift is handled
  * by {@link getGatewayClusterImageDrift}.
  */
-export function getGatewayHostProcessDrift({
+export async function getGatewayHostProcessDrift({
   gatewayName = DEFAULT_GATEWAY_NAME,
   deps = {},
   runtimeSelection,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
-}: GatewayDriftOptions = {}): GatewayHostProcessDrift | null {
+}: GatewayDriftOptions = {}): Promise<GatewayHostProcessDrift | null> {
   if (isGatewayDriftPreflightDisabled(deps)) {
     return null;
   }
@@ -449,9 +449,9 @@ export function getGatewayHostProcessDrift({
       ? deps.getGatewayClusterImageRef(gatewayName)
       : getGatewayClusterImageRef(gatewayName, { timeoutMs });
   if (clusterImage) {
-    const clusterActive =
-      deps.isGatewayClusterActive?.(gatewayName) ??
-      isGatewayClusterActiveForGateway(gatewayName, { runtimeSelection, timeoutMs });
+    const clusterActive = deps.isGatewayClusterActive
+      ? await deps.isGatewayClusterActive(gatewayName)
+      : await isGatewayClusterActiveForGateway(gatewayName, { runtimeSelection, timeoutMs });
     if (clusterActive) {
       return null;
     }
@@ -482,13 +482,13 @@ export function getGatewayHostProcessDrift({
  * readiness needs this three-state result so it can fail closed when either
  * side of the comparison is unavailable.
  */
-export function observeOpenShellGatewayVersionCompatibility({
+export async function observeOpenShellGatewayVersionCompatibility({
   source,
   gatewayName = DEFAULT_GATEWAY_NAME,
   deps = {},
   runtimeSelection,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
-}: GatewayVersionCompatibilityOptions): GatewayVersionCompatibility {
+}: GatewayVersionCompatibilityOptions): Promise<GatewayVersionCompatibility> {
   if (isGatewayDriftPreflightDisabled(deps)) return "unknown";
   const expectedVersion =
     typeof deps.getInstalledOpenshellVersion === "function"
@@ -497,9 +497,9 @@ export function observeOpenShellGatewayVersionCompatibility({
   if (!expectedVersion) return "unknown";
 
   if (source === "legacy-cluster") {
-    const clusterActive =
-      deps.isGatewayClusterActive?.(gatewayName) ??
-      isGatewayClusterActiveForGateway(gatewayName, { runtimeSelection, timeoutMs });
+    const clusterActive = deps.isGatewayClusterActive
+      ? await deps.isGatewayClusterActive(gatewayName)
+      : await isGatewayClusterActiveForGateway(gatewayName, { runtimeSelection, timeoutMs });
     if (!clusterActive) return "unknown";
     const clusterImage =
       typeof deps.getGatewayClusterImageRef === "function"
@@ -521,13 +521,13 @@ export function observeOpenShellGatewayVersionCompatibility({
   return runtime.runningVersion === expectedVersion ? "compatible" : "drift";
 }
 
-export function detectOpenShellStateRpcPreflightIssue({
+export async function detectOpenShellStateRpcPreflightIssue({
   gatewayName = DEFAULT_GATEWAY_NAME,
   deps = {},
   runtimeSelection,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
-}: GatewayDriftOptions = {}): OpenShellStateRpcIssue | null {
-  const imageDrift = getGatewayClusterImageDrift({
+}: GatewayDriftOptions = {}): Promise<OpenShellStateRpcIssue | null> {
+  const imageDrift = await getGatewayClusterImageDrift({
     gatewayName,
     deps,
     runtimeSelection,
@@ -536,7 +536,7 @@ export function detectOpenShellStateRpcPreflightIssue({
   if (imageDrift) {
     return { kind: "image_drift", drift: imageDrift };
   }
-  const hostDrift = getGatewayHostProcessDrift({
+  const hostDrift = await getGatewayHostProcessDrift({
     gatewayName,
     deps,
     runtimeSelection,
@@ -548,7 +548,7 @@ export function detectOpenShellStateRpcPreflightIssue({
   return null;
 }
 
-export function detectOpenShellStateRpcResultIssue(
+export async function detectOpenShellStateRpcResultIssue(
   result: StateRpcResult,
   {
     gatewayName = DEFAULT_GATEWAY_NAME,
@@ -556,7 +556,7 @@ export function detectOpenShellStateRpcResultIssue(
     runtimeSelection,
     timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
   }: GatewayDriftOptions = {},
-): OpenShellStateRpcIssue | null {
+): Promise<OpenShellStateRpcIssue | null> {
   const output = String(result.output || "");
   if (!isOpenShellProtobufSchemaMismatch(output)) {
     return null;
@@ -565,8 +565,18 @@ export function detectOpenShellStateRpcResultIssue(
     kind: "protobuf_mismatch",
     drift: isGatewayDriftPreflightDisabled(deps)
       ? null
-      : (getGatewayClusterImageDrift({ gatewayName, deps, runtimeSelection, timeoutMs }) ??
-        getGatewayHostProcessDrift({ gatewayName, deps, runtimeSelection, timeoutMs })),
+      : ((await getGatewayClusterImageDrift({
+          gatewayName,
+          deps,
+          runtimeSelection,
+          timeoutMs,
+        })) ??
+        (await getGatewayHostProcessDrift({
+          gatewayName,
+          deps,
+          runtimeSelection,
+          timeoutMs,
+        }))),
     output,
   };
 }

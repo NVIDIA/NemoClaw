@@ -73,7 +73,7 @@ export interface ProductionGatewayReadinessOptions {
   observeVersionCompatibility?: (
     source: GatewayVersionSource,
     hostProcessPid: number | null,
-  ) => GatewayVersionCompatibility;
+  ) => GatewayVersionCompatibility | Promise<GatewayVersionCompatibility>;
 }
 
 interface ReadonlyCaptureResult {
@@ -859,8 +859,7 @@ export function createProductionGatewayReadinessDependencies(
       try {
         if (source) {
           const hostProcessPid = source === "host-process" ? listenerScan.pids[0] : null;
-          compatibility =
-            options.observeVersionCompatibility?.(source, hostProcessPid) ??
+          compatibility = await (options.observeVersionCompatibility?.(source, hostProcessPid) ??
             observeOpenShellGatewayVersionCompatibility({
               gatewayName,
               source,
@@ -882,7 +881,7 @@ export function createProductionGatewayReadinessDependencies(
                               probeEnv,
                             ),
                     },
-            });
+            }));
         }
       } catch {
         compatibility = "unknown";

@@ -38,8 +38,8 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("pins both the sandbox and policy RPCs to the recorded owner", async () => {
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     const capture = vi
       .spyOn(openshellRuntime, "captureOpenshell")
       .mockReturnValueOnce({ status: 0, output: "Policy:\nPhase: Ready" } as never)
@@ -61,8 +61,8 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("does not classify an unconfirmed owner-scoped no-spec response as deletion", async () => {
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     const capture = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 1,
       output: 'status: Internal, message: "sandbox has no spec"',
@@ -78,8 +78,8 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("pins the async status RPC to the recorded owner", async () => {
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     vi.spyOn(openshellRuntime, "isCommandTimeout").mockReturnValue(false);
     const capture = vi
       .spyOn(openshellRuntime, "captureOpenshellForStatus")

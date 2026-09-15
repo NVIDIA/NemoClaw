@@ -512,7 +512,7 @@ export async function getSandboxGatewayState(
 ): Promise<SandboxGatewayState> {
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ gatewayName });
+  const preflightIssue = await detectOpenShellStateRpcPreflightIssue({ gatewayName });
   if (preflightIssue) {
     return {
       state: "gateway_schema_mismatch",
@@ -581,7 +581,7 @@ export async function getSandboxGatewayStateForStatus(
   const timeoutMs = getStatusProbeTimeoutMs();
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ gatewayName, timeoutMs });
+  const preflightIssue = await detectOpenShellStateRpcPreflightIssue({ gatewayName, timeoutMs });
   if (preflightIssue) {
     return {
       state: "gateway_schema_mismatch",

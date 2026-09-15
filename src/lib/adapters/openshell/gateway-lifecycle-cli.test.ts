@@ -118,7 +118,7 @@ describe("gateway lifecycle CLI", () => {
     ]);
   });
 
-  it("corroborates an exact missing selection before reporting absence (#11326)", async () => {
+  it("fails a registry-confirmed missing selection (#11326)", async () => {
     const capture = vi
       .fn()
       .mockResolvedValueOnce({
@@ -129,7 +129,12 @@ describe("gateway lifecycle CLI", () => {
       .mockResolvedValueOnce({ status: 0, output: "[]" });
     await expect(
       createCliOpenShellGatewayLifecycle(capture).selectGateway({ target }),
-    ).resolves.toEqual({ ok: true, state: "absent" });
+    ).resolves.toMatchObject({
+      ok: false,
+      unsupported: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "failed" },
+    });
     expect(capture.mock.calls.map(([args]) => args)).toEqual([
       ["gateway", "select", target.gatewayName],
       ["gateway", "list", "-o", "json"],
