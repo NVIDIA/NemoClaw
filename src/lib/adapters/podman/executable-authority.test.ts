@@ -9,6 +9,7 @@ import {
   assertPodmanExecutableAuthority,
   assertPodmanExecutableMetadataAuthority,
   capturePodmanExecutableAuthority,
+  PodmanExecutablePermissionError,
   type PodmanExecutableAuthorityDeps,
   type PodmanExecutableStat,
 } from "./executable-authority";
@@ -83,6 +84,22 @@ function authorityDeps(
 }
 
 describe("Podman executable authority", () => {
+  it.each([
+    ["ESC", "\u001b", "\\u001b"],
+    ["C1 CSI", "\u009b", "\\u009b"],
+    ["right-to-left override", "\u202e", "\\u202e"],
+    ["left-to-right isolate", "\u2066", "\\u2066"],
+  ])("renders %s in rejected paths without raw terminal controls", (_name, control, escaped) => {
+    const failure = new PodmanExecutablePermissionError(`/opt/${control}/podman`, 0o100775n);
+    const displayPath = failure.message.match(/^Executable path (.+) has mode/u)?.[1];
+
+    expect(failure.message).toContain(escaped);
+    expect(failure.message).not.toContain(control);
+    expect(displayPath).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
+  });
+
   it.each(["file", "parent"])(
     "redacts credentials in rejected %s paths before creating shared errors",
     (kind) => {

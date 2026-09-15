@@ -8,12 +8,22 @@ import path from "node:path";
 import { redactCredentialText } from "../../security/credential-filter";
 
 const MAX_EXECUTABLE_BYTES = 512n * 1024n * 1024n;
+const UNSAFE_TERMINAL_CONTROL_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
+
+/** Render the repository terminal-control set as inert JSON-compatible escapes. */
+function terminalSafeJsonString(value: string): string {
+  return JSON.stringify(value).replace(
+    UNSAFE_TERMINAL_CONTROL_PATTERN,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
 
 /** Identify a writable executable path without exposing unrelated filesystem failures. */
 export class PodmanExecutablePermissionError extends Error {
   /** Redact before escaping so every caller receives a credential-free error message and stack. */
   constructor(rejectedPath: string, mode: bigint) {
-    const displayPath = JSON.stringify(redactCredentialText(rejectedPath));
+    const displayPath = terminalSafeJsonString(redactCredentialText(rejectedPath));
     const permissions = (mode & 0o7777n).toString(8).padStart(4, "0");
     super(
       `Executable path ${displayPath} has mode ${permissions} and is writable by another user or group.\n` +

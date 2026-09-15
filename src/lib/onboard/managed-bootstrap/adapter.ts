@@ -15,7 +15,7 @@ import {
   parseManagedStartupRootApplyRequest,
   serializeManagedStartupRootApplyRequest,
 } from "../managed-startup/root-apply";
-import { redactOnboardError, redactOnboardErrorText } from "../diagnostics/redaction";
+import { redactOnboardErrorText, sanitizeOnboardFailure } from "../diagnostics/redaction";
 
 export const MANAGED_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
 export const MANAGED_BOOTSTRAP_IDENTITY_BYTES = 32;
@@ -364,24 +364,38 @@ export class ManagedBootstrapRecoveryBlockedError extends Error {
 
 /** Retain rollback evidence on the original failure, redacting Error and string details before adding recovery guidance. */
 export function attachManagedBootstrapRollbackError(failure: Error, rollbackError: unknown): void {
-  let redactedRollbackError = rollbackError;
-  if (rollbackError instanceof Error) {
-    redactedRollbackError = redactOnboardError(rollbackError);
-  } else if (typeof rollbackError === "string") {
-    redactedRollbackError = redactOnboardErrorText(rollbackError);
-  }
-  (
-    failure as Error & {
-      managedBootstrapRollbackError?: unknown;
-    }
-  ).managedBootstrapRollbackError = redactedRollbackError;
+  const redactedRollbackError = sanitizeOnboardFailure(rollbackError);
+  Object.defineProperty(failure, "managedBootstrapRollbackError", {
+    configurable: true,
+    enumerable: true,
+    value: redactedRollbackError,
+    writable: true,
+  });
+  const detailDescriptor = Object.getOwnPropertyDescriptor(redactedRollbackError, "message");
   const detail =
-    redactedRollbackError instanceof Error
-      ? redactedRollbackError.message
-      : String(redactedRollbackError);
-  if (!failure.message.includes(detail)) {
-    failure.message = `${failure.message}\nManaged bootstrap rollback requires attention: ${detail}`;
+    detailDescriptor && "value" in detailDescriptor && typeof detailDescriptor.value === "string"
+      ? detailDescriptor.value
+      : "Rollback failure details were redacted.";
+  const messageDescriptor = Object.getOwnPropertyDescriptor(failure, "message");
+  const message =
+    messageDescriptor && "value" in messageDescriptor && typeof messageDescriptor.value === "string"
+      ? redactOnboardErrorText(messageDescriptor.value)
+      : "Managed bootstrap failed.";
+  if (message.includes(detail)) return;
+  const nextMessage = `${message}\nManaged bootstrap rollback requires attention: ${detail}`;
+  if (
+    messageDescriptor &&
+    !messageDescriptor.configurable &&
+    (!("value" in messageDescriptor) || !messageDescriptor.writable)
+  ) {
+    return;
   }
+  Object.defineProperty(failure, "message", {
+    configurable: messageDescriptor?.configurable ?? true,
+    enumerable: messageDescriptor?.enumerable ?? false,
+    value: nextMessage,
+    writable: messageDescriptor && "value" in messageDescriptor ? messageDescriptor.writable : true,
+  });
 }
 
 export interface ManagedBootstrapAdapter {

@@ -3,6 +3,7 @@
 
 import { inspect } from "node:util";
 
+import * as prettyPrintModule from "../../../node_modules/@oclif/core/lib/errors/errors/pretty-print.js";
 import { assert, describe, expect, it, vi } from "vitest";
 
 import { captureHermesPortableOpenShellExecutableAuthority } from "../adapters/openshell/resolve-shared";
@@ -10,6 +11,15 @@ import { PodmanExecutablePermissionError } from "../adapters/podman/executable-a
 import { runOnboardCommand } from "./command";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { attachManagedBootstrapRollbackError } from "./managed-bootstrap/adapter";
+
+type PrettyPrint = (error: Error) => string | undefined;
+
+const prettyPrintDefault = prettyPrintModule.default as unknown;
+const prettyPrint = (
+  typeof prettyPrintDefault === "function"
+    ? prettyPrintDefault
+    : (prettyPrintDefault as { default: PrettyPrint }).default
+) as PrettyPrint;
 
 /** Expose the exit code without terminating the test process. */
 function exitWithCode(code: number): never {
@@ -33,7 +43,7 @@ async function rethrowOnboardFailure(failure: Error): Promise<void> {
 }
 
 /** Return the failure that crosses the command boundary. */
-async function catchOnboardFailure(failure: Error): Promise<unknown> {
+async function catchOnboardFailure(failure: unknown): Promise<unknown> {
   return runOnboardCommand({
     flags: {},
     env: {},
@@ -46,6 +56,141 @@ async function catchOnboardFailure(failure: Error): Promise<unknown> {
 }
 
 describe("onboarding command failures", () => {
+  it.each([
+    ["message", `nvapi-${"4".repeat(60)}`],
+    ["name", `nvapi-${"5".repeat(60)}`],
+    ["code", `nvapi-${"6".repeat(60)}`],
+    ["ref", `nvapi-${"7".repeat(60)}`],
+    ["bang", `nvapi-${"8".repeat(60)}`],
+    ["suggestions", [`nvapi-${"9".repeat(60)}`]],
+  ] as const)("shadows inherited %s before Oclif pretty printing", async (field, value) => {
+    const access = vi.fn(() => value);
+    class FormatterError extends Error {}
+    Object.defineProperty(FormatterError.prototype, field, {
+      configurable: true,
+      get: access,
+    });
+    const failure = new FormatterError();
+
+    const caught = await catchOnboardFailure(failure);
+
+    assert(caught instanceof Error);
+    expect(access).not.toHaveBeenCalled();
+    const formatted = prettyPrint(caught);
+    expect(formatted).not.toContain(Array.isArray(value) ? value[0] : value);
+    expect(access).not.toHaveBeenCalled();
+  });
+
+  it("shadows the complete Oclif handle field surface without invoking accessors", async () => {
+    const secret = `nvapi-${"a".repeat(60)}`;
+    const message = vi.fn(() => secret);
+    const skipOclifErrorHandling = vi.fn(() => secret);
+    const stack = vi.fn(() => secret);
+    const showHelp = vi.fn(() => secret);
+    const parse = vi.fn(() => secret);
+    const oclif = vi.fn(() => secret);
+    const code = vi.fn(() => secret);
+    const ref = vi.fn(() => secret);
+    const cause = vi.fn(() => secret);
+    const errors = vi.fn(() => secret);
+    class HandleError extends Error {}
+    Object.defineProperties(HandleError.prototype, {
+      message: { configurable: true, get: message },
+      skipOclifErrorHandling: { configurable: true, get: skipOclifErrorHandling },
+      stack: { configurable: true, get: stack },
+      showHelp: { configurable: true, get: showHelp },
+      parse: { configurable: true, get: parse },
+      oclif: { configurable: true, get: oclif },
+      code: { configurable: true, get: code },
+      ref: { configurable: true, get: ref },
+      cause: { configurable: true, get: cause },
+      errors: { configurable: true, get: errors },
+    });
+    const failure = new HandleError();
+    delete failure.stack;
+
+    const caught = await catchOnboardFailure(failure);
+
+    assert(caught instanceof Error);
+    expect(message).not.toHaveBeenCalled();
+    expect(skipOclifErrorHandling).not.toHaveBeenCalled();
+    expect(stack).not.toHaveBeenCalled();
+    expect(showHelp).not.toHaveBeenCalled();
+    expect(parse).not.toHaveBeenCalled();
+    expect(oclif).not.toHaveBeenCalled();
+    expect(code).not.toHaveBeenCalled();
+    expect(ref).not.toHaveBeenCalled();
+    expect(cause).not.toHaveBeenCalled();
+    expect(errors).not.toHaveBeenCalled();
+    const view = caught as Error & Record<string, unknown>;
+    void view.message;
+    void view.skipOclifErrorHandling;
+    void view.stack;
+    void view.showHelp;
+    void view.parse;
+    void view.oclif;
+    void view.code;
+    void view.ref;
+    void view.cause;
+    void view.errors;
+    expect(prettyPrint(caught)).not.toContain(secret);
+    expect(message).not.toHaveBeenCalled();
+    expect(skipOclifErrorHandling).not.toHaveBeenCalled();
+    expect(stack).not.toHaveBeenCalled();
+    expect(showHelp).not.toHaveBeenCalled();
+    expect(parse).not.toHaveBeenCalled();
+    expect(oclif).not.toHaveBeenCalled();
+    expect(code).not.toHaveBeenCalled();
+    expect(ref).not.toHaveBeenCalled();
+    expect(cause).not.toHaveBeenCalled();
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it("replaces a non-Error throw before Oclif formatting", async () => {
+    const secret = `nvapi-${"b".repeat(60)}`;
+
+    const caught = await catchOnboardFailure({ message: secret });
+
+    assert(caught instanceof Error);
+    expect(prettyPrint(caught)).not.toContain(secret);
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+  });
+
+  it("does not invoke a cancellation-code getter before redaction", async () => {
+    const secret = `nvapi-${"c".repeat(60)}`;
+    const code = vi.fn(() => {
+      throw new Error(secret);
+    });
+    const failure = new Error("Onboarding failed");
+    Object.defineProperty(failure, "code", { configurable: true, get: code });
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(caught).toBe(failure);
+    expect(code).not.toHaveBeenCalled();
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+    expect(code).not.toHaveBeenCalled();
+  });
+
+  it("rejects an Error Proxy without invoking its traps", async () => {
+    const secret = `nvapi-${"d".repeat(60)}`;
+    const get = vi.fn(() => {
+      throw new Error(secret);
+    });
+    const getOwnPropertyDescriptor = vi.fn(() => {
+      throw new Error(secret);
+    });
+    const failure = new Proxy(new Error(secret), { get, getOwnPropertyDescriptor });
+
+    const caught = await catchOnboardFailure(failure);
+
+    assert(caught instanceof Error);
+    assert(caught !== failure);
+    expect(get).not.toHaveBeenCalled();
+    expect(getOwnPropertyDescriptor).not.toHaveBeenCalled();
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+  });
+
   it("redacts nested causes without replacing the errors or their recovery diagnostics", async () => {
     const secret = `nvapi-${"b".repeat(60)}`;
     const leaf = new Error(`Provider failed: ${secret}`);
@@ -482,6 +627,31 @@ describe("onboarding command failures", () => {
     expect(inspect(failure, { depth: null })).not.toContain(secret);
   });
 
+  it("does not read inherited rollback message or coercion hooks", () => {
+    const secret = `nvapi-${"0".repeat(60)}`;
+    const message = vi.fn(() => secret);
+    const toPrimitive = vi.fn(() => secret);
+    class RollbackError extends Error {}
+    Object.defineProperties(RollbackError.prototype, {
+      message: { configurable: true, get: message },
+      [Symbol.toPrimitive]: { configurable: true, value: toPrimitive },
+    });
+    const rollback = new RollbackError();
+    const failure = new Error("Managed bootstrap failed") as Error & {
+      managedBootstrapRollbackError?: unknown;
+    };
+
+    attachManagedBootstrapRollbackError(failure, rollback);
+
+    expect(failure.managedBootstrapRollbackError).toBe(rollback);
+    expect(message).not.toHaveBeenCalled();
+    expect(toPrimitive).not.toHaveBeenCalled();
+    expect(failure.message).not.toContain(secret);
+    expect(inspect(failure, { depth: null })).not.toContain(secret);
+    expect(message).not.toHaveBeenCalled();
+    expect(toPrimitive).not.toHaveBeenCalled();
+  });
+
   it("redacts managed bootstrap rollback diagnostics before rethrow", async () => {
     const secret = `nvapi-${"f".repeat(60)}`;
     const rollback = new Error(`Rollback failed: ${secret}`);
@@ -577,6 +747,75 @@ describe("onboarding command failures", () => {
     expect(String(redacted.diagnostic)).not.toContain("PRIVATE KEY");
     expect(String(redacted.diagnostic)).toContain("<REDACTED>");
     expect(String(redacted.diagnostic)).toContain("Inspect the rejected credential.");
+  });
+
+  it("neutralizes nested object and array Symbol.toStringTag accessors", async () => {
+    const secret = `nvapi-${"e".repeat(60)}`;
+    const objectTag = vi.fn(() => secret);
+    const arrayTag = vi.fn(() => secret);
+    const record = { detail: "safe" };
+    const list = [record];
+    Object.defineProperty(record, Symbol.toStringTag, { configurable: true, get: objectTag });
+    Object.defineProperty(list, Symbol.toStringTag, { configurable: true, get: arrayTag });
+    const failure = new Error("Onboarding failed") as Error & { context?: unknown };
+    failure.context = { list, record };
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(caught).toBe(failure);
+    expect(objectTag).not.toHaveBeenCalled();
+    expect(arrayTag).not.toHaveBeenCalled();
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+    expect(objectTag).not.toHaveBeenCalled();
+    expect(arrayTag).not.toHaveBeenCalled();
+  });
+
+  it("remains inert after Error, Object, and Array prototypes are poisoned", async () => {
+    const secret = `nvapi-${"f".repeat(60)}`;
+    const renderer = vi.fn(() => secret);
+    const failure = new Error("Onboarding failed") as Error & { context?: unknown };
+    failure.context = { list: [{ detail: "safe" }] };
+    const caught = await catchOnboardFailure(failure);
+    assert(caught instanceof Error);
+    const errorDescriptors = {
+      message: Object.getOwnPropertyDescriptor(Error.prototype, "message"),
+      toJSON: Object.getOwnPropertyDescriptor(Error.prototype, "toJSON"),
+      inspect: Object.getOwnPropertyDescriptor(Error.prototype, inspect.custom),
+    };
+    const objectTag = Object.getOwnPropertyDescriptor(Object.prototype, Symbol.toStringTag);
+    const arrayTag = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.toStringTag);
+    assert(errorDescriptors.message);
+    expect(errorDescriptors.toJSON).toBeUndefined();
+    expect(errorDescriptors.inspect).toBeUndefined();
+    expect(objectTag).toBeUndefined();
+    expect(arrayTag).toBeUndefined();
+    try {
+      Object.defineProperties(Error.prototype, {
+        message: { configurable: true, get: renderer },
+        toJSON: { configurable: true, value: renderer },
+        [inspect.custom]: { configurable: true, value: renderer },
+      });
+      Object.defineProperty(Object.prototype, Symbol.toStringTag, {
+        configurable: true,
+        get: renderer,
+      });
+      Object.defineProperty(Array.prototype, Symbol.toStringTag, {
+        configurable: true,
+        get: renderer,
+      });
+
+      expect(prettyPrint(caught)).not.toContain(secret);
+      expect(inspect(caught, { depth: null })).not.toContain(secret);
+      expect(JSON.stringify(caught)).not.toContain(secret);
+      expect(String(caught)).toBe("[REDACTED ERROR]");
+      expect(renderer).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(Error.prototype, "message", errorDescriptors.message);
+      delete (Error.prototype as Error & { toJSON?: unknown }).toJSON;
+      delete (Error.prototype as Error & Record<PropertyKey, unknown>)[inspect.custom];
+      delete (Object.prototype as Record<PropertyKey, unknown>)[Symbol.toStringTag];
+      delete (Array.prototype as unknown as Record<PropertyKey, unknown>)[Symbol.toStringTag];
+    }
   });
 
   it("redacts a complete private-key block before reporting a typed onboarding error", async () => {

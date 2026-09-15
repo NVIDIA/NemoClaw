@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isNativeError, isProxy } from "node:util/types";
+
 import { redact, redactFull, redactFullWithUrls, redactSensitiveText } from "../../security/redact";
 
 interface DiagnosticTask {
@@ -22,8 +24,31 @@ interface DiagnosticWalk {
 }
 
 const CUSTOM_INSPECT = Symbol.for("nodejs.util.inspect.custom");
-const RENDERER_HOOKS = ["toJSON", CUSTOM_INSPECT] as const;
-const COERCION_HOOKS = ["toString", "valueOf", Symbol.toPrimitive] as const;
+const UNIVERSAL_SHADOWS = [
+  ["toJSON", undefined],
+  [CUSTOM_INSPECT, undefined],
+  ["toString", safeDiagnosticCoercion],
+  ["valueOf", safeDiagnosticCoercion],
+  [Symbol.toPrimitive, safeDiagnosticCoercion],
+  [Symbol.toStringTag, undefined],
+] as const;
+const ERROR_CONTROL_SHADOWS = [
+  ["bang", undefined],
+  ["suggestions", undefined],
+  ["skipOclifErrorHandling", undefined],
+  ["showHelp", undefined],
+  ["parse", undefined],
+  ["oclif", undefined],
+] as const;
+const ERROR_RENDER_FIELDS = [
+  ["name", "Error"],
+  ["message", "Onboarding failed."],
+  ["stack", "<REDACTED>"],
+  ["code", undefined],
+  ["ref", undefined],
+  ["cause", undefined],
+  ["errors", undefined],
+] as const;
 const REDACTED_ERROR_MESSAGE =
   "Onboarding failed; diagnostic details were redacted because they could not be sanitized safely.";
 
@@ -49,9 +74,39 @@ function isCoercionHook(key: PropertyKey): boolean {
   return key === "toString" || key === "valueOf" || key === Symbol.toPrimitive;
 }
 
-/** Select the inert value used to replace an executable diagnostic hook. */
-function neutralizedHookValue(key: PropertyKey): unknown {
-  return isCoercionHook(key) ? safeDiagnosticCoercion : undefined;
+/** Identify properties that every retained diagnostic container shadows locally. */
+function isUniversalShadow(key: PropertyKey): boolean {
+  return isRendererHook(key) || isCoercionHook(key) || key === Symbol.toStringTag;
+}
+
+/** Identify Oclif control fields that must never inherit or retain active values. */
+function isErrorControlShadow(key: PropertyKey): boolean {
+  return (
+    key === "bang" ||
+    key === "suggestions" ||
+    key === "skipOclifErrorHandling" ||
+    key === "showHelp" ||
+    key === "parse" ||
+    key === "oclif"
+  );
+}
+
+/** Identify Error fields consumed by Oclif and built-in diagnostic renderers. */
+function isErrorRenderField(key: PropertyKey): boolean {
+  return (
+    key === "name" ||
+    key === "message" ||
+    key === "stack" ||
+    key === "code" ||
+    key === "ref" ||
+    key === "cause" ||
+    key === "errors"
+  );
+}
+
+/** Admit only native, non-Proxy Error objects to identity-preserving redaction. */
+export function isTrustedOnboardError(value: unknown): value is Error {
+  return typeof value === "object" && value !== null && !isProxy(value) && isNativeError(value);
 }
 
 /** Limit property traversal to plain records so class instances retain their behavior. */
@@ -62,9 +117,9 @@ function isPlainDiagnosticObject(value: object): value is Record<PropertyKey, un
 
 /** Preserve Error identity and copy diagnostic containers without constructing arbitrary classes. */
 function createDiagnosticTarget(value: object): object | null {
-  if (value instanceof Error) return value;
+  if (isTrustedOnboardError(value)) return value;
   if (Array.isArray(value)) return [];
-  if (isPlainDiagnosticObject(value)) return Object.create(Object.getPrototypeOf(value)) as object;
+  if (isPlainDiagnosticObject(value)) return Object.create(null) as object;
   return null;
 }
 
@@ -76,6 +131,10 @@ function redactNestedDiagnostic(value: unknown, walk: DiagnosticWalk): unknown {
     return value;
   }
   if (typeof value !== "object" || value === null) return value;
+  if (isProxy(value)) {
+    walk.unsafe = true;
+    return value;
+  }
   if (walk.seen.has(value)) return walk.seen.get(value);
 
   const target = createDiagnosticTarget(value);
@@ -88,8 +147,8 @@ function redactNestedDiagnostic(value: unknown, walk: DiagnosticWalk): unknown {
   return target;
 }
 
-/** Keep an aggregate's mutable member array while enrolling it in the descriptor walk. */
-function retainAggregateMembers(error: AggregateError, walk: DiagnosticWalk): void {
+/** Keep a native aggregate's mutable member array while enrolling it in the descriptor walk. */
+function retainAggregateMembers(error: Error, walk: DiagnosticWalk): void {
   const descriptor = Object.getOwnPropertyDescriptor(error, "errors");
   if (!descriptor || !("value" in descriptor) || !Array.isArray(descriptor.value)) return;
   if (walk.seen.has(descriptor.value)) return;
@@ -116,7 +175,7 @@ function redactAccessor(
     descriptor: {
       configurable: descriptor.configurable,
       enumerable: descriptor.enumerable,
-      value: isRendererHook(key) ? neutralizedHookValue(key) : "<REDACTED>",
+      value: "<REDACTED>",
       writable: true,
     },
   });
@@ -130,12 +189,7 @@ function redactStoredValue(
   descriptor: PropertyDescriptor,
   walk: DiagnosticWalk,
 ): void {
-  let value: unknown;
-  if (isRendererHook(key) && descriptor.value !== undefined) {
-    value = neutralizedHookValue(key);
-  } else {
-    value = redactNestedDiagnostic(descriptor.value, walk);
-  }
+  const value = redactNestedDiagnostic(descriptor.value, walk);
   const replacement = { ...descriptor, value };
   if (source !== target) {
     Object.defineProperty(target, key, replacement);
@@ -149,80 +203,68 @@ function redactStoredValue(
   walk.updates.push({ target, key, descriptor: replacement });
 }
 
-/** Determine whether an inherited renderer can execute during diagnostic formatting. */
-function isExecutableInheritedRenderer(descriptor: PropertyDescriptor): boolean {
-  if (!("value" in descriptor)) return true;
-  return typeof descriptor.value === "function";
+/** Install one safe own shadow without reading an accessor or mutating before validation. */
+function installOwnShadow(
+  source: object,
+  target: object,
+  key: PropertyKey,
+  value: unknown,
+  walk: DiagnosticWalk,
+): void {
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  if (source !== target) {
+    Object.defineProperty(target, key, {
+      configurable: true,
+      enumerable: false,
+      value,
+      writable: true,
+    });
+    return;
+  }
+  if (descriptor && "value" in descriptor && Object.is(descriptor.value, value)) return;
+  if (
+    descriptor &&
+    !descriptor.configurable &&
+    (!("value" in descriptor) || !descriptor.writable)
+  ) {
+    walk.unsafe = true;
+    return;
+  }
+  if (!descriptor && !Object.isExtensible(target)) {
+    walk.unsafe = true;
+    return;
+  }
+  walk.updates.push({
+    target,
+    key,
+    descriptor: {
+      configurable: descriptor?.configurable ?? true,
+      enumerable: descriptor?.enumerable ?? false,
+      value,
+      writable: descriptor && "value" in descriptor ? descriptor.writable : true,
+    },
+  });
 }
 
-/** Give every retained container inert own coercion hooks without consulting its prototype. */
-function installSafeCoercionHooks(source: object, target: object, walk: DiagnosticWalk): void {
-  for (const key of COERCION_HOOKS) {
-    const descriptor = Object.getOwnPropertyDescriptor(source, key);
-    if (source !== target) {
-      Object.defineProperty(target, key, {
-        configurable: true,
-        enumerable: false,
-        value: safeDiagnosticCoercion,
-        writable: true,
-      });
-      continue;
-    }
-    if (descriptor && "value" in descriptor && descriptor.value === safeDiagnosticCoercion) {
-      continue;
-    }
-    if (
-      descriptor &&
-      !descriptor.configurable &&
-      (!("value" in descriptor) || !descriptor.writable)
-    ) {
-      walk.unsafe = true;
-      return;
-    }
-    if (!descriptor && !Object.isExtensible(target)) {
-      walk.unsafe = true;
-      return;
-    }
-    walk.updates.push({
-      target,
-      key,
-      descriptor: {
-        configurable: descriptor?.configurable ?? true,
-        enumerable: descriptor?.enumerable ?? false,
-        value: safeDiagnosticCoercion,
-        writable: "value" in (descriptor ?? {}) ? descriptor?.writable : true,
-      },
-    });
+/** Give every retained container inert own rendering and coercion properties. */
+function installUniversalShadows(source: object, target: object, walk: DiagnosticWalk): void {
+  for (const [key, value] of UNIVERSAL_SHADOWS) {
+    installOwnShadow(source, target, key, value, walk);
+    if (walk.unsafe) return;
   }
 }
 
-/** Shadow inherited rendering hooks without reading or invoking their values. */
-function neutralizeInheritedRenderers(source: object, target: object, walk: DiagnosticWalk): void {
-  for (const key of RENDERER_HOOKS) {
-    if (Object.hasOwn(source, key)) continue;
-    let prototype = Object.getPrototypeOf(source) as object | null;
-    let inherited = false;
-    while (prototype) {
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
-      if (descriptor) {
-        inherited = isExecutableInheritedRenderer(descriptor);
-        break;
-      }
-      prototype = Object.getPrototypeOf(prototype) as object | null;
-    }
-    if (!inherited) continue;
-    if (source === target && !Object.isExtensible(target)) {
-      walk.unsafe = true;
-      return;
-    }
-    const descriptor = {
-      configurable: true,
-      enumerable: false,
-      value: neutralizedHookValue(key),
-      writable: true,
-    };
-    if (source === target) walk.updates.push({ target, key, descriptor });
-    else Object.defineProperty(target, key, descriptor);
+/** Shadow missing or accessor-backed formatter fields on every retained native Error. */
+function installErrorRenderFields(error: Error, walk: DiagnosticWalk): void {
+  for (const [key, value] of ERROR_CONTROL_SHADOWS) {
+    installOwnShadow(error, error, key, value, walk);
+    if (walk.unsafe) return;
+  }
+  for (const [key, value] of ERROR_RENDER_FIELDS) {
+    const descriptor = Object.getOwnPropertyDescriptor(error, key);
+    if (descriptor && "value" in descriptor) continue;
+    installOwnShadow(error, error, key, value, walk);
+    if (walk.unsafe) return;
   }
 }
 
@@ -232,26 +274,39 @@ function redactStoredDiagnosticProperties(
   target: object,
   walk: DiagnosticWalk,
 ): void {
-  installSafeCoercionHooks(source, target, walk);
+  installUniversalShadows(source, target, walk);
   if (walk.unsafe) return;
-  neutralizeInheritedRenderers(source, target, walk);
+  const errorSource = isTrustedOnboardError(source);
+  if (errorSource) {
+    installErrorRenderFields(source, walk);
+    if (walk.unsafe) return;
+  }
   for (const key of Reflect.ownKeys(source)) {
     if (walk.unsafe) return;
-    if (isCoercionHook(key)) continue;
+    if (isUniversalShadow(key)) continue;
+    if (errorSource && isErrorControlShadow(key)) continue;
     if (isSensitiveDiagnosticKey(key)) {
       walk.unsafe = true;
       return;
     }
     const descriptor = Object.getOwnPropertyDescriptor(source, key);
     if (!descriptor) continue;
+    if (!("value" in descriptor) && errorSource && isErrorRenderField(key)) {
+      continue;
+    }
     if ("value" in descriptor) redactStoredValue(source, target, key, descriptor, walk);
     else redactAccessor(source, target, key, descriptor, walk);
   }
 }
 
+/*
+ * Every renderer-visible property is now owned locally before the graph is
+ * published, so inherited or later prototype changes cannot re-enter it.
+ */
+
 /** Sanitize every stored error diagnostic without invoking arbitrary accessors. */
 function redactErrorDiagnostic(error: Error, walk: DiagnosticWalk): void {
-  if (error instanceof AggregateError) retainAggregateMembers(error, walk);
+  retainAggregateMembers(error, walk);
   redactStoredDiagnosticProperties(error, error, walk);
 }
 
@@ -271,7 +326,7 @@ function redactPlainDiagnostic(
 
 /** Process one queued container so nested diagnostics do not consume the call stack. */
 function redactDiagnosticTask(task: DiagnosticTask, walk: DiagnosticWalk): void {
-  if (task.source instanceof Error) return redactErrorDiagnostic(task.source, walk);
+  if (isTrustedOnboardError(task.source)) return redactErrorDiagnostic(task.source, walk);
   if (Array.isArray(task.source) && Array.isArray(task.target)) {
     return redactArrayDiagnostic(task.source, task.target, walk);
   }
@@ -280,52 +335,44 @@ function redactDiagnosticTask(task: DiagnosticTask, walk: DiagnosticWalk): void 
   }
 }
 
-/** Construct an opaque replacement when the original graph cannot be safely rewritten. */
-function createFailClosedError(): Error {
-  const fallback = new Error(REDACTED_ERROR_MESSAGE);
-  Object.defineProperties(fallback, {
-    stack: {
+/** Construct a native Error whose formatter-visible surface is entirely own data. */
+function createSafeError(message: string): Error {
+  const error = new Error();
+  for (const [key, value] of ERROR_RENDER_FIELDS) {
+    const safeValue = key === "message" ? message : key === "stack" ? `Error: ${message}` : value;
+    Object.defineProperty(error, key, {
       configurable: true,
       enumerable: false,
-      value: `Error: ${REDACTED_ERROR_MESSAGE}`,
+      value: safeValue,
       writable: true,
-    },
-    toJSON: {
+    });
+  }
+  for (const [key, value] of ERROR_CONTROL_SHADOWS) {
+    Object.defineProperty(error, key, {
       configurable: true,
       enumerable: false,
-      value: undefined,
+      value,
       writable: true,
-    },
-    toString: {
+    });
+  }
+  for (const [key, value] of UNIVERSAL_SHADOWS) {
+    Object.defineProperty(error, key, {
       configurable: true,
       enumerable: false,
-      value: safeDiagnosticCoercion,
+      value,
       writable: true,
-    },
-    valueOf: {
-      configurable: true,
-      enumerable: false,
-      value: safeDiagnosticCoercion,
-      writable: true,
-    },
-    [CUSTOM_INSPECT]: {
-      configurable: true,
-      enumerable: false,
-      value: undefined,
-      writable: true,
-    },
-    [Symbol.toPrimitive]: {
-      configurable: true,
-      enumerable: false,
-      value: safeDiagnosticCoercion,
-      writable: true,
-    },
-  });
-  return fallback;
+    });
+  }
+  return error;
 }
 
-/** Redact an error graph, retaining mutable identities or returning an opaque fallback. */
-export function redactOnboardError(error: Error): Error {
+/** Construct an opaque replacement when the original graph cannot be safely rewritten. */
+function createFailClosedError(): Error {
+  return createSafeError(REDACTED_ERROR_MESSAGE);
+}
+
+/** Redact a trusted error graph, retaining mutable identities or returning an opaque fallback. */
+function redactTrustedOnboardError(error: Error): Error {
   const walk: DiagnosticWalk = {
     pending: [{ source: error, target: error }],
     seen: new WeakMap([[error, error]]),
@@ -345,6 +392,18 @@ export function redactOnboardError(error: Error): Error {
   } catch {
     return createFailClosedError();
   }
+}
+
+/** Return a safe native Error for every possible thrown or rollback value. */
+export function sanitizeOnboardFailure(value: unknown): Error {
+  if (isTrustedOnboardError(value)) return redactTrustedOnboardError(value);
+  if (typeof value === "string") return createSafeError(redactOnboardErrorText(value));
+  return createFailClosedError();
+}
+
+/** Preserve the existing named API while applying the central trust decision. */
+export function redactOnboardError(error: Error): Error {
+  return sanitizeOnboardFailure(error);
 }
 
 /** Redact complete secret blocks before bounding individual diagnostic lines. */
