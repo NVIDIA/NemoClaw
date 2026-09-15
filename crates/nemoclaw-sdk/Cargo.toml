@@ -13,6 +13,7 @@ workspace = true
 jsonschema.workspace = true
 
 [dependencies]
+thiserror.workspace = true
 schemars.workspace = true
 async-trait.workspace = true
 serde.workspace = true

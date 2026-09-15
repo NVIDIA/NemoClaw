@@ -134,6 +134,34 @@ fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
 }
 
 #[test]
+fn runtime_manifest_errors_distinguish_json_identity_paths_and_downloads() {
+    use nemoclaw_build::{RuntimeArtifact, RuntimeArtifactError};
+    use std::error::Error as _;
+    let error = RuntimeArtifact::parse(b"{").err().unwrap();
+    assert!(matches!(error, RuntimeArtifactError::Json(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
+    let valid = serde_json::json!({"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
+    let mut invalid = valid.clone();
+    invalid["name"] = "".into();
+    assert!(matches!(
+        RuntimeArtifact::parse(&serde_json::to_vec(&invalid).unwrap()),
+        Err(RuntimeArtifactError::InvalidManifest)
+    ));
+    invalid = valid.clone();
+    invalid["files"] = serde_json::json!(["Dockerfile", "Dockerfile"]);
+    assert!(matches!(
+        RuntimeArtifact::parse(&serde_json::to_vec(&invalid).unwrap()),
+        Err(RuntimeArtifactError::InvalidInputPath)
+    ));
+    invalid = valid;
+    invalid["downloads"] = serde_json::json!({"weights":{"url":"http://example.invalid/file","sha256":"0".repeat(64)}});
+    assert!(matches!(
+        RuntimeArtifact::parse(&serde_json::to_vec(&invalid).unwrap()),
+        Err(RuntimeArtifactError::InvalidDownload)
+    ));
+}
+
+#[test]
 fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices() {
     let root = tempfile::tempdir().unwrap();
     let retained = [

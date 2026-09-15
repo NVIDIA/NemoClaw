@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 [dependencies]
+thiserror.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 clap.workspace = true
 serde.workspace = true

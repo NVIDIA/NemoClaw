@@ -17,8 +17,25 @@ pub struct Download {
     pub url: String,
     pub sha256: String,
 }
+/// Failures while decoding or validating a runtime artifact manifest.
+#[derive(Debug, thiserror::Error)]
+pub enum RuntimeArtifactError {
+    #[error("{0}")]
+    Json(#[from] serde_json::Error),
+    #[error("invalid runtime artifact manifest")]
+    InvalidManifest,
+    #[error("invalid or duplicate artifact input path")]
+    InvalidInputPath,
+    #[error("artifact source requires HTTPS and SHA-256")]
+    InvalidDownload,
+}
 impl RuntimeArtifact {
-    pub fn parse(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Decode and validate the build inputs declared by a runtime manifest.
+    ///
+    /// # Errors
+    /// Returns a JSON error for malformed or incompatible input, or a validation
+    /// error for invalid identity, image, input paths, or download integrity data.
+    pub fn parse(bytes: &[u8]) -> Result<Self, RuntimeArtifactError> {
         let value: Self = serde_json::from_slice(bytes)?;
         let filename = |s: &str| {
             !s.is_empty()
@@ -45,11 +62,11 @@ impl RuntimeArtifact {
                 .all(|b| b.is_ascii_alphanumeric() || b"._-/:@".contains(&b))
             || !value.files.iter().any(|f| f == "Dockerfile")
         {
-            return Err("invalid runtime artifact manifest".into());
+            return Err(RuntimeArtifactError::InvalidManifest);
         }
         for name in value.files.iter().chain(value.downloads.keys()) {
             if !filename(name) || reserved.contains(&name.as_str()) || !names.insert(name) {
-                return Err("invalid or duplicate artifact input path".into());
+                return Err(RuntimeArtifactError::InvalidInputPath);
             }
         }
         for source in value.downloads.values() {
@@ -60,7 +77,7 @@ impl RuntimeArtifact {
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             {
-                return Err("artifact source requires HTTPS and SHA-256".into());
+                return Err(RuntimeArtifactError::InvalidDownload);
             }
         }
         Ok(value)

@@ -1675,6 +1675,7 @@ dependencies = [
  "sha2",
  "tar",
  "tempfile",
+ "thiserror",
  "tokio",
  "zip",
 ]
@@ -1768,6 +1769,7 @@ dependencies = [
  "sha2",
  "tar",
  "tempfile",
+ "thiserror",
  "time",
  "tokio",
  "tokio-util",

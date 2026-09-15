@@ -115,4 +115,4 @@ pub fn verify_source_version(expected: &str, files: &[(String, Vec<u8>)]) -> Res
 }
 
 mod runtime_artifact;
-pub use runtime_artifact::RuntimeArtifact;
+pub use runtime_artifact::{RuntimeArtifact, RuntimeArtifactError};
