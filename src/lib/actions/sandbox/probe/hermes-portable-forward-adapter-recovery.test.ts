@@ -196,4 +196,32 @@ describe("Hermes Portable typed forward recovery", () => {
       kind: "unhealthy",
     });
   });
+
+  it("preserves the initiating failure when rollback release is unproved", async () => {
+    const test = fixture(new Map());
+    test.startForward
+      .mockImplementationOnce(async ({ forward: target }) => ({
+        state: "started",
+        forward: target,
+        cleanup: async () => ({ state: "bound", forwards: [target] }),
+      }))
+      .mockImplementationOnce(async ({ forward: target }) => ({
+        state: "failed",
+        forward: target,
+        effect: "none",
+        error: {
+          kind: "command",
+          message: "The OpenShell forward command failed.",
+        },
+      }));
+
+    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+      failure: "restoration-unproved",
+      context: {
+        cause: "forward-mutation-failed",
+        operation: "start",
+        port: 8_642,
+      },
+    });
+  });
 });

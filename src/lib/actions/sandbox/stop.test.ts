@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as agentRuntime from "../../agent/runtime";
 import type { OpenShellForwardAdapter } from "../../adapters/openshell/forward";
@@ -13,6 +13,7 @@ import {
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import { decideOllamaModelOwnership } from "../../inference/ollama/model-ownership";
 import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
+import * as ollamaProxy from "../../inference/ollama/proxy";
 import type { SandboxEntry } from "../../state/registry";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
 import { discoverActiveOllamaSandboxNames, type SandboxStopDeps, stopSandbox } from "./stop";
@@ -98,7 +99,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
     DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
   >(() => false);
   const stopPortableSandbox = vi.fn<DockerRuntimeProviderDependencies["stopPortableSandbox"]>(
-    () => ({ kind: "not-installed" }),
+    async () => ({ kind: "not-installed" }),
   );
   const stopSandboxChannels = vi.fn<NonNullable<SandboxStopDeps["stopSandboxChannels"]>>();
   const dockerStop = vi.fn<DockerRuntimeProviderDependencies["stopContainer"]>(
@@ -107,10 +108,6 @@ function harness(overrides: StopHarnessOverrides = {}) {
   const captureSandboxLifecycle = vi.fn<
     DockerRuntimeProviderDependencies["captureSandboxLifecycle"]
   >(captureSandboxLifecycleOverride ?? (() => ({ status: 0, output: "stopped" })));
-  const withLifecycleLockSync: DockerRuntimeProviderDependencies["withLifecycleLockSync"] = (
-    _sandboxName,
-    operation,
-  ) => operation();
   const withLifecycleLock: NonNullable<SandboxStopDeps["withLifecycleLock"]> = async (
     _sandboxName,
     operation,
@@ -135,7 +132,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
         printRuntimeDownGuidance: printDockerRuntimeDownGuidance,
         stopContainer: dockerStop,
         stopPortableSandbox,
-        withLifecycleLockSync,
+        withLifecycleLock,
       }),
     ],
     ["kubernetes", createKubernetesRuntimeProviderBundle()],
@@ -321,6 +318,14 @@ describe("discoverActiveOllamaSandboxNames", () => {
 });
 
 describe("stopSandbox", () => {
+  beforeEach(() => {
+    vi.spyOn(ollamaProxy, "loadPersistedOllamaHost").mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("gracefully stops in-sandbox channels before stopping through OpenShell (#6026)", async () => {
     const h = harness();
 
@@ -496,7 +501,7 @@ describe("stopSandbox", () => {
       }),
     );
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
-    h.stopPortableSandbox.mockImplementation((_name, _context, beforeStop) => {
+    h.stopPortableSandbox.mockImplementation(async (_name, _context, beforeStop) => {
       beforeStop();
       return { kind: "stopped" };
     });
@@ -517,7 +522,10 @@ describe("stopSandbox", () => {
 
   it("keeps active Hermes stop out of Docker and Docker-capable channel transport (#9203)", async () => {
     const unloadOllamaModels = vi.fn(() => successfulUnload());
-    const h = harness({ unloadOllamaModels });
+    const h = harness({
+      unloadOllamaModels,
+      listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+    });
     h.getSandbox.mockReturnValue(
       sandbox({
         agent: "hermes",
@@ -530,7 +538,7 @@ describe("stopSandbox", () => {
       }),
     );
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
-    h.stopPortableSandbox.mockReturnValue({ kind: "stopped", portableAgent: "hermes" });
+    h.stopPortableSandbox.mockResolvedValue({ kind: "stopped", portableAgent: "hermes" });
 
     expect(await stopSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
 
@@ -560,7 +568,7 @@ describe("stopSandbox", () => {
     });
     h.getSandbox.mockReturnValue(hermesSandbox);
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
-    h.stopPortableSandbox.mockReturnValue({ kind: "stopped", portableAgent: "hermes" });
+    h.stopPortableSandbox.mockResolvedValue({ kind: "stopped", portableAgent: "hermes" });
 
     expect(await stopSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
     expect(unloadOllamaModels).not.toHaveBeenCalled();

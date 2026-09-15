@@ -374,7 +374,10 @@ export async function prepareHermesPortableLaunchForwards(
       try {
         await cleanupStartedForwards(input, cleanups);
       } catch {
-        normalized = new HermesPortableForwardRecoveryError("restoration-unproved");
+        normalized = new HermesPortableForwardRecoveryError(
+          "restoration-unproved",
+          normalized.context,
+        );
       }
     }
     timing.finish("failed");

@@ -923,7 +923,7 @@ function runSnapshotCreate(
 
 function requireRestoredOpenClawConfigPerms(
   targetSandbox: string,
-  result: ReturnType<typeof sandboxState.restoreSandboxState>,
+  result: Awaited<ReturnType<typeof sandboxState.restoreSandboxState>>,
 ): void {
   if (!result.restoredFiles.includes("openclaw.json")) return;
   let failure: string;
@@ -1466,11 +1466,11 @@ async function runSnapshotRestoreUnlocked(
     }
     const result =
       snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
-        ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {
+        ? await sandboxState.restoreSandboxState(targetSandbox, backupPath, {
             authority: snapshotRestoreAuthority,
             validateBeforeMutation: validateProviderRestoreBeforeMutation,
           })
-        : sandboxState.restoreSandboxState(targetSandbox, backupPath);
+        : await sandboxState.restoreSandboxState(targetSandbox, backupPath);
     if (result.success) {
       if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
         const currentTarget = registry.getSandbox(targetSandbox);

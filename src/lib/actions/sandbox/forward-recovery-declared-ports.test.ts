@@ -11,6 +11,7 @@ import type {
   StartOpenShellForwardRequest,
   VerifyOpenShellForwardReleaseRequest,
 } from "../../adapters/openshell/forward";
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 
 const mocks = vi.hoisted(() => ({
   createAdapter: vi.fn(),
@@ -188,6 +189,7 @@ describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => 
       expect.objectContaining({ sandboxName: "hermes-box", port: 18_789 }),
       expect.objectContaining({ sandboxName: "hermes-box", port: 8_642 }),
     ]);
+    expect(input.operationTimeoutMs).toBe(OPENSHELL_HEAVY_TIMEOUT_MS);
     expect(mocks.createAdapter).toHaveBeenCalledWith(
       {
         gatewayEndpoint: "https://127.0.0.1:8080",

@@ -12,7 +12,7 @@ import { createConnectHarness } from "../../../../test/support/connect-flow-test
 import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
 import { hermesPortableReceiptDirectory } from "../../onboard/experimental/hermes-portable-receipt";
 import type { SandboxEntry } from "../../state/registry";
-import { HermesPortableForwardRecoveryError } from "./probe/hermes-portable-forward-adapter-recovery";
+import { HermesPortableForwardRecoveryError } from "./process-recovery";
 
 const originalStdoutIsTty = process.stdout.isTTY;
 
@@ -859,6 +859,29 @@ describe("Hermes accepted launch-readiness probe", () => {
       expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     },
   );
+
+  it("reports the initiating timeout with unproved forward cleanup", async () => {
+    const harness = missingHermesHarness();
+    harness.verifyHermesPortableLaunchForwardsSpy.mockReturnValue({ kind: "unhealthy" });
+    harness.forwardAdapterObserveSpy.mockImplementation(async ({ forwards }) =>
+      forwards.map((forward: object) => ({ state: "absent" as const, forward })),
+    );
+    harness.forwardAdapterStartSpy.mockImplementation(async ({ forward }) => ({
+      state: "started" as const,
+      forward,
+      cleanup: async () => ({ state: "bound" as const, forwards: [forward] }),
+    }));
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Do not run another probe or launch");
+    expect(output).toContain("Initial recovery failure:");
+    expect(output).toContain("did not become healthy before the recovery deadline");
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
 
   it("rejects active and successor receipt replacement during semantic readiness", async () => {
     const harness = acceptedHermesHarness("compatible-endpoint", "descriptor/model");

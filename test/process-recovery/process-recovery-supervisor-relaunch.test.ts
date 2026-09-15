@@ -162,7 +162,7 @@ function composedRelaunchTransaction(
                 failedFiles: [],
               }) as never,
           ),
-          restoreState: vi.fn(() => {
+          restoreState: vi.fn(async () => {
             order.push("restore-state");
             return {
               success: true,
@@ -259,6 +259,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
           quiet: options.quiet,
           deps: {
             ...options.deps,
+            inspectContainer: vi.fn(() => ({
+              Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
+            })),
             readManagedWorkloadAuthority: vi.fn(
               () => ({ agent: "hermes", profile: { dashboard: { agent: "hermes" } } }) as never,
             ),
@@ -277,7 +280,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     });
 
     expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: false });
-    expect(resolveContainer).not.toHaveBeenCalled();
+    expect(resolveContainer).toHaveBeenCalledWith("legacy-hermes-box", "docker");
     expect(recreate).not.toHaveBeenCalled();
     const output = errorSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Hermes dashboard profile");

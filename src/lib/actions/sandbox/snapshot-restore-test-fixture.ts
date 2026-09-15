@@ -123,7 +123,7 @@ export const captureSnapshotRestoreAuthorityMock = vi.fn((_backupPath?: string) 
   contentSha256: "a".repeat(64),
 }));
 export const validateSnapshotRestoreMutationMock = vi.fn(
-  (backupPath: string, options: SnapshotRestoreOptions): string | null => {
+  async (backupPath: string, options: SnapshotRestoreOptions): Promise<string | null> => {
     if (options.authority) {
       const current = captureSnapshotRestoreAuthorityMock(backupPath);
       if (
@@ -135,7 +135,7 @@ export const validateSnapshotRestoreMutationMock = vi.fn(
       }
     }
     try {
-      options.validateBeforeMutation?.();
+      await options.validateBeforeMutation?.();
       return null;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

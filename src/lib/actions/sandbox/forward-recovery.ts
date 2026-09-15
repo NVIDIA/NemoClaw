@@ -12,7 +12,10 @@ import {
   type OpenShellForwardRuntimeAuthority,
 } from "../../adapters/openshell/forward-runtime";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/command-execution";
+import {
+  OPENSHELL_HEAVY_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
@@ -109,7 +112,8 @@ export function createHermesPortableForwardRecoveryInput(input: {
     intent: input.intent,
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
-    operationTimeoutMs: 30_000,
+    // Initial inspection, sequential starts, and joint verification share one deadline.
+    operationTimeoutMs: OPENSHELL_HEAVY_TIMEOUT_MS,
     ports: input.ports,
     probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     forwards: input.ports.map((port) =>

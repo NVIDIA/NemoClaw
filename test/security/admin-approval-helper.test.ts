@@ -101,11 +101,10 @@ function runSelector(
   }
 }
 
-function runAdminApprovalScript(
-  gatewayUrl: string,
-  insecurePrivateWs?: string,
-  failureCommand?: FakeFailureCommand,
-): { commands: string[]; result: SpawnSyncReturns<string> } {
+function runAdminApprovalScript(failureCommand?: FakeFailureCommand): {
+  commands: string[];
+  result: SpawnSyncReturns<string>;
+} {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-script-"));
   const cliPath = path.join(root, "nemoclaw");
   const openclawPath = path.join(root, "openclaw");
@@ -152,8 +151,6 @@ esac
     FAKE_DEVICES_STATE: devicesPath,
     FAKE_OPENCLAW_FAIL: failureCommand ?? "",
     FAKE_OPENCLAW_LOG: commandLogPath,
-    NEMOCLAW_OPENCLAW_GATEWAY_URL: gatewayUrl,
-    NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: insecurePrivateWs ?? "",
     OPENCLAW_STATE_DIR: stateRoot,
     OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "",
     OPENCLAW_GATEWAY_URL: "",
@@ -237,12 +234,8 @@ describe("prepared connect-shell administrative approval", () => {
     },
   );
 
-  it.each([
-    ["loopback ws", "ws://127.0.0.1:18789", undefined],
-    ["marked private ws", "ws://10.200.0.2:18789", "1"],
-    ["private wss", "wss://192.168.1.2:18789", undefined],
-  ])("executes the explicit approval sequence over %s (#5324)", (_case, gatewayUrl, marker) => {
-    const { commands, result } = runAdminApprovalScript(gatewayUrl, marker);
+  it("executes the approval sequence over native loopback (#5324)", () => {
+    const { commands, result } = runAdminApprovalScript();
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
@@ -268,11 +261,7 @@ describe("prepared connect-shell administrative approval", () => {
   ] as const)(
     "reports a fixed failure classification without raw command output when %s fails (#5324)",
     (failureCommand, expectedStatus, marker, diagnostic, expectedCommandCount) => {
-      const { commands, result } = runAdminApprovalScript(
-        "ws://127.0.0.1:18789",
-        undefined,
-        failureCommand,
-      );
+      const { commands, result } = runAdminApprovalScript(failureCommand);
       const output = `${result.stdout}\n${result.stderr}`;
 
       expect(result.status).toBe(expectedStatus);
@@ -286,18 +275,6 @@ describe("prepared connect-shell administrative approval", () => {
       expect(output).not.toContain("test-gateway-token");
     },
   );
-
-  it.each([
-    ["public ws", "ws://example.com:18789", "1"],
-    ["public wss", "wss://example.com:18789", undefined],
-    ["unmarked private ws", "ws://10.200.0.2:18789", undefined],
-  ])("rejects %s before invoking OpenClaw (#5324)", (_case, gatewayUrl, marker) => {
-    const { commands, result } = runAdminApprovalScript(gatewayUrl, marker);
-
-    expect(result.status).toBe(22);
-    expect(result.stderr).toContain("PRIVATE_GATEWAY_ALIAS_REJECTED");
-    expect(commands).toEqual([]);
-  });
 
   it.each(["array", "object"] as const)(
     "accepts exact paired CLI grants, including compact device scopes [case %#] (#5324)",

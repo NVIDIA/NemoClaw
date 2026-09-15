@@ -11,7 +11,7 @@
       "src/lib/adapters/openshell/resolve.ts": 25,
       "src/lib/adapters/openshell/runtime.ts": 45,
       "src/lib/adapters/openshell/sandbox-observer.ts": 35,
-      "src/lib/adapters/openshell/timeouts.ts": 27,
+      "src/lib/adapters/openshell/timeouts.ts": 28,
       "src/lib/agent/defs.ts": 33,
       "src/lib/cli/branding.ts": 80,
       "src/lib/cli/nemoclaw-oclif-command.ts": 106,
