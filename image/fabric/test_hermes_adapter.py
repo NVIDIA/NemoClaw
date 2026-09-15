@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import hermes_adapter as adapter
-from fabric import configuration
+from fabric import configuration, hermes_relay_enabled
 
 
 class HermesServerConfiguration(unittest.TestCase):
@@ -14,6 +14,31 @@ class HermesServerConfiguration(unittest.TestCase):
         config = configuration('main', 'hermes')
         self.assertEqual(config['harness']['adapter_id'], 'nemoclaw.local.hermes')
         self.assertEqual(config['harness']['settings']['agent_name'], 'main')
+
+    def test_relay_tracing_selects_upstream_adapter_without_sidecar(self):
+        inference = {'api': 'openai-completions', 'tuning': {},
+                     'observability': {'relay': {'enabled': True}}}
+        config = configuration('main', 'hermes', inference=inference)
+        self.assertEqual(config['harness']['adapter_id'], 'nvidia.fabric.hermes')
+        self.assertNotIn('discovery', config)
+        self.assertNotIn('agent_name', config['harness']['settings'])
+        self.assertEqual(config['harness']['settings']['api_mode'], 'chat_completions')
+        self.assertEqual(config['telemetry'], {'providers': {'relay': {}}})
+        self.assertEqual(config['relay']['project'], 'main')
+        self.assertEqual(config['relay']['output_dir'], '/sandbox/artifacts/relay')
+        self.assertTrue(config['relay']['observability']['atof']['enabled'])
+        self.assertTrue(config['relay']['observability']['atif']['enabled'])
+        self.assertFalse(config['relay']['observability']['enable_full_payloads'])
+
+    def test_relay_tracing_rejects_ambiguous_or_interface_configuration(self):
+        self.assertFalse(hermes_relay_enabled(None))
+        for inference in (
+            {'observability': {'relay': {'enabled': False}}},
+            {'observability': {'relay': {'enabled': True}, 'otlp': {}}},
+            {'observability': {'relay': {'enabled': True}}, 'interfaces': {}},
+        ):
+            with self.assertRaises(ValueError):
+                configuration('main', 'hermes', inference=inference)
 
     def test_retained_configuration_and_credential_reject_drift(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(adapter, 'ROOT', Path(directory)):

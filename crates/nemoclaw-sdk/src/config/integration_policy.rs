@@ -30,7 +30,8 @@ impl Sandbox {
         if self
             .agents
             .first()
-            .is_some_and(|a| a.observability.is_some())
+            .and_then(|a| a.observability.as_ref())
+            .is_some_and(|observability| observability.uses_otlp())
         {
             let name = "nemoclaw-otlp";
             if policy.network_policies.contains_key(name) {

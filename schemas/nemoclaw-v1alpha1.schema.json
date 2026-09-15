@@ -20,6 +20,13 @@
         },
         {
           "if": {
+            "properties": {
+              "observability": {
+                "required": [
+                  "otlp"
+                ]
+              }
+            },
             "required": [
               "observability"
             ]
@@ -28,6 +35,32 @@
             "properties": {
               "harness": {
                 "const": "openclaw"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "observability": {
+                "required": [
+                  "relay"
+                ]
+              }
+            },
+            "required": [
+              "observability"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "interfaces"
+              ]
+            },
+            "properties": {
+              "harness": {
+                "const": "hermes"
               }
             }
           }
@@ -130,7 +163,7 @@
         },
         "observability": {
           "$ref": "#/$defs/AgentObservability",
-          "description": "Shared OpenClaw tracing, declared only on the first agent. Adds the required collector egress grant."
+          "description": "Harness-native tracing, declared only on the first agent."
         },
         "tools": {
           "$ref": "#/$defs/AgentTools",
@@ -198,16 +231,39 @@
     },
     "AgentObservability": {
       "additionalProperties": false,
-      "description": "OpenClaw gateway telemetry, declared on the first agent and shared by its sandbox.",
+      "description": "Harness-native telemetry, declared on the first agent and shared by its sandbox.",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "relay"
+            ]
+          },
+          "required": [
+            "otlp"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "otlp"
+            ]
+          },
+          "required": [
+            "relay"
+          ]
+        }
+      ],
       "properties": {
         "otlp": {
           "$ref": "#/$defs/OtlpTracing",
-          "description": "Export traces to an externally operated local OTLP/HTTP collector. Credentials, logs, and metrics are excluded."
+          "description": "Export OpenClaw traces to an externally operated local OTLP/HTTP collector."
+        },
+        "relay": {
+          "$ref": "#/$defs/RelayTracing",
+          "description": "Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration."
         }
       },
-      "required": [
-        "otlp"
-      ],
       "type": "object"
     },
     "AgentTools": {
@@ -2092,6 +2148,21 @@
         "high"
       ],
       "type": "string"
+    },
+    "RelayTracing": {
+      "additionalProperties": false,
+      "description": "Explicitly enabled in-process NeMo Relay tracing.",
+      "properties": {
+        "enabled": {
+          "const": true,
+          "description": "Must be true. Omit observability to leave Relay tracing disabled.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
     },
     "Resources": {
       "additionalProperties": false,

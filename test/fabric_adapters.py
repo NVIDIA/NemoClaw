@@ -122,10 +122,13 @@ async def main():
         model = {'model': 'gpt-4o-mini'}
     api = os.environ.get('FABRIC_INFERENCE_API')
     inference = {'api': api, 'tuning': {}} if api else None
+    relay_enabled = HARNESS == 'hermes' and os.environ.get('FABRIC_HERMES_RELAY') == '1'
     if inference and HARNESS == 'openclaw':
         inference['tuning'] = {'contextWindow': 65536, 'maxTokens': 2048, 'reasoning': True, 'reasoningEffort': 'low'}
     if inference and HARNESS == 'hermes':
         inference['auth'] = {'method': 'api-key', 'providerRef': 'fixture'}
+        if relay_enabled:
+            inference['observability'] = {'relay': {'enabled': True}}
     if os.environ.get('FABRIC_TEST_INTERFACES') == '1':
         inference = inference or {'api': 'openai-completions', 'tuning': {}}
         inference['interfaces'] = ({'dashboard': {'port': 18800, 'bind': '127.0.0.1'}} if HARNESS == 'openclaw' else
@@ -171,7 +174,7 @@ async def main():
                 native_path.write_text(retained)
                 subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS, *extra], check=True)
             assert len(requests) == startup_requests, 'readiness made an inference request'
-            if HARNESS == 'hermes':
+            if HARNESS == 'hermes' and not relay_enabled:
                 import urllib.error
                 import urllib.request
                 from hermes_adapter import interface_settings
@@ -222,6 +225,7 @@ async def main():
                     with socket.socket() as connection:
                         assert connection.connect_ex(('127.0.0.1', settings['dashboard']['port'])) != 0
 
+            if HARNESS == 'hermes':
                 probe = subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'probe', 'fixture', 'hermes'], capture_output=True, text=True, check=True)
                 assert json.loads(probe.stdout)['status'] == 'succeeded'
             requests.clear()
@@ -253,7 +257,7 @@ async def main():
     runtime = await Fabric().start_runtime(FabricConfig.model_validate(config), base_dir='/sandbox')
     if interface_token:
         assert Path('/sandbox/.openclaw/interface-token').read_text() == interface_token, 'runtime restart rotated the retained credential'
-    if HARNESS == 'hermes':
+    if HARNESS == 'hermes' and not relay_enabled:
         assert Path('/sandbox/.hermes/interface-token').read_text() == retained_token
     results = []
     try:
@@ -282,12 +286,24 @@ async def main():
         assert requests and all(request['body']['model'] == model['model'] for request in requests), requests
     if HARNESS in ('mini-swe-agent', 'nooa', 'nooa-bench'):
         assert Path('/sandbox/workspace/tool-proof.txt').read_text() == 'FABRIC_FIXTURE_OK'
+    relay_artifacts = []
+    if relay_enabled:
+        relay_dir = Path('/sandbox/artifacts/relay')
+        event_files = sorted(relay_dir.glob('*/events.atof.jsonl'))
+        trajectories = sorted(relay_dir.glob('*/trajectory-*.atif.json'))
+        assert event_files and all(path.stat().st_size > 0 for path in event_files), 'Relay did not write ATOF events'
+        assert trajectories and all(path.stat().st_size > 0 for path in trajectories), 'Relay did not write ATIF trajectories'
+        relay_artifacts = [str(path.relative_to(relay_dir)) for path in (*event_files, *trajectories)]
+        artifact_text = '\n'.join(path.read_text() for path in (*event_files, *trajectories))
+        assert 'fixture-only' not in artifact_text, 'Relay artifacts leaked the model credential'
     Path('/evidence/proof.json').write_text(json.dumps({'harness': HARNESS, 'readiness_without_inference': True, 'authenticated_interfaces_verified': os.environ.get('FABRIC_TEST_INTERFACES') == '1',
-        **({'hermes_dashboard': settings['dashboard'], 'hermes_api_port': settings['apiPort']} if HARNESS == 'hermes' else {}),
+        **({'hermes_dashboard': settings['dashboard'], 'hermes_api_port': settings['apiPort']}
+           if HARNESS == 'hermes' and not relay_enabled else {}),
         'tool_file_verified': HARNESS in ('mini-swe-agent', 'nooa', 'nooa-bench'),
         'stopped': True, 'ordered_invocations': len(results), 'runtime_id': runtime.runtime_id, 'request_paths': sorted({r['path'] for r in requests}),
         **({'configured_model': model['model'], 'request_models': sorted({r['body']['model'] for r in requests}),
             'model_change_and_unchanged_apply_verified': True} if HARNESS == 'pi' else {}),
+        **({'relay': {'in_process': True, 'artifacts': relay_artifacts, 'credential_leak': False}} if relay_enabled else {}),
         'network': 'none; local TLS protocol fixture; no live model'}, indent=2)+'\n')
 
 

@@ -272,7 +272,7 @@ pub struct Network {
 pub struct Agent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentObservability")]
-    /// Shared OpenClaw tracing, declared only on the first agent. Adds the required collector egress grant.
+    /// Harness-native tracing, declared only on the first agent.
     pub observability: Option<super::AgentObservability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentExecution")]

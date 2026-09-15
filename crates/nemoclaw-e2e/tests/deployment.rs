@@ -334,7 +334,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         if let Some(execution) = &mut changed.spec.sandboxes[0].agents[0].execution {
             execution.timeout_seconds = Some(1200);
         } else if let Some(observability) = &mut changed.spec.sandboxes[0].agents[0].observability {
-            observability.otlp.sample_rate = 1.into();
+            observability.otlp.as_mut().unwrap().sample_rate = 1.into();
         } else {
             changed.spec.inference_providers[0].api = Some(
                 if document.spec.inference_providers[0].api

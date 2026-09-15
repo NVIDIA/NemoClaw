@@ -4,12 +4,18 @@ use super::ConfigError;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const OTLP_ENDPOINT: &str = "http://host.openshell.internal:4318";
-/// OpenClaw gateway telemetry, declared on the first agent and shared by its sandbox.
+/// Harness-native telemetry, declared on the first agent and shared by its sandbox.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentObservability {
-    /// Export traces to an externally operated local OTLP/HTTP collector. Credentials, logs, and metrics are excluded.
-    pub otlp: OtlpTracing,
+    /// Export OpenClaw traces to an externally operated local OTLP/HTTP collector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "OtlpTracing")]
+    pub otlp: Option<OtlpTracing>,
+    /// Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "RelayTracing")]
+    pub relay: Option<RelayTracing>,
 }
 /// Explicitly enabled HTTP/protobuf tracing. The collector is not managed by NemoClaw.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -25,25 +31,43 @@ pub struct OtlpTracing {
     #[schemars(with = "f64", range(min = 0, max = 1))]
     pub sample_rate: serde_json::Number,
 }
+/// Explicitly enabled in-process NeMo Relay tracing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RelayTracing {
+    /// Must be true. Omit observability to leave Relay tracing disabled.
+    pub enabled: bool,
+}
 impl AgentObservability {
     pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        let otlp = &self.otlp;
-        if harness != "openclaw"
-            || !otlp.enabled
-            || otlp.endpoint != OTLP_ENDPOINT
-            || otlp.service_name.is_empty()
-            || otlp.service_name.len() > 256
-            || otlp.service_name.trim() != otlp.service_name
-            || !otlp.service_name.bytes().all(|b| (32..=126).contains(&b))
-            || otlp
-                .sample_rate
-                .as_f64()
-                .is_none_or(|n| !(0.0..=1.0).contains(&n))
-        {
-            return Err(ConfigError(
-                "OTLP requires OpenClaw, the local collector, a printable service name and a sample rate from 0 through 1",
-            ));
+        match (&self.otlp, &self.relay) {
+            (Some(otlp), None)
+                if harness == "openclaw"
+                    && otlp.enabled
+                    && otlp.endpoint == OTLP_ENDPOINT
+                    && !otlp.service_name.is_empty()
+                    && otlp.service_name.len() <= 256
+                    && otlp.service_name.trim() == otlp.service_name
+                    && otlp.service_name.bytes().all(|b| (32..=126).contains(&b))
+                    && otlp
+                        .sample_rate
+                        .as_f64()
+                        .is_some_and(|n| (0.0..=1.0).contains(&n)) => {}
+            (None, Some(relay)) if harness == "hermes" && relay.enabled => {}
+            _ => {
+                return Err(ConfigError(
+                    "observability requires exactly one supported harness-native integration",
+                ));
+            }
         }
         Ok(())
+    }
+
+    pub(crate) fn uses_otlp(&self) -> bool {
+        self.otlp.is_some()
+    }
+
+    pub(crate) fn uses_relay(&self) -> bool {
+        self.relay.is_some()
     }
 }

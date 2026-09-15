@@ -179,7 +179,7 @@ fn guide(name: &str) -> &'static str {
             "[Agent interfaces](../interfaces.md)"
         }
         "Integrations" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
-        | "AgentObservability" | "OtlpTracing" | "AgentTools" | "AllowedTool"
+        | "AgentObservability" | "OtlpTracing" | "RelayTracing" | "AgentTools" | "AllowedTool"
         | "ToolDisclosure" => "[Agent runtimes](../agents.md)",
         _ => "[Configuration and credentials](../usage.md#configuration-and-credentials)",
     }

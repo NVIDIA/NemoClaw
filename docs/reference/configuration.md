@@ -60,7 +60,7 @@ Paths:
 | `inference` | [Inference](#inference) | Yes | — | Primary inference route for this agent. |
 | `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access, declared only on the first agent in a sandbox. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `observability` | [AgentObservability](#agentobservability) | No | — | Shared OpenClaw tracing, declared only on the first agent. Adds the required collector egress grant. |
+| `observability` | [AgentObservability](#agentobservability) | No | — | Harness-native tracing, declared only on the first agent. |
 | `tools` | [AgentTools](#agenttools) | No | — | OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access. |
 
 ## AgentAuth
@@ -107,7 +107,7 @@ Accepted input: [OpenClawInterfaces](#openclawinterfaces) or [HermesInterfaces](
 
 ## AgentObservability
 
-OpenClaw gateway telemetry, declared on the first agent and shared by its sandbox.
+Harness-native telemetry, declared on the first agent and shared by its sandbox.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -117,7 +117,8 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `otlp` | [OtlpTracing](#otlptracing) | Yes | — | Export traces to an externally operated local OTLP/HTTP collector. Credentials, logs, and metrics are excluded. |
+| `otlp` | [OtlpTracing](#otlptracing) | No | — | Export OpenClaw traces to an externally operated local OTLP/HTTP collector. |
+| `relay` | [RelayTracing](#relaytracing) | No | — | Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration. |
 
 ## AgentTools
 
@@ -1004,6 +1005,20 @@ Paths:
 Accepted input: string.
 
 Constraints: `"default"` or `"low"` or `"medium"` or `"high"`.
+
+## RelayTracing
+
+Explicitly enabled in-process NeMo Relay tracing.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].observability.relay`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `enabled` | boolean | Yes | — | Must be true. Omit observability to leave Relay tracing disabled. Constraints: `true`. |
 
 ## Resources
 

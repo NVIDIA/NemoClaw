@@ -138,6 +138,27 @@ Configuration readiness does not establish collector delivery; verify incoming t
 Use an image built with the updated [runtime build procedure](#runtime-lifecycle) and a fresh deployment when changing image or tracing intent.
 The offline native test proves trace delivery to a disposable collector; it does not qualify a production collector or its retention settings.
 
+## Hermes Relay Tracing
+
+Enable the experimental Hermes tracing path on the first agent:
+
+```yaml
+observability:
+  relay:
+    enabled: true
+```
+
+Fabric then starts Hermes through its upstream adapter and enables Hermes' in-process NeMo Relay integration.
+Relay writes ATOF events and an ATIF trajectory under `/sandbox/artifacts/relay`; it does not run as a sidecar or add network egress.
+Full payload capture is disabled.
+
+This path cannot be combined with Hermes `interfaces` because the upstream adapter does not provide NemoClaw's local API and dashboard process.
+Omit `observability` to preserve the existing local Hermes adapter and its interface behavior.
+
+The current image recipe pins Hermes 0.21.0 and Relay 0.7.3, matching the Fabric adapter's declared Relay range.
+Treat this as a tracing proof, not the production Relay 0.8 path.
+Production migration remains gated on a released Fabric adapter compatible with the released Hermes and Relay tuple, followed by the normal security and live end-to-end qualification.
+
 ## Brave Web Search
 
 Declare web search on the sandbox, using names from its OpenClaw agent list:
