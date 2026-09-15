@@ -18,6 +18,7 @@ import {
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
 import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
+import { parseSingleNpmPackResult } from "../../helpers/npm-pack-result";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -194,10 +195,7 @@ describe("standard E2E execution profile", () => {
           },
         );
         expect(packed.status, packed.stderr).toBe(0);
-        const [{ filename, integrity }] = JSON.parse(packed.stdout) as Array<{
-          filename: string;
-          integrity: string;
-        }>;
+        const { filename, integrity } = parseSingleNpmPackResult(packed.stdout);
         expect(filename).toBe("nvidia-openshell-sdk-0.0.116.tgz");
         fs.writeFileSync(
           path.join(projectDirectory, "package.json"),
