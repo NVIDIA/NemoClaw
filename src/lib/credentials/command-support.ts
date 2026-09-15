@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { recoverNamedGatewayRuntime } from "../actions/global";
+import { type GatewayRecovery, recoverNamedGatewayRuntime } from "../actions/global";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { GATEWAY_PORT } from "../core/ports";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
@@ -57,6 +57,14 @@ export function credentialsGatewayAuthorityFailureLines(
   ];
 }
 
+function hasGatewayIdentityMismatch(
+  observation: GatewayRecovery["before"] | GatewayRecovery["after"],
+): boolean {
+  return (
+    observation?.error?.kind === "transport" && observation.error.reason === "identity_mismatch"
+  );
+}
+
 export async function recoverGatewayOrExit(
   kind: "query" | "reach",
   reportFailure: (lines: readonly string[]) => void = (lines) =>
@@ -65,15 +73,8 @@ export async function recoverGatewayOrExit(
   const recovery = await recoverNamedGatewayRuntime();
   if (recovery.recovered) return true;
 
-  const recoveryEvidence = recovery as typeof recovery & {
-    before?: { recoveryBlocked?: boolean; unavailable?: boolean };
-    after?: { recoveryBlocked?: boolean; unavailable?: boolean };
-  };
   const identityUnproven =
-    (recoveryEvidence.before?.recoveryBlocked === true &&
-      recoveryEvidence.before.unavailable !== true) ||
-    (recoveryEvidence.after?.recoveryBlocked === true &&
-      recoveryEvidence.after.unavailable !== true);
+    hasGatewayIdentityMismatch(recovery.before) || hasGatewayIdentityMismatch(recovery.after);
   reportFailure(
     identityUnproven
       ? credentialsGatewayIdentityFailureLines(kind)
