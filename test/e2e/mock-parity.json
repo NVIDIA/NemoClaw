@@ -138,6 +138,7 @@
       "liveSources": ["test/e2e/live/inference-routing-helpers.ts"],
       "fast": [
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
+        "nemoclaw/src/blueprint/runner.test.ts",
         "nemoclaw/src/blueprint/runner-identity.test.ts",
         "nemoclaw/src/blueprint/runtime-identity.test.ts",
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
@@ -217,24 +218,6 @@
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/install/installer-hash-check.test.ts",
         "test/e2e-runtime/runner.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/gateway-guard-recovery.test.ts",
-      "fast": [
-        "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
-        "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
-        "src/lib/onboard/docker-gpu-supervisor-reconnect.test.ts",
-        "src/lib/onboard/docker-startup-command-patch.test.ts",
-        "src/lib/sandbox/privileged-exec.test.ts",
-        "test/inference/managed/managed-gateway-control.test.ts",
-        "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
-        "test/e2e/support/managed-image-cohort-contract.test.ts",
-        "test/e2e/support/managed-image-receipt.test.ts",
-        "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
-        "test/helpers/e2e-answer-assertions.test.ts",
-        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts",
-        "test/onboarding/docker-final-handoff-lifecycle.test.ts"
       ]
     },
     {
@@ -597,6 +580,7 @@
       "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
       "fast": [
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
+        "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -835,6 +819,7 @@
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "liveSources": [
         "test/e2e/live/rebuild-hermes-base-identity.ts",
+        "test/e2e/live/rebuild-hermes-bootstrap.ts",
         "test/e2e/live/rebuild-hermes-cron-restore.ts",
         "test/e2e/live/rebuild-hermes-env.ts",
         "test/e2e/live/rebuild-hermes-host-policy.ts"
@@ -865,6 +850,7 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/process-recovery-managed-startup.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

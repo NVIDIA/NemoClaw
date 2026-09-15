@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { withSelectedOpenShellCommandOptions } from "./command-argv";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type { OpenShellGatewayObservation, OpenShellGatewayObserver } from "./gateway-observer";
 import { isValidName } from "../../sandbox-name-contract";
@@ -12,7 +13,6 @@ import {
   type CapturedOpenShellCommandResult,
 } from "./sandbox-observer-cli";
 import type { OpenShellSandboxError } from "./sandbox-observer";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 const messages = {
   authentication: "OpenShell could not authenticate the gateway observation.",

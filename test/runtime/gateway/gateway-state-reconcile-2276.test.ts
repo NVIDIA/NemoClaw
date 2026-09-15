@@ -189,6 +189,11 @@ if (args[0] === "provider" && args[1] === "get") {
   process.exit(0);
 }
 
+if (args.includes("forward") && args.includes("list")) {
+  process.stderr.write("No active forwards.\\n");
+  process.exit(0);
+}
+
 // forward stop/start, provider delete, logs, etc. — no-op success
 process.exit(0);
 `;

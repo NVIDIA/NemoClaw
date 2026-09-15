@@ -746,6 +746,8 @@ childProcess.spawn = (...args) => {
   child.stderr = new EventEmitter();
   child.unref = () => {};
   child.pid = 4242;
+  child.exitCode = null;
+  child.signalCode = null;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => child.emit("close", 0));
   return child;
@@ -1021,7 +1023,9 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
-require(${scriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const fixtureMocks = require(${scriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.installForwardServiceReachabilityFixture();
 const onboardSession = require(${onboardSessionPath});
 onboardSession.loadSession = () => ({
   checkpoint: {

@@ -1,12 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { findDashboardForwardOwner } from "./dashboard-port";
 import {
   replaceOpenShellRuntimeSelectionEnv,
   snapshotOpenShellEnv,
   type OpenShellRuntimeSelection,
 } from "../adapters/openshell/runtime-selection";
+import {
+  createOpenShellForwardPortObserver,
+  type OpenShellForwardPortObserver,
+} from "./dashboard-port";
+import {
+  createOpenShellForwardAdapterForAuthority,
+  openShellForwardIdentity,
+} from "../adapters/openshell/forward-runtime";
+import { resolveDashboardForwardBind, type DashboardForwardBind } from "./dashboard-runtime";
 import { resolveGatewayName } from "./gateway-binding";
 import type { InferenceRouteState } from "./inference-route";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
@@ -264,15 +272,58 @@ export type AuthoritativeRebuildTargetDeps = {
   ensureOpenshell(): unknown;
   assertGatewayReadiness(): unknown | Promise<unknown>;
   inferenceRouteState(provider: string, model: string): InferenceRouteState;
-  captureForwardList(): string | null;
+  observeForwardPorts: OpenShellForwardPortObserver;
   env?: NodeJS.ProcessEnv;
 };
 
+type AuthoritativeRebuildForwardObserverContext = {
+  sandbox?: { dashboardRemoteBindPrepared?: boolean } | null;
+  wsl?: boolean;
+};
+
+/** Derive rebuild observations from the same persisted and platform-aware bind contract as launch. */
+export function resolveAuthoritativeRebuildDashboardBind(
+  env: NodeJS.ProcessEnv,
+  context: AuthoritativeRebuildForwardObserverContext = {},
+): DashboardForwardBind {
+  return resolveDashboardForwardBind(context.sandbox, {
+    requestedBind: env.NEMOCLAW_DASHBOARD_BIND,
+    wsl: context.wsl === true,
+  });
+}
+
+/** Bind authoritative rebuild port observations to one exact gateway runtime. */
+export function forwardObserver(
+  target: Pick<
+    AuthoritativeRebuildPreflightOptions,
+    "runtimeSelection" | "sandboxName" | "targetGatewayName"
+  >,
+  inputAuthority: { gatewayEndpoint: string; localTlsDir?: string },
+  context: AuthoritativeRebuildForwardObserverContext,
+  env: NodeJS.ProcessEnv = process.env,
+): OpenShellForwardPortObserver {
+  const authority = {
+    gatewayEndpoint: inputAuthority.gatewayEndpoint,
+    gatewayName: target.targetGatewayName,
+    workspace: target.runtimeSelection?.workspace ?? "default",
+    ...(inputAuthority.localTlsDir ? { localTlsDir: inputAuthority.localTlsDir } : {}),
+  };
+  return createOpenShellForwardPortObserver({
+    adapter: createOpenShellForwardAdapterForAuthority(authority),
+    forwardForPort: (port) =>
+      openShellForwardIdentity(
+        authority,
+        target.sandboxName,
+        resolveAuthoritativeRebuildDashboardBind(env, context),
+        port,
+      ),
+  });
+}
+
 /** Run target-bound readiness and installer checks under an exact process-local gateway scope. */
-export async function preflightAuthoritativeRebuildTarget(
-  target: AuthoritativeRebuildTarget,
-  deps: AuthoritativeRebuildTargetDeps,
-): Promise<void> {
+export async function preflightAuthoritativeRebuildTarget<
+  Deps extends AuthoritativeRebuildTargetDeps,
+>(target: AuthoritativeRebuildTarget, deps: Deps): Promise<void> {
   const env = deps.env ?? process.env;
   const fail = (message: string): never => {
     throw new Error(message);
@@ -315,16 +366,17 @@ export async function preflightAuthoritativeRebuildTarget(
     }
     if (target.controlUiPort === null) return;
     assertDashboardPortNotReserved(target.controlUiPort, fail);
-    const owner = findDashboardForwardOwner(
-      deps.captureForwardList(),
-      String(target.controlUiPort),
-    );
-    if (owner && owner !== target.sandboxName) {
-      fail(`Dashboard port ${target.controlUiPort} belongs to sandbox '${owner}'.`);
+    const [observation] = await deps.observeForwardPorts([target.controlUiPort]);
+    if (!observation || observation.state === "foreign") {
+      fail(
+        `Dashboard port ${String(target.controlUiPort)} is held by a forward not owned by sandbox '${target.sandboxName}'.`,
+      );
     }
-    // A direct ForwardTcp process has no legacy list row. Rebuild makes the
-    // sandbox unavailable first; the natural OpenShell lifecycle releases its
-    // port. The replacement launch then refuses any port that stayed occupied.
+    if (observation.state === "indeterminate") {
+      fail(
+        `Cannot prove dashboard port ${String(target.controlUiPort)} ownership: ${observation.error.message}`,
+      );
+    }
   } finally {
     restoreRuntimeSelection();
   }

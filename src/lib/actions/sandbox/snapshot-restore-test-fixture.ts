@@ -221,6 +221,13 @@ export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(as
   sawProgress: false,
   forcedReady: false,
 }));
+export const allocateSnapshotCloneForwardPortsMock = vi.fn(
+  async (input: { source: SandboxRecord }) => ({
+    dashboardPort:
+      typeof input.source.dashboardPort === "number" ? input.source.dashboardPort : null,
+    hermesApiPort: input.source.agent === "hermes" ? 8_642 : null,
+  }),
+);
 export const latestBackupFixture = {
   timestamp: "2026-06-15T00:00:00.000Z",
   backupPath: "/tmp/backup-alpha",
@@ -384,6 +391,11 @@ vi.mock("./restore-gateway-pairing", () => ({
   waitForRestoredSandboxGatewaySupervisor: waitForRestoredSandboxGatewaySupervisorMock,
 }));
 
+vi.mock("./snapshot/forward-port-allocation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./snapshot/forward-port-allocation")>()),
+  allocateSnapshotCloneForwardPorts: allocateSnapshotCloneForwardPortsMock,
+}));
+
 vi.mock("./mcp-bridge-adapter-deepagents-registration", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-adapter-deepagents-registration")>()),
   restoreDeepAgentsNativeMcpConfig: restoreDeepAgentsNativeMcpConfigMock,
@@ -467,6 +479,11 @@ export function resetSnapshotRestoreMocks(): void {
     output: "",
     sawProgress: false,
     forcedReady: false,
+  }));
+  allocateSnapshotCloneForwardPortsMock.mockImplementation(async (input) => ({
+    dashboardPort:
+      typeof input.source.dashboardPort === "number" ? input.source.dashboardPort : null,
+    hermesApiPort: input.source.agent === "hermes" ? 8_642 : null,
   }));
   waitForRestoredSandboxGatewaySupervisorMock.mockReturnValue(true);
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));

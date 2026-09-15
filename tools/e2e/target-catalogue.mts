@@ -265,6 +265,13 @@ const SKILL_LIFECYCLE_OWNING_PATHS = [
   "src/lib/skill-install.ts",
 ] as const;
 
+const OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS = [
+  "src/lib/adapters/openshell/command-execution.ts",
+  "src/lib/adapters/openshell/forward-cli.ts",
+  "src/lib/adapters/openshell/forward-runtime.ts",
+  "src/lib/adapters/openshell/forward.ts",
+] as const;
+
 // Keep every checked-in input copied by the Pi Dockerfiles in the PR selection boundary.
 // test/e2e/support/pi-agent-qualification-events.test.ts verifies this list against the
 // real Dockerfiles so a new COPY instruction cannot silently reuse a stale image receipt.
@@ -661,7 +668,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/json-envelope.ts"],
+    owningPaths: [...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS, "test/e2e/live/json-envelope.ts"],
     environment: {
       ...hostedInference,
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
@@ -711,6 +718,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       restoreCli: true,
       exposeCliBin: true,
       owningPaths: [
+        ...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS,
         "src/lib/onboard/dashboard.ts",
         "src/lib/onboard/dashboard-forward-control.ts",
         "src/lib/onboard/dashboard-runtime.ts",
@@ -792,23 +800,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-full",
-    },
-  }),
-  dockerOnlyTarget("gateway-guard-recovery", {
-    displayName: "Gateway: restores the guard chain after recreation",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
-    profile: "nvidia-inference",
-    timeoutMinutes: 45,
-    installMode: "authenticated",
-    installNonInteractive: true,
-    restoreCli: true,
-    exposeCliBin: true,
-    owningPaths: ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
-    environment: {
-      ...hostedInference,
-      ...nonInteractive,
-      OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
   managedRuntimeTarget("hermes-discord", {
@@ -1324,9 +1315,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("sandbox-survival", {
-    displayName: "Lifecycle: preserves sandbox state after an OpenShell gateway restart",
+    displayName: "Lifecycle: preserves native agent state across OpenShell restart",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
+    environmentOrInferenceEndpoint: "Ubuntu; OpenShell sandbox lifecycle",
     profile: "nvidia-inference",
     timeoutMinutes: 30,
     installMode: "none",
