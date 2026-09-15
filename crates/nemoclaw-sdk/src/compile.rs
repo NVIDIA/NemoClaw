@@ -30,7 +30,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
     document.validate()?;
     let workspace = document.workspace();
     let provider = &document.spec.inference_providers[0];
-    let connection = document.inference_connection();
+    let connection = document.inference_connection()?;
     let sandbox = &document.spec.sandboxes[0];
     let agent = &sandbox.agents[0];
     let mut result = Vec::new();

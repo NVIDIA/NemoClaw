@@ -29,7 +29,7 @@ fn all_recipes_preserve_defaults_digest_workspace_and_round_trip() {
             expected["workspace"].as_str().unwrap()
         );
         assert_eq!(
-            document.inference_endpoint(),
+            document.inference_endpoint().unwrap(),
             expected["endpoint"].as_str().unwrap()
         );
         assert_eq!(

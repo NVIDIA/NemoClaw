@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 #[test]
+fn invalid_placement_network_does_not_panic() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
+    value["service"]["placement"] = json!({"engine":"ssh://host","networkCidr":"invalid"});
+    let spec: Spec = serde_json::from_value(value).unwrap();
+    assert!(spec.bridge().is_err());
+}
+#[test]
 fn runtime_service_handles_a_gateway_without_panicking() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();

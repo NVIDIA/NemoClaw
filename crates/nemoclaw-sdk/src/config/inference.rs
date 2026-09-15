@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{Credential, Document};
+use super::{ConfigError, Credential, Document};
 
 /// Upstream connection as used by OpenShell routing, independent of the sandbox
 /// engine. Credentials remain references. Resolution performs no reachability probe.
@@ -18,27 +18,32 @@ impl Document {
                 .iter()
                 .any(|p| p.service.is_some())
     }
-    /// Resolve an already validated document. Managed inference retains the
-    /// existing same-host publication; external inference uses its explicit URL.
+    /// Validate the document and resolve its inference connection.
+    /// Managed inference retains its publication; external inference uses its explicit URL.
     /// Reachability must be checked through the sandbox, not the CLI host.
-    pub fn inference_connection(&self) -> InferenceConnection {
-        let provider = &self.spec.inference_providers[0];
+    ///
+    /// # Errors
+    /// Returns an error if the document is invalid or its managed bridge address
+    /// cannot be resolved. This operation does not contact external services.
+    pub fn inference_connection(&self) -> Result<InferenceConnection, ConfigError> {
+        self.validate()?;
+        let [provider] = self.spec.inference_providers.as_slice() else {
+            return Err(ConfigError("exactly one inference provider is required"));
+        };
         let endpoint = match &provider.service {
             None => provider.endpoint.clone(),
-            Some(service) => service.publication.as_ref().map_or_else(
-                || {
-                    format!(
-                        "http://{}:{}/v1",
-                        self.spec.gateway.bridge(),
-                        service.serving.port
-                    )
-                },
-                |publication| publication.endpoint.clone(),
-            ),
+            Some(service) => match &service.publication {
+                Some(publication) => publication.endpoint.clone(),
+                None => format!(
+                    "http://{}:{}/v1",
+                    self.spec.gateway.bridge()?,
+                    service.serving.port
+                ),
+            },
         };
-        InferenceConnection {
+        Ok(InferenceConnection {
             endpoint,
             credential: provider.credential.clone(),
-        }
+        })
     }
 }

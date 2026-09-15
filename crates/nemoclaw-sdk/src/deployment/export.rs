@@ -59,7 +59,7 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         return Err(Error::Conflict("provider type drift requires inspection"));
     }
     if document.spec.inference_providers[0].service.is_some() {
-        if observed["endpoint"] != document.inference_endpoint()
+        if observed["endpoint"] != document.inference_endpoint()?
             || !observed["credential_env"].is_empty()
         {
             return Err(Error::Conflict("managed inference registration drifted"));

@@ -13,7 +13,7 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
     let create = serde_json::to_value(initializer(&spec, data_path).unwrap()).unwrap();
     let helper = json!({"Id":"helper","Config":create,"HostConfig":create["HostConfig"],"State":{"Status":"exited","Running":false,"ExitCode":0},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":data_path,"RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":data_path,"CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
-    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge()}]}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new((
         Some(helper),
         Some(volume),

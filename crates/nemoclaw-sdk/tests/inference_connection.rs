@@ -3,10 +3,31 @@
 use nemoclaw_sdk::config::{Credential, Document};
 
 #[test]
+fn missing_inference_provider_does_not_panic() {
+    let mut document =
+        Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.inference_providers.clear();
+    assert!(document.inference_connection().is_err());
+    assert!(document.inference_endpoint().is_err());
+}
+
+#[test]
+fn bridge_resolution_rejects_malformed_networks_and_overflow() {
+    let mut document =
+        Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.gateway.network_cidr = "10.0.0.0/24".into();
+    assert_eq!(document.spec.gateway.bridge().unwrap(), "10.0.0.1");
+    for network in ["invalid", "::/64", "255.255.255.255/32"] {
+        document.spec.gateway.network_cidr = network.into();
+        assert!(document.spec.gateway.bridge().is_err(), "{network}");
+    }
+}
+
+#[test]
 fn inference_connection_is_resolved_independently_of_the_sandbox_engine() {
     let local = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
-    let published = local.inference_connection();
-    assert_eq!(published.endpoint, local.inference_endpoint());
+    let published = local.inference_connection().unwrap();
+    assert_eq!(published.endpoint, local.inference_endpoint().unwrap());
     assert!(published.credential.is_none());
     let mut remote =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
@@ -14,17 +35,17 @@ fn inference_connection_is_resolved_independently_of_the_sandbox_engine() {
     remote.spec.inference_providers[0].credential = Some(Credential {
         env: "MODEL_TOKEN".into(),
     });
-    let first = remote.inference_connection();
+    let first = remote.inference_connection().unwrap();
     remote.spec.sandboxes[0].runtime.provider = "podman".into();
     remote.validate().unwrap();
-    assert_eq!(remote.inference_connection(), first);
+    assert_eq!(remote.inference_connection().unwrap(), first);
     assert_eq!(first.endpoint, "https://inference.example.test:9443/v1");
     assert_eq!(first.credential.unwrap().env, "MODEL_TOKEN");
     // Resolution is pure: this address need not be reachable by the CLI host.
     remote.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
     remote.validate().unwrap();
     assert_eq!(
-        remote.inference_connection().endpoint,
+        remote.inference_connection().unwrap().endpoint,
         "https://unreachable.invalid/v1"
     );
 }

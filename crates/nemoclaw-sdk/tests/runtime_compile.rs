@@ -94,7 +94,10 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
         graph["resource"]["nemoclaw_inference_service"]["runtime"]["depends_on"],
         json!(["nemoclaw_inference_storage.runtime"])
     );
-    assert_eq!(document.inference_endpoint(), "http://10.0.0.8:18888/v1");
+    assert_eq!(
+        document.inference_endpoint().unwrap(),
+        "http://10.0.0.8:18888/v1"
+    );
     let mut changed_gateway = document.clone();
     changed_gateway.spec.gateway.endpoint = "http://127.0.0.1:17999".into();
     let original_targets = runtime_targets(&document, &generations).unwrap();
@@ -141,5 +144,8 @@ fn remote_example_parses_with_pinned_model_and_runtime() {
     let document =
         Document::parse(include_bytes!("../../../examples/remote-vllm.yaml").as_slice()).unwrap();
     assert_eq!(document.spec.sandboxes[0].runtime.provider, "podman");
-    assert_eq!(document.inference_endpoint(), "http://10.0.0.8:18898/v1");
+    assert_eq!(
+        document.inference_endpoint().unwrap(),
+        "http://10.0.0.8:18898/v1"
+    );
 }

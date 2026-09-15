@@ -38,7 +38,7 @@ async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identit
     let spec: Spec = serde_json::from_str(data["spec"].as_str().unwrap()).unwrap();
     let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":data["config"],"HostConfig":data["hostConfig"],"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/data","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
-    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{super::super::OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge()}]}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{super::super::OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new(State {
         container: Some(container.clone()),
         volume: Some(volume),

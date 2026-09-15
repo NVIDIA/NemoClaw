@@ -87,7 +87,7 @@ pub(crate) fn verify_network(spec: &Spec, network: &NetworkInspect) -> Result<()
         || ipam.driver.as_deref() != Some("default")
         || config.len() != 1
         || config[0].subnet.as_deref() != Some(spec.network_cidr())
-        || config[0].gateway.as_deref() != Some(&spec.bridge())
+        || config[0].gateway.as_deref() != Some(&spec.bridge()?)
     {
         return Err(Error::Conflict(
             "managed bridge identity, ownership or configuration drifted",

@@ -46,6 +46,10 @@ fn hex(bytes: impl AsRef<[u8]>) -> String {
         .collect()
 }
 impl Spec {
+    /// Validate ownership, configuration, runtime kind, and layout.
+    ///
+    /// # Errors
+    /// Returns an error if any of these contracts is invalid.
     pub fn validate(&self) -> Result<(), Error> {
         if !regex::Regex::new(r"^nc-[a-f0-9]{16}-(gateway|inference)$")
             .unwrap()
@@ -96,13 +100,18 @@ impl Spec {
             .and_then(|s| s.placement.as_ref())
             .map_or(&self.gateway.network_cidr, |p| &p.network_cidr)
     }
-    pub fn bridge(&self) -> String {
-        if let Some(p) = self.service.as_ref().and_then(|s| s.placement.as_ref()) {
-            let net: ipnet::Ipv4Net = p.network_cidr.parse().expect("validated network");
-            return std::net::Ipv4Addr::from(u32::from(net.network()) + 1).to_string();
-        }
-        self.gateway.bridge()
+    /// Resolve the bridge for service placement or the gateway network.
+    ///
+    /// # Errors
+    /// Returns a configuration error for malformed IPv4 CIDRs or address overflow.
+    pub fn bridge(&self) -> Result<String, Error> {
+        crate::config::bridge_address(self.network_cidr()).map_err(Into::into)
     }
+    /// Validate and extract the service configuration used inside the runtime.
+    ///
+    /// # Errors
+    /// Returns an error for invalid ownership, configuration, kind, or layout,
+    /// or when no inference service is present.
     pub fn runtime_service(&self) -> Result<Service, Error> {
         self.validate_runtime()?;
         let mut service = self.service.clone().ok_or(Error::Conflict(
@@ -112,11 +121,19 @@ impl Spec {
         service.publication = None;
         Ok(service)
     }
+    /// Serialize a validated runtime specification.
+    ///
+    /// # Errors
+    /// Returns an error if validation or serialization fails.
     pub fn json(&self) -> Result<String, Error> {
         self.validate()?;
         serde_json::to_string(self)
             .map_err(|_| Error::State("cannot serialize runtime specification"))
     }
+    /// Compile ownership labels and the serialized specification.
+    ///
+    /// # Errors
+    /// Returns validation or serialization errors from `json`.
     pub fn labels(&self) -> Result<HashMap<String, String>, Error> {
         Ok([
             (OWNER_LABEL.into(), self.owner.clone()),
@@ -140,6 +157,11 @@ impl Spec {
             .map(|service| service.image.as_str())
             .unwrap_or(&self.gateway.image)
     }
+    /// Compile the container launch configuration for the runtime.
+    ///
+    /// # Errors
+    /// Returns an error for invalid specifications, unsupported runtime layouts,
+    /// missing endpoint or service data, or launch configuration serialization.
     pub fn container(&self, data_path: &str) -> Result<ContainerCreateBody, Error> {
         self.validate_runtime()?;
         let mut host = json!({"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],"RestartPolicy":{"Name":"no","MaximumRetryCount":0},"LogConfig":{"Type":"json-file","Config":{"max-size":"32m","max-file":"3"}},"Memory":0,"MemorySwap":0,"ShmSize":0});
@@ -187,7 +209,11 @@ impl Spec {
             host["MemorySwap"] = json!(104 * GIB);
             host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
             host["Ulimits"] = json!([{"Name":"memlock","Soft":-1,"Hard":-1},{"Name":"stack","Soft":67108864,"Hard":67108864}]);
-            host["PortBindings"] = json!({format!("{}/tcp",service.serving.port):[{"HostIp":service.publication.as_ref().map(|p|p.bind_address.clone()).unwrap_or_else(||self.bridge()),"HostPort":service.serving.port.to_string()}]});
+            let bind_address = match &service.publication {
+                Some(publication) => publication.bind_address.clone(),
+                None => self.bridge()?,
+            };
+            host["PortBindings"] = json!({format!("{}/tcp",service.serving.port):[{"HostIp":bind_address,"HostPort":service.serving.port.to_string()}]});
         }
         config["HostConfig"] = host;
         serde_json::from_value(config)

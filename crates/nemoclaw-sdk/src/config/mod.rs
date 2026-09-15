@@ -32,6 +32,10 @@ impl fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 impl Document {
+    /// Read, default, and validate a configuration document.
+    ///
+    /// # Errors
+    /// Returns an error for unreadable, oversized, malformed, or invalid input.
     pub fn parse(input: impl Read) -> Result<Self, ConfigError> {
         let mut bytes = Vec::new();
         input
@@ -104,6 +108,10 @@ impl Document {
         document.validate()?;
         Ok(document)
     }
+    /// Serialize a valid configuration to YAML.
+    ///
+    /// # Errors
+    /// Returns an error if validation or serialization fails.
     pub fn yaml(&self) -> Result<String, ConfigError> {
         self.validate()?;
         serde_saphyr::to_string(self).map_err(|_| ConfigError("cannot serialize configuration"))
@@ -125,8 +133,12 @@ impl Document {
             &hex(&Sha256::digest(self.metadata.uid.as_bytes()))[..16]
         )
     }
-    pub fn inference_endpoint(&self) -> String {
-        self.inference_connection().endpoint
+    /// Resolve the validated inference endpoint without probing it.
+    ///
+    /// # Errors
+    /// Returns configuration or bridge resolution errors from `inference_connection`.
+    pub fn inference_endpoint(&self) -> Result<String, ConfigError> {
+        Ok(self.inference_connection()?.endpoint)
     }
     pub fn credential_names(&self) -> Vec<&str> {
         let g = &self.spec.gateway;
@@ -181,12 +193,22 @@ fn default_string(value: &mut String, default: &str) {
         *value = default.into();
     }
 }
+pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
+    let network = cidr
+        .parse::<ipnet::Ipv4Net>()
+        .map_err(|_| ConfigError("invalid bridge network"))?;
+    let address = u32::from(network.network())
+        .checked_add(1)
+        .ok_or(ConfigError("bridge address exceeds IPv4 range"))?;
+    Ok(std::net::Ipv4Addr::from(address).to_string())
+}
 impl Gateway {
-    pub fn bridge(&self) -> String {
-        self.network_cidr
-            .parse::<ipnet::Ipv4Net>()
-            .map(|net| std::net::Ipv4Addr::from(u32::from(net.network()) + 1).to_string())
-            .unwrap_or_default()
+    /// Resolve the first address after the configured network address.
+    ///
+    /// # Errors
+    /// Returns an error for malformed IPv4 CIDRs or an address overflow.
+    pub fn bridge(&self) -> Result<String, ConfigError> {
+        bridge_address(&self.network_cidr)
     }
 }
 impl Agent {

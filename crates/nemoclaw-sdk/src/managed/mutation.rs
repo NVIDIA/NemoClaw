@@ -219,7 +219,7 @@ impl Engine {
                 }
             }
         }
-        let request:NetworkCreateRequest=serde_json::from_value(json!({"Name":spec.network(),"Driver":"bridge","Labels":spec.labels()?,"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge()}]}})).map_err(|_|Error::State("invalid compiled gateway network"))?;
+        let request:NetworkCreateRequest=serde_json::from_value(json!({"Name":spec.network(),"Driver":"bridge","Labels":spec.labels()?,"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge()?}]}})).map_err(|_|Error::State("invalid compiled gateway network"))?;
         self.api
             .create_network(request)
             .await
