@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests;
 
+mod export;
 mod ollama;
 mod plan;
 mod runtime;
@@ -406,100 +407,6 @@ impl Deployment {
             .tofu(bundle, store, document, &["show", "-json", name], cancel)
             .await?;
         serde_json::from_slice(&bytes).map_err(|_| Error::State("invalid OpenTofu plan"))
-    }
-    pub async fn export(&self, cancel: &CancellationToken) -> Result<Document, Error> {
-        let (_, store) = self.open()?;
-        let record = store.load()?.ok_or(Error::Conflict(
-            "export requires established resource bindings",
-        ))?;
-        if record.pending || record.destroying || record.destroyed {
-            return Err(Error::Conflict(
-                "export requires established bindings; reconcile unfinished operations first",
-            ));
-        }
-
-        self.export_runtime(&store, &record, cancel).await?;
-        (self.progress)(Progress::Exporting);
-        let client = OpenShell::connect(&record.document.spec.gateway, self.secrets.clone())?;
-        let bindings = store.bindings()?;
-        let mut document = record.document;
-        for target in compile::targets(&document, &record.generations)? {
-            if cancel.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
-            let mut expected = target.values;
-            expected.insert(
-                "id".into(),
-                bindings
-                    .get(&target.address)
-                    .ok_or(Error::Conflict("resource has no durable state identity"))?
-                    .id
-                    .clone(),
-            );
-            let observed =
-                client
-                    .read(&target.kind, &expected, false)
-                    .await?
-                    .ok_or(Error::Conflict(
-                        "resource is confirmed absent; no configuration exported",
-                    ))?;
-            verify_identity(&expected, &observed)?;
-            match target.kind.as_str() {
-                "provider" => {
-                    if observed["provider_type"] != expected["provider_type"] {
-                        return Err(Error::Conflict("provider type drift requires inspection"));
-                    }
-                    if document.spec.inference_providers[0].service.is_some() {
-                        if observed["endpoint"] != document.inference_endpoint()
-                            || !observed["credential_env"].is_empty()
-                        {
-                            return Err(Error::Conflict("managed inference registration drifted"));
-                        }
-                    } else {
-                        document.spec.inference_providers[0].endpoint =
-                            observed["endpoint"].clone();
-                    }
-                    document.spec.inference_providers[0].credential =
-                        (!observed["credential_env"].is_empty()).then(|| Credential {
-                            env: observed["credential_env"].clone(),
-                        });
-                }
-                "route" => {
-                    if observed["provider_name"] != document.spec.inference_providers[0].name {
-                        return Err(Error::Conflict(
-                            "route references a provider outside this deployment",
-                        ));
-                    }
-                    document.spec.sandboxes[0].agents[0].inference.routes[0]
-                        .overrides
-                        .model = observed["model"].clone();
-                }
-                "sandbox" => {
-                    if ["image", "agent_name", "agent_runtime"]
-                        .iter()
-                        .any(|key| observed.get(*key) != expected.get(*key))
-                    {
-                        return Err(Error::Conflict(
-                            "sandbox configuration drift requires inspection",
-                        ));
-                    }
-                    if document.spec.sandboxes[0].agents[0].harness == "pi" {
-                        expected.insert(
-                            "pi_model_config".into(),
-                            serde_json::to_string(
-                                &document.spec.sandboxes[0].agents[0].inference.routes[0].overrides,
-                            )
-                            .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-                        );
-                    }
-                    client.configuration(&expected).await?;
-                }
-                _ => {}
-            }
-        }
-        tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=self.export_ollama(&document, &record.generations, &bindings)=>result? }
-        document.validate()?;
-        Ok(document)
     }
     pub async fn plan_destroy(&self, cancel: &CancellationToken) -> Result<OperationResult, Error> {
         self.teardown(cancel, true).await
