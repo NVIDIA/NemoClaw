@@ -91,6 +91,7 @@ export interface CreatedSandboxRegistryEntryInput {
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  openshellGatewayStateDir?: string | null;
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
@@ -289,6 +290,7 @@ export function buildCreatedSandboxRegistryEntry(
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    openshellGatewayStateDir: input.openshellGatewayStateDir ?? undefined,
     ...(input.hostMounts && input.hostMounts.length > 0
       ? { hostMounts: cloneSandboxHostMounts(input.hostMounts) }
       : {}),
