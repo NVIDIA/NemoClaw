@@ -602,11 +602,12 @@ function readBoundedLocalFile(filePath: string, maxBytes = MAX_LOCAL_FILE_BYTES)
     if (!metadata.isFile() || metadata.size > maxBytes) {
       throw new Error(`DGX Spark probe file ${filePath} is invalid`);
     }
-    const contents = fs.readFileSync(descriptor);
-    if (contents.length > maxBytes) {
+    const contents = Buffer.alloc(maxBytes + 1);
+    const bytesRead = fs.readSync(descriptor, contents, 0, contents.length, 0);
+    if (bytesRead > maxBytes) {
       throw new Error(`DGX Spark probe file ${filePath} is too large`);
     }
-    return contents.toString("utf8");
+    return contents.toString("utf8", 0, bytesRead);
   } finally {
     fs.closeSync(descriptor);
   }
