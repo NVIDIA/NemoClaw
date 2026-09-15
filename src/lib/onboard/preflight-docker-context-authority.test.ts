@@ -197,7 +197,7 @@ describe("assessHost Docker context endpoint (#11719)", () => {
     expect(invalid?.title).toBe("Fix the DOCKER_HOST endpoint");
   });
 
-  it("names the absent socket instead of a root-level group grant", () => {
+  it("names the missing socket instead of a root-level group grant", () => {
     const assessment = assessHost({
       platform: "linux",
       release: "6.8.0-generic",
@@ -206,7 +206,7 @@ describe("assessHost Docker context endpoint (#11719)", () => {
       dockerInfoOutput: "",
       commandExistsImpl,
       runCaptureImpl,
-      existsSyncImpl: () => false,
+      isUnixSocketImpl: () => false,
     });
 
     expect(assessment.dockerEndpointSocketMissing).toBe(DEAD_CONTEXT_SOCKET);
@@ -214,7 +214,7 @@ describe("assessHost Docker context endpoint (#11719)", () => {
 
     const advisories = planHostAdvisories(assessment);
     const missing = advisories.find((action) => action.id === "docker_endpoint_socket_missing");
-    expect(missing?.reason).toContain(`${DEAD_CONTEXT_SOCKET} has no socket at that path`);
+    expect(missing?.reason).toContain(`${DEAD_CONTEXT_SOCKET} has no Unix socket at that path`);
     expect(missing?.commands).toContain(
       "unset DOCKER_HOST DOCKER_CONTEXT   # use Docker's default endpoint",
     );
@@ -234,13 +234,33 @@ describe("assessHost Docker context endpoint (#11719)", () => {
       dockerInfoOutput: "",
       commandExistsImpl,
       runCaptureImpl,
-      existsSyncImpl: () => true,
+      isUnixSocketImpl: () => true,
     });
 
     expect(assessment.dockerEndpointSocketMissing).toBeUndefined();
     expect(planHostAdvisories(assessment).map((action) => action.id)).toContain(
       "docker_group_permission",
     );
+  });
+
+  it("treats a non-socket at the selected path as no endpoint", () => {
+    // A regular file or directory at the chosen path is exactly as unreachable
+    // as nothing at all, so existence alone must not restore the group remedy.
+    const assessment = assessHost({
+      platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
+      env: { DOCKER_HOST: "unix:///tmp/not-a-socket" },
+      dockerInfoOutput: "",
+      commandExistsImpl,
+      runCaptureImpl,
+      isUnixSocketImpl: () => false,
+    });
+
+    expect(assessment.dockerEndpointSocketMissing).toBe("unix:///tmp/not-a-socket");
+    const ids = planHostAdvisories(assessment).map((action) => action.id);
+    expect(ids).toContain("docker_endpoint_socket_missing");
+    expect(ids).not.toContain("docker_group_permission");
   });
 
   it("leaves the default endpoint to the stopped-daemon remedy", () => {
@@ -254,7 +274,7 @@ describe("assessHost Docker context endpoint (#11719)", () => {
       dockerInfoOutput: "",
       commandExistsImpl,
       runCaptureImpl: () => "",
-      existsSyncImpl: () => false,
+      isUnixSocketImpl: () => false,
       observeDockerAuthorityConflictImpl: () => null,
     });
 

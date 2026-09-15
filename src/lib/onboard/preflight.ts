@@ -66,6 +66,19 @@ const DOCKER_PREFLIGHT_TIMEOUT_MS = 15_000;
 /** The only endpoint scheme onboarding supports; see `isSupportedGatewayDockerHost`. */
 const DOCKER_UNIX_SCHEME = "unix://";
 
+/**
+ * Whether a daemon could be listening at this path. Existence alone is not
+ * enough: a regular file or directory at the selected path is just as
+ * unreachable as nothing at all, and must not read as a live endpoint.
+ */
+function isUnixSocket(socketPath: string): boolean {
+  try {
+    return fs.statSync(socketPath).isSocket();
+  } catch {
+    return false;
+  }
+}
+
 // ── Types ────────────────────────────────────────────────────────
 
 export interface PortProbeResult {
@@ -143,10 +156,9 @@ export interface HostAssessment {
    */
   dockerContextInvalid?: string;
   /**
-   * The explicitly selected `unix://` endpoint whose socket does not exist
-   * while the daemon is unreachable. Nothing can be listening at the path the
-   * operator chose, so the docker-group and start-Docker remedies both
-   * misdiagnose it (#11719).
+   * The explicitly selected `unix://` endpoint that has no Unix socket at its
+   * path while the daemon is unreachable. Nothing can be listening there, so
+   * the docker-group and start-Docker remedies both misdiagnose it (#11719).
    */
   dockerEndpointSocketMissing?: string;
   dockerInstalled: boolean;
@@ -223,7 +235,7 @@ export interface AssessHostOpts {
   resolveOpenshellImpl?: () => string | null;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
-  existsSyncImpl?: (filePath: string) => boolean;
+  isUnixSocketImpl?: (filePath: string) => boolean;
   observeDockerAuthorityConflictImpl?: (opts: {
     env: NodeJS.ProcessEnv;
     platform: NodeJS.Platform;
@@ -645,8 +657,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   }
 
   // An endpoint the operator selected explicitly cannot be a docker-group or
-  // stopped-daemon problem when its socket is absent: nothing is listening at
-  // the path they chose, and both of those remedies -- one of them a root-level
+  // stopped-daemon problem when no Unix socket sits at its path: nothing is
+  // listening there, and both of those remedies -- one of them a root-level
   // group grant -- would act on a false premise. The default endpoint is
   // deliberately excluded, because a missing default socket is exactly the
   // stopped-daemon case `start_docker` exists for (#11719).
@@ -659,7 +671,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     !dockerReachable &&
     !dockerHostInvalid &&
     selectedDockerSocketPath &&
-    !(opts.existsSyncImpl ?? fs.existsSync)(selectedDockerSocketPath)
+    !(opts.isUnixSocketImpl ?? isUnixSocket)(selectedDockerSocketPath)
       ? selectedDockerEndpoint
       : undefined;
 

@@ -215,12 +215,12 @@ export const fixMissingDockerEndpointSocket: AdvisoryCheck<HostAssessment> = {
       title: "Fix the selected Docker endpoint",
       kind: "manual",
       reason:
-        `The selected Docker endpoint ${endpoint} has no socket at that path. ` +
+        `The selected Docker endpoint ${endpoint} has no Unix socket at that path. ` +
         "Nothing can be listening there, so this is not a docker-group permission or stopped-daemon problem, " +
         "and NemoClaw withholds both of those remedies rather than act on a wrong cause. " +
         "DOCKER_HOST or DOCKER_CONTEXT selects this endpoint, and the socket must exist before onboarding can use it.",
       commands: [
-        `ls -l ${socketPath}   # confirm the selected socket is absent`,
+        `ls -l ${socketPath}   # confirm no socket sits at the selected path`,
         "unset DOCKER_HOST DOCKER_CONTEXT   # use Docker's default endpoint",
         "# or point the selector at a socket that exists",
         "nemoclaw onboard",
