@@ -15,6 +15,7 @@ import signal
 import urllib.request
 import subprocess
 from interfaces import dashboard, gateway_settings, token
+from fabric import openclaw_execution
 
 
 from nemo_fabric_adapter_contract.models import AgentRunError, AgentRunResult, AgentRunStatus
@@ -71,10 +72,12 @@ def agent_entries(name, inference):
 
 
 def native_configuration(name, inference=None):
+    execution = openclaw_execution(inference)
     config = {
         'gateway': gateway_settings(inference),
         'models': {'mode': 'replace', 'providers': {'openshell': {
             'baseUrl': 'https://inference.local/v1', 'api': 'openai-completions',
+            'timeoutSeconds': execution['timeoutSeconds'],
             'apiKey': 'openshell-placeholder', 'models': [{
                 'id': 'primary', 'name': 'OpenShell route', 'contextWindow': 32768,
                 'maxTokens': 4096, 'input': ['text'], 'reasoning': False,
@@ -82,7 +85,9 @@ def native_configuration(name, inference=None):
         }}},
         'agents': {'defaults': {'model': {'primary': 'openshell/primary'},
                               'workspace': '/sandbox/workspace', 'sandbox': {'mode': 'off'},
-                              'heartbeat': {'every': '0m'}},
+                              'timeoutSeconds': execution['timeoutSeconds'],
+                              **({'heartbeat': {'every': execution['heartbeatEvery'], 'isolatedSession': True}}
+                                 if 'heartbeatEvery' in execution else {})},
                    'entries': agent_entries(name, inference)},
         'memory': {'search': {'enabled': False}},
         'cron': {'enabled': False},
@@ -118,6 +123,7 @@ def owned_configuration(name, inference=None):
         'gateway': {'mode': 'local', 'bind': 'loopback', 'port': 18789},
         'models': {'providers': {'openshell': {
             'baseUrl': 'https://inference.local/v1', 'api': 'openai-completions',
+            'timeoutSeconds': openclaw_execution(inference)['timeoutSeconds'],
             'apiKey': 'openshell-placeholder'}}},
         'agents': {'defaults': {'model': {'primary': 'openshell/primary'},
                                'workspace': '/sandbox/workspace'}, 'entries': {name: {}}},
@@ -135,6 +141,10 @@ def owned_configuration(name, inference=None):
 
 def configuration_matches(name, inference=None):
     actual = json.loads((ROOT / 'openclaw.json').read_text())
+    expected = native_configuration(name, inference)['agents']['defaults']
+    defaults = actual.get('agents', {}).get('defaults', {})
+    if any(defaults.get(key) != expected.get(key) for key in ('timeoutSeconds', 'heartbeat')):
+        return False
     # Native settings outside deployment-owned gateway and agent settings remain native.
     if dashboard(inference) is not None and actual.get('gateway') != gateway_settings(inference):
         return False
@@ -297,11 +307,12 @@ class OpenClawRuntime:
             raise lifecycle.LifecycleError('openclaw_configuration_drift', 'deployment-owned configuration drifted')
         session_key = f'agent:{name}:fabric-{self.runtime_id}'
         try:
+            seconds = openclaw_execution(self.inference)['timeoutSeconds']
             result = await self.rpc('agent', {
                 'agentId': name, 'sessionKey': session_key,
                 'message': message, 'idempotencyKey': context.invocation_id,
-                'deliver': False, 'timeout': 260,
-            })
+                'deliver': False, 'timeout': seconds,
+            }, timeout=seconds + 20)
             if result.get('status') != 'ok':
                 raise RuntimeError('OpenClaw returned a non-successful terminal result')
             native = result.get('result', {})

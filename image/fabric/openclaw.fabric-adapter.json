@@ -135,6 +135,23 @@
                 }
               }
             }
+          },
+          "execution": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000000
+              },
+              "heartbeatEvery": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
+              }
+            }
           }
         }
       }

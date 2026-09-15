@@ -14,6 +14,21 @@ REQUEST_LIMIT = 512 * 1024  # accommodates JSON escaping of a 64 KiB prompt
 RESULT_LIMIT = 4 * 1024 * 1024
 
 
+def openclaw_execution(inference=None):
+    execution = (inference or {}).get('execution', {})
+    if (not isinstance(execution, dict) or set(execution) - {'timeoutSeconds', 'heartbeatEvery'}
+            or (inference is not None and 'execution' in inference and not execution)):
+        raise ValueError('invalid OpenClaw execution settings')
+    seconds = execution.get('timeoutSeconds', 600)
+    heartbeat = execution.get('heartbeatEvery')
+    if (type(seconds) is not int or not 1 <= seconds <= 1000000000
+            or ('heartbeatEvery' in execution and
+                (not isinstance(heartbeat, str) or len(heartbeat) > 256
+                 or not re.fullmatch(r'[0-9]+[smh]', heartbeat)))):
+        raise ValueError('invalid OpenClaw execution settings')
+    return {'timeoutSeconds': seconds, **({'heartbeatEvery': heartbeat} if heartbeat is not None else {})}
+
+
 def configuration(name, harness="deepagents", model=None, inference=None):
     if harness == "pi":
         if model is None:
@@ -52,7 +67,8 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         }},
         "environment": {"workspace": "/sandbox/workspace"},
         "runtime": {**({"max_turns": 8} if harness in ("deepagents", "claude", "mini-swe-agent") else {}),
-                    "timeout_seconds": 300, "artifacts": "/sandbox/artifacts"},
+                    "timeout_seconds": openclaw_execution(inference)['timeoutSeconds'] + 60 if harness == 'openclaw' else 300,
+                    "artifacts": "/sandbox/artifacts"},
     }
 
     if inference is not None:
