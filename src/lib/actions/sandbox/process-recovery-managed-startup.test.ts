@@ -3,12 +3,27 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type {
+  ContainerEngine,
+  ContainerEngineCommandResult,
+} from "../../adapters/container-engine";
 import * as forwardService from "../../adapters/openshell/forward-service";
 import * as openshellResolve from "../../adapters/openshell/resolve";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as wait from "../../core/wait";
 import * as gatewayTeardownAuthority from "../../onboard/gateway-teardown-authority";
+import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provider/podman";
+import {
+  PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_CONTAINER_PREFIX,
+  PODMAN_SANDBOX_ID_LABEL,
+  PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE,
+  PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
+} from "../../onboard/runtime-provider/podman-lifecycle";
 import * as runtimeProviderSelection from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 import * as privilegedExec from "../../sandbox/privileged-exec";
@@ -30,6 +45,64 @@ const PENDING_MANAGED_CONTAINER_DISCOVERY = {
   stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
   managedContainerDiscoveryUnavailable: true,
 } as const;
+
+const PODMAN_CONTAINER_ID = "b".repeat(64);
+const PODMAN_SANDBOX_ID = "provider-recovery-id";
+
+function realPodmanRecoveryBundle(
+  sandboxName: string,
+  restartResult: ContainerEngineCommandResult = { status: 0, stdout: "", stderr: "" },
+) {
+  const capture = vi.fn((args: readonly string[]): ContainerEngineCommandResult => {
+    switch (args[0]) {
+      case "ps":
+        return { status: 0, stdout: `${PODMAN_CONTAINER_ID}\n`, stderr: "" };
+      case "container":
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              Id: PODMAN_CONTAINER_ID,
+              Name: `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${PODMAN_SANDBOX_ID}`,
+              Config: {
+                Labels: {
+                  [PODMAN_MANAGED_LABEL]: "true",
+                  [PODMAN_SANDBOX_ID_LABEL]: PODMAN_SANDBOX_ID,
+                  [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
+                  [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
+                  [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
+                },
+              },
+              State: { Running: true, Paused: false, Status: "running" },
+            },
+          ]),
+          stderr: "",
+        };
+      case "restart":
+        return restartResult;
+      default:
+        return { status: 125, stdout: "", stderr: `unexpected operation ${String(args[0])}` };
+    }
+  });
+  const engine = (operation: "host-doctor" | "sandbox-lifecycle"): ContainerEngine => ({
+    operation,
+    engineId: "podman",
+    displayName: "Podman",
+    authorityId: "test:podman-recovery",
+    endpointAuthorityId: "test:podman-recovery",
+    capture,
+    captureHost: vi.fn(),
+  });
+  return {
+    bundle: createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: engine("host-doctor") as never,
+        sandboxLifecycle: engine("sandbox-lifecycle") as never,
+      },
+    }),
+    capture,
+  };
+}
 
 function mockGatewaySandbox(
   sandboxName: string,
@@ -75,6 +148,33 @@ function mockRecoveredForward(_sandboxName: string): void {
     status: 0,
     output: "SANDBOX  BIND  PORT  PID  STATUS",
   });
+}
+
+async function runRealPodmanProviderRecovery(
+  sandboxName: string,
+  restartResult: ContainerEngineCommandResult,
+) {
+  mockGatewaySandbox(sandboxName, "openclaw", "podman");
+  mockRecoveredForward(sandboxName);
+  const { bundle, capture } = realPodmanRecoveryBundle(sandboxName, restartResult);
+  vi.spyOn(runtimeProviderSelection, "resolveRegisteredRuntimeProvider").mockReturnValue(bundle);
+  const requestGatewaySupervisorAction = vi.fn();
+  const waitForRecoveredSandboxGatewayImpl = vi.fn(async () => true);
+  const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(async () => true);
+  const result = await checkAndRecoverSandboxProcesses(sandboxName, {
+    quiet: true,
+    isSandboxGatewayRunningImpl: async () => false,
+    requestGatewaySupervisorAction,
+    waitForRecoveredSandboxGatewayImpl,
+    waitForRecreatedSandboxOpenShellReadyImpl,
+  });
+  return {
+    capture,
+    requestGatewaySupervisorAction,
+    result,
+    waitForRecoveredSandboxGatewayImpl,
+    waitForRecreatedSandboxOpenShellReadyImpl,
+  };
 }
 
 afterEach(() => {
@@ -318,6 +418,57 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(waitForRecoveredSandboxGatewayImpl).not.toHaveBeenCalled();
     expect(forwardHealth.isLocalForwardReachable).not.toHaveBeenCalled();
     expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
+  });
+
+  it("routes the real registered Podman provider through readiness and forwards", async () => {
+    const recovery = await runRealPodmanProviderRecovery("real-podman-success", {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(recovery.result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    });
+    expect(recovery.capture.mock.calls.map(([args]) => args)).toContainEqual([
+      "restart",
+      "--time",
+      "30",
+      PODMAN_CONTAINER_ID,
+    ]);
+    expect(recovery.requestGatewaySupervisorAction).not.toHaveBeenCalled();
+    expect(recovery.waitForRecoveredSandboxGatewayImpl).toHaveBeenCalledOnce();
+    expect(recovery.waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledOnce();
+    expect(forwardHealth.isLocalForwardReachable).toHaveBeenCalled();
+  });
+
+  it("stops before readiness and forwards when the real Podman provider fails", async () => {
+    const recovery = await runRealPodmanProviderRecovery("real-podman-failure", {
+      status: 125,
+      stdout: "",
+      stderr: "provider restart failed",
+    });
+
+    expect(recovery.result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail: expect.stringContaining("failed"),
+    });
+    expect(recovery.capture.mock.calls.map(([args]) => args)).toContainEqual([
+      "restart",
+      "--time",
+      "30",
+      PODMAN_CONTAINER_ID,
+    ]);
+    expect(recovery.requestGatewaySupervisorAction).not.toHaveBeenCalled();
+    expect(recovery.waitForRecoveredSandboxGatewayImpl).not.toHaveBeenCalled();
+    expect(recovery.waitForRecreatedSandboxOpenShellReadyImpl).not.toHaveBeenCalled();
+    expect(forwardHealth.isLocalForwardReachable).not.toHaveBeenCalled();
   });
 
   it("does not dispatch host-local Podman recovery for an explicitly selected runtime", async () => {
