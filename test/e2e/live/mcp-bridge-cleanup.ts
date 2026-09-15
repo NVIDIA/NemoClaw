@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -30,7 +31,7 @@ function buildOwnedSandboxCleanupEnv(): NodeJS.ProcessEnv {
 
 /** Prepare a sandbox name exclusively owned by this isolated qualification job. */
 export async function prepareOwnedSandboxForOnboard(
-  host: Pick<HostCliClient, "bestEffortCleanupSandbox" | "cleanupSandbox">,
+  host: Pick<HostCliClient, "command" | "bestEffortCleanupSandbox" | "cleanupSandbox">,
   sandbox: Pick<SandboxClient, "cleanupSandbox">,
   cleanup: CleanupRegistry,
   sandboxName: string,
@@ -38,6 +39,7 @@ export async function prepareOwnedSandboxForOnboard(
   const openshellCleanupEnv = buildOwnedSandboxCleanupEnv();
   cleanup.trackSandbox(host, sandboxName, {
     artifactName: "cleanup-destroy-sandbox",
+    env: openshellCleanupEnv,
     timeoutMs: 15 * 60_000,
   });
   // A failed onboard may leave a live sandbox that the production CLI safely
@@ -51,12 +53,15 @@ export async function prepareOwnedSandboxForOnboard(
       timeoutMs: 15 * 60_000,
     }),
   );
-  // A fresh qualification runner has no active OpenShell gateway yet. Let the
-  // production CLI initialize it and perform any cleanup it can prove safe.
-  // Retained-state refusal remains non-fatal here because the identity-bound
-  // administrator deletion below is the isolated E2E fallback.
-  await host.bestEffortCleanupSandbox(sandboxName, {
+  // Destroying an absent sandbox does not initialize a fresh runner's gateway.
+  await initializeGatewayForCleanup(host, openshellCleanupEnv.OPENSHELL_GATEWAY!, {
     artifactName: "precleanup-initialize-gateway",
+    env: openshellCleanupEnv,
+    timeoutMs: 15 * 60_000,
+  });
+  await host.bestEffortCleanupSandbox(sandboxName, {
+    artifactName: "precleanup-best-effort-destroy",
+    env: openshellCleanupEnv,
     timeoutMs: 15 * 60_000,
   });
   await sandbox.cleanupSandbox(sandboxName, {
@@ -66,6 +71,7 @@ export async function prepareOwnedSandboxForOnboard(
   });
   await host.cleanupSandbox(sandboxName, {
     artifactName: "precleanup-destroy-sandbox",
+    env: openshellCleanupEnv,
     timeoutMs: 15 * 60_000,
   });
 }
