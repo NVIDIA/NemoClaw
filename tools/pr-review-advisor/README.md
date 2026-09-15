@@ -57,6 +57,13 @@ GitHub API, and requires its base branch to match `target_base`. A ref-targeted 
 and sandbox inputs use those resolved SHAs, so later PR or ref movement cannot change the reviewed
 revision. The blocker gate rejects missing or mismatched expected SHAs.
 
+PR-targeted manual dispatch intentionally supports both same-repository and fork PRs. GitHub limits
+manual workflow dispatch to repository writers, and the fork head is handled only as inert read-only
+data bound to its base and full head SHAs. The specialist job has only artifact-read permission and
+no repository write permission; the model sandbox receives neither a GitHub credential nor the real
+provider credential. A same-repository restriction belongs on automation that changes a contributor
+branch; here it would only remove static review coverage.
+
 ## Author and agent follow-up
 
 Authors and coding agents should follow the shared [PR CI and Review Follow-Up](../../.agents/skills/_shared/pr-follow-up.md) workflow after opening a PR or pushing follow-up commits. If SSH, authentication, remote access, authorization, or permission problems prevent reading comments or pushing fixes, follow [Git and GitHub Access Hard Stop](../../.agents/skills/_shared/git-github-hard-stop.md).
