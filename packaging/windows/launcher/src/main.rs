@@ -5,6 +5,7 @@
 
 #[cfg(not(feature = "immutable-runtime"))]
 mod inference_job;
+mod edge_trust;
 mod native_ui_file_owner;
 #[cfg(any(feature = "immutable-runtime", all(windows, test)))]
 mod runtime_host;
@@ -281,6 +282,18 @@ fn main() {
         println!(
             "{{\"schemaVersion\":1,\"kind\":\"native-runtime-capabilities\",\"immutableRuntime\":{enabled},\"guardianEnabled\":{enabled}}}"
         );
+        return;
+    }
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--edge-offline-trust")
+    {
+        if forwarded.len() != 2 {
+            credential_error("The Microsoft Edge trust query requires one path.");
+        }
+        let path = PathBuf::from(&forwarded[1]);
+        edge_trust::verify(&path).unwrap_or_else(|message| credential_error(message));
+        println!("{{\"schemaVersion\":1,\"signatureStatus\":\"Valid\"}}");
         return;
     }
     // Dormant helper API. Normal launch selection is not changed until the

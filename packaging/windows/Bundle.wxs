@@ -56,6 +56,22 @@
         Permanent="yes"
         Compressed="yes"
         Vital="yes" />
+      <?if $(var.RuntimeImageFinalization) = "true" ?>
+      <!-- Reverse chain order runs this after MSI removal, when the protected
+           installation root is finally empty and can be removed. -->
+      <ExePackage
+        Id="NemoClawRuntimePostMsiCleanup"
+        CacheId="NemoClawRuntimePostMsiCleanup-$(var.RuntimeFinalizerSha256)"
+        Name="runtime\NemoClawRuntimeCleanup.exe"
+        SourceFile="$(var.RuntimeFinalizerPath)"
+        InstallArguments="--runtime-bundle noop"
+        RepairArguments="--runtime-bundle noop"
+        UninstallArguments="--runtime-bundle cleanup"
+        DetectCondition="WixBundleInstalled"
+        PerMachine="yes"
+        Compressed="yes"
+        Vital="yes" />
+      <?endif ?>
       <MsiPackage Id="NemoClawArm64Msi" SourceFile="$(var.MsiPath)" Compressed="yes" Vital="yes">
         <?if $(var.RuntimeImageFinalization) = "true" ?>
         <MsiProperty Name="NEMOCLAW_BUNDLE_MANAGED_RUNTIME" Value="1" />

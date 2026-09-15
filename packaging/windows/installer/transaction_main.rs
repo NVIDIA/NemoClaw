@@ -146,6 +146,13 @@ fn bundle_transaction(arguments: &[String]) -> Result<(), String> {
     let Some(action) = arguments.first().map(String::as_str) else {
         return Err("The native bundle transaction command is invalid.".into());
     };
+    if action == "noop" && arguments.len() == 1 {
+        return Ok(());
+    }
+    if action == "cleanup" && arguments.len() == 1 {
+        return runtime_lease::native::ControlDirectory::cleanup_removed_installation()
+            .map_err(str::to_owned);
+    }
     let mut store = windows_runtime_store::WindowsStore::new();
     let commands = match (action, &arguments[1..]) {
         ("install", fields) if fields.len() == 5 => vec![
@@ -242,7 +249,7 @@ fn main() {
                 let stage = match args.get(1).copied() {
                     Some("begin-install" | "begin-remove" | "join-remove" | "verify"
                         | "commit-install" | "commit-remove" | "rollback" | "install"
-                        | "repair" | "remove") => args[1],
+                        | "repair" | "remove" | "cleanup") => args[1],
                     _ => "invalid",
                 };
                 diagnostics::record(
