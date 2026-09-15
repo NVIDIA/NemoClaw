@@ -44,13 +44,7 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
         String::from_utf8(output.stdout)?.replace(&vendor.to_string_lossy().to_string(), "vendor");
     let config_path = root.join("vendor-config.toml");
     fs::write(&config_path, config)?;
-    let mut files: Vec<_> = sources()?
-        .into_iter()
-        .map(|(name, _)| {
-            let path = PathBuf::from(&name);
-            (name, path)
-        })
-        .collect();
+    let mut files = nemoclaw_build::supervisor_source_files(Path::new("."))?;
     files.push((".cargo/config.toml".into(), config_path));
     vendor_files(&vendor, &vendor, &mut files)?;
     openshell_sources(&mut files)?;
@@ -74,6 +68,7 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
         .await?;
         fs::write(context.join(name), bytes)?;
     }
+    fs::copy(manifest, context.join("build.json"))?;
     fs::copy("LICENSE", context.join("LICENSE"))?;
     fs::copy(binary, context.join("nemoclaw-runtime"))?;
     let metadata = json!({"rust":pins.rust,"sourceVersion":version,"nemoclaw-runtime":bundle::hash_file(&context.join("nemoclaw-runtime"))?,"supervisor-source.tar.gz":bundle::hash_file(&context.join("supervisor-source.tar.gz"))?});

@@ -78,7 +78,10 @@ If the selected daemon is remote, load the archive into that daemon before apply
 ## Retained Sources and Compatibility
 
 The builder creates a source archive with normalized timestamps and compiles the supervisor offline from that archive.
-It includes locked dependencies, their licenses, and OpenShell protobuf inputs omitted by Cargo vendoring.
+It includes the Rust workspace, locked dependencies, their licenses, SDK policy attribution, and OpenShell protobuf inputs omitted by Cargo vendoring.
+It excludes the entire `runtimes/` tree, so neither image's supervisor archive contains recipe scripts.
+Each image separately retains its selected Dockerfile and build manifest under `/opt/nemoclaw/source/`.
+The Qwen3.8 image also retains its preparation tools, upstream recipe, licenses, and modified vLLM sources.
 The build excludes dependency paths and parent Git metadata from compiler inputs.
 
 The [vLLM notice](../runtimes/vllm/NOTICE.md) and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.

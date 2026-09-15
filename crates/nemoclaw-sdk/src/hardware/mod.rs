@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Memory-pressure policy informed by MiaAI Lab's AGPL-3.0-or-later memwatch.sh.
 //! This implementation combines pressure samples and latches a trip.
-//! Source revision and attribution: runtimes/qwen38/NOTICE.md.
+//! Source revision and attribution: crates/nemoclaw-sdk/NOTICE.md.
 //! Host observations and validated memory protection, independent of a recipe.
 use crate::{Error, config::Service};
 use std::{collections::BTreeMap, io::Read};

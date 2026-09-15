@@ -32,6 +32,7 @@ impl RuntimeArtifact {
             "supervisor-source.tar.gz",
             "supervisor.json",
             "LICENSE",
+            "build.json",
         ];
         let mut names = std::collections::BTreeSet::new();
         if !filename(&value.name)

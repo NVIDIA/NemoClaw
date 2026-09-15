@@ -132,3 +132,47 @@ fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
         );
     }
 }
+
+#[test]
+fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices() {
+    let root = tempfile::tempdir().unwrap();
+    let retained = [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "versions.json",
+        "LICENSE",
+        "crates/runtime/src/main.rs",
+        "crates/sdk/NOTICE.md",
+    ];
+    for name in retained.into_iter().chain([
+        "runtimes/qwen38/verify_packed.py",
+        "runtimes/qwen38/AGPL-3.0-or-later.txt",
+        "runtimes/vllm/Dockerfile",
+        "runtimes/another-recipe/custom.py",
+    ]) {
+        let file = root.path().join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, name).unwrap();
+    }
+    let files = nemoclaw_build::supervisor_source_files(root.path()).unwrap();
+    let bytes = nemoclaw_build::source_archive(&files, 1234).unwrap();
+    let unpacked = tempfile::tempdir().unwrap();
+    tar::Archive::new(flate2::read::GzDecoder::new(bytes.as_slice()))
+        .unpack(unpacked.path())
+        .unwrap();
+    assert!(!unpacked.path().join("runtimes").exists());
+    for name in retained {
+        assert_eq!(
+            std::fs::read_to_string(unpacked.path().join(name)).unwrap(),
+            name
+        );
+    }
+    assert_eq!(files.len(), retained.len());
+}
+
+#[test]
+fn artifact_inputs_cannot_overwrite_the_retained_build_manifest() {
+    let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","build.json"],"downloads":{}}"#;
+    assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
+}

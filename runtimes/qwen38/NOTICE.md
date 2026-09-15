@@ -57,11 +57,8 @@ The recipe's generated draft vocabulary, `files/draft_vocab_en_code_47k.txt`, st
 
 ## Related NemoClaw Code
 
-MiaAI Lab's `files/memwatch.sh` informed the available/free-memory thresholds and free-memory gate in `crates/nemoclaw-sdk/src/hardware/mod.rs`.
-NemoClaw uses one combined pressure counter and a latched stop; upstream uses two counters and stops a Docker container.
-`hardware/capacity.rs`, `config/constraints.rs`, and `backends/vllm.rs` use the recipe's host-reserve and serving-budget guidance.
+The SDK's memory-policy and serving-budget credits are retained in `crates/nemoclaw-sdk/NOTICE.md` inside `supervisor-source.tar.gz`.
 `examples/spark-inline.yaml` records model settings informed by `start.sh`.
-These Rust implementations and configuration values remain Apache-2.0; this credit identifies the source of their operational policy.
 The snapshot downloader, recipe protocol, supervisor lifecycle, and preparation receipts are NemoClaw implementations.
 Calling a recipe program does not replace that program's license with the caller's license.
 
@@ -70,9 +67,12 @@ Calling a recipe program does not replace that program's license with the caller
 The build recipe, original sources, modified sources, licenses, and immutable input pins remain available inside the image for inspection and source retrieval.
 The build does not publish artifacts.
 
-The supervisor and workspace source are retained in `/opt/nemoclaw/source/supervisor-source.tar.gz`.
+The supervisor and Rust workspace source are retained in `/opt/nemoclaw/source/supervisor-source.tar.gz`.
 The archive includes `Cargo.lock`, vendored dependencies with their original licenses, OpenShell protobuf build inputs and license, and Cargo source replacement configuration.
 The supervisor is compiled offline from that exact archive.
+The archive excludes every `runtimes/` directory, including this recipe.
+This image retains its recipe scripts separately under `/opt/nemoclaw/source/` and `/opt/nemoclaw/recipe/`.
+`/opt/nemoclaw/source/Dockerfile` and `build.json` retain the selected image build instructions and manifest.
 `supervisor.json` records the compiler version, source version, binary hash, and archive hash.
 
 Building requires the pinned Rust toolchain, Protocol Buffers compiler, and a native C build toolchain.

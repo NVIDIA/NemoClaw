@@ -12,6 +12,7 @@ RUN SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH python3 /opt/nemoclaw/source/apply_patc
 COPY --chmod=755 prepare.py verify.py /opt/nemoclaw/recipe/
 COPY nemoclaw-runtime /usr/local/bin/nemoclaw-runtime
 COPY supervisor-source.tar.gz supervisor.json /opt/nemoclaw/source/
+COPY Dockerfile build.json /opt/nemoclaw/source/
 ENTRYPOINT ["/usr/local/bin/nemoclaw-runtime"]
 CMD []
 LABEL org.nemoclaw.backend="vllm" \

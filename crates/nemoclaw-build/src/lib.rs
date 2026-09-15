@@ -38,6 +38,20 @@ fn extract_entry(bytes: &[u8], name: &str, limit: u64) -> Result<Vec<u8>, String
     Ok(output)
 }
 
+/// Retain supervisor build inputs without any image recipes or preparation tools.
+pub fn supervisor_source_files(
+    root: &std::path::Path,
+) -> Result<Vec<(String, std::path::PathBuf)>, String> {
+    Ok(source_inputs(root)?
+        .into_iter()
+        .filter(|(name, _)| !name.starts_with("runtimes/"))
+        .map(|(name, _)| {
+            let path = root.join(&name);
+            (name, path)
+        })
+        .collect())
+}
+
 pub fn source_archive(
     files: &[(String, std::path::PathBuf)],
     epoch: u64,
