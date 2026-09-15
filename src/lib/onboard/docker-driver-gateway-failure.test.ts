@@ -421,7 +421,6 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     );
     const stateOwnership = createDockerDriverGatewayStateOwnership({
       getDockerDriverGatewayPid: () => null,
-      getDockerDriverGatewayProcessTarget: () => null,
       getDockerDriverGatewayStateDir: () => dir,
       getGatewayName: () => "nemoclaw",
       getGatewayPort: () => 8080,

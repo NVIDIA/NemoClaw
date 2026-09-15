@@ -8,6 +8,7 @@ import {
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "../docker-driver-gateway-config";
 import { readDockerDriverGatewayProcessEnvironment } from "../docker-driver-gateway-process-identity";
+import { resolveOpenShellGatewayProcessTarget } from "../gateway-process-target-identity";
 import { HOST_GATEWAY_PGREP_PATTERN } from "../host-gateway-process";
 
 interface ProcessScanResult {
@@ -18,7 +19,6 @@ interface ProcessScanResult {
 
 interface DockerDriverGatewayStateOwnershipDeps {
   getDockerDriverGatewayPid(): number | null;
-  getDockerDriverGatewayProcessTarget(pid: number): { name: string; port: number } | null;
   getDockerDriverGatewayStateDir(): string;
   getGatewayName(): string;
   getGatewayPort(): number;
@@ -116,7 +116,14 @@ export function createDockerDriverGatewayStateOwnership(
       }
       const processEnv = readProcessEnvironment(pid);
       if (!processEnv) {
-        const target = deps.getDockerDriverGatewayProcessTarget(pid);
+        let targetScan: ProcessScanResult;
+        try {
+          targetScan = deps.runCaptureEx(["ps", "-p", String(pid), "-o", "args="]);
+        } catch {
+          return true;
+        }
+        if (targetScan.timedOut || targetScan.exitCode !== 0) return true;
+        const target = resolveOpenShellGatewayProcessTarget(targetScan.stdout);
         if (!target) return true;
         if (target.name === deps.getGatewayName() && target.port === deps.getGatewayPort()) {
           return true;
