@@ -88,6 +88,7 @@ type SpawnResult = ReturnType<typeof spawnSync>;
 
 export interface PortableHostPreparationDeps {
   platform?: NodeJS.Platform;
+  architecture?: NodeJS.Architecture;
   home?: string;
   uid?: number;
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
@@ -773,6 +774,12 @@ export function preparePortableExperimentalHost(
   const dockerNetworkName = resolveDockerDriverNetworkName(env);
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("The portable experimental profile requires Linux.");
+  }
+  const architecture = deps.architecture ?? process.arch;
+  if (architecture !== "x64") {
+    throw new Error(
+      `The portable experimental profile requires Linux x86_64 (amd64); detected Linux ${architecture}.`,
+    );
   }
   const uid = deps.uid ?? process.geteuid?.() ?? process.getuid?.();
   if (!Number.isInteger(uid) || Number(uid) < 0) {

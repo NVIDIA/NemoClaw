@@ -93,6 +93,7 @@ function preparePortableExperimentalHost(
     env,
     {
       ...deps,
+      architecture: deps.architecture ?? "x64",
       docker:
         docker && simulateExistingPortableNetwork
           ? (args, childEnv) =>
