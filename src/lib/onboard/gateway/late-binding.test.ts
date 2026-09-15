@@ -44,7 +44,7 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
-  it("withholds a stop command when the active service uses another state (#11720)", async () => {
+  async function captureFailedStartRecovery(ownsSelectedState: boolean) {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
     const lines: string[] = [];
@@ -54,7 +54,8 @@ describe("gateway lifecycle late binding", () => {
       stopCommand: "systemctl --user stop openshell-gateway",
     }));
     const readProcessEnvironment = vi.fn(
-      () => "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=another-gateway",
+      () =>
+        `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${ownsSelectedState ? gatewayIdForStateDir(stateDir) : "another-gateway"}`,
     );
     const checkGatewayPortAvailable = vi
       .fn()
@@ -163,14 +164,11 @@ describe("gateway lifecycle late binding", () => {
         }),
       ).rejects.toThrow(/failed to start within/);
 
-      expect(lines.join("\n")).toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
-      expect(lines.join("\n")).not.toContain("sudo lsof -iTCP -sTCP:LISTEN -P -n");
-      expect(lines.join("\n")).not.toContain("systemctl --user stop openshell-gateway");
-      expect(serviceTarget).toHaveBeenCalledOnce();
-      expect(readProcessEnvironment).toHaveBeenCalledWith(
-        ["ps", "eww", "-p", "5444", "-o", "command="],
-        { ignoreError: true },
-      );
+      return {
+        output: lines.join("\n"),
+        processEnvironmentCalls: readProcessEnvironment.mock.calls,
+        serviceTargetCalls: serviceTarget.mock.calls.length,
+      };
     } finally {
       spawnSpy.mockRestore();
       prepareSpy.mockRestore();
@@ -179,6 +177,33 @@ describe("gateway lifecycle late binding", () => {
       vi.unstubAllEnvs();
       fs.rmSync(root, { force: true, recursive: true });
     }
+  }
+
+  it("withholds a stop command when the active service uses another state (#11720)", async () => {
+    const result = await captureFailedStartRecovery(false);
+
+    expect(result.output).toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
+    expect(result.output).not.toContain("sudo lsof -iTCP -sTCP:LISTEN -P -n");
+    expect(result.output).not.toContain("systemctl --user stop openshell-gateway");
+    expect(result.serviceTargetCalls).toBe(1);
+    expect(result.processEnvironmentCalls).toContainEqual([
+      ["ps", "eww", "-p", "5444", "-o", "command="],
+      { ignoreError: true },
+    ]);
+  });
+
+  it("passes the verified service stop command through failed-start recovery (#11720)", async () => {
+    const result = await captureFailedStartRecovery(true);
+
+    expect(result.output).toContain(
+      "systemctl --user stop openshell-gateway && nemoclaw onboard --resume",
+    );
+    expect(result.output).not.toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
+    expect(result.serviceTargetCalls).toBe(2);
+    expect(result.processEnvironmentCalls).toContainEqual([
+      ["ps", "eww", "-p", "5444", "-o", "command="],
+      { ignoreError: true },
+    ]);
   });
 
   it("returns a stop command when one stable service owns the selected port and state", async () => {
