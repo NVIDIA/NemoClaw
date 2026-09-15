@@ -7,7 +7,6 @@ import path from "node:path";
 
 import type { AddSandboxChannelDependencies } from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
-import { clearStoppedSandboxStateRoots } from "../../../src/lib/sandbox/privileged-exec.ts";
 import {
   assertCleanupSucceededOrAbsent,
   cleanupWhenOpenShellAvailable,
@@ -32,7 +31,6 @@ import { expectGooglechatProviderEgress } from "./channels-stop-start-googlechat
 import {
   type AgentKind,
   runSecondaryCleanup as bestEffortPreclean,
-  CLI,
   requirePhase6RuntimeProvider,
   expectExitZero,
   expectSandboxReady,
@@ -42,7 +40,6 @@ import {
   resultText,
   sandboxSh,
   shellQuote,
-  stripAnsi,
   trackSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 import { parsePolicyPresetState } from "./policy-list-state.ts";
@@ -306,8 +303,6 @@ const CHANNELS = [
   "teams",
   "googlechat",
 ] as const;
-const REMOVAL_CHANNELS = ["wechat", "teams", "googlechat"] as const;
-type RemovalChannel = (typeof REMOVAL_CHANNELS)[number];
 const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
   telegram: (sandbox) => [`${sandbox}-telegram-bridge`],
   discord: (sandbox) => [`${sandbox}-discord-bridge`],
@@ -569,12 +564,6 @@ function expectPlanChannelState(channelId: string, expected: ChannelPlanExpected
   ).toEqual([]);
 }
 
-function expectRemovedPlanChannelRetired(channelId: string): void {
-  const plan = messagingPlan(SANDBOX_NAME);
-  expect(planChannel(channelId), `${channelId} removal tombstone retired`).toBeUndefined();
-  expect(plan.disabledChannels, `${channelId} disabled tombstone retired`).not.toContain(channelId);
-}
-
 function requireEnvValue(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key];
   if (!value) throw new Error(`${key} must be configured for the channels stop/start target`);
@@ -779,21 +768,6 @@ async function precleanNemoclawGateway(
       timeoutMs: 60_000,
     }),
   );
-}
-
-async function rebuildSandbox(
-  host: import("../fixtures/clients/host.ts").HostCliClient,
-  sandboxName: string,
-  env: NodeJS.ProcessEnv,
-  redactions: string[],
-  artifactName: string,
-) {
-  return host.command("node", [CLI, sandboxName, "rebuild", "--yes"], {
-    artifactName,
-    env,
-    redactionValues: redactions,
-    timeoutMs: 30 * 60_000,
-  });
 }
 
 async function addGooglechatForLiveE2e(
