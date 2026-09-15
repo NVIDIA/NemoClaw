@@ -4,11 +4,11 @@
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const FIXTURE_SHA256: &str = "20132310c2f14dd927b0ac50e30d5176a9e3c99b83d5890c9cf581e2320d3442";
-const PROFILE: &str = "nemoclaw-voice-r0/1";
+const FIXTURE_SHA256: &str = "3e5f88079f5f8967008243b7a56b9916482a4655eb8f790a79320b097ec59c82";
+const PROFILE: &str = "nemoclaw-voice-r0/2";
 
 fn fixture() -> (&'static [u8], Value) {
-    let bytes = include_bytes!("fixtures/voiceclaw-r0-v1/fixtures.json");
+    let bytes = include_bytes!("fixtures/voiceclaw-r0-v2/fixtures.json");
     let value = serde_json::from_slice(bytes).expect("published fixture must be valid JSON");
     (bytes, value)
 }
@@ -65,6 +65,60 @@ fn published_voiceclaw_fixture_covers_connection_and_denial_outcomes() {
         assert!(
             !encoded.contains(native_field),
             "fixture exposes native field {native_field}"
+        );
+    }
+}
+
+#[test]
+fn published_voiceclaw_fixture_covers_the_fixed_one_shot_probe() {
+    let (_, value) = fixture();
+    assert_eq!(
+        value["probe"]["clientRequest"],
+        serde_json::json!({
+            "profile": PROFILE,
+            "question": "What is two plus two? Reply with only 4."
+        })
+    );
+    assert_eq!(
+        value["probe"]["success"],
+        serde_json::json!({"profile": PROFILE, "answer": "4"})
+    );
+    let cases: std::collections::BTreeMap<_, _> = value["probeCases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|case| (case["name"].as_str().unwrap(), case))
+        .collect();
+    for required in [
+        "success",
+        "missing_auth",
+        "invalid_auth",
+        "expired",
+        "wrong_target",
+        "replaced",
+        "unavailable",
+        "malformed",
+        "oversized",
+        "wrong_question",
+        "extra_field",
+        "duplicate_key",
+        "before_connection",
+        "second_probe",
+        "unsupported_profile",
+        "unsupported_media_type",
+        "stream_lost",
+    ] {
+        assert!(cases.contains_key(required), "fixture lacks {required}");
+    }
+    for (name, case) in cases {
+        let expected = if name == "success" || name == "second_probe" || name == "stream_lost" {
+            1
+        } else {
+            0
+        };
+        assert_eq!(
+            case["nativeDispatches"], expected,
+            "unexpected dispatch count for {name}"
         );
     }
 }
