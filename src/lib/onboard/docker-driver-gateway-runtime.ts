@@ -8,6 +8,10 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./docker-driver-gateway-config";
+import {
   createDockerDriverGatewayPortListenerHelpers,
   type DockerDriverGatewayPortListenerOptions,
   type DockerDriverGatewayPortListenerScan,
@@ -26,10 +30,6 @@ import { HOST_GATEWAY_PGREP_PATTERN } from "./host-gateway-process";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import * as gatewayBinding from "./gateway-binding";
-import {
-  processEnvironmentUsesSelectedGatewayState,
-  readDockerDriverGatewayProcessEnvironmentFromPs,
-} from "./gateway/state-ownership";
 import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
@@ -504,6 +504,17 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return true;
   }
 
+  function readProcessEnvironmentFromPs(pid: number): Record<string, string> | null {
+    const command = deps
+      .runCapture(["ps", "eww", "-p", String(pid), "-o", "command="], { ignoreError: true })
+      .trim();
+    const prefix = `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=`;
+    const value = command.split(/\s+/).find((token) => token.startsWith(prefix));
+    return value
+      ? { [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: value.slice(prefix.length) }
+      : null;
+  }
+
   /**
    * Fail-closed recovery probe for every direct gateway process that can still
    * use the selected state directory, including a service-manager replacement
@@ -515,7 +526,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     const scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
     if (scan.timedOut || (scan.exitCode !== 0 && scan.exitCode !== 1)) return true;
     if (scan.exitCode === 1) return false;
-    const selectedStateDir = getDockerDriverGatewayStateDir();
+    const selectedNamespace = gatewayIdForStateDir(getDockerDriverGatewayStateDir());
     const gatewayBin = resolveOpenShellGatewayBinary();
     const lines = scan.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
     if (lines.length === 0) return true;
@@ -527,11 +538,9 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       if (!isDockerDriverGatewayProcess(pid, gatewayBin, { requireDockerDriverEnv: false })) {
         return true;
       }
-      const processEnv =
-        readProcessEnv(pid) ??
-        readDockerDriverGatewayProcessEnvironmentFromPs(pid, deps.runCapture);
+      const processEnv = readProcessEnv(pid) ?? readProcessEnvironmentFromPs(pid);
       if (!processEnv) return true;
-      if (processEnvironmentUsesSelectedGatewayState(processEnv, selectedStateDir)) return true;
+      if (processEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === selectedNamespace) return true;
     }
     return false;
   }

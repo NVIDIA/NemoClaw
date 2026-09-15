@@ -18,11 +18,14 @@ function makeOwnership(
 ) {
   return createDockerDriverGatewayStateOwnership({
     getDockerDriverGatewayStateDir: () => STATE_DIR,
+    isDockerDriverGatewayProcess: () => true,
     isPidAlive: () => true,
     readProcessEnvironment: () => ({
       NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
     }),
+    resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
     runCapture: () => "",
+    runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
     ...overrides,
   });
 }
@@ -92,5 +95,30 @@ describe("docker-driver gateway selected-state ownership", () => {
     });
 
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "legacy default namespace with the exact database path",
+      processEnv: {
+        NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: "default",
+        OPENSHELL_DB_URL: `sqlite:${path.join(STATE_DIR, "openshell.db")}`,
+      } as Record<string, string>,
+      expected: true,
+    },
+    {
+      label: "current selected namespace",
+      processEnv: {
+        NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
+      } as Record<string, string>,
+      expected: false,
+    },
+  ])("supplements runtime ownership only for $label", ({ processEnv, expected }) => {
+    const ownership = makeOwnership({
+      readProcessEnvironment: () => processEnv,
+      runCaptureEx: () => ({ stdout: "4242\n", exitCode: 0, timedOut: false }),
+    });
+
+    expect(ownership.isLegacyDockerDriverGatewayStateInUse()).toBe(expected);
   });
 });

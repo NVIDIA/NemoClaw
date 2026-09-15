@@ -150,8 +150,11 @@ export function createDockerDriverGatewayStart(
 ): DockerDriverGatewayStart {
   const stateOwnership = createDockerDriverGatewayStateOwnership({
     getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
+    isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
     isPidAlive: deps.isPidAlive,
+    resolveOpenShellGatewayBinary: deps.resolveOpenShellGatewayBinary,
     runCapture: deps.runner.runCapture,
+    runCaptureEx: deps.runner.runCaptureEx,
   });
 
   async function startDockerDriverGateway({
@@ -424,7 +427,9 @@ export function createDockerDriverGatewayStart(
       reportDockerDriverGatewayStartFailure(logPath, childExit, {
         exitOnFailure,
         gatewayPort: deps.gatewayPort(),
-        isGatewayStateInUse: deps.isDockerDriverGatewayStateInUse,
+        isGatewayStateInUse: () =>
+          deps.isDockerDriverGatewayStateInUse() ||
+          stateOwnership.isLegacyDockerDriverGatewayStateInUse(),
         launchLogOffset: log.startOffset,
         resolveGatewayStopCommand: () => gatewayServiceStopCommand,
         ...(output ? { printError: (message?: string) => output.error(message ?? "") } : {}),
