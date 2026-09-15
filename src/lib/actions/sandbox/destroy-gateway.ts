@@ -30,11 +30,11 @@ import {
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/registry";
+import { NEMOCLAW_GATEWAY_RUNTIME_ENV } from "../../onboard/runtime-provider/configured-runtime";
 import {
-  NEMOCLAW_GATEWAY_RUNTIME_ENV,
-  resolveNemoClawGatewayRuntime,
-} from "../../onboard/runtime-provider/configured-runtime";
-import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
+  resolveConfiguredRuntimeProvider,
+  resolveRegisteredRuntimeProvider,
+} from "../../onboard/runtime-provider/selection";
 
 export type DestroyRunOpenshell = (
   args: string[],
@@ -90,14 +90,6 @@ export function resolveGatewayCleanupRuntimeProviderId(
   const registered = registeredProviderId
     ? normalizeRuntimeProviderIdentity(registeredProviderId)
     : null;
-  const configuredProviderId =
-    deps.configuredRuntimeProviderId ??
-    (process.env[NEMOCLAW_GATEWAY_RUNTIME_ENV]?.trim()
-      ? resolveNemoClawGatewayRuntime(process.env)
-      : null);
-  const configured = configuredProviderId
-    ? normalizeRuntimeProviderIdentity(configuredProviderId)
-    : null;
   const recorded = (deps.resolveOwnedRuntimeProviderId ?? resolveOwnedHostGatewayRuntimeProviderId)(
     {
       gatewayName,
@@ -105,15 +97,18 @@ export function resolveGatewayCleanupRuntimeProviderId(
       stateDir: perGatewayState.stateDir,
     },
   );
-  const authorities = [registered, recorded, configured].filter(
-    (providerId): providerId is string => providerId !== null,
-  );
-  if (new Set(authorities).size > 1) {
+  if (registered && recorded && registered !== recorded) {
     throw new Error(
-      "Refusing cleanup because the registered, recorded, and configured runtime providers do not match.",
+      `Refusing cleanup for gateway '${gatewayName}': registered runtime provider '${registered}' does not match recorded gateway runtime provider '${recorded}'.`,
     );
   }
-  return registered ?? recorded ?? configured;
+  if (registered || recorded) return registered ?? recorded;
+  const configuredProviderId =
+    deps.configuredRuntimeProviderId ??
+    (process.env[NEMOCLAW_GATEWAY_RUNTIME_ENV]?.trim()
+      ? resolveConfiguredRuntimeProvider().identity.id
+      : null);
+  return configuredProviderId ? normalizeRuntimeProviderIdentity(configuredProviderId) : null;
 }
 
 export function selectGatewayForSandboxDestroy(

@@ -1881,7 +1881,10 @@ export function createPodmanManagedBootstrapAdapter(
       current.watcherLease = watcherLease;
       let prepared: PodmanBootstrapPreparedReplacement;
       try {
-        watcherLease.resumeForObservationAndProve();
+        // Keep OpenShell's watcher stopped while the final-labelled replacement
+        // is staged. OpenShell 0.0.116 observes the duplicate sandbox labels and
+        // can change the replacement before NemoClaw records prepared authority.
+        watcherLease.assertStillStopped();
         prepared = prepareStoppedPodmanBootstrapReplacement({
           engine: options.engine,
           journalStore,

@@ -214,6 +214,33 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     expect(classify).not.toHaveBeenCalled();
   });
 
+  it("uses provider-owned name lookup for a partial registry row", () => {
+    const classify = vi.fn();
+    const providerIdentity = {
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: "a".repeat(64),
+      ownershipSha256: "b".repeat(64),
+    };
+    const captureProviderIdentity = vi.fn();
+    const captureProviderIdentityByName = vi.fn(() => providerIdentity);
+    const sandbox = { name: "destroytest", agent: "openclaw" as const, openshellDriver: null };
+
+    expect(
+      assertUnambiguousDestroyContainerIdentity("destroytest", {
+        providerId: "podman",
+        redact: String,
+        sandbox,
+        captureProviderIdentity,
+        captureProviderIdentityByName,
+        classify: classify as never,
+      }),
+    ).toEqual({ identities: undefined, providerIdentity });
+    expect(captureProviderIdentity).not.toHaveBeenCalled();
+    expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
+    expect(classify).not.toHaveBeenCalled();
+  });
+
   it("uses a provider-owned destroy identity without the Docker classifier", () => {
     const classify = vi.fn();
     const providerIdentity = {

@@ -2100,6 +2100,9 @@ Correct the reported Docker state, then rerun `destroy`.
 If Docker cannot complete the inspection, correct the reported Docker error before you rerun `destroy`.
 For common recovery steps, refer to [Docker is not running](troubleshooting#docker-is-not-running) and [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux).
 
+After native Podman onboarding fails before NemoClaw records provider ownership, keep `NEMOCLAW_GATEWAY_RUNTIME=podman` set when you run `destroy`.
+When the sandbox registry or gateway state already records a runtime provider, `destroy` uses that recorded provider instead of the current selector.
+
 If `destroy` reports conflicting, incomplete, or malformed identity data, inspect the matching containers:
 
 ```bash
