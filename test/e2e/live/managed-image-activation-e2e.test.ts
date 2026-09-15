@@ -23,6 +23,7 @@ test(
         "restart and recover Deep Agents Code",
         "destroy and verify Deep Agents Code cleanup",
         "prove buildless all-agent activation",
+        "prove Hermes secret-boundary refusal before native restart",
       ],
     },
   },

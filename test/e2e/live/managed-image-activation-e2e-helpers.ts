@@ -41,6 +41,7 @@ const MODEL = "nemoclaw-managed-activation-model";
 const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
@@ -219,7 +220,7 @@ async function runAgentTurn(
   sandbox: SandboxClient,
   agent: ShippedManagedImageAgent,
   sandboxName: string,
-  phase: "before" | "after",
+  phase: "before" | "boundary" | "after",
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const result = await sandbox.exec(
@@ -263,6 +264,55 @@ async function runOpenClawSubagentTurn(
   expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
     true,
   );
+}
+
+async function proveHermesRestartSecretBoundary(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const backup = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
+  const poison = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      `set -eu; cp /sandbox/.hermes/.env ${shellQuote(backup)}; printf '%s\n' ${shellQuote(`DEVTEST_API_TOKEN=${HERMES_BOUNDARY_SENTINEL}`)} >> /sandbox/.hermes/.env`,
+    ),
+    {
+      artifactName: "hermes-poison-env-before-native-restart",
+      env,
+      redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(poison, "prepare Hermes secret-boundary restart refusal");
+
+  const restart = await host.nemoclaw([sandboxName, "gateway", "restart", "--quiet"], {
+    artifactName: "hermes-native-restart-secret-boundary-refusal",
+    env,
+    redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+    timeoutMs: 60_000,
+  });
+
+  const restore = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      `set -eu; cp ${shellQuote(backup)} /sandbox/.hermes/.env; rm -f ${shellQuote(backup)}`,
+    ),
+    {
+      artifactName: "hermes-restore-env-after-native-restart-refusal",
+      env,
+      redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(restore, "restore Hermes environment after restart refusal");
+
+  const output = resultText(restart);
+  expect(restart.exitCode, output).not.toBe(0);
+  expect(output).toContain("secret-boundary");
+  expect(output).not.toContain(HERMES_BOUNDARY_SENTINEL);
+  await runAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
 }
 
 export async function preclean(
@@ -502,6 +552,9 @@ async function qualifyAgent(
   await sandbox.expectListed(sandboxName, { env });
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
+  if (agent === "hermes") {
+    await proveHermesRestartSecretBoundary(host, sandbox, sandboxName, env);
+  }
   const marker = `managed-activation-${agent}-${Date.now()}`;
   const writeMarker = await sandbox.execShell(
     sandboxName,
