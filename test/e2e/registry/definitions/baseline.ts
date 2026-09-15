@@ -1,93 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { target } from "../builder.ts";
+import type { TargetDefinition } from "../types.ts";
 import {
-  brevLaunchableRemote,
-  gpuRepoDockerCdi,
-  macosRepoDocker,
-  ubuntuRepoDocker,
   ubuntuRepoDockerLifecycle,
   ubuntuRepoManagedRuntime,
   ubuntuRepoManagedRuntimeLifecycle,
-  ubuntuRepoNoDocker,
-  wslRepoDocker,
 } from "../matrix.ts";
-import type { ExpectedFailureContract, TargetDefinition, TargetEnvironment } from "../types.ts";
-import {
-  type E2eExecutionMetadata,
-  validateE2eExecutionMetadata,
-} from "../../../../tools/e2e/execution-coverage.mts";
-import {
-  E2E_GATEWAY_RUNTIMES,
-  type E2eGatewayRuntimeSupport,
-} from "../../../../tools/e2e/gateway-runtime.mts";
+import { E2E_GATEWAY_RUNTIMES } from "../../../../tools/e2e/gateway-runtime.mts";
 
-interface CanonicalTargetInput {
-  id: string;
-  manifestName: string;
-  environment: TargetEnvironment;
-  expectedStateId: string;
-  suiteIds: string[];
-  onboardingAssertionIds?: string[];
-  description?: string;
-  executionCoverage?: E2eExecutionMetadata;
-  runnerRequirements?: string[];
-  requiredSecrets?: string[];
-  skippedCapabilities?: Array<Record<string, unknown>>;
-  expectedFailure?: ExpectedFailureContract;
-  gatewayRuntimes: E2eGatewayRuntimeSupport;
-}
-
-function canonicalTarget(input: CanonicalTargetInput): TargetDefinition {
-  let builder = target(input.id)
-    .description(input.description ?? `Canonical typed target for ${input.id}.`)
-    .manifest(`test/e2e/manifests/${input.manifestName}.yaml`)
-    .environment(input.environment)
-    .expectedState(input.expectedStateId)
-    .onboardingAssertions(input.onboardingAssertionIds ?? ["base-installed", "preflight-passed"])
-    .suites(input.suiteIds);
-
-  if (input.runnerRequirements) {
-    builder = builder.runnerRequirements(input.runnerRequirements);
-  }
-  if (input.requiredSecrets) {
-    builder = builder.requiredSecrets(input.requiredSecrets);
-  }
-  if (input.skippedCapabilities) {
-    builder = builder.skippedCapabilities(input.skippedCapabilities);
-  }
-  if (input.expectedFailure) {
-    builder = builder.expectedFailure(input.expectedFailure);
-  }
-  const definition = { ...builder.build(), gatewayRuntimes: input.gatewayRuntimes };
-  if (!input.executionCoverage) return definition;
-  return {
-    ...definition,
-    executionCoverage: validateE2eExecutionMetadata(
-      input.executionCoverage,
-      `Typed E2E target ${input.id}`,
-    ),
-  };
-}
-
-const macosDockerSkipped = [
-  {
-    id: "macos-docker-dependent-suites",
-    reason:
-      "GitHub-hosted macOS runners do not provide a reachable Docker daemon; gateway/sandbox/inference suites are reported as skipped instead of failing this target.",
-    suites: ["smoke", "inference", "credentials"],
-  },
-];
-
-const canonicalTargetInputs: CanonicalTargetInput[] = [
+const TARGETS: readonly TargetDefinition[] = [
   {
     id: "ubuntu-repo-cloud-openclaw",
-    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
-    manifestName: "openclaw-nvidia",
-    environment: ubuntuRepoManagedRuntime("cloud-openclaw"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "inference", "credentials"],
     description: "Ubuntu repo checkout with managed-runtime cloud OpenClaw onboarding.",
     executionCoverage: {
       agentRuntime: "openclaw",
@@ -95,27 +19,15 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
       environmentOrInferenceEndpoint: "Ubuntu managed-runtime host; NVIDIA hosted inference",
       unresolvedReason: "",
     },
+    manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
+    environment: ubuntuRepoManagedRuntime("cloud-openclaw"),
+    expectedStateId: "cloud-openclaw-ready",
+    suiteIds: ["smoke", "inference", "credentials"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "ubuntu-repo-cloud-hermes",
-    gatewayRuntimes: ["docker"],
-    manifestName: "hermes-nvidia",
-    environment: ubuntuRepoDocker("cloud-hermes"),
-    expectedStateId: "cloud-hermes-ready",
-    suiteIds: ["smoke", "inference", "hermes-specific"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
+    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
   },
   {
     id: "ubuntu-repo-cloud-langchain-deepagents-code",
-    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
-    manifestName: "langchain-deepagents-code-nvidia",
-    environment: ubuntuRepoManagedRuntimeLifecycle(
-      "cloud-langchain-deepagents-code",
-      "dcode-rebuild-invalid-credential",
-    ),
-    expectedStateId: "cloud-deepagents-code-ready",
-    suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     description: "Ubuntu repo checkout with managed-runtime Deep Agents Code onboarding.",
     executionCoverage: {
       agentRuntime: "langchain-deepagents-code",
@@ -123,101 +35,18 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
       environmentOrInferenceEndpoint: "Ubuntu managed-runtime host; NVIDIA hosted inference",
       unresolvedReason: "",
     },
+    manifestPath: "test/e2e/manifests/langchain-deepagents-code-nvidia.yaml",
+    environment: ubuntuRepoManagedRuntimeLifecycle(
+      "cloud-langchain-deepagents-code",
+      "dcode-rebuild-invalid-credential",
+    ),
+    expectedStateId: "cloud-deepagents-code-ready",
+    suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
+    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
   },
   {
-    id: "gpu-repo-local-ollama-openclaw",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-ollama-gpu",
-    environment: gpuRepoDockerCdi("local-ollama-openclaw"),
-    expectedStateId: "local-ollama-openclaw-ready",
-    suiteIds: ["smoke", "local-ollama-inference", "ollama-proxy"],
-    runnerRequirements: ["self-hosted-gpu", "docker-cdi"],
-  },
-  {
-    id: "macos-repo-cloud-openclaw",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-macos",
-    environment: macosRepoDocker("cloud-openclaw"),
-    expectedStateId: "macos-cli-ready-docker-optional",
-    onboardingAssertionIds: ["base-installed"],
-    suiteIds: ["platform-macos"],
-    runnerRequirements: ["macos-latest"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-    skippedCapabilities: macosDockerSkipped,
-  },
-  {
-    id: "wsl-repo-cloud-openclaw",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-wsl",
-    environment: wslRepoDocker("cloud-openclaw"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "platform-wsl"],
-    runnerRequirements: ["windows-latest", "wsl2"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "brev-launchable-cloud-openclaw",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-brev-launchable",
-    environment: brevLaunchableRemote("cloud-openclaw"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "inference"],
-    runnerRequirements: ["ubuntu-latest", "brev-api-token", "launchable-image"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "ubuntu-no-docker-preflight-negative",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-no-docker-negative",
-    environment: ubuntuRepoNoDocker("cloud-openclaw"),
-    expectedStateId: "preflight-failure-no-sandbox",
-    onboardingAssertionIds: ["base-installed", "preflight-expected-failed"],
-    suiteIds: [],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-    expectedFailure: {
-      phase: "preflight",
-      errorClass: "docker-missing",
-      forbiddenSideEffects: ["gateway-started", "sandbox-created"],
-    },
-  },
-  {
-    // Rebuild target. Onboards an OpenClaw sandbox normally, then
-    // the lifecycle phase seeds a workspace marker, runs
-    // `nemoclaw rebuild --yes`, and publishes the marker contract to
-    // runtime-phase assertions in rebuild_upgrade.sh. Mirrors the
-    // workspace-state-preservation invariant from
-    // dimension (build OLD-version base image first) belongs to a
-    // future `rebuild-from-old-version` lifecycle profile and is
-    // intentionally out of scope here.
-    id: "ubuntu-rebuild-openclaw",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-rebuild",
-    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "rebuild-current-version"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "rebuild", "upgrade"],
-    requiredSecrets: ["NVIDIA_API_KEY"],
-  },
-  {
-    // Reboot-style Docker-driver recovery without a physical reboot:
-    //   1. `docker stop` the labeled sandbox container.
-    //   2. Stop the OpenShell gateway runtime, then restart it through
-    //      the required upstream `openshell-gateway` or marked
-    //      `nemoclaw-openshell-gateway` user service.
-    //   3. Run `nemoclaw <name> status` so any destructive
-    //      registry/container path runs against host-observable state.
-    // The state-validation phase then asserts the typed
-    // `post-reboot-recovery-ready` contract: CLI installed, named
-    // gateway healthy, local registry entry preserved, and labeled
-    // Docker container present (running, stopped, or a
-    // `*-nemoclaw-gpu-backup-*` sibling).
     id: "ubuntu-repo-docker-post-reboot-recovery",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-post-reboot-recovery",
-    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
-    expectedStateId: "post-reboot-recovery-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     description:
       "Post-reboot recovery guard: the gateway must recover through the required user service " +
       "while preserving the local sandbox registry and container.",
@@ -227,192 +56,31 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
       environmentOrInferenceEndpoint: "Ubuntu Docker host; local recovery fixture",
       unresolvedReason: "",
     },
-  },
-  {
-    id: "ubuntu-repo-openai-compatible-openclaw",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-openai-compatible",
-    environment: ubuntuRepoDocker("openai-compatible-openclaw"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["OPENAI_COMPATIBLE_API_KEY"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-brave",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-brave",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-brave"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "BRAVE_API_KEY"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-telegram",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-telegram",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-telegram"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "messaging-telegram"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "TELEGRAM_BOT_TOKEN"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-discord",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-discord",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-discord"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "messaging-discord"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "DISCORD_BOT_TOKEN"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-slack",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-slack",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-slack"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "messaging-slack"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "SLACK_BOT_TOKEN"],
-  },
-  {
-    id: "ubuntu-repo-cloud-hermes-discord",
-    gatewayRuntimes: ["docker"],
-    manifestName: "hermes-nvidia-discord",
-    environment: ubuntuRepoDocker("cloud-nvidia-hermes-discord"),
-    expectedStateId: "cloud-hermes-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "DISCORD_BOT_TOKEN"],
-  },
-  {
-    id: "ubuntu-repo-cloud-hermes-slack",
-    gatewayRuntimes: ["docker"],
-    manifestName: "hermes-nvidia-slack",
-    environment: ubuntuRepoDocker("cloud-nvidia-hermes-slack"),
-    expectedStateId: "cloud-hermes-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-resume",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-resume",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-resume-after-interrupt"),
-    expectedStateId: "cloud-openclaw-ready",
+    manifestPath: "test/e2e/manifests/openclaw-nvidia-post-reboot-recovery.yaml",
+    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
+    expectedStateId: "post-reboot-recovery-ready",
     suiteIds: ["smoke"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-repair",
     gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-repair",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-repair-existing-config"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-double-same-provider",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-double-same-provider",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-double-same-provider"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-double-provider-switch",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-double-provider-switch",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-double-provider-switch"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-token-rotation",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-token-rotation",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-token-rotation"),
-    expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "messaging-token-rotation"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "ubuntu-repo-cloud-openclaw-custom-policies",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-custom-policies",
-    environment: ubuntuRepoDocker("cloud-openclaw-custom-policies"),
-    expectedStateId: "cloud-openclaw-custom-policies-ready",
-    suiteIds: [
-      "smoke",
-      "inference",
-      "credentials",
-      "onboarding-state",
-      "baseline-onboarding",
-      "model-router",
-      "snapshot-lifecycle",
-    ],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-  },
-  {
-    id: "ubuntu-invalid-nvidia-key-negative",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-invalid-key",
-    environment: ubuntuRepoDocker("cloud-openclaw-invalid-nvidia-key"),
-    expectedStateId: "onboarding-failure-invalid-nvidia-key",
-    onboardingAssertionIds: ["base-installed"],
-    suiteIds: [],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-    expectedFailure: {
-      phase: "onboarding",
-      errorClass: "invalid-nvidia-api-key",
-      forbiddenSideEffects: ["gateway-started", "sandbox-created"],
-    },
-  },
-  {
-    id: "ubuntu-gateway-port-conflict-negative",
-    gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-gateway-port-conflict",
-    environment: ubuntuRepoDocker("cloud-openclaw-gateway-port-conflict"),
-    expectedStateId: "onboarding-failure-gateway-port-conflict",
-    onboardingAssertionIds: ["base-installed"],
-    suiteIds: [],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-    expectedFailure: {
-      phase: "onboarding",
-      errorClass: "gateway-port-conflict",
-      forbiddenSideEffects: ["gateway-started", "sandbox-created"],
-    },
   },
   {
     id: "ubuntu-policy-custom-missing-presets-negative",
-    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
-    manifestName: "openclaw-nvidia-policy-custom-missing-presets",
-    environment: ubuntuRepoManagedRuntime("cloud-openclaw-policy-custom-missing-presets"),
-    expectedStateId: "onboarding-failure-policy-presets-required",
-    onboardingAssertionIds: ["base-installed", "preflight-passed"],
-    suiteIds: [],
+    description: "Missing custom policy presets fail closed.",
     executionCoverage: {
       agentRuntime: "openclaw",
       observableOutcome: "Missing custom policy presets fail closed",
       environmentOrInferenceEndpoint: "Ubuntu Docker host; local negative fixture",
       unresolvedReason: "",
     },
+    manifestPath: "test/e2e/manifests/openclaw-nvidia-policy-custom-missing-presets.yaml",
+    environment: ubuntuRepoManagedRuntime("cloud-openclaw-policy-custom-missing-presets"),
+    expectedStateId: "onboarding-failure-policy-presets-required",
+    suiteIds: [],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-    expectedFailure: {
-      phase: "onboarding",
-      errorClass: "policy-presets-required",
-    },
+    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
   },
 ];
 
 export function canonicalTargets(): TargetDefinition[] {
-  return canonicalTargetInputs.map(canonicalTarget);
-}
-
-export function ubuntuRepoCloudOpenClawTarget(): TargetDefinition {
-  const target = canonicalTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
-  if (!target) {
-    throw new Error("Missing canonical target 'ubuntu-repo-cloud-openclaw'");
-  }
-  return target;
+  return [...TARGETS];
 }
