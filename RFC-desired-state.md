@@ -323,3 +323,12 @@ This result covers an external native OpenShell gateway and rootless Podman
 sandboxes on this Linux host. Managed Podman gateway/inference resources, rootful
 operation, remote placement and other operating systems remain unqualified.
 See the [Podman evidence](docs/validation/rust-podman-rootless-linux-arm64.json).
+
+The next transport slice accepts explicit `ssh://user@host:port` Docker endpoints
+in the SDK. It uses OpenSSH and `docker system dial-stdio`, requires existing host
+trust, and does not retry mutations. Remote capacity defaults to unavailable;
+selecting SSH never assigns the local host collector. Real loopback SSH tests
+exercise daemon identity, absence, denied authentication/host trust and artifact
+upload/download. They qualify the transport, not remote provisioning, network
+reachability between hosts, or remote GPU observation. No engine-selection YAML
+or inference tunnel is introduced by this slice.

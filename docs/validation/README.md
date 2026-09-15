@@ -36,3 +36,7 @@ qualification. No comparative maintenance-cost reduction has been measured.
 The selected-model experiment additionally qualifies Fabric OpenClaw with a
 managed gateway and managed vLLM inference. It does not extend that live result
 to every Fabric harness or model.
+
+[SSH engine transport evidence](rust-ssh-linux-arm64.json) covers real loopback
+SSH identity, failure classification and artifact transfers. It does not qualify
+remote managed deployment.

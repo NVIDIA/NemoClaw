@@ -1,0 +1,82 @@
+{
+  "sourceRevision": "3cb6a3c78c205f22937d0d1ef2dcac51cf317961",
+  "platform": "linux_arm64",
+  "scope": "Real loopback OpenSSH server with an isolated host key and authorized key, forwarding Docker API stdio to the existing daemon. This is transport qualification, not a remote GPU deployment.",
+  "endpoint": "ssh://cvillela@127.0.0.1:22298",
+  "sshVersion": "OpenSSH_9.6p1 Ubuntu-3ubuntu13.16, OpenSSL 3.0.13 30 Jan 2024",
+  "dockerVersion": "29.2.1",
+  "daemonId": "9003d825-ec2b-414b-a043-d70389061d6d",
+  "behavior": [
+    "Connection construction is lazy; SSH capacity is unavailable until a remote observer is supplied.",
+    "Repeated real SSH reads returned the independently observed Docker daemon ID.",
+    "A missing container returned confirmed absence.",
+    "Rejected client key, untrusted server key and refused connection each returned observation failure, not absence.",
+    "Uploaded and streamed back 128 KiB through SSH to an owned stopped container without changing its identity.",
+    "The empty test known-hosts file remained empty; host trust was not automatically added."
+  ],
+  "validation": {
+    "workspace": {
+      "passed": 120,
+      "failed": 0,
+      "ignored": 33
+    },
+    "format": "passed",
+    "strictClippy": "passed",
+    "liveSuccessfulContracts": 2,
+    "liveFailureConfigurations": 3
+  },
+  "cleanup": {
+    "testContainerRemoved": "b38f113b6b53f381622cefa6301562751359e5909feb3944eae5a23961687fef",
+    "temporarySshServerStopped": true,
+    "temporaryPrivateKeysRemoved": true,
+    "emptyKnownHostsBytes": 0,
+    "unrelatedResources": "Existing gateway, sandbox and inference resources were not changed."
+  },
+  "limits": [
+    "SDK engine transport on Unix only; Windows SSH transport is not enabled.",
+    "No managed remote YAML, remote host collector or inference tunnel.",
+    "SSH URL socket paths, embedded passwords, query options and IPv6 literals are rejected; SSH config aliases are supported.",
+    "Fresh SSH connection per request; no pooling or automatic mutation retry.",
+    "SSH stderr is suppressed; authentication and transport failures surface as observation errors."
+  ],
+  "logs": [
+    {
+      "path": ".local/ssh-proof/final-live.log",
+      "sha256": "5ce1901b4d68a8f00dce437bd9cd24d9ccf3d260b8c6c2d91616b1296641be5d"
+    },
+    {
+      "path": ".local/ssh-proof/auth-failure-final.log",
+      "sha256": "c680640450cd73fe392d00ea458222af605936af37059c89e6ab20f19d7c9a3a"
+    },
+    {
+      "path": ".local/ssh-proof/trust-failure-final.log",
+      "sha256": "090df5679c832d11bf14037c8f332d75c2de6af0106ccfbe1c94715feb08179e"
+    },
+    {
+      "path": ".local/ssh-proof/transport-failure.log",
+      "sha256": "0957a9befa629e0dd75c9c8829ab73555e138f559202c612df83f15c1259144f"
+    },
+    {
+      "path": ".local/ssh-proof/final-clippy.log",
+      "sha256": "8e5c2c08f1dec7bdf898ee0c6d59754bb45e45f60ddf1b904d8218ab1caeac9c"
+    },
+    {
+      "path": ".local/ssh-proof/final-workspace.log",
+      "sha256": "9b5d1d2ec22b431e44ba65bcbbad9fbe81b533d19ae1c6e00020026557129f30"
+    },
+    {
+      "path": ".local/ssh-proof/integrated-workspace.log",
+      "sha256": "92408ddf3a0b3a2e55033fb4109a34f3b50a49c5ef0ad7eca942e1fa3da58fb9"
+    },
+    {
+      "path": ".local/ssh-proof/integrated-clippy.log",
+      "sha256": "57915092b3051a917e470dad13b5107519dc05796f7b49624c5f65fbd70bb1c5"
+    }
+  ],
+  "integrationNote": "Concurrent CI/cache changes were integrated after live testing; SDK transport source is identical.",
+  "integratedWorkspace": {
+    "passed": 122,
+    "failed": 0,
+    "ignored": 33
+  }
+}
