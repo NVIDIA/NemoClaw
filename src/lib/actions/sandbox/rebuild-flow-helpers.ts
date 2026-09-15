@@ -48,6 +48,7 @@ import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
+  printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
   usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
@@ -217,14 +218,18 @@ export async function resolveRebuildLiveState(
   if (reconciled.state === "present") {
     const lifecycle = await getNamedGatewayLifecycleState(recordedGateway);
     if (lifecycle.state !== "healthy_named") {
-      printWrongGatewayActiveGuidance(
-        sandboxName,
-        lifecycle.activeGateway,
-        console.error,
-        "rebuild --yes",
-      );
+      if (lifecycle.state === "connected_other") {
+        printWrongGatewayActiveGuidance(
+          sandboxName,
+          lifecycle.activeGateway,
+          console.error,
+          "rebuild --yes",
+        );
+      } else {
+        printGatewayLifecycleHint(lifecycle, sandboxName, console.error);
+      }
       bail(
-        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
+        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (${lifecycle.state}).`,
       );
       return null;
     }

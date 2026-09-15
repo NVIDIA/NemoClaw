@@ -7,7 +7,7 @@ import systemReadinessSchema from "../../../schemas/system-readiness.schema.json
 import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
-import type { PlatformIdentity } from "./platform-qualification";
+import { collectPlatformIdentity, type PlatformIdentity } from "./platform-qualification";
 
 const { detectGpu, detectNvidiaDriverVersion, detectNvidiaPlatform } = vi.hoisted(() => ({
   detectGpu: vi.fn<(_deps?: unknown) => GpuDetection | null>(() => null),
@@ -179,6 +179,31 @@ describe("host readiness projection (#7408)", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
     );
+  });
+
+  it.each([
+    [
+      "a malformed selected field",
+      'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS\n',
+    ],
+    ["a repeated selected field", "ID=ubuntu\nVERSION_ID=24.04\nID=debian\nVERSION_ID=12\n"],
+  ])("treats %s as inconclusive (#11026)", (_scenario, osRelease) => {
+    const platformIdentity = collectPlatformIdentity({
+      readFile: () => "",
+      readdir: () => [],
+      openFile: () => {
+        throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
+      },
+      readBoundedOsRelease: () => osRelease,
+    });
+    const result = report({}, { platformIdentity });
+
+    expect(platformIdentity.osId).toBeUndefined();
+    expect(platformIdentity.osVersionId).toBeUndefined();
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
+    );
+    expect(findingIds(result)).not.toContain("host.os.release_unqualified");
   });
 
   it.each([

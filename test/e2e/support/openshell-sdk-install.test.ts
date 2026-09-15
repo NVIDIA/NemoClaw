@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it, vi } from "vitest";
 import YAML from "yaml";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
@@ -14,6 +15,7 @@ import {
   type SupervisedProcessOwner,
   type SupervisedProcessResult,
 } from "../../helpers/supervised-process.ts";
+import { packUniquePackageSources, parseNpmPackArchives } from "./openshell-sdk-pack-archives.ts";
 
 const profile = YAML.parse(
   fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
@@ -115,32 +117,34 @@ async function writePackageArchives(
     );
     return { dependencies, name, source, version };
   });
-  const packed = JSON.parse(
-    (
-      await runSuccessfulProcess(
-        "npm",
-        [
-          "pack",
-          ...sources.map(({ source }) => source),
-          "--pack-destination",
-          root,
-          "--json",
-          "--offline",
-          "--ignore-scripts",
-        ],
-        {
-          cwd: root,
-          env: {
-            PATH: process.env.PATH,
-            HOME: root,
-            NPM_CONFIG_CACHE: path.join(root, "pack-cache"),
+  const packed = await packUniquePackageSources(sources, async (batch) =>
+    parseNpmPackArchives(
+      (
+        await runSuccessfulProcess(
+          "npm",
+          [
+            "pack",
+            ...batch.map(({ source }) => source),
+            "--pack-destination",
+            root,
+            "--json",
+            "--offline",
+            "--ignore-scripts",
+          ],
+          {
+            cwd: root,
+            env: {
+              PATH: process.env.PATH,
+              HOME: root,
+              NPM_CONFIG_CACHE: path.join(root, "pack-cache"),
+            },
+            owner,
+            timeoutMs: 30_000,
           },
-          owner,
-          timeoutMs: 30_000,
-        },
-      )
-    ).stdout,
-  ) as Array<{ filename: string; name: string; version: string }>;
+        )
+      ).stdout,
+    ),
+  );
   return sources.map(({ dependencies, name, version }) => {
     const filename = packed.find(
       (archive) => archive.name === name && archive.version === version,
@@ -169,7 +173,6 @@ calls.push({
 });
 fs.writeFileSync(process.env.INSTALL_LOG, JSON.stringify(calls));
 if (process.argv[2] === process.env.NPM_FAILURE) process.exit(17);
-if (process.argv[2] === "cache") process.exit(0);
 const directory = "node_modules/@nvidia/openshell-sdk";
 fs.mkdirSync(directory, { recursive: true });
 fs.writeFileSync(directory + "/package.json", JSON.stringify({ type: "module", exports: "./index.js" }));
@@ -177,6 +180,39 @@ fs.writeFileSync(directory + "/index.js", process.env.SDK_SOURCE);
 `;
 
 describe.concurrent("catalogue OpenShell SDK installation", () => {
+  it.for([
+    {
+      name: "npm 11 array metadata",
+      output: JSON.stringify([
+        { filename: "fixture-transport-1.0.0.tgz", name: "fixture-transport", version: "1.0.0" },
+      ]),
+    },
+    {
+      name: "npm 12 keyed metadata",
+      output: JSON.stringify({
+        "fixture-transport@1.0.0": {
+          filename: "fixture-transport-1.0.0.tgz",
+          name: "fixture-transport",
+          version: "1.0.0",
+        },
+      }),
+    },
+  ])("reads $name from npm pack", ({ output }, context) => {
+    context
+      .expect(parseNpmPackArchives(output))
+      .toEqual([
+        { filename: "fixture-transport-1.0.0.tgz", name: "fixture-transport", version: "1.0.0" },
+      ]);
+  });
+
+  it("rejects npm pack metadata without an archive filename", (context) => {
+    context
+      .expect(() =>
+        parseNpmPackArchives(JSON.stringify([{ name: "fixture-transport", version: "1.0.0" }])),
+      )
+      .toThrow("npm pack --json returned invalid package metadata");
+  });
+
   it("reaps helper descendants after the process-group leader exits", async (context) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-process-tree-"));
     const pidFile = path.join(root, "descendant.pid");
@@ -241,13 +277,21 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           context,
         );
         const selectedSdk = lockedSdkVersion === "1.0.0" ? sdk : previousSdk;
+        const selectedSdkArchive = path.join(
+          root,
+          "openshell-sdk",
+          lockedSdkVersion === "1.0.0" ? "sdk.tgz" : "previous-sdk.tgz",
+        );
         const workspace = path.join(root, "workspace");
         fs.mkdirSync(workspace);
         const manifest = JSON.stringify({
           name: "sdk-install-fixture",
           version: "1.0.0",
           dependencies: { "fixture-sibling": "^1.0.0" },
-          optionalDependencies: { "@nvidia/openshell-sdk": lockedSdkVersion },
+          optionalDependencies: {
+            "@nvidia/openshell-sdk": lockedSdkVersion,
+            "fixture-transport": "1.0.0",
+          },
           scripts: {
             preinstall: "node -e \"require('node:fs').writeFileSync('lifecycle-ran', 'yes')\"",
           },
@@ -259,9 +303,20 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           requires: true,
           packages: {
             "": JSON.parse(manifest),
-            "node_modules/@nvidia/openshell-sdk": { ...selectedSdk.lock, optional: true },
-            "node_modules/fixture-transport": { ...transport.lock, optional: true },
-            "node_modules/fixture-sibling": sibling.lock,
+            "node_modules/@nvidia/openshell-sdk": {
+              ...selectedSdk.lock,
+              optional: true,
+              resolved: `https://127.0.0.1:9/${path.basename(selectedSdkArchive)}`,
+            },
+            "node_modules/fixture-transport": {
+              ...transport.lock,
+              optional: true,
+              resolved: pathToFileURL(transport.archive).href,
+            },
+            "node_modules/fixture-sibling": {
+              ...sibling.lock,
+              resolved: pathToFileURL(sibling.archive).href,
+            },
           },
         });
         fs.writeFileSync(path.join(workspace, "package.json"), manifest);
@@ -270,9 +325,11 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           PATH: process.env.PATH,
           HOME: root,
           NPM_CONFIG_CACHE: path.join(root, "cache"),
-          NPM_CONFIG_OFFLINE: "true",
+          NPM_CONFIG_PREFER_OFFLINE: "true",
           NPM_CONFIG_AUDIT: "false",
           NPM_CONFIG_FUND: "false",
+          NPM_CONFIG_FETCH_RETRIES: "0",
+          NPM_CONFIG_FETCH_TIMEOUT: "100",
           NPM_CONFIG_UPDATE_NOTIFIER: "false",
           RUNNER_TEMP: root,
         };
@@ -283,9 +340,12 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
             owner: context,
             timeoutMs: 30_000,
           });
+        const npmVersion = (await runNpm(["--version"])).stdout.trim();
+        expect(npmVersion).toMatch(/^12\./);
         await runNpm([
           "cache",
           "add",
+          selectedSdk.archive,
           transport.archive,
           sibling.archive,
           "--offline",
@@ -346,17 +406,27 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
       archives: ["sdk.tgz"],
       sdk: 'if (process.env.NODE_AUTH_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN) throw new Error("Unexpected credential"); export class OpenShellClient { static connect() {} }',
       status: 0,
-      calls: 2,
+      calls: 1,
       failure: "",
+      integrityMatches: true,
     },
-    { name: "no archive", archives: [], sdk: "", status: 1, calls: 0, failure: "" },
+    {
+      name: "no archive",
+      archives: [],
+      sdk: "",
+      status: 1,
+      calls: 0,
+      failure: "",
+      integrityMatches: true,
+    },
     {
       name: "one approved transition pair",
       archives: ["first.tgz", "second.tgz"],
       sdk: "export class OpenShellClient { static connect() {} }",
       status: 0,
-      calls: 3,
+      calls: 1,
       failure: "",
+      integrityMatches: true,
     },
     {
       name: "more than one transition pair",
@@ -365,35 +435,39 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
       status: 1,
       calls: 0,
       failure: "",
+      integrityMatches: true,
     },
     {
       name: "an SDK without the connection API",
       archives: ["sdk.tgz"],
       sdk: "export const OpenShellClient = {};",
       status: 1,
-      calls: 2,
+      calls: 1,
       failure: "",
+      integrityMatches: true,
     },
     {
-      name: "a cache staging failure",
+      name: "an archive integrity mismatch",
       archives: ["sdk.tgz"],
       sdk: "",
-      status: 17,
-      calls: 1,
-      failure: "cache",
+      status: 1,
+      calls: 0,
+      failure: "",
+      integrityMatches: false,
     },
     {
       name: "a dependency install failure",
       archives: ["sdk.tgz"],
       sdk: "",
       status: 17,
-      calls: 2,
+      calls: 1,
       failure: "ci",
+      integrityMatches: true,
     },
   ])(
     "checks $name before running the catalogue target",
     testTimeoutOptions(30_000),
-    async ({ archives, sdk, status, calls, failure }, context) => {
+    async ({ archives, sdk, status, calls, failure, integrityMatches }, context) => {
       const { expect } = context;
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-install-"));
       const archiveDirectory = path.join(directory, "openshell-sdk");
@@ -403,8 +477,45 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
         fs.mkdirSync(archiveDirectory);
         fs.mkdirSync(bin);
         fs.writeFileSync(log, "[]");
-        archives.forEach((archive) =>
-          fs.writeFileSync(path.join(archiveDirectory, archive), "fixture"),
+        const [sdkPackage, otherPackage] = await writePackageArchives(
+          directory,
+          [{ name: "@nvidia/openshell-sdk" }, { name: "fixture-other" }],
+          context,
+        );
+        archives.forEach((archive, index) =>
+          fs.copyFileSync(
+            index === 0 ? sdkPackage.archive : otherPackage.archive,
+            path.join(archiveDirectory, archive),
+          ),
+        );
+        fs.writeFileSync(
+          path.join(directory, "package.json"),
+          JSON.stringify({
+            name: "sdk-install-fixture",
+            optionalDependencies: { "@nvidia/openshell-sdk": "1.0.0" },
+            version: "1.0.0",
+          }),
+        );
+        fs.writeFileSync(
+          path.join(directory, "package-lock.json"),
+          JSON.stringify({
+            lockfileVersion: 3,
+            name: "sdk-install-fixture",
+            packages: {
+              "": {
+                name: "sdk-install-fixture",
+                optionalDependencies: { "@nvidia/openshell-sdk": "1.0.0" },
+                version: "1.0.0",
+              },
+              "node_modules/@nvidia/openshell-sdk": {
+                ...sdkPackage.lock,
+                integrity: integrityMatches ? sdkPackage.lock.integrity : "sha512-invalid",
+                optional: true,
+              },
+            },
+            requires: true,
+            version: "1.0.0",
+          }),
         );
         fs.writeFileSync(path.join(bin, "npm"), npmFixture, { mode: 0o755 });
         fs.symlinkSync(process.execPath, path.join(bin, "node"));
@@ -430,16 +541,6 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           status,
         );
         const expectedCalls = [
-          ...archives.map((archive) => ({
-            args: [
-              "cache",
-              "add",
-              path.join(archiveDirectory, archive),
-              "--offline",
-              "--ignore-scripts",
-            ],
-            auth: [null, null, null],
-          })),
           {
             args: ["ci", "--ignore-scripts", "--prefer-offline", "--no-audit", "--no-fund"],
             auth: [null, null, null],

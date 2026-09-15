@@ -248,6 +248,10 @@ vi.mock("../../agent/defs", () => ({
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
+  captureResolvedOpenshell: (args: string[]) =>
+    args[0] === "gateway" && args[1] === "select"
+      ? runOpenshellMock(args)
+      : captureOpenshellMock(args),
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
 }));
@@ -314,6 +318,22 @@ vi.mock("../../sandbox/mutable-config-perms", () => ({
 
 vi.mock("../../sandbox/create-stream", () => ({
   streamSandboxCreate: streamSandboxCreateMock,
+}));
+
+vi.mock("../../adapters/openshell/gateway-reuse-cli", () => ({
+  createCliOpenShellGatewayReuseObserver: () => ({
+    observeGatewayReuse: async () => {
+      const healthy = isGatewayHealthyMock();
+      return {
+        gatewayReuseState: healthy ? "healthy" : "missing",
+        healthy,
+        namedMetadata: true,
+        shouldSelect: false,
+        endpoints: [],
+        endpointBinding: healthy ? "match" : "unknown",
+      };
+    },
+  }),
 }));
 
 vi.mock("../../state/gateway", () => ({

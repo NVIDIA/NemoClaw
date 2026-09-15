@@ -35,6 +35,14 @@ function gatewayName(output: string): string | null {
   return names.length === 1 && isValidName(names[0]) ? names[0] : null;
 }
 
+function reportsMissingNamedGateway(output: string, name: string): boolean {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `^\\s*(?:Error:\\s*)?(?:×\\s*)?Unknown gateway ['"]${escapedName}['"]\\.\\s*$`,
+    "imu",
+  ).test(output);
+}
+
 function hasGatewayDeclaration(output: string): boolean {
   return /^\s*Gateway:/m.test(output);
 }
@@ -98,7 +106,7 @@ export function createCliOpenShellGatewayObserver(
         const missing = /\bNo (?:active )?gateway(?: configured)?\b|No gateway metadata found/i;
         const statusError = gatewayError(status);
         const infoError = gatewayError(info);
-        const absentInfo = missing.test(infoText);
+        const absentInfo = missing.test(infoText) || reportsMissingNamedGateway(infoText, name);
         const absentStatus = missing.test(statusText);
         // Only known absence and unreachable responses describe resource state. Other failures are not absence.
         for (const [error, absent, legacy] of [

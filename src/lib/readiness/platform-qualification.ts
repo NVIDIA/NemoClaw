@@ -168,9 +168,10 @@ function parseOsRelease(contents: string): {
   const values = new Map<string, string>();
   for (const line of contents.split("\n")) {
     const match = /^(ID|VERSION_ID|PRETTY_NAME)=(?:"([^"\0]*)"|([A-Za-z0-9._-]+))$/.exec(line);
+    if (/^(?:ID|VERSION_ID|PRETTY_NAME)=/.test(line) && !match) return {};
     if (!match) continue;
     const [, key, quotedValue, plainValue] = match;
-    if (!key || values.has(key)) continue;
+    if (!key || values.has(key)) return {};
     values.set(key, quotedValue ?? plainValue ?? "");
   }
   return {

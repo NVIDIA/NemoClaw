@@ -6,6 +6,7 @@ import http from "node:http";
 import { generateKeyPairSync } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { gatewayAdaptersForTest } from "../../../../../test/helpers/openshell-gateway-adapters";
 import { describe, expect, it, vi } from "vitest";
 import type { GatewayReuseState } from "../../../state/gateway";
 import { createSession, type Session } from "../../../state/onboard-session";
@@ -474,19 +475,14 @@ describe("handleGatewayState", () => {
     });
   });
 
-  it("starts the gateway when stderr-only status marks the selected gateway stale (#7087)", async () => {
-    const statusOutput = [
-      "Server Status",
-      "",
-      "Gateway: nemoclaw",
-      "Error: Connection refused",
-    ].join("\n");
-    const gatewayReuseSnapshot = createGatewayReuseHelpers({
+  it("starts a verified stale gateway with named metadata (#7087)", async () => {
+    const gatewayReuseSnapshot = await createGatewayReuseHelpers({
+      ...gatewayAdaptersForTest({
+        healthy: false,
+        namedMetadata: true,
+        gatewayReuseState: "stale",
+      }),
       gatewayName: "nemoclaw",
-      runCaptureOpenshell: vi.fn((args: string[], opts?: Record<string, unknown>) =>
-        args[0] === "status" && opts?.includeStderr === true ? statusOutput : "",
-      ),
-      runOpenshell: vi.fn(() => ({ status: 0 })),
       cliDisplayName: () => "NemoClaw",
     }).getGatewayReuseSnapshot();
     const { deps, calls } = createDeps();

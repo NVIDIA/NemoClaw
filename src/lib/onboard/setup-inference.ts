@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
 import { canonicalEndpoint } from "../core/url-utils";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
@@ -288,19 +289,21 @@ export function createRoutedResumeProviderUpsert(deps: {
   };
 }
 
-export function selectGatewayForFollowupOrExit(
+export async function selectGatewayForFollowupOrExit(
   gatewayName: string,
-  runOpenshell: SetupInferenceDeps["runOpenshell"],
+  lifecycle: Pick<OpenShellGatewayLifecycle, "selectGateway">,
   error: (message: string) => void = console.error,
   exitProcess: (code: number) => never = (code) => process.exit(code),
-): void {
-  const selected = runOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
-  if (selected.status === 0) return;
+): Promise<void> {
+  const selected = await lifecycle.selectGateway({
+    target: { kind: "named", gatewayName },
+  });
+  if (selected.ok) return;
   error(
     `  Error: OpenShell could not select managed gateway '${gatewayName}' after onboarding. ` +
       "No follow-up operations were run against an ambient gateway.",
   );
-  exitProcess(typeof selected.status === "number" && selected.status !== 0 ? selected.status : 1);
+  exitProcess(1);
 }
 
 function resolveLocalInferenceRouteApplier(

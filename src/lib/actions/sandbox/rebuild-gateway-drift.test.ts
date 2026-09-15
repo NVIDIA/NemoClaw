@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
+import * as gatewaySelection from "./gateway-select";
+import * as gatewayState from "./gateway-state";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
@@ -53,22 +55,24 @@ function bail(message: string): never {
 
 describe("rebuild gateway drift preflight", () => {
   let captureOpenshellSpy: MockInstance;
-  let runOpenshellSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let recoverDockerDriverSandboxSpy: MockInstance;
   let errorSpy: MockInstance;
 
   beforeEach(() => {
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewaySelection, "selectSandboxOwningGateway").mockImplementation(async (name) => ({
+      outcome: "selected",
+      gatewayName: registry.getSandbox(name)?.gatewayName ?? "nemoclaw",
+    }));
+
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     vi.spyOn(gatewayDrift, "printOpenShellStateRpcIssue").mockImplementation(() => undefined);
     captureOpenshellSpy = vi
       .spyOn(openshellRuntime, "captureOpenshell")
       .mockReturnValue({ status: 0, output: "alpha Ready" });
-    runOpenshellSpy = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0, output: "" } as never);
+    vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0, output: "" } as never);
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
       .mockResolvedValue({
@@ -107,8 +111,34 @@ describe("rebuild gateway drift preflight", () => {
     vi.restoreAllMocks();
   });
 
+  it("reports failed gateway observation without claiming a sibling is active", async () => {
+    captureOpenshellSpy.mockReturnValue({ status: 0, output: "beta Ready" });
+    vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue({
+      state: "present",
+      output: "alpha Ready",
+    });
+    const observation = {
+      state: "observation_failed" as const,
+      activeGateway: null,
+      diagnostic: "Gateway observation could not be completed.",
+      recoveryBlocked: true,
+      unavailable: true,
+    };
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue(observation);
+    const wrongGateway = vi.spyOn(gatewayState, "printWrongGatewayActiveGuidance");
+
+    await expect(
+      resolveRebuildLiveState("alpha", makeSandboxEntry(), vi.fn(), bail),
+    ).rejects.toThrow("(observation_failed)");
+    expect(errorSpy).toHaveBeenCalledWith(observation.diagnostic);
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "currently active OpenShell gateway",
+    );
+    expect(wrongGateway).not.toHaveBeenCalled();
+  });
+
   it("rejects gateway image drift before confirming rebuild intent", async () => {
-    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockReturnValue(driftIssue);
+    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockResolvedValue(driftIssue);
     const confirmIntent = vi.fn();
 
     await expect(
@@ -131,7 +161,7 @@ describe("rebuild gateway drift preflight", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
-  it("binds gateway schema preflight to the frozen runtime target (#10514)", () => {
+  it("binds gateway schema preflight to the frozen runtime target (#10514)", async () => {
     const runtimeSelection = {
       gatewayName: "nemoclaw",
       localTlsDir: "/authority/tls",
@@ -139,7 +169,7 @@ describe("rebuild gateway drift preflight", () => {
     };
 
     expect(
-      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
+      await checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
     ).toBe(true);
     expect(gatewayDrift.detectOpenShellStateRpcPreflightIssue).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
@@ -147,12 +177,16 @@ describe("rebuild gateway drift preflight", () => {
     });
   });
 
-  it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", () => {
-    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockReturnValue(driftIssue);
+  it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", async () => {
+    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockResolvedValue(driftIssue);
     const nonThrowingBail = vi.fn();
 
     expect(
-      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), nonThrowingBail as never),
+      await checkRebuildGatewaySchemaPreflight(
+        "alpha",
+        makeSandboxEntry(),
+        nonThrowingBail as never,
+      ),
     ).toBe(false);
 
     const diagnostics = errorSpy.mock.calls.flat().join("\n");
@@ -196,10 +230,7 @@ describe("rebuild gateway drift preflight", () => {
         "Cannot rebuild an absent sandbox without its authoritative OpenShell policy",
       );
       expect(getNamedGatewayLifecycleStateSpy).not.toHaveBeenCalled();
-      expect(runOpenshellSpy).toHaveBeenCalledWith(
-        ["gateway", "select", recordedGateway],
-        expect.objectContaining({ ignoreError: true }),
-      );
+      expect(gatewaySelection.selectSandboxOwningGateway).toHaveBeenCalledWith("alpha");
       expect(captureOpenshellSpy).toHaveBeenNthCalledWith(
         1,
         ["sandbox", "list", "-g", recordedGateway],

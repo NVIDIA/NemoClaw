@@ -547,7 +547,7 @@ export async function collectSandboxStatusSnapshot(
       liveResult = null;
     }
   }
-  const rpcIssue = liveResult ? detectOpenShellStateRpcResultIssue(liveResult) : null;
+  const rpcIssue = liveResult ? await detectOpenShellStateRpcResultIssue(liveResult) : null;
   if (rpcIssue) {
     return {
       sb,

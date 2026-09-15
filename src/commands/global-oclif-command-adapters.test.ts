@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   createOnboardActionRuntimeDeps: vi.fn(),
   getSandboxInventory: vi.fn(),
   getStatusReport: vi.fn(),
-  renderSandboxInventoryText: vi.fn(),
+  listSandboxesCommand: vi.fn(),
   runBackupAllAction: vi.fn(),
   runGarbageCollectImagesAction: vi.fn(),
   runInferenceGet: vi.fn(),
@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/inventory", () => ({
   getSandboxInventory: mocks.getSandboxInventory,
   getStatusReport: mocks.getStatusReport,
-  renderSandboxInventoryText: mocks.renderSandboxInventoryText,
+  listSandboxesCommand: mocks.listSandboxesCommand,
   showStatusCommand: mocks.showStatusCommand,
 }));
 
@@ -105,6 +105,7 @@ describe("global oclif command adapters", () => {
     mocks.buildStatusCommandDeps.mockReturnValue({ statusDeps: true });
     mocks.getSandboxInventory.mockResolvedValue({ sandboxes: [] });
     mocks.getStatusReport.mockReturnValue({ sandboxes: [] });
+    mocks.listSandboxesCommand.mockResolvedValue(undefined);
     mocks.createOnboardActionRuntimeDeps.mockReturnValue(mocks.onboardRuntimeDeps);
     mocks.runInferenceSet.mockResolvedValue({
       sandboxName: "alpha",
@@ -130,14 +131,11 @@ describe("global oclif command adapters", () => {
       "list",
     );
     expect(mocks.buildListCommandDeps).toHaveBeenCalledWith();
-    expect(mocks.getSandboxInventory).toHaveBeenCalledWith({
+    expect(mocks.listSandboxesCommand).toHaveBeenCalledWith({
       getLiveInference: expect.any(Function),
+      log: expect.any(Function),
     });
-    expect(mocks.renderSandboxInventoryText).toHaveBeenCalledWith(
-      { sandboxes: [] },
-      expect.any(Function),
-      null,
-    );
+    expect(mocks.getSandboxInventory).not.toHaveBeenCalled();
   });
 
   it("keeps list --json stdout clean while inventory recovery prints progress", async () => {
