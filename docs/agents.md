@@ -65,6 +65,36 @@ Changing YAML alone does not update an existing image or migrate retained native
 
 See [agent interfaces](interfaces.md) for OpenClaw and Hermes dashboard, API, and browser-TUI access.
 
+## OpenClaw Execution Settings
+
+Set optional execution defaults on the first agent in `spec.sandboxes[].agents`:
+
+```yaml
+execution:
+  timeoutSeconds: 900
+  heartbeatEvery: 30m
+```
+
+`timeoutSeconds` limits an agent turn and defaults to 600 seconds when omitted.
+Fabric's outer deadline includes time for the gateway response and cleanup.
+Startup, readiness, and managed-inference probes retain separate budgets.
+
+Omitting `heartbeatEvery` leaves OpenClaw's native heartbeat defaults in place.
+An explicit interval uses an isolated heartbeat session; `0m` disables heartbeat.
+Use a whole number followed by `s`, `m`, or `h`.
+See the [execution field reference](reference/configuration.md#agentexecution) for bounds.
+
+Execution settings apply to the shared OpenClaw gateway defaults.
+Only the first agent may declare them; a sandbox still accepts one or more OpenClaw agents.
+Other harnesses and empty `execution` objects are rejected.
+Export preserves explicit settings and leaves omitted fields absent.
+
+Build the updated image using the [runtime build procedure](#runtime-lifecycle) and use its immutable digest in a fresh deployment.
+Earlier images do not implement these execution settings or defaults.
+Changing execution settings changes the sandbox launch specification; it is not an in-place update.
+Startup, refresh, and export reject conflicting retained native timeout or heartbeat settings without overwriting them.
+Restore the expected settings before retrying, or use a fresh deployment with separate state and storage.
+
 ## Hermes Native Server
 
 Fabric owns one authenticated native Hermes HTTP API server per sandbox.
