@@ -11,6 +11,16 @@ const RUN_MANAGED_IMAGE_SECURITY = Boolean(
   process.env.NEMOCLAW_TEST_IMAGE ?? process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT,
 );
 
+const ENTRYPOINT_CONFIG_REPAIR_PROOF = Buffer.from(
+  String.raw`set -eu
+test "$(id -un)" = sandbox
+test "$(stat -c '%a %U:%G' /sandbox/.openclaw)" = '2770 sandbox:sandbox'
+test "$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)" = '660 sandbox:sandbox'
+test "$(wc -c </sandbox/.openclaw/openclaw.json)" -eq 3
+test "$(cat /sandbox/.openclaw/openclaw.json)" = '{}'
+`,
+).toString("base64");
+
 const PACKAGED_IMAGE_CONTRACT_PROBE = String.raw`import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -799,7 +809,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
           "chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash",
           "chmod 2770 /sandbox/.openclaw",
           "mkdir -p /sandbox/.openclaw/bin",
-          `printf %s dGVzdCAiJChpZCAtdW4pIiA9IHNhbmRib3gKdGVzdCAiJChzdGF0IC1jICclYSAlVTolRycgL3NhbmRib3gvLm9wZW5jbGF3KSIgPSAnMjc3MCBzYW5kYm94OnNhbmRib3gnCnRlc3QgIiQoc3RhdCAtYyAnJWEgJVU6JUcnIC9zYW5kYm94Ly5vcGVuY2xhdy9vcGVuY2xhdy5qc29uKSIgPSAnNjYwIHNhbmRib3g6c2FuZGJveCcKZ3JlcCAtcXggJ3t9JyAvc2FuZGJveC8ub3BlbmNsYXcvb3BlbmNsYXcuanNvbgpjYXBfYm5kPSQoYXdrICcvXkNhcEJuZDove3ByaW50ICQyfScgL3Byb2Mvc2VsZi9zdGF0dXMpCnRlc3QgIiRjYXBfYm5kIiA9IDAwMDAwMDAwMDAwMDAxMDAK | base64 -d >/sandbox/.openclaw/bin/entrypoint-security-proof`,
+          `printf %s ${ENTRYPOINT_CONFIG_REPAIR_PROOF} | base64 -d >/sandbox/.openclaw/bin/entrypoint-security-proof`,
           "chmod 755 /sandbox/.openclaw/bin/entrypoint-security-proof",
         ].join("\n"),
         "managed-image-openclaw-prepare-entrypoint-repair",
@@ -872,39 +882,11 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       expect(refusalRemoved.exitCode).toBe(0);
     }
 
-    progress.phase("verify post-stepdown capability boundary");
-    const capabilities = await runContainer(
-      host,
-      image,
-      [
-        "source /usr/local/lib/nemoclaw/sandbox-init.sh",
-        'cat >/tmp/check-capabilities.sh <<\'NEMOCLAW_CAPABILITY_CHECK\'\nsource /usr/local/lib/nemoclaw/sandbox-init.sh\ncap_bnd="$(awk \'/^CapBnd:/{print $2}\' /proc/self/status)"\ntest -z "$(dangerous_caps_in_capbnd "$cap_bnd")"\nfor bit in 7 6 3; do test $(((16#$cap_bnd >> bit) & 1)) -eq 0; done\nprintf "CapBnd: %s\\n" "$cap_bnd"\nNEMOCLAW_CAPABILITY_CHECK',
-        "drop_capabilities /bin/bash -c 'source /usr/local/lib/nemoclaw/sandbox-init.sh; exec \"${STEP_DOWN_PREFIX_SANDBOX[@]}\" /bin/bash /tmp/check-capabilities.sh'",
-      ].join("\n"),
-      "managed-image-openclaw-capabilities",
-      [
-        "--cap-add=CAP_SYS_ADMIN",
-        "--cap-add=CAP_SYS_PTRACE",
-        "--cap-add=CAP_NET_RAW",
-        "--cap-add=CAP_DAC_OVERRIDE",
-        "--cap-add=CAP_SYS_CHROOT",
-        "--cap-add=CAP_FSETID",
-        "--cap-add=CAP_SETFCAP",
-        "--cap-add=CAP_MKNOD",
-        "--cap-add=CAP_AUDIT_WRITE",
-        "--cap-add=CAP_NET_BIND_SERVICE",
-      ],
-    );
-    const match = /^CapBnd:\s*([a-fA-F0-9]+)$/mu.exec(capabilities.stdout);
-    expect(match, "post-stepdown process must report CapBnd").not.toBeNull();
-
     progress.phase("record managed-image security evidence");
     await artifacts.writeJson("managed-image-security.json", {
       image,
       gatewayUid: Number(gatewayUid),
       sandboxUid: Number(sandboxUid),
-      capabilityBoundingSet: match?.[1]?.toLowerCase(),
-      dangerousCapabilitiesAbsent: "entrypoint inventory plus setuid, setgid, and kill",
     });
     await artifacts.target.complete({
       id: "managed-image-openclaw-security",

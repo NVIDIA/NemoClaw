@@ -32,6 +32,7 @@ import {
 } from "../fixtures/docker-build-guard.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
+import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
@@ -264,13 +265,18 @@ async function runOpenClawSubagentTurn(
   );
 }
 
-async function preclean(
+export async function preclean(
   host: HostCliClient,
   lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
+  await initializeGatewayForCleanup(host, GATEWAY, {
+    artifactName: `pre-cleanup-initialize-gateway-${sandboxName}`,
+    env,
+    timeoutMs: 3 * 60_000,
+  });
   await host.bestEffortCleanupSandbox(sandboxName, {
     artifactName: `pre-cleanup-nemoclaw-${sandboxName}`,
     env,
