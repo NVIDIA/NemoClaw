@@ -224,6 +224,32 @@ describe("PR review advisor specialist prompts", () => {
     },
   );
 
+  it("bounds a follow-up review to the frozen contract and exact commit delta", () => {
+    const followUpDiffPath = ".pr-review-advisor-context/follow-up-diff.patch";
+    const turn = buildSpecialistInvestigateTurn("customer-value-behavior", {
+      ...context,
+      followUp: {
+        review: {
+          reviewId: 10,
+          reviewedHeadSha: "a".repeat(40),
+          state: "CHANGES_REQUESTED",
+          body: "Preserve the completed command result.",
+          inlineComments: [],
+        },
+        diffPath: followUpDiffPath,
+      },
+    });
+
+    expect(turn.contextToolResults?.map(({ toolName }) => toolName)).toContain(
+      "pr_review_follow_up_context",
+    );
+    expect(turn.requiredReadOneOfPaths).toEqual([followUpDiffPath]);
+    expect(turn.prompt).toContain("Treat the trusted human review as the frozen review contract");
+    expect(turn.prompt).toContain("Do not restart the original full review");
+    expect(turn.prompt).toContain("the follow-up delta introduces it");
+    expect(turn.prompt).toContain("record a clear ledger");
+  });
+
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
     const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
     const turn = buildSpecialistInvestigateTurn("customer-value-behavior", {
