@@ -25,16 +25,16 @@ describe("native lifecycle E2E migration contracts", () => {
   it.each([
     [
       "rebuild-openclaw.test.ts",
-      ["const DASHBOARD_PORT = 18_792", "${String(DASHBOARD_PORT)}/health"],
+      /const DASHBOARD_PORT = 18_792[\s\S]*\$\{String\(DASHBOARD_PORT\)\}\/health/u,
       "/sandbox/.openclaw/workspace",
     ],
-    ["rebuild-hermes.test.ts", ["127.0.0.1:8642/health"], "/sandbox/.hermes/memories"],
+    ["rebuild-hermes.test.ts", /127\.0\.0\.1:8642\/health/u, "/sandbox/.hermes/memories"],
   ])("reduces %s to state restoration and native readiness", (file, readiness, statePath) => {
     const source = liveSource(file);
 
     expect(source).toContain('"rebuild", "--yes", "--verbose"');
     expect(source).toContain(statePath);
-    for (const needle of readiness) expect(source).toContain(needle);
+    expect(source).toMatch(readiness);
     expect(source).toContain("sandbox.cleanupSandbox");
     expect(source).not.toMatch(/Dockerfile\.base|repair controller|respawn|quarantine/iu);
   });
