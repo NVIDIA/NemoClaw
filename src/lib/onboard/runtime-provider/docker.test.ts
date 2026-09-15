@@ -465,17 +465,17 @@ describe("Docker provider start with a running container", () => {
     overrides: Partial<DockerRuntimeProviderDependencies> = {},
   ) {
     const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "started" }));
-    const readSandboxPhase = vi.fn(() => phase);
+    const sandboxNeedsLifecycleStart = vi.fn(() => phase === "Stopped");
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle,
-      readSandboxPhase,
+      sandboxNeedsLifecycleStart,
       findLabeledSandboxContainers: () => [runningContainer],
       recoverPortableSandbox: async () => ({ kind: "not-installed" }),
       recoverSandbox: () => ({ recovered: true, via: "started-running-original" }),
       withLifecycleLock: async (_sandboxName, operation) => operation(),
       ...overrides,
     } as Partial<DockerRuntimeProviderDependencies>);
-    return { captureSandboxLifecycle, provider, readSandboxPhase };
+    return { captureSandboxLifecycle, provider, sandboxNeedsLifecycleStart };
   }
 
   it("starts a sandbox still reported Stopped while its container runs (#11790)", async () => {
@@ -491,12 +491,17 @@ describe("Docker provider start with a running container", () => {
   });
 
   it("still reports a Ready sandbox as already running (#11790)", async () => {
-    const { captureSandboxLifecycle, provider, readSandboxPhase } = startWithPhase("Ready");
+    const { captureSandboxLifecycle, provider, sandboxNeedsLifecycleStart } =
+      startWithPhase("Ready");
 
     expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
       exitCode: 0,
     });
-    expect(readSandboxPhase).toHaveBeenCalledWith("alpha", "nemoclaw", expect.any(Object));
+    expect(sandboxNeedsLifecycleStart).toHaveBeenCalledWith(
+      "alpha",
+      "nemoclaw",
+      expect.any(Object),
+    );
     expect(captureSandboxLifecycle).not.toHaveBeenCalled();
   });
 
@@ -535,18 +540,25 @@ describe("Docker provider start with a running container", () => {
   });
 
   it("does not probe the phase when a container is already at rest", async () => {
-    const { captureSandboxLifecycle, provider, readSandboxPhase } = startWithPhase("Stopped", {
-      findLabeledSandboxContainers: () => [
-        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
-      ],
-      recoverSandbox: poison,
-    } as Partial<DockerRuntimeProviderDependencies>);
+    const { captureSandboxLifecycle, provider, sandboxNeedsLifecycleStart } = startWithPhase(
+      "Stopped",
+      {
+        findLabeledSandboxContainers: () => [
+          {
+            name: "openshell-default--alpha-id",
+            running: false,
+            status: "Exited (0) 1 second ago",
+          },
+        ],
+        recoverSandbox: poison,
+      } as Partial<DockerRuntimeProviderDependencies>,
+    );
 
     expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
       exitCode: 0,
     });
     expect(captureSandboxLifecycle).toHaveBeenCalledOnce();
-    expect(readSandboxPhase).not.toHaveBeenCalled();
+    expect(sandboxNeedsLifecycleStart).not.toHaveBeenCalled();
   });
 });
 

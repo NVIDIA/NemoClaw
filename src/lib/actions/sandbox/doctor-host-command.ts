@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { resolveOpenshellBinaryOrNull } from "../../adapters/openshell/resolve-shared";
-import { parseSandboxPhase } from "../../state/gateway";
+import { parseSandboxPhase, sandboxPhaseNeedsLifecycleStart } from "../../state/gateway";
 import { ROOT } from "../../state/paths";
 
 export type CommandCapture = {
@@ -46,6 +46,10 @@ type OpenShellHostCommandDeps = {
   resolveExecutable?: typeof resolveOpenshellBinaryOrNull;
 };
 
+type OpenShellSandboxPhaseDeps = OpenShellHostCommandDeps & {
+  captureCommand?: typeof captureOpenShellHostCommand;
+};
+
 /** Resolve and capture one bounded OpenShell host lifecycle command. */
 export function captureOpenShellHostCommand(
   args: string[],
@@ -77,9 +81,9 @@ export function readOpenShellSandboxPhase(
   gatewayName: string,
   environment: NodeJS.ProcessEnv,
   timeout: number,
-  deps: OpenShellHostCommandDeps = {},
+  deps: OpenShellSandboxPhaseDeps = {},
 ): string | null {
-  const probe = captureOpenShellHostCommand(
+  const probe = (deps.captureCommand ?? captureOpenShellHostCommand)(
     ["sandbox", "get", "-g", gatewayName, sandboxName],
     environment,
     timeout,
@@ -87,4 +91,17 @@ export function readOpenShellSandboxPhase(
   );
   if (probe.status !== 0 || probe.error) return null;
   return parseSandboxPhase(probe.output);
+}
+
+/** True only when OpenShell reports the phase that requires a lifecycle start. */
+export function openShellSandboxNeedsLifecycleStart(
+  sandboxName: string,
+  gatewayName: string,
+  environment: NodeJS.ProcessEnv,
+  timeout: number,
+  deps: OpenShellSandboxPhaseDeps = {},
+): boolean {
+  return sandboxPhaseNeedsLifecycleStart(
+    readOpenShellSandboxPhase(sandboxName, gatewayName, environment, timeout, deps),
+  );
 }

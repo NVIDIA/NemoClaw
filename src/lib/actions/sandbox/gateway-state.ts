@@ -22,6 +22,7 @@ import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gatewa
 import {
   isTerminalSandboxPhase,
   parseSandboxPhase,
+  sandboxPhaseNeedsLifecycleStart,
   TERMINAL_SANDBOX_PHASES,
 } from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
@@ -1005,8 +1006,6 @@ export async function getReconciledSandboxGatewayState(
 }
 
 const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
-/** The phase OpenShell reports for a sandbox that is not running. */
-const STOPPED_SANDBOX_PHASE = "Stopped";
 
 function startSandboxThroughOpenShell(sandboxName: string, gatewayName: string) {
   return captureOpenshell(["sandbox", "start", "-g", gatewayName, sandboxName], {
@@ -1029,7 +1028,7 @@ function startStoppedSandboxPhaseForProbeRecovery(
     timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
   });
   const phase = probe.status === 0 ? parseSandboxPhase(probe.output ?? "") : null;
-  if (phase !== STOPPED_SANDBOX_PHASE) return false;
+  if (!sandboxPhaseNeedsLifecycleStart(phase)) return false;
   console.error(
     `  Sandbox '${sandboxName}' is still stopped while its container runs — starting it...`,
   );

@@ -4,7 +4,7 @@
 import {
   captureHostCommand,
   captureOpenShellHostCommand,
-  readOpenShellSandboxPhase,
+  openShellSandboxNeedsLifecycleStart,
 } from "../../actions/sandbox/doctor-host-command";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import {
@@ -79,12 +79,12 @@ export interface DockerRuntimeProviderDependencies {
     gatewayName: string,
     environment: NodeJS.ProcessEnv,
   ) => ReturnType<typeof captureOpenShellHostCommand>;
-  /** Read the sandbox phase OpenShell reports, or null when it cannot be observed. */
-  readonly readSandboxPhase: (
+  /** True only when OpenShell reports a phase that requires a lifecycle start. */
+  readonly sandboxNeedsLifecycleStart: (
     sandboxName: string,
     gatewayName: string,
     environment: NodeJS.ProcessEnv,
-  ) => string | null;
+  ) => boolean;
   readonly captureHostCommand: (
     command: string,
     args: string[],
@@ -107,8 +107,6 @@ export interface DockerRuntimeProviderDependencies {
 
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
 const AT_REST_STATUS_PREFIXES = ["Exited", "Created", "Dead"] as const;
-/** The phase OpenShell reports for a sandbox that was stopped on purpose. */
-const STOPPED_SANDBOX_PHASE = "Stopped";
 
 function inspectDockerGatewayNetwork(networkName: string) {
   const raw = dockerCapture(
@@ -257,10 +255,10 @@ function resolveDependencies(
           environment,
           DOCKER_OPERATION_TIMEOUT_MS,
         )),
-    readSandboxPhase:
-      overrides.readSandboxPhase ??
+    sandboxNeedsLifecycleStart:
+      overrides.sandboxNeedsLifecycleStart ??
       ((sandboxName, gatewayName, environment) =>
-        readOpenShellSandboxPhase(
+        openShellSandboxNeedsLifecycleStart(
           sandboxName,
           gatewayName,
           environment,
@@ -430,11 +428,11 @@ async function startDockerSandboxUnlocked(
   const stoppedPhaseWithRunningContainer =
     !containerAtRest &&
     containers.length > 0 &&
-    deps.readSandboxPhase(
+    deps.sandboxNeedsLifecycleStart(
       input.sandboxName,
       input.sandbox.gatewayName ?? "nemoclaw",
       input.environment,
-    ) === STOPPED_SANDBOX_PHASE;
+    );
   if (
     (containerAtRest || stoppedPhaseWithRunningContainer) &&
     !containers.some((container) => isGpuBackupSibling(container.name))
