@@ -3,8 +3,6 @@
 
 import path from "node:path";
 
-const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
-
 export function printRemediationActions(
   actions:
     | readonly {
@@ -40,19 +38,4 @@ export function getFutureShellPathHint(
     return null;
   }
   return `export PATH="${binDir}:$PATH"`;
-}
-
-export function getPortConflictServiceHints(platform = process.platform): string[] {
-  if (platform === "darwin") {
-    return [
-      "       # or, if it's a launchctl service (macOS):",
-      "       launchctl list | grep -i claw   # columns: PID | ExitStatus | Label",
-      `       launchctl unload ${OPENCLAW_LAUNCH_AGENT_PLIST}`,
-      "       # or: launchctl bootout gui/$(id -u)/ai.openclaw.gateway",
-    ];
-  }
-  return [
-    "       # or, if it's a systemd service:",
-    "       systemctl --user stop openclaw-gateway.service",
-  ];
 }

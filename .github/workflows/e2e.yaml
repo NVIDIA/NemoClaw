@@ -3842,7 +3842,7 @@ jobs:
       E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "openshell-credential-generation-window"
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs"
+      E2E_OBSERVABLE_OUTCOME: "Stable-handle refresh, revocation, detach, re-add, and valid rebuild preserve authorization epochs; expired inference credentials block rebuild before source deletion"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
