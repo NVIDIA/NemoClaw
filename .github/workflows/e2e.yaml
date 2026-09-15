@@ -429,11 +429,28 @@ jobs:
             echo "::error::Manual PR E2E must be dispatched from this repository branch" >&2
             exit 1
           }
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
           [[ "$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::checkout_repository must be an owner/repository name" >&2; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA" >&2; exit 1; }
           [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA" >&2; exit 1; }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
+
+          if [[ -z "$PR_NUMBER" ]]; then
+            [[ "$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$CHECKOUT_SHA" == "$BASE_SHA" ]] || {
+              echo "::error::PR-less dispatch must test the exact main commit" >&2
+              exit 1
+            }
+            current_main="$(curl --fail --silent --show-error --proto '=https' \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/branches/main" | jq -r '.commit.sha')"
+            [[ "$current_main" == "$CHECKOUT_SHA" ]] || {
+              echo "::error::PR-less dispatch checkout_sha must equal current main" >&2
+              exit 1
+            }
+            printf 'nvidia_owned=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Accept: application/vnd.github+json" \
@@ -699,7 +716,7 @@ jobs:
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
       - name: Stage immutable native Podman E2E toolchains
-        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@1385418619a2518fb79c3b603efba69d5d825f0d
+        uses: ./.github/actions/stage-native-podman-e2e-toolchains
         with:
           enabled: ${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}
           github-token: ${{ github.token }}
