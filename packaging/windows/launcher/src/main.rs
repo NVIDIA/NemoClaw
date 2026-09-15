@@ -292,7 +292,11 @@ fn main() {
             credential_error("The Microsoft Edge trust query requires one path.");
         }
         let path = PathBuf::from(&forwarded[1]);
-        edge_trust::verify(&path).unwrap_or_else(|message| credential_error(message));
+        edge_trust::verify(&path).unwrap_or_else(|status| {
+            credential_error(&format!(
+                "Microsoft Edge offline Authenticode verification failed (0x{status:08x})."
+            ))
+        });
         println!("{{\"schemaVersion\":1,\"signatureStatus\":\"Valid\"}}");
         return;
     }

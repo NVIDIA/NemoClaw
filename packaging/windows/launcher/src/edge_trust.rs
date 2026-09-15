@@ -47,9 +47,9 @@ unsafe extern "system" {
     fn WinVerifyTrust(window: RawHandle, action: *const Guid, data: *mut WintrustData) -> i32;
 }
 
-pub(crate) fn verify(path: &Path) -> Result<(), &'static str> {
+pub(crate) fn verify(path: &Path) -> Result<(), u32> {
     const ACTION_GENERIC_VERIFY_V2: Guid = Guid {
-        data1: 0x00aa_00ba,
+        data1: 0x00aa_c56b,
         data2: 0xcd44,
         data3: 0x11d0,
         data4: [0x8c, 0xc2, 0x00, 0xc0, 0x4f, 0xc2, 0x95, 0xee],
@@ -62,7 +62,7 @@ pub(crate) fn verify(path: &Path) -> Result<(), &'static str> {
     const WTD_CACHE_ONLY_URL_RETRIEVAL: u32 = 0x1000;
 
     if !path.is_absolute() {
-        return Err("Microsoft Edge trust requires an absolute path.");
+        return Err(123);
     }
     let wide = OsStr::new(path.as_os_str())
         .encode_wide()
@@ -93,7 +93,7 @@ pub(crate) fn verify(path: &Path) -> Result<(), &'static str> {
     data.state_action = WTD_STATEACTION_CLOSE;
     unsafe { WinVerifyTrust(null_mut(), &ACTION_GENERIC_VERIFY_V2, &mut data) };
     if status != 0 {
-        return Err("Microsoft Edge offline Authenticode verification failed.");
+        return Err(status as u32);
     }
     Ok(())
 }
