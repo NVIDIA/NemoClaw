@@ -34,7 +34,8 @@ Plan observes resources without creating containers, downloading models, prepari
 A fresh managed gateway defers the OpenShell graph until apply makes it reachable.
 Apply always creates its own checked plan; a previous public plan is not an approval artifact.
 
-Managed inference apply checks an actual agent reply even when the resource change list is empty.
+Managed vLLM service apply checks an actual agent reply even when the resource change list is empty.
+Other inference paths perform the configured API probe; see [verification levels](inference.md#verify-the-result).
 
 For model-specific preparation supplied by a pinned image, see [inline recipes](recipes.md).
 Ordinary models can omit `service.recipe`.
@@ -150,14 +151,55 @@ See [validation beyond the schema](reference/configuration.md#validation-beyond-
 
 ## Updates and Recovery
 
-Change the route's `overrides.model` to update inference without replacing the sandbox.
-Ordinary apply rejects removal and most replacement.
-Managed DGX Spark allows explicit process-specification changes only after independently verifying retained storage bindings.
+Keep the original YAML and bundle before editing a deployment.
+Plan the proposed YAML against the existing state directory, review the changes and any `deferred` checks, then apply that same YAML.
+Apply recomputes its plan; a successful earlier plan does not reserve resources or authorize a later unchecked change.
+
+### Choose the Change Path
+
+| Proposed change | Current behavior and next step |
+|---|---|
+| Route `overrides.model`, with the same API and launch settings | Can update the route without replacing the sandbox; use a model served by the selected endpoint and recheck a real agent reply |
+| Pi model or native model metadata | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
+| External inference endpoint with the same provider identity/API | Plan the provider update and verify the new route after apply; do not change the gateway endpoint to move inference |
+| Sandbox image, harness, API, OpenClaw tuning, roster/tools, execution settings, interfaces, or declared integrations | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
+| Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
+| Managed vLLM process image or serving specification | May replace the process only after checking retained storage and the established engine/resource identities; review the plan and [model constraints](models.md) |
+| Deployment UID, established gateway endpoint, or bound runtime engine | Cannot retarget the existing state; create a separate deployment |
+| Remove a resource or change management mode so its binding disappears | Ordinary apply refuses removal; assess a separate deployment and explicit retirement of the original |
+| Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
+
+The [plan checks](../crates/nemoclaw-sdk/src/deployment/plan.rs) reject ordinary removal/replacement.
+The [runtime stage](../crates/nemoclaw-sdk/src/deployment/runtime.rs) enforces the narrower managed-process replacement path.
+A successful route change does not migrate conversations or guarantee that the new model supports the old model's tools, context, or reasoning settings.
+
+### Verify an Unchanged Reapply
+
+From the directory containing your deployment YAML, with the matching bundle and credential references available:
+
+```sh
+nemoclaw export --state-dir .local/deployment --output exported-new.yaml
+```
+
+After export succeeds, inspect its configuration and reapply it using the same state:
+
+```sh
+nemoclaw plan --state-dir .local/deployment exported-new.yaml
+nemoclaw apply --state-dir .local/deployment exported-new.yaml
+```
+
+For a fully observed unchanged deployment, expect an empty `changes` list.
+A nonempty `deferred` list means the plan is incomplete, even if the current changes list is empty.
+Unchanged apply still performs readiness and inference checks; it can send requests and fail if a service is unavailable.
+Keep the original YAML until verification succeeds.
+
+### Recover an Interrupted Operation
 
 Changing an established gateway endpoint is rejected.
 There is no lost-state adoption, migration, pruning, or purge command.
 
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and explicitly reapply.
+If the error says an unfinished apply has different intent, use the exact configuration from that unfinished operation before attempting a new change.
 If readiness fails after resource creation, established identities remain recorded.
 Authentication, transport, incomplete observations, ownership drift, or changed durable identity stop planning; they never authorize recreation.
 

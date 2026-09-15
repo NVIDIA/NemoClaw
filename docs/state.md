@@ -24,6 +24,25 @@ The [state store](../crates/nemoclaw-sdk/src/state/mod.rs) and [deployment lifec
 Keep the whole directory after failure; deleting state does not establish that its runtime resources are absent.
 The local lock does not exclude other clients of the same gateway.
 
+## Native Agent Files
+
+These paths are inside the sandbox, not the client's deployment state directory.
+Use authenticated [native access](interfaces.md) for the selected deployment.
+
+| Native data | Location and lifetime |
+|---|---|
+| OpenClaw configuration and native state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
+| First OpenClaw agent's working files | `/sandbox/workspace` |
+| Additional declared OpenClaw agents' working files | `/sandbox/workspaces/<agent-name>` |
+| Hermes API/native state | `/sandbox/.hermes`; includes the API `interface-token` |
+| Hermes dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
+| Pi conversation | Held in the running Pi process; changing its model or restarting the runtime loses the in-memory conversation |
+
+The [OpenClaw adapter](../image/fabric/openclaw_adapter.py) and [interface guide](interfaces.md) define these locations.
+Native state can survive a process restart while its files remain; deleting the sandbox deletes its files.
+Separate agent workspaces within one sandbox are not separate security boundaries.
+File/history locations and restoration procedures for the other harnesses: **TBD**.
+
 ## Configuration Export and Native Data
 
 Export produces checked desired-state YAML with credential references.
@@ -45,6 +64,24 @@ See [managed vLLM authentication](inference.md#authenticate-a-managed-vllm-servi
 
 A complete inventory and verified manual removal procedure for retained resources: **TBD**.
 There is no current purge command.
+
+### Understand the Retained Resources
+
+| Resource or data | Result of a completed destroy |
+|---|---|
+| Sandbox and its native files, settings, tokens, and conversations | Deleted |
+| Deployment route and provider registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
+| External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
+| OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
+| Managed vLLM/Ollama process containers | Removed; model storage remains tracked |
+| Managed model downloads and prepared data | Retained; authenticated vLLM storage can also contain its generated key |
+| Managed Ollama proxy | Container removed; tracked credential volume retained |
+| Managed gateway | Process removed; database, signing/encryption keys, bridge, and stopped initializer retained |
+| Local deployment state, bundle, and container images | Remain; removing the CLI bundle is separate from destroying its deployment |
+
+The [teardown implementation](../crates/nemoclaw-sdk/src/deployment/runtime/teardown.rs) selects retained bindings.
+Destroy's JSON `retained` list identifies tracked resource addresses; it is not an inventory of every host file or externally owned resource.
+Record those addresses and keep the state directory if you need to account for retained storage later.
 
 ## Recovery and Transfer
 
