@@ -3,11 +3,6 @@
 
 import { isAbsolute } from "node:path";
 
-import { buildCliOpenShellForwardServiceArgs } from "../../../../src/lib/adapters/openshell/forward-cli.ts";
-import { DEFAULT_GATEWAY_PORT, parsePort } from "../../../../src/lib/core/ports.ts";
-import { getGatewayHttpsEndpoint } from "../../../../src/lib/onboard/docker-driver-gateway-env.ts";
-import { resolveGatewayName } from "../../../../src/lib/onboard/gateway-binding/identity.ts";
-import { loadGatewayManagementDeclaration } from "../../../../src/lib/onboard/gateway-management.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import {
   assertStockManagedImageReceipt,
@@ -43,11 +38,21 @@ const GATEWAY_REMOVE_UNSUPPORTED =
 const FORWARD_ALREADY_ABSENT =
   /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/i;
 
-function forwardListenerAuthority(env: NodeJS.ProcessEnv): {
+async function forwardListenerAuthority(env: NodeJS.ProcessEnv): Promise<{
   gatewayEndpoint: string;
   gatewayName: string;
   workspace: string;
-} {
+}> {
+  const [ports, gatewayEnv, gatewayIdentity, gatewayManagement] = await Promise.all([
+    import("../../../../src/lib/core/ports.ts"),
+    import("../../../../src/lib/onboard/docker-driver-gateway-env.ts"),
+    import("../../../../src/lib/onboard/gateway-binding/identity.ts"),
+    import("../../../../src/lib/onboard/gateway-management.ts"),
+  ]);
+  const { DEFAULT_GATEWAY_PORT, parsePort } = ports;
+  const { getGatewayHttpsEndpoint } = gatewayEnv;
+  const { resolveGatewayName } = gatewayIdentity;
+  const { loadGatewayManagementDeclaration } = gatewayManagement;
   const gatewayPort = parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, env);
   const configuredDeclaration = env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim();
   const loaded = configuredDeclaration ? loadGatewayManagementDeclaration({ env }) : null;
@@ -263,8 +268,12 @@ export class HostCliClient {
         artifactName: `${artifactName}-listener-after`,
       }),
     ]);
+    const [{ buildCliOpenShellForwardServiceArgs }, authority] = await Promise.all([
+      import("../../../../src/lib/adapters/openshell/forward-cli-args.ts"),
+      forwardListenerAuthority(options.env ?? process.env),
+    ]);
     const target = {
-      ...forwardListenerAuthority(options.env ?? process.env),
+      ...authority,
       sandboxName,
       localHost: "127.0.0.1" as const,
       port: Number(port),

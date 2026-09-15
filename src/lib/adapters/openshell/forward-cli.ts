@@ -27,6 +27,7 @@ import {
   type StartOpenShellForwardRequest,
   type VerifyOpenShellForwardReleaseRequest,
 } from "./forward";
+import { buildCliOpenShellForwardServiceArgs } from "./forward-cli-args";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
 import {
   replaceOpenShellRuntimeSelectionEnv,
@@ -248,26 +249,7 @@ export function buildCliOpenShellForwardListArgs(forward: OpenShellForwardIdenti
   ];
 }
 
-/** Build the direct ForwardTcp command without a shell. */
-export function buildCliOpenShellForwardServiceArgs(forward: OpenShellForwardIdentity): string[] {
-  return [
-    "--gateway",
-    forward.gatewayName,
-    "--gateway-endpoint",
-    forward.gatewayEndpoint,
-    "--workspace",
-    forward.workspace,
-    "forward",
-    "service",
-    forward.sandboxName,
-    "--target-port",
-    String(forward.port),
-    "--target-host",
-    "127.0.0.1",
-    "--local",
-    `${forward.localHost}:${String(forward.port)}`,
-  ];
-}
+export { buildCliOpenShellForwardServiceArgs } from "./forward-cli-args";
 
 /** Build the authority-scoped legacy stop command. */
 export function buildCliOpenShellLegacyForwardStopArgs(
