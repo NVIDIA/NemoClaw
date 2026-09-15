@@ -32,6 +32,7 @@ $logicalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
 $topLevelNames = @($files | ForEach-Object {
     ([IO.Path]::GetRelativePath($RuntimeRoot, $_.FullName) -split '[\\/]')[0]
 } | Sort-Object -Unique)
+$topLevelDirectories = @(Get-ChildItem -LiteralPath $RuntimeRoot -Directory -Force | ForEach-Object Name)
 $sourceManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()
 $maximumMiB = [Math]::Max(4096, [Math]::Ceiling(($logicalBytes + 536870912) / 1MB))
 # The dynamic image normally stays close to its compressed payload size, but
@@ -110,6 +111,14 @@ try {
         $security.AddAccessRule($rule) | Out-Null
     }
     Set-Acl -LiteralPath $mount -AclObject $security
+    # Set-Acl on a volume mount point protects the host reparse point rather
+    # than the attached volume root. Pre-create and protect each runtime root
+    # inside the image so Robocopy descendants inherit the package grants.
+    foreach ($name in $topLevelDirectories) {
+        $directory = Join-Path $mount $name
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+        Set-Acl -LiteralPath $directory -AclObject $security
+    }
     $copyLog = [IO.Path]::ChangeExtension($ReceiptPath, '.robocopy.log')
     & (Join-Path $env:SystemRoot 'System32\robocopy.exe') $RuntimeRoot $mount /E /MOV /COPY:DT /DCOPY:DT /R:0 /W:0 /NP "/LOG:$copyLog" | Out-Null
     $copyStatus = $LASTEXITCODE
@@ -118,6 +127,24 @@ try {
         $detail = ((Get-Content -LiteralPath $copyLog -Tail 40) -join ' | ')
         throw "Runtime image population failed with status ${copyStatus}: $detail"
     }
+    $requiredReadMask = [uint32]0x001200a9
+    $readRoots = @($topLevelDirectories | ForEach-Object {
+        $directory = Join-Path $mount $_
+        $acl = Get-Acl -LiteralPath $directory
+        $rows = @($acl.Access | ForEach-Object {
+            $sid = $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+            $mask = [uint32]([int64]([int32]$_.FileSystemRights) -band 0xffffffffL)
+            [pscustomobject]@{ sid=$sid; mask=$mask; inherited=$_.IsInherited;
+                accessControlType=[string]$_.AccessControlType }
+        })
+        foreach ($sid in @('S-1-15-2-1','S-1-15-2-2')) {
+            $matches = @($rows | Where-Object { $_.sid -ceq $sid -and $_.accessControlType -ceq 'Allow' -and
+                ($_.mask -band $requiredReadMask) -eq $requiredReadMask })
+            if ($matches.Count -ne 1) { throw "The runtime image did not preserve the required AppContainer read grant for $sid on $directory." }
+        }
+        [pscustomobject]@{ name=$_; sddl=$acl.Sddl; access=$rows }
+    })
+    $receipt['appContainerReadRoots'] = $readRoots
     & $icacls $mount /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'The runtime image inventory could not apply its installer-owned identity.' }
     $mountedFiles = @($topLevelNames | ForEach-Object {
