@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { gatewayAdaptersForTest } from "../../../../test/helpers/openshell-gateway-adapters";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -42,169 +43,196 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
-  it("uses the current binding for select, add, and health commands", () => {
+  it("uses the current binding for registration and selection", async () => {
     let name = "initial";
-    const runCaptureOpenshell = vi.fn((args: string[]) => args.join(" "));
-    const runOpenshell = vi.fn(() => runResult());
+    const adapters = gatewayAdaptersForTest({
+      healthy: false,
+      namedMetadata: false,
+      gatewayReuseState: "missing",
+    });
+    const revalidateAuthority = vi.fn();
     const registration = createGatewayRegistration({
+      revalidateAuthority,
+      ...adapters,
       gatewayName: () => name,
+      gatewayPort: () => 9443,
       getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:9443",
       getGatewayLocalEndpoint: () => "https://127.0.0.1:9443",
-      hasStaleGateway: () => false,
-      isGatewayHealthy: () => false,
       isLinuxDockerDriverGatewayEnabled: () => true,
-      removeDockerDriverGatewayRegistration: () => true,
-      runCaptureOpenshell,
-      runOpenshell,
-      runQuietOpenshell: vi.fn(() => ({ status: 0 })),
     });
-
     name = "resumed";
-    expect(registration.registerDockerDriverGatewayEndpoint()).toBe(true);
-
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(
-      ["gateway", "info", "-g", "resumed"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["gateway", "add", "https://127.0.0.1:9443", "--local", "--name", "resumed"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["gateway", "select", "resumed"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    await expect(registration.registerDockerDriverGatewayEndpoint()).resolves.toBe(true);
+    expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "resumed" },
+      expectedGatewayPort: 9443,
+    });
+    expect(adapters.lifecycle.registerGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "resumed" },
+      endpoint: "https://127.0.0.1:9443",
+    });
+    expect(adapters.lifecycle.selectGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "resumed" },
+    });
   });
 
-  it("keeps Docker-driver registration on the frozen OpenShell target (#10514)", () => {
-    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
-    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
-    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
-    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
-    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
-    vi.stubEnv("OPENSHELL_DISABLE_TLS", "1");
-    vi.stubEnv("OPENSHELL_DISABLE_GATEWAY_AUTH", "1");
-    const runCaptureOpenshell = vi.fn(
-      (_args: string[], _options?: Record<string, unknown>) => "Connected",
-    );
-    const runOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) =>
-      runResult(),
-    );
-    const runQuietOpenshell = vi.fn(() => runResult());
+  it("passes the frozen target to observation and selection (#10514)", async () => {
+    const adapters = gatewayAdaptersForTest({ endpointBinding: "match" });
+    const revalidateAuthority = vi.fn();
     const registration = createGatewayRegistration({
+      revalidateAuthority,
+      ...adapters,
       gatewayName: () => "nemoclaw-8090",
+      gatewayPort: () => 8090,
       getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8090",
       getGatewayLocalEndpoint: () => "https://127.0.0.1:8090",
-      hasStaleGateway: () => false,
-      isGatewayHealthy: () => true,
       isLinuxDockerDriverGatewayEnabled: () => true,
-      removeDockerDriverGatewayRegistration: () => true,
-      runCaptureOpenshell,
-      runOpenshell,
-      runQuietOpenshell,
     });
-
-    try {
-      expect(
-        registration.registerDockerDriverGatewayEndpoint({
-          gatewayName: "nemoclaw-8090",
-          workspace: "default",
-          localTlsDir: "/recorded/tls",
-        }),
-      ).toBe(true);
-
-      expect(runQuietOpenshell).not.toHaveBeenCalled();
-      expect(runOpenshell).toHaveBeenCalledTimes(1);
-      expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
-      const selectedOptions = runOpenshell.mock.calls[0]?.[1] as
-        | { env?: Record<string, string>; replaceEnv?: boolean }
-        | undefined;
-      expect(selectedOptions).toMatchObject({
-        env: expect.objectContaining({
-          OPENSHELL_GATEWAY: "nemoclaw-8090",
-          OPENSHELL_WORKSPACE: "default",
-          OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
-        }),
-        replaceEnv: true,
-      });
-      expect(runCaptureOpenshell.mock.calls[0]?.[1]?.env).toEqual(selectedOptions?.env);
-      expect(runCaptureOpenshell.mock.calls[1]?.[1]?.env).toEqual(selectedOptions?.env);
-      expect(runCaptureOpenshell.mock.calls[2]?.[1]?.env).toEqual(selectedOptions?.env);
-      expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-      expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
-      expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_TLS");
-      expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_GATEWAY_AUTH");
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-8090",
+      workspace: "default",
+      localTlsDir: "/recorded/tls",
+    };
+    await expect(registration.registerDockerDriverGatewayEndpoint(runtimeSelection)).resolves.toBe(
+      true,
+    );
+    const request = { target: { kind: "named", gatewayName: "nemoclaw-8090" }, runtimeSelection };
+    expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith({
+      ...request,
+      expectedGatewayPort: 8090,
+    });
+    expect(adapters.lifecycle.selectGateway).toHaveBeenCalledWith(request);
+    expect(adapters.lifecycle.registerGateway).not.toHaveBeenCalled();
   });
 
-  it("does not retry registration or use legacy destroy after a current remove failure", () => {
-    const outcomes = new Map<string, ReturnType<typeof runResult>>([
-      ["gateway select nemoclaw", runResult(1)],
-      ["gateway add https://127.0.0.1:8080 --local --name nemoclaw", runResult(1)],
-      [
-        "gateway remove nemoclaw",
-        { status: 1, stdout: "", stderr: "connection refused" } as ReturnType<
-          typeof import("../../runner").run
-        >,
-      ],
-    ]);
-    const runOpenshell = vi.fn((args: string[]) => outcomes.get(args.join(" ")) ?? runResult());
+  it("reuses matching offline metadata while the managed gateway restarts (#11741)", async () => {
+    const adapters = gatewayAdaptersForTest({
+      healthy: false,
+      namedMetadata: true,
+      gatewayReuseState: "stale",
+      endpointBinding: "match",
+    });
     const registration = createGatewayRegistration({
+      revalidateAuthority: vi.fn(),
+      ...adapters,
       gatewayName: () => "nemoclaw",
+      gatewayPort: () => 8080,
       getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
       getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
-      hasStaleGateway: () => false,
-      isGatewayHealthy: () => false,
       isLinuxDockerDriverGatewayEnabled: () => true,
-      removeDockerDriverGatewayRegistration: () => true,
-      runCaptureOpenshell: vi.fn(() => ""),
-      runOpenshell,
-      runQuietOpenshell: vi.fn(() => runResult()),
     });
 
-    expect(
-      registration.registerDockerDriverGatewayEndpoint({
-        gatewayName: "nemoclaw",
-        workspace: "default",
-      }),
-    ).toBe(false);
-    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
-      ["gateway", "select", "nemoclaw"],
-      ["gateway", "add", "https://127.0.0.1:8080", "--local", "--name", "nemoclaw"],
-      ["gateway", "remove", "nemoclaw"],
-    ]);
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["gateway", "destroy", "-g", "nemoclaw"],
-      expect.anything(),
-    );
+    await expect(registration.registerDockerDriverGatewayEndpoint()).resolves.toBe(true);
+
+    expect(adapters.lifecycle.selectGateway).toHaveBeenCalledOnce();
+    expect(adapters.lifecycle.registerGateway).not.toHaveBeenCalled();
   });
+
+  it("does not reuse offline metadata bound to another managed gateway port (#11741)", async () => {
+    const adapters = gatewayAdaptersForTest({
+      healthy: false,
+      namedMetadata: true,
+      gatewayReuseState: "stale",
+      endpointBinding: "mismatch",
+    });
+    const registration = createGatewayRegistration({
+      revalidateAuthority: vi.fn(),
+      ...adapters,
+      gatewayName: () => "nemoclaw",
+      gatewayPort: () => 8080,
+      getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+      getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
+      isLinuxDockerDriverGatewayEnabled: () => true,
+    });
+
+    await expect(registration.registerDockerDriverGatewayEndpoint()).resolves.toBe(true);
+
+    expect(adapters.lifecycle.registerGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      endpoint: "https://127.0.0.1:8080",
+    });
+  });
+
+  it("repairs healthy metadata bound to another managed gateway port (#11741)", async () => {
+    const adapters = gatewayAdaptersForTest({
+      healthy: true,
+      namedMetadata: true,
+      gatewayReuseState: "healthy",
+      endpointBinding: "mismatch",
+    });
+    const registration = createGatewayRegistration({
+      revalidateAuthority: vi.fn(),
+      ...adapters,
+      gatewayName: () => "nemoclaw",
+      gatewayPort: () => 8080,
+      getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+      getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
+      isLinuxDockerDriverGatewayEnabled: () => true,
+    });
+
+    await expect(registration.registerDockerDriverGatewayEndpoint()).resolves.toBe(true);
+
+    expect(adapters.lifecycle.registerGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      endpoint: "https://127.0.0.1:8080",
+    });
+    expect(adapters.lifecycle.selectGateway).toHaveBeenCalledOnce();
+  });
+
+  it.each(["registration", "metadata"] as const)(
+    "reobserves failed %s add without remove, destroy, or another add (#11326)",
+    async (operation) => {
+      const adapters = gatewayAdaptersForTest({
+        healthy: false,
+        namedMetadata: false,
+        gatewayReuseState: "missing",
+      });
+      adapters.lifecycle.registerGateway.mockResolvedValue({
+        ok: false,
+        ambiguous: true,
+        unsupported: false,
+        error: { kind: "timeout", message: "Timed out." },
+      });
+      const revalidateAuthority = vi.fn();
+      const registration = createGatewayRegistration({
+        revalidateAuthority,
+        ...adapters,
+        gatewayName: () => "nemoclaw",
+        gatewayPort: () => 8080,
+        getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+        getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
+        isLinuxDockerDriverGatewayEnabled: () => operation === "registration",
+      });
+      await expect(
+        operation === "registration"
+          ? registration.registerDockerDriverGatewayEndpoint()
+          : registration.attachGatewayMetadataIfNeeded({ forceRefresh: true }),
+      ).resolves.toBe(false);
+      expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledTimes(2);
+      expect(revalidateAuthority).toHaveBeenCalledOnce();
+      expect(adapters.lifecycle.registerGateway).toHaveBeenCalledOnce();
+      expect(adapters.lifecycle.removeGateway).not.toHaveBeenCalled();
+      expect(adapters.lifecycle.destroyGateway).not.toHaveBeenCalled();
+      expect(adapters.lifecycle.selectGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses the current binding for recovery select and health commands", async () => {
     let name = "initial";
-    const runOpenshell = vi.fn(() => runResult());
-    const runCaptureOpenshell = vi
-      .fn<(args: string[], options?: { ignoreError?: boolean }) => string>()
-      .mockReturnValueOnce("Disconnected")
-      .mockReturnValue("Connected");
+    const adapters = gatewayAdaptersForTest();
     const recovery = createGatewayRecoveryOrchestration({
+      ...adapters,
       SCRIPTS: "/tmp/scripts",
       assertGatewayStartAllowed: vi.fn(),
-      attachGatewayMetadataIfNeeded: () => true,
+      attachGatewayMetadataIfNeeded: async () => true,
       envInt: (_name, fallback) => fallback,
       gatewayClusterHealthcheckPassed: () => true,
       gatewayName: () => name,
       getContainerRuntime: () => "docker",
       getGatewayClusterContainerState: () => "missing",
-      isGatewayHealthy: () => true,
       isGatewayHttpReady: async () => true,
       isLinuxDockerDriverGatewayEnabled: () => false,
-      isSelectedGateway: () => false,
       repairGatewayBootstrapSecrets: () => ({ repaired: true, missingSecrets: [] }),
       run: vi.fn(() => runResult()),
-      runCaptureOpenshell,
-      runOpenshell,
       shouldPatchCoredns: () => false,
       sleepSeconds: vi.fn(),
       startDockerDriverGateway: vi.fn(),
@@ -214,14 +242,12 @@ describe("gateway lifecycle late binding", () => {
     name = "resumed";
     await expect(recovery.recoverGatewayRuntime()).resolves.toBe(true);
 
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["gateway", "select", "resumed"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(
-      ["gateway", "info", "-g", "resumed"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(adapters.lifecycle.selectGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "resumed" },
+    });
+    expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "resumed" },
+    });
   });
 
   it("admits proven pre-marker state and rejects unproven custom roots before startup", async () => {
@@ -230,13 +256,16 @@ describe("gateway lifecycle late binding", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-start-boundary-"));
     const stateDir = path.join(root, "gateway");
     const verifyReachability = vi.fn(async () => undefined);
+    const adapters = gatewayAdaptersForTest();
     const managedStart = vi.fn(
       async (
         options: Parameters<
           typeof import("../docker-driver-gateway-env").startPackageManagedDockerDriverGatewayWithEnvOverride
         >[0],
       ) => {
-        options.runCaptureOpenshell(["status"], { ignoreError: true });
+        await options.observer.observeGatewayReuse({
+          target: { kind: "named", gatewayName: options.gatewayName },
+        });
         await options.verifySandboxBridgeGatewayReachableOrExit(false, {});
         return true;
       },
@@ -267,6 +296,7 @@ describe("gateway lifecycle late binding", () => {
         identityGatewayBin: options.gatewayBin,
       }));
     const start = createDockerDriverGatewayStart({
+      observer: adapters.observer,
       SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
       checkGatewayPortAvailable: async () => ({ ok: true }),
       clearDockerDriverGatewayRuntimeFiles: vi.fn(),
@@ -297,11 +327,10 @@ describe("gateway lifecycle late binding", () => {
       isDockerDriverGatewayHttpReady: async () => true,
       isDockerDriverGatewayProcessAlive: () => false,
       isDockerDriverGatewayStateInUse: () => false,
-      isGatewayHealthy: () => true,
       isGatewayTcpReady: async () => true,
       isPidAlive: () => false,
       logDockerDriverGatewayRestart: vi.fn(),
-      registerDockerDriverGatewayEndpoint: () => true,
+      registerDockerDriverGatewayEndpoint: async () => true,
       rememberDockerDriverGatewayPid: vi.fn(),
       resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
       resolveOpenShellSandboxBinary: () => null,
@@ -365,11 +394,10 @@ describe("gateway lifecycle late binding", () => {
       expect(runtimeIdentityOptions?.env?.OPENSHELL_TOKEN).toBeUndefined();
       expect(runtimeIdentityOptions?.env?.OPENSHELL_DISABLE_TLS).toBeUndefined();
       expect(runtimeIdentityOptions?.env?.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
-      expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+      expect(runCaptureOpenshell).toHaveBeenCalledTimes(1);
       const versionOptions = runCaptureOpenshell.mock.calls[0]?.[1] as
         | { env?: Record<string, string>; replaceEnv?: boolean }
         | undefined;
-      const statusOptions = runCaptureOpenshell.mock.calls[1]?.[1] as typeof versionOptions;
       expect(versionOptions).toMatchObject({
         env: expect.objectContaining({
           OPENSHELL_GATEWAY: "resumed",
@@ -378,7 +406,14 @@ describe("gateway lifecycle late binding", () => {
         }),
         replaceEnv: true,
       });
-      expect(statusOptions?.env).toEqual(versionOptions?.env);
+      expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "resumed" },
+        runtimeSelection: {
+          gatewayName: "resumed",
+          workspace: "default",
+          localTlsDir: path.join(stateDir, "tls"),
+        },
+      });
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_TLS");

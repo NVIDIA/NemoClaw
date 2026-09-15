@@ -208,6 +208,7 @@ if (a[0] === "sandbox" && a[1] === "exec") {
 }
 if (a[0] === "status") { process.stdout.write("Server Status\\n  Gateway: ${gatewayName}\\n  Status: Connected\\n"); process.exit(0); }
 if (a[0] === "gateway" && a[1] === "info") { process.stdout.write("Gateway Info\\n\\nGateway: ${gatewayName}\\nGateway endpoint: https://127.0.0.1:${gatewayPort}\\n"); process.exit(0); }
+if (a[0] === "gateway" && a[1] === "list") { process.stdout.write(JSON.stringify([{name:"${gatewayName}",endpoint:"https://127.0.0.1:${gatewayPort}",active:true}]) + "\\n"); process.exit(0); }
 if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
