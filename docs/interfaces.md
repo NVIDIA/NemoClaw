@@ -3,6 +3,8 @@
 
 # Access Agent Interfaces
 
+## OpenClaw Dashboard
+
 Declare OpenClaw dashboard settings on the first agent in a sandbox.
 All agents share its native gateway; secondary agents must omit `interfaces`.
 
@@ -77,3 +79,92 @@ Inspect the owned gateway logs and retained files, restore the intended settings
 
 Offline fixtures exercise the real native gateway and local protocol endpoints.
 They do not establish browser compatibility or qualify a public dashboard deployment.
+
+## Hermes API, Dashboard, and Browser TUI
+
+Hermes exposes a native authenticated API on sandbox loopback port 8642 and a dashboard on port 18789 by default.
+The dashboard uses internal port 19119 behind a sandbox-local forwarder.
+OpenShell forwarding provides host access; none of these listeners publishes a host port automatically.
+The dashboard and its browser TUI share a native session engine and isolated state under `/sandbox/.hermes/profiles/dashboard-home`.
+Fabric invokes the separate HTTP API engine under `/sandbox/.hermes`.
+Both use the same configured OpenShell model route; they do not share active conversations, cancellation, or live steering.
+Standalone `hermes` terminal sessions also retain native behavior.
+
+```mermaid
+flowchart LR
+    Fabric --> API["Hermes HTTP API"]
+    Client["API client via OpenShell"] --> API
+    Browser["Browser via OpenShell"] --> Dashboard["Dashboard and browser TUI"]
+    API --> Route["OpenShell inference route"]
+    Dashboard --> Route
+    API --> APIState["API session state"]
+    Dashboard --> UIState["Dashboard session state"]
+```
+
+Use the [Hermes interface example](../examples/hermes-interfaces.yaml) to override the ports:
+
+```yaml
+interfaces:
+  api:
+    port: 8643
+  dashboard:
+    enabled: true
+    port: 18800
+    internalPort: 19120
+    tui:
+      enabled: true
+```
+
+API ports must be between 8642 and 8652.
+Dashboard ports must be unprivileged, distinct from each other, and outside that range; 18642 is also reserved.
+The parser checks collisions after applying defaults, so changing one port may require setting the other explicitly.
+To disable the dashboard, use only `dashboard: {enabled: false}`; the API remains available for Fabric.
+To keep the dashboard while disabling browser chat and its WebSocket endpoints, set `tui.enabled: false`.
+This does not disable standalone terminal access.
+
+The pinned Hermes revision always enables browser chat upstream and treats its old `--tui` flag as a no-op.
+NemoClaw preserves that enabled default and applies explicit `tui.enabled` through the native browser-chat gate.
+This differs from the optional-TUI wording in `origin/main`; an explicit false now disables browser chat.
+It does not unify API and dashboard conversations.
+
+### Build and Connect
+
+From the repository root, follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) and run:
+
+```sh
+python3 image/fabric/build.py --harness hermes
+```
+
+The build includes native dashboard and TUI assets; startup does not install Node dependencies or rebuild assets.
+Replace the example's zero-digest image reference with the printed immutable digest and choose your own deployment UID, endpoints, and model.
+Use a fresh deployment UID and state directory when changing images or interface settings; existing sandboxes and native configurations are not migrated or replaced automatically.
+The [managed Hermes example](../examples/managed-hermes.yaml) uses managed Ollama and disables the dashboard.
+Apply using the [desired-state workflow](usage.md).
+
+With an authenticated OpenShell CLI configured for the deployment's gateway and workspace, run each desired forward in a separate terminal:
+
+```sh
+openshell forward service assistant --target-port 18800 --local 127.0.0.1:18800
+openshell forward service assistant --target-port 8643 --local 127.0.0.1:8643
+```
+
+Open `http://127.0.0.1:18800` for the dashboard.
+Its native loopback bootstrap supplies the browser session token; access relies on the authenticated OpenShell forward and local host access.
+Keep forwards bound to loopback and stop them with Ctrl-C.
+The API requires its separate bearer credential from `/sandbox/.hermes/interface-token`.
+Retrieve it only in a private terminal:
+
+```sh
+openshell sandbox exec -n assistant -- cat /sandbox/.hermes/interface-token
+```
+
+This displays a credential; avoid recorded terminals, command arguments, exported YAML, and shared URLs.
+Supply it through your API client's protected credential facility.
+Both API and dashboard tokens are private to the sandbox user, remain in their respective state directories across restarts, and are removed when retained state is deleted.
+There is no rotation command; use a fresh deployment to replace a compromised token.
+Readiness rejects changed native configuration, missing or insecure token files, or failed authenticated checks.
+Restore the intended files and permissions before reapplying; established resources remain retained on failure.
+
+Fabric owns both service processes and the sandbox-local forwarder.
+Stopping Fabric stops those processes; client-side OpenShell forwards have their own lifetime.
+Offline fixtures verify native HTTP and WebSocket behavior, not browser rendering or live OpenShell forwarding.

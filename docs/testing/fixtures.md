@@ -199,3 +199,22 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 ```
 
 It simulates SSH/Docker, OpenShell, and the agent response while exercising apply, export/reapply, observation failures, and retained data through the bundled CLI/provider.
+
+### Hermes Interface Modes
+
+After rebuilding the Hermes image, exercise the three native interface modes:
+
+```sh
+python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --inference-api openai-completions
+python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --hermes-tui disabled --inference-api openai-responses
+python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --hermes-dashboard disabled --inference-api anthropic-messages
+```
+
+These offline containers check nondefault API/dashboard ports, authenticated native readiness, HTML delivery, browser WebSocket session creation or rejection, and the absence of a disabled dashboard listener.
+They also reject changed credentials and native route configuration without overwriting drift, then verify restored readiness and credential retention across restart.
+The fixture invokes the hosted probe and two Fabric turns against local model responses.
+It does not qualify browser rendering, interactive terminal behavior, or live OpenShell forwarding.
+
+Run `hermes_interfaces_sdk_export_reapply_and_drift` in the `deployment` test binary with a verified bundle to check retained interface intent through SDK apply, CLI export, reapply, drift rejection, and destroy.
+
+[Recorded Hermes results](../validation/rust-hermes-native-interfaces-linux-arm64.json) identify the pinned sources, tested local image, and separate bundle-fixture limits.

@@ -14,6 +14,10 @@ RUN /opt/fabric/bin/pip install --no-index --find-links=/opt/wheels --require-ha
 # source and use its supported editable install, with already locked dependencies.
 COPY hermes-agent-29112bef099274229cadff79cdff7bf7b99c4b77 /opt/hermes
 RUN /opt/fabric/bin/pip install --no-index --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
+# The pinned workspace lock supplies native dashboard and TUI assets at build time.
+RUN npm install --global npm@11.17.0 \
+    && cd /opt/hermes/web && npm ci --ignore-scripts && npm run build \
+    && cd /opt/hermes/ui-tui && npm ci --ignore-scripts && npm run build:ink && npm run build
 COPY fabric.py hermes_adapter.py interfaces.py hermes.fabric-adapter.json /opt/nemoclaw/
 COPY provenance.json /opt/nemoclaw/provenance.json
 ENV HERMES_DISABLE_LAZY_INSTALLS=1

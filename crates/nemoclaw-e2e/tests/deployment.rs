@@ -69,6 +69,12 @@ async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift() 
     lifecycle(include_str!("../../../examples/openclaw-dashboard.yaml")).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn hermes_interfaces_sdk_export_reapply_and_drift() {
+    lifecycle(include_str!("../../../examples/hermes-interfaces.yaml")).await;
+}
+
 async fn lifecycle(input: &str) {
     lifecycle_with_ownership(input, false).await;
 }

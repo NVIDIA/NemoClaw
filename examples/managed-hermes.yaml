@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: local-agent
+  uid: 091eb070-6a20-4804-9516-381b2226c975
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17671
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11436/v1
+      ollama:
+        engine: unix:///var/run/docker.sock
+        image: ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba
+        network: nc-prototype-slice
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      agents:
+        - name: main
+          harness: hermes
+          interfaces:
+            dashboard:
+              enabled: false
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: qwen3:0.6b

@@ -63,7 +63,7 @@ Build the updated OpenClaw image using the [runtime build procedure](#runtime-li
 Earlier images do not implement the agent-roster and disclosure interface.
 Changing YAML alone does not update an existing image or migrate retained native configuration.
 
-See [agent interfaces](interfaces.md) for authenticated OpenClaw dashboard access.
+See [agent interfaces](interfaces.md) for OpenClaw and Hermes dashboard, API, and browser-TUI access.
 
 ## Hermes Native Server
 

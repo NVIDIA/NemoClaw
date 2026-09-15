@@ -228,7 +228,18 @@ pub(super) fn constrain(root: &mut Value) {
         json!({"not":{"minimum":8642,"maximum":8652}}),
     );
     defs["OpenClawDashboard"]["minProperties"] = json!(1);
-    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["interfaces"]},"then":{"properties":{"harness":{"const":"openclaw"}}}}));
+    defs["HermesInterfaces"]["minProperties"] = json!(1);
+    for field in ["port", "internalPort"] {
+        property(
+            &mut defs["HermesDashboard"],
+            field,
+            json!({"not":{"anyOf":[{"minimum":8642,"maximum":8652},{"const":18642}]}}),
+        );
+    }
+    defs["HermesDashboard"]["allOf"] = json!([{"if":{"properties":{"enabled":{"const":false}}},"then":forbid(&["port","internalPort","tui"])}]);
+    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["interfaces"]},"then":{"properties":{"harness":{"enum":["openclaw","hermes"]}},"allOf":[
+        {"if":{"properties":{"harness":{"const":"openclaw"}}},"then":{"properties":{"interfaces":{"$ref":"#/$defs/OpenClawInterfaces"}}},"else":{"properties":{"interfaces":{"$ref":"#/$defs/HermesInterfaces"}}}}
+    ]}}));
     service_constraints(defs);
 
     let provider = "spec/inferenceProviders/[]";

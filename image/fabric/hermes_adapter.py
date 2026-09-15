@@ -18,6 +18,15 @@ MODES = {'openai-completions': 'chat_completions', 'openai-responses': 'codex_re
          'anthropic-messages': 'anthropic_messages'}
 
 
+def interface_settings(inference):
+    interfaces = (inference or {}).get('interfaces', {})
+    dashboard = interfaces.get('dashboard', {'enabled': True})
+    return {'apiPort': interfaces.get('api', {}).get('port', 8642),
+            'dashboard': {'enabled': dashboard['enabled'], 'port': dashboard.get('port', 18789),
+                          'internalPort': dashboard.get('internalPort', 19119),
+                          'tui': dashboard.get('tui', {'enabled': True})}}
+
+
 def native_configuration(inference):
     api = (inference or {}).get('api', 'openai-completions')
     return {'model': {'default': 'primary', 'provider': 'custom:openshell',
@@ -25,21 +34,22 @@ def native_configuration(inference):
             'custom_providers': [{'name': 'openshell', 'base_url': 'https://inference.local/v1',
                                   'api_mode': MODES[api], 'api_key': 'openshell-placeholder'}],
             'agent': {'max_turns': 8}, 'terminal': {'backend': 'local', 'cwd': '/sandbox/workspace'},
-            'approvals': {'mode': 'manual'}}
+            'approvals': {'mode': 'manual'}, 'nemoclaw_interfaces': interface_settings(inference)}
 
 
-def configuration_matches(inference):
+def configuration_matches(inference, home=None):
     import yaml
-    actual = yaml.safe_load((ROOT / 'config.yaml').read_text())
+    actual = yaml.safe_load(((home or ROOT) / 'config.yaml').read_text())
     return isinstance(actual, dict) and all(actual.get(k) == v for k, v in native_configuration(inference).items())
 
 
-def initialize(inference):
-    ROOT.mkdir(parents=True, mode=0o700, exist_ok=True)
-    path = ROOT / 'config.yaml'
-    token(ROOT, create=not path.exists())
+def initialize(inference, home=None):
+    home = home or ROOT
+    home.mkdir(parents=True, mode=0o700, exist_ok=True)
+    path = home / 'config.yaml'
+    token(home, create=not path.exists())
     if path.exists():
-        if not configuration_matches(inference):
+        if not configuration_matches(inference, home):
             raise RuntimeError('native Hermes configuration conflicts with deployment-owned settings')
         return
     with open(path, 'x', opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
@@ -48,11 +58,11 @@ def initialize(inference):
         os.fsync(output.fileno())
 
 
-def api_request(path, body=None, timeout=3):
-    request = urllib.request.Request(f'http://127.0.0.1:{PORT}' + path,
+def api_request(path, body=None, timeout=3, port=PORT):
+    request = urllib.request.Request(f'http://127.0.0.1:{port}' + path,
         data=json.dumps(body).encode() if body is not None else None,
         headers={'Authorization': 'Bearer ' + token(ROOT), 'Content-Type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout) as response:
         raw = response.read(4 * 1024 * 1024 + 1)
         if len(raw) > 4 * 1024 * 1024:
             raise RuntimeError('Hermes response exceeds limit')
@@ -61,7 +71,19 @@ def api_request(path, body=None, timeout=3):
 
 def healthy(inference=None):
     try:
-        return configuration_matches(inference) and api_request('/v1/models')['data'][0]['id'] == 'primary'
+        settings = interface_settings(inference)
+        if not configuration_matches(inference) or api_request('/v1/models', port=settings['apiPort'])['data'][0]['id'] != 'primary':
+            return False
+        dashboard = settings['dashboard']
+        if dashboard['enabled']:
+            home = ROOT / 'profiles/dashboard-home'
+            if not configuration_matches(inference, home):
+                return False
+            request = urllib.request.Request(f"http://127.0.0.1:{dashboard['port']}/api/sessions?limit=1",
+                headers={'X-Hermes-Session-Token': token(home)})
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=3) as response:
+                return response.status == 200
+        return True
     except (OSError, ValueError, KeyError, IndexError, RuntimeError):
         return False
 
@@ -69,18 +91,82 @@ def healthy(inference=None):
 async def native_server():
     from gateway.config import PlatformConfig
     from gateway.platforms.api_server import APIServerAdapter
+    settings = json.loads(os.environ['NEMOCLAW_HERMES_INTERFACES'])
+    dashboard = settings['dashboard']
     adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={
-        'host': '127.0.0.1', 'port': PORT, 'key': token(ROOT), 'model_name': 'primary'}))
+        'host': '127.0.0.1', 'port': settings['apiPort'], 'key': token(ROOT), 'model_name': 'primary'}))
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
+    child = None
+    forwarder = None
+    clients = set()
+    async def relay(reader, writer):
+        task = asyncio.current_task()
+        clients.add(task)
+        target_writer = None
+        async def copy(source, destination):
+            while data := await source.read(65536):
+                destination.write(data)
+                await destination.drain()
+        try:
+            if len(clients) > 128:
+                return
+            target_reader, target_writer = await asyncio.open_connection('127.0.0.1', dashboard['internalPort'])
+            a = asyncio.create_task(copy(reader, target_writer))
+            b = asyncio.create_task(copy(target_reader, writer))
+            try:
+                await asyncio.wait([a, b], return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                a.cancel(); b.cancel()
+                await asyncio.gather(a, b, return_exceptions=True)
+        except OSError:
+            pass
+        finally:
+            writer.close()
+            if target_writer:
+                target_writer.close()
+            clients.discard(task)
     try:
         if not await adapter.connect():
             raise RuntimeError('Hermes native API startup failed')
-        await stop.wait()
+        if dashboard['enabled']:
+            home = ROOT / 'profiles/dashboard-home'
+            env = dict(os.environ, HERMES_HOME=str(home), HERMES_DASHBOARD_SESSION_TOKEN=token(home))
+            child = await asyncio.create_subprocess_exec(sys.executable, __file__, 'dashboard', env=env)
+            forwarder = await asyncio.start_server(relay, '127.0.0.1', dashboard['port'])
+        while not stop.is_set():
+            if child is not None and child.returncode is not None:
+                raise RuntimeError('Hermes dashboard exited')
+            try:
+                await asyncio.wait_for(stop.wait(), 0.2)
+            except asyncio.TimeoutError:
+                pass
     finally:
+        if forwarder:
+            forwarder.close()
+            await forwarder.wait_closed()
+        pending = list(clients)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        if child is not None and child.returncode is None:
+            child.terminate()
+            try:
+                await asyncio.wait_for(child.wait(), 5)
+            except asyncio.TimeoutError:
+                child.kill()
+                await child.wait()
         await adapter.disconnect()
+
+
+def native_dashboard():
+    from hermes_cli import web_server
+    settings = json.loads(os.environ['NEMOCLAW_HERMES_INTERFACES'])['dashboard']
+    # Pinned Hermes exposes this shared gate for browser chat and WebSocket endpoints.
+    web_server._DASHBOARD_EMBEDDED_CHAT_ENABLED = settings['tui']['enabled']
+    web_server.start_server(host='127.0.0.1', port=settings['internalPort'], open_browser=False)
 
 
 class HermesRuntime:
@@ -107,9 +193,12 @@ class HermesRuntime:
         try:
             fcntl.flock(self.state_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             initialize(self.inference)
+            if interface_settings(self.inference)['dashboard']['enabled']:
+                initialize(self.inference, ROOT / 'profiles/dashboard-home')
             self.log = (ROOT / 'api.log').open('ab')
             env = dict(os.environ, HERMES_HOME=str(ROOT), OPENAI_API_KEY='openshell-placeholder',
-                       OPENAI_BASE_URL='https://inference.local/v1', HERMES_DISABLE_LAZY_INSTALLS='1')
+                       OPENAI_BASE_URL='https://inference.local/v1', HERMES_DISABLE_LAZY_INSTALLS='1',
+                       NEMOCLAW_HERMES_INTERFACES=json.dumps(interface_settings(self.inference)))
             self.process = await asyncio.create_subprocess_exec(sys.executable, __file__, 'server',
                 env=env, cwd='/sandbox/workspace', stdout=self.log, stderr=self.log, start_new_session=True)
             deadline = asyncio.get_running_loop().time() + 75
@@ -138,7 +227,7 @@ class HermesRuntime:
             if self.previous_response and not probe:
                 body['previous_response_id'] = self.previous_response
             try:
-                result = await asyncio.to_thread(api_request, '/v1/responses', body, 280)
+                result = await asyncio.to_thread(api_request, '/v1/responses', body, 280, interface_settings(self.inference)['apiPort'])
                 if result.get('status') != 'completed' or not result.get('id'):
                     raise RuntimeError('Hermes returned an unsuccessful response')
                 if not probe:
@@ -175,6 +264,8 @@ class HermesRuntime:
 if __name__ == '__main__':
     if sys.argv[1:] == ['server']:
         asyncio.run(native_server())
+    elif sys.argv[1:] == ['dashboard']:
+        native_dashboard()
     else:
         from nemo_fabric_adapters.common import lifecycle
         lifecycle.serve(HermesRuntime)

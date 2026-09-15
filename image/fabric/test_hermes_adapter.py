@@ -47,6 +47,38 @@ class HermesInvocation(unittest.IsolatedAsyncioTestCase):
                 await runtime.invoke(SimpleNamespace(input='hello'), SimpleNamespace(runtime_id='fixture'))
             self.assertEqual(request.call_count, 1)
 
+class HermesInterfaces(unittest.TestCase):
+    def test_default_and_explicit_native_services_are_distinct(self):
+        defaults = adapter.interface_settings(None)
+        self.assertEqual(defaults, {'apiPort':8642,'dashboard':{'enabled':True,'port':18789,'internalPort':19119,'tui':{'enabled':True}}})
+        settings = adapter.interface_settings({'interfaces':{'api':{'port':8643},'dashboard':{'enabled':False}}})
+        self.assertEqual(settings['apiPort'], 8643)
+        self.assertFalse(settings['dashboard']['enabled'])
+
+class HermesLocalTransport(unittest.TestCase):
+    def test_local_api_credentials_bypass_configured_egress_proxy(self):
+        import http.server
+        import os
+        import threading
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"data":[{"id":"primary"}]}')
+            def log_message(self, *_args):
+                pass
+        with http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler) as server:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with tempfile.TemporaryDirectory() as directory, patch.object(adapter, 'ROOT', Path(directory)):
+                    adapter.initialize(None)
+                    with patch.dict(os.environ, {'http_proxy':'http://127.0.0.1:1', 'HTTP_PROXY':'http://127.0.0.1:1', 'no_proxy':'', 'NO_PROXY':''}):
+                        self.assertEqual(adapter.api_request('/v1/models', port=server.server_port)['data'][0]['id'], 'primary')
+            finally:
+                server.shutdown()
+                thread.join()
+
 
 if __name__ == '__main__':
     unittest.main()

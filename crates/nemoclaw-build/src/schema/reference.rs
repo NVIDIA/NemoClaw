@@ -167,7 +167,8 @@ fn guide(name: &str) -> &'static str {
         | "ReasoningEffort" | "AgentAuth" | "AuthMethod" => {
             "[Inference configuration](../inference.md)"
         }
-        "AgentInterfaces" | "OpenClawDashboard" | "DashboardBind" => {
+        "AgentInterfaces" | "OpenClawInterfaces" | "OpenClawDashboard" | "DashboardBind"
+        | "HermesInterfaces" | "HermesDashboard" | "HermesApi" | "HermesTui" => {
             "[Agent interfaces](../interfaces.md)"
         }
         "Agent" | "AgentTools" | "AllowedTool" | "ToolDisclosure" => {

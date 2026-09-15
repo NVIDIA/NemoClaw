@@ -78,7 +78,7 @@ Paths:
 
 ## AgentInterfaces
 
-Native agent interfaces. Declare once on the first agent in a shared sandbox.
+Harness-specific native interfaces; OpenClaw uses gateway settings, Hermes uses separate services.
 
 Guide: [Agent interfaces](../interfaces.md).
 
@@ -86,9 +86,7 @@ Paths:
 
 - `spec.sandboxes[].agents[].interfaces`
 
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `dashboard` | [OpenClawDashboard](#openclawdashboard) | Yes | — | Enable the OpenClaw dashboard with sandbox-local token authentication. |
+Accepted input: [OpenClawInterfaces](#openclawinterfaces) or [HermesInterfaces](#hermesinterfaces).
 
 ## AgentTools
 
@@ -313,6 +311,66 @@ Paths:
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway. Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
 | `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
+
+## HermesApi
+
+Hermes HTTP API listener inside the sandbox; host access requires OpenShell forwarding.
+
+Guide: [Agent interfaces](../interfaces.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].interfaces.api`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `port` | integer | Yes | — | Sandbox-local API port, from 8642 through 8652. Constraints: minimum 8642; maximum 8652. |
+
+## HermesDashboard
+
+Native Hermes dashboard with isolated configuration and active sessions.
+
+Guide: [Agent interfaces](../interfaces.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].interfaces.dashboard`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `enabled` | boolean | Yes | — | Start the dashboard. When false, all other dashboard fields must be omitted. |
+| `internalPort` | integer | No | — | Native dashboard listener behind the local forwarder; defaults to 19119 and must differ from port. Constraints: minimum 1024; maximum 65535. |
+| `port` | integer | No | — | Sandbox dashboard access port; defaults to 18789. Must differ from internalPort and reserved API ports. Constraints: minimum 1024; maximum 65535. |
+| `tui` | [HermesTui](#hermestui) | No | — | Enable native browser chat/TUI; omitted settings preserve the pinned Hermes default of enabled. |
+
+## HermesInterfaces
+
+Native Hermes services. Declare at least one override; defaults enable the dashboard and browser chat.
+
+Guide: [Agent interfaces](../interfaces.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].interfaces`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `api` | [HermesApi](#hermesapi) | No | — | Authenticated HTTP API settings. Omitting api selects port 8642; declaring api requires port. |
+| `dashboard` | [HermesDashboard](#hermesdashboard) | No | — | Dashboard service settings; omitted settings enable port 18789 with internal port 19119. |
+
+## HermesTui
+
+Browser chat/TUI availability; standalone terminal access remains native Hermes behavior.
+
+Guide: [Agent interfaces](../interfaces.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].interfaces.dashboard.tui`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `enabled` | boolean | Yes | — | Permit browser chat and its WebSocket session endpoints. |
 
 ## Image
 
@@ -585,6 +643,20 @@ Paths:
 |---|---|---|---|---|
 | `bind` | [DashboardBind](#dashboardbind) | No | — | Sandbox bind address; defaults to loopback. Host publication still requires OpenShell forwarding. |
 | `port` | integer | No | — | Sandbox gateway port; defaults to 18789. Ports 8642 through 8652 are reserved for Hermes. Constraints: minimum 1024; maximum 65535. |
+
+## OpenClawInterfaces
+
+Native agent interfaces. Declare once on the first agent in a shared sandbox.
+
+Guide: [Agent interfaces](../interfaces.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].interfaces`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `dashboard` | [OpenClawDashboard](#openclawdashboard) | Yes | — | Enable the OpenClaw dashboard with sandbox-local token authentication. |
 
 ## Overrides
 

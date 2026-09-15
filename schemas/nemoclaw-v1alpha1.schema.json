@@ -25,9 +25,37 @@
             ]
           },
           "then": {
+            "allOf": [
+              {
+                "else": {
+                  "properties": {
+                    "interfaces": {
+                      "$ref": "#/$defs/HermesInterfaces"
+                    }
+                  }
+                },
+                "if": {
+                  "properties": {
+                    "harness": {
+                      "const": "openclaw"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "interfaces": {
+                      "$ref": "#/$defs/OpenClawInterfaces"
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "harness": {
-                "const": "openclaw"
+                "enum": [
+                  "openclaw",
+                  "hermes"
+                ]
               }
             }
           }
@@ -101,18 +129,15 @@
       "type": "object"
     },
     "AgentInterfaces": {
-      "additionalProperties": false,
-      "description": "Native agent interfaces. Declare once on the first agent in a shared sandbox.",
-      "properties": {
-        "dashboard": {
-          "$ref": "#/$defs/OpenClawDashboard",
-          "description": "Enable the OpenClaw dashboard with sandbox-local token authentication."
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OpenClawInterfaces"
+        },
+        {
+          "$ref": "#/$defs/HermesInterfaces"
         }
-      },
-      "required": [
-        "dashboard"
       ],
-      "type": "object"
+      "description": "Harness-specific native interfaces; OpenClaw uses gateway settings, Hermes uses separate services."
     },
     "AgentTools": {
       "anyOf": [
@@ -582,6 +607,139 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "HermesApi": {
+      "additionalProperties": false,
+      "description": "Hermes HTTP API listener inside the sandbox; host access requires OpenShell forwarding.",
+      "properties": {
+        "port": {
+          "description": "Sandbox-local API port, from 8642 through 8652.",
+          "format": "uint16",
+          "maximum": 8652,
+          "minimum": 8642,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "port"
+      ],
+      "type": "object"
+    },
+    "HermesDashboard": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "port"
+                  ]
+                },
+                {
+                  "required": [
+                    "internalPort"
+                  ]
+                },
+                {
+                  "required": [
+                    "tui"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "description": "Native Hermes dashboard with isolated configuration and active sessions.",
+      "properties": {
+        "enabled": {
+          "description": "Start the dashboard. When false, all other dashboard fields must be omitted.",
+          "type": "boolean"
+        },
+        "internalPort": {
+          "description": "Native dashboard listener behind the local forwarder; defaults to 19119 and must differ from port.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1024,
+          "not": {
+            "anyOf": [
+              {
+                "maximum": 8652,
+                "minimum": 8642
+              },
+              {
+                "const": 18642
+              }
+            ]
+          },
+          "type": "integer"
+        },
+        "port": {
+          "description": "Sandbox dashboard access port; defaults to 18789. Must differ from internalPort and reserved API ports.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1024,
+          "not": {
+            "anyOf": [
+              {
+                "maximum": 8652,
+                "minimum": 8642
+              },
+              {
+                "const": 18642
+              }
+            ]
+          },
+          "type": "integer"
+        },
+        "tui": {
+          "$ref": "#/$defs/HermesTui",
+          "description": "Enable native browser chat/TUI; omitted settings preserve the pinned Hermes default of enabled."
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "HermesInterfaces": {
+      "additionalProperties": false,
+      "description": "Native Hermes services. Declare at least one override; defaults enable the dashboard and browser chat.",
+      "minProperties": 1,
+      "properties": {
+        "api": {
+          "$ref": "#/$defs/HermesApi",
+          "description": "Authenticated HTTP API settings. Omitting api selects port 8642; declaring api requires port."
+        },
+        "dashboard": {
+          "$ref": "#/$defs/HermesDashboard",
+          "description": "Dashboard service settings; omitted settings enable port 18789 with internal port 19119."
+        }
+      },
+      "type": "object"
+    },
+    "HermesTui": {
+      "additionalProperties": false,
+      "description": "Browser chat/TUI availability; standalone terminal access remains native Hermes behavior.",
+      "properties": {
+        "enabled": {
+          "description": "Permit browser chat and its WebSocket session endpoints.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
       "type": "object"
     },
     "Image": {
@@ -1214,6 +1372,20 @@
           "type": "integer"
         }
       },
+      "type": "object"
+    },
+    "OpenClawInterfaces": {
+      "additionalProperties": false,
+      "description": "Native agent interfaces. Declare once on the first agent in a shared sandbox.",
+      "properties": {
+        "dashboard": {
+          "$ref": "#/$defs/OpenClawDashboard",
+          "description": "Enable the OpenClaw dashboard with sandbox-local token authentication."
+        }
+      },
+      "required": [
+        "dashboard"
+      ],
       "type": "object"
     },
     "Overrides": {

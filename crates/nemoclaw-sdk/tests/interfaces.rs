@@ -19,3 +19,33 @@ fn openclaw_dashboard_settings_roundtrip_and_reject_reserved_ports() {
         assert!(!validator.is_valid(&v));
     }
 }
+
+#[test]
+fn hermes_native_interfaces_preserve_explicit_enablement_and_reject_collisions() {
+    let mut v: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-hermes.yaml")).unwrap();
+    v["spec"]["sandboxes"][0]["agents"][0]["interfaces"] = json!({
+        "api": {"port":8643}, "dashboard":{"enabled":true,"port":18800,"internalPort":19120,"tui":{"enabled":true}}
+    });
+    let parse = |v: &Value| Document::parse(serde_json::to_vec(v).unwrap().as_slice());
+    let document = parse(&v).expect("Hermes native interfaces must parse");
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    assert!(
+        jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&v)
+    );
+    for bad in [
+        json!({}),
+        json!({"api":{"port":9000}}),
+        json!({"dashboard":{"enabled":false,"port":18800}}),
+        json!({"dashboard":{"enabled":true,"port":8643}}),
+        json!({"dashboard":{"enabled":true,"port":19120,"internalPort":19120}}),
+    ] {
+        v["spec"]["sandboxes"][0]["agents"][0]["interfaces"] = bad;
+        assert!(parse(&v).is_err());
+    }
+}
