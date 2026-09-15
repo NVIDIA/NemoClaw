@@ -82,6 +82,41 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
     );
   });
 
+  it("does not expose credential values when provider inventory fails (#10394)", async () => {
+    const credentialValue = "must-not-cross-failed-inventory";
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0, PROVIDER_GET_OUTPUT))
+      .mockReturnValueOnce(
+        captured(
+          1,
+          JSON.stringify([
+            {
+              name: "search-prod",
+              credentials: { TAVILY_API_KEY: credentialValue },
+            },
+          ]),
+          "provider list failed",
+        ),
+      );
+
+    const result = await createCliOpenShellProviderAdapter({ run }).getProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+      includeCredentialExpirations: true,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "OpenShell could not inspect provider credential expiration metadata.",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(credentialValue);
+  });
+
   it("finds a requested provider beyond the first inventory page", async () => {
     const page = Array.from({ length: 1000 }, (_, index) => ({ name: `other-${index}` }));
     const run = vi

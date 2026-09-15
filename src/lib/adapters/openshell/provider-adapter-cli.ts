@@ -277,6 +277,18 @@ function commandError(
   };
 }
 
+function providerInventoryError(
+  result: CapturedProviderCommandResult,
+): OpenShellProviderError | null {
+  const error = commandError(result);
+  if (error?.kind !== "command") return error;
+  return {
+    kind: "command",
+    reason: error.reason,
+    message: "OpenShell could not inspect provider credential expiration metadata.",
+  };
+}
+
 function scopedArgs(
   args: string[],
   target: OpenShellGatewayTarget,
@@ -618,7 +630,7 @@ export function createCliOpenShellProviderAdapter(
         true,
         PROVIDER_INVENTORY_DIAGNOSTIC_LIMIT,
       );
-      const inventoryError = commandError(inventory);
+      const inventoryError = providerInventoryError(inventory);
       if (inventoryError) return failure(inventoryError);
       const credentialState = parseCliOpenShellProviderCredentialState(
         commandStdout(inventory),
