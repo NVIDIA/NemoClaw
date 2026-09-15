@@ -461,6 +461,14 @@ OpenClaw onboarding does not enter the `complete` state until NemoClaw proves th
 
 Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice. If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again. A non-interactive `--resume` run reuses the recorded choice and continues to inference setup. After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts. If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name. If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices. Run `$$nemoclaw onboard` to make new choices after exit. During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior. For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`. If onboarding returns without reaching the final `complete` state, the command exits with status `1`. When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
 
+<AgentOnly variant="openclaw,hermes">
+
+During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
+It does not report the sandbox as ready.
+Run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
+
+</AgentOnly>
+
 #### Inspect retained sandbox recovery
 
 If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox.
