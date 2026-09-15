@@ -3,6 +3,22 @@
   "$defs": {
     "Agent": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "tools"
+            ]
+          },
+          "then": {
+            "properties": {
+              "harness": {
+                "const": "openclaw"
+              }
+            }
+          }
+        }
+      ],
       "description": "One Fabric harness and its inference route.",
       "properties": {
         "auth": {
@@ -33,6 +49,10 @@
           "description": "Lowercase agent name.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
+        },
+        "tools": {
+          "$ref": "#/$defs/AgentTools",
+          "description": "Optional OpenClaw tool restriction. Omission preserves native tools; allow: [read] exposes only the read tool, not OS-level filesystem isolation."
         }
       },
       "required": [
@@ -61,6 +81,35 @@
         "providerRef"
       ],
       "type": "object"
+    },
+    "AgentTools": {
+      "additionalProperties": false,
+      "description": "Native OpenClaw tool access. Only the read-only allowlist is supported.",
+      "properties": {
+        "allow": {
+          "description": "Exactly the read tool. Empty lists, wildcards, and other tool names are rejected.",
+          "items": {
+            "$ref": "#/$defs/AllowedTool"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "allow"
+      ],
+      "type": "object"
+    },
+    "AllowedTool": {
+      "description": "Tool supported by the read-only OpenClaw policy.",
+      "oneOf": [
+        {
+          "const": "read",
+          "description": "Read a file within the sandbox's filesystem permissions.",
+          "type": "string"
+        }
+      ]
     },
     "AuthMethod": {
       "description": "Hermes authentication method supported through the OpenShell provider.",
@@ -1485,14 +1534,40 @@
     },
     "Sandbox": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "agents": {
+                "minItems": 2
+              }
+            },
+            "required": [
+              "agents"
+            ]
+          },
+          "then": {
+            "properties": {
+              "agents": {
+                "items": {
+                  "properties": {
+                    "harness": {
+                      "const": "openclaw"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "description": "The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.",
       "properties": {
         "agents": {
-          "description": "Exactly one agent.",
+          "description": "One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent.",
           "items": {
             "$ref": "#/$defs/Agent"
           },
-          "maxItems": 1,
           "minItems": 1,
           "type": "array"
         },
@@ -1889,7 +1964,7 @@
           "type": "array"
         },
         "sandboxes": {
-          "description": "Exactly one sandbox with one agent and one primary inference route.",
+          "description": "Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness.",
           "items": {
             "$ref": "#/$defs/Sandbox"
           },
@@ -2923,6 +2998,7 @@
     "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
+    "The parser checks unique agent names and identical inference settings across multiple OpenClaw agents.",
     "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."

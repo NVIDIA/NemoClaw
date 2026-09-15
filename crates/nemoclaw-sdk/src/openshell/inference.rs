@@ -33,7 +33,14 @@ pub(super) fn inference_environment(row: &Row) -> Result<Row, ObservationError> 
         runtime,
         row_proxy(row)?.as_ref(),
     );
-    if inference_settings(text, runtime)?.is_some() {
+    if let Some(settings) = inference_settings(text, runtime)? {
+        if settings
+            .agents
+            .first()
+            .is_some_and(|agent| Some(&agent.name) != row.get("agent_name"))
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
         env.insert(INFERENCE_ENV.into(), text.into());
     }
     Ok(env)

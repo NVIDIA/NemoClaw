@@ -80,9 +80,9 @@ fn export_route(document: &mut Document, observed: &Row) -> Result<(), Error> {
             "route references a provider outside this deployment",
         ));
     }
-    document.spec.sandboxes[0].agents[0].inference.routes[0]
-        .overrides
-        .model = observed["model"].clone();
+    for agent in &mut document.spec.sandboxes[0].agents {
+        agent.inference.routes[0].overrides.model = observed["model"].clone();
+    }
     Ok(())
 }
 

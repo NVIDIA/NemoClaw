@@ -68,7 +68,6 @@ pub(super) fn constrain(root: &mut Value) {
     for (name, field) in [
         ("Spec", "inferenceProviders"),
         ("Spec", "sandboxes"),
-        ("Sandbox", "agents"),
         ("Inference", "routes"),
     ] {
         property(
@@ -77,6 +76,15 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"minItems": 1, "maxItems": 1}),
         );
     }
+    property(&mut defs["Sandbox"], "agents", json!({"minItems": 1}));
+    defs["Sandbox"]["allOf"] = json!([{
+        "if": {"properties": {"agents": {"minItems": 2}}, "required": ["agents"]},
+        "then": {"properties": {"agents": {"items": {"properties": {"harness": {"const": "openclaw"}}}}}}
+    }]);
+    defs["Agent"]["allOf"] = json!([{
+        "if": {"required": ["tools"]},
+        "then": {"properties": {"harness": {"const": "openclaw"}}}
+    }]);
     optional_string(
         &mut defs["Image"],
         "ref",
@@ -246,6 +254,7 @@ pub(super) fn constrain(root: &mut Value) {
         "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
+        "The parser checks unique agent names and identical inference settings across multiple OpenClaw agents.",
         "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."

@@ -47,7 +47,7 @@ pub struct Spec {
     /// Exactly one external endpoint, managed Ollama server, or managed vLLM service.
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// Exactly one sandbox with one agent and one primary inference route.
+    /// Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness.
     pub sandboxes: Vec<Sandbox>,
 }
 
@@ -183,7 +183,7 @@ pub struct Sandbox {
     /// Sandbox network policy; omission selects isolated inference routing.
     pub network: Network,
     #[serde(rename = "agents")]
-    /// Exactly one agent.
+    /// One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent.
     pub agents: Vec<Agent>,
 }
 
@@ -247,6 +247,10 @@ pub struct Agent {
     #[schemars(default, with = "super::AgentAuth")]
     /// Hermes API-key authentication through the routed provider. The provider must declare a credential reference.
     pub auth: Option<super::AgentAuth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentTools")]
+    /// Optional OpenClaw tool restriction. Omission preserves native tools; allow: [read] exposes only the read tool, not OS-level filesystem isolation.
+    pub tools: Option<super::AgentTools>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

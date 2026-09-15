@@ -85,9 +85,32 @@ pub struct AgentAuth {
     /// Must equal the primary route's providerRef. Secret values stay in OpenShell.
     pub provider_ref: String,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// Native OpenClaw tool access. Only the read-only allowlist is supported.
+pub struct AgentTools {
+    /// Exactly the read tool. Empty lists, wildcards, and other tool names are rejected.
+    pub allow: [AllowedTool; 1],
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+/// Tool supported by the read-only OpenClaw policy.
+pub enum AllowedTool {
+    /// Read a file within the sandbox's filesystem permissions.
+    Read,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuntimeAgent {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<AgentTools>,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeInference {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<RuntimeAgent>,
     pub api: InferenceApi,
     pub tuning: RouteTuning,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -96,6 +119,16 @@ pub(crate) struct RuntimeInference {
 impl RuntimeInference {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
         self.tuning.validate(harness)?;
+        let mut names = std::collections::BTreeSet::new();
+        if !self.agents.is_empty()
+            && (harness != "openclaw"
+                || self
+                    .agents
+                    .iter()
+                    .any(|a| !super::validation::SLUG.is_match(&a.name) || !names.insert(&a.name)))
+        {
+            return Err(ConfigError("invalid OpenClaw agent roster"));
+        }
         if !self.api.supported(harness)
             || self
                 .auth
@@ -112,14 +145,29 @@ impl Document {
         let agent = &self.spec.sandboxes[0].agents[0];
         let provider = &self.spec.inference_providers[0];
         let tuning = &agent.inference.routes[0].overrides.tuning;
-        (provider.api.is_some() || tuning != &RouteTuning::default() || agent.auth.is_some()).then(
-            || RuntimeInference {
+        let agents = &self.spec.sandboxes[0].agents;
+        let roster = agents.len() > 1 || agents.iter().any(|a| a.tools.is_some());
+        (provider.api.is_some()
+            || tuning != &RouteTuning::default()
+            || agent.auth.is_some()
+            || roster)
+            .then(|| RuntimeInference {
+                agents: if roster {
+                    agents
+                        .iter()
+                        .map(|a| RuntimeAgent {
+                            name: a.name.clone(),
+                            tools: a.tools.clone(),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
                 api: provider
                     .api
                     .unwrap_or(InferenceApi::for_harness(&agent.harness)),
                 tuning: tuning.clone(),
                 auth: agent.auth.clone(),
-            },
-        )
+            })
     }
 }

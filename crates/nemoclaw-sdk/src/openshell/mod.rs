@@ -145,7 +145,14 @@ fn sandbox_row(
     let environment: Row = spec.environment.into_iter().collect();
     let proxy = observed_proxy(&environment)?;
     let inference = environment.get(INFERENCE_ENV).cloned().unwrap_or_default();
-    inference_settings(&inference, &runtime)?;
+    if inference_settings(&inference, &runtime)?.is_some_and(|settings| {
+        settings
+            .agents
+            .first()
+            .is_some_and(|first| &first.name != agent)
+    }) {
+        return Err(ObservationError::BindingMismatch);
+    }
     let mut expected_environment = launch_environment(agent, &runtime, proxy.as_ref());
     if !inference.is_empty() {
         expected_environment.insert(INFERENCE_ENV.into(), inference.clone());
