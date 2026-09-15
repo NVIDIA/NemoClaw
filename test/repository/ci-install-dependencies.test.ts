@@ -97,7 +97,11 @@ describe("shared CI dependency installer", () => {
 
   it.each([
     [["invalid"], "Unsupported plugin dependency install mode: invalid\n"],
-    [["production", "extra"], "Usage: ci-install-dependencies.sh [full|production|none]\n"],
+    [
+      ["production", "extra", "unexpected"],
+      "Usage: ci-install-dependencies.sh [full|production|none] [auto|artifact|registry]\n",
+    ],
+    [["none", "unexpected"], "Unsupported package dependency source mode: unexpected\n"],
   ] as const)("rejects unsupported install arguments before npm runs [case %#]", (args, error) => {
     const fixture = makeFixture();
 
@@ -154,7 +158,29 @@ describe("shared CI dependency installer", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toBe(
-      "Pull request dependency installation must not receive a package credential.\n",
+      "Artifact dependency installation must not receive a package credential.\n",
+    );
+    expect(result.stderr).not.toContain("credential-sentinel");
+    expect(existsSync(fixture.trace)).toBe(false);
+  });
+
+  it("forces credential-free artifact preparation for trusted E2E callers", () => {
+    const fixture = makeFixture();
+    const result = spawnSync("bash", [installer, "none", "artifact"], {
+      cwd: fixture.root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+        NODE_AUTH_TOKEN: "credential-sentinel",
+        NPM_TRACE: fixture.trace,
+        PATH: fixture.path,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(
+      "Artifact dependency installation must not receive a package credential.\n",
     );
     expect(result.stderr).not.toContain("credential-sentinel");
     expect(existsSync(fixture.trace)).toBe(false);

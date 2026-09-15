@@ -76,7 +76,10 @@ import {
   type RebuildSandboxExecutionOptions,
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
-import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
+import {
+  inspectRebuildGatewayProviderRegistration,
+  shouldVerifyRebuildGatewayProvider,
+} from "./rebuild-provider-preflight";
 import {
   clearRebuildRecoveryBackup,
   findRebuildRecoveryBackup,
@@ -84,6 +87,7 @@ import {
   isRebuildRecoveryCleanupOnly,
   markRebuildRecoveryCleanupOnly,
   openRebuildRecreateJournal,
+  assertRebuildRecoverySource,
   recordRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
@@ -257,7 +261,38 @@ async function rebuildSandboxUnlocked(
       );
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
+      const recoveryCleanupRequired = recoveryManifest
+        ? isRebuildRecoveryCleanupOnly({
+            sandboxName,
+            agentName: rebuildAgent,
+            backupManifest: recoveryManifest,
+          }) ||
+          recoveryManifest.rebuildPolicyHandoff?.retired === true ||
+          recoveryManifest.rebuildMcpHandoff?.retired === true ||
+          recoveryManifest.hermesOperatorConfigHandoff?.retired === true
+        : false;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+      // Older manifests and a crash immediately after marker creation can lack
+      // the MCP handoff. Re-observe only while the journal remains pre-delete
+      // and the journaled source identity is verified before MCP inspection.
+      const canRecapturePreparedRecoveryMcp = Boolean(
+        recoveryManifest &&
+        recoveryManifest.rebuildMcpHandoff === undefined &&
+        !staleRecovery &&
+        activeRecoveryTransaction?.sandboxName === sandboxName &&
+        (activeRecoveryTransaction.phase === "planned" ||
+          activeRecoveryTransaction.phase === "deleting"),
+      );
+      if (
+        recoveryManifest &&
+        !recoveryCleanupRequired &&
+        recoveryManifest.rebuildMcpHandoff === undefined &&
+        !canRecapturePreparedRecoveryMcp
+      ) {
+        return bail(
+          "The retained rebuild MCP recovery observation is unavailable, so rebuild cannot safely resume. No sandbox deletion was attempted.",
+        );
+      }
       const retainedMcpHandoff = recoveryManifest ? readRebuildMcpHandoff(recoveryManifest) : null;
       if (
         recoveryManifest?.rebuildMcpHandoff &&
@@ -266,12 +301,25 @@ async function rebuildSandboxUnlocked(
       ) {
         return bail("The retained rebuild MCP recovery handoff is invalid.");
       }
+      if (canRecapturePreparedRecoveryMcp && activeRecoveryTransaction) {
+        const target = {
+          sandboxName,
+          gatewayName: recreateOptions.targetGatewayName,
+          gatewayPort: recreateOptions.targetGatewayPort,
+        };
+        assertRebuildRecoverySource(
+          activeRecoveryTransaction,
+          target,
+          recreateOptions.runtimeSelection,
+        );
+      }
       const observedMcp =
         retainedMcpHandoff ??
         (await observeMcpStateForRebuild(
           sandboxEntry,
           recreateOptions.runtimeSelection,
-          recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName,
+          (recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName) ||
+            canRecapturePreparedRecoveryMcp,
         ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
@@ -391,20 +439,7 @@ async function rebuildSandboxUnlocked(
       // marker is removed. A missing handoff with a retained marker means the
       // handoff cleanup completed but marker cleanup did not. Resume only that
       // cleanup against the already accepted replacement.
-      const recoveryCleanupOnly = recoveryManifest
-        ? isRebuildRecoveryCleanupOnly({
-            sandboxName,
-            agentName: rebuildAgent,
-            backupManifest: recoveryManifest,
-          })
-        : false;
-      if (
-        recoveryManifest &&
-        (recoveryCleanupOnly ||
-          recoveryManifest.rebuildPolicyHandoff?.retired === true ||
-          recoveryManifest.rebuildMcpHandoff?.retired === true ||
-          recoveryManifest.hermesOperatorConfigHandoff?.retired === true)
-      ) {
+      if (recoveryManifest && recoveryCleanupRequired) {
         const cleanupManifest = recoveryManifest;
         const cleanupJournal = openRecreateJournal();
         if (!cleanupJournal) return;
@@ -758,7 +793,7 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         validateAfterMcpPreparation: async (preparation) => {
-          if (backup.backupManifest && preparation.entries.length > 0) {
+          if (backup.backupManifest) {
             try {
               writeRebuildMcpHandoff(
                 backup.backupManifest,
@@ -823,6 +858,28 @@ async function rebuildSandboxUnlocked(
           );
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
+          if (
+            !recreateOptions.rebuildProviderReconfigure &&
+            shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
+          ) {
+            const registration = await inspectRebuildGatewayProviderRegistration(
+              resumeConfig.provider,
+              log,
+              "Before deletion",
+              runtimeSelection,
+              undefined,
+              resumeConfig.credentialEnv,
+            );
+            if (registration !== "registered") {
+              return {
+                ok: false,
+                message:
+                  registration === "credential_missing"
+                    ? `Gateway provider '${resumeConfig.provider}' no longer exposes credential ${resumeConfig.credentialEnv} before sandbox deletion. Re-register the provider, then retry rebuild.`
+                    : `Gateway provider '${resumeConfig.provider}' is ${registration} before sandbox deletion. Refresh its credential or restore gateway access, then retry rebuild.`,
+              };
+            }
+          }
           const validation =
             revalidateManagedWorkloadRebuildBeforeDelete(
               sandboxName,

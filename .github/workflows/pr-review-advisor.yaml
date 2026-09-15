@@ -114,6 +114,10 @@ jobs:
               echo "Manual PR analysis requires target_repo and a positive target_pr" >&2
               exit 1
             }
+            # Manual analysis intentionally accepts fork PR heads. The selected
+            # PR remains inert data: this gate binds its base and immutable SHAs,
+            # the specialist job has no repository write permission, and the
+            # model sandbox receives no GitHub credential.
             pull="$(gh api --method GET "repos/$TARGET_REPO/pulls/$TARGET_PR")"
             jq -e --arg repo "$TARGET_REPO" --arg base "$TARGET_BASE" \
               '.state == "open" and .base.repo.full_name == $repo and .base.ref == $base' \
