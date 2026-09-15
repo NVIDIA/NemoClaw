@@ -48,7 +48,6 @@ describe("gateway lifecycle late binding", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
     const lines: string[] = [];
-    const stateInUse = vi.fn(() => true);
     const serviceTarget = vi.fn(() => ({
       executablePath: "/opt/openshell/openshell-gateway",
       pid: 5444,
@@ -136,7 +135,6 @@ describe("gateway lifecycle late binding", () => {
         isDockerDriverGatewayHttpReady: async () => false,
         isDockerDriverGatewayProcess: () => true,
         isDockerDriverGatewayProcessAlive: () => false,
-        isDockerDriverGatewayStateInUse: stateInUse,
         isGatewayHealthy: () => false,
         isGatewayTcpReady: async () => false,
         isPidAlive: () => true,
@@ -147,7 +145,7 @@ describe("gateway lifecycle late binding", () => {
         resolveOpenShellSandboxBinary: () => null,
         runner: {
           runCapture: readProcessEnvironment,
-          runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
+          runCaptureEx: () => ({ stdout: "", exitCode: null, timedOut: true }),
         },
         runCaptureOpenshell: () => "",
         sleepSeconds: vi.fn(),
@@ -173,7 +171,6 @@ describe("gateway lifecycle late binding", () => {
         ["ps", "eww", "-p", "5444", "-o", "command="],
         { ignoreError: true },
       );
-      expect(stateInUse).toHaveBeenCalledOnce();
     } finally {
       spawnSpy.mockRestore();
       prepareSpy.mockRestore();
@@ -487,7 +484,6 @@ describe("gateway lifecycle late binding", () => {
       isDockerDriverGatewayHttpReady: async () => true,
       isDockerDriverGatewayProcess: () => true,
       isDockerDriverGatewayProcessAlive: () => false,
-      isDockerDriverGatewayStateInUse: () => false,
       isGatewayHealthy: () => true,
       isGatewayTcpReady: async () => true,
       isPidAlive: () => false,

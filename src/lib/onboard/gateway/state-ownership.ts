@@ -23,7 +23,6 @@ interface DockerDriverGatewayStateOwnershipDeps {
     gatewayBin?: string | null,
     opts?: { requireDockerDriverEnv?: boolean },
   ): boolean;
-  isExistingDockerDriverGatewayStateInUse(): boolean;
   isPidAlive(pid: number): boolean;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
   resolveOpenShellGatewayBinary(): string | null;
@@ -97,7 +96,6 @@ export function createDockerDriverGatewayStateOwnership(
   }
 
   function isDockerDriverGatewayStateInUse(): boolean {
-    if (deps.isExistingDockerDriverGatewayStateInUse()) return true;
     const scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
     if (scan.timedOut || (scan.exitCode !== 0 && scan.exitCode !== 1)) return true;
     if (scan.exitCode === 1) return false;

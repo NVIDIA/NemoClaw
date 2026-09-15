@@ -61,7 +61,6 @@ export interface DockerDriverGatewayStartDeps {
   isDockerDriverGatewayHttpReady: DynamicGatewayHelpers["isDockerDriverGatewayHttpReady"];
   isDockerDriverGatewayProcess: GatewayRuntimeHelpers["isDockerDriverGatewayProcess"];
   isDockerDriverGatewayProcessAlive: GatewayRuntimeHelpers["isDockerDriverGatewayProcessAlive"];
-  isDockerDriverGatewayStateInUse: GatewayRuntimeHelpers["isDockerDriverGatewayStateInUse"];
   isGatewayHealthy(status: string, namedInfo: string, activeInfo: string): boolean;
   isGatewayTcpReady: DynamicGatewayHelpers["isGatewayTcpReady"];
   isPidAlive: GatewayRuntimeHelpers["isPidAlive"];
@@ -151,7 +150,6 @@ export function createDockerDriverGatewayStart(
   const stateOwnership = createDockerDriverGatewayStateOwnership({
     getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
     isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
-    isExistingDockerDriverGatewayStateInUse: deps.isDockerDriverGatewayStateInUse,
     isPidAlive: deps.isPidAlive,
     resolveOpenShellGatewayBinary: deps.resolveOpenShellGatewayBinary,
     runCapture: deps.runner.runCapture,

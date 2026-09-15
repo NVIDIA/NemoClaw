@@ -19,7 +19,6 @@ function makeOwnership(
   return createDockerDriverGatewayStateOwnership({
     getDockerDriverGatewayStateDir: () => STATE_DIR,
     isDockerDriverGatewayProcess: () => true,
-    isExistingDockerDriverGatewayStateInUse: () => false,
     isPidAlive: () => true,
     readProcessEnvironment: () => ({
       NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),

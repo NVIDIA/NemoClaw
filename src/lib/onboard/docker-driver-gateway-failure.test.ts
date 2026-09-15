@@ -422,7 +422,6 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     const stateOwnership = createDockerDriverGatewayStateOwnership({
       getDockerDriverGatewayStateDir: () => dir,
       isDockerDriverGatewayProcess: () => true,
-      isExistingDockerDriverGatewayStateInUse: () => false,
       isPidAlive: () => true,
       readProcessEnvironment: () => null,
       resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
