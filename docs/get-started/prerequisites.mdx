@@ -50,11 +50,12 @@ Before selecting it, review its qualified host requirements and limitations in [
 Managed llama.cpp and Windows-host Ollama remain Docker Desktop-only on WSL. Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
 The portable experimental profile is separate and still requires a Docker-compatible `docker` command.
 
-NemoClaw uses isolated `python3` helpers for descriptor-relative snapshot sanitization and deletion.
-NemoClaw does not resolve this credential-bearing helper through the host `PATH`.
+NemoClaw's active rebuild-backup sanitizer uses an isolated `python3` helper for descriptor-relative inspection and mutation.
+NemoClaw does not resolve this credential-bearing sanitizer through the host `PATH`.
 It accepts a verified executable at `/usr/bin/python3`, `/usr/local/bin/python3`, `/opt/homebrew/bin/python3`, `/opt/local/bin/python3`, or beside the Node.js executable.
 The sanitizer fails closed before it reads snapshot content if no candidate passes its ownership, permission, and executable checks.
-Supported Linux, macOS, and WSL environments provide the required POSIX filesystem operations.
+Legacy snapshot deletion uses a separate descriptor-relative helper resolved as `python3` through `PATH`.
+Both helpers require the POSIX filesystem operations available on supported Linux, macOS, and WSL environments.
 Native Windows is not a supported execution path; use WSL.
 
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
