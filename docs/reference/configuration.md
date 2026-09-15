@@ -60,6 +60,7 @@ Paths:
 | `inference` | [Inference](#inference) | Yes | — | Primary inference route for this agent. |
 | `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access, declared only on the first agent in a sandbox. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `observability` | [AgentObservability](#agentobservability) | No | — | Shared OpenClaw tracing, declared only on the first agent. Adds the required collector egress grant. |
 | `tools` | [AgentTools](#agenttools) | No | — | OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access. |
 
 ## AgentAuth
@@ -103,6 +104,20 @@ Paths:
 - `spec.sandboxes[].agents[].interfaces`
 
 Accepted input: [OpenClawInterfaces](#openclawinterfaces) or [HermesInterfaces](#hermesinterfaces).
+
+## AgentObservability
+
+OpenClaw gateway telemetry, declared on the first agent and shared by its sandbox.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].observability`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `otlp` | [OtlpTracing](#otlptracing) | Yes | — | Export traces to an externally operated local OTLP/HTTP collector. Credentials, logs, and metrics are excluded. |
 
 ## AgentTools
 
@@ -673,6 +688,23 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `dashboard` | [OpenClawDashboard](#openclawdashboard) | Yes | — | Enable the OpenClaw dashboard with sandbox-local token authentication. |
+
+## OtlpTracing
+
+Explicitly enabled HTTP/protobuf tracing. The collector is not managed by NemoClaw.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].observability.otlp`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `enabled` | boolean | Yes | — | Must be true. Omit observability to leave native telemetry unconfigured. Constraints: `true`. |
+| `endpoint` | string | Yes | — | Local collector base URL; currently http://host.openshell.internal:4318. Constraints: `"http://host.openshell.internal:4318"`. |
+| `sampleRate` | number | Yes | — | Fraction of traces sampled, from 0 through 1 inclusive. Constraints: minimum 0; maximum 1. |
+| `serviceName` | string | Yes | — | Nonempty printable ASCII service name, without leading or trailing spaces, at most 256 characters. Constraints: pattern `^[!-~](?:[ -~]*[!-~])?$(?![\s\S])`; minimum characters 1; maximum characters 256. |
 
 ## Overrides
 

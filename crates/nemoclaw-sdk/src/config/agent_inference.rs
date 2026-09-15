@@ -148,6 +148,8 @@ pub(crate) struct RuntimeAgent {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeInference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observability: Option<AgentObservability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<AgentExecution>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interfaces: Option<AgentInterfaces>,
@@ -161,6 +163,9 @@ pub(crate) struct RuntimeInference {
 impl RuntimeInference {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
         self.tuning.validate(harness)?;
+        if let Some(observability) = &self.observability {
+            observability.validate(harness)?;
+        }
         if let Some(execution) = &self.execution {
             execution.validate(harness)?;
         }
@@ -201,8 +206,10 @@ impl Document {
             || agent.auth.is_some()
             || roster
             || agent.execution.is_some()
+            || agent.observability.is_some()
             || agent.interfaces.is_some())
         .then(|| RuntimeInference {
+            observability: agent.observability.clone(),
             execution: agent.execution.clone(),
             interfaces: agent.interfaces.clone(),
             agents: if roster {

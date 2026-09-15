@@ -82,7 +82,7 @@ pub(super) fn constrain(root: &mut Value) {
         json!({
             "minItems": 1,
             "prefixItems": [{"$ref": "#/$defs/Agent"}],
-            "items": {"$ref": "#/$defs/Agent", "not": {"required": ["execution"]}}
+            "items": {"$ref": "#/$defs/Agent", "not": {"anyOf":[{"required": ["execution"]},{"required":["observability"]}]}}
         }),
     );
     defs["Sandbox"]["allOf"] = json!([{
@@ -237,6 +237,18 @@ pub(super) fn constrain(root: &mut Value) {
     );
     defs["OpenClawDashboard"]["minProperties"] = json!(1);
     defs["AgentExecution"]["minProperties"] = json!(1);
+    property(&mut defs["OtlpTracing"], "enabled", json!({"const":true}));
+    property(
+        &mut defs["OtlpTracing"],
+        "endpoint",
+        json!({"const":super::super::observability::OTLP_ENDPOINT}),
+    );
+    property(
+        &mut defs["OtlpTracing"],
+        "serviceName",
+        json!({"minLength":1,"maxLength":256,"pattern":"^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"}),
+    );
+    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["observability"]},"then":{"properties":{"harness":{"const":"openclaw"}}}}));
     // JSON Schema's dollar anchor also matches before a trailing newline.
     property(
         &mut defs["AgentExecution"],

@@ -204,6 +204,7 @@ impl Document {
             "managed gateway requires the qualified Docker driver",
         )?;
         sandbox.network.validate()?;
+        sandbox.policy_proto()?;
         require(!sandbox.agents.is_empty(), "at least one agent is required")?;
         ToolDisclosure::shared(sandbox.agents.iter().map(|a| a.tools.as_ref()))?;
         let mut names = std::collections::BTreeSet::new();
@@ -260,6 +261,13 @@ impl Document {
                     "execution defaults belong to the first agent in a shared sandbox",
                 )?;
                 execution.validate(&agent.harness)?;
+            }
+            if let Some(observability) = &agent.observability {
+                require(
+                    agent.name == sandbox.agents[0].name,
+                    "observability belongs to the first agent in a shared sandbox",
+                )?;
+                observability.validate(&agent.harness)?;
             }
             if let Some(auth) = &agent.auth {
                 require(

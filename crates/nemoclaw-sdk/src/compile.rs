@@ -109,12 +109,10 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                     serde_json::to_string(&settings).expect("typed inference settings"),
                 );
             }
-            if sandbox.network.policy.is_some() {
-                values.insert(
-                    "policy_json".into(),
-                    crate::openshell::policy_json(&sandbox.network.policy_proto()?)
-                        .map_err(|_| ConfigError("cannot encode sandbox policy"))?,
-                );
+            let policy = crate::openshell::policy_json(&sandbox.policy_proto()?)
+                .map_err(|_| ConfigError("cannot encode sandbox policy"))?;
+            if !policy.is_empty() {
+                values.insert("policy_json".into(), policy);
             }
             if let Some(proxy) = &sandbox.network.proxy {
                 values.insert("proxy_host".into(), proxy.host.clone());
@@ -188,8 +186,10 @@ pub fn compile(
         if target.kind == "sandbox" {
             // JSON configuration strings are still OpenTofu templates. Preserve
             // literal policy paths and matchers across that interpretation layer.
-            if let Some(policy) = attributes["policy_json"].as_str() {
-                attributes["policy_json"] = json!(policy.replace("${", "$${").replace("%{", "%%{"));
+            for field in ["policy_json", "inference_json"] {
+                if let Some(value) = attributes[field].as_str() {
+                    attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
+                }
             }
             attributes["depends_on"] = json!(["nemoclaw_route.primary"]);
         }

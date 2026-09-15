@@ -81,6 +81,20 @@ async fn execution_settings_cli_export_reapply_and_drift() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn observability_cli_export_reapply_and_drift() {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.sandboxes[0].agents[0].observability = Some(
+        serde_json::from_value(serde_json::json!({
+        "otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318",
+                "serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}}))
+        .unwrap(),
+    );
+    lifecycle(&document.yaml().unwrap()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift() {
     lifecycle(include_str!("../../../examples/openclaw-dashboard.yaml")).await;
 }
@@ -220,6 +234,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     if document.spec.inference_providers[0].api.is_some()
         || document.spec.sandboxes[0].agents[0].auth.is_some()
         || document.spec.sandboxes[0].agents[0].execution.is_some()
+        || document.spec.sandboxes[0].agents[0].observability.is_some()
     {
         let key = format!(
             "{}/{}",
@@ -245,6 +260,8 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         let mut changed = document.clone();
         if let Some(execution) = &mut changed.spec.sandboxes[0].agents[0].execution {
             execution.timeout_seconds = Some(1200);
+        } else if let Some(observability) = &mut changed.spec.sandboxes[0].agents[0].observability {
+            observability.otlp.sample_rate = 1.into();
         } else {
             changed.spec.inference_providers[0].api = Some(
                 if document.spec.inference_providers[0].api

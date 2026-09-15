@@ -4,6 +4,9 @@
 mod agent_inference;
 pub(crate) mod constraints;
 mod execution;
+mod integration_policy;
+mod observability;
+pub use observability::*;
 mod inference;
 mod interfaces;
 pub use agent_inference::*;

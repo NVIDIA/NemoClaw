@@ -259,6 +259,10 @@ pub struct Network {
 /// One Fabric harness and its inference route.
 pub struct Agent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentObservability")]
+    /// Shared OpenClaw tracing, declared only on the first agent. Adds the required collector egress grant.
+    pub observability: Option<super::AgentObservability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentExecution")]
     /// OpenClaw timeout and heartbeat defaults. Declare only on the first agent in a shared sandbox.
     pub execution: Option<super::AgentExecution>,

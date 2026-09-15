@@ -21,6 +21,20 @@
         {
           "if": {
             "required": [
+              "observability"
+            ]
+          },
+          "then": {
+            "properties": {
+              "harness": {
+                "const": "openclaw"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
               "execution"
             ]
           },
@@ -114,6 +128,10 @@
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
+        "observability": {
+          "$ref": "#/$defs/AgentObservability",
+          "description": "Shared OpenClaw tracing, declared only on the first agent. Adds the required collector egress grant."
+        },
         "tools": {
           "$ref": "#/$defs/AgentTools",
           "description": "OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access."
@@ -177,6 +195,20 @@
         }
       ],
       "description": "Harness-specific native interfaces; OpenClaw uses gateway settings, Hermes uses separate services."
+    },
+    "AgentObservability": {
+      "additionalProperties": false,
+      "description": "OpenClaw gateway telemetry, declared on the first agent and shared by its sandbox.",
+      "properties": {
+        "otlp": {
+          "$ref": "#/$defs/OtlpTracing",
+          "description": "Export traces to an externally operated local OTLP/HTTP collector. Credentials, logs, and metrics are excluded."
+        }
+      },
+      "required": [
+        "otlp"
+      ],
+      "type": "object"
     },
     "AgentTools": {
       "anyOf": [
@@ -1427,6 +1459,43 @@
       ],
       "type": "object"
     },
+    "OtlpTracing": {
+      "additionalProperties": false,
+      "description": "Explicitly enabled HTTP/protobuf tracing. The collector is not managed by NemoClaw.",
+      "properties": {
+        "enabled": {
+          "const": true,
+          "description": "Must be true. Omit observability to leave native telemetry unconfigured.",
+          "type": "boolean"
+        },
+        "endpoint": {
+          "const": "http://host.openshell.internal:4318",
+          "description": "Local collector base URL; currently http://host.openshell.internal:4318.",
+          "type": "string"
+        },
+        "sampleRate": {
+          "description": "Fraction of traces sampled, from 0 through 1 inclusive.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "serviceName": {
+          "description": "Nonempty printable ASCII service name, without leading or trailing spaces, at most 256 characters.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "endpoint",
+        "serviceName",
+        "sampleRate"
+      ],
+      "type": "object"
+    },
     "Overrides": {
       "additionalProperties": false,
       "description": "Model overrides on the primary route.",
@@ -2022,8 +2091,17 @@
           "items": {
             "$ref": "#/$defs/Agent",
             "not": {
-              "required": [
-                "execution"
+              "anyOf": [
+                {
+                  "required": [
+                    "execution"
+                  ]
+                },
+                {
+                  "required": [
+                    "observability"
+                  ]
+                }
               ]
             }
           },
