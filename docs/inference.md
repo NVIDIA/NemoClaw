@@ -45,6 +45,28 @@ Use a separate deployment when moving from an older image; changing YAML does no
 For incomplete creation, use the retained state to inspect or destroy the owned resources before starting the new deployment.
 See [deployment recovery](usage.md) for the operation workflow.
 
+## Authenticate a Managed vLLM Service
+
+Set `service.authentication: bearer` to generate a private key for a managed vLLM service.
+Omission preserves the existing unauthenticated serving behavior.
+Build the [runtime image](build.md#build-a-runtime-image) from this revision and use its immutable digest; older images lack the required authentication capability and are rejected before creation.
+Do not supply `inferenceProviders[].credential` for a managed service.
+
+The supervisor creates a mode-0600 key in `/data/inference-key` under its persistent writer lock and reuses it after restart.
+It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` using bearer authentication before reporting readiness.
+Recipe environment maps cannot set `VLLM_API_KEY`.
+The SDK reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
+Agent requests use their OpenShell placeholder credential.
+YAML, plans, container launch settings, and OpenTofu state contain no generated key.
+The runtime's root user and Docker administrators can read the key and child environment.
+The private published HTTP endpoint provides bearer authentication without TLS.
+
+Destroy removes the runtime and provider registration and retains the model volume, including its credential.
+Recreation using that retained volume reuses the key.
+A missing key after initialization or invalid key metadata stops startup and retains storage for inspection.
+Remove the retained volume explicitly when retiring its model data and credential.
+Changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
+
 ## Use External Ollama through a Managed Proxy
 
 Use this mode when Ollama and the route's model are already installed on the local Linux Docker host.
@@ -159,6 +181,7 @@ Supply `NOUS_API_KEY` to the applying process through your secret-management mec
 The SDK resolves the reference and supplies the credential to the OpenShell provider.
 Hermes sends requests through `https://inference.local/v1` using a sandbox placeholder key; the real upstream key is not added to its launch environment or exported YAML.
 The auth reference must name the primary route's credential-bearing provider.
+That provider may also use a generated credential from a [managed vLLM service](#authenticate-a-managed-vllm-service) or [Ollama proxy](#use-external-ollama-through-a-managed-proxy).
 Interactive Hermes login and separate authentication providers are unsupported.
 
 The gateway retains the provider credential until the owned provider is removed or updated.
