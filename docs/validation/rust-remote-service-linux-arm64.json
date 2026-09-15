@@ -107,5 +107,60 @@
       "path": ".local/remote-observation/validated-live.log",
       "sha256": "8c27532ddaa2c0ac7db4fceedda669564e3b1cd75a9fd417217d73e55053c5a1"
     }
-  ]
+  ],
+  "nonDefaultRootFollowup": {
+    "sourceRevision": "290ab4839485726f9029da8f1054ad1bbc7ab5a9",
+    "bundle": {
+      "Version": "0.1.0-dev.79325bb984a190a7",
+      "Rust": "1.98.1",
+      "OpenTofu": "1.12.6",
+      "Files": {
+        "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "bin/nemoclaw": "e5052dc5acb0511ed7be2bc917623a834ea7fd55c5cf9e3269410a4a8fda4257",
+        "libexec/tofu": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59",
+        "licenses/OpenTofu-LICENSE": "142b957651baf401646dd7f3d855cb7c4f6f0921d645faa27e7cb540bc33cf4c",
+        "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.79325bb984a190a7/linux_arm64/terraform-provider-nemoclaw_v0.1.0-dev.79325bb984a190a7": "58afbaf00c8782bc03c7c26cc1d395832f4323e12243e6cdeded998483f1ccba"
+      }
+    },
+    "workspace": {
+      "passed": 128,
+      "failed": 0,
+      "ignored": 35
+    },
+    "format": "passed",
+    "strictClippy": "passed",
+    "bundledRemoteLifecycle": "passed",
+    "behavior": "Non-default DockerRootDir accepted for owned volumes. Missing or malformed roots, traversal, and paths outside the observed root fail. The bundled remote lifecycle fixture uses /srv/nemoclaw-proof/docker.",
+    "liveStatus": "Not run: administrator setup of the second daemon and permission to temporarily stop the existing GPU service are pending. Existing resources remain untouched.",
+    "logs": [
+      {
+        "path": ".local/dual-daemon/storage-red.log",
+        "sha256": "9e30a882f7805055e12899dc74e906f78a72cdbb0f2655b5de5d416e907cdcf2"
+      },
+      {
+        "path": ".local/dual-daemon/storage-green.log",
+        "sha256": "38a4e5eac35855df38d969e018b81ac422d94c43296fd2979ad5f590062fa1b0"
+      },
+      {
+        "path": ".local/dual-daemon/workspace.log",
+        "sha256": "cd9bc83f0eba38d740acc32d47dfc1a86ee5540402830acc5e3a9093139c972b"
+      },
+      {
+        "path": ".local/dual-daemon/clippy.log",
+        "sha256": "57f5d8e09e529fbfdff3eb6331349acc53dd5a8cce7ca359ab09601bba18bbf0"
+      },
+      {
+        "path": ".local/dual-daemon/format.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".local/dual-daemon/build.log",
+        "sha256": "609e6a46f0ef133d21d13bcf1019ea91ea0d598284297fc8a69506d7265312bf"
+      },
+      {
+        "path": ".local/dual-daemon/lifecycle.log",
+        "sha256": "af77f8e9543bd0615797babc05c2978c3646a044315da1dfca7a57337c648ad8"
+      }
+    ]
+  }
 }
