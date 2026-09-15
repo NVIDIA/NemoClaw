@@ -29,8 +29,13 @@ if (-not (Test-Path -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Pa
 }
 $files = @(Get-ChildItem -LiteralPath $RuntimeRoot -Recurse -File -Force)
 $logicalBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+$runtimePrefix = $RuntimeRoot.TrimEnd([char[]]@('\', '/')) + [IO.Path]::DirectorySeparatorChar
 $topLevelNames = @($files | ForEach-Object {
-    ([IO.Path]::GetRelativePath($RuntimeRoot, $_.FullName) -split '[\\/]')[0]
+    $fullName = [IO.Path]::GetFullPath($_.FullName)
+    if (-not $fullName.StartsWith($runtimePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A runtime image input escaped its declared root.'
+    }
+    ($fullName.Substring($runtimePrefix.Length) -split '[\\/]')[0]
 } | Sort-Object -Unique)
 $topLevelDirectories = @(Get-ChildItem -LiteralPath $RuntimeRoot -Directory -Force | ForEach-Object Name)
 $sourceManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()
