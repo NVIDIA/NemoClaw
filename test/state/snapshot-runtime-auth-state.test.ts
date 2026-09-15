@@ -9,6 +9,7 @@
 // (GatewayCredentialsRequiredError) until the device is re-paired.
 
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -31,6 +32,22 @@ afterAll(() => {
 
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
+}
+
+function throwInjectedCleanupFailure(): never {
+  throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
+}
+
+function throwInjectedManifestFailure(): never {
+  throw new Error("injected manifest publication failure");
+}
+
+function throwInjectedConfigWriteFailure(): never {
+  throw new Error("injected SSH configuration write failure");
+}
+
+function isSnapshotSshTempDirectory(target: fs.PathLike): boolean {
+  return /^nemoclaw-state-[A-Za-z0-9]{6}$/u.test(path.basename(String(target)));
 }
 
 /**
@@ -254,6 +271,124 @@ describe("runtime auth state across snapshot backup/restore (#6852)", () => {
       expect(fs.readFileSync(path.join(openclawDir, "devices", "paired.json"), "utf-8")).toBe(
         LIVE_PAIRED_DEVICE,
       );
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("snapshot temporary SSH credential cleanup", () => {
+  it("preserves cleanup failures through backup finalization and restore (#10947)", async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-cleanup-"));
+    try {
+      const binDir = path.join(fixture, "bin");
+      const fakeRoot = path.join(fixture, "sandbox-root");
+      const openclawDir = path.join(fakeRoot, ".openclaw");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "agents", "main"), { recursive: true });
+      fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
+      fs.writeFileSync(path.join(openclawDir, "agents", "main", "state.txt"), "state\n");
+      writeFakeSandboxBins(binDir, fakeRoot);
+      writeOpenClawRegistry("alpha");
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", path.join(binDir, "openshell"));
+      vi.stubEnv("PATH", `${binDir}:${process.env.PATH || ""}`);
+
+      const completeBackup = sandboxState.backupSandboxState("alpha");
+      expect(completeBackup.success).toBe(true);
+      const backupPath = completeBackup.manifest!.backupPath;
+
+      const originalRmSync = fs.rmSync;
+      const originalRenameSync = fs.renameSync;
+      const originalWriteFileSync = fs.writeFileSync;
+      const retainedDirectories: string[] = [];
+      fs.rmSync = ((target, options) =>
+        isSnapshotSshTempDirectory(target)
+          ? (retainedDirectories.push(String(target)), throwInjectedCleanupFailure())
+          : originalRmSync(target, options)) as typeof fs.rmSync;
+      syncBuiltinESMExports();
+      try {
+        expect(sandboxState.backupSandboxState("alpha", { name: "cleanup-failure" })).toMatchObject(
+          {
+            success: false,
+            error: expect.stringContaining("Remove that directory before continuing"),
+            manifest: { backupComplete: false },
+          },
+        );
+        await expect(sandboxState.restoreSandboxState("alpha", backupPath)).resolves.toMatchObject({
+          success: false,
+          error: expect.stringContaining("Remove that directory before continuing"),
+        });
+
+        fs.renameSync = ((source, destination) =>
+          path.basename(String(destination)) === "rebuild-manifest.json"
+            ? throwInjectedManifestFailure()
+            : originalRenameSync(source, destination)) as typeof fs.renameSync;
+        syncBuiltinESMExports();
+        let finalizationFailure: unknown;
+        try {
+          sandboxState.backupSandboxState("alpha", { name: "combined-failure" });
+        } catch (error) {
+          finalizationFailure = error;
+        }
+        expect(finalizationFailure).toBeInstanceOf(AggregateError);
+        expect((finalizationFailure as AggregateError).errors).toEqual([
+          expect.objectContaining({ message: "injected manifest publication failure" }),
+          expect.objectContaining({
+            name: "TempSshConfigCleanupError",
+            dir: retainedDirectories[2],
+          }),
+        ]);
+        expect(retainedDirectories).toHaveLength(3);
+
+        fs.renameSync = originalRenameSync;
+        fs.writeFileSync = ((file, data, options) =>
+          path.basename(String(file)) === "ssh_config"
+            ? throwInjectedConfigWriteFailure()
+            : originalWriteFileSync(file, data, options)) as typeof fs.writeFileSync;
+        syncBuiltinESMExports();
+        expect(
+          sandboxState.backupSandboxState("alpha", { name: "creation-cleanup-failure" }),
+        ).toMatchObject({
+          success: false,
+          error: expect.stringMatching(
+            /injected SSH configuration write failure.*Remove that directory before continuing/u,
+          ),
+          manifest: { backupComplete: false },
+        });
+        await expect(sandboxState.restoreSandboxState("alpha", backupPath)).resolves.toMatchObject({
+          success: false,
+          error: expect.stringMatching(
+            /injected SSH configuration write failure.*Remove that directory before continuing/u,
+          ),
+        });
+        expect(retainedDirectories).toHaveLength(5);
+      } finally {
+        fs.writeFileSync = originalWriteFileSync;
+        fs.renameSync = originalRenameSync;
+        fs.rmSync = originalRmSync;
+        syncBuiltinESMExports();
+        originalRmSync(retainedDirectories[0] ?? path.join(fixture, "missing-temp-0"), {
+          recursive: true,
+          force: true,
+        });
+        originalRmSync(retainedDirectories[1] ?? path.join(fixture, "missing-temp-1"), {
+          recursive: true,
+          force: true,
+        });
+        originalRmSync(retainedDirectories[2] ?? path.join(fixture, "missing-temp-2"), {
+          recursive: true,
+          force: true,
+        });
+        originalRmSync(retainedDirectories[3] ?? path.join(fixture, "missing-temp-3"), {
+          recursive: true,
+          force: true,
+        });
+        originalRmSync(retainedDirectories[4] ?? path.join(fixture, "missing-temp-4"), {
+          recursive: true,
+          force: true,
+        });
+      }
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(fixture, { recursive: true, force: true });

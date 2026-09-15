@@ -301,6 +301,55 @@ describe("probeUserManagedFiles", () => {
     expect([...tempSshFiles].every((dir) => !fs.existsSync(dir))).toBe(true);
   });
 
+  it("reports the retained credential directory when cleanup fails", () => {
+    stubSpawnSync(".env\n", 0);
+    const originalRmSync = fs.rmSync;
+    let retainedDirectory = "";
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation(((target: fs.PathLike) => {
+      retainedDirectory = String(target);
+      throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
+    }) as typeof fs.rmSync);
+    const { probeUserManagedFiles } = loadProbe();
+
+    try {
+      expect(() => probeUserManagedFiles("alpha")).toThrow(
+        /User-managed file probe completed, but temporary SSH configuration remains at/u,
+      );
+      expect(retainedDirectory).toContain("nemoclaw-umf-");
+    } finally {
+      rmSpy.mockRestore();
+      originalRmSync(retainedDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("retains both the SSH failure and cleanup failure", () => {
+    stubSpawnSync("", 255, "connection refused");
+    const originalRmSync = fs.rmSync;
+    let retainedDirectory = "";
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation(((target: fs.PathLike) => {
+      retainedDirectory = String(target);
+      throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
+    }) as typeof fs.rmSync);
+    const { probeUserManagedFiles } = loadProbe();
+
+    try {
+      let failure: unknown;
+      try {
+        probeUserManagedFiles("alpha");
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors).toEqual([
+        expect.objectContaining({ message: expect.stringContaining("ssh exit=255") }),
+        expect.objectContaining({ name: "TempSshConfigCleanupError", dir: retainedDirectory }),
+      ]);
+    } finally {
+      rmSpy.mockRestore();
+      originalRmSync(retainedDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("returns empty declared when the agent has no user_managed_files", () => {
     const defs = loadDefs();
     vi.spyOn(defs, "loadAgent").mockImplementation(() => makeFakeAgent([]));

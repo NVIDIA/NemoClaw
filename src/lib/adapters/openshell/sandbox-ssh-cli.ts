@@ -3,7 +3,14 @@
 
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isValidName } from "../../sandbox-name-contract";
-import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import {
+  createTempSshConfig,
+  runWithTempSshConfigCleanupAsync,
+  TempSshConfigCleanupError,
+  TempSshConfigOperationCleanupError,
+  type TempSshConfig,
+  type TempSshConfigRunResult,
+} from "../../sandbox/temp-ssh-config";
 import { resolveOpenshell } from "./resolve";
 import {
   runCliOpenShellBufferedCommand,
@@ -36,6 +43,7 @@ export function createCliOpenShellSandboxSshExecutor(
     resolveBinary?: () => string | null;
     runBuffered?: OpenShellBufferedCommandRunner;
     commandTransport?: boolean;
+    createTempConfig?: typeof createTempSshConfig;
   } = {},
 ): OpenShellSandboxSshExecutor {
   const run = deps.runBuffered ?? runCliOpenShellBufferedCommand;
@@ -79,59 +87,102 @@ export function createCliOpenShellSandboxSshExecutor(
         if (sshHost === null) {
           return { kind: "failed", reason: "configuration" };
         }
-        const temporary = createTempSshConfig(
-          config.stdout,
-          deps.commandTransport ? "nemoclaw-ssh-" : "nemoclaw-ver-",
-        );
+        let temporary: TempSshConfig;
         try {
-          const result = await run(
-            "ssh",
-            [
-              "-F",
-              temporary.file,
-              "-o",
-              "StrictHostKeyChecking=no",
-              "-o",
-              "UserKnownHostsFile=/dev/null",
-              "-o",
-              "ConnectTimeout=5",
-              "-o",
-              "LogLevel=ERROR",
-              sshHost,
-              request.command,
-            ],
-            {
-              environment,
-              timeoutMilliseconds: request.timeoutMilliseconds ?? 15000,
-            },
+          temporary = (deps.createTempConfig ?? createTempSshConfig)(
+            config.stdout,
+            deps.commandTransport ? "nemoclaw-ssh-" : "nemoclaw-ver-",
           );
-          // OpenSSH cannot distinguish a transport failure from remote exit 255.
-          const commandFailure =
-            failure(result) ??
-            (result.status === 255
-              ? { kind: "failed" as const, reason: "transport" as const }
-              : null);
-          if (commandFailure) {
-            return deps.commandTransport
-              ? {
-                  ...commandFailure,
-                  command: {
-                    exitCode: result.status ?? 1,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                  },
-                }
-              : commandFailure;
+        } catch (error) {
+          if (error instanceof TempSshConfigCleanupError) {
+            return {
+              kind: "failed",
+              reason: "cleanup",
+              retainedDirectory: error.dir,
+              cleanupError: error,
+            };
           }
-          return {
-            kind: "completed",
-            exitCode: result.status ?? 1,
-            stdout: result.stdout,
-            stderr: result.stderr,
-          };
-        } finally {
-          temporary.cleanup();
+          throw error;
         }
+        let sshPhase: TempSshConfigRunResult<OpenShellSandboxSshResult>;
+        try {
+          sshPhase = await runWithTempSshConfigCleanupAsync(temporary, async () => {
+            const result = await run(
+              "ssh",
+              [
+                "-F",
+                temporary.file,
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "LogLevel=ERROR",
+                sshHost,
+                request.command,
+              ],
+              {
+                environment,
+                timeoutMilliseconds: request.timeoutMilliseconds ?? 15000,
+              },
+            );
+            // OpenSSH cannot distinguish a transport failure from remote exit 255.
+            const commandFailure =
+              failure(result) ??
+              (result.status === 255
+                ? { kind: "failed" as const, reason: "transport" as const }
+                : null);
+            if (commandFailure) {
+              return deps.commandTransport
+                ? {
+                    ...commandFailure,
+                    command: {
+                      exitCode: result.status ?? 1,
+                      stdout: result.stdout,
+                      stderr: result.stderr,
+                    },
+                  }
+                : commandFailure;
+            }
+            return {
+              kind: "completed" as const,
+              exitCode: result.status ?? 1,
+              stdout: result.stdout,
+              stderr: result.stderr,
+            };
+          });
+        } catch (error) {
+          if (error instanceof TempSshConfigOperationCleanupError) {
+            return {
+              kind: "failed",
+              reason: "cleanup",
+              retainedDirectory: error.cleanupError.dir,
+              operationError: error.operationError,
+              cleanupError: error.cleanupError,
+            };
+          }
+          throw error;
+        }
+        if (sshPhase.cleanupError) {
+          const command =
+            sshPhase.result.kind === "completed"
+              ? {
+                  exitCode: sshPhase.result.exitCode,
+                  stdout: sshPhase.result.stdout,
+                  stderr: sshPhase.result.stderr,
+                }
+              : sshPhase.result.command;
+          return {
+            kind: "failed",
+            reason: "cleanup",
+            retainedDirectory: sshPhase.cleanupError.dir,
+            cleanupError: sshPhase.cleanupError,
+            ...(deps.commandTransport && command ? { command } : {}),
+          };
+        }
+        return sshPhase.result;
       } catch {
         return { kind: "failed", reason: "transport" };
       }

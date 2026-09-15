@@ -7,7 +7,7 @@ import { loadAgent } from "../agent/defs.js";
 import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv.js";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection.js";
 import { shellQuote } from "../runner.js";
-import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
+import { createTempSshConfig, runWithTempSshConfigCleanup } from "../sandbox/temp-ssh-config.js";
 
 import * as registry from "./registry.js";
 import { getSshConfig, sshArgs } from "./sandbox.js";
@@ -61,7 +61,7 @@ export function probeUserManagedFiles(
 
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-umf-");
   const configFile = tempSshConfig.file;
-  try {
+  const sshPhase = runWithTempSshConfigCleanup(tempSshConfig, () => {
     const probeCmd =
       declared
         .map(
@@ -87,7 +87,12 @@ export function probeUserManagedFiles(
     const existing = stdout.split("\n").filter((line) => line.length > 0);
     _log(`${existing.length}/${declared.length} present in sandbox`);
     return { declared, existing };
-  } finally {
-    tempSshConfig.cleanup();
+  });
+  if (sshPhase.cleanupError) {
+    throw new Error(
+      `User-managed file probe completed, but temporary SSH configuration remains at ${JSON.stringify(sshPhase.cleanupError.dir)}`,
+      { cause: sshPhase.cleanupError },
+    );
   }
+  return sshPhase.result;
 }

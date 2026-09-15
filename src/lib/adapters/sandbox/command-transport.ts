@@ -76,6 +76,7 @@ export async function executeSandboxCommandTransport(
     environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
     timeoutMilliseconds: timeout,
   });
+  if (result.kind === "failed" && result.reason === "cleanup") throw result.cleanupError;
   const commandResult = result.kind === "completed" ? result : result.command;
   return commandResult
     ? {

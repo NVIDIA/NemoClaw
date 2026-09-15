@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { TempSshConfigCleanupError } from "../../sandbox/temp-ssh-config";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
 export type OpenShellSandboxSshRequest = Readonly<{
@@ -13,6 +14,14 @@ export type OpenShellSandboxSshRequest = Readonly<{
 
 export type OpenShellSandboxSshResult =
   | Readonly<{ kind: "completed"; exitCode: number; stdout: string; stderr: string }>
+  | Readonly<{
+      kind: "failed";
+      reason: "cleanup";
+      retainedDirectory: string;
+      cleanupError: TempSshConfigCleanupError;
+      operationError?: unknown;
+      command?: Readonly<{ exitCode: number; stdout: string; stderr: string }>;
+    }>
   | Readonly<{
       kind: "failed";
       reason: "configuration" | "unavailable" | "timeout" | "cancelled" | "transport" | "capture";

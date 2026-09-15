@@ -3,6 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { TempSshConfigCleanupError } from "../../sandbox/temp-ssh-config";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../openshell/sandbox-command";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
 
@@ -82,13 +83,35 @@ describe("sandbox command transport", () => {
       expected: { status: 255, stdout: "out", stderr: "err" },
     },
   ] as const)(
-    "preserves the SSH command outcome $result without a Docker fallback",
+    "maps the typed SSH result $result without a Docker fallback",
     async ({ result, expected }) => {
       const deps = createDependencies({ sshExecutor: { run: vi.fn(async () => result) } });
       expect(await executeSandboxCommandTransport(deps, "alpha", "id")).toEqual(expected);
       expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects a zero-exit command when its SSH credential cleanup fails (#10947)", async () => {
+    const retainedDirectory = "/tmp/nemoclaw-ssh-retained";
+    const cleanupError = new TempSshConfigCleanupError(
+      retainedDirectory,
+      new Error("injected failure"),
+    );
+    const deps = createDependencies({
+      sshExecutor: {
+        run: vi.fn(async () => ({
+          kind: "failed" as const,
+          reason: "cleanup" as const,
+          retainedDirectory,
+          cleanupError,
+          command: { exitCode: 0, stdout: " out\n", stderr: "" },
+        })),
+      },
+    });
+
+    await expect(executeSandboxCommandTransport(deps, "alpha", "id")).rejects.toBe(cleanupError);
+    expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+  });
 
   it("pins OpenShell exec to the requested gateway (#9834)", async () => {
     const deps = createDependencies();
