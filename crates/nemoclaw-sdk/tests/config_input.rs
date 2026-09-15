@@ -129,3 +129,27 @@ fn only_pi_metadata_permits_nested_null_values() {
     *value.pointer_mut(pointer).unwrap() = Value::Null;
     assert!(parse(&value).is_err());
 }
+
+#[test]
+fn voiceclaw_intent_selects_one_openclaw_agent_without_internal_settings() {
+    let value = input("voiceclaw-r0.yaml");
+    let document = parse(&value).unwrap();
+    let integration = &document.spec.integrations[0];
+    assert_eq!(integration.name, "voice");
+    assert_eq!(integration.kind, "voiceclaw");
+    assert_eq!(integration.agent_ref, "assistant");
+
+    for (path, replacement) in [
+        ("/spec/integrations/0/kind", json!("unknown")),
+        ("/spec/integrations/0/agentRef", json!("missing")),
+        ("/spec/sandboxes/0/agents/0/harness", json!("hermes")),
+    ] {
+        let mut invalid = value.clone();
+        *invalid.pointer_mut(path).unwrap() = replacement;
+        assert!(parse(&invalid).is_err(), "{path}");
+    }
+
+    let mut internal = value;
+    internal["spec"]["integrations"][0]["credential"] = json!("secret");
+    assert!(parse(&internal).is_err());
+}

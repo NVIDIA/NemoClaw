@@ -5,7 +5,9 @@ use crate::{
     args::{Cli, Command},
     io::document,
 };
-use nemoclaw_sdk::{CancellationToken, Deployment, Error, OperationResult, config::Document};
+use nemoclaw_sdk::{
+    CancellationToken, Deployment, Error, OperationResult, config::Document, voice::Bootstrap,
+};
 use tokio::io::AsyncRead;
 
 pub(crate) enum CommandResult {
@@ -34,7 +36,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             .ok_or(Error::Bundle("cannot locate runtime bundle"))?
             .into(),
     };
-    let deployment = Deployment::new(&cli.state_dir, &bundle);
+    let mut deployment = Deployment::new(&cli.state_dir, &bundle);
     let result = match cli.command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
         Command::Plan {
@@ -44,7 +46,10 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
                 .plan(&document(&file, stdin, cancel).await?, cancel)
                 .await?
         }
-        Command::Apply { file } => {
+        Command::Apply { file, voiceclaw } => {
+            if let Some(root) = voiceclaw {
+                deployment = deployment.with_voiceclaw(Bootstrap::new(&root)?);
+            }
             deployment
                 .apply(&document(&file, stdin, cancel).await?, cancel)
                 .await?

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::{CancellationToken, Error};
+use crate::{CancellationToken, Error, ObservationError};
 use std::time::Duration;
 
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
@@ -48,6 +48,16 @@ fn response_text(bytes: &[u8]) -> Result<String, Error> {
     Ok(text.into())
 }
 impl OpenShell {
+    pub(crate) async fn voice_ready(&self, binding: &Row) -> crate::voice::ProbeResult {
+        match self.agent_configuration(binding).await {
+            Ok(()) => crate::voice::ProbeResult::Ready,
+            Err(Error::Observation(ObservationError::BindingMismatch)) => {
+                crate::voice::ProbeResult::Replaced
+            }
+            Err(_) => crate::voice::ProbeResult::Unavailable,
+        }
+    }
+
     pub async fn verify_gateway(&self, driver: &str) -> Result<(), Error> {
         let info = self
             .grpc()
@@ -324,9 +334,15 @@ impl OpenShell {
         }
         Ok(())
     }
-    pub async fn agent_response(&self, binding: &Row) -> Result<String, Error> {
+    async fn openclaw_response(
+        &self,
+        binding: &Row,
+        message: &'static str,
+        command_timeout: &'static str,
+        execution_timeout: u32,
+    ) -> Result<String, OpenClawResponseError> {
         let mut random = [0_u8; 16];
-        getrandom::fill(&mut random).map_err(|_| Error::State("cannot generate probe session"))?;
+        getrandom::fill(&mut random).map_err(|_| OpenClawResponseError::Unavailable)?;
         random[6] = (random[6] & 15) | 64;
         random[8] = (random[8] & 63) | 128;
         let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
@@ -338,44 +354,92 @@ impl OpenShell {
             &hex[16..20],
             &hex[20..]
         );
-        let hermes = value(binding, "agent_runtime") == "fabric-hermes";
-        let command = if hermes {
-            vec![
-                "/opt/fabric/bin/python".into(),
-                "/opt/nemoclaw/fabric.py".into(),
-                "probe".into(),
-                value(binding, "agent_name").into(),
-                "hermes".into(),
-            ]
-        } else {
-            [
-                "openclaw",
-                "agent",
-                "--agent",
-                value(binding, "agent_name"),
-                "--session-id",
-                &session,
-                "--message",
-                "Reply with the word FOUR.",
-                "--thinking",
-                "off",
-                "--json",
-                "--timeout",
-                "300",
-            ]
-            .map(String::from)
-            .to_vec()
+        let command = [
+            "openclaw",
+            "agent",
+            "--agent",
+            value(binding, "agent_name"),
+            "--session-id",
+            &session,
+            "--message",
+            message,
+            "--thinking",
+            "off",
+            "--json",
+            "--timeout",
+            command_timeout,
+        ]
+        .map(String::from)
+        .to_vec();
+        let (exit, output) = match self
+            .exec_bound(binding, command, Row::new(), execution_timeout)
+            .await
+        {
+            Ok(result) => result,
+            Err(Error::Observation(ObservationError::BindingMismatch)) => {
+                return Err(OpenClawResponseError::Replaced);
+            }
+            Err(_) => return Err(OpenClawResponseError::Unavailable),
         };
-        let (exit, output) = self.exec_bound(binding, command, Row::new(), 360).await?;
         if exit != 0 {
-            return Err(Error::Conflict(
-                "actual agent response failed; resources retained",
-            ));
+            return Err(OpenClawResponseError::Unavailable);
         }
+        response_text(&output).map_err(|_| OpenClawResponseError::InvalidResponse)
+    }
+
+    pub(crate) async fn voice_response(&self, binding: &Row) -> crate::voice::DispatchResult {
+        match self
+            .openclaw_response(binding, crate::voice::QUESTION, "60", 60)
+            .await
+        {
+            Ok(answer) => crate::voice::DispatchResult::Answer(answer),
+            Err(OpenClawResponseError::Replaced) => crate::voice::DispatchResult::TargetReplaced,
+            Err(OpenClawResponseError::Unavailable) => {
+                crate::voice::DispatchResult::AgentUnavailable
+            }
+            Err(OpenClawResponseError::InvalidResponse) => {
+                crate::voice::DispatchResult::InvalidResponse
+            }
+        }
+    }
+
+    pub async fn agent_response(&self, binding: &Row) -> Result<String, Error> {
+        let hermes = value(binding, "agent_runtime") == "fabric-hermes";
         let text = if hermes {
+            let (exit, output) = self
+                .exec_bound(
+                    binding,
+                    vec![
+                        "/opt/fabric/bin/python".into(),
+                        "/opt/nemoclaw/fabric.py".into(),
+                        "probe".into(),
+                        value(binding, "agent_name").into(),
+                        "hermes".into(),
+                    ],
+                    Row::new(),
+                    360,
+                )
+                .await?;
+            if exit != 0 {
+                return Err(Error::Conflict(
+                    "actual agent response failed; resources retained",
+                ));
+            }
             hermes_response_text(&output)?
         } else {
-            response_text(&output)?
+            self.openclaw_response(binding, "Reply with the word FOUR.", "300", 360)
+                .await
+                .map_err(|failure| match failure {
+                    OpenClawResponseError::Replaced => {
+                        Error::Observation(ObservationError::BindingMismatch)
+                    }
+                    OpenClawResponseError::Unavailable => {
+                        Error::Conflict("actual agent response failed; resources retained")
+                    }
+                    OpenClawResponseError::InvalidResponse => {
+                        Error::Conflict("agent returned no confirmed response")
+                    }
+                })?
         };
         if !text
             .trim_matches([' ', '\n', '\r', '\t', '.', '!', '\"', '\''])
@@ -387,6 +451,13 @@ impl OpenShell {
         }
         Ok(text)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenClawResponseError {
+    Replaced,
+    Unavailable,
+    InvalidResponse,
 }
 
 const INFERENCE_PROBE: &str = r###"fetch('https://inference.local/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.choices)&&b.choices.length>0?0:1)}).catch(()=>process.exit(1))"###;

@@ -28,6 +28,9 @@ openshell-core.workspace = true
 openshell-policy.workspace = true
 tonic.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
+axum.workspace = true
+zeroize.workspace = true
 tempfile.workspace = true
 getrandom.workspace = true
 process-wrap.workspace = true
@@ -44,3 +47,4 @@ rustix.workspace = true
 [target.'cfg(unix)'.dependencies]
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+command-fds.workspace = true

@@ -1030,6 +1030,33 @@
       ],
       "type": "object"
     },
+    "Integration": {
+      "additionalProperties": false,
+      "description": "A semantic integration owned outside the NemoClaw sandbox.",
+      "properties": {
+        "agentRef": {
+          "description": "Name of the one OpenClaw agent authorized for this integration.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "voiceclaw",
+          "description": "External integration kind. R0 supports only voiceclaw.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Integration name within this deployment.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "agentRef"
+      ],
+      "type": "object"
+    },
     "ManagedManagement": {
       "description": "NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.",
       "oneOf": [
@@ -2390,6 +2417,14 @@
           "minItems": 1,
           "type": "array"
         },
+        "integrations": {
+          "description": "Optional external integrations. R0 permits one VoiceClaw integration bound to the deployment's OpenClaw agent.",
+          "items": {
+            "$ref": "#/$defs/Integration"
+          },
+          "maxItems": 1,
+          "type": "array"
+        },
         "sandboxes": {
           "description": "Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness.",
           "items": {
@@ -3408,6 +3443,49 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "integrations": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "integrations"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "agents": {
+                      "items": {
+                        "properties": {
+                          "harness": {
+                            "const": "openclaw"
+                          }
+                        }
+                      },
+                      "maxItems": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "description": "Desired configuration for one deployment. Fields describe authored input before SDK normalization.",
@@ -3444,6 +3522,7 @@
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+    "The parser checks that a VoiceClaw integration's agentRef exactly matches the one declared OpenClaw agent.",
     "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."

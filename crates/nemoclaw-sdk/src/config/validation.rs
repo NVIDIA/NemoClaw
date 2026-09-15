@@ -319,6 +319,22 @@ impl Document {
                 )?;
             }
         }
+        require(
+            self.spec.integrations.len() <= 1,
+            "R0 permits at most one external integration",
+        )?;
+        for integration in &self.spec.integrations {
+            require(
+                SLUG.is_match(&integration.name) && integration.kind == "voiceclaw",
+                "integration requires a lowercase name and supported kind",
+            )?;
+            require(
+                sandbox.agents.len() == 1
+                    && sandbox.agents[0].harness == "openclaw"
+                    && integration.agent_ref == sandbox.agents[0].name,
+                "VoiceClaw R0 requires the one declared OpenClaw agent",
+            )?;
+        }
         Ok(())
     }
 }

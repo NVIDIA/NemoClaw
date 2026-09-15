@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: voiceclaw-r0
+  uid: 30000000-0000-4000-8000-000000000001
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:8080
+  inferenceProviders:
+    - name: model
+      provider: openai
+      endpoint: http://127.0.0.1:8000/v1
+  sandboxes:
+    - name: voiceclaw-r0
+      agents:
+        - name: assistant
+          harness: openclaw
+          inference:
+            routes:
+              - name: primary
+                providerRef: model
+                overrides:
+                  model: test/model
+  integrations:
+    - name: voice
+      kind: voiceclaw
+      agentRef: assistant

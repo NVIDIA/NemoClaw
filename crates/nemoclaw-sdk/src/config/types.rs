@@ -49,6 +49,24 @@ pub struct Spec {
     #[serde(rename = "sandboxes")]
     /// Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness.
     pub sandboxes: Vec<Sandbox>,
+    #[serde(rename = "integrations", skip_serializing_if = "Vec::is_empty")]
+    #[schemars(default)]
+    /// Optional external integrations. R0 permits one VoiceClaw integration bound to the deployment's OpenClaw agent.
+    pub integrations: Vec<Integration>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// A semantic integration owned outside the NemoClaw sandbox.
+pub struct Integration {
+    /// Integration name within this deployment.
+    pub name: String,
+    /// External integration kind. R0 supports only voiceclaw.
+    pub kind: String,
+    #[serde(rename = "agentRef")]
+    /// Name of the one OpenClaw agent authorized for this integration.
+    pub agent_ref: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -21,6 +21,7 @@ Empty or zero selects a default only where stated.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
+- The parser checks that a VoiceClaw integration's agentRef exactly matches the one declared OpenClaw agent.
 - The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
@@ -457,6 +458,22 @@ Paths:
 | `snapshot` | [Manifest](#manifest) | No | — | Optional pinned file manifest. When omitted, the SDK resolves the model inventory. When present, its repository and revision must match service.model. |
 | `sourceNotices` | array of string | Yes | — | Nonempty list of absolute paths to retained source notices inside the image. Constraints: minimum items 1; items: pattern `^/`. |
 | `verification` | [Tool](#tool) | Yes | — | Executable that independently verifies prepared data before publication. |
+
+## Integration
+
+A semantic integration owned outside the NemoClaw sandbox.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.integrations[]`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `agentRef` | string | Yes | — | Name of the one OpenClaw agent authorized for this integration. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `kind` | string | Yes | — | External integration kind. R0 supports only voiceclaw. Constraints: `"voiceclaw"`. |
+| `name` | string | Yes | — | Integration name within this deployment. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## ManagedManagement
 
@@ -1097,6 +1114,7 @@ Paths:
 |---|---|---|---|---|
 | `gateway` | [Gateway](#gateway) | Yes | — | OpenShell gateway connection or managed gateway settings. |
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | Yes | — | Exactly one external endpoint, managed Ollama server, or managed vLLM service. Constraints: minimum items 1; maximum items 1. |
+| `integrations` | array of [Integration](#integration) | No | — | Optional external integrations. R0 permits one VoiceClaw integration bound to the deployment's OpenClaw agent. Constraints: maximum items 1. |
 | `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness. Constraints: minimum items 1; maximum items 1. |
 
 ## TLS
