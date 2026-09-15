@@ -2,6 +2,47 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test]
+fn verified_downloads_have_an_independent_source_stable_cache() {
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
+    let steps = workflow["jobs"]["native"]["steps"].as_array().unwrap();
+    let downloads = steps
+        .iter()
+        .find(|step| step["with"]["path"] == ".build/downloads")
+        .expect("verified archives need a separate cache");
+    assert!(
+        downloads["uses"]
+            .as_str()
+            .unwrap()
+            .starts_with("actions/cache@")
+    );
+    let key = downloads["with"]["key"].as_str().unwrap();
+    assert!(key.contains("matrix.platform"));
+    assert!(key.contains("hashFiles('versions.json')"));
+    assert!(!key.contains("github.sha") && !key.contains("Cargo.lock"));
+    assert!(downloads["with"]["restore-keys"].is_null());
+    let deps = steps
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|action| action.starts_with("Swatinem/rust-cache@"))
+        })
+        .unwrap();
+    assert!(deps["with"]["cache-directories"].is_null());
+    let download_index = steps.iter().position(|step| step == downloads).unwrap();
+    let bundle_index = steps
+        .iter()
+        .position(|step| {
+            step["run"]
+                .as_str()
+                .is_some_and(|script| script.contains("bundle --platform"))
+        })
+        .unwrap();
+    assert!(download_index < bundle_index);
+}
+
+#[test]
 fn native_ci_disables_incremental_without_disabling_debug_symbols() {
     let workflow: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();

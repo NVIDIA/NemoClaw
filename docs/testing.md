@@ -10,6 +10,21 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## CI caches
+
+Native CI disables incremental compilation but retains the existing debug-symbol
+settings. The dependency cache keeps third-party build artifacts for both debug
+and target-specific release profiles. Workspace libraries, test executables,
+workspace binaries, and installed Cargo binaries are excluded. Dependency caches
+are keyed by platform and the Rust toolchain, manifests, lockfile, and build
+environment, rather than each source commit.
+
+The checksum-addressed OpenTofu archives in `.build/downloads` use a separate
+cache keyed by platform and `versions.json`. Source-only changes reuse that
+archive cache without uploading it again. Bundle assembly still verifies every
+archive checksum and builds a fresh bundle; `dist` is not cached. Protobuf's
+compiler is still downloaded and checksum-verified during tool setup.
+
 ## Local coverage
 
 Install the pinned coverage tool and the LLVM tools for the repository's Rust
