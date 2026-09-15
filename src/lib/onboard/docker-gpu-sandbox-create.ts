@@ -34,6 +34,7 @@ import type {
   ManagedBootstrapNativeGpuFallbackRollbackOutcome,
   ManagedBootstrapNativeGpuFallbackRollbackRequest,
 } from "./managed-bootstrap/runtime-create";
+import { redactOnboardError } from "./diagnostics/redaction";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
 export type { DockerGpuRoutePlan, SelectedDockerGpuRoute } from "./docker-gpu-route";
@@ -288,6 +289,12 @@ export function createDockerGpuSandboxCreatePatch(
     }
   };
 
+  const attachRollbackError = (failure: Error, rollbackError: Error): void => {
+    redactOnboardError(rollbackError);
+    (failure as Error & { managedBootstrapRollbackError?: unknown }).managedBootstrapRollbackError =
+      rollbackError;
+  };
+
   const reportPatchErrorAndExit = async (): Promise<void> => {
     if (!patchError) return;
     const rollbackError = await rollbackAfterFailure();
@@ -508,9 +515,7 @@ export function createDockerGpuSandboxCreatePatch(
                 rollbackFailure instanceof Error
                   ? rollbackFailure
                   : new Error(String(rollbackFailure));
-              (
-                failure as Error & { managedBootstrapRollbackError?: unknown }
-              ).managedBootstrapRollbackError = rollbackError;
+              attachRollbackError(failure, rollbackError);
             }
             cutoverFinalizationFailure = failure;
             onPatchFailureExit(options.sandboxName, failure, {
@@ -636,10 +641,8 @@ export function createDockerGpuSandboxCreatePatch(
           });
           const rollbackError = await rollbackAfterFailure();
           if (rollbackError) {
+            attachRollbackError(failure, rollbackError);
             console.error(`  ${rollbackError.message}`);
-            (
-              failure as Error & { managedBootstrapRollbackError?: unknown }
-            ).managedBootstrapRollbackError = rollbackError;
           }
           throw failure;
         }
@@ -662,10 +665,8 @@ export function createDockerGpuSandboxCreatePatch(
         });
         const rollbackError = await rollbackAfterFailure();
         if (rollbackError) {
+          attachRollbackError(failure, rollbackError);
           console.error(`  ${rollbackError.message}`);
-          (
-            failure as Error & { managedBootstrapRollbackError?: unknown }
-          ).managedBootstrapRollbackError = rollbackError;
         }
         throw failure;
       }
