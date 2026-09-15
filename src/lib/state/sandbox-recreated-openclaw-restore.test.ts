@@ -278,133 +278,35 @@ describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
     }
   });
 
-  it.each([
-    { provenance: "missing legacy", previousPluginInstalls: undefined },
-    { provenance: "known-empty", previousPluginInstalls: [] },
-  ])(
-    "restores config and extensions with $provenance previous provenance",
-    async ({ previousPluginInstalls }) => {
-      const weather = imageInstall("weather", "weather");
-      const result = await runRestoreScenario({
-        previousPluginInstalls,
-        freshPluginInstalls: [weather],
-        backupExtensionDirs: ["weather"],
-        backupConfig: {
-          gateway: { auth: { token: "stale-token" } },
-          mcpServers: { filesystem: { command: "npx" } },
-          plugins: { entries: { "user-plugin": { enabled: true } } },
-        },
-        freshConfig: {
-          gateway: { auth: { token: "fresh-token" } },
-          plugins: {
-            entries: { weather: { enabled: true, config: { revision: "fresh" } } },
-            load: { paths: weather.loadPaths },
-          },
-        },
-      });
-
-      expectSuccessfulRestore(result);
-      expect(result.freshMarkers).toEqual({
-        nemoclaw: "fresh-nemoclaw\n",
-        weather: "fresh-weather\n",
-      });
-      expect(result.restoredConfig.gateway.auth.token).toBe("fresh-token");
-      expect(result.restoredConfig.mcpServers.filesystem.command).toBe("npx");
-      expect(result.restoredConfig.plugins.entries).toEqual({
-        "user-plugin": { enabled: true },
-        weather: { enabled: true, config: { revision: "fresh" } },
-      });
-      expect(result.cleanupCommand).toContain("! -name 'nemoclaw'");
-      expect(result.cleanupCommand).toContain("! -name 'weather'");
-    },
-  );
-
-  it("uses fresh primary-model routing during an ordinary sandbox re-create (#7011)", async () => {
+  it("restores the complete sanitized native config without key ownership merging (#11764)", async () => {
+    const weather = imageInstall("weather", "weather");
+    const backupConfig = {
+      agents: {
+        defaults: { model: { primary: "inference/user-selected" }, thinkingDefault: "off" },
+      },
+      cron: { enabled: true },
+      hooks: { internal: { enabled: true } },
+      plugins: { entries: { "user-plugin": { enabled: true } } },
+      tools: { profile: "full" },
+    };
     const result = await runRestoreScenario({
       previousPluginInstalls: [],
-      freshPluginInstalls: [],
+      freshPluginInstalls: [weather],
       backupExtensionDirs: [],
-      backupConfig: {
-        agents: {
-          defaults: {
-            model: { primary: "inference/stale-model" },
-            thinkingDefault: "off",
-          },
-          list: [{ id: "main", default: true, model: "inference/stale-model" }],
-        },
-      },
+      backupConfig,
       freshConfig: {
-        agents: { defaults: { model: { primary: "inference/fresh-model" } } },
-      },
-    });
-
-    expectSuccessfulRestore(result);
-    expect(result.restoredConfig.agents).toEqual({
-      defaults: {
-        model: { primary: "inference/fresh-model" },
-        thinkingDefault: "off",
-      },
-      list: [{ id: "main", default: true, model: "inference/fresh-model" }],
-    });
-  });
-
-  it("reconciles populated previous and fresh image-plugin provenance during config restore", async () => {
-    const previousWeather = imageInstall("weather", "weather-v1");
-    const freshWeather = imageInstall("weather", "weather-v2");
-    const userPluginPath = `${OPENCLAW_DIR}/extensions/user-plugin`;
-    const result = await runRestoreScenario({
-      previousPluginInstalls: [previousWeather],
-      freshPluginInstalls: [freshWeather],
-      backupExtensionDirs: ["weather-v1"],
-      backupConfig: {
-        gateway: { auth: { token: "stale-token" } },
-        channels: {
-          weather: { enabled: false, token: "stale-image-token" },
-          "user-channel": { room: "keep" },
-        },
-        plugins: {
-          entries: {
-            weather: { enabled: false, config: { revision: "stale" } },
-            "user-plugin": { enabled: true },
-          },
-          installs: { weather: { installPath: previousWeather.installPath } },
-          load: { paths: [previousWeather.installPath, userPluginPath] },
-          slots: { memory: "weather", contextEngine: "user-plugin" },
-        },
-      },
-      freshConfig: {
-        gateway: { auth: { token: "fresh-token" } },
-        channels: { weather: { enabled: true, endpoint: "fresh" } },
-        plugins: {
-          entries: { weather: { enabled: true, config: { revision: "fresh" } } },
-          load: { paths: freshWeather.loadPaths },
-          slots: { memory: "weather" },
-        },
+        gateway: { auth: { token: "fresh-ephemeral-token" } },
+        plugins: { entries: { weather: { enabled: true } } },
       },
     });
 
     expectSuccessfulRestore(result);
     expect(result.freshMarkers).toEqual({
       nemoclaw: "fresh-nemoclaw\n",
-      "weather-v2": "fresh-weather-v2\n",
+      weather: "fresh-weather\n",
     });
-    expect(result.restoredConfig.gateway.auth.token).toBe("fresh-token");
-    expect(result.restoredConfig.channels).toEqual({
-      weather: { enabled: true, endpoint: "fresh" },
-      "user-channel": { room: "keep" },
-    });
-    expect(result.restoredConfig.plugins.entries).toEqual({
-      "user-plugin": { enabled: true },
-      weather: { enabled: true, config: { revision: "fresh" } },
-    });
-    expect(result.restoredConfig.plugins.load.paths).toEqual([
-      freshWeather.installPath,
-      userPluginPath,
-    ]);
-    expect(result.restoredConfig.plugins.slots).toEqual({
-      contextEngine: "user-plugin",
-      memory: "weather",
-    });
-    expect(result.restoredConfig.plugins.installs).toBeUndefined();
+    expect(result.restoredConfig).toEqual(backupConfig);
+    expect(result.cleanupCommand).toContain("! -name 'nemoclaw'");
+    expect(result.cleanupCommand).toContain("! -name 'weather'");
   });
 });

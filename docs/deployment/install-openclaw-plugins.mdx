@@ -216,7 +216,9 @@ Starting with `v0.0.76`, custom-image onboarding records validated plugin IDs an
 It derives direct extension-directory ownership from those paths and records configured load paths owned by linked `path` installs.
 
 Use `openclaw plugins install` as shown above; manually copied, unregistered extension directories are outside this provenance contract.
-During rebuild or warm recreation, the new image remains authoritative for those image-owned plugins: updated plugins keep the fresh image copy, removed plugins stay removed, and renamed plugins do not restore their old IDs.
+During rebuild or warm recreation, the new image remains authoritative for image-owned extension directories: updated directories keep the fresh image copy, removed directories stay removed, and renamed directories do not restore the old directory.
+
+NemoClaw then restores the credential-sanitized `openclaw.json` from the snapshot as a whole file. Saved plugin entries and load paths therefore replace the generated config entries from the replacement image. Verify plugin registration after a rebuild, especially when the image changes a plugin ID or load path.
 
 NemoClaw continues to restore backup-only user plugins and their configuration.
 

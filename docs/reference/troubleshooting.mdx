@@ -2153,7 +2153,7 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 
 [Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
 
-Do not rely on direct edits to `openclaw.json` for a persistent provider change. NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
+Do not rely on direct edits to `openclaw.json` for a provider change. A snapshot-backed rebuild can preserve the file edit, but the edit does not update the OpenShell route, host-managed credentials, or registry metadata. Use onboarding or a supported host-side inference command to keep those resources aligned.
 
 Ask the agent to perform an action that requires a tool, then confirm that the TUI does not show a JSON blob as assistant text, the gateway log shows tool dispatch followed by an answer, and `$$nemoclaw <name> status` reports the intended local vLLM or compatible provider. If JSON still appears as text, confirm that vLLM started with automatic tool choice and the parser required by the model family.
 
@@ -2217,7 +2217,7 @@ NemoClaw freezes the messaging channel list into the sandbox image during `$$nem
 NemoClaw compiles the selected channel configuration into `NEMOCLAW_MESSAGING_PLAN_B64` for that build.
 The build applies the selected agent configuration to `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes, writes reduced runtime metadata to `/usr/local/share/nemoclaw/messaging-runtime-plan.json`, and removes the full build plan from the runtime environment.
 Credential bindings remain OpenShell credential placeholders, so raw messaging credentials do not enter the sandbox image or agent configuration.
-Changes made inside the running sandbox do not persist across rebuilds, so `openclaw channels` commands that mutate the config are intercepted.
+Agent-local channel commands do not update NemoClaw's messaging plan, OpenShell providers, or network policy, so NemoClaw intercepts `openclaw channels` commands that mutate the config.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
 
 Run the equivalent host-side command instead:
@@ -2257,7 +2257,7 @@ npm test -- test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
-This is expected. NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs. Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits are not the supported or durable path for NemoClaw-managed settings. NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
+This is expected. NemoClaw builds the sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) from host-side onboarding, rebuild, inference, policy, and messaging inputs. Fresh sandboxes keep that file writable by default so the agent can manage runtime state, but direct in-sandbox edits do not update related OpenShell resources or registry metadata. NemoClaw's sandbox entrypoint therefore installs a guard that intercepts `openclaw config set` and `openclaw config unset` and points to the host-side command.
 
 For most configuration changes, exit the sandbox and rerun onboarding:
 

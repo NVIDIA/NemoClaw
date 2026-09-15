@@ -91,11 +91,13 @@ state_dirs:
 # (issue #5027). Backed up with the default copy strategy; the local backup is
 # credential-sanitized (gateway section dropped, secret-bearing fields scrubbed)
 # while OpenShell `resolve:env` placeholders and the `unused` provider sentinel
-# are preserved so the restored config keeps routing through proxy-injected
-# credentials.
+# are preserved. Restore the complete sanitized file so OpenClaw-owned providers,
+# tools, plugins, hooks, cron, and gateway settings survive lifecycle operations.
 state_files:
   - path: openclaw.json
     restore:
+      # Transitional integrity publication remains until the runtime guard is retired.
+      # The restore itself is now the complete sanitized OpenClaw-owned file.
       merge: openclaw-config
 user_managed_files:
   - .env

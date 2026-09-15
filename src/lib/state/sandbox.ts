@@ -2705,15 +2705,6 @@ async function restoreSandboxStateInternal(
     freshOpenClawImagePluginInstalls !== undefined
       ? manifest.openclawImagePluginInstalls
       : undefined;
-  // Fresh provenance is still authoritative for preserving image-managed
-  // extension directories during recreation. Config reconciliation, however,
-  // needs a complete before/after pair. Legacy and stock-image backups do not
-  // carry the previous baseline, so preserve their historical config-merge
-  // behavior by passing neither side of the pair to openclaw.json restore.
-  const configFreshOpenClawImagePluginInstalls =
-    previousOpenClawImagePluginInstalls !== undefined
-      ? freshOpenClawImagePluginInstalls
-      : undefined;
   try {
     const pluginRestorePlan = planOpenClawPluginRestore({
       agentType: manifest.agentType,
@@ -2892,8 +2883,6 @@ async function restoreSandboxStateInternal(
           targetStateFile.restore,
           options.allowCustomImageWholeStateFileRestore === true,
           _log,
-          configFreshOpenClawImagePluginInstalls,
-          previousOpenClawImagePluginInstalls,
           selectedSshEnv,
         )
       ) {

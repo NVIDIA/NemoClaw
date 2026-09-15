@@ -65,7 +65,8 @@ Refer to [Set Up Google Chat](set-up-google-chat) for topic publishing, pull sub
 
 <AgentOnly variant="openclaw">
 Use host-side `$$nemoclaw <sandbox> channels` commands.
-Do not run `openclaw channels add` or `openclaw channels remove` inside the sandbox because NemoClaw generates `/sandbox/.openclaw/openclaw.json` at image build time, and changes inside the running container do not persist across rebuilds.
+Do not run `openclaw channels add` or `openclaw channels remove` inside the sandbox.
+A direct change to `/sandbox/.openclaw/openclaw.json` can survive snapshot restore, but it does not update NemoClaw's messaging plan, OpenShell providers, or network policy.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Use host-side `$$nemoclaw <sandbox> channels` commands.

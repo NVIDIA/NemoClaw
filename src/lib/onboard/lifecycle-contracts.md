@@ -20,7 +20,7 @@ Related guides: [`README.md`](README.md) describes package placement, [`machine/
 | **checkpoint** | Durable, secret-minimized state from which a later process can continue | onboard session and machine snapshot; registry; backup/recovery manifests |
 | **result** | Handler outcome: advance, retry, branch, pause, complete, or fail | `OnboardStateResult`, applied by `OnboardRuntime` through `OnboardRuntimeBoundary` |
 | **compensation** | Effect that undoes or limits a partial apply | failed-create source cleanup, `cancel-rollback.ts`, `rollbackChannelAdd`, recovery-registry restore |
-| **reconcile** | Align recorded and live state without replaying the full journey | sandbox drift checks, `reconcileSandboxMessaging`, `mergeOpenClawRestoredConfig` |
+| **reconcile** | Align recorded and live state without replaying the full journey | sandbox drift checks, `reconcileSandboxMessaging` |
 
 A **lifecycle contribution** is an internal, data-first plan input such as a policy preset, provider binding, package, host forward, resource profile, or runtime setup entry. It is not a public SDK. A **managed agent package** is recorded desired state for an agent runtime. An **agent-native plugin** is interpreted by the selected agent. “NemoClaw plugin SDK” remains reserved for the #6229 decision.
 

@@ -2468,7 +2468,7 @@ $$nemoclaw my-assistant channels remove telegram
 
 As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` or a run without a terminal on stdin skips the rebuild prompt and queues the change for a manual `$$nemoclaw <name> rebuild`. `channels start` and `channels stop` follow the same rule. If you omit the required `<channel>` argument, the CLI prints the `channels remove <channel>` usage with the supported channel list.
 
-Host-side removal is the supported path because managed startup (or an explicit custom image build) materializes agent channel config as image-owned state (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
+Host-side removal is the supported path because it updates the messaging plan, OpenShell providers, network policy, and agent config together. An OpenClaw config change made inside the sandbox can survive snapshot restore, but it does not update those host-side resources. Hermes continues to regenerate its image-owned messaging config during rebuild.
 
 ### `$$nemoclaw <name> channels stop <channel>`
 
