@@ -3,7 +3,7 @@
 
 # Validation Evidence
 
-These records qualify specific behaviors, revisions, and environments of the experimental Rust implementation.
+These records qualify specific behaviors, revisions, and environments of NemoClaw.
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
@@ -24,11 +24,11 @@ Commit bodies retain the test-first implementation decisions.
 | Linux ARM64/x64, macOS ARM64/Intel, Windows x64 bundles | [Five native jobs](rust-native-platforms.json); real OpenTofu and production provider execution on each target |
 
 These records describe their named revisions, including earlier schemas and runtime images.
-They do not assert that the current checkout reran each live experiment.
+They do not assert that the current checkout reran each live test.
 
 The retained platform and live records identify the separate execution gates; ignored tests are not counted as passes.
 
-The Rust Ollama recovery change adds independent storage and permits destroy with retained model data.
+The Ollama recovery change adds independent storage and permits destroy with retained model data.
 Older deployments must apply their original YAML to establish that storage binding before destroy.
 Refer to [destroy behavior](../usage.md#destroy).
 
@@ -36,7 +36,7 @@ Native channel credentials and persistent sandbox mounts are not provisioned by 
 Invocation replay and conversation recovery are not provided.
 Native bundle tests do not establish Podman or GPU compatibility across all operating systems.
 
-The selected-model experiment additionally qualifies Fabric OpenClaw with a managed gateway and managed vLLM inference.
+The selected-model validation additionally qualifies Fabric OpenClaw with a managed gateway and managed vLLM inference.
 It does not extend that live result to every Fabric harness or model.
 
 [SSH engine transport evidence](rust-ssh-linux-arm64.json) covers real loopback SSH identity, failure classification and artifact transfers.

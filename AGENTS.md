@@ -3,7 +3,7 @@
 
 # Working in This Repository
 
-This orphan branch implements the desired-state SDK and its CLI and OpenTofu provider consumers.
+NemoClaw provides the desired-state SDK and its CLI and OpenTofu provider consumers.
 Read the [accepted scope](docs/design/scope.md) before changing boundaries.
 
 Write a behavioral test, observe it fail, implement the behavior, and run the focused tests before committing.
@@ -14,7 +14,7 @@ Use Conventional Commits and SPDX Apache-2.0 source headers.
 Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` for the implemented workspace.
 
 Preserve other worktrees and live resources.
-Push this branch to `origin/v1`; never force-push.
+Push to `origin/v1`; never force-push.
 Do not publish packages or images.
 
 Live tests require explicit configuration and must touch only their owned resources.

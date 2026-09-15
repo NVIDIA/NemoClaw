@@ -17,7 +17,7 @@ The remote host must meet the existing Linux ARM64 DGX Spark hardware profile an
 Configure SSH authentication and host trust beforehand.
 Managed volume observation uses that daemon's reported data root, including a non-default root; it never substitutes the client host's storage path.
 
-Load the pinned runtime image into the selected Docker daemon; the example's experiment image has not been published.
+Load the pinned runtime image into the selected Docker daemon; the example's runtime image has not been published.
 Load the sandbox image into Podman.
 
 Use a fresh deployment UID and a dedicated state directory.

@@ -95,7 +95,7 @@ fn runtime_replacement_requires_retained_storage_and_preserves_the_old_binding()
 }
 
 #[tokio::test]
-#[ignore = "creates and removes only an explicitly configured experimental gateway; retains its storage"]
+#[ignore = "creates and removes only an explicitly configured test gateway; retains its storage"]
 async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu() {
     let path =
         |name| PathBuf::from(std::env::var_os(name).expect("explicit managed qualification path"));

@@ -5,7 +5,7 @@
 
 Execution placement determines where resources live; a connection determines how the client reaches them.
 The [accepted scope](scope.md) governs implementation changes.
-The opening explanation describes the current boundaries, followed by the experiments that established them.
+The opening explanation describes the current boundaries, followed by the validation results that established them.
 
 ## Connection, Identity, and Publication
 
@@ -64,12 +64,12 @@ The resident supervisor separately checks its own execution host during startup 
 Refer to [host observation boundaries](../engine-assumptions.md#host-observations-and-supervision) for the implementation owners.
 
 Two daemons can still share one physical GPU and memory pool.
-The [two-daemon experiment](https://github.com/NVIDIA/NemoClaw/commit/d3f45ce1a6) tested daemon isolation and routing on one DGX Spark.
+The [two-daemon validation](https://github.com/NVIDIA/NemoClaw/commit/d3f45ce1a6) tested daemon isolation and routing on one DGX Spark.
 Its result does not establish independent physical capacity or separate-host qualification.
 
 ## Execution-target Preparation
 
-Decision: Accept for the preparatory experiment requested by cvillela.
+Decision: Accept for execution-target preparation requested by cvillela.
 Keep the existing YAML, resource addresses and binding encodings during connection selection work.
 cvillela owns acceptance; two-engine fixtures and a separately recorded live OpenShell/Podman proof are the validation gates.
 This does not qualify Podman or remote deployment merely because a Docker-compatible client connects.
@@ -117,7 +117,7 @@ External inference keeps its explicit URL.
 Plan performs no reachability probe.
 Apply tests the route from the sandbox through OpenShell; a failed probe retains bindings for explicit recovery.
 
-### Native Podman Experiment
+### Native Podman Validation
 
 Upstream inspection found a native OpenShell Podman driver in the pinned gateway.
 It uses Podman image volumes, secrets and rootless networking rather than merely substituting a socket in the Docker driver.
@@ -146,7 +146,7 @@ This result covers an external native OpenShell gateway and rootless Podman sand
 Managed Podman gateway/inference resources, rootful operation, remote placement and other operating systems remain unqualified.
 See the [Podman evidence](../validation/rust-podman-rootless-linux-arm64.json).
 
-### SSH Transport Experiment
+### SSH Transport Validation
 
 The next transport slice accepts explicit `ssh://user@host:port` Docker endpoints in the SDK.
 It uses OpenSSH and `docker system dial-stdio`, requires existing host trust, and does not retry mutations.
@@ -159,7 +159,8 @@ No engine-selection YAML or inference tunnel is introduced by this slice.
 ### Independent Inference Placement
 
 The remote-model slice accepts independent service placement and publication.
-Decision: Accept for the v1 experiment at the user's direction; the requesting maintainer owns the experiment and its separate-host qualification gate.
+Decision: Accept for independent inference placement requested by cvillela.
+cvillela owns acceptance and the separate-host qualification gate.
 A service's placement selects a Docker SSH connection and private container network.
 
 Its publication selects the private host interface and URL that OpenShell can reach.
@@ -197,7 +198,7 @@ The remote lifecycle fixture uses a non-default root to exercise this through th
 
 ### Two-Daemon Live Qualification
 
-The two-daemon live experiment now qualifies SSH-managed inference with an external native OpenShell gateway and rootless Podman sandbox on this DGX Spark.
+The two-daemon live validation now qualifies SSH-managed inference with an external native OpenShell gateway and rootless Podman sandbox on this DGX Spark.
 The second Docker daemon had a separate containerd, data root, socket, daemon identity and network namespace.
 OpenClaw answered FOUR through OpenShell using the pinned Qwen3-4B service.
 
@@ -214,7 +215,7 @@ The resident supervisor also handled its explicit protection-trip signal after t
 Memory-threshold behavior remains covered by fixtures; the live test did not exhaust host memory.
 Managed applies still perform the actual agent-reply probe when resource plans are unchanged.
 
-The experiment confirms that connection selection, publication and durable daemon identity are separate concerns.
+The results confirm that connection selection, publication and durable daemon identity are separate concerns.
 Both daemons share physical capacity: a distinct daemon ID does not imply another GPU or memory pool.
 Network namespaces exercise routing isolation but do not qualify a separate physical host, WAN behavior, or another operating system.
 

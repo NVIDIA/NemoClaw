@@ -11,18 +11,18 @@ The CLI does not load recipe code.
 Recipe authors package their executables, patches, licenses and source notices in that image; the YAML declares their contract.
 
 See [the inline Qwen example](../examples/spark-inline.yaml).
-Use [the Qwen3.8 image build](build.md#build-a-runtime-image); the example pins an OCI manifest from the recorded experiment.
+Use [the Qwen3.8 image build](build.md#build-a-runtime-image); the example pins an OCI manifest from the recorded validation run.
 Build the pinned images from `sourceRevision` in [the validation evidence](validation/rust-recipe-removal-linux-arm64.json).
 Later revisions can produce different digests.
 
-This experiment does not publish the image.
+The build loads the image locally without publishing it.
 Its model-specific adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside the generic execution path.
 All vLLM services use `backend: vllm`.
 Model-specific backend names and the built-in recipe registry have been removed.
 
 ## Declaration
 
-The initial contract is inline, with `apiVersion: nemoclaw.nvidia.com/recipe/v1`.
+The contract is inline, with `apiVersion: nemoclaw.nvidia.com/recipe/v1`.
 It contains:
 
 - `compatibility`: target architecture, GPU name, minimum driver and host memory, and required image labels.
@@ -101,7 +101,7 @@ Apply checks the pinned image capabilities and packaged files, downloads or reus
 
 The Qwen adapter can hard-link earlier packed data into staging and verify it before accepting a new receipt.
 This avoids repacking while preserving the old published files.
-The model-specific orphan-recovery rule remains in that adapter, not the generic Rust preparation lifecycle.
+The model-specific orphan-recovery rule remains in that adapter, not the shared preparation lifecycle.
 
 Changing to a recipe-capable image can replace the inference container.
 Existing ownership, generation and storage checks still apply; this does not authorize adopting another deployment's volume.

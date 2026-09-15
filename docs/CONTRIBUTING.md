@@ -4,7 +4,7 @@
 # Contribute Documentation
 
 Follow [WRITING.md](../WRITING.md) for prose and [the design decision](design/scope.md) for accepted scope.
-This branch uses repository Markdown files.
+Documentation lives in repository Markdown files.
 
 ## Choose the Page
 
@@ -33,7 +33,7 @@ For operational instructions:
 2. Give commands from a named working directory.
 3. Explain the expected result, how to verify it, and how to recover from a partial failure.
 
-Example image pins and deployment IDs do not authorize access to the original experiment's resources.
+Example image pins and deployment IDs do not authorize access to the original deployment's resources.
 Use relative file links and existing heading anchors.
 When moving content, update inbound links and the index; retain old paths or anchors only when they have consumers.
 

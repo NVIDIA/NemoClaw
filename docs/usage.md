@@ -5,9 +5,9 @@
 
 Build a [verified native bundle](build.md) and put its `bin` directory on `PATH`.
 Choose a checked-in [example](../examples/), set a fresh deployment UUID and available endpoints, and retain the same state directory for every operation.
-The prototype supports one provider, sandbox, agent, and route per document.
+NemoClaw supports one provider, sandbox, agent, and route per document.
 
-Examples contain experiment identities and local image pins; replace them before provisioning your own deployment.
+Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
 Apply creates or changes runtime resources and can download model data and send inference requests.
 If you omit `--state-dir`, the CLI uses `.nemoclaw` in the working directory.
 
@@ -24,7 +24,7 @@ Export writes YAML to standard output, or to a file with `--output exported.yaml
 `--bundle DIR` selects an explicit private bundle; otherwise the CLI uses the parent of its executable's `bin` directory.
 
 Keep the selected bundle unchanged while an operation runs.
-`--bundle-dir` remains an alias for early Rust builds.
+`--bundle-dir` is an alias for `--bundle`.
 Export and destroy accept no YAML.
 Errors go to stderr with a nonzero exit code.
 
@@ -68,7 +68,8 @@ Uncredentialed inference HTTP endpoints must be literal private or loopback addr
 The isolated policy permits inference routing without general network egress.
 
 Filesystem enforcement uses OpenShell's `best_effort` Landlock mode and depends on the host kernel.
-Do not assume that unavailable Landlock restrictions are enforced; this branch has no security qualification.
+Unavailable Landlock restrictions are not enforced.
+The [validation evidence](validation/README.md) records policy tests, not a security qualification.
 
 ## Updates and Recovery
 

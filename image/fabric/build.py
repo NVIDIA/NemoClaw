@@ -100,7 +100,7 @@ def main():
         "fabric_revision": REVISION, "source_sha256": SOURCE_HASH,
         "harness": harness, "version": {"deepagents": "0.7.13", "hermes": "0.21.0", "openclaw": "2026.9.4", "claude": "0.2.120", "codex": "0.144.4", "mini-swe-agent": "2.4.6", "nooa": "0.0.10", "nooa-bench": "0.0.10", "remote-agent": "0.4.0", "pi": "0.84.2"}[harness],
         **({"openclaw_image": "ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101",
-            "adapter": "local prototype; not supplied by upstream Fabric",
+            "adapter": "NemoClaw adapter; not supplied by upstream Fabric",
             "adapter_sha256": hashlib.sha256((ROOT / "image/fabric/openclaw_adapter.py").read_bytes()).hexdigest()}
            if harness == "openclaw" else {}),
         **({"hermes_revision": HERMES_REVISION, "hermes_source_sha256": HERMES_HASH}

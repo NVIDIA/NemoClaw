@@ -3,7 +3,6 @@
 
 # Documentation
 
-These guides describe the experimental Rust `v1` branch.
 Use the [validation matrix](validation/README.md) to distinguish tested configurations from remaining qualification gates.
 
 ## Build and Deploy
@@ -17,7 +16,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Choose a public model for managed vLLM | [Select a managed model](models.md) |
 | Package model-specific preparation | [Inline model recipes](recipes.md) |
 | Place inference on an SSH-selected Docker engine | [Configure an SSH model service](remote-service.md) |
-| Call deployment operations from Rust | [Use the SDK](sdk.md) |
+| Call deployment operations programmatically | [Use the SDK](sdk.md) |
 
 ## Develop and Validate
 

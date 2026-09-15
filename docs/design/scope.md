@@ -4,11 +4,9 @@
 # Accepted Scope and Invariants
 
 Decision: Accept.
-Maintainer cvillela requested and owns this experiment and its acceptance, recorded on 2026-09-14.
-Placement: the independent Rust `origin/v1` branch.
-Project adoption remains a separate decision.
+Maintainer cvillela owns this design and its acceptance, recorded on 2026-09-14.
 
-The experiment implements a public desired-state SDK, its CLI, and an OpenTofu provider.
+NemoClaw provides a public desired-state SDK, its CLI, and an OpenTofu provider.
 The SDK owns deployment behavior; the CLI owns arguments, terminal output, and exit codes.
 OpenTofu owns graph execution and resource state, with the provider adapting its protocol to shared typed backend operations.
 Add a crate only when it has a consumer and a dependency or deployment boundary that justifies it.
@@ -17,7 +15,7 @@ The [architecture](architecture.md), [runtime](runtime.md), [execution-target](e
 
 ## Ownership and Recovery
 
-Backward compatibility with earlier experimental schemas, SDK APIs, or state formats is not required.
+Backward compatibility with earlier schemas, SDK APIs, or state formats is not required.
 Reject unsupported state without silently adopting, replacing, or deleting its resources.
 
 - Validate configuration strictly and retain intent, ownership generations, durable identities, configuration digests, and secret references across operations.

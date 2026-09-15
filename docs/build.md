@@ -31,7 +31,7 @@ Add the bundle’s `bin` directory to `PATH` and run `nemoclaw --help` to check 
 Continue with [deployment usage](usage.md).
 
 Keep the bundle unchanged while an operation uses it.
-The builder replaces `dist/<platform>`; copy the bundle to a dedicated location before a long live experiment.
+The builder replaces `dist/<platform>`; copy the bundle to a dedicated location before a long live run.
 Repository text uses LF on every platform so checkout newline conversion does not change source-derived provider versions.
 
 ## Build a Runtime Image

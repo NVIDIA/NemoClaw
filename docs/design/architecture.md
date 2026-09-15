@@ -9,7 +9,7 @@ The explanations below describe the current boundaries; the later findings retai
 
 ## Why the SDK Owns the Operation
 
-A Rust application and a CLI user need the same answer to an interrupted apply: which resources exist, who owns them, and what can resume?
+An application and a CLI user need the same answer to an interrupted apply: which resources exist, who owns them, and what can resume?
 Putting locking or recovery in the CLI would leave programmatic callers to implement those rules again.
 The SDK therefore owns the complete deployment operation, while OpenTofu owns dependency ordering and resource state.
 
@@ -18,9 +18,9 @@ The diagram shows logical responsibilities across the SDK and its child processe
 ```mermaid
 flowchart TD
     CLI[CLI arguments and output] --> SDK[SDK deployment orchestration]
-    App[Rust application] --> SDK
+    App[Application] --> SDK
     SDK -->|compile and check saved plans| Tofu[OpenTofu child process]
-    Tofu -->|provider protocol| Provider[Rust provider process]
+    Tofu -->|provider protocol| Provider[Provider process]
     Provider --> Backend[Shared SDK backend operations]
     SDK -->|preflight, export, and active probes| Backend
     Backend --> OpenShell[OpenShell API]
@@ -166,7 +166,6 @@ Destroy cannot infer ownership from missing local state or delete a whole worksp
 
 ## Costs and Hypotheses Still to Test
 
-Rust does not remove protocol or packaging work.
 The pinned high-level OpenShell Rust client omits mTLS, so the SDK uses its generated tonic clients with explicit certificate and bearer references.
 The real OpenTofu test exposed a Rustls backend-selection panic after HTTP dependencies were added.
 
@@ -183,7 +182,7 @@ Managed gateway and GPU execution are qualified on Linux ARM64.
 Native CLI availability does not establish container or GPU backend support on every platform.
 Podman topology still requires its own evidence.
 
-The model runtime retains the recipe archive, original and patched sources, preparation tools, licenses, Rust source and vendored dependency licenses.
+The model runtime retains the recipe archive, original and patched sources, preparation tools, licenses, supervisor source and vendored dependency licenses.
 The builder normalizes timestamps and rejects changing source inputs during a build.
 An independent offline rebuild from another extraction directory produced an identical supervisor binary hash.
 
@@ -207,14 +206,14 @@ A lost deletion response leaves state for explicit reconciliation.
 The fixture also checks volume replacement and engine failure before any deletion, and reapply after destroy keeps model data without another pull.
 This is deterministic Docker/HTTP/OpenShell fixture qualification with the real provider and OpenTofu; it does not establish a new live Ollama hardware qualification.
 
-Managed apply also exposed a Rust async allocation cost that the release CLI hid: composing several debug-build SDK calls overflowed a normal executor thread stack.
+Managed apply also exposed an async allocation cost that the release CLI hid: composing several debug-build SDK calls overflowed a normal executor thread stack.
 Public plan/apply now heap-allocate their orchestration future, with a tested per-operation stack-size budget.
 SDK qualification must exercise its public API directly as well as its CLI consumer.
 
 ## Acceptance Evidence
 
 [Validation records](../validation/) distinguish deterministic failure tests, protocol qualification, native runtime execution, and remaining platform limits.
-The Rust gateway experiment passed initial create, no-op, retained-storage destroy, and explicit recovery.
+Gateway lifecycle validation passed initial create, no-op, retained-storage destroy, and explicit recovery.
 The [Spark run](../validation/rust-spark-linux-arm64.json) passed a fresh model download, verified PLE preparation, actual OpenClaw reply, unchanged apply without download or preparation, export/reapply, safe capacity rejection, and watchdog shutdown followed by explicit recovery.
 
 Image replacement changed only the inference process identity.

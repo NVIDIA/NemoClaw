@@ -11,7 +11,7 @@ The [recipe guide](../recipes.md) owns the declaration and executable protocol; 
 
 Ordinary safetensors loading and Qwen3.8 preparation share downloads, storage, supervision, and backend startup.
 Qwen3.8 additionally needs model-specific tools, patches, memory requirements, and verification.
-Keeping those details in a Rust recipe enum made adding or changing a model depend on SDK changes.
+Keeping those details in a compiled recipe enum made adding or changing a model depend on SDK changes.
 
 The [inline declaration](https://github.com/NVIDIA/NemoClaw/commit/b71671aa33) moved those requirements into a versioned contract.
 The [execution protocol](https://github.com/NVIDIA/NemoClaw/commit/5585add1e7) lets the runtime invoke pinned image executables with structured JSON.
@@ -63,7 +63,7 @@ Prepared files share the inference service's retained storage and recovery lifec
 They do not need an independently running controller or a separate OpenTofu resource to resume unfinished work.
 The runtime can prepare and verify them before backend startup while the provider retains the service and storage bindings.
 
-The [inline live experiment](https://github.com/NVIDIA/NemoClaw/commit/b402353743) reused Qwen packed files after verification and preserved identities across unchanged apply and export/reapply.
+The [inline live validation](https://github.com/NVIDIA/NemoClaw/commit/b402353743) reused Qwen packed files after verification and preserved identities across unchanged apply and export/reapply.
 That evidence supported keeping preparation inside the runtime stage.
 It remains evidence for the recorded images and DGX Spark setup, rather than a qualification of every recipe or later image rebuild.
 
@@ -72,16 +72,16 @@ The [artifact-manifest refactor](https://github.com/NVIDIA/NemoClaw/commit/47d00
 Each artifact directory now declares its own inputs and retains its sources and licenses.
 Recipe executables remain trusted image code; their hashes verify identity and do not sandbox their behavior.
 
-## Inline Recipe Contract Experiment
+## Inline Recipe Contract Validation
 
-The first inline experiment kept one inference-service resource and independent retained storage.
+The inline recipe validation kept one inference-service resource and independent retained storage.
 Both the Qwen recipe and ordinary Qwen3-4B returned actual Fabric OpenClaw responses on DGX Spark.
 The Qwen import required verification but no download or repack; unchanged apply and export/reapply preserved runtime identities, start time, and cache metadata.
 [The retained evidence](../validation/rust-inline-recipes-linux-arm64.json) identifies the tested revisions and excludes native-agent state migration and other GPUs.
 
-The declaration includes resource requirements and typed vLLM settings so model-specific assumptions remain visible outside Rust.
+The declaration includes resource requirements and typed vLLM settings so model-specific assumptions are explicit in YAML.
 Image labels declare required capabilities and protocol support.
-Executable invocation uses structured input without shell interpolation or a dynamic Rust library.
+Executable invocation uses structured input without shell interpolation or a dynamic library.
 A future file or reference form could resolve into the same inline structure; it is not implemented by this contract.
 
 Recipe receipts and image capabilities use the existing engine-scoped Docker observation boundary.
@@ -92,9 +92,8 @@ Model-specific sources, licenses, and build manifests remain with their artifact
 
 ## Built-in Recipe Removal
 
-The cleanup at `c9bf619774` removes the built-in Qwen3.8 implementation from production Rust and rejects the retired backend name.
+The cleanup at `c9bf619774` removes the built-in Qwen3.8 implementation from the shared runtime code and rejects the retired backend name.
 It also removes the SDK compatibility facade, old runtime environment variable, and old executable alias.
 Both rebuilt images returned an agent response through OpenShell on DGX Spark.
-Backwards compatibility is not a requirement for this experimental branch.
 
 See [cleanup validation](../validation/rust-recipe-removal-linux-arm64.json) for the tested source, image pins, retained-data checks, and qualification limits.

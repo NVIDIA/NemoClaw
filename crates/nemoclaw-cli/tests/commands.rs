@@ -21,7 +21,7 @@ fn invalid_configuration_fails_before_creating_state_or_echoing_secrets() {
     assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-sentinel"));
 }
 #[test]
-fn prototype_bundle_flag_selects_an_explicit_bundle() {
+fn bundle_flag_selects_an_explicit_bundle() {
     let directory = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
         .args(["export", "--bundle"])

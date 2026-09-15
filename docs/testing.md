@@ -4,7 +4,7 @@
 # Tests
 
 The pinned Rust toolchain needs a C linker and `protoc` on PATH (or `PROTOC` pointing to it) to build the provider protocol.
-This branch was validated with protoc 36.1 on Linux ARM64.
+Validation used protoc 36.1 on Linux ARM64.
 No host package installation is part of the tests.
 
 ```sh

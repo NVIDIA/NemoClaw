@@ -3,7 +3,7 @@
 
 # Run Live Qualification
 
-Live tests require explicit configuration and must touch only resources owned by the experiment.
+Live tests require explicit configuration and must touch only resources owned by the test.
 Use a dedicated deployment UID, state directory, and immutable bundle.
 Read each test’s lifecycle effects before running it.
 
@@ -11,7 +11,7 @@ Do not run all ignored tests against a shared deployment.
 
 ## Retained Storage Observations
 
-Read-only live storage qualification requires an explicit OpenTofu runtime state file containing the experiment's retained inference volume binding:
+Read-only live storage qualification requires an explicit OpenTofu runtime state file containing the test deployment's retained inference volume binding:
 
 ```sh
 NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
@@ -26,7 +26,7 @@ Refer to [retained volume evidence](../validation/rust-storage-linux-arm64.json)
 ## Spark and Fabric
 
 For complete DGX Spark qualification, use the concrete `examples/spark-inline.yaml` on an available GB10 host.
-Change its deployment UID, gateway port, and network only when creating a separate experiment.
+Change its deployment UID, gateway port, and network only when creating a separate deployment.
 Build the pinned local runtime artifact first, check capacity, and preserve the same state directory throughout:
 
 ```sh
@@ -41,7 +41,7 @@ Unchanged apply must have no resource changes and retain process/storage IDs and
 The download and preparation fixtures cover deterministic interruption boundaries; live evidence also records an interrupted download and explicit recovery.
 
 Test capacity rejection with synthetic capacity observations, not deliberate host exhaustion.
-Test the resident supervisor's SIGUSR1 operator trip only on an explicitly owned experiment, then confirm that it remains stopped until explicit apply.
+Test the resident supervisor's SIGUSR1 operator trip only on an explicitly owned test deployment, then confirm that it remains stopped until explicit apply.
 Do not confuse that controlled trip with a naturally occurring host-pressure event.
 
 The lifecycle test stops and recovers inference, then leaves workloads running.

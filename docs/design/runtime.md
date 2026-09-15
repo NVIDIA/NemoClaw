@@ -144,7 +144,7 @@ Apply retains the manifest and resumable downloads; subsequent observation uses 
 
 Authentication, transport, partial inventories and changed artifacts are errors, never resource absence.
 
-The experiment keeps the PLE recipe for Qwen3.8 separate from ordinary safetensors loading.
+The PLE recipe for Qwen3.8 is separate from ordinary safetensors loading.
 A different model must not inherit its memory estimate, MTP, parser, cache dtype or preparation tools.
 Generic serving declares a total GPU budget and optional native parsers; the existing hardware profile and resident memory protection remain shared.
 

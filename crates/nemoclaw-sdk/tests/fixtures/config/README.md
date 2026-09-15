@@ -7,6 +7,6 @@ The YAML files are parser inputs.
 Adjacent JSON files record expected serialization, digests, workspace names, and inference endpoints.
 
 These files are parser fixtures, not authorization to apply the embedded live deployment UIDs.
-Live experiments must select independent identities.
+Live tests must select independent identities.
 
 The `spark.yaml` fixture exercises the inline recipe schema.

@@ -29,7 +29,7 @@ Errors retain observation uncertainty and redact resolved values.
 Cancellation leaves state available for explicit reconciliation; it does not delete resources or stop the independent DGX Spark memory supervisor.
 
 Keep each selected bundle immutable while operations use it.
-Use a separate bundle copy for a running experiment when rebuilding development artifacts.
+Use a separate bundle copy for a deployment operation when rebuilding development artifacts.
 There is no SDK auto-retry of ambiguous mutations and no background reconciliation loop.
 
 See [lifecycle behavior](usage.md) and [tests](testing.md).

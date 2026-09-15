@@ -3,12 +3,11 @@
 
 # NemoClaw
 
-NemoClaw’s experimental Rust SDK manages agent deployments from desired-state YAML.
+NemoClaw’s SDK manages agent deployments from desired-state YAML.
 The CLI delegates `plan`, `apply`, `export`, and `destroy` to the SDK.
 OpenTofu owns graph execution and resource state.
 
-This independent `v1` branch follows the [accepted experiment](docs/design/scope.md).
-Project adoption remains a separate decision.
+The [design decision](docs/design/scope.md) defines implementation boundaries and invariants.
 [Validation evidence and limits](docs/validation/README.md) identify tested configurations.
 
 ## Start Here

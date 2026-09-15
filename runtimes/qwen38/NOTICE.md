@@ -25,9 +25,9 @@ Its license does not replace the upstream licenses.
 
 `apply_patches.py` adds one fail-closed change after applying the upstream patches: a missing packed PLE artifact raises an error instead of loading the table into anonymous RAM.
 The build recipe, original sources, modified sources, licenses, and immutable input pins remain available inside the image for inspection and source retrieval.
-Nothing from this experiment is published automatically.
+The build does not publish artifacts.
 
-The Rust supervisor and workspace source are retained in `/opt/nemoclaw/source/supervisor-source.tar.gz`.
+The supervisor and workspace source are retained in `/opt/nemoclaw/source/supervisor-source.tar.gz`.
 The archive includes `Cargo.lock`, vendored dependencies with their original licenses, OpenShell protobuf build inputs and license, and Cargo source replacement configuration.
 The supervisor is compiled offline from that exact archive.
 `supervisor.json` records the compiler version, source version, binary hash, and archive hash.

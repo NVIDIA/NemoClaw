@@ -4,7 +4,7 @@
 # Execution-Engine Assumptions
 
 This reference describes the checked-in engine boundaries.
-The [execution-target findings](design/execution-targets.md) retain the experiments that established them.
+The [execution-target findings](design/execution-targets.md) retain the validation results that established them.
 Use [the SSH service guide](remote-service.md) for deployment instructions.
 
 “Client host” means the host running the SDK, CLI, provider, or collector.
@@ -26,7 +26,7 @@ A distinct daemon ID does not establish a distinct physical GPU or memory pool.
 
 A changed bound endpoint is rejected; there is no target migration or lost-state adoption command.
 Unavailable or mismatched identity stops the operation.
-The rootless Podman experiment found that Podman 4.9.3 changes Docker-compatible `/info.ID` between requests.
+The rootless Podman validation found that Podman 4.9.3 changes Docker-compatible `/info.ID` between requests.
 
 Managed Podman resources need a separately qualified persistent namespace identity.
 The [native Podman evidence](validation/rust-podman-rootless-linux-arm64.json) covers an external OpenShell gateway and rootless sandbox path.
@@ -78,7 +78,7 @@ Mutations, capacity preflight, local credential reads, and active probes remain 
 
 Refresh and export share typed observations from the owning APIs.
 
-The [two-daemon experiment](validation/rust-dual-daemon-linux-arm64.json) exercises routing and daemon isolation on one DGX Spark.
+The [two-daemon validation](validation/rust-dual-daemon-linux-arm64.json) exercises routing and daemon isolation on one DGX Spark.
 It does not qualify a separate physical host, WAN behavior, rootful Podman, or other operating systems.
 
 Paths labeled SDK are relative to `crates/nemoclaw-sdk/src`.
