@@ -197,6 +197,26 @@ describe("assessHost Docker context endpoint (#11719)", () => {
     expect(invalid?.title).toBe("Fix the DOCKER_CONTEXT endpoint");
   });
 
+  it("rejects a control-bearing endpoint without reproducing the control byte", () => {
+    const escapeByte = "\u001b";
+    const assessment = assessHost({
+      platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
+      env: { DOCKER_HOST: `unix:///tmp/${escapeByte}[31mdocker.sock` },
+      commandExistsImpl,
+      runCaptureImpl,
+    });
+
+    expect(assessment.dockerHostInvalid).toBe(true);
+    expect(assessment.dockerEndpointSocketMissing).toBeUndefined();
+    const invalid = planHostAdvisories(assessment).find(
+      (action) => action.id === "invalid_docker_host",
+    );
+    expect(invalid?.title).toBe("Fix the DOCKER_HOST endpoint");
+    expect(JSON.stringify(invalid)).not.toContain(escapeByte);
+  });
+
   it("names the missing socket instead of a root-level group grant", () => {
     const assessment = assessHost({
       platform: "linux",

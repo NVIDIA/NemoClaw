@@ -71,13 +71,13 @@ export function isDockerDaemonReachable(rawOutput = ""): boolean {
 // relative paths are unsupported, so onboarding cannot use them even when they
 // are reachable.
 //
-// The raw value is checked for null bytes and line breaks before trimming, so a
-// trailing `\n` cannot be trimmed away and then accepted; the socket path is
-// checked for the single quote it would be wrapped in when written to the
-// gateway environment file.
+// The raw value is checked for control bytes and bidirectional controls before
+// trimming, so terminal output cannot be altered and a trailing `\n` cannot be
+// trimmed away and then accepted. The socket path is checked for the single
+// quote it would be wrapped in when written to the gateway environment file.
 export function isSupportedGatewayDockerHost(value: string | undefined): boolean {
   const raw = String(value ?? "");
-  if (/[\0\r\n]/.test(raw)) return false;
+  if (/[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(raw)) return false;
   const candidate = raw.trim();
   if (!candidate) return true;
   const prefix = "unix://";

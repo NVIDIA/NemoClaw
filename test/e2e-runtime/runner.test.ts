@@ -304,6 +304,65 @@ describe("runner env merging", () => {
     expect(dockerEnv?.DOCKER_CONTEXT).toBeUndefined();
   });
 
+  it("carries the production context resolver result into Docker children (#11719)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = (
+      command: string,
+      args?: readonly string[],
+      options?: SpawnCallOptions,
+    ) => {
+      calls.push([command, args, options]);
+      const isContextInspect =
+        command === "docker" && args?.[0] === "context" && args?.[1] === "inspect";
+      return {
+        status: 0,
+        stdout: isContextInspect ? "unix:///context.sock\n" : "",
+        stderr: "",
+      };
+    };
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "selected-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/context-docker-config");
+      vi.stubEnv("DOCKER_HOST", "unix:///ignored-host.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+    } finally {
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const inspectCall = calls.find(
+      ([command, args]) =>
+        command === "docker" && args?.[0] === "context" && args?.[1] === "inspect",
+    );
+    expect(inspectCall?.[1]).toEqual([
+      "context",
+      "inspect",
+      "selected-context",
+      "--format",
+      "{{.Endpoints.docker.Host}}",
+    ]);
+    expect(inspectCall?.[2]?.env).toMatchObject({
+      DOCKER_CONTEXT: "selected-context",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
+    });
+    expect(inspectCall?.[2]?.env?.DOCKER_HOST).toBeUndefined();
+
+    const dockerEnv = calls.find(
+      ([command, args]) => command === "docker" && args?.[0] === "ps",
+    )?.[2]?.env;
+    expect(dockerEnv).toMatchObject({
+      DOCKER_HOST: "unix:///context.sock",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
+    });
+    expect(dockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+  });
+
   it("keeps an unresolved context authoritative over the ambient Docker host (#11719)", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
