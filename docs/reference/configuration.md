@@ -53,9 +53,39 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `auth` | [AgentAuth](#agentauth) | No | — | Hermes API-key authentication through the routed provider. The provider must declare a credential reference. |
 | `harness` | string | Yes | — | Agent harness. Harnesses other than openclaw require external gateway and inference services. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
 | `inference` | [Inference](#inference) | Yes | — | Primary inference route for this agent. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## AgentAuth
+
+Authenticate Hermes inference using the primary route's credential-bearing provider.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].auth`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `method` | [AuthMethod](#authmethod) | Yes | — | API-key authentication. Interactive login is not supported. |
+| `providerRef` | string | Yes | — | Must equal the primary route's providerRef. Secret values stay in OpenShell. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## AuthMethod
+
+Hermes authentication method supported through the OpenShell provider.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].auth.method`
+
+Accepted input: string.
+
+Constraints: `"api-key"`.
 
 ## Compatibility
 
@@ -195,7 +225,7 @@ Paths:
 
 Agent inference routing.
 
-Guide: [Agent runtimes](../agents.md).
+Guide: [Inference configuration](../inference.md).
 
 Paths:
 
@@ -205,11 +235,25 @@ Paths:
 |---|---|---|---|---|
 | `routes` | array of [Route](#route) | Yes | — | Exactly one route named primary. Constraints: minimum items 1; maximum items 1. |
 
+## InferenceApi
+
+Wire API used by the agent through OpenShell; no protocol conversion is implied.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.inferenceProviders[].api`
+
+Accepted input: string.
+
+Constraints: `"openai-completions"` or `"openai-responses"` or `"anthropic-messages"`.
+
 ## InferenceProvider
 
 Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Inference configuration](../inference.md).
 
 Paths:
 
@@ -217,11 +261,12 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata. |
 | `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by service and ollama. |
 | `endpoint` | string | Without service | — | Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address. |
 | `name` | string | Yes | — | Provider name referenced by the primary route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `ollama` | [ManagedOllama](#managedollama) | No | — | Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. |
-| `provider` | string | Yes | — | Wire protocol: Claude requires anthropic; every other harness requires openai. Constraints: `"openai"` or `"anthropic"`. |
+| `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
 | `service` | [Service](#service) | No | — | Manage vLLM from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty. |
 
 ## InlineRecipe
@@ -349,7 +394,7 @@ Paths:
 
 Model overrides on the primary route.
 
-Guide: [Agent runtimes](../agents.md).
+Guide: [Inference configuration](../inference.md).
 
 Paths:
 
@@ -357,8 +402,12 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `contextWindow` | integer | No | — | Model context capacity in tokens. Does not resize the inference server. Constraints: minimum 1; maximum 4194304. |
+| `maxTokens` | integer | No | — | Maximum output tokens advertised to OpenClaw. Constraints: minimum 1; maximum 1000000000. |
 | `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `piModel` | object | No | — | Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object. |
+| `reasoning` | boolean | No | — | Whether the model supports reasoning. |
+| `reasoningEffort` | [ReasoningEffort](#reasoningeffort) | No | — | Default reasoning effort. The value default leaves the native choice in place. |
 
 ## PolicyAllowRule
 
@@ -573,6 +622,20 @@ Paths:
 | `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
 | `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
+## ReasoningEffort
+
+Native reasoning effort; default leaves the harness choice in place.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].inference.routes[].overrides.reasoningEffort`
+
+Accepted input: string.
+
+Constraints: `"default"` or `"low"` or `"medium"` or `"high"`.
+
 ## Resources
 
 Resource declarations checked against host observations and produced data.
@@ -609,7 +672,7 @@ Paths:
 
 Primary inference route supplied through OpenShell.
 
-Guide: [Agent runtimes](../agents.md).
+Guide: [Inference configuration](../inference.md).
 
 Paths:
 
@@ -618,7 +681,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `name` | string | Yes | — | The primary route name. Constraints: `"primary"`. |
-| `overrides` | [Overrides](#overrides) | Yes | — | Model selection and optional Pi model metadata. |
+| `overrides` | [Overrides](#overrides) | Yes | — | Model selection, optional OpenClaw tuning, and optional Pi model metadata. |
 | `providerRef` | string | Yes | — | Must equal the declared inference provider name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## Runtime

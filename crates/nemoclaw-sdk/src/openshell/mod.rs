@@ -7,6 +7,8 @@ mod tests;
 mod agent;
 mod network;
 pub use network::policy_json;
+mod inference;
+use inference::{INFERENCE_ENV, inference_environment, inference_settings};
 use network::{launch_command, launch_environment, observed_proxy, row_policy, row_proxy};
 mod transport;
 use crate::{ObservationError, backend::Row};
@@ -142,10 +144,16 @@ fn sandbox_row(
     let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
     let environment: Row = spec.environment.into_iter().collect();
     let proxy = observed_proxy(&environment)?;
+    let inference = environment.get(INFERENCE_ENV).cloned().unwrap_or_default();
+    inference_settings(&inference, &runtime)?;
+    let mut expected_environment = launch_environment(agent, &runtime, proxy.as_ref());
+    if !inference.is_empty() {
+        expected_environment.insert(INFERENCE_ENV.into(), inference.clone());
+    }
     let policy = policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?;
     if image.is_empty()
         || spec.command != launch_command(&runtime, proxy.as_ref())
-        || environment != launch_environment(agent, &runtime, proxy.as_ref())
+        || environment != expected_environment
     {
         return Err(ObservationError::BindingMismatch);
     }
@@ -158,6 +166,7 @@ fn sandbox_row(
     let mut row = base(sandbox.metadata.clone(), name, removing)?;
     row.insert("agent_name".into(), agent.clone());
     row.insert("agent_runtime".into(), runtime);
+    row.insert("inference_json".into(), inference);
     row.insert("image".into(), image);
     row.insert("policy_json".into(), policy);
     row.insert(

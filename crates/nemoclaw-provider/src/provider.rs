@@ -315,6 +315,7 @@ impl Provider for NemoClawProvider {
                     "policy_json",
                     "proxy_host",
                     "proxy_port",
+                    "inference_json",
                 ],
                 &[],
             ),

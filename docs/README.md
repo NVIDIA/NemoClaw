@@ -13,6 +13,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
 | Declare sandbox filesystem, process, egress, and proxy settings | [Sandbox policy and proxy](sandbox-network.md) |
 | Look up YAML fields, defaults, and constraints | [Configuration reference](reference/configuration.md) |
+| Select inference APIs, OpenClaw limits, and Hermes authentication | [Inference configuration](inference.md) |
 | Choose an agent and access its native runtime | [Agent runtimes](agents.md) |
 | Choose a public model for managed vLLM | [Select a managed model](models.md) |
 | Package model-specific preparation | [Inline model recipes](recipes.md) |

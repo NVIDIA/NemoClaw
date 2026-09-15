@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 from patch_pi import patch_pi
+from patch_hermes import patch_hermes
 import platform
 import shutil
 import subprocess
@@ -51,6 +52,8 @@ def main():
     with tarfile.open(archive) as source:
         source.extractall(BUILD, filter="data")
     source = BUILD / f"NeMo-Fabric-{REVISION}"
+    if harness == "hermes":
+        patch_hermes(source)
     own_wheels = BUILD / "own-wheels"
     own_wheels.mkdir(exist_ok=True)
     env = dict(os.environ, SOURCE_DATE_EPOCH="1789171200")
@@ -98,12 +101,14 @@ def main():
             source.extractall(BUILD, filter="data")
     (BUILD / "provenance.json").write_text(json.dumps({
         "fabric_revision": REVISION, "source_sha256": SOURCE_HASH,
+        "fabric_launcher_sha256": hashlib.sha256((ROOT / "image/fabric/fabric.py").read_bytes()).hexdigest(),
         "harness": harness, "version": {"deepagents": "0.7.13", "hermes": "0.21.0", "openclaw": "2026.9.4", "claude": "0.2.120", "codex": "0.144.4", "mini-swe-agent": "2.4.6", "nooa": "0.0.10", "nooa-bench": "0.0.10", "remote-agent": "0.4.0", "pi": "0.84.2"}[harness],
         **({"openclaw_image": "ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101",
             "adapter": "NemoClaw adapter; not supplied by upstream Fabric",
             "adapter_sha256": hashlib.sha256((ROOT / "image/fabric/openclaw_adapter.py").read_bytes()).hexdigest()}
            if harness == "openclaw" else {}),
-        **({"hermes_revision": HERMES_REVISION, "hermes_source_sha256": HERMES_HASH}
+        **({"hermes_revision": HERMES_REVISION, "hermes_source_sha256": HERMES_HASH,
+            "local_patch_sha256": hashlib.sha256((ROOT / "image/fabric/patch_hermes.py").read_bytes()).hexdigest()}
            if harness == "hermes" else {}),
         **({"local_pi_model_sources": {
             name: hashlib.sha256((ROOT / "image/fabric" / name).read_bytes()).hexdigest()

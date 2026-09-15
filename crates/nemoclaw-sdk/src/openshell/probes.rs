@@ -161,6 +161,10 @@ impl OpenShell {
                     .clone(),
             );
         }
+        if let Some(settings) = binding.get("inference_json").filter(|s| !s.is_empty()) {
+            inference_settings(settings, value(binding, "agent_runtime"))?;
+            command.extend(["--inference".into(), settings.clone()]);
+        }
         Ok((command, Row::new()))
     }
     pub async fn configure_pi(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
@@ -264,10 +268,19 @@ impl OpenShell {
                 ))
             };
         }
-        let script = match value(binding, "agent_runtime") {
-            "fabric-claude" => ANTHROPIC_PROBE,
-            "fabric-codex" => RESPONSES_PROBE,
-            _ => INFERENCE_PROBE,
+        use crate::config::InferenceApi;
+        let api = inference_settings(
+            value(binding, "inference_json"),
+            value(binding, "agent_runtime"),
+        )?
+        .map(|s| s.api)
+        .unwrap_or_else(|| {
+            InferenceApi::for_harness(value(binding, "agent_runtime").trim_start_matches("fabric-"))
+        });
+        let script = match api {
+            InferenceApi::AnthropicMessages => ANTHROPIC_PROBE,
+            InferenceApi::OpenaiResponses => RESPONSES_PROBE,
+            InferenceApi::OpenaiCompletions => INFERENCE_PROBE,
         };
         let (exit, _) = self
             .exec_bound(

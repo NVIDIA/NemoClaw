@@ -74,33 +74,25 @@ impl OpenShell {
         }
         let response = self
             .grpc()
-            .create_sandbox(
-                self.request(proto::CreateSandboxRequest {
-                    name: name.into(),
-                    workspace: workspace.into(),
-                    labels,
-                    spec: Some(proto::SandboxSpec {
-                        template: Some(proto::SandboxTemplate {
-                            image: value(want, "image").into(),
-                            ..Default::default()
-                        }),
-                        command: launch_command(
-                            value(want, "agent_runtime"),
-                            row_proxy(want)?.as_ref(),
-                        ),
-                        environment: launch_environment(
-                            value(want, "agent_name"),
-                            value(want, "agent_runtime"),
-                            row_proxy(want)?.as_ref(),
-                        )
-                        .into_iter()
-                        .collect(),
-                        policy: Some(row_policy(want)?),
+            .create_sandbox(self.request(proto::CreateSandboxRequest {
+                name: name.into(),
+                workspace: workspace.into(),
+                labels,
+                spec: Some(proto::SandboxSpec {
+                    template: Some(proto::SandboxTemplate {
+                        image: value(want, "image").into(),
                         ..Default::default()
                     }),
+                    command: launch_command(
+                        value(want, "agent_runtime"),
+                        row_proxy(want)?.as_ref(),
+                    ),
+                    environment: inference_environment(want)?.into_iter().collect(),
+                    policy: Some(row_policy(want)?),
                     ..Default::default()
                 }),
-            )
+                ..Default::default()
+            }))
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();

@@ -136,6 +136,7 @@ fn optional(field: &str) -> bool {
             | "policy_json"
             | "proxy_host"
             | "proxy_port"
+            | "inference_json"
     )
 }
 

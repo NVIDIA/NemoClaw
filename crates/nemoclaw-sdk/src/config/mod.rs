@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod agent_inference;
 pub(crate) mod constraints;
 mod inference;
+pub use agent_inference::*;
 mod network;
 pub use network::*;
 #[doc(hidden)]

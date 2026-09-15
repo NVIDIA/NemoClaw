@@ -14,7 +14,7 @@ REQUEST_LIMIT = 512 * 1024  # accommodates JSON escaping of a 64 KiB prompt
 RESULT_LIMIT = 4 * 1024 * 1024
 
 
-def configuration(name, harness="deepagents", model=None):
+def configuration(name, harness="deepagents", model=None, inference=None):
     if harness == "pi":
         if model is None:
             from pi_host import MODEL_PATH
@@ -32,7 +32,7 @@ def configuration(name, harness="deepagents", model=None):
                "mini-swe-agent": "nvidia.fabric.mini-swe-agent",
                "nooa": "nvidia.fabric.nooa", "nooa-bench": "nvidia.fabric.nooa.bench-agent",
                "remote-agent": "nvidia.fabric.remote-agent", "pi": "nvidia.fabric.pi"}[harness]
-    return {
+    config = {
         **({"discovery": {"local_paths": ["/opt/nemoclaw/openclaw.fabric-adapter.json"]}}
            if harness == "openclaw" else {}),
         **({"discovery": {"local_paths": ["/opt/fabric-source/adapters/typescript/pi/pi.fabric-adapter.json"]}} if harness == "pi" else {}),
@@ -54,6 +54,19 @@ def configuration(name, harness="deepagents", model=None):
                     "timeout_seconds": 300, "artifacts": "/sandbox/artifacts"},
     }
 
+    if inference is not None:
+        api = inference['api']
+        if harness == 'openclaw':
+            config['harness']['settings']['inference'] = inference
+        elif harness == 'hermes':
+            config['harness']['settings'] = {'api_mode': {
+                'openai-completions': 'chat_completions',
+                'openai-responses': 'codex_responses',
+                'anthropic-messages': 'anthropic_messages',
+            }[api]}
+            config['models']['default']['provider'] = 'anthropic' if api == 'anthropic-messages' else 'openai'
+    return config
+
 
 async def serve():
     if os.environ.get("NEMOCLAW_FABRIC_HARNESS") == "pi":
@@ -64,8 +77,9 @@ async def serve():
     os.umask(0o077)
     for directory in ("/sandbox/tmp", "/sandbox/workspace", "/sandbox/artifacts"):
         Path(directory).mkdir(parents=True, exist_ok=True)
+    inference = json.loads(os.environ["NEMOCLAW_INFERENCE_CONFIG"]) if "NEMOCLAW_INFERENCE_CONFIG" in os.environ else None
     config = configuration(os.environ["NEMOCLAW_AGENT_NAME"],
-                           os.environ.get("NEMOCLAW_FABRIC_HARNESS", "deepagents"))
+                           os.environ.get("NEMOCLAW_FABRIC_HARNESS", "deepagents"), inference=inference)
     runtime = await Fabric().start_runtime(FabricConfig.model_validate(config), base_dir="/sandbox")
 
     async def handle(reader, writer):
@@ -74,7 +88,7 @@ async def serve():
             request = json.loads(raw)
             if request == {"operation": "check"}:
                 response = {"config": config, "runtime_id": runtime.runtime_id,
-                            "ready": runtime.status == RuntimeStatus.ACTIVE}
+                            "ready": runtime.status == RuntimeStatus.ACTIVE, "inference": inference}
             else:
                 raise ValueError("invalid request")
             encoded = json.dumps(response).encode() + b"\n"
@@ -103,8 +117,8 @@ async def serve():
         Path(SOCKET).unlink(missing_ok=True)
 
 
-async def client(operation, argument, harness="deepagents", model=None):
-    expected = configuration(argument, harness, model)
+async def client(operation, argument, harness="deepagents", model=None, inference=None):
+    expected = configuration(argument, harness, model, inference)
     deadline = asyncio.get_running_loop().time() + 90
     while True:
         try:
@@ -126,10 +140,11 @@ async def client(operation, argument, harness="deepagents", model=None):
         if operation in ("check", "configure"):
             if harness == "openclaw":
                 from openclaw_adapter import healthy
-                if not await asyncio.to_thread(healthy, argument, result.get("runtime_id", "")):
+                if not await asyncio.to_thread(healthy, argument, result.get("runtime_id", ""), inference):
                     return 2
             return 0 if (result.get("ready") and result.get("runtime_id")
-                         and result.get("config") == expected) else 2
+                         and result.get("config") == expected
+                         and result.get("inference") == inference) else 2
         print(json.dumps(result))
         return 0 if result.get("status") == "succeeded" else 1
     finally:
@@ -138,13 +153,17 @@ async def client(operation, argument, harness="deepagents", model=None):
 
 
 if __name__ == "__main__":
+    inference = None
+    if len(sys.argv) >= 3 and sys.argv[-2] == '--inference':
+        inference = json.loads(sys.argv[-1])
+        del sys.argv[-2:]
     if len(sys.argv) == 2 and sys.argv[1] == "serve":
         asyncio.run(serve())
     elif len(sys.argv) == 5 and sys.argv[1] in ("configure", "prepare", "check") and sys.argv[3] == "pi":
-        sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2], "pi", json.loads(sys.argv[4]))))
+        sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2], "pi", json.loads(sys.argv[4]), inference=inference)))
     elif len(sys.argv) == 3 and sys.argv[1] == "check":
-        sys.exit(asyncio.run(client("check", sys.argv[2])))
+        sys.exit(asyncio.run(client("check", sys.argv[2], inference=inference)))
     elif len(sys.argv) == 4 and sys.argv[1] == "check" and sys.argv[3] in ("deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "pi"):
-        sys.exit(asyncio.run(client("check", sys.argv[2], sys.argv[3])))
+        sys.exit(asyncio.run(client("check", sys.argv[2], sys.argv[3], inference=inference)))
     else:
         sys.exit("usage: fabric.py serve | check NAME [HARNESS]")

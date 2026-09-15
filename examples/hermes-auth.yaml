@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hermes-auth
+  uid: c659b251-29b2-4666-b191-8b27106f8102
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17671
+  inferenceProviders:
+    - name: local
+      provider: openai
+      api: openai-completions
+      credential:
+        env: NOUS_API_KEY
+      endpoint: https://inference-api.nousresearch.com/v1
+  sandboxes:
+    - name: assistant
+      image:
+        # Replace with the digest from a fresh Hermes image build; see docs/inference.md.
+        ref: local-fabric-hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      agents:
+        - name: main
+          harness: hermes
+          auth:
+            method: api-key
+            providerRef: local
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: moonshotai/kimi-k2.6

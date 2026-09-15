@@ -15,6 +15,7 @@ OpenClaw supports external services, managed OpenShell gateways, and managed DGX
 Other harnesses currently require external gateway and inference services.
 
 The strict schema rejects unsupported combinations.
+See [inference configuration](inference.md) for API selection, OpenClaw route tuning, and Hermes authentication.
 
 ## Pi Model Selection
 

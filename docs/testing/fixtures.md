@@ -92,3 +92,25 @@ Run `cargo test -p nemoclaw-e2e --test remote_service -- --ignored` with `NEMOCL
 It checks read-only planning, missing/low capacity, failed startup recovery, no-op, export/reapply, failed observation and daemon retargeting without recreation, and retained storage on destroy.
 
 Its readiness and artifact receipts are simulated; it does not download or serve a model.
+
+## Inference API Fixtures
+
+From the repository root, use Docker, OpenSSL, Python 3, and a freshly built Fabric image on the qualified Linux ARM64 host.
+See [image prerequisites](../inference.md#build-an-image-with-the-configuration-interface).
+The fixture starts disposable containers with networking disabled and local TLS protocol servers; it uses no live credentials or model endpoints.
+OpenClaw's fixture adds an address to the container's loopback interface with `NET_ADMIN`, then runs the agent as UID 1000.
+
+```sh
+python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-prototype-fabric:openclaw --inference-api openai-responses
+python3 tools/fabric-adapter-experiment.py --harness hermes --image nc-prototype-fabric:hermes --inference-api anthropic-messages
+```
+
+Repeat with `openai-completions`, `openai-responses`, and `anthropic-messages` to exercise all three APIs for each harness.
+OpenClaw also receives explicit token limits and reasoning settings; Hermes receives an API-key auth reference with a fixture key.
+The fixture checks configuration readiness without additional inference requests, rejects an incorrect agent identity, invokes the real adapter twice, and checks the inference request paths.
+Hermes may make model-metadata requests during startup; these are separate from inference requests.
+
+The command prints an evidence directory under `.local/fabric-<harness>-<uuid>` and exits successfully when the assertions pass.
+It retains logs, request bodies, and `proof.json`; it removes only its named container, including after failure.
+Inspect that directory on failure and rerun after correcting the fixture or image.
+These tests do not qualify model quality, live upstream authentication, or inference through a real OpenShell gateway.

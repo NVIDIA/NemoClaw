@@ -99,6 +99,7 @@ async fn export_sandbox(
         "policy_json",
         "proxy_host",
         "proxy_port",
+        "inference_json",
     ]
     .iter()
     .any(|key| {

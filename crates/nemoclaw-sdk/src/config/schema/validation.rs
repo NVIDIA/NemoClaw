@@ -140,6 +140,11 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"minimum": 1, "maximum": n::POLICY_BODY_MAX}),
         );
     }
+    property(
+        &mut defs["AgentAuth"],
+        "providerRef",
+        json!({"pattern": c::SLUG}),
+    );
     property(&mut defs["Agent"], "harness", json!({"enum": c::HARNESSES}));
     property(&mut defs["Route"], "name", json!({"const": "primary"}));
     property(
@@ -213,6 +218,7 @@ pub(super) fn constrain(root: &mut Value) {
     let route = format!("{agent}/inference/routes/[]/overrides");
     let service = format!("{provider}/service");
     root["allOf"] = json!([
+        {"if": at(&format!("{agent}/harness"), json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
         {"if": at("spec/gateway/management", json!({"const": "managed"}), true),
          "then": at(runtime, json!({"enum": ["", "docker"]}), false)},
         {"if": {"allOf": [at(&service, json!({}), true), {"anyOf": [
@@ -221,9 +227,16 @@ pub(super) fn constrain(root: &mut Value) {
          ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
         {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "openclaw"}}), true),
          "then": {"allOf": [at("spec/gateway/management", json!({"const": "external"}), false), at(provider, forbid(&["service", "ollama"]), false)]}},
-        {"if": at(&format!("{agent}/harness"), json!({"const": "claude"}), true),
+        {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
+            {"allOf": [at(&format!("{agent}/harness"), json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
          "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),
          "else": at(&format!("{provider}/provider"), json!({"const": "openai"}), false)},
+        {"if": at(&format!("{agent}/harness"), json!({"const": "claude"}), true), "then": at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), false)},
+        {"if": at(&format!("{agent}/harness"), json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
+        {"if": at(&format!("{agent}/harness"), json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
+        {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "openclaw"}}), true),
+         "then": at(&route, forbid(&["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]), false)},
+        {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at(&format!("{agent}/harness"), json!({"const": "hermes"}), false), at(provider, json!({"required": ["credential"]}), true)]}},
         {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "pi"}}), true),
          "then": at(&route, forbid(&["piModel"]), false)},
         {"if": at(&format!("{provider}/ollama"), json!({}), true),

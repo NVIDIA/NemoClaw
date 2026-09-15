@@ -23,8 +23,8 @@ NODE = '/usr/local/bin/node'
 CLI = '/app/openclaw.mjs'
 
 
-def native_configuration(name):
-    return {
+def native_configuration(name, inference=None):
+    config = {
         'gateway': {'mode': 'local', 'bind': 'loopback', 'port': 18789,
                     'auth': {'mode': 'none'}, 'controlUi': {'enabled': False}},
         'models': {'mode': 'replace', 'providers': {'openshell': {
@@ -44,6 +44,17 @@ def native_configuration(name):
         'tools': {'profile': 'coding', 'exec': {'host': 'gateway', 'mode': 'full'}},
     }
 
+    if inference is not None:
+        provider = config['models']['providers']['openshell']
+        provider['api'] = inference['api']
+        model = provider['models'][0]
+        for key, value in inference['tuning'].items():
+            if key != 'reasoningEffort':
+                model[key] = value
+            elif value != 'default':
+                config['agents']['defaults']['thinkingDefault'] = value
+    return config
+
 
 def contains(actual, required):
     if isinstance(required, dict):
@@ -51,8 +62,8 @@ def contains(actual, required):
     return actual == required
 
 
-def owned_configuration(name):
-    return {
+def owned_configuration(name, inference=None):
+    config = {
         'gateway': {'mode': 'local', 'bind': 'loopback', 'port': 18789},
         'models': {'providers': {'openshell': {
             'baseUrl': 'https://inference.local/v1', 'api': 'openai-completions',
@@ -61,18 +72,25 @@ def owned_configuration(name):
                                'workspace': '/sandbox/workspace'}, 'entries': {name: {}}},
     }
 
+    if inference is not None:
+        native = native_configuration(name, inference)
+        config['models'] = native['models']
+        if 'thinkingDefault' in native['agents']['defaults']:
+            config['agents']['defaults']['thinkingDefault'] = native['agents']['defaults']['thinkingDefault']
+    return config
 
-def configuration_matches(name):
+
+def configuration_matches(name, inference=None):
     actual = json.loads((ROOT / 'openclaw.json').read_text())
     # Native settings (including channels, pairing and plugins) belong to OpenClaw.
-    return contains(actual, owned_configuration(name))
+    return contains(actual, owned_configuration(name, inference))
 
 
-def healthy(name, runtime_id):
+def healthy(name, runtime_id, inference=None):
     if not re.fullmatch(r'[a-zA-Z0-9_-]+', runtime_id):
         return False
     try:
-        if not configuration_matches(name):
+        if not configuration_matches(name, inference):
             return False
         with urllib.request.urlopen('http://127.0.0.1:18789/healthz', timeout=3) as response:
             return response.status == 200
@@ -104,6 +122,7 @@ def normalize_messages(messages):
 
 class OpenClawRuntime:
     def __init__(self):
+        self.inference = None
         self.process = None
         self.log = None
         self.runtime_id = None
@@ -115,6 +134,7 @@ class OpenClawRuntime:
         config = payload['config']
         self.runtime_id = payload['runtime_context']['runtime_id']
         self.name = config['harness']['settings']['agent_name']
+        self.inference = config['harness']['settings'].get('inference')
         if (not re.fullmatch(r'[a-z][a-z0-9-]*', self.name)
                 or not re.fullmatch(r'[a-zA-Z0-9_-]+', self.runtime_id)):
             raise ValueError('invalid OpenClaw runtime identity')
@@ -142,12 +162,12 @@ class OpenClawRuntime:
     def initialize_configuration(self):
         path = self.home / 'openclaw.json'
         if path.exists():
-            if not configuration_matches(self.name):
+            if not configuration_matches(self.name, self.inference):
                 raise RuntimeError('native configuration conflicts with deployment-owned settings')
             return
         temporary = path.with_suffix('.tmp')
         with open(temporary, 'w', opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
-            json.dump(native_configuration(self.name), output)
+            json.dump(native_configuration(self.name, self.inference), output)
             output.flush()
             os.fsync(output.fileno())
         temporary.replace(path)
@@ -162,7 +182,7 @@ class OpenClawRuntime:
             if self.process.returncode is not None:
                 await self.stop_gateway()
                 raise RuntimeError('OpenClaw gateway exited during startup; inspect gateway.log')
-            if await asyncio.to_thread(healthy, self.name, self.runtime_id):
+            if await asyncio.to_thread(healthy, self.name, self.runtime_id, self.inference):
                 return
             await asyncio.sleep(0.05)
         await self.stop_gateway()

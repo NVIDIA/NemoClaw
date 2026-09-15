@@ -212,9 +212,25 @@ impl Document {
             "this harness requires external gateway and inference services",
         )?;
         require(
-            (agent.harness == "claude") == (provider.provider == "anthropic"),
-            "Claude requires anthropic; other harnesses require openai",
+            agent.harness != "pi" || provider.api.is_none(),
+            "Pi selects its API through model metadata; omit provider api",
         )?;
+        let api = provider
+            .api
+            .unwrap_or(InferenceApi::for_harness(&agent.harness));
+        require(
+            api.supported(&agent.harness)
+                && (api == InferenceApi::AnthropicMessages) == (provider.provider == "anthropic"),
+            "API must match the provider implementation and be supported by the harness",
+        )?;
+        if let Some(auth) = &agent.auth {
+            require(
+                agent.harness == "hermes"
+                    && auth.provider_ref == provider.name
+                    && provider.credential.is_some(),
+                "Hermes API-key auth must reference the routed provider with a credential",
+            )?;
+        }
         require(
             agent.inference.routes.len() == 1,
             "this slice requires exactly one primary route",
@@ -226,6 +242,7 @@ impl Document {
                 && MODEL.is_match(&route.overrides.model),
             "primary route must reference the declared provider and valid model",
         )?;
+        route.overrides.tuning.validate(&agent.harness)?;
         require(
             route.overrides.pi_model.is_none() || agent.harness == "pi",
             "piModel is supported only by the Pi harness",

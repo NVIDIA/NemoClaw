@@ -104,9 +104,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 async def main():
     from fabric import configuration
     from nemo_fabric import Fabric, FabricConfig
+    if HARNESS == 'openclaw':
+        # Container-only loopback alias exercises native SSRF checks without external networking.
+        subprocess.run(['ip', 'addr', 'add', '8.8.4.4/32', 'dev', 'lo'], check=True)
+        os.setgid(1000)
+        os.setuid(1000)
     for d in ('/sandbox/tmp', '/sandbox/workspace', '/sandbox/artifacts'):
         Path(d).mkdir(parents=True, exist_ok=True)
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 443), Handler)
+    server = http.server.ThreadingHTTPServer(('0.0.0.0', 443), Handler)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain('/certs/fixture.crt', '/certs/fixture.key')
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
@@ -115,8 +120,17 @@ async def main():
         'contextWindow': 8192, 'maxTokens': 2048, 'reasoning': False, 'input': ['text']}} if HARNESS == 'pi' else None
     if HARNESS == 'pi' and os.environ.get('FABRIC_PI_CATALOG') == '1':
         model = {'model': 'gpt-4o-mini'}
-    config = configuration('fixture', HARNESS, model)
+    api = os.environ.get('FABRIC_INFERENCE_API')
+    inference = {'api': api, 'tuning': {}} if api else None
+    if inference and HARNESS == 'openclaw':
+        inference['tuning'] = {'contextWindow': 65536, 'maxTokens': 2048, 'reasoning': True, 'reasoningEffort': 'low'}
+    if inference and HARNESS == 'hermes':
+        inference['auth'] = {'method': 'api-key', 'providerRef': 'fixture'}
+    config = configuration('fixture', HARNESS, model, inference=inference)
+    extra = ['--inference', json.dumps(inference)] if inference else []
     env = dict(os.environ, NEMOCLAW_AGENT_NAME='fixture', NEMOCLAW_FABRIC_HARNESS=HARNESS)
+    if inference:
+        env['NEMOCLAW_INFERENCE_CONFIG'] = json.dumps(inference)
     with open('/evidence/host.log', 'w') as log:
         host = subprocess.Popen([sys.executable, '/opt/nemoclaw/fabric.py', 'serve'], env=env, stdout=log, stderr=log)
         try:
@@ -128,11 +142,13 @@ async def main():
                 await asyncio.sleep(1)
             if HARNESS == 'pi':
                 subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'configure', 'fixture', 'pi', json.dumps(model)], check=True)
+            startup_requests = len(requests)
             for _ in range(2):
-                subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS], check=True)
+                subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS, *extra], check=True)
             mismatch = subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'wrong-name', HARNESS])
             assert mismatch.returncode != 0, 'readiness accepted different configuration'
-            assert not requests, 'readiness made an inference request'
+            assert len(requests) == startup_requests, 'readiness made an inference request'
+            requests.clear()
             if HARNESS == 'pi':
                 # Changing the model must stop the old runtime before reconfiguration.
                 import socket
@@ -178,6 +194,10 @@ async def main():
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(f, dest)
         server.shutdown()
+    if api:
+        expected_path = {'openai-completions': '/chat/completions', 'openai-responses': '/responses', 'anthropic-messages': '/messages'}[api]
+        inference_requests = [r for r in requests if r['path'] != '/api/show']
+        assert inference_requests and all(r['path'].endswith(expected_path) for r in inference_requests), [r['path'] for r in requests]
     if HARNESS == 'pi':
         assert requests and all(request['body']['model'] == model['model'] for request in requests), requests
     if HARNESS in ('mini-swe-agent', 'nooa', 'nooa-bench'):

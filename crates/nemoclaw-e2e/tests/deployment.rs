@@ -20,6 +20,13 @@ async fn explicit_network_sdk_apply_cli_export_reapply_and_destroy_preserve_inte
     lifecycle(include_str!("../../../examples/explicit-policy.yaml")).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn inference_settings_sdk_apply_export_reapply_and_drift() {
+    lifecycle(include_str!("../../../examples/inference-tuning.yaml")).await;
+    lifecycle(include_str!("../../../examples/hermes-auth.yaml")).await;
+}
+
 async fn lifecycle(input: &str) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
@@ -41,7 +48,15 @@ async fn lifecycle(input: &str) {
             .path = Some("/docs/${file}/%{literal}".into());
     }
     document.spec.gateway.endpoint = fixture.endpoint.clone();
-    let deployment = Deployment::new(directory.path(), &bundle);
+    struct FixtureSecrets;
+    impl nemoclaw_sdk::openshell::Secrets for FixtureSecrets {
+        fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            assert_eq!(name, "NOUS_API_KEY");
+            Ok("fixture-only-inference-key".into())
+        }
+    }
+    let deployment = Deployment::new(directory.path(), &bundle)
+        .with_secrets(std::sync::Arc::new(FixtureSecrets));
     let cancel = CancellationToken::new();
     let planning = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(planning.outcome, Outcome::Planned);
@@ -85,6 +100,69 @@ async fn lifecycle(input: &str) {
             .is_empty()
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    if document.spec.inference_providers[0].api.is_some()
+        || document.spec.sandboxes[0].agents[0].auth.is_some()
+    {
+        let key = format!(
+            "{}/{}",
+            document.workspace(),
+            document.spec.sandboxes[0].name
+        );
+        let original = fixture.state.lock().unwrap().sandboxes[&key]
+            .spec
+            .as_ref()
+            .unwrap()
+            .environment["NEMOCLAW_INFERENCE_CONFIG"]
+            .clone();
+        assert!(!original.contains("fixture-only-inference-key"));
+        assert!(
+            fixture
+                .state
+                .lock()
+                .unwrap()
+                .exec_calls
+                .iter()
+                .any(|cmd| cmd.ends_with(&["--inference".into(), original.clone()]))
+        );
+        let mut changed = document.clone();
+        changed.spec.inference_providers[0].api = Some(
+            if document.spec.inference_providers[0].api
+                == Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions)
+            {
+                nemoclaw_sdk::config::InferenceApi::OpenaiResponses
+            } else {
+                nemoclaw_sdk::config::InferenceApi::OpenaiCompletions
+            },
+        );
+        assert!(deployment.plan(&changed, &cancel).await.is_err());
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .environment
+            .remove("NEMOCLAW_INFERENCE_CONFIG");
+        assert!(deployment.export(&cancel).await.is_err());
+        assert!(deployment.plan(&document, &cancel).await.is_err());
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .environment
+            .insert("NEMOCLAW_INFERENCE_CONFIG".into(), original);
+    }
     if document.spec.sandboxes[0].network.policy.is_some() {
         let mut changed = document.clone();
         changed.spec.sandboxes[0]

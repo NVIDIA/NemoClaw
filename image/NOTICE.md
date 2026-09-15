@@ -24,3 +24,7 @@ It retains upstream headers and adds model resolution from the NemoClaw configur
 The image retains the patched TypeScript source and records the local source hashes in `/opt/nemoclaw/provenance.json`.
 
 These changes are not part of the pinned upstream Fabric release.
+
+The Hermes recipe applies `fabric/patch_hermes.py` to Fabric revision `51a28c1aefec56abd877070b6973d0a32a1e3003` (Apache-2.0).
+The 2026-09-15 modification adds an explicit API-mode setting and forwards it to the pinned Hermes `AIAgent` constructor.
+The patch preserves upstream notices; image provenance records the patch and launcher hashes.

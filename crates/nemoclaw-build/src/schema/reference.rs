@@ -84,6 +84,10 @@ fn section(
     }
     if schema.get("properties").is_none() {
         writeln!(output, "\nAccepted input: {}.\n", input_type(schema)).unwrap();
+        let choices = constraints(schema);
+        if !choices.is_empty() {
+            writeln!(output, "Constraints: {choices}.\n").unwrap();
+        }
         return Ok(());
     }
     output.push_str("\n| Field | Input type | Required | Default | Description and constraints |\n|---|---|---|---|---|\n");
@@ -135,7 +139,11 @@ fn guide(name: &str) -> &'static str {
         | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../recipes.md)",
         "ServicePlacement" | "ServicePublication" => "[SSH model service](../remote-service.md)",
         "Service" | "Model" | "Serving" | "Memory" => "[Managed models](../models.md)",
-        "Agent" | "Inference" | "Route" | "Overrides" => "[Agent runtimes](../agents.md)",
+        "InferenceProvider" | "Inference" | "Route" | "Overrides" | "InferenceApi"
+        | "ReasoningEffort" | "AgentAuth" | "AuthMethod" => {
+            "[Inference configuration](../inference.md)"
+        }
+        "Agent" => "[Agent runtimes](../agents.md)",
         _ => "[Configuration and credentials](../usage.md#configuration-and-credentials)",
     }
 }
@@ -205,6 +213,7 @@ fn constraints(schema: &Value) -> String {
             variants
                 .iter()
                 .map(constraints)
+                .filter(|part| !part.is_empty())
                 .collect::<Vec<_>>()
                 .join(" or "),
         );
@@ -282,10 +291,23 @@ fn collect_paths(
 mod tests {
     use super::*;
     #[test]
+    fn reference_lists_named_enum_choices() {
+        let markdown = render_reference(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
+        let api = markdown
+            .split("## InferenceApi\n")
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        assert!(api.contains("openai-responses") && api.contains("anthropic-messages"));
+    }
+    #[test]
     fn reference_documents_map_values_and_matcher_alternatives() {
         let markdown = render_reference(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
         assert!(markdown.contains("network_policies.{key}.endpoints[].rules[].allow"));
         assert!(markdown.contains("## PolicyValueMatcher"));
+        assert!(!markdown.contains("Constraints:  or ."));
         assert!(!markdown.contains("any JSON value or any JSON value"));
         assert!(markdown.contains("| `consecutiveSamples` | integer |"));
         assert!(markdown.contains("[PolicyAnyMatcher](#policyanymatcher)"));

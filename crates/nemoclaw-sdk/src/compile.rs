@@ -103,6 +103,12 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         }
         values.extend(extra.into_iter().map(|(k, v)| (k.into(), v)));
         if kind == "sandbox" {
+            if let Some(settings) = document.runtime_inference() {
+                values.insert(
+                    "inference_json".into(),
+                    serde_json::to_string(&settings).expect("typed inference settings"),
+                );
+            }
             if sandbox.network.policy.is_some() {
                 values.insert(
                     "policy_json".into(),

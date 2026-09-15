@@ -12,6 +12,50 @@
       "agent_name": {
         "type": "string",
         "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "inference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "api",
+          "tuning"
+        ],
+        "properties": {
+          "api": {
+            "enum": [
+              "openai-completions",
+              "openai-responses",
+              "anthropic-messages"
+            ]
+          },
+          "tuning": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "contextWindow": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4194304
+              },
+              "maxTokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000000
+              },
+              "reasoning": {
+                "type": "boolean"
+              },
+              "reasoningEffort": {
+                "enum": [
+                  "default",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "required": [

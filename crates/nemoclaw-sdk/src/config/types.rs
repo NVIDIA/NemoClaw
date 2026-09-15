@@ -121,8 +121,12 @@ pub struct InferenceProvider {
     /// Provider name referenced by the primary route.
     pub name: String,
     #[serde(rename = "provider")]
-    /// Wire protocol: Claude requires anthropic; every other harness requires openai.
+    /// OpenShell provider implementation. Must match the selected API family.
     pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::InferenceApi")]
+    /// Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata.
+    pub api: Option<super::InferenceApi>,
     #[serde(rename = "endpoint", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     /// Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address.
@@ -239,6 +243,10 @@ pub struct Agent {
     #[serde(rename = "inference")]
     /// Primary inference route for this agent.
     pub inference: Inference,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentAuth")]
+    /// Hermes API-key authentication through the routed provider. The provider must declare a credential reference.
+    pub auth: Option<super::AgentAuth>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -263,7 +271,7 @@ pub struct Route {
     /// Must equal the declared inference provider name.
     pub provider_ref: String,
     #[serde(rename = "overrides")]
-    /// Model selection and optional Pi model metadata.
+    /// Model selection, optional OpenClaw tuning, and optional Pi model metadata.
     pub overrides: Overrides,
 }
 
@@ -275,6 +283,9 @@ pub struct Overrides {
     #[serde(rename = "model")]
     /// Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.
     pub model: String,
+    #[serde(flatten)]
+    /// OpenClaw native model limits and reasoning defaults.
+    pub tuning: super::RouteTuning,
     #[serde(rename = "piModel", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object.
