@@ -7,6 +7,7 @@ import {
   getSandboxInventory,
   getStatusReport,
   listSandboxesCommand,
+  renderSandboxInventoryText,
   showStatusCommand,
   type SandboxEntry,
 } from "./index";
@@ -78,7 +79,7 @@ describe("inventory row behavior", () => {
       name: sandboxName,
       provider: `nvidia-prod ${secret}`,
       model: `nvidia/test ${secret}`,
-      agent: `openclaw ${secret}`,
+      agent: "https://agent-user:agent-password@example.com/openclaw",
       openshellVersion: `0.0.110 ${secret}`,
       recoveredFromGateway: true,
       livePhase: `Ready ${secret}`,
@@ -100,6 +101,7 @@ describe("inventory row behavior", () => {
     expect(inventory.sandboxes[0]).toMatchObject(status.sandboxes[0]!);
     expect(inventory.defaultSandbox).toBe(status.defaultSandbox);
     expect(JSON.stringify(inventory)).not.toContain("example-not-a-real-value-1");
+    expect(JSON.stringify({ inventory, status })).not.toMatch(/agent-(?:user|password)/);
   });
 
   it("redacts matching live gateway inference without reporting false drift", async () => {
@@ -171,6 +173,26 @@ describe("inventory row behavior", () => {
     const output = lines.join("\n");
     expect(output).not.toMatch(/(?:stored|live)-(?:user|password)/);
     expect(output).toContain("live OpenShell gateway differs from onboarded");
+  });
+
+  it("renders copied matching routes without false drift", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [{ name: "alpha", model: "model", provider: "provider" }],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+    const copied = JSON.parse(JSON.stringify(inventory)) as typeof inventory;
+    const lines: string[] = [];
+
+    renderSandboxInventoryText(copied, (message = "") => lines.push(message), {
+      model: "model",
+      provider: "provider",
+    });
+
+    expect(lines.some((line) => line.includes("differs from onboarded"))).toBe(false);
   });
 
   it("redacts completed and incomplete onboarding sandbox names", async () => {

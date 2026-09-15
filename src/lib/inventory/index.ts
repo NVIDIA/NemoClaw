@@ -6,7 +6,7 @@ import { gatewayStartGuidance } from "../gateway-start-guidance";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
-import { redactFull, redactFullWithUrls } from "../security/redact";
+import { redactFullWithUrls } from "../security/redact";
 import {
   getSandboxEntryDisplayInference,
   isPendingReservationForSession,
@@ -226,8 +226,6 @@ function safeStatusString(value: string | null | undefined): string | null {
   return redactFullWithUrls(value);
 }
 
-const inventoryInferenceSources = new WeakMap<SandboxInventoryRow, GatewayInference>();
-
 function projectIncompleteOnboarding(
   sandboxes: readonly SandboxEntry[],
   session: OnboardingSessionSummary | null | undefined,
@@ -320,7 +318,7 @@ async function projectPublicSandboxFields(
     policies: ((await getPolicyPresets?.(sandbox.name)) ?? []).map(
       (policy) => safeStatusString(policy) ?? policy,
     ),
-    agent: redactFull(resolveDisplayAgent(sandbox)),
+    agent: safeStatusString(resolveDisplayAgent(sandbox)) ?? "unknown",
     ...(dashboardPort != null ? { dashboardPort } : {}),
   };
 }
@@ -349,14 +347,13 @@ async function buildSandboxInventoryRow(
       ? { livePhase: safeStatusString(sandbox.livePhase ?? null) }
       : {}),
   };
-  inventoryInferenceSources.set(row, inference);
   return row;
 }
 
-export async function getSandboxInventory(
+async function buildSandboxInventory(
   deps: ListSandboxesCommandDeps,
+  recovery: RecoveryResult,
 ): Promise<SandboxInventoryResult> {
-  const recovery = await deps.recoverRegistryEntries();
   const resolvedDefault =
     resolveDefaultSandboxName(() => ({ defaultSandbox: recovery.defaultSandbox ?? null })) ?? null;
   const lastSession = deps.loadLastSession();
@@ -396,6 +393,17 @@ export async function getSandboxInventory(
   };
 }
 
+export async function getSandboxInventory(
+  deps: ListSandboxesCommandDeps,
+): Promise<SandboxInventoryResult> {
+  return buildSandboxInventory(deps, await deps.recoverRegistryEntries());
+}
+
+interface InventoryRouteDrift {
+  model: boolean;
+  provider: boolean;
+}
+
 /**
  * Render the `nemoclaw list` output. For the default sandbox (the one the
  * cluster-wide gateway is currently serving) the live gateway `model`/
@@ -411,6 +419,7 @@ export function renderSandboxInventoryText(
   inventory: SandboxInventoryResult,
   log: (message?: string) => void = console.log,
   liveInference: GatewayInference | null = null,
+  routeDrift?: InventoryRouteDrift,
 ): void {
   if (inventory.sandboxes.length === 0) {
     log("");
@@ -450,20 +459,15 @@ export function renderSandboxInventoryText(
   for (const sandbox of inventory.sandboxes) {
     const liveModel = sandbox.isDefault ? safeStatusString(liveInference?.model) : null;
     const liveProvider = sandbox.isDefault ? safeStatusString(liveInference?.provider) : null;
-    const storedInference = inventoryInferenceSources.get(sandbox);
     const def = sandbox.isDefault ? " *" : "";
     const model = liveModel || sandbox.model || "unknown";
     const provider = liveProvider || sandbox.provider || "unknown";
-    const modelDrifted = !!(
-      sandbox.isDefault &&
-      liveInference?.model &&
-      liveInference.model !== storedInference?.model
-    );
-    const providerDrifted = !!(
-      sandbox.isDefault &&
-      liveInference?.provider &&
-      liveInference.provider !== storedInference?.provider
-    );
+    const modelDrifted = sandbox.isDefault
+      ? (routeDrift?.model ?? !!(liveModel && liveModel !== sandbox.model))
+      : false;
+    const providerDrifted = sandbox.isDefault
+      ? (routeDrift?.provider ?? !!(liveProvider && liveProvider !== sandbox.provider))
+      : false;
     // #5714: a gateway-recovered row's GPU state is unknown — the gateway
     // sandbox list does not expose it — so don't assert "CPU sandbox" (which
     // would mislead DGX users whose GPU sandbox's registry entry was lost).
@@ -500,9 +504,23 @@ export function renderSandboxInventoryText(
 
 export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Promise<void> {
   const log = deps.log ?? console.log;
-  const inventory = await getSandboxInventory(deps);
+  const recovery = await deps.recoverRegistryEntries();
+  const inventory = await buildSandboxInventory(deps, recovery);
   const liveInference = inventory.sandboxes.length > 0 ? deps.getLiveInference() : null;
-  renderSandboxInventoryText(inventory, log, liveInference);
+  const resolvedDefault = resolveDefaultSandboxName(() => ({
+    defaultSandbox: recovery.defaultSandbox ?? null,
+  }));
+  const defaultEntry = recovery.sandboxes.find((sandbox) => sandbox.name === resolvedDefault);
+  const storedInference = defaultEntry ? getSandboxEntryDisplayInference(defaultEntry) : null;
+  const routeDrift = liveInference
+    ? {
+        model: !!(liveInference.model && liveInference.model !== storedInference?.model),
+        provider: !!(
+          liveInference.provider && liveInference.provider !== storedInference?.provider
+        ),
+      }
+    : undefined;
+  renderSandboxInventoryText(inventory, log, liveInference, routeDrift);
 }
 
 async function buildStatusSandboxRow(
