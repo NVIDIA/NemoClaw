@@ -123,15 +123,12 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/lib/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/corporate-ca-runtime.sh
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
-COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
-COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
-COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 COPY agents/hermes/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py
 COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py
@@ -577,10 +574,9 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/runtime/sandbox/sandbox-rlimit-hooks.test.ts covers that base.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json \
-    && chmod 700 /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
-    && chmod 500 /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/lib/nemoclaw/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/managed_policy.py \
+    && chown root:root /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json \
+    && chmod 700 /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
+    && chmod 444 /usr/local/lib/nemoclaw/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/managed_policy.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json \
     && /opt/hermes/.venv/bin/python3 -I -c 'import runpy, yaml; assert yaml.safe_load("ready: true")["ready"] is True; runpy.run_path("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", run_name="nemoclaw_runtime_config_guard_probe")' \
@@ -1703,7 +1699,6 @@ RUN check_metadata() { \
     && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root 755' \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root 444' \
-    && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-cron-restore-control.py 'root:root 700' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \

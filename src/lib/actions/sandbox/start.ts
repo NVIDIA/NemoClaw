@@ -97,7 +97,8 @@ function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | n
   if (!check.checked) return "managed agent gateway inspection did not complete";
   if ("runtime" in check && check.runtime === "terminal") return null;
   if ("secretBoundaryRefused" in check && check.secretBoundaryRefused) {
-    return `secret-boundary refusal: ${String(check.secretBoundaryReason)}`;
+    const legacyReason = (check as { secretBoundaryReason?: unknown }).secretBoundaryReason;
+    return `secret-boundary refusal: ${String(legacyReason)}`;
   }
   if ("forwardRecoveryFailed" in check && check.forwardRecoveryFailed) {
     return String(check.forwardRecoveryFailureDetail);

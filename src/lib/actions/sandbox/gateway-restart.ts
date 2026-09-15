@@ -5,18 +5,6 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
-import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
-
-export async function withUnsupportedHermesPortableGatewayRestartFence<T>(
-  sandboxName: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  return withMcpLifecycleLock(sandboxName, async () => {
-    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:gateway:restart");
-    return operation();
-  });
-}
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -439,9 +427,7 @@ export async function restartSandboxGatewayWithDeps(
     }
   } else if (agentName !== "openclaw" || (agent && agent.name !== "openclaw")) {
     const unsupportedAgentName = agent?.name ?? agentName;
-    const reason =
-      `${agentRuntime.getAgentDisplayName(agent)} does not declare a supported supervisor-mediated ` +
-      "gateway restart runtime.";
+    const reason = `${agentRuntime.getAgentDisplayName(agent)} does not declare a supported native gateway restart runtime.`;
     const detail = unsupportedGatewayRestartAgentDetail(unsupportedAgentName, reason);
     printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
     return { ok: false, failureLayer: "unsupported agent", detail };

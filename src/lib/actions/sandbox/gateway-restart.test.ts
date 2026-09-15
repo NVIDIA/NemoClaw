@@ -3,7 +3,6 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
-import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 import { classifyGatewayRestartFailure } from "./gateway-restart";
 import { restartSandboxGateway } from "./process-recovery";
 
@@ -63,19 +62,6 @@ describe("restartSandboxGateway native lifecycle", () => {
       ...overrides,
     };
   }
-
-  it("keeps the portable lifecycle fence before native restart", async () => {
-    vi.spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable").mockImplementation(
-      () => {
-        throw new Error("schema-5 rejected");
-      },
-    );
-    const deps = baseDeps();
-    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).rejects.toThrow(
-      "schema-5 rejected",
-    );
-    expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
-  });
 
   it("asks OpenClaw to restart its gateway", async () => {
     silenceConsole();
