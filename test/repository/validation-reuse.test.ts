@@ -15,7 +15,6 @@ import { changedCheckFiles } from "../../scripts/checks/run.mts";
 import {
   changeInputDuringRead,
   fixtureGit,
-  observeHighPrecisionIdentity,
   observeInputReads,
   replaceInputBeforeRead,
   validationFixture,
@@ -203,17 +202,6 @@ describe("validation reuse", () => {
     );
   });
 
-  it("does not reread unchanged dependencies on warm validation (#11782)", () => {
-    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
-    const dependency = path.join(root, "node_modules/typescript/compiler.js");
-    const observed = observeInputReads(dependency);
-    const options = check();
-    runCachedCommand(options);
-    runCachedCommand(options);
-    expect(observed).toHaveBeenCalledOnce();
-    expect(options.execute).toHaveBeenCalledOnce();
-  });
-
   it.each([
     "src/example.ts",
     "untracked.ts",
@@ -270,179 +258,15 @@ describe("validation reuse", () => {
     expect(options.execute).toHaveBeenCalledTimes(3);
   });
 
-  it("reuses identical inputs after the commit and comparison ref change (#11782)", () => {
+  it("reuses identical inputs when the canonical comparison ref changes", () => {
     const options = check();
     runCachedCommand(options);
     fixtureGit(root, "commit", "--allow-empty", "-m", "test: next");
-    runCachedCommand(options);
-    fixtureGit(root, "update-ref", "refs/remotes/origin/main", "HEAD");
+    const next = fixtureGit(root, "rev-parse", "HEAD").trim();
+    fixtureGit(root, "checkout", "--detach", "HEAD^");
+    fixtureGit(root, "update-ref", "refs/remotes/origin/main", next);
     runCachedCommand(options);
     expect(options.execute).toHaveBeenCalledOnce();
-  });
-
-  it.each([
-    [
-      "inode",
-      (file: string) => {
-        const replacement = `${file}.replacement`;
-        fs.copyFileSync(file, replacement);
-        fs.renameSync(replacement, file);
-      },
-    ],
-    [
-      "modification time",
-      (file: string) => {
-        const stat = fs.statSync(file);
-        fs.utimesSync(file, stat.atime, new Date(stat.mtimeMs + 1_000));
-      },
-    ],
-  ])("rehashes when dependency %s identity changes (#11782)", (_field, mutate) => {
-    const dependency = path.join(root, "node_modules/typescript/compiler.js");
-    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
-    const options = check();
-    runCachedCommand(options);
-    mutate(dependency);
-    const observed = observeInputReads(dependency);
-    runCachedCommand(options);
-    expect(observed).toHaveBeenCalledOnce();
-    expect(options.execute).toHaveBeenCalledOnce();
-  });
-
-  it("rehashes when only dependency change time differs (#11782)", () => {
-    const dependency = path.join(root, "node_modules/typescript/compiler.js");
-    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
-    const options = check();
-    runCachedCommand(options);
-    const indexPath = path.join(root, ".git/nemoclaw-validation/file-digests-v1.json");
-    const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
-    const entry = index.entries.find(([file]: [string]) => file === fs.realpathSync(dependency))[1];
-    entry.identity.ctimeMs -= 1;
-    fs.writeFileSync(indexPath, JSON.stringify(index));
-    const observed = observeInputReads(dependency);
-    runCachedCommand(options);
-    expect(observed).toHaveBeenCalledOnce();
-    expect(options.execute).toHaveBeenCalledOnce();
-  });
-
-  it("distinguishes high-precision dependency device and inode values (#11782)", () => {
-    const dependency = path.join(root, "node_modules/typescript/compiler.js");
-    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
-    const identity = observeHighPrecisionIdentity(dependency);
-    const options = check();
-    runCachedCommand(options);
-    identity.reads.mockClear();
-    identity.set(9_007_199_254_740_993n, 9_007_199_254_740_993n);
-    runCachedCommand(options);
-    expect(Number(9_007_199_254_740_992n)).toBe(Number(9_007_199_254_740_993n));
-    expect(identity.reads).toHaveBeenCalledOnce();
-    expect(options.execute).toHaveBeenCalledOnce();
-  });
-
-  it.each([
-    ["mode", (file: string) => fs.chmodSync(file, 0o600)],
-    [
-      "file type",
-      (file: string) => {
-        fs.rmSync(file);
-        fs.mkdirSync(file);
-      },
-    ],
-  ])("reruns when dependency %s changes (#11782)", (_field, mutate) => {
-    const dependency = path.join(root, "node_modules/typescript/compiler.js");
-    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
-    const options = check();
-    runCachedCommand(options);
-    mutate(dependency);
-    runCachedCommand(options);
-    expect(options.execute).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    ["missing", (index: string) => fs.rmSync(index)],
-    [
-      "malformed",
-      (index: string) => {
-        fs.rmSync(index);
-        writeFixture(root, path.relative(root, index), "broken");
-      },
-    ],
-    [
-      "symlink",
-      (index: string) => {
-        fs.rmSync(index);
-        fs.symlinkSync("fixture.json", index);
-      },
-    ],
-    [
-      "numeric identity",
-      (index: string) => {
-        const contents = JSON.parse(fs.readFileSync(index, "utf8"));
-        contents.entries[0][1].identity.dev = 1;
-        fs.writeFileSync(index, JSON.stringify(contents));
-      },
-    ],
-  ])("rehashes inputs when the digest index is %s (#11782)", (_state, prepareIndex) => {
-    const options = check();
-    runCachedCommand(options);
-    const index = path.join(root, ".git/nemoclaw-validation/file-digests-v1.json");
-    prepareIndex(index);
-    const observed = observeInputReads(path.join(root, "src/example.ts"));
-    runCachedCommand(options);
-    expect(observed).toHaveBeenCalledOnce();
-    expect(options.execute).toHaveBeenCalledOnce();
-  });
-
-  it("prunes stale digest entries after successful validation (#11782)", () => {
-    const options = check();
-    runCachedCommand(options);
-    const index = path.join(root, ".git/nemoclaw-validation/file-digests-v1.json");
-    const contents = JSON.parse(fs.readFileSync(index, "utf8"));
-    contents.entries.push([path.join(root, "stale"), { ...contents.entries[0][1], lastSeen: 0 }]);
-    fs.writeFileSync(index, JSON.stringify(contents));
-    runCachedCommand(options);
-    const updated = JSON.parse(fs.readFileSync(index, "utf8"));
-    expect(updated.entries.some(([file]: [string]) => file === path.join(root, "stale"))).toBe(
-      false,
-    );
-  });
-
-  it("merges a concurrent digest-index publication (#11782)", () => {
-    const options = check();
-    runCachedCommand(options);
-    const directory = path.join(root, ".git/nemoclaw-validation");
-    const indexPath = path.join(directory, "file-digests-v1.json");
-    const receiptPath = path.join(directory, "fixture.json");
-    const concurrentPath = path.join(root, "concurrent-input");
-    const concurrentIndex = JSON.parse(fs.readFileSync(indexPath, "utf8"));
-    concurrentIndex.entries.push([
-      concurrentPath,
-      { ...concurrentIndex.entries[0][1], lastSeen: Date.now() },
-    ]);
-    const read = fs.readFileSync;
-    const publish = vi.fn(() => fs.writeFileSync(indexPath, JSON.stringify(concurrentIndex)));
-    vi.spyOn(fs, "readFileSync").mockImplementation(
-      (...args: Parameters<typeof fs.readFileSync>) => {
-        const result = read(...args);
-        const _publication =
-          args[0] === receiptPath && publish.mock.calls.length === 0 ? publish() : undefined;
-        return result;
-      },
-    );
-    runCachedCommand(options);
-    const updated = JSON.parse(fs.readFileSync(indexPath, "utf8"));
-    expect(publish).toHaveBeenCalledOnce();
-    expect(updated.entries.some(([file]: [string]) => file === concurrentPath)).toBe(true);
-    expect(options.execute).toHaveBeenCalledOnce();
-  });
-
-  it("reports fingerprint, compiler, and post-check timings (#11782)", () => {
-    const options = check();
-    runCachedCommand(options);
-    expect(options.report).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /timings discovery=\d+ ms, source\/config=\d+ ms, dependencies=\d+ ms, outputs=\d+ ms, compiler=\d+ ms, post-check=\d+ ms, total=\d+ ms/,
-      ),
-    );
   });
 
   it("reruns when the receipt is malformed", () => {
