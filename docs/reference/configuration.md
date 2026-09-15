@@ -285,6 +285,7 @@ Guide: [Resource ownership](../usage.md#resource-ownership).
 Paths:
 
 - `spec.inferenceProviders[].ollama.network.management`
+- `spec.inferenceProviders[].ollamaProxy.model.management`
 - `spec.sandboxes[].network.proxy.management`
 
 Accepted input: string.
@@ -305,6 +306,21 @@ Paths:
 |---|---|---|---|---|
 | `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external. |
 | `name` | string | Yes | — | Existing network name on the Ollama Docker engine. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## ExternalOllamaModel
+
+Existing Ollama model installation, independently owned outside the deployment.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.inferenceProviders[].ollamaProxy.model`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `digest` | string | Yes | — | Lowercase 64-character model digest reported by Ollama's /api/tags API. Constraints: pattern `^[a-f0-9]{64}$`. |
+| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional ownership declaration; omission means external. |
 
 ## File
 
@@ -464,6 +480,7 @@ Paths:
 | `management` | [Management](#management) | No | — | Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode. |
 | `name` | string | Yes | — | Provider name referenced by the primary route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `ollama` | [ManagedOllama](#managedollama) | No | — | Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. |
+| `ollamaProxy` | [OllamaProxy](#ollamaproxy) | No | — | Manage an authenticated proxy while leaving the endpoint's Ollama daemon and installed model external. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
 | `service` | [Service](#service) | No | — | Manage vLLM from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty. |
 
@@ -517,6 +534,7 @@ Paths:
 - `spec.inferenceProviders[].ollama.management`
 - `spec.inferenceProviders[].ollama.model.management`
 - `spec.inferenceProviders[].ollama.storage.management`
+- `spec.inferenceProviders[].ollamaProxy.management`
 - `spec.inferenceProviders[].service.management`
 - `spec.inferenceProviders[].service.model.management`
 - `spec.inferenceProviders[].service.placement.network.management`
@@ -674,6 +692,24 @@ Paths:
 Accepted input: string or [ExternalNetwork](#externalnetwork).
 
 Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`.
+
+## OllamaProxy
+
+Managed authenticated proxy for an external, loopback-only Ollama daemon and installed model.
+
+Guide: [Inference configuration](../inference.md).
+
+Paths:
+
+- `spec.inferenceProviders[].ollamaProxy`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
+| `engine` | string | Yes | — | Local Unix Docker socket. The external daemon runs on this same Linux host. Constraints: pattern `^unix:///`. |
+| `image` | string | Yes | — | Immutable NemoClaw Ollama proxy image built locally. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration; omission means managed. |
+| `model` | [ExternalOllamaModel](#externalollamamodel) | Yes | — | Digest of the already-installed route model. NemoClaw never installs or deletes it. |
 
 ## OpenClawDashboard
 

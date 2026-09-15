@@ -98,6 +98,7 @@ pub(super) fn provider_row(
         .ok_or(ObservationError::Incomplete)?
         .clone();
     let mut result = base(provider.metadata, name, removing)?;
+    result.insert("credential_source".into(), String::new());
     result.extend([
         ("endpoint".into(), "https://api.search.brave.com".into()),
         ("provider_type".into(), "brave".into()),

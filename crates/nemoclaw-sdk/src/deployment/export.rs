@@ -37,17 +37,27 @@ impl Deployment {
                     .id
                     .clone(),
             );
-            let observed =
-                client
+            let observed = if crate::ollama::proxy::supports(&target.kind) {
+                let proxy = document.spec.inference_providers[0]
+                    .ollama_proxy
+                    .as_ref()
+                    .ok_or(Error::State("missing proxy settings"))?;
+                crate::ollama::OllamaBackend::new(self.engines.resolve(&proxy.engine)?)
                     .read(&target.kind, &expected, false)
                     .await?
-                    .ok_or(Error::Conflict(
-                        "resource is confirmed absent; no configuration exported",
-                    ))?;
+            } else {
+                client.read(&target.kind, &expected, false).await?
+            }
+            .ok_or(Error::Conflict(
+                "resource is confirmed absent; no configuration exported",
+            ))?;
             verify_identity(&expected, &observed)?;
             match target.kind.as_str() {
                 "provider" if target.address == "nemoclaw_provider.web_search" => {
-                    if expected != observed {
+                    if expected
+                        .iter()
+                        .any(|(key, value)| observed.get(key) != Some(value))
+                    {
                         return Err(Error::Conflict(
                             "web search provider drift requires inspection",
                         ));
@@ -68,6 +78,20 @@ impl Deployment {
 fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> Result<(), Error> {
     if observed["provider_type"] != expected["provider_type"] {
         return Err(Error::Conflict("provider type drift requires inspection"));
+    }
+    if expected
+        .get("credential_source")
+        .filter(|s| !s.is_empty())
+        .is_some()
+    {
+        if expected.get("credential_source") != observed.get("credential_source")
+            || expected.get("endpoint") != observed.get("endpoint")
+        {
+            return Err(Error::Conflict(
+                "managed inference credential or endpoint drift",
+            ));
+        }
+        return Ok(());
     }
     if document.spec.inference_providers[0].service.is_some() {
         if observed["endpoint"] != document.inference_endpoint()?

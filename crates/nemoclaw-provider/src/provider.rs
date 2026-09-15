@@ -243,6 +243,49 @@ impl Provider for NemoClawProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
         let definitions = [
             Definition::new(
+                "ollama_proxy_storage",
+                &[
+                    "name",
+                    "owner",
+                    "generation",
+                    "image",
+                    "bind_address",
+                    "upstream",
+                    "model",
+                    "digest",
+                ],
+                &[],
+            ),
+            Definition::new(
+                "ollama_proxy",
+                &[
+                    "name",
+                    "owner",
+                    "generation",
+                    "image",
+                    "bind_address",
+                    "upstream",
+                    "model",
+                    "digest",
+                    "running",
+                ],
+                &["running"],
+            ),
+            Definition::new(
+                "ollama_external_model",
+                &[
+                    "name",
+                    "owner",
+                    "generation",
+                    "image",
+                    "bind_address",
+                    "upstream",
+                    "model",
+                    "digest",
+                ],
+                &[],
+            ),
+            Definition::new(
                 "ollama_storage",
                 &[
                     "name",
@@ -292,6 +335,7 @@ impl Provider for NemoClawProvider {
                     "endpoint",
                     "credential_env",
                     "provider_type",
+                    "credential_source",
                 ],
                 &["endpoint", "credential_env"],
             ),

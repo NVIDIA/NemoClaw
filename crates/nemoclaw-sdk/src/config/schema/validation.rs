@@ -204,7 +204,7 @@ pub(super) fn constrain(root: &mut Value) {
     let provider = &mut defs["InferenceProvider"];
     property(provider, "provider", json!({"enum": c::PROVIDERS}));
     provider["if"] = json!({"required": ["service"]});
-    provider["then"] = json!({"properties": {"endpoint": {"const": ""}}, "allOf": [forbid(&["credential", "ollama"])]});
+    provider["then"] = json!({"properties": {"endpoint": {"const": ""}}, "allOf": [forbid(&["credential", "ollama", "ollamaProxy"])]});
     provider["else"] =
         json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
     provider["allOf"] = json!([
@@ -217,6 +217,18 @@ pub(super) fn constrain(root: &mut Value) {
             "allOf": [forbid(&["credential"])]
         }}
     ]);
+    provider["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["ollamaProxy"]},"then":{
+        "properties":{"provider":{"const":"openai"},"management":{"const":"external"}},"allOf":[forbid(&["ollama","service","credential"])]}}));
+    property(
+        &mut defs["OllamaProxy"],
+        "engine",
+        json!({"pattern":"^unix:///"}),
+    );
+    property(
+        &mut defs["OllamaProxy"],
+        "image",
+        json!({"pattern":c::IMAGE}),
+    );
     property(
         &mut defs["ManagedOllama"],
         "engine",

@@ -15,6 +15,7 @@ fn specification(document: &Document, generations: &Generations) -> Result<Servi
         .as_ref()
         .ok_or(Error::Conflict("Ollama is not declared"))?;
     let spec = ServiceSpec {
+        proxy: None,
         name: format!("{}-ollama", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generations
@@ -63,6 +64,20 @@ impl Deployment {
         generations: &Generations,
         bindings: &BTreeMap<String, StateBinding>,
     ) -> Result<(), Error> {
+        if let Some(proxy) = &document.spec.inference_providers[0].ollama_proxy {
+            let spec = crate::ollama::proxy::specification(document, generations)?;
+            crate::ollama::proxy::verify_model(spec.proxy.as_ref().unwrap()).await?;
+            return self
+                .engines
+                .resolve(&proxy.engine)?
+                .preflight_ollama(
+                    &spec,
+                    bindings
+                        .get("nemoclaw_ollama_proxy.service")
+                        .map_or("", |b| b.id.as_str()),
+                )
+                .await;
+        }
         let Some(config) = &document.spec.inference_providers[0].ollama else {
             return Ok(());
         };

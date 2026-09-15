@@ -156,6 +156,7 @@ fn retained_addresses(runtime: bool) -> BTreeSet<String> {
         [
             "nemoclaw_workspace.deployment".into(),
             crate::deployment::ollama::STORAGE.into(),
+            "nemoclaw_ollama_proxy_storage.credentials".into(),
         ]
         .into()
     }

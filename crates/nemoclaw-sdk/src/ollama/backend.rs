@@ -9,14 +9,14 @@ use crate::{
 
 /// Shared provider and export observations for an explicitly configured engine.
 pub struct OllamaBackend {
-    engine: Engine,
+    pub(super) engine: Engine,
 }
 impl OllamaBackend {
     pub fn new(engine: Engine) -> Self {
         Self { engine }
     }
     pub fn supports(kind: &str) -> bool {
-        matches!(kind, "ollama" | "ollama_model" | "ollama_storage")
+        matches!(kind, "ollama" | "ollama_model" | "ollama_storage") || super::proxy::supports(kind)
     }
     async fn observe(
         &self,
@@ -25,6 +25,9 @@ impl OllamaBackend {
         apply: bool,
         removing: bool,
     ) -> Result<Option<Row>, Error> {
+        if super::proxy::supports(kind) {
+            return self.proxy_read(kind, row, apply, removing).await;
+        }
         let field = |name: &str| {
             row.get(name)
                 .filter(|v| !v.is_empty())
@@ -34,6 +37,7 @@ impl OllamaBackend {
         let mut result = row.clone();
         if matches!(kind, "ollama" | "ollama_storage") {
             let spec = ServiceSpec {
+                proxy: None,
                 name: field("name")?,
                 owner: field("owner")?,
                 generation: field("generation")?,
@@ -135,6 +139,12 @@ impl Backend for OllamaBackend {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
+        if destroying && super::proxy::supports(kind) {
+            return self
+                .proxy_remove(kind, prior)
+                .await
+                .map_err(|e| diagnostic(&e));
+        }
         if !destroying || kind == "ollama_storage" {
             return Err(ObservationError::Backend(
                 "Ollama storage is retained; service deletion requires explicit destroy",
@@ -157,6 +167,7 @@ impl Backend for OllamaBackend {
                 .ok_or(ObservationError::Incomplete)
         };
         let spec = ServiceSpec {
+            proxy: None,
             name: field("name")?,
             owner: field("owner")?,
             generation: field("generation")?,

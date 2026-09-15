@@ -163,10 +163,16 @@ fn guide(name: &str) -> &'static str {
         | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../recipes.md)",
         "ServicePlacement" | "ServicePublication" => "[SSH model service](../remote-service.md)",
         "Service" | "Model" | "Serving" | "Memory" => "[Managed models](../models.md)",
-        "InferenceProvider" | "Inference" | "Route" | "Overrides" | "InferenceApi"
-        | "ReasoningEffort" | "AgentAuth" | "AuthMethod" => {
-            "[Inference configuration](../inference.md)"
-        }
+        "InferenceProvider"
+        | "Inference"
+        | "Route"
+        | "Overrides"
+        | "OllamaProxy"
+        | "ExternalOllamaModel"
+        | "InferenceApi"
+        | "ReasoningEffort"
+        | "AgentAuth"
+        | "AuthMethod" => "[Inference configuration](../inference.md)",
         "AgentInterfaces" | "OpenClawInterfaces" | "OpenClawDashboard" | "DashboardBind"
         | "HermesInterfaces" | "HermesDashboard" | "HermesApi" | "HermesTui" => {
             "[Agent interfaces](../interfaces.md)"

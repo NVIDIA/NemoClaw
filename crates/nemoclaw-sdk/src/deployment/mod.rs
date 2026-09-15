@@ -162,7 +162,8 @@ impl Deployment {
                 "unfinished apply has different intent; reapply its original configuration",
             ));
         }
-        if document.spec.inference_providers[0].ollama.is_some()
+        if (document.spec.inference_providers[0].ollama.is_some()
+            || document.spec.inference_providers[0].ollama_proxy.is_some())
             && record
                 .generations
                 .get("ollama")
@@ -328,7 +329,18 @@ impl Deployment {
             if let Some(binding) = bindings.get(&target.address) {
                 expected.insert("id".into(), binding.id.clone());
             }
-            match client.read(&target.kind, &expected, false).await? {
+            let observed = if crate::ollama::proxy::supports(&target.kind) {
+                let config = document.spec.inference_providers[0]
+                    .ollama_proxy
+                    .as_ref()
+                    .ok_or(Error::State("missing proxy settings"))?;
+                crate::ollama::OllamaBackend::new(self.engines.resolve(&config.engine)?)
+                    .read(&target.kind, &expected, false)
+                    .await?
+            } else {
+                client.read(&target.kind, &expected, false).await?
+            };
+            match observed {
                 Some(observed) => verify_identity(&expected, &observed)?,
                 None if bindings.contains_key(&target.address) => {
                     return Err(Error::Conflict(

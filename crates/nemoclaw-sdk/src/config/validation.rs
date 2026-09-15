@@ -313,6 +313,9 @@ impl Document {
                             || provider.service.as_ref().unwrap().placement.is_some())),
                 "service requires its declared served model and compatible sandbox placement",
             )?;
+            if let Some(proxy) = &provider.ollama_proxy {
+                proxy.validate(provider, &route.overrides.model, &agent.harness)?;
+            }
             if let Some(ollama) = &provider.ollama {
                 let url = Url::parse(&provider.endpoint)
                     .map_err(|_| ConfigError("invalid Ollama endpoint"))?;

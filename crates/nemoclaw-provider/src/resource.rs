@@ -130,7 +130,8 @@ impl ResourceAdapter {
 fn optional(field: &str) -> bool {
     matches!(
         field,
-        "credential_env"
+        "credential_source"
+            | "credential_env"
             | "agent_runtime"
             | "provider_type"
             | "policy_json"

@@ -125,6 +125,14 @@ pub struct Gateway {
 #[serde(default, deny_unknown_fields)]
 /// Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.
 pub struct InferenceProvider {
+    #[serde(
+        rename = "ollamaProxy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "super::OllamaProxy")]
+    /// Manage an authenticated proxy while leaving the endpoint's Ollama daemon and installed model external.
+    pub ollama_proxy: Option<super::OllamaProxy>,
     /// Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "super::Management")]

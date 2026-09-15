@@ -49,7 +49,7 @@ impl OpenShell {
         let response = self
             .grpc()
             .create_provider(self.request(proto::CreateProviderRequest {
-                provider: Some(self.provider(want)?),
+                provider: Some(self.provider(want).await?),
                 workspace: workspace.into(),
             }))
             .await

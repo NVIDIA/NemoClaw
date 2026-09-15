@@ -1,0 +1,216 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+use crate::{
+    Error, ObservationError,
+    backend::Row,
+    compile::{Generations, Target},
+    config::Document,
+};
+pub const PROXY: &str = "ollama_proxy";
+pub const STORAGE: &str = "ollama_proxy_storage";
+pub const MODEL: &str = "ollama_external_model";
+pub fn supports(kind: &str) -> bool {
+    matches!(kind, PROXY | STORAGE | MODEL)
+}
+pub fn specification(document: &Document, generations: &Generations) -> Result<ServiceSpec, Error> {
+    let provider = &document.spec.inference_providers[0];
+    let proxy = provider
+        .ollama_proxy
+        .as_ref()
+        .ok_or(Error::State("missing proxy configuration"))?;
+    let spec = ServiceSpec {
+        name: format!("{}-ollama-proxy", document.workspace()),
+        owner: document.metadata.uid.clone(),
+        generation: generations
+            .get("ollama")
+            .ok_or(Error::State("missing proxy generation"))?
+            .clone(),
+        image: proxy.image.clone(),
+        network: "host".into(),
+        bind_address: proxy
+            .endpoint
+            .strip_prefix("http://")
+            .and_then(|s| s.strip_suffix("/v1"))
+            .ok_or(Error::State("invalid proxy endpoint"))?
+            .into(),
+        proxy: Some(ProxySettings {
+            upstream: provider.endpoint.clone(),
+            endpoint: proxy.endpoint.clone(),
+            model: document.spec.sandboxes[0].agents[0].inference.routes[0]
+                .overrides
+                .model
+                .clone(),
+            digest: proxy.model.digest.clone(),
+        }),
+    };
+    spec.validate()?;
+    Ok(spec)
+}
+pub fn row_spec(row: &Row) -> Result<ServiceSpec, Error> {
+    let get = |name: &str| {
+        row.get(name)
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .ok_or(Error::State("incomplete proxy resource"))
+    };
+    let binding = get("bind_address")?;
+    let spec = ServiceSpec {
+        name: get("name")?,
+        owner: get("owner")?,
+        generation: get("generation")?,
+        image: get("image")?,
+        network: "host".into(),
+        proxy: Some(ProxySettings {
+            upstream: get("upstream")?,
+            endpoint: format!("http://{binding}/v1"),
+            model: get("model")?,
+            digest: get("digest")?,
+        }),
+        bind_address: binding,
+    };
+    spec.validate()?;
+    Ok(spec)
+}
+pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Target>, Error> {
+    let spec = specification(document, generations)?;
+    let settings = spec.proxy.as_ref().unwrap();
+    let common: Row = [
+        ("name", spec.name.clone()),
+        ("owner", spec.owner.clone()),
+        ("generation", spec.generation.clone()),
+        ("image", spec.image.clone()),
+        ("bind_address", spec.bind_address.clone()),
+        ("upstream", settings.upstream.clone()),
+        ("model", settings.model.clone()),
+        ("digest", settings.digest.clone()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.into(), v))
+    .collect();
+    Ok([
+        (STORAGE, "credentials"),
+        (PROXY, "service"),
+        (MODEL, "inference"),
+    ]
+    .into_iter()
+    .map(|(kind, name)| {
+        let mut values = common.clone();
+        if kind == PROXY {
+            values.insert("running".into(), "true".into());
+        }
+        Target {
+            kind: kind.into(),
+            address: format!("nemoclaw_{kind}.{name}"),
+            values,
+        }
+    })
+    .collect())
+}
+pub async fn verify_model(settings: &ProxySettings) -> Result<(), Error> {
+    let model = Models::new(&settings.upstream)?
+        .read(&settings.model)
+        .await?
+        .ok_or(Error::Conflict(
+            "external Ollama model is absent; installation is not managed",
+        ))?;
+    if model.digest != settings.digest {
+        return Err(Error::Conflict("external Ollama model digest changed"));
+    }
+    Ok(())
+}
+impl OllamaBackend {
+    pub(super) async fn proxy_read(
+        &self,
+        kind: &str,
+        row: &Row,
+        apply: bool,
+        removing: bool,
+    ) -> Result<Option<Row>, Error> {
+        let spec = row_spec(row)?;
+        let id = row.get("id").map(String::as_str).unwrap_or("");
+        let mut result = row.clone();
+        if kind == MODEL {
+            if !removing {
+                verify_model(spec.proxy.as_ref().unwrap()).await?;
+            }
+            let expected = format!(
+                "{}/{}/{}",
+                spec.owner,
+                spec.generation,
+                spec.proxy.as_ref().unwrap().digest
+            );
+            if !id.is_empty() && id != expected {
+                return Err(ObservationError::BindingMismatch.into());
+            }
+            result.insert("id".into(), expected);
+            return Ok(Some(result));
+        }
+        if kind == STORAGE {
+            let observed = if apply {
+                Some(self.engine.ensure_ollama_storage(&spec, id).await?)
+            } else {
+                self.engine.observe_ollama_storage(&spec, id).await?
+            };
+            return Ok(observed.map(|id| {
+                result.insert("id".into(), id);
+                result
+            }));
+        }
+        if kind != PROXY {
+            return Err(ObservationError::Query.into());
+        }
+        let service = if removing {
+            self.engine.observe_ollama_removal(&spec, id).await?
+        } else if apply {
+            verify_model(spec.proxy.as_ref().unwrap()).await?;
+            Some(self.engine.ensure_ollama(&spec, id).await?)
+        } else {
+            match self.engine.observe_ollama(&spec, id).await {
+                Err(Error::PartialRuntime) if id.is_empty() => None,
+                other => other?,
+            }
+        };
+        if let Some(service) = &service
+            && service.running
+            && !removing
+        {
+            let container = service
+                .id
+                .split('/')
+                .nth(1)
+                .ok_or(Error::State("invalid proxy identity"))?;
+            let deadline = std::time::Instant::now()
+                + std::time::Duration::from_secs(if apply { 30 } else { 0 });
+            loop {
+                match crate::inference_auth::read_key(&self.engine, container).await {
+                    Ok(_) => break,
+                    Err(_) if apply && std::time::Instant::now() < deadline => {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(service.map(|service| {
+            result.insert("id".into(), service.id);
+            result.insert("running".into(), service.running.to_string());
+            result
+        }))
+    }
+    pub(super) async fn proxy_remove(&self, kind: &str, row: &Row) -> Result<(), Error> {
+        if kind == STORAGE {
+            return Err(Error::Conflict("proxy credential storage is retained"));
+        }
+        if kind == MODEL {
+            self.proxy_read(kind, row, false, true).await?;
+            return Ok(());
+        }
+        let spec = row_spec(row)?;
+        let id = row
+            .get("id")
+            .filter(|s| !s.is_empty())
+            .ok_or(Error::State("missing proxy identity"))?;
+        self.engine.remove_ollama(&spec, id).await
+    }
+}

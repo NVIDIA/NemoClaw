@@ -19,6 +19,7 @@ pub use transport::{EnvironmentSecrets, OpenShell, Secrets};
 
 pub const OWNER: &str = "nemoclaw.nvidia.com/uid";
 pub const GENERATION: &str = "nemoclaw.nvidia.com/generation";
+pub const CREDENTIAL_SOURCE: &str = "nemoclaw.nvidia.com/credential-source";
 pub const CREDENTIAL: &str = "nemoclaw.nvidia.com/credential-env";
 pub const AGENT: &str = "nemoclaw.nvidia.com/agent";
 pub const AGENT_RUNTIME: &str = "nemoclaw.nvidia.com/agent-runtime";
@@ -98,6 +99,12 @@ fn provider_row(
         .and_then(|m| m.labels.get(CREDENTIAL))
         .cloned()
         .unwrap_or_default();
+    let source = provider
+        .metadata
+        .as_ref()
+        .and_then(|m| m.labels.get(CREDENTIAL_SOURCE))
+        .cloned()
+        .unwrap_or_default();
     let mut row = base(provider.metadata, name, removing)?;
     let key = if provider.r#type == "anthropic" {
         "ANTHROPIC_BASE_URL"
@@ -109,6 +116,13 @@ fn provider_row(
         .get(key)
         .filter(|v| !v.is_empty())
         .ok_or(ObservationError::Incomplete)?;
+    if !source.is_empty() {
+        if !credential.is_empty() {
+            return Err(ObservationError::BindingMismatch);
+        }
+        crate::inference_auth::Source::parse(&source, &row["owner"], endpoint)?;
+    }
+    row.insert("credential_source".into(), source);
     row.insert("endpoint".into(), endpoint.clone());
     row.insert("credential_env".into(), credential);
     row.insert(

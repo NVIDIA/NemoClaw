@@ -20,7 +20,7 @@ fn labels(want: &Row) -> HashMap<String, String> {
     .into()
 }
 impl OpenShell {
-    fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
+    async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
         let (kind, endpoint_key, secret_key) = match value(want, "provider_type") {
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
@@ -33,11 +33,28 @@ impl OpenShell {
             }
             _ => return Err(ObservationError::Query),
         };
-        let credential = match value(want, "credential_env") {
-            "" => "empty".into(),
-            reference => self.secrets.resolve(reference)?,
+        let source = value(want, "credential_source");
+        let credential = if !source.is_empty() {
+            if !value(want, "credential_env").is_empty() {
+                return Err(ObservationError::BindingMismatch);
+            }
+            crate::inference_auth::Source::parse(
+                source,
+                value(want, "owner"),
+                value(want, "endpoint"),
+            )?
+            .resolve()
+            .await?
+        } else {
+            match value(want, "credential_env") {
+                "" => "empty".into(),
+                reference => self.secrets.resolve(reference)?,
+            }
         };
         let mut labels = labels(want);
+        if !source.is_empty() {
+            labels.insert(CREDENTIAL_SOURCE.into(), source.into());
+        }
         labels.insert(CREDENTIAL.into(), value(want, "credential_env").into());
         Ok(proto::Provider {
             metadata: Some(proto::ObjectMeta {

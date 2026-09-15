@@ -31,7 +31,10 @@ impl Document {
             return Err(ConfigError("exactly one inference provider is required"));
         };
         let endpoint = match &provider.service {
-            None => provider.endpoint.clone(),
+            None => provider
+                .ollama_proxy
+                .as_ref()
+                .map_or_else(|| provider.endpoint.clone(), |proxy| proxy.endpoint.clone()),
             Some(service) => match &service.publication {
                 Some(publication) => publication.endpoint.clone(),
                 None => format!(

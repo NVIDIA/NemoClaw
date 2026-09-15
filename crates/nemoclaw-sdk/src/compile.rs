@@ -153,6 +153,27 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             });
         }
     }
+    if let Some(proxy) = &provider.ollama_proxy {
+        let spec = crate::ollama::proxy::specification(document, generations)
+            .map_err(|_| ConfigError("invalid Ollama proxy specification"))?;
+        let source = crate::inference_auth::Source::OllamaProxy {
+            engine: proxy.engine.clone(),
+            spec,
+        };
+        result
+            .iter_mut()
+            .find(|r| r.address == "nemoclaw_provider.inference")
+            .unwrap()
+            .values
+            .insert(
+                "credential_source".into(),
+                serde_json::to_string(&source).expect("typed credential source"),
+            );
+        result.extend(
+            crate::ollama::proxy::targets(document, generations)
+                .map_err(|_| ConfigError("invalid proxy resources"))?,
+        );
+    }
     Ok(result)
 }
 
@@ -173,6 +194,9 @@ pub fn compile(
         provider["tls_ca_env"] = json!(tls.ca.env);
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
+    }
+    if let Some(proxy) = &inference.ollama_proxy {
+        provider["ollama_engine"] = json!(proxy.engine);
     }
     let mut resources = json!({});
     if let Some(ollama) = &inference.ollama {
@@ -202,7 +226,7 @@ pub fn compile(
     }
     for target in targets {
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
-        if target.kind != "workspace" {
+        if target.values.contains_key("workspace") {
             attributes["workspace"] = json!("${nemoclaw_workspace.deployment.name}");
         }
         if target.kind == "route" {
@@ -224,6 +248,18 @@ pub fn compile(
             } else {
                 json!(["nemoclaw_route.primary"])
             };
+        }
+        match target.address.as_str() {
+            "nemoclaw_provider.inference" if inference.ollama_proxy.is_some() => {
+                attributes["depends_on"] = json!(["nemoclaw_ollama_proxy.service"]);
+            }
+            "nemoclaw_ollama_proxy.service" => {
+                attributes["depends_on"] = json!([
+                    "nemoclaw_ollama_proxy_storage.credentials",
+                    "nemoclaw_ollama_external_model.inference"
+                ]);
+            }
+            _ => {}
         }
         if target.address == "nemoclaw_provider.web_search" {
             attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);

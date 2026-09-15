@@ -129,3 +129,5 @@ pub mod hardware;
 
 pub mod backends;
 pub mod recipes;
+
+mod inference_auth;
