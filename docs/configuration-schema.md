@@ -80,3 +80,6 @@ Review generated changes when updating those dependencies.
 
 The schema's API version identifies the document format; accepted fields can change between source revisions without changing that version.
 Use a schema from the same source revision as the SDK or CLI you run.
+Native bundles carry their matching schema at `schemas/nemoclaw-v1alpha1.schema.json`, covered by the bundle manifest's hash.
+The builder generates it from the compiled SDK and checks its source fingerprint before assembling CLI and provider binaries.
+See [bundle construction](build.md#build-a-native-bundle) for rebuild and verification behavior.

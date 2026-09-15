@@ -109,6 +109,7 @@ pub fn required_files(version: &str) -> Result<Vec<String>, Error> {
             platform()?,
             executable(&format!("terraform-provider-nemoclaw_v{version}"))
         ),
+        crate::config::schema::SCHEMA_PATH.into(),
     ])
 }
 pub fn hash_file(path: &Path) -> Result<String, Error> {

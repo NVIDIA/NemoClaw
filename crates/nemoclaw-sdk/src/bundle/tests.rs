@@ -46,3 +46,53 @@ fn incomplete_manifests_and_escaping_paths_are_rejected() {
     .unwrap();
     assert!(Bundle::open(dir.path()).is_err());
 }
+
+#[test]
+fn bundle_requires_the_schema_in_its_integrity_manifest() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = crate::config::schema::SCHEMA_PATH;
+    let mut manifest = Manifest {
+        version: "0.1.0".into(),
+        rust: "1.98.1".into(),
+        opentofu: crate::compile::OPENTOFU_VERSION.into(),
+        files: Default::default(),
+    };
+    for name in required_files(&manifest.version)
+        .unwrap()
+        .into_iter()
+        .filter(|name| name != schema)
+    {
+        let path = directory.path().join(&name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"fixture binary").unwrap();
+        manifest.files.insert(name, hash_file(&path).unwrap());
+    }
+    let manifest_path = directory.path().join("manifest.json");
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(
+        Bundle::open(directory.path()).is_err(),
+        "schema must be listed"
+    );
+    let schema_path = directory.path().join(schema);
+    fs::create_dir_all(schema_path.parent().unwrap()).unwrap();
+    fs::write(
+        &schema_path,
+        serde_json::to_vec(&crate::config::schema::input_schema()).unwrap(),
+    )
+    .unwrap();
+    manifest
+        .files
+        .insert(schema.into(), hash_file(&schema_path).unwrap());
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    Bundle::open(directory.path()).unwrap();
+    fs::write(&schema_path, b"{}\n").unwrap();
+    assert!(
+        Bundle::open(directory.path()).is_err(),
+        "changed schema must fail its hash"
+    );
+    fs::remove_file(&schema_path).unwrap();
+    assert!(
+        Bundle::open(directory.path()).is_err(),
+        "missing schema must fail verification"
+    );
+}

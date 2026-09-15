@@ -20,6 +20,15 @@ The builder downloads and verifies the OpenTofu archive, builds the CLI and prod
 The manifest records each shipped file’s hash, including the OpenTofu license.
 The SDK verifies the bundle before use.
 
+Each bundle includes `schemas/nemoclaw-v1alpha1.schema.json`, generated from its SDK contract and covered by the manifest hash.
+Use that file for [editor assistance](usage.md#editor-schema-assistance) with the bundled CLI.
+The API version alone does not identify a source revision.
+
+The builder records its source fingerprint at compilation and rejects changed inputs before bundle assembly.
+If it reports `build tool source inputs changed`, rebuild and run it with the `cargo run` command above.
+The builder also rejects source changes during assembly.
+Bundles created before schema packaging must be rebuilt; the SDK rejects a manifest that omits the schema or a schema file that fails its recorded hash.
+
 A source-derived provider version prevents reuse of a stale OpenTofu provider installation.
 
 To select a target, pass `bundle --platform PLATFORM`.

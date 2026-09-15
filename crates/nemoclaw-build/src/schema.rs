@@ -18,6 +18,17 @@ pub fn generate(root: &Path, check: bool) -> Result<(), String> {
     generated_file(root, REFERENCE_PATH, reference.as_bytes(), check)
 }
 
+pub fn add_to_bundle(
+    root: &Path,
+    manifest: &mut nemoclaw_sdk::bundle::Manifest,
+) -> Result<(), String> {
+    generated_file(root, SCHEMA_PATH, &schema_bytes(), false)?;
+    let hash = nemoclaw_sdk::bundle::hash_file(&root.join(SCHEMA_PATH))
+        .map_err(|error| error.to_string())?;
+    manifest.files.insert(SCHEMA_PATH.into(), hash);
+    Ok(())
+}
+
 fn generated_file(root: &Path, relative: &str, bytes: &[u8], check: bool) -> Result<(), String> {
     let path = root.join(relative);
     if check {

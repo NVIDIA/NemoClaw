@@ -82,7 +82,8 @@ The maintained examples select their schema with a comment:
 An editor using [YAML Language Server](https://github.com/redhat-developer/yaml-language-server) can provide field completion, hover descriptions, and schema diagnostics.
 The path is relative to the YAML file.
 When copying an example elsewhere, update the path to the matching schema file.
-Use the schema from the same source revision as your CLI; the experimental API version alone does not identify that revision.
+Use the schema from the same source revision as your CLI; the API version alone does not identify that revision.
+For an installed bundle, select its `schemas/nemoclaw-v1alpha1.schema.json` file.
 
 Keep `$schema` in the comment; a YAML field named `$schema` is an unknown configuration field and is rejected.
 Exported YAML omits comments, so add the association again if you want editor assistance for an export.

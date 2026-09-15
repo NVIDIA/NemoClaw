@@ -143,7 +143,8 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
         .ok_or("missing platform pin")?;
     let bytes = download(artifact).await?;
     let binary = nemoclaw_build::extract_tofu(&bytes, platform.starts_with("windows"))?;
-    let version = nemoclaw_build::source_version(&sources()?);
+    let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
+    nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
     build(&["nemoclaw-cli", "nemoclaw-provider"], target)?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
@@ -204,6 +205,8 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     manifest
         .files
         .insert("LICENSE".into(), bundle::hash_file(&root.join("LICENSE"))?);
+    nemoclaw_build::schema::add_to_bundle(root, &mut manifest)?;
+    nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::write(
         root.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest)?,
@@ -224,6 +227,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Action::Schema { check } = cli.command {
         return nemoclaw_build::schema::generate(Path::new("."), check).map_err(Into::into);
+    }
+    if matches!(cli.command, Action::Bundle { .. })
+        && nemoclaw_build::source_version(&sources()?) != nemoclaw_build::BUILDER_SOURCE_VERSION
+    {
+        return Err("build tool source inputs changed; rebuild with cargo run --locked -p nemoclaw-build -- bundle".into());
     }
     let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
     let version = cargo().arg("--version").output()?;

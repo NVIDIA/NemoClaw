@@ -56,3 +56,76 @@ fn schema_generation_is_repeatable_and_check_rejects_missing_or_stale_output() {
     );
     assert_eq!(fs::read(&path).unwrap(), b"{}\n");
 }
+
+#[test]
+fn bundle_rejects_a_builder_compiled_from_different_source_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for name in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "versions.json",
+        "LICENSE",
+    ] {
+        fs::copy(repository.join(name), root.path().join(name)).unwrap();
+    }
+    fs::create_dir(root.path().join("crates")).unwrap();
+    fs::create_dir(root.path().join("runtimes")).unwrap();
+    fs::write(root.path().join("crates/changed.rs"), "changed source\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .current_dir(root.path())
+        .args(["bundle", "--platform", "fixture"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("build tool source inputs changed"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!root.path().join("dist").exists());
+    assert!(!root.path().join(".build").exists());
+}
+
+#[test]
+fn bundled_schema_matches_the_compiled_contract_and_is_hashed() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut manifest = nemoclaw_sdk::bundle::Manifest {
+        version: "0.1.0".into(),
+        rust: "1.98.1".into(),
+        opentofu: nemoclaw_sdk::compile::OPENTOFU_VERSION.into(),
+        files: Default::default(),
+    };
+    let name = nemoclaw_sdk::config::schema::SCHEMA_PATH;
+    let path = directory.path().join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, b"stale checked-in schema").unwrap();
+    nemoclaw_build::schema::add_to_bundle(directory.path(), &mut manifest).unwrap();
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        nemoclaw_build::schema::schema_bytes()
+    );
+    assert_eq!(
+        manifest.files[name],
+        nemoclaw_sdk::bundle::hash_file(&path).unwrap()
+    );
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(value, nemoclaw_sdk::config::schema::input_schema());
+}
+
+#[test]
+fn compiled_source_identity_stays_fixed_when_inputs_change_during_assembly() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = nemoclaw_build::source_inputs(&root).unwrap();
+    let expected = nemoclaw_build::BUILDER_SOURCE_VERSION;
+    nemoclaw_build::verify_source_version(expected, &files).unwrap();
+    files
+        .iter_mut()
+        .find(|(name, _)| name == "crates/nemoclaw-sdk/src/config/types.rs")
+        .unwrap()
+        .1
+        .extend(b"\n// changed contract\n");
+    assert!(nemoclaw_build::verify_source_version(expected, &files).is_err());
+    assert_ne!(expected, nemoclaw_build::source_version(&files));
+}
