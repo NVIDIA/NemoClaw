@@ -6,8 +6,10 @@ import { createCliOpenShellGatewayReuseObserver } from "./gateway-reuse-cli";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 const target = { kind: "named", gatewayName: "nemoclaw" } as const;
-const named = "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/";
 const healthy = "Gateway: nemoclaw\nStatus: Connected\nServer: https://127.0.0.1:8080/";
+const registry = JSON.stringify([
+  { name: "nemoclaw", endpoint: "https://127.0.0.1:8080/", active: true },
+]);
 
 describe("gateway reuse CLI observation", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -16,7 +18,7 @@ describe("gateway reuse CLI observation", () => {
     const capture = vi
       .fn()
       .mockResolvedValueOnce({ status: 0, output: healthy })
-      .mockResolvedValue({ status: 0, output: named });
+      .mockResolvedValue({ status: 0, output: registry });
     const result = await createCliOpenShellGatewayReuseObserver(capture).observeGatewayReuse({
       target,
       runtimeSelection: {
@@ -29,8 +31,7 @@ describe("gateway reuse CLI observation", () => {
     expect(result).toMatchObject({ healthy: true, namedMetadata: true, endpointBinding: "match" });
     expect(capture.mock.calls.map(([args]) => args)).toEqual([
       ["status", "-g", "nemoclaw"],
-      ["gateway", "info", "-g", "nemoclaw"],
-      ["gateway", "info"],
+      ["gateway", "list", "-o", "json"],
     ]);
     const expectedOptions = expect.objectContaining({
       ignoreError: true,
@@ -46,15 +47,17 @@ describe("gateway reuse CLI observation", () => {
     expect(capture.mock.calls.map(([, options]) => options)).toEqual([
       expectedOptions,
       expectedOptions,
-      expectedOptions,
     ]);
     expect(capture.mock.calls.map(([, options]) => options.env.OPENSHELL_GATEWAY_ENDPOINT)).toEqual(
-      [undefined, undefined, undefined],
+      [undefined, undefined],
     );
   });
   it("uses the supplied read-only child environment without inventing workspace authority", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
-    const capture = vi.fn().mockResolvedValue({ status: 0, output: healthy });
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, output: healthy })
+      .mockResolvedValue({ status: 0, output: registry });
     const environment = { HOME: "/readiness", OPENSHELL_GATEWAY: "nemoclaw" };
     const observed = await createCliOpenShellGatewayReuseObserver(
       capture,
@@ -64,9 +67,26 @@ describe("gateway reuse CLI observation", () => {
     expect(capture.mock.calls.map(([, options]) => options.env)).toEqual([
       environment,
       environment,
-      environment,
     ]);
     expect(capture.mock.calls.every(([, options]) => options.replaceEnv === true)).toBe(true);
+  });
+  it("parses registry JSON from stdout without treating stderr diagnostics as schema", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, output: healthy })
+      .mockResolvedValueOnce({
+        status: 0,
+        output: `${registry}\nwarning: system registration shadowed`,
+        stdout: registry,
+        stderr: "warning: system registration shadowed",
+      });
+
+    expect(
+      await createCliOpenShellGatewayReuseObserver(capture).observeGatewayReuse({
+        target,
+        expectedGatewayPort: 8080,
+      }),
+    ).toMatchObject({ healthy: true, namedMetadata: true, endpointBinding: "match" });
   });
   it("preserves registration after a status authentication failure", async () => {
     const capture = vi
@@ -75,7 +95,7 @@ describe("gateway reuse CLI observation", () => {
         status: 0,
         output: `${healthy}\nError: authentication failed secret-token`,
       })
-      .mockResolvedValue({ status: 0, output: named });
+      .mockResolvedValue({ status: 0, output: registry });
     const observed = await createCliOpenShellGatewayReuseObserver(capture).observeGatewayReuse({
       target,
     });
@@ -107,7 +127,7 @@ describe("gateway reuse CLI observation", () => {
     const capture = vi
       .fn()
       .mockResolvedValueOnce({ status: 1, output: "Error: connection refused" })
-      .mockResolvedValue({ status: 0, output: "" });
+      .mockResolvedValue({ status: 0, output: "[]" });
     expect(
       await createCliOpenShellGatewayReuseObserver(capture).observeGatewayReuse({ target }),
     ).toMatchObject({ healthy: false, shouldSelect: false, error: { kind: "schema" } });
@@ -121,12 +141,31 @@ describe("gateway reuse CLI observation", () => {
     const capture = vi
       .fn()
       .mockResolvedValueOnce({ status: 0, output: healthy })
-      .mockResolvedValue({ status: 0, output: `Gateway: nemoclaw\nGateway endpoint: ${endpoint}` });
+      .mockResolvedValue({
+        status: 0,
+        output: JSON.stringify([{ name: "nemoclaw", endpoint, active: true }]),
+      });
     expect(
       await createCliOpenShellGatewayReuseObserver(capture).observeGatewayReuse({
         target,
         expectedGatewayPort: 8080,
       }),
     ).toMatchObject({ endpointBinding: "mismatch" });
+  });
+  it("rejects malformed or ambiguous gateway registry output", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, output: healthy })
+      .mockResolvedValueOnce({
+        status: 0,
+        output: JSON.stringify([
+          { name: "nemoclaw", endpoint: "https://127.0.0.1:8080/", active: true },
+          { name: "other", endpoint: "https://127.0.0.1:8090/", active: true },
+        ]),
+      });
+
+    expect(
+      await createCliOpenShellGatewayReuseObserver(capture).observeGatewayReuse({ target }),
+    ).toMatchObject({ error: { kind: "schema" } });
   });
 });

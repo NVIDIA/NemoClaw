@@ -35,6 +35,46 @@ function failed(error: OpenShellSandboxError): OpenShellGatewayReuseObservation 
   };
 }
 
+type GatewayRegistryEntry = Readonly<{
+  name: string;
+  endpoint: string;
+  active: boolean;
+}>;
+
+function parseGatewayRegistry(output: string): GatewayRegistryEntry[] | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(value)) return null;
+
+  const entries: GatewayRegistryEntry[] = [];
+  const names = new Set<string>();
+  let activeCount = 0;
+  for (const entry of value) {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      !isValidName(entry.name) ||
+      typeof entry.endpoint !== "string" ||
+      typeof entry.active !== "boolean" ||
+      names.has(entry.name)
+    ) {
+      return null;
+    }
+    names.add(entry.name);
+    if (entry.active) activeCount += 1;
+    entries.push({ name: entry.name, endpoint: entry.endpoint, active: entry.active });
+  }
+  return activeCount <= 1 ? entries : null;
+}
+
+function gatewayMetadataOutput(entry: GatewayRegistryEntry | undefined): string {
+  return entry ? `Gateway: ${entry.name}\nGateway endpoint: ${entry.endpoint}` : "";
+}
+
 export function createCliOpenShellGatewayReuseObserver(
   capture: CaptureOpenShellCommand,
   environment?: NodeJS.ProcessEnv,
@@ -78,8 +118,7 @@ export function createCliOpenShellGatewayReuseObserver(
         const outputs: string[] = [];
         for (const args of [
           ["status", "-g", name],
-          ["gateway", "info", "-g", name],
-          ["gateway", "info"],
+          ["gateway", "list", "-o", "json"],
         ]) {
           const result = await capture(args, opts);
           const error = classifyCliOpenShellCommandError(
@@ -96,9 +135,18 @@ export function createCliOpenShellGatewayReuseObserver(
             )
           )
             return failed(error);
-          outputs.push(result.output);
+          outputs.push(args[0] === "gateway" ? (result.stdout ?? result.output) : result.output);
         }
-        const [statusOutput = "", namedOutput = "", activeOutput = ""] = outputs;
+        const [statusOutput = "", registryOutput = ""] = outputs;
+        const registry = parseGatewayRegistry(registryOutput);
+        if (!registry)
+          return failed({
+            kind: "schema",
+            message: "OpenShell returned an unrecognized gateway registry.",
+          });
+        const namedOutput = gatewayMetadataOutput(registry.find((entry) => entry.name === name));
+        const activeOutput = gatewayMetadataOutput(registry.find((entry) => entry.active));
+        const observationOutputs = [statusOutput, namedOutput, activeOutput];
         const namedMetadata = hasStaleGateway(namedOutput, name);
         const healthy = isGatewayHealthy(statusOutput, namedOutput, activeOutput, name);
         const reuse = getGatewayReuseState(statusOutput, namedOutput, activeOutput, name, name);
@@ -109,7 +157,7 @@ export function createCliOpenShellGatewayReuseObserver(
             message: "Gateway metadata is unavailable; recovery authority cannot be verified.",
           });
         const endpoints: (string | null)[] = [];
-        for (const output of outputs) {
+        for (const output of observationOutputs) {
           for (const match of stripOpenShellCliAnsi(output).matchAll(
             /^\s*(?:Gateway endpoint|Server):\s*(.*)$/gim,
           )) {
@@ -144,7 +192,10 @@ export function createCliOpenShellGatewayReuseObserver(
           endpointBinding:
             request.expectedGatewayPort === undefined
               ? "unknown"
-              : classifyManagedGatewayEndpointBinding(outputs, request.expectedGatewayPort),
+              : classifyManagedGatewayEndpointBinding(
+                  observationOutputs,
+                  request.expectedGatewayPort,
+                ),
         };
       } catch {
         return failed({
