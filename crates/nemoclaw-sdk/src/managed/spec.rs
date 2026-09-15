@@ -64,7 +64,7 @@ impl Spec {
         if self.service.as_ref().is_none_or(|s| s.placement.is_none()) {
             self.gateway.validate_managed()?;
         }
-        if self.kind == GATEWAY_KIND && self.service.is_none() && self.layout <= 2 {
+        if self.kind == GATEWAY_KIND && self.service.is_none() && matches!(self.layout, 0 | 2) {
             return Ok(());
         }
         if self.kind == SERVICE_KIND
@@ -74,6 +74,15 @@ impl Spec {
             return service.validate().map_err(Into::into);
         }
         Err(Error::Conflict("invalid managed runtime kind or layout"))
+    }
+    pub(crate) fn validate_runtime(&self) -> Result<(), Error> {
+        self.validate()?;
+        if self.kind == GATEWAY_KIND && self.layout != 2 {
+            return Err(Error::Conflict(
+                "unsupported managed gateway process layout; resources retained",
+            ));
+        }
+        Ok(())
     }
     pub fn engine(&self) -> &str {
         self.service
@@ -129,16 +138,14 @@ impl Spec {
             .unwrap_or(&self.gateway.image)
     }
     pub fn container(&self, data_path: &str) -> Result<ContainerCreateBody, Error> {
-        self.validate()?;
+        self.validate_runtime()?;
         let mut host = json!({"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],"RestartPolicy":{"Name":"no","MaximumRetryCount":0},"LogConfig":{"Type":"json-file","Config":{"max-size":"32m","max-file":"3"}},"Memory":0,"MemorySwap":0,"ShmSize":0});
         let mut config = json!({"Image":self.image(),"User":"","Labels":self.labels()?});
         if self.kind == GATEWAY_KIND {
             let url = url::Url::parse(&self.gateway.endpoint)
                 .map_err(|_| Error::Conflict("invalid gateway endpoint"))?;
             config["User"] = json!("0:0");
-            if self.layout >= 1 {
-                config["Env"] = json!([format!("XDG_STATE_HOME={data_path}/state")]);
-            }
+            config["Env"] = json!([format!("XDG_STATE_HOME={data_path}/state")]);
             config["Entrypoint"] = json!(["/usr/local/bin/openshell-gateway"]);
             config["Cmd"] = json!([
                 "--config",

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 fn observed() -> RuntimeObservation {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     RuntimeObservation {
-        spec: serde_json::from_str(fixtures[3]["spec"].as_str().unwrap()).unwrap(),
+        spec: serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap(),
         id: "binding".into(),
         container_id: "container".into(),
         data_path: "/data".into(),

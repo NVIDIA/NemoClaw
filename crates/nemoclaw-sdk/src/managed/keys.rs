@@ -8,33 +8,6 @@ use crate::{Error, docker::Engine};
 pub(crate) const CREDENTIAL_KEY_PATH: &str =
     "/state/openshell/gateway/credentials/key-encryption-key.bin";
 impl Engine {
-    /// Caller has verified the immutable container and its complete old spec.
-    pub(crate) async fn preserve_legacy_key(&self, id: &str, data_path: &str) -> Result<(), Error> {
-        let legacy = self
-            .read_file(
-                id,
-                "/root/.local/state/openshell/gateway/credentials/key-encryption-key.bin",
-                32,
-            )
-            .await?
-            .filter(|key| key.len() == 32)
-            .ok_or(Error::Conflict(
-                "legacy gateway encryption key is unobservable; replacement forbidden",
-            ))?;
-        let key = match self
-            .read_file(id, &format!("{data_path}{CREDENTIAL_KEY_PATH}"), 32)
-            .await?
-        {
-            Some(key) => key,
-            None => self.write_credential_key(id, data_path, &legacy).await?,
-        };
-        if key != legacy {
-            return Err(Error::Conflict(
-                "legacy encryption key was not preserved; replacement forbidden",
-            ));
-        }
-        Ok(())
-    }
     pub(crate) async fn write_credential_key(
         &self,
         id: &str,

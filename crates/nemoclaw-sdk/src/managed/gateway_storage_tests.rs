@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 #[tokio::test]
 async fn retained_gateway_storage_requires_complete_owned_credentials_without_mutations() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
-    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    spec.layout = 0;
     let data_path = "/var/lib/docker/volumes/fixture/_data";
     let create = serde_json::to_value(initializer(&spec, data_path).unwrap()).unwrap();
     let helper = json!({"Id":"helper","Config":create,"HostConfig":create["HostConfig"],"State":{"Status":"exited","Running":false,"ExitCode":0},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":data_path,"RW":true}]});
@@ -138,4 +139,43 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn missing_persistent_key_never_imports_or_generates_for_an_existing_gateway() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    spec.layout = 0;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let seen = requests.clone();
+    let fixture = Fixture::start(move |request| {
+        assert_eq!(request.method, "GET", "missing key must not cause a write");
+        seen.lock().unwrap().push(request.path.clone());
+        if request.path.contains("/archive?") {
+            Some((404, br#"{"message":"missing"}"#.to_vec()))
+        } else {
+            Some((200, br#"{"Id":"existing-gateway"}"#.to_vec()))
+        }
+    })
+    .await;
+    let engine = fixture.engine_for(&spec.gateway.engine);
+    for bound in [true, false] {
+        requests.lock().unwrap().clear();
+        assert!(
+            engine
+                .credential_key(&spec, "helper", "/owned-data", bound, true)
+                .await
+                .is_err()
+        );
+        let observed = requests.lock().unwrap();
+        assert_eq!(observed.len(), if bound { 1 } else { 2 });
+        let path = url::Url::parse(&format!("http://fixture{}", observed[0])).unwrap();
+        assert!(
+            path.query_pairs()
+                .any(|(k, v)| k == "path" && v == format!("/owned-data{CREDENTIAL_KEY_PATH}"))
+        );
+        if !bound {
+            assert!(observed[1].contains(&spec.name));
+        }
+    }
 }

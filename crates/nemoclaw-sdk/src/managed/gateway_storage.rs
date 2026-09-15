@@ -234,35 +234,17 @@ impl Engine {
                 "gateway encryption key is missing; resources retained",
             ));
         }
-        let key = if let Some(container) = self.container(&spec.name).await? {
-            self.observe_runtime(spec, "")
-                .await?
-                .ok_or(ObservationError::Incomplete)?;
-            self.read_file(
-                container
-                    .id
-                    .as_deref()
-                    .ok_or(ObservationError::Incomplete)?,
-                "/root/.local/state/openshell/gateway/credentials/key-encryption-key.bin",
-                32,
-            )
-            .await?
-            .filter(|key| key.len() == 32)
-            .ok_or(Error::Conflict(
-                "legacy encryption key is unobservable; replacement forbidden",
-            ))?
-        } else {
-            if !create {
-                return Err(Error::PartialRuntime);
-            }
-            let mut key = vec![0_u8; 32];
-            getrandom::fill(&mut key)
-                .map_err(|_| Error::State("cannot generate gateway credential key"))?;
-            key
-        };
-        if !create {
-            return Ok(key);
+        if self.container(&spec.name).await?.is_some() {
+            return Err(Error::Conflict(
+                "gateway has no persistent credential key; resources retained",
+            ));
         }
+        if !create {
+            return Err(Error::PartialRuntime);
+        }
+        let mut key = vec![0_u8; 32];
+        getrandom::fill(&mut key)
+            .map_err(|_| Error::State("cannot generate gateway credential key"))?;
         self.write_credential_key(helper, data_path, &key).await
     }
     async fn initialize_gateway(&self, spec: &Spec, data_path: &str) -> Result<(), Error> {

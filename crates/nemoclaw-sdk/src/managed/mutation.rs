@@ -233,10 +233,6 @@ impl Engine {
             .observe_runtime(spec, id)
             .await?
             .ok_or(ObservationError::Incomplete)?;
-        if spec.kind == GATEWAY_KIND && spec.layout == 0 {
-            self.preserve_legacy_key(&observed.container_id, &observed.data_path)
-                .await?;
-        }
         if observed.running {
             self.api
                 .stop_container(

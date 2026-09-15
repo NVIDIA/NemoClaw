@@ -5,7 +5,9 @@
 
 `reference.json` records the Go `managed.Spec.JSON`, ownership labels, container configuration, host configuration, and gateway TOML generated from the Spark configuration fixture at `v1-poc` revision `b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`.
 
-The four cases cover gateway layouts 0, 1, and 2, and the inference service.
+The retained cases cover gateway process layout 2 and the inference service.
+Obsolete gateway process layouts 0 and 1 are rejected before engine access.
+Gateway storage retains its separate layout-0 specification and durable identity.
 Generation is the synthetic 32-character value `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`.
 The fixture does not authorize access to any existing deployment.
 

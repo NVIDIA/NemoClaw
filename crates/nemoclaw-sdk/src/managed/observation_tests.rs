@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 fn reference() -> (Spec, Value, Value, Value) {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
-    let fixture = &fixtures[3];
+    let fixture = &fixtures[1];
     let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
     let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":fixture["config"],"HostConfig":fixture["hostConfig"],"State":{"Running":true,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Source":"/var/lib/docker/volumes/fixture/_data","Destination":"/data","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
@@ -126,19 +126,15 @@ fn gateway_identity_includes_signing_key_and_persisted_encryption_key() {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     assert_eq!(
-        gateway_identity(base, signing, None, 0).unwrap(),
-        format!("{base}/{signing_hash}")
-    );
-    assert_eq!(
-        gateway_identity(base, signing, Some(&key), 2).unwrap(),
+        gateway_identity(base, signing, &key).unwrap(),
         format!("{base}/{signing_hash}/{key_hash}")
     );
-    assert!(gateway_identity(base, signing, None, 2).is_err());
-    assert!(gateway_identity(base, signing, Some(b"short"), 2).is_err());
-    assert!(gateway_identity(base, b"", Some(&key), 2).is_err());
+    assert!(gateway_identity(base, signing, &[]).is_err());
+    assert!(gateway_identity(base, signing, b"short").is_err());
+    assert!(gateway_identity(base, b"", &key).is_err());
     assert_ne!(
-        gateway_identity(base, signing, Some(&key), 2).unwrap(),
-        gateway_identity(base, signing, Some(&[8; 32]), 2).unwrap()
+        gateway_identity(base, signing, &key).unwrap(),
+        gateway_identity(base, signing, &[8; 32]).unwrap()
     );
 }
 
@@ -235,4 +231,40 @@ fn owned_volume_accepts_an_isolated_daemon_data_root() {
     let mut drifted: Volume = volume;
     drifted.mountpoint = "/srv/nemoclaw-proof/docker/volumes/../foreign/_data".into();
     assert!(verify_volume(&spec, &drifted, Some("/srv/nemoclaw-proof/docker")).is_err());
+}
+
+#[tokio::test]
+async fn retired_gateway_process_layouts_fail_before_engine_access() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let mut spec: Spec = serde_json::from_str(
+        fixtures
+            .iter()
+            .find(|f| {
+                serde_json::from_str::<Spec>(f["spec"].as_str().unwrap())
+                    .unwrap()
+                    .layout
+                    == 2
+            })
+            .unwrap()["spec"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = requests.clone();
+    let fixture = Fixture::start(move |_| {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Some((503, br#"{"message":"unavailable"}"#.to_vec()))
+    })
+    .await;
+    let engine = fixture.engine_for(&spec.gateway.engine);
+    for layout in [0, 1] {
+        spec.layout = layout;
+        assert!(spec.container("/owned-data").is_err());
+        assert!(engine.observe_runtime(&spec, "engine/bound").await.is_err());
+        assert!(engine.ensure_runtime(&spec, "engine/bound").await.is_err());
+        assert!(engine.replace_runtime(&spec, "engine/bound").await.is_err());
+        assert!(engine.remove_runtime(&spec, "engine/bound").await.is_err());
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 }

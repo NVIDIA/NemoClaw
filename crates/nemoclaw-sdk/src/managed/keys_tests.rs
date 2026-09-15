@@ -7,25 +7,18 @@ use std::{
     sync::{Arc, Mutex},
 };
 #[tokio::test]
-async fn legacy_key_handoff_never_rekeys_or_writes_after_failed_observation() {
+async fn credential_key_write_requires_matching_readback_and_private_permissions() {
     for failure in [
         "none",
-        "preserved",
         "different",
         "missing",
         "authentication",
         "copy",
         "short",
     ] {
-        let legacy = vec![42_u8; 32];
-        let initial = match failure {
-            "preserved" => Some(legacy.clone()),
-            "different" => Some(vec![43; 32]),
-            _ => None,
-        };
-        let state = Arc::new(Mutex::new((initial, 0)));
+        let key = vec![42_u8; 32];
+        let state = Arc::new(Mutex::new((None::<Vec<u8>>, 0)));
         let shared = state.clone();
-        let key = legacy.clone();
         let fixture = Fixture::start(move |request| {
             assert!(request.path.starts_with("/containers/verified/archive?"));
             let url = url::Url::parse(&format!("http://fixture{}", request.path)).unwrap();
@@ -61,17 +54,15 @@ async fn legacy_key_handoff_never_rekeys_or_writes_after_failed_observation() {
                 return Some((200, Vec::new()));
             }
             assert_eq!(request.method, "GET");
-            let data = if path.starts_with("/root/") {
-                match failure {
-                    "authentication" => {
-                        return Some((403, br#"{"message":"secret-sentinel"}"#.to_vec()));
-                    }
-                    "missing" => None,
-                    "short" => Some(b"short".to_vec()),
-                    _ => Some(key.clone()),
+            assert_eq!(path, format!("/owned-data{CREDENTIAL_KEY_PATH}"));
+            let data = match failure {
+                "authentication" => {
+                    return Some((403, br#"{"message":"secret-sentinel"}"#.to_vec()));
                 }
-            } else {
-                state.0.clone()
+                "missing" => None,
+                "short" => Some(b"short".to_vec()),
+                "different" => Some(vec![43; 32]),
+                _ => state.0.clone(),
             };
             if let Some(bytes) = data {
                 let mut archive = tar::Builder::new(Vec::new());
@@ -89,17 +80,21 @@ async fn legacy_key_handoff_never_rekeys_or_writes_after_failed_observation() {
         })
         .await;
         let engine = crate::docker::Engine::connect(&fixture.endpoint).unwrap();
-        let result = engine.preserve_legacy_key("verified", "/owned-data").await;
-        if matches!(failure, "none" | "preserved") {
-            result.unwrap();
-            assert_eq!(state.lock().unwrap().0.as_ref(), Some(&legacy));
+        let result = engine
+            .write_credential_key("verified", "/owned-data", &key)
+            .await;
+        if failure == "none" {
+            assert_eq!(result.unwrap(), key);
         } else {
-            let error = result.unwrap_err();
-            assert!(!error.to_string().contains("secret-sentinel"));
+            assert!(!result.unwrap_err().to_string().contains("secret-sentinel"));
         }
-        assert_eq!(
-            state.lock().unwrap().1,
-            usize::from(matches!(failure, "none" | "copy"))
+        assert_eq!(state.lock().unwrap().1, 1);
+        assert!(
+            engine
+                .write_credential_key("verified", "/owned-data", b"short")
+                .await
+                .is_err()
         );
+        assert_eq!(state.lock().unwrap().1, 1);
     }
 }

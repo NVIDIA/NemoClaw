@@ -269,7 +269,7 @@ impl Engine {
         spec: &Spec,
         id: &str,
     ) -> Result<Option<RuntimeObservation>, Error> {
-        spec.validate()?;
+        spec.validate_runtime()?;
         if self.endpoint() != spec.engine() {
             return Err(Error::Conflict(
                 "runtime engine differs from its explicit specification",
@@ -366,23 +366,18 @@ impl Engine {
                     )
                     .await?
                     .ok_or(ObservationError::Incomplete)?;
-                let encryption = if spec.layout >= 2 {
-                    Some(
-                        self.read_file(
-                            &container_id,
-                            &format!(
-                                "{}/state/openshell/gateway/credentials/key-encryption-key.bin",
-                                volume.mountpoint
-                            ),
-                            32,
-                        )
-                        .await?
-                        .ok_or(ObservationError::Incomplete)?,
+                let encryption = self
+                    .read_file(
+                        &container_id,
+                        &format!(
+                            "{}/state/openshell/gateway/credentials/key-encryption-key.bin",
+                            volume.mountpoint
+                        ),
+                        32,
                     )
-                } else {
-                    None
-                };
-                actual = gateway_identity(&actual, &signing, encryption.as_deref(), spec.layout)?;
+                    .await?
+                    .ok_or(ObservationError::Incomplete)?;
+                actual = gateway_identity(&actual, &signing, &encryption)?;
                 let supervisor = self
                     .read_file(
                         &container_id,
@@ -421,6 +416,7 @@ impl Engine {
         spec: &Spec,
         id: &str,
     ) -> Result<Option<RuntimeObservation>, Error> {
+        spec.validate_runtime()?;
         if id.is_empty() {
             return Err(Error::Conflict(
                 "runtime deletion requires an established identity",
@@ -443,14 +439,14 @@ impl Engine {
     }
 }
 
-fn gateway_identity(
-    base: &str,
-    signing: &[u8],
-    encryption: Option<&[u8]>,
-    layout: u32,
-) -> Result<String, Error> {
+fn gateway_identity(base: &str, signing: &[u8], encryption: &[u8]) -> Result<String, Error> {
     if signing.is_empty() {
         return Err(Error::Conflict("gateway signing identity is unobservable"));
+    }
+    if encryption.len() != 32 {
+        return Err(Error::Conflict(
+            "gateway credential encryption key is unobservable; restart forbidden",
+        ));
     }
     let digest = |bytes: &[u8]| -> String {
         Sha256::digest(bytes)
@@ -458,15 +454,5 @@ fn gateway_identity(
             .map(|byte| format!("{byte:02x}"))
             .collect()
     };
-    let mut id = format!("{base}/{}", digest(signing));
-    if layout >= 2 {
-        let encryption = encryption
-            .filter(|key| key.len() == 32)
-            .ok_or(Error::Conflict(
-                "gateway credential encryption key is unobservable; restart forbidden",
-            ))?;
-        id.push('/');
-        id.push_str(&digest(encryption));
-    }
-    Ok(id)
+    Ok(format!("{base}/{}/{}", digest(signing), digest(encryption)))
 }
