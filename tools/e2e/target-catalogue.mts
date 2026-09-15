@@ -1302,10 +1302,15 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("sandbox-survival", {
-    displayName: "Lifecycle: preserves native agent state across OpenShell restart",
+    displayName: "Lifecycle: repairs stopped phase and preserves native agent state",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; OpenShell sandbox lifecycle",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    owningPaths: [
+      "src/lib/actions/sandbox/gateway-state.ts",
+      "src/lib/onboard/runtime-provider/docker.ts",
+    ],
     timeoutMinutes: 30,
     installMode: "none",
     restoreCli: true,
