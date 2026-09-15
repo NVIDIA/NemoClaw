@@ -46,6 +46,7 @@ Each explanation includes diagrams and links to the commits that established its
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
 | Artifact ownership, preparation verification, and receipt publication | [Recipe design](design/recipes.md) |
 | Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |
+| Proposed migration of previous user guides, public routes, and release documentation | [Documentation migration plan](design/documentation-migration.md) |
 
 ## Sources and Fixtures
 
