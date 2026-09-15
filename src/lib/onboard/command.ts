@@ -61,6 +61,7 @@ import {
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
   isOnboardDeferredExitError,
+  redactOnboardError,
   redactOnboardErrorText,
   redactOnboardDiagnosticText,
 } from "./session-bootstrap";
@@ -538,66 +539,6 @@ function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string)
   return 1;
 }
 
-function isPlainDiagnosticObject(value: object): value is Record<PropertyKey, unknown> {
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function redactDiagnosticArray(value: unknown[], seen: WeakMap<object, unknown>): unknown[] {
-  const redacted: unknown[] = [];
-  seen.set(value, redacted);
-  for (const nested of value) {
-    redacted.push(redactOnboardCommandFailure(nested, seen));
-  }
-  return redacted;
-}
-
-function redactPlainDiagnosticObject(
-  value: Record<PropertyKey, unknown>,
-  seen: WeakMap<object, unknown>,
-): Record<PropertyKey, unknown> {
-  const redacted = Object.create(Object.getPrototypeOf(value)) as Record<PropertyKey, unknown>;
-  seen.set(value, redacted);
-  for (const key of Reflect.ownKeys(value)) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor) continue;
-    if ("value" in descriptor) {
-      descriptor.value = redactOnboardCommandFailure(descriptor.value, seen);
-    }
-    Object.defineProperty(redacted, key, descriptor);
-  }
-  return redacted;
-}
-
-function redactNestedError(value: Error, seen: WeakMap<object, unknown>): Error {
-  seen.set(value, value);
-  value.message = redactOnboardErrorText(value.message);
-  value.stack = value.stack && redactOnboardErrorText(value.stack);
-  if ("cause" in value) {
-    value.cause = redactOnboardCommandFailure(value.cause, seen);
-  }
-  if (value instanceof AggregateError && Array.isArray(value.errors)) {
-    for (const [index, nested] of value.errors.entries()) {
-      value.errors[index] = redactOnboardCommandFailure(nested, seen);
-    }
-  }
-  return value;
-}
-
-/** Redact nested command failures while preserving every Error identity and object cycle. */
-function redactOnboardCommandFailure(
-  value: unknown,
-  seen = new WeakMap<object, unknown>(),
-): unknown {
-  if (typeof value === "string") return redactOnboardErrorText(value);
-  if (typeof value !== "object" || value === null) return value;
-  if (seen.has(value)) return seen.get(value);
-
-  if (Array.isArray(value)) return redactDiagnosticArray(value, seen);
-  if (isPlainDiagnosticObject(value)) return redactPlainDiagnosticObject(value, seen);
-  return value instanceof Error ? redactNestedError(value, seen) : value;
-}
-
 /** Preserve cancellation and failure behavior without exposing secrets through CLI errors. */
 function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
   const cancellationCode = promptCancellationCode(error);
@@ -638,7 +579,8 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // print a clear message and exit non-zero instead of either crashing with
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
   if (cancellationCode !== "EOF") {
-    throw redactOnboardCommandFailure(error);
+    if (error instanceof Error) redactOnboardError(error);
+    throw error;
   }
   return reportOnboardCommandError(deps, "  Installation cancelled");
 }
