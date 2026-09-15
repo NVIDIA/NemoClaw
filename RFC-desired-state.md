@@ -250,3 +250,32 @@ unchanged apply, export/reapply, and watchdog stop with explicit recovery. Resou
 identities and snapshot receipts stayed stable during recovery; intentional destroy
 retained storage, and a later apply reused it. The same generic runtime image served
 both tested models. See the [retained evidence](docs/validation/rust-selected-model-linux-arm64.json).
+
+## Execution-target preparation
+
+Decision: Accept for the preparatory experiment requested by cvillela. Keep the
+existing YAML, resource addresses and binding encodings during connection-plumbing
+work. cvillela owns acceptance; two-engine fixtures and a separately recorded live
+OpenShell/Podman proof are the validation gates. This does not qualify Podman or
+remote deployment merely because a Docker-compatible client connects.
+
+A connection alias selects transport details. A durable execution target identifies
+the daemon and its storage/account namespace. A hostname, socket pathname or alias
+is not sufficient identity. Rootless and rootful engines on one host are different
+targets. Changing connection details may preserve a target only after observing
+and matching its identity; changing target requires explicit migration, never
+adoption or cleanup by resource name. Credential rotation does not migrate a
+resource. Missing or failed identity observations stop operations. This preparation
+keeps the existing stricter endpoint-change behavior until migration is implemented.
+
+One gateway owns one sandbox execution target. Inference may be elsewhere, reached
+through an explicitly resolved inference connection. No per-sandbox engine placement
+is promised. Validate OpenShell's configured Docker-compatible socket before adding
+engine selection to YAML. Do not introduce a generic provider framework or remote
+observation agent in this preparation.
+
+Capacity observations belong to an execution host, while `/proc` and `nvidia-smi`
+belong to the process that reads them. A remote daemon's architecture does not prove
+that local memory, GPU or disk observations belong to it. Missing remote capacity
+must fail, never fall back to local measurements. The resident supervisor remains
+responsible for its own execution host's immediate checks and memory protection.
