@@ -35,17 +35,6 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - name: Restore native build cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            .build/downloads
-          key: native-v1-${{ matrix.platform }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}-${{ github.sha }}
-          restore-keys: |
-            native-v1-${{ matrix.platform }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}-
       - name: Install pinned local build tools
         run: |
           rustup show
@@ -63,6 +52,18 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'PROTOC={binary}\n')
           PY
+      - name: Restore native dependency cache
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          prefix-key: native-deps-v2
+          key: ${{ matrix.platform }}
+          add-rust-environment-hash-key: "true"
+          workspaces: . -> target
+          cache-targets: "true"
+          cache-all-crates: "false"
+          cache-workspace-crates: "false"
+          cache-bin: "false"
+          cache-directories: .build/downloads
       - name: Formatting, lint, and deterministic behavior
         run: |
           cargo fmt --check

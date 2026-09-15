@@ -66,7 +66,7 @@ fn native_commands_preserve_workspace_features_between_build_and_test() {
 }
 
 #[test]
-fn native_cache_reuses_compatible_builds_without_restoring_bundles_or_credentials() {
+fn native_cache_retains_only_dependencies_in_both_build_profiles() {
     let workflow: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
     let steps = workflow["jobs"]["native"]["steps"].as_array().unwrap();
@@ -75,36 +75,28 @@ fn native_cache_reuses_compatible_builds_without_restoring_bundles_or_credential
         .find(|step| {
             step["uses"]
                 .as_str()
-                .is_some_and(|action| action.starts_with("actions/cache@"))
+                .is_some_and(|action| action.starts_with("Swatinem/rust-cache@"))
         })
-        .expect("native builds must restore a cache before compiling");
+        .expect("native builds must prune workspace artifacts before caching");
     let inputs = &cache["with"];
-    let paths: Vec<_> = inputs["path"].as_str().unwrap().lines().collect();
-    assert_eq!(
-        paths,
-        [
-            "~/.cargo/registry",
-            "~/.cargo/git",
-            "target",
-            ".build/downloads"
-        ]
-    );
-    let key = inputs["key"].as_str().unwrap();
-    let prefix = inputs["restore-keys"].as_str().unwrap().trim();
-    assert!(key.starts_with(prefix));
-    assert!(key.ends_with("${{ github.sha }}"));
-    for input in [
-        "matrix.platform",
-        "rust-toolchain.toml",
-        "Cargo.lock",
-        "Cargo.toml",
-    ] {
-        assert!(
-            prefix.contains(input),
-            "cache compatibility must include {input}"
-        );
-    }
+    assert_eq!(inputs["cache-all-crates"], "false");
+    assert_eq!(inputs["cache-workspace-crates"], "false");
+    assert_eq!(inputs["cache-bin"], "false");
+    assert_eq!(inputs["cache-targets"], "true");
+    // Include debug and target-triple/release artifacts, not just one profile.
+    assert_eq!(inputs["workspaces"], ". -> target");
+    assert_eq!(inputs["key"], "${{ matrix.platform }}");
+    assert_eq!(inputs["add-rust-environment-hash-key"], "true");
+    assert!(!inputs.to_string().contains("github.sha"));
     let cache_index = steps.iter().position(|step| step == cache).unwrap();
+    let toolchain_index = steps
+        .iter()
+        .position(|step| {
+            step["run"]
+                .as_str()
+                .is_some_and(|script| script.contains("rustup show"))
+        })
+        .unwrap();
     let compile_index = steps
         .iter()
         .position(|step| {
@@ -113,5 +105,5 @@ fn native_cache_reuses_compatible_builds_without_restoring_bundles_or_credential
                 .is_some_and(|script| script.contains("cargo clippy"))
         })
         .unwrap();
-    assert!(cache_index < compile_index);
+    assert!(toolchain_index < cache_index && cache_index < compile_index);
 }
