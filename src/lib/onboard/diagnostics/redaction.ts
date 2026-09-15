@@ -46,6 +46,13 @@ function redactErrorDiagnostic(error: Error, walk: DiagnosticWalk): void {
       error.errors[index] = redactNestedDiagnostic(member, walk);
     }
   }
+  const rollbackCarrier = error as Error & { managedBootstrapRollbackError?: unknown };
+  if ("managedBootstrapRollbackError" in rollbackCarrier) {
+    rollbackCarrier.managedBootstrapRollbackError = redactNestedDiagnostic(
+      rollbackCarrier.managedBootstrapRollbackError,
+      walk,
+    );
+  }
 }
 
 function redactArrayDiagnostic(source: unknown[], target: unknown[], walk: DiagnosticWalk): void {

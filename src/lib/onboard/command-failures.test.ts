@@ -96,6 +96,25 @@ describe("onboarding command failures", () => {
     expect(inspect(failure, { depth: null })).not.toContain(secret);
   });
 
+  it("redacts managed bootstrap rollback diagnostics before rethrow", async () => {
+    const secret = `nvapi-${"f".repeat(60)}`;
+    const rollback = new Error(`Rollback failed: ${secret}`);
+    rollback.stack = `Rollback stack: ${secret}`;
+    const failure = new Error("Managed bootstrap failed") as Error & {
+      managedBootstrapRollbackError?: unknown;
+    };
+    failure.managedBootstrapRollbackError = rollback;
+    rollback.cause = failure;
+
+    await rethrowOnboardFailure(failure);
+
+    expect(failure.managedBootstrapRollbackError).toBe(rollback);
+    expect(rollback.cause).toBe(failure);
+    expect(rollback.message).toBe("Rollback failed: <REDACTED>");
+    expect(rollback.stack).toBe("Rollback stack: <REDACTED>");
+    expect(inspect(failure, { depth: null })).not.toContain(secret);
+  });
+
   it("redacts string causes and aggregate members while retaining non-string values", async () => {
     const secret = `nvapi-${"e".repeat(60)}`;
     const failure = new AggregateError([secret, null, 42], "Onboarding failed", { cause: secret });
