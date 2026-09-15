@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Brave Search plugin
 
 Upstream: OpenClaw, `@openclaw/brave-plugin` version `2026.9.4`.

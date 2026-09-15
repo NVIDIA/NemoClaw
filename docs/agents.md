@@ -122,6 +122,43 @@ Configuration readiness does not establish collector delivery; verify incoming t
 Use an image built with the updated [runtime build procedure](#runtime-lifecycle) and a fresh deployment when changing image or tracing intent.
 The offline native test proves trace delivery to a disposable collector; it does not qualify a production collector or its retention settings.
 
+## Brave Web Search
+
+Declare web search on the sandbox, using names from its OpenClaw agent list:
+
+```yaml
+integrations:
+  webSearch:
+    provider: brave
+    agentRefs: [main]
+    credential:
+      env: BRAVE_API_KEY
+```
+
+Set the referenced environment variable on the host running `nemoclaw apply`.
+NemoClaw resolves that reference locally and creates a workspace-scoped Brave provider profile and credential-bearing provider in OpenShell.
+The agent receives OpenShell's placeholder through `BRAVE_API_KEY`; OpenShell's supervisor proxy replaces it with the real key in requests to Brave.
+Exported YAML and OpenTofu state retain the host reference, not its value.
+Destroy removes the managed provider and profile without revoking the key at Brave.
+Unchanged apply does not rotate a changed value behind the same environment reference.
+
+`agentRefs` must contain one or more unique, declared, unrestricted OpenClaw agents.
+Selected agents receive `web_search`; other unrestricted agents explicitly deny it, and read-only agents retain only `read`.
+These are native tool restrictions within a shared sandbox, not separate process or filesystem boundaries.
+Other harnesses are rejected.
+
+The integration adds a reserved `nemoclaw-brave` policy rule permitting the native Node executable to GET `/res/v1/web/search` at `api.search.brave.com:443`.
+The supervisor proxy terminates TLS there to inject `X-Subscription-Token`.
+An explicit policy cannot reuse this rule name, and the inference provider cannot be named `brave-search`.
+The integration owns its profile, provider attachment, native plugin settings, and agent tool grants.
+Profile, attachment, or native configuration drift stops refresh and export without overwriting the conflicting configuration.
+Restore the declared settings before retrying.
+
+Build an updated image using the [runtime build procedure](#runtime-lifecycle) and use a fresh deployment when changing integration intent.
+The builder installs the matching, checksum-pinned Brave plugin; older images do not contain it.
+Changing YAML does not update an image or migrate retained native configuration.
+Offline tests exercise the native plugin against a disposable HTTP fixture; they do not establish that your Brave key is valid or has quota.
+
 ## Hermes Native Server
 
 Fabric owns one authenticated native Hermes HTTP API server per sandbox.
