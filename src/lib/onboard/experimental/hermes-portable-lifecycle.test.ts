@@ -98,7 +98,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete process.env.OPENSHELL_GATEWAY_ENDPOINT;
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
@@ -1398,7 +1398,7 @@ describe("Hermes portable lifecycle", () => {
         const command = args.slice(0, 2).join(":");
         switch (command) {
           case "policy:get":
-            process.env.OPENSHELL_GATEWAY_ENDPOINT = ["", "ambient"][policyReadCount++] ?? "";
+            vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", ["", "ambient"][policyReadCount++] ?? "");
             return { status: 0, stdout: POLICY, stderr: "" };
           case "sandbox:list":
             return {
