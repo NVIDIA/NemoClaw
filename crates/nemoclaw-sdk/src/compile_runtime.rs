@@ -19,7 +19,7 @@ pub fn runtime_targets(
         name: format!("{}-gateway", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generation(generations, GATEWAY_KIND)?.into(),
-        gateway: document.spec.gateway.clone(),
+        gateway: document.spec.gateway.runtime_settings(),
         service: None,
     };
     let mut storage = gateway.clone();
@@ -47,9 +47,9 @@ pub fn runtime_targets(
             gateway: if service.placement.is_some() {
                 Default::default()
             } else {
-                document.spec.gateway.clone()
+                document.spec.gateway.runtime_settings()
             },
-            service: Some(service.clone()),
+            service: Some(service.runtime_settings()),
         };
         let storage = Storage {
             name: format!("{}-inference-data", document.workspace()),

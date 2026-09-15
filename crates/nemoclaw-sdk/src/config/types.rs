@@ -82,6 +82,14 @@ pub struct TLS {
 #[serde(default, deny_unknown_fields)]
 /// Choose a managed local Docker gateway or connect to an external gateway. Credentials and TLS require HTTPS.
 pub struct Gateway {
+    /// Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub network: Option<super::ManagedResource>,
+    /// Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub storage: Option<super::ManagedResource>,
     #[serde(rename = "management")]
     /// Whether the SDK manages the gateway or connects to an existing one.
     pub management: String,
@@ -151,6 +159,18 @@ pub struct InferenceProvider {
 #[serde(default, deny_unknown_fields)]
 /// Managed Ollama uses a pinned image, an existing Docker network, and an explicit model:tag on the route.
 pub struct ManagedOllama {
+    /// Optional ownership declaration for installing the route model. Omission means managed; this does not change the selected model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub model: Option<super::ManagedResource>,
+    /// Optional model-volume ownership declaration. Omission means managed; the volume survives destroy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub storage: Option<super::ManagedResource>,
+    /// Optional ownership declaration for the Ollama daemon container. Omission means managed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedManagement")]
+    pub management: Option<super::ManagedManagement>,
     #[serde(rename = "engine")]
     /// Local Unix Docker socket URL.
     pub engine: String,
@@ -305,6 +325,14 @@ pub struct Overrides {
 #[serde(default, deny_unknown_fields)]
 /// Managed vLLM service. Explicit placement and publication must appear together.
 pub struct Service {
+    /// Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub storage: Option<super::ManagedResource>,
+    /// Optional managed ownership declaration. Omission means managed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedManagement")]
+    pub management: Option<super::ManagedManagement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Box<crate::recipes::inline::InlineRecipe>")]
     /// Optional inline preparation and serving contract supplied by the pinned runtime image.
@@ -343,6 +371,10 @@ pub struct Service {
 #[serde(default, deny_unknown_fields)]
 /// Immutable model identity used for snapshot resolution and storage.
 pub struct Model {
+    /// Optional ownership declaration for downloading and preparing this model installation. Omission means managed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedManagement")]
+    pub management: Option<super::ManagedManagement>,
     #[serde(rename = "repository")]
     /// Public Hugging Face owner/repository name.
     pub repository: String,
@@ -433,6 +465,10 @@ fn is_zero(value: &i64) -> bool {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Execution host and Docker network for a remote model service.
 pub struct ServicePlacement {
+    /// Optional ownership declaration for the network configured by networkCIDR. Omission means managed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub network: Option<super::ManagedResource>,
     /// SSH Docker endpoint, for example ssh://gpu-box.
     pub engine: String,
     /// Canonical private IPv4 /24 on the selected Docker engine.

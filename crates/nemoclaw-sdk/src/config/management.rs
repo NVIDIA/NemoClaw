@@ -10,6 +10,45 @@ pub enum ExternalManagement {
     External,
 }
 
+/// NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ManagedManagement {
+    /// The deployment creates and observes the resource using its existing lifecycle and retention policy.
+    Managed,
+}
+
+/// Explicit ownership for a dependency whose creation settings remain on its parent. Only managed ownership is implemented.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedResource {
+    /// Managed ownership. Omit the enclosing object to keep the same behavior.
+    pub management: ManagedManagement,
+}
+
+impl super::Gateway {
+    pub(crate) fn runtime_settings(&self) -> Self {
+        let mut settings = self.clone();
+        settings.storage = None;
+        settings.network = None;
+        settings
+    }
+}
+impl super::Service {
+    pub(crate) fn runtime_settings(&self) -> Self {
+        // Ownership declarations select the already-implemented lifecycle. Keep
+        // the established process specification and its ownership labels stable.
+        let mut settings = self.clone();
+        settings.management = None;
+        settings.storage = None;
+        settings.model.management = None;
+        if let Some(placement) = &mut settings.placement {
+            placement.network = None;
+        }
+        settings
+    }
+}
+
 /// An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]

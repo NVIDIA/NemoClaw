@@ -475,6 +475,24 @@
           "title": "Managed gateway"
         },
         {
+          "allOf": [
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "network"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "storage"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
           "properties": {
             "endpoint": {
               "pattern": "^https?://"
@@ -527,10 +545,18 @@
           ],
           "type": "string"
         },
+        "network": {
+          "$ref": "#/$defs/ManagedResource",
+          "description": "Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway."
+        },
         "networkCIDR": {
           "description": "Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway.",
           "type": "string",
           "x-nemoclaw-default-rule": "Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
+        },
+        "storage": {
+          "$ref": "#/$defs/ManagedResource",
+          "description": "Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage."
         },
         "tls": {
           "$ref": "#/$defs/TLS",
@@ -812,6 +838,16 @@
       ],
       "type": "object"
     },
+    "ManagedManagement": {
+      "description": "NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.",
+      "oneOf": [
+        {
+          "const": "managed",
+          "description": "The deployment creates and observes the resource using its existing lifecycle and retention policy.",
+          "type": "string"
+        }
+      ]
+    },
     "ManagedOllama": {
       "additionalProperties": false,
       "description": "Managed Ollama uses a pinned image, an existing Docker network, and an explicit model:tag on the route.",
@@ -826,15 +862,41 @@
           "pattern": "^ollama/ollama@sha256:[a-f0-9]{64}$",
           "type": "string"
         },
+        "management": {
+          "$ref": "#/$defs/ManagedManagement",
+          "description": "Optional ownership declaration for the Ollama daemon container. Omission means managed."
+        },
+        "model": {
+          "$ref": "#/$defs/ManagedResource",
+          "description": "Optional ownership declaration for installing the route model. Omission means managed; this does not change the selected model."
+        },
         "network": {
           "$ref": "#/$defs/NetworkReference",
           "description": "Name of the existing Docker network."
+        },
+        "storage": {
+          "$ref": "#/$defs/ManagedResource",
+          "description": "Optional model-volume ownership declaration. Omission means managed; the volume survives destroy."
         }
       },
       "required": [
         "engine",
         "image",
         "network"
+      ],
+      "type": "object"
+    },
+    "ManagedResource": {
+      "additionalProperties": false,
+      "description": "Explicit ownership for a dependency whose creation settings remain on its parent. Only managed ownership is implemented.",
+      "properties": {
+        "management": {
+          "$ref": "#/$defs/ManagedManagement",
+          "description": "Managed ownership. Omit the enclosing object to keep the same behavior."
+        }
+      },
+      "required": [
+        "management"
       ],
       "type": "object"
     },
@@ -1005,6 +1067,10 @@
       "additionalProperties": false,
       "description": "Immutable model identity used for snapshot resolution and storage.",
       "properties": {
+        "management": {
+          "$ref": "#/$defs/ManagedManagement",
+          "description": "Optional ownership declaration for downloading and preparing this model installation. Omission means managed."
+        },
         "repository": {
           "description": "Public Hugging Face owner/repository name.",
           "maxLength": 200,
@@ -1761,6 +1827,10 @@
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string"
         },
+        "management": {
+          "$ref": "#/$defs/ManagedManagement",
+          "description": "Optional managed ownership declaration. Omission means managed."
+        },
         "memory": {
           "$ref": "#/$defs/Memory",
           "description": "GPU budget and resident watchdog thresholds. Omission selects the SDK defaults."
@@ -1786,6 +1856,10 @@
         "serving": {
           "$ref": "#/$defs/Serving",
           "description": "Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options."
+        },
+        "storage": {
+          "$ref": "#/$defs/ManagedResource",
+          "description": "Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged."
         }
       },
       "required": [
@@ -1814,6 +1888,10 @@
           "description": "SSH Docker endpoint, for example ssh://gpu-box.",
           "pattern": "^ssh://",
           "type": "string"
+        },
+        "network": {
+          "$ref": "#/$defs/ManagedResource",
+          "description": "Optional ownership declaration for the network configured by networkCIDR. Omission means managed."
         },
         "networkCidr": {
           "description": "Canonical private IPv4 /24 on the selected Docker engine.",
