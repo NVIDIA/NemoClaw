@@ -90,8 +90,22 @@ try {
         throw 'The runtime image NTFS root could not enable inherited compression.'
     }
     $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
-    & $icacls $mount /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' '*S-1-5-11:(OI)(CI)(RX)' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'The runtime image root could not apply its read-only consumer ACL.' }
+    $security = [Security.AccessControl.DirectorySecurity]::new()
+    $security.SetAccessRuleProtection($true, $false)
+    $administrators = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+    $security.SetOwner($administrators)
+    $inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($entry in @(
+        @{ sid='S-1-5-18'; rights=[Security.AccessControl.FileSystemRights]::FullControl },
+        @{ sid='S-1-5-32-544'; rights=[Security.AccessControl.FileSystemRights]::FullControl },
+        @{ sid='S-1-5-11'; rights=[Security.AccessControl.FileSystemRights]::ReadAndExecute }
+    )) {
+        $principal = [Security.Principal.SecurityIdentifier]::new($entry['sid'])
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new($principal, $entry['rights'], $inherit,
+            [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+        $security.AddAccessRule($rule) | Out-Null
+    }
+    Set-Acl -LiteralPath $mount -AclObject $security
     $copyLog = [IO.Path]::ChangeExtension($ReceiptPath, '.robocopy.log')
     & (Join-Path $env:SystemRoot 'System32\robocopy.exe') $RuntimeRoot $mount /E /MOV /COPY:DT /DCOPY:DT /R:0 /W:0 /NP "/LOG:$copyLog" | Out-Null
     $copyStatus = $LASTEXITCODE
