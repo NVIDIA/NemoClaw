@@ -57,6 +57,7 @@ export function parseManagedGatewayControlCompletion(
 
 export type GatewayRestartFailureLayer =
   | "unsupported agent"
+  | "native agent command"
   | "privileged control unavailable"
   | "supervisor not running"
   | "supervisor unavailable"
@@ -452,24 +453,25 @@ export async function restartSandboxGatewayWithDeps(
       `  Restarting ${agentRuntime.getAgentDisplayName(agent)} gateway in '${sandboxName}'...`,
     );
   }
-  const restartResult = deps.requestGatewaySupervisorAction(sandboxName, "restart", 210000);
-  const hasRestartMarker =
-    restartResult?.status === 0 &&
-    restartResult.stdout.split(/\r?\n/).some((line) => line.startsWith("GATEWAY_PID="));
-  if (!hasRestartMarker) {
-    const failure = classifyGatewayRestartFailure(restartResult);
+  const nativeCommand = `${agentName} gateway restart`;
+  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  if (!restartResult || restartResult.status !== 0) {
+    const detail = restartResult
+      ? sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
+        `${nativeCommand} exited ${restartResult.status}`
+      : `${nativeCommand} did not return command output`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
         : [];
-    printGatewayRestartFailure(sandboxName, failure.layer, failure.detail, gatewayLogTail);
-    return { ok: false, failureLayer: failure.layer, detail: failure.detail };
+    printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
+    return { ok: false, failureLayer: "native agent command", detail };
   }
 
   if (
     !(await deps.waitForRecoveredSandboxGateway(sandboxName, {
       quiet,
-      initialManagedHealthPassed: true,
+      initialManagedHealthPassed: false,
     }))
   ) {
     const detail = "gateway process restarted but health did not pass before timeout";

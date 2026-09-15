@@ -976,14 +976,8 @@ export async function restartSandboxGateway(
           waitForRecoveredSandboxGateway: (name, options) =>
             waitForRecoveredSandboxGateway(name, {
               ...options,
-              initialManagedHealthPassed: true,
               runtimeSelection,
               timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
-              managedProbeImpl: (sandboxName) =>
-                confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                  requestGatewaySupervisorActionImpl:
-                    deps.requestGatewaySupervisorAction ?? defaultSupervisorAction,
-                }),
             }),
           ensureSandboxPortForward: (name) => ensureSandboxPortForward(name, { runtimeSelection }),
           ensureHermesDashboardPortForwardIfEnabled: (name) =>
