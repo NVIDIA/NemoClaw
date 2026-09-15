@@ -484,6 +484,13 @@ function cleanupFailure(dir: string): HermesAcpSshOutcome {
   );
 }
 
+function cleanupError(dir: string) {
+  return {
+    kind: "cleanup" as const,
+    message: `NemoClaw could not remove the temporary SSH configuration at ${JSON.stringify(dir)}. Remove that directory before running nemoclaw-acp again.`,
+  };
+}
+
 function defaultSshSpawner(
   binary: string,
   args: readonly string[],
@@ -710,14 +717,26 @@ export function createCliHermesAcpSshTransport(
       } catch (error) {
         operationError = error;
       }
+      let cleanupOperationError: TempSshConfigCleanupError | undefined;
       try {
         temporary.cleanup();
-      } catch {
-        return cleanupFailure(temporary.dir);
+      } catch (error) {
+        cleanupOperationError =
+          error instanceof TempSshConfigCleanupError
+            ? error
+            : new TempSshConfigCleanupError(temporary.dir, error);
+      }
+      if (operationError !== undefined && cleanupOperationError) {
+        throw new AggregateError(
+          [operationError, cleanupOperationError],
+          `Hermes ACP transport failed and temporary SSH configuration remains at ${JSON.stringify(temporary.dir)}`,
+        );
       }
       if (operationError !== undefined) throw operationError;
       if (!outcome) throw new Error("Hermes ACP transport completed without an outcome");
-      return outcome;
+      return cleanupOperationError
+        ? { ...outcome, cleanupError: cleanupError(cleanupOperationError.dir) }
+        : outcome;
     },
   };
 }

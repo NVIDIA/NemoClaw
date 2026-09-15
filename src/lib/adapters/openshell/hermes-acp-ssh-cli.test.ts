@@ -532,13 +532,39 @@ describe("CLI Hermes ACP SSH transport", () => {
     });
 
     expect(result).toEqual({
-      kind: "failed",
-      error: {
+      kind: "completed",
+      cleanupError: {
         kind: "cleanup",
         message:
           'NemoClaw could not remove the temporary SSH configuration at "/tmp/nemoclaw-acp-retained". Remove that directory before running nemoclaw-acp again.',
       },
-      exitCode: 1,
+      exitCode: 0,
+    });
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a remote nonzero exit when credential cleanup also fails (#10947)", async () => {
+    const cleanup = vi.fn(() => {
+      throw new Error("remove failed");
+    });
+    const createTempConfig = vi.fn(() => ({
+      dir: "/tmp/nemoclaw-acp-retained",
+      file: "/tmp/nemoclaw-acp-retained/ssh_config",
+      cleanup,
+    }));
+    const session = fakeChild((child) => finishSession(child, 42));
+    const fixture = harness([probeChild(), session], { createTempConfig });
+
+    const result = await fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: streams().value,
+    });
+
+    expect(result).toMatchObject({
+      kind: "completed",
+      cleanupError: { kind: "cleanup", message: expect.stringContaining("nemoclaw-acp-retained") },
+      exitCode: 42,
     });
     expect(cleanup).toHaveBeenCalledOnce();
   });

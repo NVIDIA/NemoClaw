@@ -15,16 +15,24 @@ export type HermesAcpSshFailureKind =
   | "transport"
   | "unavailable";
 
-export type HermesAcpSshOutcome =
-  | Readonly<{ kind: "completed"; exitCode: number; signal?: NodeJS.Signals | null }>
-  | Readonly<{
-      kind: "failed";
-      error: Readonly<{
-        kind: HermesAcpSshFailureKind;
-        message: string;
-      }>;
-      exitCode: number;
-    }>;
+export type HermesAcpSshCleanupError = Readonly<{
+  kind: "cleanup";
+  message: string;
+}>;
+
+export type HermesAcpSshOutcome = Readonly<
+  (
+    | { kind: "completed"; exitCode: number; signal?: NodeJS.Signals | null }
+    | {
+        kind: "failed";
+        error: Readonly<{
+          kind: HermesAcpSshFailureKind;
+          message: string;
+        }>;
+        exitCode: number;
+      }
+  ) & { cleanupError?: HermesAcpSshCleanupError }
+>;
 
 export type HermesAcpSshRequest = Readonly<{
   gatewayName: string;

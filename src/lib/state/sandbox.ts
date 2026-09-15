@@ -53,7 +53,11 @@ import {
   classifyFailedDirsFromTarStderr,
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
-import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
+import {
+  createTempSshConfig,
+  TempSshConfigCleanupError,
+  type TempSshConfig,
+} from "../sandbox/temp-ssh-config.js";
 import {
   SnapshotSanitizerPrerequisiteError,
   sanitizeSnapshotDirectory,
@@ -1700,6 +1704,47 @@ function classifyPreBackupAuditEntry(
   return "violation";
 }
 
+type TempSshConfigRunResult<T> = Readonly<{
+  result: T;
+  cleanupError?: TempSshConfigCleanupError;
+}>;
+
+function retainedTempSshConfigMessage(error: TempSshConfigCleanupError): string {
+  return `${error.message}. Remove that directory before continuing.`;
+}
+
+function runWithTempSshConfigCleanup<T>(
+  tempSshConfig: TempSshConfig,
+  operation: () => T,
+): TempSshConfigRunResult<T> {
+  let result!: T;
+  let operationFailure: Readonly<{ error: unknown }> | undefined;
+  try {
+    result = operation();
+  } catch (error) {
+    operationFailure = { error };
+  }
+
+  let cleanupError: TempSshConfigCleanupError | undefined;
+  try {
+    tempSshConfig.cleanup();
+  } catch (error) {
+    cleanupError =
+      error instanceof TempSshConfigCleanupError
+        ? error
+        : new TempSshConfigCleanupError(tempSshConfig.dir, error);
+  }
+
+  if (operationFailure && cleanupError) {
+    throw new AggregateError(
+      [operationFailure.error, cleanupError],
+      `Sandbox state operation failed and temporary SSH configuration remains at ${JSON.stringify(tempSshConfig.dir)}`,
+    );
+  }
+  if (operationFailure) throw operationFailure.error;
+  return cleanupError ? { result, cleanupError } : { result };
+}
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
@@ -1872,7 +1917,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
   const configFile = tempSshConfig.file;
-  try {
+  const sshPhase = runWithTempSshConfigCleanup(tempSshConfig, (): BackupResult | null => {
     if (hasBackupDirectories) {
       // Build tar command that only includes existing directories.
       // First, check which declared state dirs actually exist in the sandbox,
@@ -2221,12 +2266,17 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         failedFiles,
         options.captureStateFile,
       ) || unreachable;
-  } finally {
-    try {
-      tempSshConfig.cleanup();
-    } catch {
-      /* ignore */
-    }
+    return null;
+  });
+  const cleanupError = sshPhase.cleanupError;
+  if (sshPhase.result) {
+    if (!cleanupError) return sshPhase.result;
+    const cleanupMessage = retainedTempSshConfigMessage(cleanupError);
+    return {
+      ...sshPhase.result,
+      success: false,
+      error: sshPhase.result.error ? `${sshPhase.result.error}; ${cleanupMessage}` : cleanupMessage,
+    };
   }
 
   // SECURITY: Strip credentials from the local backup
@@ -2247,7 +2297,8 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
     manifest.stateDirs.includes(failedDir),
   );
-  manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
+  manifest.backupComplete =
+    failedDirs.length === 0 && failedFiles.length === 0 && cleanupError === undefined;
 
   const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
   if (publicationError) {
@@ -2257,14 +2308,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       failedDirs: [],
       backedUpFiles: [],
       failedFiles: [],
-      error: publicationError,
+      error: cleanupError
+        ? `${publicationError}; ${retainedTempSshConfigMessage(cleanupError)}`
+        : publicationError,
     };
   }
   writeManifest(backupPath, manifest);
   manifest.backupPath = backupPath;
 
   return {
-    success: failedDirs.length === 0 && failedFiles.length === 0,
+    success: failedDirs.length === 0 && failedFiles.length === 0 && cleanupError === undefined,
     unreachable,
     manifest,
     backedUpDirs,
@@ -2272,6 +2325,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
     backedUpFiles,
     failedFiles,
+    ...(cleanupError ? { error: retainedTempSshConfigMessage(cleanupError) } : {}),
   };
 }
 
@@ -2710,7 +2764,7 @@ function restoreSandboxStateInternal(
     previousOpenClawImagePluginInstalls !== undefined
       ? freshOpenClawImagePluginInstalls
       : undefined;
-  try {
+  const sshPhase = runWithTempSshConfigCleanup(tempSshConfig, (): RestoreResult | null => {
     const pluginRestorePlan = planOpenClawPluginRestore({
       agentType: manifest.agentType,
       dir,
@@ -2898,20 +2952,26 @@ function restoreSandboxStateInternal(
         failedFiles.push(spec.path);
       }
     }
-  } finally {
-    try {
-      tempSshConfig.cleanup();
-    } catch {
-      /* ignore */
-    }
+    return null;
+  });
+  const cleanupError = sshPhase.cleanupError;
+  if (sshPhase.result) {
+    if (!cleanupError) return sshPhase.result;
+    const cleanupMessage = retainedTempSshConfigMessage(cleanupError);
+    return {
+      ...sshPhase.result,
+      success: false,
+      error: sshPhase.result.error ? `${sshPhase.result.error}; ${cleanupMessage}` : cleanupMessage,
+    };
   }
 
   return {
-    success: failedDirs.length === 0 && failedFiles.length === 0,
+    success: failedDirs.length === 0 && failedFiles.length === 0 && cleanupError === undefined,
     restoredDirs,
     failedDirs,
     restoredFiles,
     failedFiles,
+    ...(cleanupError ? { error: retainedTempSshConfigMessage(cleanupError) } : {}),
   };
 }
 

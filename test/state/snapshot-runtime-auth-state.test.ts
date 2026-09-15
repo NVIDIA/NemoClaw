@@ -9,6 +9,7 @@
 // (GatewayCredentialsRequiredError) until the device is re-paired.
 
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -31,6 +32,14 @@ afterAll(() => {
 
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
+}
+
+function throwInjectedCleanupFailure(): never {
+  throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
+}
+
+function isSnapshotSshTempDirectory(target: fs.PathLike): boolean {
+  return /^nemoclaw-state-[A-Za-z0-9]{6}$/u.test(path.basename(String(target)));
 }
 
 /**
@@ -254,6 +263,65 @@ describe("runtime auth state across snapshot backup/restore (#6852)", () => {
       expect(fs.readFileSync(path.join(openclawDir, "devices", "paired.json"), "utf-8")).toBe(
         LIVE_PAIRED_DEVICE,
       );
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("snapshot temporary SSH credential cleanup", () => {
+  it("fails backup and restore with retained-directory guidance (#10947)", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-cleanup-"));
+    try {
+      const binDir = path.join(fixture, "bin");
+      const fakeRoot = path.join(fixture, "sandbox-root");
+      const openclawDir = path.join(fakeRoot, ".openclaw");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "agents", "main"), { recursive: true });
+      fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
+      fs.writeFileSync(path.join(openclawDir, "agents", "main", "state.txt"), "state\n");
+      writeFakeSandboxBins(binDir, fakeRoot);
+      writeOpenClawRegistry("alpha");
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", path.join(binDir, "openshell"));
+      vi.stubEnv("PATH", `${binDir}:${process.env.PATH || ""}`);
+
+      const completeBackup = sandboxState.backupSandboxState("alpha");
+      expect(completeBackup.success).toBe(true);
+      const backupPath = completeBackup.manifest!.backupPath;
+
+      const originalRmSync = fs.rmSync;
+      const retainedDirectories: string[] = [];
+      fs.rmSync = ((target, options) =>
+        isSnapshotSshTempDirectory(target)
+          ? (retainedDirectories.push(String(target)), throwInjectedCleanupFailure())
+          : originalRmSync(target, options)) as typeof fs.rmSync;
+      syncBuiltinESMExports();
+      try {
+        expect(sandboxState.backupSandboxState("alpha", { name: "cleanup-failure" })).toMatchObject(
+          {
+            success: false,
+            error: expect.stringContaining("Remove that directory before continuing"),
+            manifest: { backupComplete: false },
+          },
+        );
+        expect(sandboxState.restoreSandboxState("alpha", backupPath)).toMatchObject({
+          success: false,
+          error: expect.stringContaining("Remove that directory before continuing"),
+        });
+        expect(retainedDirectories).toHaveLength(2);
+      } finally {
+        fs.rmSync = originalRmSync;
+        syncBuiltinESMExports();
+        originalRmSync(retainedDirectories[0] ?? path.join(fixture, "missing-temp-0"), {
+          recursive: true,
+          force: true,
+        });
+        originalRmSync(retainedDirectories[1] ?? path.join(fixture, "missing-temp-1"), {
+          recursive: true,
+          force: true,
+        });
+      }
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(fixture, { recursive: true, force: true });

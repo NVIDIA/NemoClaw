@@ -164,6 +164,43 @@ describe("discoverFreshOpenClawImagePluginInstalls", () => {
       originalRmSync(retainedDirectory, { recursive: true, force: true });
     }
   });
+
+  it("preserves discovery and credential cleanup failures in order", () => {
+    const originalRmSync = fs.rmSync;
+    const discoveryError = new Error("injected discovery failure");
+    let retainedDirectory = "";
+    let failure: unknown;
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation(((target: fs.PathLike) => {
+      retainedDirectory = String(target);
+      throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
+    }) as typeof fs.rmSync);
+
+    try {
+      try {
+        discoverFreshOpenClawImagePluginInstalls("alpha", {
+          getSshConfig: () => "Host openshell-alpha\n",
+          sshArgs: () => [],
+          runSsh: () => {
+            throw discoveryError;
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors).toEqual([
+        discoveryError,
+        expect.objectContaining({
+          name: "TempSshConfigCleanupError",
+          dir: retainedDirectory,
+        }),
+      ]);
+      expect(retainedDirectory).toContain("nemoclaw-plugin-discovery-");
+    } finally {
+      rmSpy.mockRestore();
+      originalRmSync(retainedDirectory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("parseFreshOpenClawPluginExtensionDirs", () => {
