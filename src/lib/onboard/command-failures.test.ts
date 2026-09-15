@@ -96,6 +96,43 @@ describe("onboarding command failures", () => {
     expect(inspect(failure, { depth: null })).not.toContain(secret);
   });
 
+  it("redacts custom error diagnostics without invoking accessors", async () => {
+    const directSecret = `nvapi-${"g".repeat(60)}`;
+    const nestedSecret = `nvapi-${"h".repeat(60)}`;
+    const member = new Error("Member failed") as Error & {
+      diagnostic?: unknown;
+    };
+    member.diagnostic = directSecret;
+    const failure = new AggregateError([member], "Onboarding failed") as AggregateError & {
+      context?: unknown;
+      lazyDiagnostic?: unknown;
+    };
+    const context: Record<string, unknown> = {
+      nested: { credential: nestedSecret },
+    };
+    context.failure = failure;
+    failure.context = context;
+    const accessor = vi.fn(() => nestedSecret);
+    Object.defineProperty(failure, "lazyDiagnostic", {
+      configurable: true,
+      enumerable: true,
+      get: accessor,
+    });
+    const members = failure.errors;
+
+    await rethrowOnboardFailure(failure);
+
+    expect(failure.errors).toBe(members);
+    expect(failure.errors[0]).toBe(member);
+    expect(accessor).not.toHaveBeenCalled();
+    expect((failure.context as Record<string, unknown>).failure).toBe(failure);
+    const rendered = inspect(failure, { depth: null });
+    expect(rendered).not.toContain(directSecret);
+    expect(rendered).not.toContain(nestedSecret);
+    expect(rendered).toContain("<REDACTED>");
+    expect(accessor).not.toHaveBeenCalled();
+  });
+
   it("redacts managed bootstrap rollback diagnostics before rethrow", async () => {
     const secret = `nvapi-${"f".repeat(60)}`;
     const rollback = new Error(`Rollback failed: ${secret}`);

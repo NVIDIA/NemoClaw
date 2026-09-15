@@ -40,28 +40,42 @@ function redactNestedDiagnostic(value: unknown, walk: DiagnosticWalk): unknown {
   return target;
 }
 
-/** Sanitize complete error text and enqueue nested failures before a renderer can expose them. */
-function redactErrorDiagnostic(error: Error, walk: DiagnosticWalk): void {
-  error.message = redactOnboardErrorText(error.message);
-  error.stack = error.stack && redactOnboardErrorText(error.stack);
-  if ("cause" in error) error.cause = redactNestedDiagnostic(error.cause, walk);
-  if (error instanceof AggregateError) {
-    for (const [index, member] of error.errors.entries()) {
-      error.errors[index] = redactNestedDiagnostic(member, walk);
-    }
-  }
-  const rollbackCarrier = error as Error & { managedBootstrapRollbackError?: unknown };
-  if ("managedBootstrapRollbackError" in rollbackCarrier) {
-    rollbackCarrier.managedBootstrapRollbackError = redactNestedDiagnostic(
-      rollbackCarrier.managedBootstrapRollbackError,
-      walk,
-    );
+/** Keep an aggregate's mutable member array while enrolling it in the descriptor walk. */
+function retainAggregateMembers(error: AggregateError, walk: DiagnosticWalk): void {
+  const descriptor = Object.getOwnPropertyDescriptor(error, "errors");
+  if (!descriptor || !("value" in descriptor) || !Array.isArray(descriptor.value)) return;
+  if (walk.seen.has(descriptor.value)) return;
+  walk.seen.set(descriptor.value, descriptor.value);
+  walk.pending.push({ source: descriptor.value, target: descriptor.value });
+}
+
+/** Copy stored diagnostics without invoking accessors or changing descriptor visibility. */
+function redactStoredDiagnosticProperties(
+  source: object,
+  target: object,
+  walk: DiagnosticWalk,
+): void {
+  for (const key of Reflect.ownKeys(source)) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (!descriptor) continue;
+    if ("value" in descriptor) descriptor.value = redactNestedDiagnostic(descriptor.value, walk);
+    else if (source === target) continue;
+    Object.defineProperty(target, key, descriptor);
   }
 }
 
-/** Retain diagnostic member order while sharing the walk's cycle detection. */
+/** Sanitize every stored error diagnostic without invoking arbitrary accessors. */
+function redactErrorDiagnostic(error: Error, walk: DiagnosticWalk): void {
+  // Node exposes the standard stack slot as an own accessor; it is the only
+  // accessor this boundary reads so arbitrary diagnostic getters stay inert.
+  error.stack = error.stack && redactOnboardErrorText(error.stack);
+  if (error instanceof AggregateError) retainAggregateMembers(error, walk);
+  redactStoredDiagnosticProperties(error, error, walk);
+}
+
+/** Retain diagnostic descriptors and member order while sharing cycle detection. */
 function redactArrayDiagnostic(source: unknown[], target: unknown[], walk: DiagnosticWalk): void {
-  for (const value of source) target.push(redactNestedDiagnostic(value, walk));
+  redactStoredDiagnosticProperties(source, target, walk);
 }
 
 /** Copy own property descriptors without invoking getters while sanitizing stored diagnostic values. */
@@ -70,12 +84,7 @@ function redactPlainDiagnostic(
   target: Record<PropertyKey, unknown>,
   walk: DiagnosticWalk,
 ): void {
-  for (const key of Reflect.ownKeys(source)) {
-    const descriptor = Object.getOwnPropertyDescriptor(source, key);
-    if (!descriptor) continue;
-    if ("value" in descriptor) descriptor.value = redactNestedDiagnostic(descriptor.value, walk);
-    Object.defineProperty(target, key, descriptor);
-  }
+  redactStoredDiagnosticProperties(source, target, walk);
 }
 
 /** Process one queued container so nested diagnostics do not consume the call stack. */
