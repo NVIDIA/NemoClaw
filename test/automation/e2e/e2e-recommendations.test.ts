@@ -77,6 +77,7 @@ describe("E2E recommendation normalizer", () => {
         "bedrock-runtime-compatible-anthropic",
         "channels-stop-start",
         "openclaw-skill-cli",
+        "sandbox-survival",
         "security-posture",
       ]),
     );
