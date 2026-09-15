@@ -289,6 +289,40 @@ function resolveDisplayAgent(sandbox: SandboxEntry): string {
   return sandbox.recoveredFromGateway ? "unknown" : "openclaw";
 }
 
+type PublicSandboxFields = Omit<StatusSandboxRow, "phase" | "isDefault">;
+
+async function projectPublicSandboxFields(
+  sandbox: SandboxEntry,
+  inference: { model?: string | null; provider?: string | null },
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
+): Promise<PublicSandboxFields> {
+  const sandboxGpuEnabled =
+    typeof sandbox.sandboxGpuEnabled === "boolean"
+      ? sandbox.sandboxGpuEnabled
+      : sandbox.gpuEnabled === true;
+  const dashboardPort =
+    typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
+      ? sandbox.dashboardPort
+      : null;
+  return {
+    name: safeStatusString(sandbox.name) ?? sandbox.name,
+    model: safeStatusString(inference.model),
+    provider: safeStatusString(inference.provider),
+    gpuEnabled: sandbox.gpuEnabled === true,
+    hostGpuDetected: sandbox.hostGpuDetected === true,
+    sandboxGpuEnabled,
+    sandboxGpuMode: safeStatusString(sandbox.sandboxGpuMode),
+    sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice),
+    openshellDriver: safeStatusString(sandbox.openshellDriver),
+    openshellVersion: safeStatusString(sandbox.openshellVersion),
+    policies: ((await getPolicyPresets?.(sandbox.name)) ?? []).map(
+      (policy) => safeStatusString(policy) ?? policy,
+    ),
+    agent: redactFull(resolveDisplayAgent(sandbox)),
+    ...(dashboardPort != null ? { dashboardPort } : {}),
+  };
+}
+
 /**
  * Project a stored or recovered {@link SandboxEntry} into a display row,
  * resolving inference/GPU fields and marking gateway-recovered rows so unknown
@@ -301,28 +335,11 @@ async function buildSandboxInventoryRow(
   getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
 ): Promise<SandboxInventoryRow> {
   const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox.name) : null;
-  const sandboxGpuEnabled =
-    typeof sandbox.sandboxGpuEnabled === "boolean"
-      ? sandbox.sandboxGpuEnabled
-      : sandbox.gpuEnabled === true;
   const inference = getSandboxEntryDisplayInference(sandbox);
+  const publicFields = await projectPublicSandboxFields(sandbox, inference, getPolicyPresets);
 
   return {
-    name: safeStatusString(sandbox.name) || sandbox.name,
-    model: safeStatusString(inference.model),
-    provider: safeStatusString(inference.provider),
-    gpuEnabled: sandbox.gpuEnabled === true,
-    hostGpuDetected: sandbox.hostGpuDetected === true,
-    sandboxGpuEnabled,
-    sandboxGpuMode: safeStatusString(sandbox.sandboxGpuMode || null),
-    sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
-    openshellDriver: safeStatusString(sandbox.openshellDriver || null),
-    openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: ((await getPolicyPresets?.(sandbox.name)) ?? []).map(
-      (policy) => safeStatusString(policy) || policy,
-    ),
-    agent: redactFull(resolveDisplayAgent(sandbox)),
-    ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
+    ...publicFields,
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
@@ -494,31 +511,17 @@ async function buildStatusSandboxRow(
   const liveModel = isDefault ? liveInference?.model : null;
   const liveProvider = isDefault ? liveInference?.provider : null;
   const inference = getSandboxEntryDisplayInference(sandbox);
-  const dashboardPort =
-    typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
-      ? sandbox.dashboardPort
-      : null;
-  const sandboxGpuEnabled =
-    typeof sandbox.sandboxGpuEnabled === "boolean"
-      ? sandbox.sandboxGpuEnabled
-      : sandbox.gpuEnabled === true;
+  const publicFields = await projectPublicSandboxFields(
+    sandbox,
+    {
+      model: liveModel || inference.model,
+      provider: liveProvider || inference.provider,
+    },
+    getPolicyPresets,
+  );
   return {
-    name: safeStatusString(sandbox.name) || sandbox.name,
-    model: safeStatusString(liveModel || inference.model),
-    provider: safeStatusString(liveProvider || inference.provider),
-    gpuEnabled: sandbox.gpuEnabled === true,
-    hostGpuDetected: sandbox.hostGpuDetected === true,
-    sandboxGpuEnabled,
-    sandboxGpuMode: safeStatusString(sandbox.sandboxGpuMode || null),
-    sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
-    openshellDriver: safeStatusString(sandbox.openshellDriver || null),
-    openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: ((await getPolicyPresets?.(sandbox.name)) ?? []).map(
-      (policy) => safeStatusString(policy) || policy,
-    ),
-    agent: redactFull(resolveDisplayAgent(sandbox)),
+    ...publicFields,
     ...(portablePhase ? { phase: portablePhase } : {}),
-    ...(dashboardPort != null ? { dashboardPort } : {}),
     isDefault,
   };
 }
@@ -674,17 +677,19 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       const def = isDefault ? " *" : "";
       // Prefer the live gateway model for the default sandbox so `status`
       // agrees with `openshell inference get` (#2369).
-      const liveModel = isDefault && live ? live.model : null;
-      const liveProvider = isDefault && live ? live.provider : null;
+      const liveModel = safeStatusString(isDefault && live ? live.model : null);
+      const liveProvider = safeStatusString(isDefault && live ? live.provider : null);
       const inference = getSandboxEntryDisplayInference(sb);
-      const model = liveModel || inference.model;
-      const provider = liveProvider || inference.provider;
+      const storedModel = safeStatusString(inference.model);
+      const model = liveModel || storedModel;
+      const provider = liveProvider || safeStatusString(inference.provider);
+      const name = safeStatusString(sb.name) ?? "unknown";
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
-      log(`    ${sb.name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
+      log(`    ${name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
       const portablePhase = portablePhases.get(sb.name);
       if (portablePhase) log(`      agent: hermes  phase: ${portablePhase}`);
-      if (isDefault && liveModel && liveModel !== inference.model) {
-        log(`      (onboarded: ${inference.model || "unknown"})`);
+      if (isDefault && liveModel && liveModel !== storedModel) {
+        log(`      (onboarded: ${storedModel || "unknown"})`);
       }
       // #2604: surface the configured Inference (provider/model) and the
       // SSH-session count as labeled fields. Bare `nemoclaw status` previously

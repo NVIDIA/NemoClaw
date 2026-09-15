@@ -7,6 +7,7 @@ import {
   getSandboxInventory,
   getStatusReport,
   listSandboxesCommand,
+  showStatusCommand,
   type SandboxEntry,
 } from "./index";
 
@@ -126,6 +127,31 @@ describe("inventory row behavior", () => {
 
     expect(lines.join("\n")).not.toContain("example-not-a-real-value-1");
     expect(lines.some((line) => line.includes("onboarded"))).toBe(false);
+  });
+
+  it("redacts sandbox and inference fields in global status text", async () => {
+    const lines: string[] = [];
+    const secret = 'api_key="example-not-a-real-value-1"';
+    await showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: `alpha ${secret}`,
+            model: `configured-model ${secret}`,
+            provider: `configured-provider ${secret}`,
+          },
+        ],
+        defaultSandbox: `alpha ${secret}`,
+      }),
+      getLiveInference: () => ({
+        model: `live-model ${secret}`,
+        provider: `live-provider ${secret}`,
+      }),
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines.join("\n")).not.toContain("example-not-a-real-value-1");
   });
 
   it("redacts completed and incomplete onboarding sandbox names", async () => {
