@@ -3,6 +3,28 @@
 
 # Configure Inference APIs, Limits, and Authentication
 
+Choose who operates the inference service, then select the API and model used by the agent.
+NemoClaw declares one inference provider per deployment document.
+The provider's local `name` connects it to an agent route; it does not select a vendor or download a model catalog.
+
+## Choose a Service Mode
+
+| Situation | Configuration and owning guide | Example to adapt |
+|---|---|---|
+| You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../examples/inference-tuning.yaml), [Hermes authentication](../examples/hermes-auth.yaml) |
+| NemoClaw should run Ollama and manage its model lifecycle | Declare `ollama`, a local engine, an existing Docker network, a pinned image, and a reachable private endpoint; see [deployment usage](usage.md#configuration-and-credentials) | [Managed Ollama](../examples/managed-ollama.yaml) |
+| Ollama and its model already run locally and must remain external | Declare `ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
+| NemoClaw should download and serve a pinned public model with vLLM | Declare `service` with the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/vllm.yaml) |
+| The managed vLLM engine is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/remote-vllm.yaml) |
+| The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark-inline.yaml) |
+
+Managed Ollama/vLLM and external Ollama with a managed proxy are accepted for OpenClaw and Hermes; the [harness matrix](reference/fabric-harnesses.md) lists restrictions for other agents.
+Examples carry local image digests, deployment identities, and environment-specific endpoints.
+Build/select your own matching images and replace those values before use.
+An accepted example is a configuration contract; [validation records](validation/README.md) identify which combinations completed live inference and at which revision.
+
+## Choose the Request API
+
 Set `inferenceProviders[].api` to the request API your endpoint accepts.
 OpenShell routes the request and supplies the provider credential; selecting an API does not translate requests into a different protocol.
 
@@ -17,6 +39,22 @@ OpenShell routes the request and supplies the provider credential; selecting an 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
 The provider name is the local reference used by routes and authentication; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
+
+### Prepare an External Endpoint
+
+Before writing its provider declaration, obtain the base URL, API, exact model ID, required credential, and model limits from the endpoint operator.
+Confirm that the selected harness accepts that API in the table above.
+For a credentialed endpoint, declare an HTTPS URL and an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
+Uncredentialed HTTP inference endpoints must use literal private or loopback addresses.
+
+The endpoint must be reachable from OpenShell's inference route, not just from your client terminal.
+A loopback URL refers to the network namespace making the request.
+For a local external Ollama daemon, use the [managed proxy](#use-external-ollama-through-a-managed-proxy) contract instead of assuming that the gateway can reach the client's loopback interface.
+
+Use the route's `overrides.model` for the upstream model ID.
+Native agents use OpenShell's configured route and placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
+Confirm a native agent reply after apply using [verification levels](#verify-the-result).
+Named-provider walkthroughs remain [TBD](#additional-inference-workflows) until their endpoint/API/model combinations are qualified.
 
 ## Build an Image with the Configuration Interface
 
@@ -202,6 +240,19 @@ Apply checks the agent configuration and sends an inference probe using the sele
 Export compares the retained intent with the observed launch settings and agent configuration.
 Changed or missing settings stop export and preserve deployment state for inspection.
 An unchanged exported document can be reapplied without restarting the sandbox.
+
+| Check | What success establishes | What it does not establish |
+|---|---|---|
+| Parse and plan | Accepted fields and observed ownership/configuration; a `deferred` list identifies checks that cannot run yet | No runtime creation, model request, or complete result for deferred stages |
+| Apply readiness | The sandbox has the declared agent configuration and the selected API probe succeeds | A native conversation for every service mode |
+| Managed vLLM apply (`service`) | Also returns a confirmed native reply in JSON `agentResponse` | General model quality, tool reliability, or a user's existing conversation |
+| Export | Observed configuration agrees with retained intent | An inference request or native-data backup |
+| A reply through your chosen native interface | That interface, agent, route, and model completed the tested turn | Support for untested providers, models, tools, or long conversations |
+
+Managed Ollama, the Ollama proxy, and external endpoints use the API probe during apply; they do not populate `agentResponse` through the managed-vLLM check.
+An empty `changes` list on apply does not skip these readiness requests.
+Changing a model can expose API, context, or tool-format incompatibility even when the endpoint is reachable.
+Use [change constraints](usage.md#choose-the-change-path) before changing the API or agent launch settings.
 
 The deterministic lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
 The [offline harness fixture](testing/fixtures.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.

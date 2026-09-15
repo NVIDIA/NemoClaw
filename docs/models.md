@@ -7,6 +7,23 @@ Use `service.backend: vllm` for a public Hugging Face model that the pinned vLLM
 Set `service.model.repository` and an exact 40-character commit in `service.model.revision`.
 There is no repository allowlist.
 
+## Choose a Model and Capacity
+
+| Decision | Check before apply |
+|---|---|
+| Request API and agent | The [harness/API combination](inference.md#choose-the-request-api) accepts the model's serving protocol |
+| Weights and format | Public repository, immutable revision, and files accepted by the resolver described below |
+| Runtime compatibility | The pinned vLLM image can load the model without unsupported repository code or format conversion |
+| Hardware and placement | The selected engine host satisfies the declared hardware contract; use [SSH placement](remote-service.md) when needed |
+| Capacity and context | Weight size, runtime memory, KV cache, context length, and concurrency fit the configured host/GPU budget |
+| Agent limits and tools | Native agent context/output/reasoning settings agree with the server and model; parser acceptance is not a tool-use qualification |
+
+Start with a model/configuration covered by [retained evidence](validation/README.md), then verify it against your current images and host.
+Older evidence is not a release-wide support matrix.
+For an external endpoint, its operator owns installation and capacity; use [external inference configuration](inference.md#prepare-an-external-endpoint) instead of the managed-model fields below.
+
+## Pin and Serve the Model
+
 Mutable branches and tags are rejected so a later apply cannot silently change weights.
 The OpenShell route's model must match `serving.modelName` when declared, or the repository name when it is omitted.
 

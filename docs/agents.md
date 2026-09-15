@@ -10,12 +10,28 @@ Fabric owns the agent process inside the sandbox, while OpenShell owns isolation
 Native channel enrollment, pairing, plugins, histories, and workspace data belong to the agent.
 NemoClaw checks its reserved gateway and inference settings without replacing unrelated settings.
 
-An agent selects a `harness` from `deepagents`, `hermes`, `openclaw`, `claude`, `codex`, `mini-swe-agent`, `nooa`, `nooa-bench`, `remote-agent`, or `pi`.
-OpenClaw and Hermes support external services, managed OpenShell gateways, and managed DGX Spark or Ollama inference.
-Other harnesses currently require external gateway and inference services.
+Use the [harness matrix](reference/fabric-harnesses.md) to choose an accepted `harness`, its management modes, and a maintained example.
+API and native-interface requirements differ between harnesses.
 
 The strict schema rejects unsupported combinations.
 See [inference configuration](inference.md) for API selection, OpenClaw route tuning, and Hermes authentication.
+
+## Choose Native Access
+
+Start with the shared [first-deployment procedure](get-started.md) for bundle, image, YAML, state, and lifecycle concepts.
+That procedure uses the OpenClaw dashboard; it is not a dashboard guide for every harness.
+
+| Agent | Access and conversation behavior |
+|---|---|
+| OpenClaw | Optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns a native gateway with a session per declared agent |
+| Hermes | [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui); API and dashboard conversations are separate |
+| Pi | Native model metadata and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
+| Other Fabric harnesses | Fabric hosts the native process; a complete user-facing first-message/access procedure for each harness is **TBD** |
+
+Use the deployment's gateway and workspace for OpenShell access; [the quickstart](get-started.md#5-access-the-agent) explains how to identify the workspace.
+NemoClaw has no `launch`, `connect`, or invocation command.
+Do not start a separate Fabric SDK `run` expecting to attach to the runtime already hosted by the deployment.
+Native channel/plugin capabilities need their own prerequisites; see [integration gaps](#additional-agent-integrations).
 
 ## Multiple OpenClaw Agents and Tool Restrictions
 
@@ -259,7 +275,7 @@ Fabric's local OpenClaw adapter owns one native gateway with a session for each 
 An uncertain invocation result stops that runtime and is never replayed automatically.
 Agent configuration readiness does not invoke the model.
 
-Managed inference apply additionally checks an actual agent reply.
+Managed vLLM service apply additionally checks an actual agent reply; other paths use the configured API probe.
 Native settings survive configuration checks and recreation when their state volume is retained.
 
 Qualification commands:
