@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
-import { isSupportedGatewayDockerHost } from "./domain/docker-host";
+import { isSupportedDockerContextName, isSupportedGatewayDockerHost } from "./domain/docker-host";
 import { buildDockerSubprocessEnv } from "./subprocess-env";
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
@@ -196,9 +196,6 @@ function buildDockerProbeEnv(
   return buildDockerSubprocessEnv(source, dockerHost);
 }
 
-/** Docker's own context-name shape; anything else cannot name a context. */
-const DOCKER_CONTEXT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
-
 const DOCKER_CONTEXT_HOST_FORMAT = "{{.Endpoints.docker.Host}}";
 
 /**
@@ -210,7 +207,7 @@ const DOCKER_CONTEXT_HOST_FORMAT = "{{.Endpoints.docker.Host}}";
  * the caller keeps the host default and lets the real command report why.
  */
 function resolveDockerContextHost(context: string, source: NodeJS.ProcessEnv): string | null {
-  if (!DOCKER_CONTEXT_NAME_PATTERN.test(context)) return null;
+  if (!isSupportedDockerContextName(context)) return null;
   const result = dockerSpawnSync(
     ["context", "inspect", context, "--format", DOCKER_CONTEXT_HOST_FORMAT],
     {

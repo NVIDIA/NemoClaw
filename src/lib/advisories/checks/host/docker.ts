@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../../../domain/docker-host";
+import {
+  DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES,
+  isSupportedDockerContextName,
+} from "../../../domain/docker-host";
 import type { HostAssessment, PackageManager } from "../../../onboard/preflight";
 import type { AdvisoryCheck } from "../../types";
 import { hostAdvisory } from "./common";
@@ -111,20 +114,29 @@ export const invalidDockerHost: AdvisoryCheck<HostAssessment> = {
         ],
       });
     }
-    // The name is quoted for the shell because it reaches the operator inside a
-    // printed command, and nothing has constrained its shape by this point.
-    const quotedContext = shellSingleQuoted(context);
+    // Only Docker's bounded printable context-name grammar may reach terminal
+    // output. An invalid selector still owns the authority choice, but echoing
+    // it would let an environment value inject terminal controls or unbounded
+    // text into the remediation.
+    const contextNameIsSafe = isSupportedDockerContextName(context);
+    const selectedContextReason = contextNameIsSafe
+      ? `DOCKER_CONTEXT selects the Docker context ${shellSingleQuoted(context)}, which does not resolve to an endpoint onboarding can use. `
+      : "DOCKER_CONTEXT selects an invalid Docker context name that onboarding cannot use. ";
     return hostAdvisory(invalidDockerHost, {
       title: "Fix the DOCKER_CONTEXT endpoint",
       kind: "manual",
       reason:
-        `DOCKER_CONTEXT selects the Docker context ${quotedContext}, which does not resolve to an endpoint onboarding can use. ` +
+        selectedContextReason +
         "Onboarding does not fall back to the default Docker socket here: that would report readiness for a daemon you did not select. " +
         SUPPORTED_DOCKER_ENDPOINT_REASON +
         "This is a DOCKER_CONTEXT configuration problem, not a docker-group permission or stopped-daemon issue.",
       commands: [
         "unset DOCKER_CONTEXT   # use Docker's default context",
-        `docker context inspect ${quotedContext} --format '{{.Endpoints.docker.Host}}'   # show the selected endpoint`,
+        ...(contextNameIsSafe
+          ? [
+              `docker context inspect ${shellSingleQuoted(context)} --format '{{.Endpoints.docker.Host}}'   # show the selected endpoint`,
+            ]
+          : []),
         "# or select a context whose endpoint is an absolute unix:// socket",
         "nemoclaw onboard",
       ],

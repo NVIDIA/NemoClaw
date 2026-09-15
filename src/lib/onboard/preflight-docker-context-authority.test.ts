@@ -163,12 +163,13 @@ describe("assessHost Docker context endpoint (#11719)", () => {
     expect(ids).not.toContain("start_docker");
   });
 
-  it("quotes the selector name it prints back into a command", () => {
+  it("does not reproduce an invalid selector name in terminal output", () => {
+    const unsafeContext = "qa\u001b[31m'; rm -rf ~";
     const assessment = assessHost({
       platform: "linux",
       release: "6.8.0-generic",
       procVersion: "Linux version 6.8.0-generic",
-      env: { DOCKER_CONTEXT: "qa'; rm -rf ~" },
+      env: { DOCKER_CONTEXT: unsafeContext },
       commandExistsImpl,
       runCaptureImpl,
     });
@@ -176,7 +177,31 @@ describe("assessHost Docker context endpoint (#11719)", () => {
     const invalid = planHostAdvisories(assessment).find(
       (action) => action.id === "invalid_docker_host",
     );
-    expect(invalid?.commands?.join("\n")).toContain("'qa'\\''; rm -rf ~'");
+    const rendered = [invalid?.title, invalid?.reason, ...(invalid?.commands ?? [])].join("\n");
+    expect(invalid?.reason).toContain("selects an invalid Docker context name");
+    expect(rendered).not.toContain(unsafeContext);
+    expect(rendered).not.toContain("\u001b");
+    expect(invalid?.commands?.some((command) => command.startsWith("docker context inspect"))).toBe(
+      false,
+    );
+  });
+
+  it("does not reproduce an oversized selector name in terminal output", () => {
+    const oversizedContext = `qa-${"x".repeat(300)}`;
+    const assessment = assessHost({
+      platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
+      env: { DOCKER_CONTEXT: oversizedContext },
+      commandExistsImpl,
+      runCaptureImpl,
+    });
+
+    const invalid = planHostAdvisories(assessment).find(
+      (action) => action.id === "invalid_docker_host",
+    );
+    const rendered = [invalid?.title, invalid?.reason, ...(invalid?.commands ?? [])].join("\n");
+    expect(rendered).not.toContain(oversizedContext);
   });
 
   it("reports an unresolved DOCKER_CONTEXT even when DOCKER_HOST is set", () => {

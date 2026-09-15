@@ -65,6 +65,13 @@ export function isDockerDaemonReachable(rawOutput = ""): boolean {
   return parseDockerDaemonObservation(rawOutput).reachable;
 }
 
+/** Docker context names safe to resolve and reproduce in operator diagnostics. */
+const DOCKER_CONTEXT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
+
+export function isSupportedDockerContextName(value: string | undefined): boolean {
+  return DOCKER_CONTEXT_NAME_PATTERN.test(String(value ?? ""));
+}
+
 // A DOCKER_HOST value onboarding can use. Unset means Docker's default socket,
 // which is supported; a set value must be an absolute `unix://` socket that can
 // be written to the gateway environment file. TCP and SSH endpoints and
