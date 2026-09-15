@@ -93,7 +93,7 @@ class AuthoringTests(unittest.TestCase):
         )
         self.assertEqual(
             conditions["NativeRuntimeRollback"],
-            'NOT UPGRADINGPRODUCTCODE AND NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"',
+            "NOT UPGRADINGPRODUCTCODE",
         )
         self.assertEqual(
             tree.find("{" + NAMESPACE + "}Launch").get("Condition"),

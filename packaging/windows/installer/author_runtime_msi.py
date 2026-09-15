@@ -112,9 +112,11 @@ def author(identity, helper: Path, expected_sha256: str):
         Secure="yes",
     )
     tuple_args = " ".join("[" + name + "]" for name in IDENTITY_PROPERTIES.values())
-    root = 'NOT UPGRADINGPRODUCTCODE AND NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"'
+    root = "NOT UPGRADINGPRODUCTCODE"
+    msi_owned = 'NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"'
     installing = root + ' AND NOT (REMOVE ~= "ALL")'
-    removing = root + ' AND REMOVE ~= "ALL"'
+    msi_installing = installing + " AND " + msi_owned
+    removing = root + ' AND REMOVE ~= "ALL" AND ' + msi_owned
     actions = [
         (
             "NativeRuntimeRollback",
@@ -141,15 +143,15 @@ def author(identity, helper: Path, expected_sha256: str):
             "NativeRuntimeJoinRemoval",
             "deferred",
             "join-remove " + identity["runtimeId"] + ' "[UPGRADINGPRODUCTCODE]"',
-            'UPGRADINGPRODUCTCODE AND NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"',
+            "UPGRADINGPRODUCTCODE AND " + msi_owned,
             1504,
         ),
-        ("NativeRuntimeVerify", "deferred", "verify " + tuple_args, installing, 6501),
+        ("NativeRuntimeVerify", "deferred", "verify " + tuple_args, msi_installing, 6501),
         (
             "NativeRuntimeCommitInstall",
             "commit",
             "commit-install " + identity["runtimeId"],
-            installing,
+            msi_installing,
             6502,
         ),
         (

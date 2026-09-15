@@ -148,7 +148,11 @@ fn bundle_transaction(arguments: &[String]) -> Result<(), String> {
     };
     let mut store = windows_runtime_store::WindowsStore::new();
     let commands = match (action, &arguments[1..]) {
-        ("install" | "repair", fields) if fields.len() == 5 => vec![
+        ("install", fields) if fields.len() == 5 => vec![
+            [vec!["verify".into()], fields.to_vec()].concat(),
+            vec!["commit-install".into(), fields[0].clone()],
+        ],
+        ("repair", fields) if fields.len() == 5 => vec![
             [vec!["begin-install".into()], fields.to_vec(), vec![OWNER.into()]].concat(),
             [vec!["verify".into()], fields.to_vec()].concat(),
             vec!["commit-install".into(), fields[0].clone()],
