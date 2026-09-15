@@ -15,6 +15,7 @@ import {
   parseManagedStartupRootApplyRequest,
   serializeManagedStartupRootApplyRequest,
 } from "../managed-startup/root-apply";
+import { redactOnboardError, redactOnboardErrorText } from "../diagnostics/redaction";
 
 export const MANAGED_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
 export const MANAGED_BOOTSTRAP_IDENTITY_BYTES = 32;
@@ -362,12 +363,21 @@ export class ManagedBootstrapRecoveryBlockedError extends Error {
 }
 
 export function attachManagedBootstrapRollbackError(failure: Error, rollbackError: unknown): void {
+  let redactedRollbackError = rollbackError;
+  if (rollbackError instanceof Error) {
+    redactOnboardError(rollbackError);
+  } else if (typeof rollbackError === "string") {
+    redactedRollbackError = redactOnboardErrorText(rollbackError);
+  }
   (
     failure as Error & {
       managedBootstrapRollbackError?: unknown;
     }
-  ).managedBootstrapRollbackError = rollbackError;
-  const detail = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+  ).managedBootstrapRollbackError = redactedRollbackError;
+  const detail =
+    redactedRollbackError instanceof Error
+      ? redactedRollbackError.message
+      : String(redactedRollbackError);
   if (!failure.message.includes(detail)) {
     failure.message = `${failure.message}\nManaged bootstrap rollback requires attention: ${detail}`;
   }

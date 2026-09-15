@@ -37,7 +37,6 @@ import type {
   ManagedBootstrapNativeGpuFallbackRollbackOutcome,
   ManagedBootstrapNativeGpuFallbackRollbackRequest,
 } from "./managed-bootstrap/runtime-create";
-import { redactOnboardError } from "./diagnostics/redaction";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
 export type { DockerGpuRoutePlan, SelectedDockerGpuRoute } from "./docker-gpu-route";
@@ -292,17 +291,12 @@ export function createDockerGpuSandboxCreatePatch(
     }
   };
 
-  const attachRollbackError = (failure: Error, rollbackError: Error): void => {
-    redactOnboardError(rollbackError);
-    attachManagedBootstrapRollbackError(failure, rollbackError);
-  };
-
   const reportPatchErrorAndExit = async (): Promise<void> => {
     if (!patchError) return;
     const failure = patchError instanceof Error ? patchError : new Error(String(patchError));
     const rollbackError = await rollbackAfterFailure();
     if (rollbackError) {
-      attachRollbackError(failure, rollbackError);
+      attachManagedBootstrapRollbackError(failure, rollbackError);
     }
     onPatchFailureExit(options.sandboxName, failure, {
       runCaptureOpenshell: options.deps.runCaptureOpenshell,
@@ -516,7 +510,7 @@ export function createDockerGpuSandboxCreatePatch(
                 rollbackFailure instanceof Error
                   ? rollbackFailure
                   : new Error(String(rollbackFailure));
-              attachRollbackError(failure, rollbackError);
+              attachManagedBootstrapRollbackError(failure, rollbackError);
             }
             cutoverFinalizationFailure = failure;
             onPatchFailureExit(options.sandboxName, failure, {
@@ -642,7 +636,7 @@ export function createDockerGpuSandboxCreatePatch(
           });
           const rollbackError = await rollbackAfterFailure();
           if (rollbackError) {
-            attachRollbackError(failure, rollbackError);
+            attachManagedBootstrapRollbackError(failure, rollbackError);
             console.error(`  ${rollbackError.message}`);
           }
           throw failure;
@@ -666,7 +660,7 @@ export function createDockerGpuSandboxCreatePatch(
         });
         const rollbackError = await rollbackAfterFailure();
         if (rollbackError) {
-          attachRollbackError(failure, rollbackError);
+          attachManagedBootstrapRollbackError(failure, rollbackError);
           console.error(`  ${rollbackError.message}`);
         }
         throw failure;
