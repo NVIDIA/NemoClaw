@@ -87,6 +87,9 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // The same reviewed install after OpenClaw 2026.9.1 began requiring
   // explicit acceptance of package-declared plugin capabilities.
   "46a1858936c680a21252483515f55ebfa2de65fb4352d27ec71d3aaa8d67dbd5",
+  // The same reviewed install with npm forced offline for every optional
+  // plugin command; it still preserves the generated dashboard config.
+  "a72a06b293274fb997f5a4b8b1c61cf3daa8a7cc4b8385baa0d9dc63400b8d52",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
