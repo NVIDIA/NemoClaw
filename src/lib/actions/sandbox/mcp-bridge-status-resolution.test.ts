@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, type TestContext } from "vitest";
+import {
+  createAbortAwareLimiter,
+  createControlledHarnessProcess,
+} from "../../../../test/helpers/controlled-concurrency-harness";
 import { runOnboardProcessAsync } from "../../../../test/helpers/onboard-child-process-harness";
 
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
@@ -20,30 +24,7 @@ function describeConcurrentProbeSuite(name: string, factory: () => void): void {
   describe.concurrent(name, { timeout: harnessTimeoutMs }, factory);
 }
 
-function createHarnessLimiter(
-  concurrency: number,
-): <Result>(run: () => Promise<Result>) => Promise<Result> {
-  const lanes = Array.from({ length: concurrency }, () => Promise.resolve());
-  let nextLane = 0;
-
-  return async <Result>(run: () => Promise<Result>): Promise<Result> => {
-    const lane = nextLane;
-    nextLane = (nextLane + 1) % concurrency;
-    const previous = lanes[lane];
-    let release!: () => void;
-    lanes[lane] = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    try {
-      return await run();
-    } finally {
-      release();
-    }
-  };
-}
-
-const limitHarness = createHarnessLimiter(harnessConcurrency);
+const limitHarness = createAbortAwareLimiter(harnessConcurrency);
 
 function createTempHome(prefix: string, root = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(root, prefix));
@@ -258,7 +239,7 @@ ${body}
   process.exit(1);
 });
 `;
-    const result = await limitHarness(() =>
+    const result = await limitHarness(context.signal, () =>
       runHarnessProcess(["-e", script], {
         cwd: process.cwd(),
         env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
@@ -279,31 +260,75 @@ describe("MCP status harness concurrency", { timeout: harnessTimeoutMs }, () => 
     const homes = Array.from({ length: harnessConcurrency + 1 }, () =>
       createTempHome("nemoclaw-mcp-concurrency-"),
     );
-    let active = 0;
+    const controlled = createControlledHarnessProcess();
     let maxActive = 0;
-    let releaseAll!: () => void;
-    const release = new Promise<void>((resolve) => {
-      releaseAll = resolve;
-    });
-    runHarnessProcess = async () => {
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await release;
-      active -= 1;
-      return { status: 0, signal: null, error: undefined, stdout: "", stderr: "", output: "" };
+    runHarnessProcess = async (...arguments_) => {
+      const result = controlled.run(...arguments_);
+      maxActive = Math.max(maxActive, controlled.activeHomes.size);
+      return result;
     };
     const runs = homes.map((home) => runHarness(context, home, ""));
 
     try {
-      await expect.poll(() => active).toBe(harnessConcurrency);
+      await expect.poll(() => controlled.activeHomes.size).toBe(harnessConcurrency);
       expect(maxActive).toBe(harnessConcurrency);
-      releaseAll();
+      expect(controlled.activeHomes.has(homes[harnessConcurrency])).toBe(false);
+
+      controlled.release(homes[1]);
+      await expect.poll(() => controlled.activeHomes.has(homes[harnessConcurrency])).toBe(true);
+      expect(controlled.activeHomes.has(homes[0])).toBe(true);
+      controlled.releaseAll();
       await Promise.all(runs);
       expect(maxActive).toBe(harnessConcurrency);
     } finally {
-      releaseAll();
+      controlled.releaseAll();
       await Promise.allSettled(runs);
       runHarnessProcess = originalRunHarnessProcess;
+    }
+  });
+
+  it("removes a cancelled queued harness without delaying the next launch", async (context) => {
+    const originalRunHarnessProcess = runHarnessProcess;
+    const blockerHomes = Array.from({ length: harnessConcurrency }, () =>
+      createTempHome("nemoclaw-mcp-blocker-"),
+    );
+    const cleanupRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-queued-cleanup-"));
+    const cancelledHome = createTempHome("cancelled-", cleanupRoot);
+    const successorHome = createTempHome("nemoclaw-mcp-successor-");
+    const controlled = createControlledHarnessProcess();
+    runHarnessProcess = controlled.run;
+    const blockerRuns = blockerHomes.map((home) => runHarness(context, home, ""));
+    const controller = new AbortController();
+    const reason = new Error("queued fixture cancelled");
+    let cancelledRun: Promise<{ status: number | null; stdout: string }> | undefined;
+    let successorRun: Promise<{ status: number | null; stdout: string }> | undefined;
+
+    try {
+      await expect.poll(() => controlled.activeHomes.size).toBe(harnessConcurrency);
+      cancelledRun = runHarness(
+        { signal: controller.signal, onTestFinished: context.onTestFinished },
+        cancelledHome,
+        "",
+      );
+      successorRun = runHarness(context, successorHome, "");
+      controller.abort(reason);
+
+      await expect(cancelledRun).rejects.toBe(reason);
+      expect(fs.readdirSync(cleanupRoot)).toEqual([]);
+      controlled.release(blockerHomes[2]);
+      await expect.poll(() => controlled.activeHomes.has(successorHome)).toBe(true);
+      controlled.releaseAll();
+      await Promise.all([...blockerRuns, successorRun]);
+    } finally {
+      controller.abort(reason);
+      controlled.releaseAll();
+      await Promise.allSettled([
+        ...blockerRuns,
+        ...(cancelledRun ? [cancelledRun] : []),
+        ...(successorRun ? [successorRun] : []),
+      ]);
+      runHarnessProcess = originalRunHarnessProcess;
+      fs.rmSync(cleanupRoot, { recursive: true, force: true });
     }
   });
 });
