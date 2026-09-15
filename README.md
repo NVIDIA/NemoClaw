@@ -7,7 +7,7 @@ NemoClaw’s experimental Rust SDK manages agent deployments from desired-state 
 The CLI delegates `plan`, `apply`, `export`, and `destroy` to the SDK.
 OpenTofu owns graph execution and resource state.
 
-This independent `v1` branch follows the [accepted experiment](DESIGN.md).
+This independent `v1` branch follows the [accepted experiment](docs/design/scope.md).
 Project adoption remains a separate decision.
 [Validation evidence and limits](docs/validation/README.md) identify tested configurations and the pinned Go comparison.
 
@@ -20,6 +20,5 @@ Project adoption remains a separate decision.
 
 ## Contribute
 
-Read [AGENTS.md](AGENTS.md) and [DESIGN.md](DESIGN.md) before implementation changes.
+Follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
 Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/CONTRIBUTING.md) for documentation changes.
-[Run the workspace checks](docs/testing.md) before committing.

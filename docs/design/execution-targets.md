@@ -4,7 +4,7 @@
 # Execution Target Design
 
 Execution placement determines where resources live; a connection determines how the client reaches them.
-The [accepted scope](../../DESIGN.md) governs implementation changes.
+The [accepted scope](scope.md) governs implementation changes.
 The opening explanation describes the current boundaries, followed by the experiments that established them.
 
 ## Connection, Identity, and Publication

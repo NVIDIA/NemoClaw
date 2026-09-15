@@ -3,7 +3,7 @@
 
 # Contribute Documentation
 
-Follow [WRITING.md](../WRITING.md) for prose and [DESIGN.md](../DESIGN.md) for accepted scope.
+Follow [WRITING.md](../WRITING.md) for prose and [the design decision](design/scope.md) for accepted scope.
 This branch uses repository Markdown files.
 
 ## Choose the Page

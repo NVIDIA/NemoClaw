@@ -4,7 +4,7 @@
 # Inline Recipe Design
 
 An inline recipe describes model-specific preparation and serving requirements without adding a model-specific backend to the SDK.
-The [accepted scope](../../DESIGN.md) governs implementation changes.
+The [accepted scope](scope.md) governs implementation changes.
 The [recipe guide](../recipes.md) owns the declaration and executable protocol; this page explains their design.
 
 ## Why the Contract Is Data

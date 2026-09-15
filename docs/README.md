@@ -36,7 +36,7 @@ Each explanation includes diagrams and links to the commits that established its
 
 | Topic | Owner |
 |---|---|
-| Accepted scope, implementation boundaries, and invariants | [Design decision](../DESIGN.md) |
+| Accepted scope, implementation boundaries, and invariants | [Design decision](design/scope.md) |
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
@@ -50,5 +50,3 @@ Each explanation includes diagrams and links to the commits that established its
 - [Qwen3.8 source notices](../runtimes/qwen38/NOTICE.md).
 - [Configuration fixture provenance](../crates/nemoclaw-sdk/tests/fixtures/config/README.md).
 - [Managed runtime fixture provenance](../crates/nemoclaw-sdk/src/managed/REFERENCE.md).
-
-The [former RFC location](../RFC-desired-state.md) preserves links to the design topics.

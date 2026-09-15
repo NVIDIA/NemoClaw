@@ -4,7 +4,7 @@
 # Runtime and Model Design
 
 The runtime manages the lifetime of inference inside its container, including preparation, startup, readiness, and protective shutdown.
-The [accepted scope](../../DESIGN.md) governs implementation changes.
+The [accepted scope](scope.md) governs implementation changes.
 The opening sections explain the current design.
 The later findings describe stages that predate [removal of built-in recipes and runtime aliases](recipes.md).
 

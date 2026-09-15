@@ -4,7 +4,7 @@
 # SDK and OpenTofu Architecture
 
 The SDK turns a deployment document into checked OpenTofu operations and preserves enough state to recover after failure.
-The [accepted scope](../../DESIGN.md) governs implementation changes.
+The [accepted scope](scope.md) governs implementation changes.
 The explanations below describe the current boundaries; the later findings retain intermediate results and their limits.
 
 ## Why the SDK Owns the Operation

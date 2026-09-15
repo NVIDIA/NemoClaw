@@ -28,7 +28,7 @@ For credential-handling procedures, explain storage, access, lifetime, and remov
 Distinguish an observed result from an inference or untested claim.
 A reachable endpoint does not establish successful inference; one successful request does not establish general compatibility.
 Passing tests do not establish product support or authorize actions on a user's resources.
-[DESIGN.md](DESIGN.md) owns the accepted scope.
+The [design decision](docs/design/scope.md) defines the accepted scope.
 
 ## Review the Assigned Change
 
