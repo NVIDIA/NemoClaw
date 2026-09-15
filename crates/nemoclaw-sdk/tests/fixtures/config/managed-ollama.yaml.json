@@ -1,5 +1,5 @@
 {
-  "digest": "bd7d0d16c5b54e5cdfd0545e5bd7367610bcc12b6e387b2399e94590e3c9a9b3",
+  "digest": "4ccac1e806d864eed64aa7066b3fde419f6a687c79c871d17e1b24c4fede2958",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -28,7 +28,7 @@
         {
           "name": "assistant",
           "image": {
-            "ref": "nc-prototype-openclaw@sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a435af897405f3"
+            "ref": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd"
           },
           "runtime": {
             "provider": "docker"
@@ -39,7 +39,7 @@
           "agents": [
             {
               "name": "main",
-              "type": "openclaw",
+              "type": "fabric",
               "inference": {
                 "routes": [
                   {
@@ -50,7 +50,8 @@
                     }
                   }
                 ]
-              }
+              },
+              "harness": "openclaw"
             }
           ]
         }

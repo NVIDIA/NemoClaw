@@ -1,14 +1,22 @@
 # Agent runtimes and native access
 
-OpenClaw is the default agent. A sandbox owns its native process, while OpenShell
+OpenClaw runs through Fabric, using `type: fabric` and `harness: openclaw`.
+The default sandbox image is the pinned Fabric OpenClaw image. Fabric owns the
+agent process inside the sandbox, while OpenShell
 owns isolation and inference routing. Native channel enrollment, pairing,
 plugins, histories, and workspace data belong to the agent. NemoClaw checks its
 reserved gateway and inference settings without replacing unrelated settings.
 
 A Fabric agent selects `type: fabric` and a `harness` from `deepagents`, `hermes`,
 `openclaw`, `claude`, `codex`, `mini-swe-agent`, `nooa`, `nooa-bench`, `remote-agent`,
-or `pi`. This prototype requires an external OpenShell gateway and external
-inference for Fabric. The strict schema rejects unsupported combinations.
+or `pi`. OpenClaw supports external services, managed OpenShell gateways, and
+managed Spark or Ollama inference. Other harnesses currently require external
+gateway and inference services. The strict schema rejects unsupported combinations.
+
+The former `type: openclaw` standalone launcher is no longer supported. Existing
+standalone deployments are not automatically converted or replaced; use their
+previous bundle to export or tear them down before provisioning a Fabric deployment.
+Changing YAML alone does not migrate agent files or conversations.
 
 Build a local Linux ARM64 image with:
 

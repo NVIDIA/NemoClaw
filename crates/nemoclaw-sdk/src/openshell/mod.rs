@@ -129,10 +129,9 @@ fn sandbox_row(
         .filter(|v| !v.is_empty())
         .ok_or(ObservationError::Incomplete)?;
     let runtime = meta.labels.get(AGENT_RUNTIME).cloned().unwrap_or_default();
-    if !runtime.is_empty()
-        && !runtime
-            .strip_prefix("fabric-")
-            .is_some_and(crate::config::is_fabric_harness)
+    if !runtime
+        .strip_prefix("fabric-")
+        .is_some_and(crate::config::is_fabric_harness)
     {
         return Err(ObservationError::Incomplete);
     }

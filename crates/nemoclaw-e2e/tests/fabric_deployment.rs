@@ -106,7 +106,7 @@ async fn every_fabric_harness_preserves_conversations_and_rejects_runtime_drift(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
-async fn older_state_defaults_runtime_and_provider_type_without_replacement() {
+async fn missing_runtime_declaration_stops_planning_without_recreation() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -132,14 +132,23 @@ async fn older_state_defaults_runtime_and_provider_type_without_replacement() {
             .remove(field);
     }
     fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
-    );
+    let before = fs::read(&path).unwrap();
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .values_mut()
+        .next()
+        .unwrap()
+        .metadata
+        .as_mut()
+        .unwrap()
+        .labels
+        .remove("nemoclaw.nvidia.com/agent-runtime");
+    assert!(deployment.plan(&document, &cancel).await.is_err());
+    assert!(deployment.apply(&document, &cancel).await.is_err());
+    assert!(deployment.export(&cancel).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, 4);
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert_eq!(fs::read(&path).unwrap(), before);
 }

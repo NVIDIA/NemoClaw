@@ -107,6 +107,12 @@ impl OpenShell {
                     )
                 }
                 "sandbox" => {
+                    if !value(want, "agent_runtime")
+                        .strip_prefix("fabric-")
+                        .is_some_and(crate::config::is_fabric_harness)
+                    {
+                        return Err(ObservationError::BindingMismatch);
+                    }
                     let mut labels = labels(want);
                     labels.insert(AGENT.into(), value(want, "agent_name").into());
                     if !value(want, "agent_runtime").is_empty() {

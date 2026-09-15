@@ -34,22 +34,6 @@
   },
   "reference": "b549ccd43e6102b72aa9c65ee17abfe3c429fc0b",
   "runtimes": {
-    "": {
-      "command": [
-        "node",
-        "-e",
-        "const fs=require('node:fs');\nconst cp=require('node:child_process');\nfs.mkdirSync('/sandbox/.openclaw',{recursive:true,mode:0o700});\nfs.mkdirSync('/sandbox/tmp',{recursive:true,mode:0o700});\nfs.mkdirSync('/sandbox/workspace',{recursive:true,mode:0o700});\nconst p=process.env.OPENCLAW_CONFIG_PATH;\nfs.writeFileSync(p+'.tmp',process.env.NEMOCLAW_AGENT_CONFIG,{mode:0o600});\nfs.renameSync(p+'.tmp',p);\nconst child=cp.spawn('openclaw',['gateway'],{stdio:'inherit',cwd:'/sandbox'});\nfor(const s of ['SIGTERM','SIGINT'])process.on(s,()=\u003echild.kill(s));\nchild.on('error',()=\u003eprocess.exit(1));\nchild.on('exit',code=\u003eprocess.exit(code??1));"
-      ],
-      "environment": {
-        "NEMOCLAW_AGENT_CONFIG": "{\"agents\":{\"defaults\":{\"model\":{\"primary\":\"openshell/primary\"},\"sandbox\":{\"mode\":\"off\"},\"workspace\":\"/sandbox/workspace\"},\"entries\":{\"main\":{}}},\"gateway\":{\"auth\":{\"mode\":\"none\"},\"bind\":\"loopback\",\"controlUi\":{\"enabled\":false},\"mode\":\"local\",\"port\":18789},\"models\":{\"mode\":\"replace\",\"providers\":{\"openshell\":{\"api\":\"openai-completions\",\"apiKey\":\"openshell-placeholder\",\"baseUrl\":\"https://inference.local/v1\",\"models\":[{\"contextWindow\":32768,\"id\":\"primary\",\"input\":[\"text\"],\"maxTokens\":2048,\"name\":\"OpenShell route\",\"reasoning\":false}]}}},\"tools\":{\"profile\":\"coding\"}}",
-        "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
-        "OPENCLAW_CONFIG_PATH": "/sandbox/.openclaw/openclaw.json",
-        "OPENCLAW_HOME": "/sandbox",
-        "OPENCLAW_STATE_DIR": "/sandbox/.openclaw",
-        "TMPDIR": "/sandbox/tmp",
-        "XDG_CACHE_HOME": "/sandbox/.cache"
-      }
-    },
     "fabric-claude": {
       "command": [
         "/opt/fabric/bin/python",

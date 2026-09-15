@@ -220,16 +220,15 @@ impl Document {
             "agent requires a lowercase name",
         )?;
         require(
-            (agent.agent_type == "openclaw" && agent.harness.is_empty())
-                || (agent.agent_type == "fabric" && is_fabric_harness(&agent.harness)),
-            "unsupported agent and harness combination",
+            agent.agent_type == "fabric" && is_fabric_harness(&agent.harness),
+            "agent requires type fabric and a supported harness",
         )?;
         require(
-            agent.agent_type != "fabric"
+            agent.harness == "openclaw"
                 || (gateway.management == "external"
                     && provider.service.is_none()
                     && provider.ollama.is_none()),
-            "Fabric requires external gateway and inference services",
+            "this harness requires external gateway and inference services",
         )?;
         require(
             (agent.agent_type == "fabric" && agent.harness == "claude")

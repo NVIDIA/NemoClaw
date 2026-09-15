@@ -3,7 +3,6 @@
 
 use crate::backend::Row;
 use openshell_core::proto;
-use serde_json::json;
 
 pub fn command(runtime: &str) -> Vec<String> {
     if runtime.starts_with("fabric-") {
@@ -13,9 +12,10 @@ pub fn command(runtime: &str) -> Vec<String> {
             "serve".into(),
         ]
     } else {
-        vec!["node".into(), "-e".into(), BOOTSTRAP.into()]
+        Vec::new()
     }
 }
+
 pub fn environment(name: &str, runtime: &str) -> Row {
     if let Some(harness) = runtime.strip_prefix("fabric-") {
         let mut env: Row = [
@@ -44,26 +44,9 @@ pub fn environment(name: &str, runtime: &str) -> Row {
         }
         return env;
     }
-    let config = json!({
-        "gateway":{"mode":"local","bind":"loopback","port":18789,"auth":{"mode":"none"},"controlUi":{"enabled":false}},
-        "models":{"mode":"replace","providers":{"openshell":{"baseUrl":"https://inference.local/v1","api":"openai-completions","apiKey":"openshell-placeholder","models":[{"id":"primary","name":"OpenShell route","contextWindow":32768,"maxTokens":2048,"input":["text"],"reasoning":false}]}}},
-        "agents":{"defaults":{"model":{"primary":"openshell/primary"},"workspace":"/sandbox/workspace","sandbox":{"mode":"off"}},"entries":{name:{}}},
-        "tools":{"profile":"coding"}
-    });
-    let mut env: Row = [
-        ("TMPDIR", "/sandbox/tmp"),
-        ("OPENCLAW_HOME", "/sandbox"),
-        ("XDG_CACHE_HOME", "/sandbox/.cache"),
-        ("OPENCLAW_CONFIG_PATH", "/sandbox/.openclaw/openclaw.json"),
-        ("OPENCLAW_STATE_DIR", "/sandbox/.openclaw"),
-        ("NODE_EXTRA_CA_CERTS", "/etc/ssl/certs/ca-certificates.crt"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.into(), v.into()))
-    .collect();
-    env.insert("NEMOCLAW_AGENT_CONFIG".into(), config.to_string());
-    env
+    Row::new()
 }
+
 pub fn policy() -> proto::SandboxPolicy {
     proto::SandboxPolicy {
         version: 1,
@@ -111,16 +94,3 @@ pub fn policy_matches(actual: &proto::SandboxPolicy) -> bool {
         && actual.network_policies.is_empty()
         && actual.network_middlewares.is_empty()
 }
-
-const BOOTSTRAP: &str = r###"const fs=require('node:fs');
-const cp=require('node:child_process');
-fs.mkdirSync('/sandbox/.openclaw',{recursive:true,mode:0o700});
-fs.mkdirSync('/sandbox/tmp',{recursive:true,mode:0o700});
-fs.mkdirSync('/sandbox/workspace',{recursive:true,mode:0o700});
-const p=process.env.OPENCLAW_CONFIG_PATH;
-fs.writeFileSync(p+'.tmp',process.env.NEMOCLAW_AGENT_CONFIG,{mode:0o600});
-fs.renameSync(p+'.tmp',p);
-const child=cp.spawn('openclaw',['gateway'],{stdio:'inherit',cwd:'/sandbox'});
-for(const s of ['SIGTERM','SIGINT'])process.on(s,()=>child.kill(s));
-child.on('error',()=>process.exit(1));
-child.on('exit',code=>process.exit(code??1));"###;

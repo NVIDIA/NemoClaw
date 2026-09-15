@@ -1,6 +1,6 @@
 # Agent runtime sources
 
-These native OpenClaw and Fabric recipes retain the implementation from the
+These Fabric recipes and their OpenClaw adapter retain the implementation from the
 Go prototype at `b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`. They remain runtime
 Python and JavaScript because they integrate with the agents' native APIs;
 the desired-state SDK, CLI, provider, and Spark supervisor are Rust.

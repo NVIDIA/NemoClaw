@@ -195,3 +195,17 @@ changed; cached artifact receipts and every independent binding were preserved.
 The agent replied `FOUR`, followed by unchanged apply and export/reapply. An
 independent offline rebuild produced the same runtime executable hash. This
 qualifies the separation against the existing recipe, not another backend.
+
+## One OpenClaw deployment path
+
+OpenClaw uses Fabric (`type: fabric`, `harness: openclaw`) for both external and
+managed dependencies. The standalone Node bootstrap and its image recipe are
+removed. Gateway and inference ownership do not require a different agent
+launcher. Fabric owns the native OpenClaw gateway; native commands and channel
+settings remain available through sandbox access. Other harnesses retain their
+external-service qualification boundary.
+
+Missing or unsupported runtime labels are failed observations, never absence.
+Old standalone state is not silently converted; its previous bundle remains
+necessary for export or teardown. Sandbox identities and agent data are not
+migrated by changing the agent type in YAML.

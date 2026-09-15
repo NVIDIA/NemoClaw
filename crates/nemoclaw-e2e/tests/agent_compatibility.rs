@@ -3,9 +3,12 @@
 use nemoclaw_sdk::openshell::{command, environment, policy};
 use serde_json::{Value, json};
 #[test]
-fn all_native_launch_contracts_match_the_pinned_go_reference() {
+fn all_fabric_launch_contracts_match_the_pinned_go_reference() {
     let reference: Value =
         serde_json::from_str(include_str!("../fixtures/agent-runtime.json")).unwrap();
+    assert_eq!(reference["runtimes"].as_object().unwrap().len(), 10);
+    assert!(command("").is_empty());
+    assert!(environment("main", "").is_empty());
     for (runtime, expected) in reference["runtimes"].as_object().unwrap() {
         assert_eq!(
             json!(environment("main", runtime)),

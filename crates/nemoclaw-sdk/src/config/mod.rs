@@ -11,7 +11,7 @@ pub use validation::{is_fabric_harness, validate_endpoint};
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub const DEFAULT_AGENT_IMAGE: &str =
-    "nc-prototype-openclaw@sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a435af897405f3";
+    "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd";
 pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792";
 pub const MODEL_NAME: &str = "qwen3.8-flash-next";
 
@@ -158,11 +158,7 @@ impl Gateway {
 }
 impl Agent {
     pub fn runtime(&self) -> String {
-        if self.agent_type == "fabric" {
-            format!("fabric-{}", self.harness)
-        } else {
-            String::new()
-        }
+        format!("fabric-{}", self.harness)
     }
 }
 impl Service {

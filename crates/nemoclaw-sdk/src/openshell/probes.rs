@@ -128,44 +128,28 @@ impl OpenShell {
         }
         Ok((exit.ok_or(ObservationError::Incomplete)?, output))
     }
-    fn configuration_command(&self, binding: &Row, health: bool) -> (Vec<String>, Row) {
-        let runtime = value(binding, "agent_runtime");
-        let agent = value(binding, "agent_name");
-        if let Some(harness) = runtime.strip_prefix("fabric-") {
-            let mut command = [
-                "/opt/fabric/bin/python",
-                "/opt/nemoclaw/fabric.py",
-                "check",
-                agent,
-            ]
-            .map(String::from)
-            .to_vec();
-            if harness != "deepagents" {
-                command.push(harness.into());
-            }
-            (command, Row::new())
-        } else {
-            let suffix = if health {
-                "fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-            } else {
-                "process.exit(0)"
-            };
-            (
-                vec![
-                    "node".into(),
-                    "-e".into(),
-                    format!("{CONFIGURATION_PROBE}{suffix}"),
-                ],
-                [(
-                    "NEMOCLAW_EXPECTED_CONFIG".into(),
-                    environment(agent, runtime)["NEMOCLAW_AGENT_CONFIG"].clone(),
-                )]
-                .into(),
-            )
+    fn configuration_command(&self, binding: &Row) -> Result<(Vec<String>, Row), Error> {
+        let harness = value(binding, "agent_runtime")
+            .strip_prefix("fabric-")
+            .filter(|harness| crate::config::is_fabric_harness(harness))
+            .ok_or(Error::Conflict(
+                "sandbox does not declare a supported Fabric runtime",
+            ))?;
+        let mut command = [
+            "/opt/fabric/bin/python",
+            "/opt/nemoclaw/fabric.py",
+            "check",
+            value(binding, "agent_name"),
+        ]
+        .map(String::from)
+        .to_vec();
+        if harness != "deepagents" {
+            command.push(harness.into());
         }
+        Ok((command, Row::new()))
     }
     pub async fn configuration(&self, binding: &Row) -> Result<(), Error> {
-        let (command, environment) = self.configuration_command(binding, false);
+        let (command, environment) = self.configuration_command(binding)?;
         let (exit, _) = self.exec_bound(binding, command, environment, 20).await?;
         if exit != 0 {
             return Err(Error::Conflict(
@@ -190,17 +174,9 @@ impl OpenShell {
                     ));
                 }
                 if phase == proto::SandboxPhase::Ready as i32 {
-                    let (command, environment) = self.configuration_command(binding, true);
-                    if let Ok((exit, _)) = self.exec_bound(binding, command, environment, 20).await
-                    {
-                        if exit == 0 {
-                            return Ok(());
-                        }
-                        if exit == 2 && value(binding, "agent_runtime").is_empty() {
-                            return Err(Error::Conflict(
-                                "agent configuration drifted; resources retained",
-                            ));
-                        }
+                    let (command, environment) = self.configuration_command(binding)?;
+                    if let Ok((0, _)) = self.exec_bound(binding, command, environment, 20).await {
+                        return Ok(());
                     }
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -282,7 +258,6 @@ impl OpenShell {
     }
 }
 
-const CONFIGURATION_PROBE: &str = r###"const fs=require('node:fs'),u=require('node:util');try{const actual=JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'));const expected=JSON.parse(process.env.NEMOCLAW_EXPECTED_CONFIG);for(const k of Object.keys(expected))if(!u.isDeepStrictEqual(actual[k],expected[k]))process.exit(2);}catch{process.exit(2);}"###;
 const INFERENCE_PROBE: &str = r###"fetch('https://inference.local/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.choices)&&b.choices.length>0?0:1)}).catch(()=>process.exit(1))"###;
 const ANTHROPIC_PROBE: &str = r###"fetch('https://inference.local/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':'openshell-placeholder','anthropic-version':'2023-06-01'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.content)&&b.content.length>0?0:1)}).catch(()=>process.exit(1))"###;
 const RESPONSES_PROBE: &str = r###"fetch('https://inference.local/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',input:'Reply OK.',max_output_tokens:16,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.output)&&b.output.length>0?0:1)}).catch(()=>process.exit(1))"###;

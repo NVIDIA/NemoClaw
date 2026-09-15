@@ -5,7 +5,7 @@ use nemoclaw_sdk::config::{Document, validate_endpoint};
 use serde_json::Value;
 
 #[test]
-fn all_reference_recipes_preserve_defaults_digest_workspace_and_round_trip() {
+fn all_recipes_preserve_defaults_digest_workspace_and_round_trip() {
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config");
     for entry in std::fs::read_dir(&fixtures).unwrap() {
         let path = entry.unwrap().path();
@@ -59,7 +59,7 @@ fn unsafe_yaml_and_secret_values_are_rejected_without_echoing_input() {
             "model: '${file(\"secret-do-not-print\")}'",
         ),
         ("provider: docker", "provider: unsupported"),
-        ("type: openclaw", "type: fabric\n          harness: unknown"),
+        ("harness: openclaw", "harness: unknown"),
     ];
     for (from, to) in changes {
         let error = Document::parse(base.replace(from, to).as_bytes()).unwrap_err();
@@ -177,5 +177,39 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         ("qwen3:0.6b", "qwen3"),
     ] {
         assert!(Document::parse(base.replace(from, to).as_bytes()).is_err());
+    }
+}
+
+#[test]
+fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
+    for input in [
+        include_str!("fixtures/config/local.yaml"),
+        include_str!("fixtures/config/spark.yaml"),
+        include_str!("fixtures/config/managed-ollama.yaml"),
+    ] {
+        let mut document = Document::parse(input.as_bytes()).unwrap();
+        let agent = &mut document.spec.sandboxes[0].agents[0];
+        agent.agent_type = "fabric".into();
+        agent.harness = "openclaw".into();
+        document.spec.sandboxes[0].image.ref_.clear();
+        document.defaults();
+        document.validate().unwrap();
+        assert!(
+            document.spec.sandboxes[0]
+                .image
+                .ref_
+                .starts_with("nc-prototype-fabric@sha256:")
+        );
+        assert_eq!(
+            document.spec.sandboxes[0].agents[0].runtime(),
+            "fabric-openclaw"
+        );
+        let agent = &mut document.spec.sandboxes[0].agents[0];
+        agent.agent_type = "openclaw".into();
+        agent.harness.clear();
+        assert!(
+            document.validate().is_err(),
+            "standalone OpenClaw must be rejected"
+        );
     }
 }

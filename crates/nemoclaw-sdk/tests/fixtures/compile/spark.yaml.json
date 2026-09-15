@@ -35,12 +35,12 @@
     "nemoclaw_sandbox": {
       "agent": {
         "agent_name": "assistant",
-        "agent_runtime": "",
+        "agent_runtime": "fabric-openclaw",
         "depends_on": [
           "nemoclaw_route.primary"
         ],
         "generation": "sandbox-generation",
-        "image": "nc-prototype-openclaw@sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a435af897405f3",
+        "image": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd",
         "lifecycle": {
           "prevent_destroy": true
         },

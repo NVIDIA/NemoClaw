@@ -70,7 +70,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 
 Authenticated OpenShell, stalled exec streams, and launch compatibility run in
 the default workspace suite. `agent_compatibility` uses fixtures generated from
-the pinned Go reference, covering all eleven native launch contracts. The
+the pinned Go reference, covering the ten retained Fabric launch contracts. The
 `tls` test generates certificates and verifies both trust directions and bearer
 references through a real TLS connection.
 

@@ -38,14 +38,15 @@ spec:
   sandboxes:
     - name: assistant
       image:
-        ref: nc-prototype-openclaw@sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a435af897405f3
+        ref: nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd
       runtime:
         provider: docker
       network:
         tier: isolated
       agents:
         - name: assistant
-          type: openclaw
+          type: fabric
+          harness: openclaw
           inference:
             routes:
               - name: primary
