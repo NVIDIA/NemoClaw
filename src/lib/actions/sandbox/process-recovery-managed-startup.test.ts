@@ -176,6 +176,63 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
   });
 
+  it("does not dispatch host-local Podman recovery for an explicitly selected runtime", async () => {
+    const sandboxName = "selected-podman";
+    mockGatewaySandbox(sandboxName, "openclaw", "podman");
+    const recover = vi.fn(() => ({ exitCode: 0 }));
+    vi.spyOn(runtimeProviderSelection, "resolveRegisteredRuntimeProvider").mockReturnValue({
+      gateway: { supported: true, launcher: "nemoclaw" },
+      lifecycle: { supported: true },
+      recovery: { supported: true, recover },
+    } as never);
+    const requestGatewaySupervisorAction = vi.fn();
+
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      isSandboxGatewayRunningImpl: async () => false,
+      requestGatewaySupervisorAction,
+      runtimeSelection: { gatewayName: "selected-gateway", workspace: "default" },
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail: expect.stringContaining("host-local"),
+    });
+    expect(recover).not.toHaveBeenCalled();
+    expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
+  });
+
+  it("describes provider readiness failure without obsolete replacement wording", async () => {
+    const sandboxName = "podman-readiness-failure";
+    mockGatewaySandbox(sandboxName, "openclaw", "podman");
+    const recover = vi.fn(() => ({ exitCode: 0 }));
+    vi.spyOn(runtimeProviderSelection, "resolveRegisteredRuntimeProvider").mockReturnValue({
+      gateway: { supported: true, launcher: "nemoclaw" },
+      lifecycle: { supported: true },
+      recovery: { supported: true, recover },
+    } as never);
+
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      isSandboxGatewayRunningImpl: async () => false,
+      waitForRecoveredSandboxGatewayImpl: async () => true,
+      waitForRecreatedSandboxOpenShellReadyImpl: async () => false,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail:
+        "the sandbox did not become ready in OpenShell after gateway recovery. NemoClaw did not start the primary dashboard/API host forward",
+    });
+    expect(result.recoveryFailureDetail).not.toMatch(/recreated|replacement/u);
+  });
+
   it.each([
     ["SUPERVISOR_NOT_RUNNING", false],
     ["SUPERVISOR_DISCOVERY_PENDING", false],
