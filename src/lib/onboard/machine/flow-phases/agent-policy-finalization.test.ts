@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 import type { OnboardFlowContext } from "../flow-context";
 import { advanceTo, completeOnboardMachine } from "../result";
-import { OnboardRuntime, type OnboardRuntimeDeps } from "../runtime";
 import { runOnboardSequenceWithRunner } from "../sequence-runner";
 import {
   createAgentSetupPhase,
@@ -17,8 +16,6 @@ import {
 import {
   MACHINE_SNAPSHOT_VERSION,
   type Session,
-  type SessionUpdates,
-  cloneSession,
   createSession,
   createTestRuntime,
 } from "../../../../../test/helpers/onboard-machine-runtime-fixture";

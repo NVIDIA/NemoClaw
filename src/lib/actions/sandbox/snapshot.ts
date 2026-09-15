@@ -32,25 +32,18 @@ import {
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
 import { deleteSandboxProviderRegistrations } from "../../onboard/sandbox-provider-cleanup";
-import {
-  findAvailableDashboardPort,
-  getRegistryOccupiedDashboardPorts,
-  getRegistryOccupiedHermesApiPorts,
-  withDashboardPortReservationLock,
-} from "../../onboard/dashboard-port";
+import { withDashboardPortReservationLock } from "../../onboard/dashboard-port";
 import { isValidForwardPort } from "../../onboard/dashboard-runtime";
 import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
-import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   cleanupTempDir,
   createExactTempFileCleanup,
   secureTempFile,
 } from "../../onboard/temp-files";
-import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
@@ -96,7 +89,6 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
-  getMcpProviderInspectionRuntimeSelection,
   isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
@@ -107,10 +99,13 @@ import {
   readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
-  restoreDeepAgentsManagedMcpProjection,
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
+import {
+  allocateSnapshotCloneForwardPorts,
+  snapshotCloneHermesApiEnvArgs,
+} from "./snapshot/forward-port-allocation";
 import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -120,18 +115,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
-function deepAgentsManagedProjectionRecoveryCommand(sandboxName: string): string {
-  const script = [
-    "projection=/sandbox/.deepagents/.nemoclaw-mcp.json",
-    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then printf "Managed MCP projection recovery stopped because %s is no longer a directory. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
-    "recovery_dir=$(mktemp -d /sandbox/.nemoclaw-mcp.json.recovery.XXXXXX)",
-    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then rmdir -- "$recovery_dir"; printf "Managed MCP projection recovery stopped because %s changed before it could be moved. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
-    'mv -- "$projection" "$recovery_dir/projection"',
-    'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
-  ].join(" && ");
-  return `${CLI_NAME} ${shellQuote(sandboxName)} exec -- sh -c ${shellQuote(script)}`;
-}
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -283,71 +266,6 @@ function resolveSrcPodImage(
   }
 }
 
-// Allocate the clone's own dashboard port. Dashboard ports are per-sandbox
-// host resources: the host forward for src's port is owned by src, so a clone
-// that inherits the port gets a dashboard URL that points at src's dashboard
-// and a rebuild preflight that rejects the clone forever (#6746). Allocate
-// dst's own port instead, from the same per-gateway forward list +
-// cross-gateway registry occupancy view as onboard's `ensureDashboardForward`.
-// Sources without a dashboard port (non-dashboard-managed agents) return null
-// so the clone's field stays unset. Callers must invoke this before any
-// destructive step (e.g. deleting a `--force` destination) so port-range
-// exhaustion aborts before, not after, the mutation.
-function allocateCloneDashboardPort(
-  dstName: string,
-  srcEntry: {
-    name?: string;
-    dashboardPort?: number | null;
-    hermesDashboardEnabled?: boolean;
-    hermesDashboardInternalPort?: number | null;
-  },
-): number | null {
-  const srcPort = srcEntry.dashboardPort;
-  if (typeof srcPort !== "number" || !Number.isInteger(srcPort) || srcPort <= 0) return null;
-  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  const occupied = getRegistryOccupiedDashboardPorts(dstName);
-  const hermesInternalPort = srcEntry.hermesDashboardInternalPort;
-  if (srcEntry.hermesDashboardEnabled === true && isValidForwardPort(hermesInternalPort)) {
-    occupied.set(
-      String(hermesInternalPort),
-      `${srcEntry.name ?? "source"} (Hermes dashboard internal)`,
-    );
-  }
-  try {
-    return findAvailableDashboardPort(dstName, srcPort, forwards.output || "", undefined, occupied);
-  } catch (err) {
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    snapshotExit(1);
-  }
-}
-
-// Allocate the clone's own API port. The source owns the host forward for its
-// port, and the sandbox exposes the API on the same number it is forwarded on,
-// so a clone that inherits the source's port gets no inference forward, and its
-// gateway restart never converges. Returns null for an agent that has no
-// per-sandbox API port, so the clone's field stays unset. Callers must invoke
-// this before any destructive step so range exhaustion aborts before the
-// mutation.
-function allocateCloneHermesApiPort(
-  dstName: string,
-  srcEntry: { name?: string; agent?: string | null },
-): number | null {
-  if (srcEntry.agent !== "hermes") return null;
-  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  try {
-    return findAvailableHermesApiPort(
-      dstName,
-      undefined,
-      forwards.output || "",
-      undefined,
-      getRegistryOccupiedHermesApiPorts(dstName),
-    );
-  } catch (err) {
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    snapshotExit(1);
-  }
-}
-
 function resolveCloneDashboardEnvArgs(
   srcEntry: SandboxEntry | { name: string },
   dstDashboardPort: number | null,
@@ -475,7 +393,7 @@ async function autoCreateSandboxFromSource(
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
     ...dashboardEnvArgs,
-    ...(dstHermesApiPort === null ? [] : [`${HERMES_API_PORT_ENV}=${dstHermesApiPort}`]),
+    ...snapshotCloneHermesApiEnvArgs(dstHermesApiPort),
     "nemoclaw-start",
   ];
   const createEnv = { ...process.env };
@@ -1005,7 +923,7 @@ function runSnapshotCreate(
 
 function requireRestoredOpenClawConfigPerms(
   targetSandbox: string,
-  result: ReturnType<typeof sandboxState.restoreSandboxState>,
+  result: Awaited<ReturnType<typeof sandboxState.restoreSandboxState>>,
 ): void {
   if (!result.restoredFiles.includes("openclaw.json")) return;
   let failure: string;
@@ -1379,8 +1297,20 @@ async function runSnapshotRestoreUnlocked(
       // dashboard-port-range exhaustion aborts before `deleteSandboxForRestore`
       // removes the existing `--force` destination — matching the pre-delete
       // validation the image and gateway-route checks above already do (#3756).
-      const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
-      const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
+      let clonePorts: Awaited<ReturnType<typeof allocateSnapshotCloneForwardPorts>>;
+      try {
+        clonePorts = await allocateSnapshotCloneForwardPorts({
+          destinationName: targetSandbox,
+          executable: getOpenshellBinary(),
+          gatewayName: lockedGatewayName,
+          gatewayPort: lockedGatewayPort,
+          source: lockedSourceEntry,
+        });
+      } catch (error) {
+        console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+        snapshotExit(1);
+      }
+      const { dashboardPort: dstDashboardPort, hermesApiPort: dstHermesApiPort } = clonePorts;
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let cloneCreatedPending = false;
@@ -1482,15 +1412,6 @@ async function runSnapshotRestoreUnlocked(
     }
   }
   await withMcpLifecycleLock(targetSandbox, async () => {
-    const snapshotTarget = registry.getSandbox(targetSandbox);
-    const repairsManagedDeepAgentsProjection =
-      snapshotTarget?.agent === "langchain-deepagents-code" && !snapshotTarget.fromDockerfile;
-    const managedDeepAgentsEntries = repairsManagedDeepAgentsProjection
-      ? Object.values(snapshotTarget.mcp?.bridges ?? {}).filter(
-          (entry) =>
-            entry.agent === "langchain-deepagents-code" && entry.adapter === "deepagents-config",
-        )
-      : [];
     const validateProviderRestoreBeforeMutation =
       preparedRuntimeRestore || preparedHostLocalInferenceRestore
         ? () => {
@@ -1538,43 +1459,6 @@ async function runSnapshotRestoreUnlocked(
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
     }
-    if (
-      repairsManagedDeepAgentsProjection &&
-      snapshotRestoreAuthority &&
-      validateProviderRestoreBeforeMutation
-    ) {
-      const authorityError = sandboxState.validateSnapshotRestoreMutation(backupPath, {
-        authority: snapshotRestoreAuthority,
-        validateBeforeMutation: validateProviderRestoreBeforeMutation,
-      });
-      if (authorityError) {
-        console.error(`  Cannot restore provider snapshot '${sandboxName}': ${authorityError}.`);
-        console.error(`  Destination '${targetSandbox}' was not changed.`);
-        snapshotExit(1);
-      }
-    }
-    if (repairsManagedDeepAgentsProjection) {
-      try {
-        const currentTarget = registry.getSandbox(targetSandbox);
-        if (!currentTarget) {
-          throw new Error(`target '${targetSandbox}' is no longer registered`);
-        }
-        const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
-        await restoreDeepAgentsManagedMcpProjection(
-          targetSandbox,
-          managedDeepAgentsEntries,
-          runtimeSelection,
-        );
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        const recoveryCommand = deepAgentsManagedProjectionRecoveryCommand(targetSandbox);
-        throw new SnapshotCommandError([
-          `Snapshot files were not restored into '${targetSandbox}'.`,
-          `The managed Deep Agents MCP projection at '/sandbox/.deepagents/.nemoclaw-mcp.json' could not be repaired: ${detail}`,
-          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${recoveryCommand}\`. The command prints the unused recovery location. Then rerun the snapshot restore command.`,
-        ]);
-      }
-    }
     if (targetSandbox !== sandboxName) {
       console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
     } else {
@@ -1582,11 +1466,11 @@ async function runSnapshotRestoreUnlocked(
     }
     const result =
       snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
-        ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {
+        ? await sandboxState.restoreSandboxState(targetSandbox, backupPath, {
             authority: snapshotRestoreAuthority,
             validateBeforeMutation: validateProviderRestoreBeforeMutation,
           })
-        : sandboxState.restoreSandboxState(targetSandbox, backupPath);
+        : await sandboxState.restoreSandboxState(targetSandbox, backupPath);
     if (result.success) {
       if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
         const currentTarget = registry.getSandbox(targetSandbox);

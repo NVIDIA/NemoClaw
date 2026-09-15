@@ -310,11 +310,11 @@ describe("created DCode sandbox finalization", () => {
     );
   });
 
-  it("rechecks the latest snapshot before managed state restoration (#10546)", () => {
+  it("rechecks the latest snapshot before managed state restoration (#10546)", async () => {
     const restoreManaged = vi.fn();
     const restore = vi.fn();
 
-    const result = restoreSelectedOnboardSnapshot(
+    const result = await restoreSelectedOnboardSnapshot(
       "openclaw",
       "/tmp/selected-backup",
       { targetAgentType: "openclaw" },
@@ -362,10 +362,10 @@ describe("created DCode sandbox finalization", () => {
             extensionDirs: [],
             pluginInstalls: [],
           }),
-          restoreRecreatedSandboxState: (name, backup, options) => {
+          restoreRecreatedSandboxState: async (name, backup, options) => {
             order.push("restore");
             expect(options.allowCustomImageWholeStateFileRestore).toBeUndefined();
-            return sandboxState.restoreRecreatedSandboxState(name, backup, options);
+            return await sandboxState.restoreRecreatedSandboxState(name, backup, options);
           },
           getDcodeSelectionDrift: async (name, provider, model, api) => {
             order.push("validate");
@@ -680,8 +680,12 @@ describe("created DCode sandbox finalization", () => {
           {
             ...preparedRestoreAuthority("dcode"),
             discoverFreshOpenClawImagePluginInstalls: vi.fn(),
-            restoreRecreatedSandboxState: (name, backup, options) => {
-              const restored = sandboxState.restoreRecreatedSandboxState(name, backup, options);
+            restoreRecreatedSandboxState: async (name, backup, options) => {
+              const restored = await sandboxState.restoreRecreatedSandboxState(
+                name,
+                backup,
+                options,
+              );
               return {
                 ...restored,
                 success: false,
@@ -746,9 +750,9 @@ describe("created DCode sandbox finalization", () => {
         {
           ...preparedRestoreAuthority("custom-dcode"),
           discoverFreshOpenClawImagePluginInstalls: vi.fn(),
-          restoreRecreatedSandboxState: (name, backup, options) => {
+          restoreRecreatedSandboxState: async (name, backup, options) => {
             expect(options.allowCustomImageWholeStateFileRestore).toBe(true);
-            return sandboxState.restoreRecreatedSandboxState(name, backup, options);
+            return await sandboxState.restoreRecreatedSandboxState(name, backup, options);
           },
           getDcodeSelectionDrift: vi.fn(),
           register: () => {
@@ -948,9 +952,9 @@ describe("created OpenClaw sandbox finalization", () => {
           expect(target).toBe(expectedTargets[revalidation]);
           return refreshedTargets[revalidation++]!;
         },
-        restoreRecreatedSandboxState: (_name, _backupPath, _options, resolveTarget) => {
+        restoreRecreatedSandboxState: async (_name, _backupPath, _options, resolveTarget) => {
           order.push("restore");
-          expect(resolveTarget?.()).toBe(restoredTarget);
+          expect(await resolveTarget?.()).toBe(restoredTarget);
           return {
             success: true,
             restoredDirs: ["workspace"],
@@ -994,8 +998,8 @@ describe("created OpenClaw sandbox finalization", () => {
           discoverFreshOpenClawImagePluginInstalls: vi.fn(),
           prepareRegistration: () => prepared,
           revalidatePreparedRegistration: () => prepared,
-          restoreRecreatedSandboxState: (_name, _backupPath, _options, resolveTarget) => {
-            expect(resolveTarget?.()).toBe(prepared);
+          restoreRecreatedSandboxState: async (_name, _backupPath, _options, resolveTarget) => {
+            expect(await resolveTarget?.()).toBe(prepared);
             return {
               success: false,
               restoredDirs: [],

@@ -31,6 +31,12 @@ Missing recording fails the specialist run. Missing artifacts never mean zero bl
 Require every trusted specialist, a successful matching workflow, and the provenance checks below before calculating the blocker count.
 The ledger does not authenticate itself; bind its candidate and specialist to the shared context and GitHub artifact envelope.
 
+The workflow's `Require no Advisor blockers` job validates every specialist ledger and E2E receipt.
+It binds that evidence to the head and base SHAs resolved by the trusted workflow gate.
+It fails when any P0/P1 finding or unresolved E2E recommendation remains, or when the evidence is incomplete or malformed.
+For automatic `workflow_run` PR runs, the publication job still posts the run link after a blocker failure so the contributor can inspect the evidence.
+Trusted manual dispatch does not run the publisher or post a PR comment.
+
 `test/fixtures/review-queue-findings-clear.json` and `test/fixtures/review-queue-findings-excluded-blocker.json` are producer-generated synthetic fixtures.
 The focused ledger tests rebuild both fixtures, validate canonical identity, and prove excluded findings remain present.
 
@@ -126,7 +132,9 @@ Generate a UUIDv4 `correlation_id` once for the logical dispatch. Persist the ca
 An accepted response is not passing E2E evidence. Reconcile a returned run ID against GitHub workflow identity and the dispatch receipt.
 For an ambiguous response, read the workflow inventory and match the correlation in `E2E PR #<number> (<uuid>)` plus repository, workflow path, event, and workflow SHA.
 Require one matching run. Zero, multiple, inconsistent, or incomplete results remain unresolved; do not dispatch again automatically.
-`pr-e2e-dispatch-reconciliation.mts` documents the existing bounded bot-controller reconciliation implementation. Its bot actor checks are not suitable for a human dispatcher unchanged.
+The dispatcher must implement this bounded reconciliation directly against the current manual E2E
+workflow contract. Historical bot-controller receipt and retry helpers were retired with the former
+PR E2E controller and are not an authority for human dispatch.
 
 ## Results
 

@@ -124,6 +124,7 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
@@ -137,9 +138,12 @@ jobs:
       - name: Set up Node for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: package
         name: Download and verify reviewed OpenShell SDK packages
@@ -237,7 +241,10 @@ jobs:
       - name: Set up Node for publication verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: select_pr_source
         name: Resolve exact PR managed-image publication
@@ -304,7 +311,7 @@ jobs:
           export GITHUB_REF=refs/heads/main
           export GITHUB_SHA="$EXPECTED_SHA"
           wait_seconds=3000
-          if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then
+          if [[ "$PUBLICATION_HISTORY_ALLOW_NON_HEAD" == "1" ]]; then
             wait_seconds=300
           fi
           node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30
@@ -638,7 +645,10 @@ jobs:
       - name: Set up Node for trusted E2E planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: 24.18.1
+
+      - name: Install reviewed npm for trusted E2E planning
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Install trusted E2E planner dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -893,6 +903,9 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
+            scripts/lib/reviewed-npm-audit.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-producer-plan.mts
@@ -910,7 +923,10 @@ jobs:
       - name: Set up Node for trusted qualification planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - id: source
         name: Authenticate the candidate and dispatch artifact
@@ -1242,6 +1258,9 @@ jobs:
           path: .qualification-workflow
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
+            scripts/lib/reviewed-npm-audit.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             scripts/checks/run-native-runtime-installer-qualification.sh
             test/e2e/registry/native-runtime-qualification.ts
@@ -1261,7 +1280,10 @@ jobs:
       - name: Set up Node for candidate execution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.qualification-workflow/.github/actions/setup-reviewed-npm
 
       - name: Require a reviewed Ubuntu runtime host
         shell: bash
@@ -2455,6 +2477,9 @@ jobs:
           path: .qualification-aggregate
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
+            scripts/lib/reviewed-npm-audit.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-producer-plan.mts
@@ -2513,7 +2538,10 @@ jobs:
       - name: Set up Node for qualification aggregation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.qualification-aggregate/.github/actions/setup-reviewed-npm
 
       - name: Validate and aggregate all 24 case receipts
         working-directory: .qualification-aggregate
@@ -2533,44 +2561,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 9
-
-  retired-selector-compatibility:
-    needs: generate-matrix
-    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,') || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/retired-selector-compatibility
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Verify retired selector replacements
-        env:
-          JOBS: ${{ inputs.jobs }}
-          TARGETS: ${{ inputs.targets }}
-        run: npx tsx tools/e2e/retired-selector-compatibility.mts
-
-      - name: Upload retired selector compatibility evidence
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-retired-selector-compatibility
-          path: e2e-artifacts/live/retired-selector-compatibility/
 
   staging-brev-launchable:
     name: Exact staging Brev Launchable
@@ -2796,7 +2786,7 @@ jobs:
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3013,7 +3003,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3307,7 +3297,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_CANDIDATE_VERSION: "0.0.116"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
-      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c"
+      DOCKER_GRPC_PROBE_IMAGE: "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3319,7 +3309,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3395,7 +3385,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3693,7 +3683,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3850,7 +3840,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3969,13 +3959,19 @@ jobs:
           path: .trusted-openshell-dev-artifact
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
+            scripts/lib/reviewed-npm-audit.mts
             scripts/install-openshell.sh
             tools/e2e/openshell-dev-artifact.mts
 
       - name: Set up Node for OpenShell dev artifact resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.trusted-openshell-dev-artifact/.github/actions/setup-reviewed-npm
 
       - id: resolve_openshell_dev_artifact
         name: Resolve immutable OpenShell dev artifact
@@ -4036,7 +4032,7 @@ jobs:
       - name: Set up Node.js for trusted OpenShell verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: 24.18.1
           package-manager-cache: false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4047,6 +4043,9 @@ jobs:
           persist-credentials: false
 
       - *dockerhub-auth
+
+      - name: Install reviewed npm for trusted OpenShell verification
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Checkout trusted OpenShell dev tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4122,7 +4121,7 @@ jobs:
       # it after the trusted installer has consumed the verified OpenShell
       # assets and Docker credentials have been revoked.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -4343,7 +4342,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -4509,6 +4508,7 @@ jobs:
             --revision "$CHECKOUT_SHA" \
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM" \
+            --runtime-user sandbox \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE" \
@@ -4786,7 +4786,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
 
       - id: runtime-contract
         name: Validate protected runtime activation contract
@@ -5007,7 +5007,7 @@ jobs:
 
   hermes-e2e:
     name: Hermes E2E (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}
     timeout-minutes: 85
@@ -5075,9 +5075,31 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
+
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print | sort)
+          test "${#archives[@]}" -ge 1
+          test "${#archives[@]}" -le 2
+          for archive in "${archives[@]}"; do
+            env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+              npm cache add "$archive" --offline --ignore-scripts
+          done
+          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+            npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+            node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
@@ -5248,7 +5270,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -5265,7 +5287,10 @@ jobs:
           ENV: /dev/null
           NODE_OPTIONS: ""
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
+
+      - name: Reinstall reviewed npm after Node reassertion
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Recover Docker CLI before native Podman E2E
         if: ${{ matrix.runtime_provider == 'podman' }}
@@ -5449,7 +5474,10 @@ jobs:
       - name: Set up Node for Jetson controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Dispatch exact commit to Jetson through operator backend
         env:
@@ -5530,7 +5558,7 @@ jobs:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -5673,7 +5701,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -5764,14 +5792,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
+          docker pull node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
 
       - name: Remove Docker auth before current-checkout fixture
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -5811,7 +5839,6 @@ jobs:
       &e2e-result-jobs [
         base-image-publication,
         generate-matrix,
-        retired-selector-compatibility,
         staging-brev-launchable,
         staging-brev-launchable-identity,
         live,

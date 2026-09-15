@@ -41,6 +41,7 @@ import type {
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
   listBackups,
   type RebuildManifest,
@@ -94,6 +95,7 @@ interface RebuildRecoveryBackupDeps {
   readonly validateManifest?: typeof validateRebuildRecoveryManifest;
   readonly observePresence?: typeof observeSandboxPresenceOnGateway;
   readonly clearPolicyHandoff?: typeof clearRebuildPolicyHandoff;
+  readonly clearMcpHandoff?: typeof clearRebuildMcpHandoff;
 }
 
 function validateRecoveryIdentity(input: RebuildRecoveryBackupIdentity): void {
@@ -493,6 +495,11 @@ export function retireRebuildRecoveryBackup(
   if (!(deps.clearPolicyHandoff ?? clearRebuildPolicyHandoff)(manifest)) {
     throw new Error(
       `The retained rebuild policy handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+    );
+  }
+  if (!(deps.clearMcpHandoff ?? clearRebuildMcpHandoff)(manifest)) {
+    throw new Error(
+      `The retained rebuild MCP recovery handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
     );
   }
   try {

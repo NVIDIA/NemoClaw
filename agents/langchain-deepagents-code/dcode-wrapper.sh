@@ -7,11 +7,11 @@
 set -euo pipefail
 
 if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2'
+  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3'
   exit 0
 fi
 
-unset BASH_ENV ENV OPENAI_PROXY DEEPAGENTS_CODE_APPROVAL_MODE DEEPAGENTS_CODE_STARTUP_MODE
+unset BASH_ENV ENV OPENAI_PROXY
 while IFS= read -r _nemoclaw_auto_approval_env; do
   unset "$_nemoclaw_auto_approval_env"
 done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
@@ -875,7 +875,36 @@ case "${1:-}" in
     ;;
 esac
 
-unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST
+is_non_interactive_long_option() {
+  case "$1" in
+    --non | --non- | --non-i | --non-in | --non-int | --non-inte | --non-inter | --non-intera | --non-interac | --non-interact | --non-interacti | --non-interactiv | --non-interactive)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+managed_headless=false
+for arg in "$@"; do
+  case "$arg" in
+    -n | -n?*)
+      managed_headless=true
+      break
+      ;;
+    *)
+      if is_non_interactive_long_option "${arg%%=*}"; then
+        managed_headless=true
+        break
+      fi
+      ;;
+  esac
+done
+
+if [ "$managed_headless" = true ]; then
+  unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST
+fi
 
 reject_managed_override() {
   local posture="$1"
@@ -924,7 +953,9 @@ for arg in "$@"; do
       reject_managed_override "MCP posture" "$arg"
       ;;
     --shell-allow-list | --shell-allow-list=* | -S | -S?*)
-      reject_managed_override "shell allow-list posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless shell posture" "$arg"
+      fi
       ;;
     --u | --up | --upd | --upda | --updat | --update | --update=*)
       reject_managed_override "dependency update posture" "$arg"
@@ -942,16 +973,22 @@ for arg in "$@"; do
       reject_managed_override "rubric model posture" "$arg"
       ;;
     --sta | --sta=* | --star | --star=* | --start | --start=* | --startu | --startu=* | --startup | --startup=* | --startup-*)
-      reject_managed_override "startup command posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless startup command posture" "$arg"
+      fi
       ;;
     --interpreter)
-      reject_managed_override "interpreter posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless interpreter posture" "$arg"
+      fi
       ;;
     --interpreter-t | --interpreter-t=* | --interpreter-to | --interpreter-to=* | --interpreter-too | --interpreter-too=* | --interpreter-tool | --interpreter-tool=* | --interpreter-tools | --interpreter-tools=*)
-      reject_managed_override "interpreter posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless interpreter posture" "$arg"
+      fi
       ;;
-    -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve)
-      if [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
+    -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve | --yolo)
+      if [ "$managed_headless" = true ] || [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
         reject_managed_override "tool approval posture" "$arg"
       fi
       ;;
@@ -996,14 +1033,25 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
       arg_index=$((value_index + 1))
       continue
       ;;
-    --non-interactive=*)
-      if prompt_is_blank "${current_arg#--non-interactive=}"; then
-        reject_empty_non_interactive "--non-interactive"
-      fi
-      ;;
     -n?*)
       if prompt_is_blank "${current_arg#-n}"; then
         reject_empty_non_interactive "-n"
+      fi
+      ;;
+    *)
+      current_name="${current_arg%%=*}"
+      if is_non_interactive_long_option "$current_name"; then
+        if [ "$current_name" = "$current_arg" ]; then
+          value_index=$((arg_index + 1))
+          if [ "$value_index" -lt "${#dcode_args[@]}" ] && prompt_is_blank "${dcode_args[value_index]}"; then
+            reject_empty_non_interactive "$current_name"
+          fi
+          arg_index=$((value_index + 1))
+          continue
+        fi
+        if prompt_is_blank "${current_arg#*=}"; then
+          reject_empty_non_interactive "$current_name"
+        fi
       fi
       ;;
   esac

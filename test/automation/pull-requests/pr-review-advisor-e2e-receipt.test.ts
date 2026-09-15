@@ -211,6 +211,7 @@ describe("Advisor E2E receipts", () => {
       [
         receipt("first", {
           ...empty,
+          noAdditionalE2eReason: null,
           unresolvedRecommendations: ["No trusted target covers the new device."],
         }),
         receipt("second"),
@@ -329,5 +330,32 @@ describe("Advisor E2E receipts", () => {
     const copy = recorder.snapshot();
     copy.noAdditionalE2eReason = "Changed";
     expect(recorder.snapshot()).toEqual(empty);
+  });
+});
+
+describe("Brev deterministic evidence", () => {
+  it("retains Brev after every specialist records no additional tests", () => {
+    const input = {
+      ...expected,
+      riskPlan: buildRiskPlan({
+        headSha: expected.riskPlan.headSha,
+        changedFiles: ["test/e2e/fixtures/full-e2e-gateway.ts"],
+      }),
+    };
+    const receipts = input.expectedSpecialists.map((interest) =>
+      buildSpecialistE2eReceipt({ ...input, interest, advisor: empty }),
+    );
+    const collected = collectE2eRecommendations(receipts, input);
+    expect(collected.status).toBe("selected");
+    expect(collected.recommendations).toContainEqual(
+      expect.objectContaining({
+        selectorType: "job",
+        id: "staging-brev-launchable",
+        required: true,
+      }),
+    );
+    expect(
+      buildReviewQueueContext(input, hostedEnvironment).deterministic.requiredJobs,
+    ).toContainEqual(expect.objectContaining({ id: "staging-brev-launchable" }));
   });
 });

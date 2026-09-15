@@ -5,12 +5,12 @@
 
 The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs its
 model-backed analysis in OpenShell sandboxes from trusted GitHub Actions jobs and inspects PRs as
-read-only data. It posts a sticky comment that links to the complete specialist reviews in the
-workflow run.
+read-only data. For automatic PR runs, it posts a sticky comment that links to the complete
+specialist reviews in the workflow run. Manual dispatch does not post a PR comment.
 
 After a required `CI / Pull Request` run whose name ends in `gate true` succeeds, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Other completed CI runs do not schedule the Advisor. Each prompt owns a distinct review concern and defines its purpose, investigation method, evidence expectations, and finding threshold.
 
-Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not select, aggregate, or summarize their findings.
+Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The Advisor does not select or summarize their findings. A trusted aggregate gate reports only whether their blocker evidence is clear.
 
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 
@@ -24,7 +24,10 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
 6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, findings ledger, and shared review-queue context.
-7. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
+7. After every specialist completes successfully, a trusted aggregate job validates all exact-attempt finding ledgers and E2E receipts. It fails the workflow for any P0/P1 finding, unresolved E2E recommendation, or incomplete or malformed evidence.
+8. For automatic `workflow_run` PR runs, one publisher attempts to post a sticky comment that links to the workflow run, including after the aggregate job fails. A failed specialist suppresses publication. Manual dispatch does not run the publisher.
+
+For a PR-bound run, `Require no Advisor blockers` is the review-request signal. Request human review only when that job is green for the latest PR commit. It is not merge authorization, and contributors must still inspect the specialist reports.
 
 `investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
 
@@ -34,19 +37,25 @@ primitives and exposes only sandbox runtime initialization as a CLI command. Bot
 lifecycle and credential-boundary helpers in `tools/openshell-agent/runtime.mts`, which are also
 used by the merge-conflict fixer.
 
-Provider failures, timeouts, and missing specialist artifacts fail closed. Workflow logs retain orchestration diagnostics.
+Provider failures, timeouts, missing specialist artifacts, blocker findings, unresolved E2E recommendations, and malformed evidence fail closed. Workflow logs retain orchestration diagnostics.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its comment
 links to the specialist reviews and does not dispatch or report pass/fail for E2E jobs.
 Model availability must not become the authority
 for whether a pull request can merge.
-For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
-changed-file list and dispatches every selected job after `CI / Pull Request` completes. `E2E / PR
-Gate` does not consume advisor output.
+When a maintainer requires live E2E for a pull request, they run it explicitly through the current
+[E2E workflow](../../.github/workflows/e2e.yaml) and follow the
+[maintainer E2E procedure](../../.agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md). Former PR E2E
+check contexts remain advisory and are ignored by the merge-readiness gate.
 
 On automatic runs, the gate accepts a successful `CI / Pull Request` run whose name ends in
 `gate true`. It uses the source repository, branch, and commit to resolve one open PR through the
-GitHub API. Manual dispatch does not require CI-run evidence.
+GitHub API. Manual dispatch does not require CI-run evidence. A PR-targeted dispatch requires both
+`target_repo` and a positive `target_pr`, resolves the open PR's head and base SHAs through the
+GitHub API, and requires its base branch to match `target_base`. A ref-targeted dispatch resolves
+`head_ref` and `base_ref` to full SHAs in `NVIDIA/NemoClaw`. In both cases, the analysis checkout
+and sandbox inputs use those resolved SHAs, so later PR or ref movement cannot change the reviewed
+revision. The blocker gate rejects missing or mismatched expected SHAs.
 
 ## Author and agent follow-up
 
@@ -68,9 +77,9 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
-- The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence. The PR E2E controller separately dispatches every listed job without consuming advisor output.
+- The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence, but does not dispatch jobs. Maintainers decide whether to run its recommended E2E coverage through the [separate manual E2E procedure](../../.agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md).
 
-Risk plan version 20 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
+The checked-in risk plan selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
 
 The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
 and checked-in evidence:

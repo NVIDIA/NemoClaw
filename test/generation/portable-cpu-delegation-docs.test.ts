@@ -942,7 +942,7 @@ describe("portable CPU delegation documentation (#9188)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture, { SUDO_SCENARIO: "concurrent" });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("File exists");
+    expect(result.stderr).toMatch(/(?:File|Already) exists/u);
     expect(result.stderr).toContain(
       `CPU controller drop-in creation failed: ${fixture.delegationDropIn}`,
     );

@@ -57,7 +57,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "a0a554d474cb70087e50686d998915eae06201d6182a2410d3ccc4879e5058e6",
   "5af905889f94ffed2f6c371111d0589e38eed7b0de54ddb0dd68ad912a23149a",
   "1197b99bdb996b37a3e4e386a507dfabcdfb2c26a40b015d617f97208668187d",
-  "3d5708120490fab5a69d1e592252cc0e2a79a6ea1b963f714dad8a6e971e4937",
+  "e4d6ad4cea1f9b676bcd0c11b3665933bc9baf783de1adef782c283775dd5171",
   "c0b409e1bf4d33a9e44f407c6bd9b0445b2ffd0b796823fe3cfa5989314d6603",
   "9fcc674a44a152707380cdb09a67f8594f568288406c96f5354f1c87f5b939a6",
   "83567d1fa0e73bef6a3333383c13ace05e26704964ae6a7a76ee24a2f2be3d7e",
@@ -71,10 +71,12 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
   "2801e488822e10a39a5586bd150279e54df4612e30c2fa782453534a466def59",
   "8f0861e48c0cec37faa662fccd130ab21f972ac3ed2a0ce5f4e5a1e9ec223130",
-  // Reviewed late messaging inputs, metadata setup, and runtime assertions.
+  "6364b77bae0a2a4449737beefac36c439333a5e37993ac404c02e375aa170515",
+  // Reviewed late messaging inputs, metadata setup, npm 12 helper, and runtime assertions.
   "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
   "4c2f29cb433ff14ca386e71373b53e88c705e2ed255b435715681a0dd64e43f9",
+  "d658e3a999d640f5d1935d2870cfe58a00a7be7708a459df9ac84fa41e735c46",
   "761ea4fbb0da5cf3390ee8f2e56f3703a7da88c96ac47fea89d0fff800f728ae",
   "9026e48d7294a60abe57d7fed77aaf27e8088d29c48421a0f2d1260e7a6d5bdc",
   // COPY --from=openclaw-runtime-payload / /

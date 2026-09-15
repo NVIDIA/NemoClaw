@@ -12,10 +12,8 @@ import { spawnExitCode } from "../../core/process-exit";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isValidName } from "../../sandbox-name-contract";
 import { buildSubprocessEnv } from "../../subprocess-env";
-import {
-  captureOpenshellCommandAsyncResult,
-  type OpenshellAsyncCaptureSignalSource,
-} from "./client";
+import type { OpenshellAsyncCaptureSignalSource } from "./client";
+import { captureOpenshellCommandAsyncResult } from "./command-execution";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import {
   type OpenShellSandboxBufferedCommandCompletion,

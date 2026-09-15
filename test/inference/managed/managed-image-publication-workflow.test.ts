@@ -28,13 +28,10 @@ import {
   required,
   step,
 } from "../../helpers/managed-image-publication-workflow";
-import type {
-  Job,
-  MatrixEntry,
-  Workflow,
-} from "../../helpers/managed-image-publication-workflow-types";
+import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
+const reviewedAuditSha = "98669f24d35f18e49b6b2769cd68709509ea24f2";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -467,7 +464,7 @@ describe("complete managed-image publication workflow", () => {
     });
     const trustedCheckout = step(reviewedAudit, "Checkout npm audit code from the base commit");
     expect(trustedCheckout.with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
+      ref: reviewedAuditSha,
       path: ".trusted-reviewed-npm-audit",
       "persist-credentials": false,
       "sparse-checkout-cone-mode": false,
@@ -478,8 +475,8 @@ describe("complete managed-image publication workflow", () => {
     expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
     const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
     expect(verifyAuditIdentities.env).toEqual({
-      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
+      REVIEWED_AUDIT_SHA: reviewedAuditSha,
     });
     expect(verifyAuditIdentities.run).toContain(
       "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
@@ -514,6 +511,11 @@ describe("complete managed-image publication workflow", () => {
     expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
+    const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
+    expect(auditVerifierCheckout.with?.ref).toBe(reviewedAuditSha);
+    const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
+    expect(prepareAuditEvidence.run).toContain(`rev-parse --verify HEAD)" = '${reviewedAuditSha}'`);
+    expect(prepareAuditEvidence.run).not.toMatch(/--legacy-(?:audit|npmjs)/u);
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
@@ -532,7 +534,8 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(localBaseBuild));
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(registryBaseBuild));
 
-    for (const action of steps.filter((candidate) => candidate.uses)) {
+    const externalActions = steps.filter(({ uses }) => uses && !uses.startsWith("./"));
+    for (const action of externalActions) {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 
@@ -754,7 +757,15 @@ describe("complete managed-image publication workflow", () => {
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/**",
+        "test/e2e/fixtures/gateway-runtime-start.ts",
+        "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
+      ]),
+    );
+    expect(readWorkflow("base-image.yaml").on?.push?.paths).toEqual(
+      expect.arrayContaining([
+        "test/e2e/fixtures/gateway-runtime-start.ts",
+        "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
     );
     expect(activation.needs).toBe("pr-build-and-entrypoint");

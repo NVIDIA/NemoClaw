@@ -28,9 +28,7 @@ If lock acquisition reaches that deadline, the controller returns `SUPERVISOR_BU
 <AgentOnly variant="hermes">
 Hermes configuration remains mutable in both topologies.
 Before a restart, the supervisor validates the secret boundary and records one stable config snapshot in its transaction metadata.
-A direct MCP change becomes pending and supersedes stale host-managed intent.
-The supervisor marks that change as applied only after the replacement gateway passes its health checks.
-The host operation that owns a managed MCP transaction can report a registry mismatch after Hermes is healthy.
+The native `mcp_servers` content in that snapshot remains authoritative, including direct edits. No separate host-side MCP registry or intended/applied marker participates in restart eligibility.
 
 The direct root-entrypoint topology keeps the integrity metadata under root ownership while it seals a restart transaction.
 That metadata does not make the complete Hermes config a relaunch allowlist.

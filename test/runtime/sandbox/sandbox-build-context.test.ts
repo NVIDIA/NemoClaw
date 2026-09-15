@@ -124,7 +124,11 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(
       path.join("ci", "reviewed-npm-audit.json"),
-      `${JSON.stringify({ npmVersion: "10.9.4" })}\n`,
+      `${JSON.stringify({
+        npmIntegrity:
+          "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
+        npmVersion: "12.0.2",
+      })}\n`,
     );
     for (const runtimeName of [
       "managed-image-messaging-runtime",
@@ -256,6 +260,7 @@ describe("sandbox build context staging", () => {
       path.join("src", "lib", "messaging", "channels", "fixture", "hooks", "example.ts"),
     );
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
+    writeFixture(path.join("src", "lib", "providerless-inference.ts"));
     for (const relativePath of [
       "extra-agents-validation.ts",
       path.join("core", "json-types.ts"),
@@ -270,6 +275,7 @@ describe("sandbox build context staging", () => {
       writeFixture(path.join("src", "lib", relativePath));
     }
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-npm12-pack-json.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-reliability.mts"));
@@ -277,7 +283,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-managed-transport-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
-    writeFixture(path.join("scripts", "openclaw", "patch-gateway-daemon-dialback.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
@@ -286,6 +291,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "upgrade-bundled-npm.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
     writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"), "fixture\n", 0o700);
+    writeFixture(path.join("scripts", "lib", "reviewed-npm-identity.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "bundled-npm-package.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "seed-reviewed-npm-cache.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);
@@ -514,16 +520,21 @@ describe("sandbox build context staging", () => {
     }
   }
 
-  function expectStagedScriptModes(buildCtx: string) {
+  function expectStagedScriptModes(buildCtx: string, sourceRoot: string) {
     const stagedScripts = path.join(buildCtx, "scripts");
     const stagedLib = path.join(stagedScripts, "lib");
     const stagedHelper = path.join(stagedLib, "reviewed-npm-archive.mts");
+    const stagedIdentity = path.join(stagedLib, "reviewed-npm-identity.mts");
     const stagedPackageHelper = path.join(stagedLib, "bundled-npm-package.mts");
     const stagedSeed = path.join(stagedLib, "seed-reviewed-npm-cache.mts");
 
     expect((fs.statSync(stagedScripts).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedLib).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedHelper).mode & 0o777).toString(8)).toBe("755");
+    expect(fs.readFileSync(stagedIdentity, "utf8")).toBe(
+      fs.readFileSync(path.join(sourceRoot, "scripts", "lib", "reviewed-npm-identity.mts"), "utf8"),
+    );
+    expect((fs.statSync(stagedIdentity).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedPackageHelper).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedSeed).mode & 0o777).toString(8)).toBe("755");
   }
@@ -690,7 +701,7 @@ describe("sandbox build context staging", () => {
       const previousUmask = process.umask(0o077);
       try {
         const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
-        expectStagedScriptModes(buildCtx);
+        expectStagedScriptModes(buildCtx, sourceRoot);
       } finally {
         process.umask(previousUmask);
       }
@@ -711,7 +722,7 @@ describe("sandbox build context staging", () => {
       const previousUmask = process.umask(0o077);
       try {
         const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
-        expectStagedScriptModes(buildCtx);
+        expectStagedScriptModes(buildCtx, sourceRoot);
       } finally {
         process.umask(previousUmask);
       }

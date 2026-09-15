@@ -60,6 +60,7 @@ import {
 
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
+export { resolveSandboxGatewayName };
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 

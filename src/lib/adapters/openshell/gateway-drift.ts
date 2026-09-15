@@ -22,17 +22,15 @@ import {
   isGatewayHealthy,
 } from "../../state/gateway";
 import { dockerContainerInspectFormat } from "../docker";
+import { type ManagedGatewayEndpointBinding, parseVersionFromText, stripAnsi } from "./client";
 import {
   classifyManagedGatewayEndpointBinding,
-  type ManagedGatewayEndpointBinding,
-  parseVersionFromText,
-  stripAnsi,
-} from "./client";
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "./command-execution";
 import { resolveOpenshell } from "./resolve";
 import { captureOpenshell, getInstalledOpenshellVersionOrNull } from "./runtime";
 import { buildSelectedOpenShellSubprocessEnv } from "./command-argv";
 import type { OpenShellRuntimeSelection } from "./runtime-selection";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 export type { GatewayReuseState, ManagedGatewayEndpointBinding };
 // Gateway observation consumers use the established drift adapter as their

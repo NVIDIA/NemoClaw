@@ -113,50 +113,6 @@ describe("sandbox registry normalization", () => {
     expect(persisted.sandboxes?.alpha).not.toHaveProperty("cuaRuntimeReadiness");
   });
 
-  it("lists managed MCP credential reservations in a stable order", async () => {
-    const registry = await loadRegistryWith({
-      zeta: {
-        name: "zeta",
-        mcp: {
-          bridges: {
-            search: {
-              server: "search",
-              agent: "openclaw",
-              url: "https://8.8.8.8/mcp",
-              env: ["SEARCH_TOKEN", "SEARCH_REGION"],
-              policyName: "mcp-bridge-search",
-              addedAt: "2026-08-18T00:00:00.000Z",
-            },
-          },
-        },
-      },
-      alpha: {
-        name: "alpha",
-        mcp: {
-          bridges: {
-            files: {
-              server: "files",
-              agent: "hermes",
-              url: "https://1.1.1.1/mcp",
-              env: ["FILES_TOKEN"],
-              policyName: "mcp-bridge-files",
-              addedAt: "2026-08-18T00:00:00.000Z",
-            },
-          },
-        },
-      },
-    });
-
-    expect(registry.listManagedMcpCredentialReservations()).toEqual([
-      { sandboxName: "alpha", server: "files", credentialKeys: ["FILES_TOKEN"] },
-      {
-        sandboxName: "zeta",
-        server: "search",
-        credentialKeys: ["SEARCH_TOKEN", "SEARCH_REGION"],
-      },
-    ]);
-  });
-
   it("preserves a stale pointer for diagnostics but repairs it on registration", async () => {
     const registry = await loadRegistryWith({ mismatched: { name: "different" } }, "mismatched");
 
@@ -245,21 +201,34 @@ describe("sandbox registry normalization", () => {
     );
   });
 
-  it("round-trips only valid Deferred N1x preview acceptance (#10959)", async () => {
-    const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
-    registry.registerSandbox({
-      name: "preview",
-      provider: "vllm-local",
-      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
-      endpointUrl: null,
-      endpointSource: null,
-      openshellDriver: "docker",
-      deferredN1xManagedVllmAccepted: true,
-    });
-    vi.resetModules();
-    const reloadedRegistry = await import("./registry");
+  it.each([
+    null,
+    "http://host.openshell.internal:8000/v1",
+    "http://host.openshell.internal:18000/v1",
+  ])(
+    "round-trips valid Deferred N1x preview acceptance with endpoint %s (#11510)",
+    async (endpointUrl) => {
+      const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+      registry.registerSandbox({
+        name: "preview",
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl,
+        endpointSource: null,
+        openshellDriver: "docker",
+        deferredN1xManagedVllmAccepted: true,
+      });
+      vi.resetModules();
+      const reloadedRegistry = await import("./registry");
 
-    expect(reloadedRegistry.getSandbox("preview")?.deferredN1xManagedVllmAccepted).toBe(true);
+      expect(reloadedRegistry.getSandbox("preview")).toMatchObject({
+        endpointUrl,
+        deferredN1xManagedVllmAccepted: true,
+      });
+    },
+  );
+
+  it("rejects malformed Deferred N1x preview acceptance (#10959)", async () => {
     const malformed = await loadRegistryWith({
       malformed: {
         name: "malformed",

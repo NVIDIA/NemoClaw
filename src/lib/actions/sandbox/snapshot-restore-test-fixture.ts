@@ -51,7 +51,8 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
-  mcp?: SandboxEntry["mcp"];
+  /** Legacy test input consumed only by the source-inspection mock. */
+  mcp?: { bridges?: Record<string, import("./mcp-bridge-contracts").McpSourceEntry> };
 };
 export { type DcodeProbeState, dcodeProbeOutput } from "./dcode-probe-test-fixture";
 
@@ -122,7 +123,7 @@ export const captureSnapshotRestoreAuthorityMock = vi.fn((_backupPath?: string) 
   contentSha256: "a".repeat(64),
 }));
 export const validateSnapshotRestoreMutationMock = vi.fn(
-  (backupPath: string, options: SnapshotRestoreOptions): string | null => {
+  async (backupPath: string, options: SnapshotRestoreOptions): Promise<string | null> => {
     if (options.authority) {
       const current = captureSnapshotRestoreAuthorityMock(backupPath);
       if (
@@ -134,7 +135,7 @@ export const validateSnapshotRestoreMutationMock = vi.fn(
       }
     }
     try {
-      options.validateBeforeMutation?.();
+      await options.validateBeforeMutation?.();
       return null;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -198,7 +199,7 @@ export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
-export const restoreDeepAgentsManagedMcpProjectionMock = vi.fn();
+export const restoreDeepAgentsNativeMcpConfigMock = vi.fn();
 export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
   gatewayName: "nemoclaw-8091",
   workspace: "default",
@@ -220,6 +221,13 @@ export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(as
   sawProgress: false,
   forcedReady: false,
 }));
+export const allocateSnapshotCloneForwardPortsMock = vi.fn(
+  async (input: { source: SandboxRecord }) => ({
+    dashboardPort:
+      typeof input.source.dashboardPort === "number" ? input.source.dashboardPort : null,
+    hermesApiPort: input.source.agent === "hermes" ? 8_642 : null,
+  }),
+);
 export const latestBackupFixture = {
   timestamp: "2026-06-15T00:00:00.000Z",
   backupPath: "/tmp/backup-alpha",
@@ -363,14 +371,26 @@ vi.mock("./restore-gateway-pairing", () => ({
   waitForRestoredSandboxGatewaySupervisor: waitForRestoredSandboxGatewaySupervisorMock,
 }));
 
+vi.mock("./snapshot/forward-port-allocation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./snapshot/forward-port-allocation")>()),
+  allocateSnapshotCloneForwardPorts: allocateSnapshotCloneForwardPortsMock,
+}));
+
 vi.mock("./mcp-bridge-adapter-deepagents-registration", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-adapter-deepagents-registration")>()),
-  restoreDeepAgentsManagedMcpProjection: restoreDeepAgentsManagedMcpProjectionMock,
+  restoreDeepAgentsNativeMcpConfig: restoreDeepAgentsNativeMcpConfigMock,
 }));
 
 vi.mock("./mcp-bridge-provider-inspection", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-provider-inspection")>()),
   getMcpProviderInspectionRuntimeSelection: getMcpProviderInspectionRuntimeSelectionMock,
+}));
+
+vi.mock("./mcp-bridge-source", () => ({
+  inspectAgentMcpSources: (sandbox: SandboxRecord) => ({
+    native: sandbox.mcp?.bridges ?? {},
+    legacy: {},
+  }),
 }));
 
 export function resetSnapshotRestoreMocks(): void {
@@ -432,13 +452,18 @@ export function resetSnapshotRestoreMocks(): void {
     failedDirs: [],
     failedFiles: [],
   });
-  restoreDeepAgentsManagedMcpProjectionMock.mockReset();
+  restoreDeepAgentsNativeMcpConfigMock.mockReset();
   getMcpProviderInspectionRuntimeSelectionMock.mockClear();
   streamSandboxCreateMock.mockImplementation(async () => ({
     status: 0,
     output: "",
     sawProgress: false,
     forcedReady: false,
+  }));
+  allocateSnapshotCloneForwardPortsMock.mockImplementation(async (input) => ({
+    dashboardPort:
+      typeof input.source.dashboardPort === "number" ? input.source.dashboardPort : null,
+    hermesApiPort: input.source.agent === "hermes" ? 8_642 : null,
   }));
   waitForRestoredSandboxGatewaySupervisorMock.mockReturnValue(true);
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));

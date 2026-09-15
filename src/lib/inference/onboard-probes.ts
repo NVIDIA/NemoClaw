@@ -97,12 +97,7 @@ const {
   getProbeProcessTimeoutMs,
   MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
 } = require("./probe-http-helpers");
-const {
-  getCurlTimingArgs,
-  runCurlProbe,
-  runChatCompletionsStreamingProbe,
-  runStreamingEventProbe,
-} = httpProbe;
+const { runCurlProbe, runChatCompletionsStreamingProbe, runStreamingEventProbe } = httpProbe;
 const { createOpenAiLikeAuthConfig } = authConfigModule;
 
 function buildOpenAiLikeAuthConfig(apiKey, options = {}) {

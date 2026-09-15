@@ -13,7 +13,8 @@ import {
   type OpenShellSandboxReadinessProbe,
   type OpenShellSandboxResult,
 } from "./sandbox-observer";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+import { observeOpenShellSandboxIdentity } from "./sandbox-presence";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 
@@ -34,6 +35,7 @@ const KNOWN_PHASES = new Set([
   "NotReady",
   "Pending",
   "Provisioning",
+  "Stopped",
   "Terminating",
 ]);
 const CANONICAL_PHASES = new Map(
@@ -237,9 +239,42 @@ export function classifyCliOpenShellCommandError(
   return null;
 }
 
-function isMissingSandboxOutput(output: string): boolean {
-  return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox has no spec/iu.test(
-    stripOpenShellCliAnsi(output),
+/** Match only legacy failures that can leave a sandbox present but unreadable. */
+export function isLegacyOpenShellSandboxConfigUnavailableOutput(output: string): boolean {
+  const clean = stripOpenShellCliAnsi(String(output)).replace(/\r/g, "").trim();
+  const structured = clean.replace(/\n\s*│\s*/g, " ");
+  return (
+    /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/iu.test(
+      clean,
+    ) ||
+    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Internal error["']\s*,\s*message:\s*["']sandbox has no spec["']$/iu.test(
+      structured,
+    ) ||
+    /^(?:error:\s*)?(?:×\s*)?code:\s*'The system is not in a state required for the operation's execution'\s*,\s*message:\s*"provider '[a-z0-9][a-z0-9._-]*' not found"$/iu.test(
+      structured,
+    )
+  );
+}
+
+/** Match only sandbox-specific absence from an owner-scoped lookup. */
+export function isExplicitMissingOpenShellSandboxOutput(
+  output: string,
+  sandboxName: string,
+): boolean {
+  const clean = stripOpenShellCliAnsi(String(output)).replace(/\r/g, "").trim();
+  const structured = clean.replace(/\n\s*│\s*/g, " ");
+  const exactStructuredNotFound =
+    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu;
+  if (exactStructuredNotFound.test(structured)) return true;
+
+  const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
+  return (
+    new RegExp(
+      `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
+      "iu",
+    ).test(clean) ||
+    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${namedSandbox}[.!]?$`, "iu").test(clean)
   );
 }
 
@@ -326,18 +361,56 @@ export function createCliOpenShellSandboxLookup(
   deps: Pick<CliOpenShellSandboxObserverDeps, "capture" | "defaultTimeoutMs">,
 ): CliOpenShellSandboxLookup {
   return async (request) => {
-    const result = await deps.capture(targetArgs("get", request.target, request.sandboxName), {
+    const timeout = request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
+    const captureOptions = {
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
-      timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
-    });
+      timeout,
+    } as const;
+    const result = await deps.capture(
+      targetArgs("get", request.target, request.sandboxName),
+      captureOptions,
+    );
     const output = commandOutput(result);
     const error = classifyCliOpenShellCommandError(result);
     if (error && error.kind !== "command") {
       return { result: failure(error), displayOutput: "" };
     }
-    if (result.status !== 0 && isMissingSandboxOutput(output)) {
+    if (
+      !result.error &&
+      result.status !== null &&
+      result.status !== 0 &&
+      isLegacyOpenShellSandboxConfigUnavailableOutput(output)
+    ) {
+      const inventory = await deps.capture(
+        [...targetArgs("list", request.target), "-o", "json"],
+        captureOptions,
+      );
+      const listed = observeOpenShellSandboxIdentity(request.sandboxName, inventory);
+      if (listed.kind === "present") {
+        return {
+          result: success({
+            state: "present",
+            sandbox: observation(request.sandboxName, listed.phase),
+          }),
+          displayOutput: "",
+        };
+      }
+      return {
+        result: failure({
+          kind: "command",
+          reason: "failed",
+          message:
+            "OpenShell could not confirm the unreadable legacy sandbox in gateway inventory.",
+        }),
+        displayOutput: "",
+      };
+    }
+    if (
+      result.status !== 0 &&
+      isExplicitMissingOpenShellSandboxOutput(output, request.sandboxName)
+    ) {
       return { result: success({ state: "missing" }), displayOutput: "" };
     }
     if (error) return { result: failure(error), displayOutput: "" };

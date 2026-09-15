@@ -1192,11 +1192,8 @@ def _hash_text_and_mcp_digest(
     env_entry, env_snapshot = _sha256_entry(env_path, MAX_ENV_BYTES)
     current_mcp = _canonical_mcp_servers_digest(config_text)
     state = mcp_state or McpHashState(current_mcp, current_mcp)
-    state_entry = (
-        f"{MCP_HASH_STATE_PREFIX} intended={state.intended} applied={state.applied}\n"
-    )
     return (
-        config_entry + env_entry + state_entry,
+        config_entry + env_entry,
         config_snapshot,
         env_snapshot,
         current_mcp,
@@ -1217,76 +1214,6 @@ def _hash_text(
         _config_text,
     ) = _hash_text_and_mcp_digest(config_path, env_path, mcp_state)
     return text, config_snapshot, env_snapshot
-
-
-def _applied_mcp_hash_text(
-    config_path: str,
-    env_path: str,
-    compat_hash: str,
-    source_hash_text: str,
-    current_mcp: str,
-    state: McpHashState,
-    mode: str,
-) -> tuple[str, FileSnapshot, FileSnapshot]:
-    """Build the metadata-only MCP applied-state commit from one stable input."""
-    if not secrets.compare_digest(current_mcp, state.intended):
-        raise UnsafePathError("Hermes MCP config changed before applied-state commit")
-    # Applying intent is a metadata-only commit. Require the complete
-    # config/env snapshot to still match the pending trust anchor rather than
-    # re-hashing and blessing unrelated concurrent changes.
-    pending_hash_text, config_snapshot, env_snapshot = _hash_text(
-        config_path, env_path, state
-    )
-    if not secrets.compare_digest(pending_hash_text, source_hash_text):
-        raise UnsafePathError(
-            "Hermes config or env changed before applied-state commit"
-        )
-    if mode == "both" and not secrets.compare_digest(
-        _read_hash_file(compat_hash), source_hash_text
-    ):
-        raise UnsafePathError(
-            "Hermes strict and compatibility MCP state differ before "
-            "applied-state commit"
-        )
-    applied_state = McpHashState(state.intended, state.intended)
-    lines = pending_hash_text.splitlines(keepends=True)
-    state_line = (
-        f"{MCP_HASH_STATE_PREFIX} intended={applied_state.intended} "
-        f"applied={applied_state.applied}\n"
-    )
-    for index, line in enumerate(lines):
-        if line.startswith(MCP_HASH_STATE_PREFIX):
-            lines[index] = state_line
-            break
-    else:
-        raise UnsafePathError(
-            "Hermes MCP state marker missing before applied-state commit"
-        )
-    return "".join(lines), config_snapshot, env_snapshot
-
-
-def _hash_text_for_refresh(
-    config_path: str,
-    env_path: str,
-    compat_hash: str,
-    source_hash_text: str,
-    current_mcp: str,
-    state: McpHashState,
-    mode: str,
-    mcp_transition: str,
-) -> tuple[str, FileSnapshot, FileSnapshot]:
-    """Resolve the hash refresh payload and its input snapshots in one step."""
-    if mcp_transition == "apply":
-        return _applied_mcp_hash_text(
-            config_path,
-            env_path,
-            compat_hash,
-            source_hash_text,
-            current_mcp,
-            state,
-            mode,
-        )
-    return _hash_text(config_path, env_path, state)
 
 
 def _sealed_file_limit(name: str) -> int:
@@ -1326,105 +1253,37 @@ def refresh_hashes(
     mode: str,
     mcp_transition: str = "preserve",
 ) -> None:
-    """Advance the durable MCP intended/applied state around one config snapshot.
-
-    ``preserve`` requires current MCP config to equal intended. ``adopt`` records
-    Hermes-owned MCP config as the next intent and supersedes stale host intent.
-    ``intend`` records current config as the next managed intent while retaining
-    the last applied digest.
-    ``rollback`` requires restored config to equal the prior applied digest,
-    then conservatively records restored/failed-candidate until reload health is
-    proven. ``apply`` is a metadata-only intended/intended commit and requires
-    the complete pending config/env anchor to remain byte-identical. Thus a new
-    image begins current/current, add/remove moves to new/old, rollback moves to
-    old/new, and only a healthy replacement advances either pending state to
-    current/current; concurrent config or env changes fail closed.
-    """
+    """Refresh the config/env integrity anchors without recording MCP state."""
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
     compat_hash = os.path.join(hermes_dir, ".config-hash")
     if mcp_transition not in {"preserve", "adopt", "intend", "rollback", "apply"}:
         raise UnsafePathError("refusing unsupported Hermes MCP hash transition")
 
-    # Snapshot-stability/TOCTOU contract: derive the config hash and canonical
-    # MCP digest from one `_read_text` result, retain both config/env inode
-    # snapshots, and reopen/compare them before each anchor write and once after
-    # the final write. For `apply`, the complete pending anchor must also remain
-    # byte-identical, so advancing only the metadata line cannot bless unrelated
-    # config/env drift between gateway health and commit.
+    # The transition argument remains accepted for old callers, but all values
+    # now mean the same source-owned operation. The complete config bytes still
+    # participate in the integrity hash; there is no separate MCP digest.
     state_path = hash_file if mode in ("strict", "both") else compat_hash
-    # Runtime refresh is allowed to advance an existing trust anchor, never to
-    # create one from the mutable config it is supposed to authenticate. Image
-    # construction emits the initial intended/applied marker; missing or
-    # malformed metadata must therefore fail closed.
-    source_hash_text = _read_hash_file(state_path)
-    _config_digest, _env_digest, state = _parse_config_hash(
-        source_hash_text, config_path, env_path
+    raw_source_hash_text = _read_hash_file(state_path)
+    source_hash_text = _canonical_config_hash_text(
+        raw_source_hash_text, config_path, env_path
     )
-    current_mcp, _ = _current_mcp_servers_digest(config_path)
-    # The transaction helper and the managed supervisor can both observe the
-    # same pending reload. The helper may commit it first while the supervisor
-    # still retains its earlier pending observation. Replacing an already-current
-    # anchor with byte-identical content needlessly changes its inode and can
-    # make a concurrent host reconciliation reject an otherwise coherent
-    # snapshot. Keep the repeated apply fail-closed, but make it validation-only:
-    # authenticate config, env, and every relevant anchor as one stable current
-    # snapshot before returning without an atomic replacement.
-    if mcp_transition == "apply" and secrets.compare_digest(
-        state.intended, state.applied
-    ):
-        integrity = inspect_mcp_integrity_snapshot(
-            hermes_dir,
-            state_path,
-            compat_hash if mode == "both" else None,
-        )
-        if integrity.state != "current":
-            raise UnsafePathError(
-                "Hermes MCP applied-state commit did not observe current state"
+    if mode == "both":
+        try:
+            compatibility_hash_text = _canonical_config_hash_text(
+                _read_hash_file(compat_hash), config_path, env_path
             )
-        assert_mcp_integrity_snapshot_current(integrity)
-        return
-    if mcp_transition == "preserve":
-        if not secrets.compare_digest(current_mcp, state.intended):
-            raise UnsafePathError(
-                "Hermes MCP config differs from persisted intended state"
-            )
-    elif mcp_transition == "adopt":
-        if not secrets.compare_digest(current_mcp, state.intended):
-            state = McpHashState(current_mcp, state.applied)
-    elif mcp_transition == "intend":
-        if state.intended != state.applied and not secrets.compare_digest(
-            current_mcp, state.intended
+        except FileNotFoundError:
+            compatibility_hash_text = None
+        if (
+            mcp_transition == "apply"
+            and compatibility_hash_text is not None
+            and not secrets.compare_digest(compatibility_hash_text, source_hash_text)
         ):
             raise UnsafePathError(
-                "Hermes MCP configuration has an incomplete prior transaction"
+                "Hermes strict and compatibility config hashes differ before refresh"
             )
-        state = McpHashState(current_mcp, state.applied)
-    elif mcp_transition == "rollback":
-        # A failed desired-config reload leaves the runtime identity uncertain.
-        # Re-anchor the restored config as intended, but retain the failed
-        # candidate digest as the conservative applied value until a healthy
-        # old-config replacement is observed.  This keeps startup/recovery
-        # fail-closed if the rollback reload also fails.
-        if secrets.compare_digest(state.intended, state.applied):
-            raise UnsafePathError(
-                "Hermes MCP rollback requires a pending desired configuration"
-            )
-        if not secrets.compare_digest(current_mcp, state.applied):
-            raise UnsafePathError(
-                "Hermes MCP rollback config does not match the previously applied state"
-            )
-        state = McpHashState(current_mcp, state.intended)
-    hash_text, config_snapshot, env_snapshot = _hash_text_for_refresh(
-        config_path,
-        env_path,
-        compat_hash,
-        source_hash_text,
-        current_mcp,
-        state,
-        mode,
-        mcp_transition,
-    )
+    hash_text, config_snapshot, env_snapshot = _hash_text(config_path, env_path)
 
     def assert_inputs_stable() -> None:
         config = _open_regular(config_path)
@@ -1438,27 +1297,18 @@ def refresh_hashes(
             config.close()
             env.close()
 
-    # Restart validates once before sealing and once after. Keep a current
-    # anchor on the same inode so the second pass cannot invalidate seal state.
-    if mcp_transition == "adopt" and secrets.compare_digest(
-        hash_text, source_hash_text
+    if (
+        mcp_transition == "adopt"
+        and secrets.compare_digest(hash_text, source_hash_text)
+        and secrets.compare_digest(raw_source_hash_text, source_hash_text)
     ):
-        compatibility_matches = True
-        if mode == "both":
-            try:
-                compatibility_matches = secrets.compare_digest(
-                    _read_hash_file(compat_hash), source_hash_text
-                )
-            except FileNotFoundError:
-                compatibility_matches = False
-        if compatibility_matches:
-            integrity = inspect_mcp_integrity_snapshot(
-                hermes_dir,
-                state_path,
-                compat_hash if mode == "both" else None,
-            )
-            assert_mcp_integrity_snapshot_current(integrity)
-            return
+        integrity = inspect_mcp_integrity_snapshot(
+            hermes_dir,
+            state_path,
+            compat_hash if mode == "both" else None,
+        )
+        assert_mcp_integrity_snapshot_current(integrity)
+        return
 
     # `both` is the transaction contract: both trust anchors must advance or
     # the caller rolls the config write back. `compat` remains best-effort for
@@ -1466,13 +1316,7 @@ def refresh_hashes(
     # anchor. Hash refresh is an atomic rename, so directory write authority
     # is what matters.
     compat_writable = os.access(hermes_dir, os.W_OK)
-    # Applying a healthy gateway's intent must use the real atomic write as
-    # the authority check. `os.access` is only a best-effort legacy probe and
-    # can disagree with the effective credentials used by the write itself.
-    compat_commit_required = mcp_transition == "apply" and mode == "compat"
-    if mode == "both" or (
-        mode == "compat" and (compat_writable or compat_commit_required)
-    ):
+    if mode == "both" or (mode == "compat" and compat_writable):
         assert_inputs_stable()
         _write_hash(compat_hash, hash_text)
 
@@ -1502,12 +1346,18 @@ def inspect_mcp_integrity_snapshot(
         compatibility_text, compatibility_snapshot = _read_text(
             compatibility_hash_file, MAX_HASH_BYTES
         )
-        if not secrets.compare_digest(compatibility_text, text):
+        if not secrets.compare_digest(
+            _canonical_config_hash_text(
+                compatibility_text, config_path, env_path
+            ),
+            _canonical_config_hash_text(text, config_path, env_path),
+        ):
             raise UnsafePathError(
                 "Hermes strict and compatibility MCP integrity anchors differ"
             )
         hash_snapshots.append((compatibility_hash_file, compatibility_snapshot))
     _config_digest, _env_digest, state = _parse_config_hash(text, config_path, env_path)
+    canonical_text = _canonical_config_hash_text(text, config_path, env_path)
     (
         actual,
         config_snapshot,
@@ -1515,7 +1365,7 @@ def inspect_mcp_integrity_snapshot(
         current_mcp,
         config_text,
     ) = _hash_text_and_mcp_digest(config_path, env_path, state)
-    if not secrets.compare_digest(actual, text):
+    if not secrets.compare_digest(actual, canonical_text):
         raise UnsafePathError("Hermes config hash does not match persisted inputs")
     if not secrets.compare_digest(current_mcp, state.intended):
         raise UnsafePathError("Hermes MCP config differs from persisted intended state")
@@ -1628,14 +1478,28 @@ def _verify_strict_hash(hermes_dir: str, hash_file: str) -> None:
         strict, config_path, env_path
     )
     actual, _config_snapshot, _env_snapshot = _hash_text(config_path, env_path, state)
-    if actual != strict:
+    if actual != _canonical_config_hash_text(strict, config_path, env_path):
         raise StrictHashMismatchError(
             "strict hash verification failed for Hermes restart seal"
         )
 
 
 def _verify_compat_hash(hash_file: str, compat_hash_file: str) -> None:
-    if _read_hash_file(compat_hash_file) != _read_hash_file(hash_file):
+    hermes_dir = os.path.dirname(compat_hash_file)
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    try:
+        compatibility = _canonical_config_hash_text(
+            _read_hash_file(compat_hash_file), config_path, env_path
+        )
+        strict = _canonical_config_hash_text(
+            _read_hash_file(hash_file), config_path, env_path
+        )
+    except UnsafePathError as exc:
+        raise UnsafePathError(
+            "compat hash verification failed for Hermes restart seal"
+        ) from exc
+    if compatibility != strict:
         raise UnsafePathError("compat hash verification failed for Hermes restart seal")
 
 
@@ -1643,7 +1507,7 @@ def _parse_config_hash(
     text: str, config_path: str, env_path: str
 ) -> tuple[str, str, McpHashState]:
     parts = text.split("\n")
-    if len(parts) != 4 or parts[-1] != "":
+    if len(parts) not in {3, 4} or parts[-1] != "":
         raise UnsafePathError("refusing malformed Hermes config hash")
     lines = parts[:2]
     expected_paths = (config_path, env_path)
@@ -1655,14 +1519,20 @@ def _parse_config_hash(
         if match is None or match.group(2) != expected_path:
             raise UnsafePathError("refusing malformed Hermes config hash")
         digests.append(match.group(1))
-    state_match = MCP_HASH_STATE_RE.fullmatch(parts[2])
-    if state_match is None:
-        raise UnsafePathError("refusing malformed Hermes MCP hash state")
+    if len(parts) == 4 and MCP_HASH_STATE_RE.fullmatch(parts[2]) is None:
+        raise UnsafePathError("refusing malformed legacy Hermes MCP hash state")
+    current_mcp, _snapshot = _current_mcp_servers_digest(config_path)
     return (
         digests[0],
         digests[1],
-        McpHashState(state_match.group(1), state_match.group(2)),
+        McpHashState(current_mcp, current_mcp),
     )
+
+
+def _canonical_config_hash_text(text: str, config_path: str, env_path: str) -> str:
+    """Validate a current or legacy anchor and drop retired MCP metadata."""
+    _parse_config_hash(text, config_path, env_path)
+    return "".join(text.splitlines(keepends=True)[:2])
 
 
 def _without_single_generated_api_server_key(text: str) -> str:
@@ -1770,7 +1640,12 @@ def _reconcile_nonroot_startup_api_key_hash(
         actual_text, config_path, env_path
     )
 
-    if not secrets.compare_digest(_read_hash_file(compat_hash_path), actual_text):
+    if not secrets.compare_digest(
+        _canonical_config_hash_text(
+            _read_hash_file(compat_hash_path), config_path, env_path
+        ),
+        actual_text,
+    ):
         raise UnsafePathError(
             "compat hash does not match frozen Hermes inputs during non-root reconciliation"
         )
@@ -2657,13 +2532,22 @@ def seal_restart(
             text, snapshot = _read_text(path, _sealed_file_limit(name))
             if name == ".config-hash":
                 strict_hash_text = _read_hash_file(hash_file)
-                if text != strict_hash_text:
+                canonical_strict_hash_text = _canonical_config_hash_text(
+                    strict_hash_text,
+                    os.path.join(hermes_dir, "config.yaml"),
+                    os.path.join(hermes_dir, ".env"),
+                )
+                if _canonical_config_hash_text(
+                    text,
+                    os.path.join(hermes_dir, "config.yaml"),
+                    os.path.join(hermes_dir, ".env"),
+                ) != canonical_strict_hash_text:
                     raise UnsafePathError(
                         "compat hash changed during Hermes restart seal"
                     )
                 # Publish trusted anchor bytes, not bytes copied from a path for
                 # which a sandbox process may retain a pre-seal descriptor.
-                text = strict_hash_text
+                text = canonical_strict_hash_text
             file_states[name]["trusted_base64"] = base64.b64encode(
                 text.encode("utf-8")
             ).decode("ascii")
