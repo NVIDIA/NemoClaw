@@ -28,6 +28,13 @@ HERMES_HASH = "76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a"
 HARNESSES = ("deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "pi")
 
 
+def source_archive_filter(member, destination):
+    """Apply the data filter while excluding unused repository metadata links."""
+    if member.issym() and Path(member.name).parts[-2:] == (".claude", "skills"):
+        return None
+    return tarfile.data_filter(member, destination)
+
+
 def run(*args, **kwargs):
     subprocess.run(args, check=True, **kwargs)
 
@@ -50,7 +57,7 @@ def main():
     if hashlib.sha256(archive.read_bytes()).hexdigest() != SOURCE_HASH:
         raise SystemExit("Fabric source checksum mismatch")
     with tarfile.open(archive) as source:
-        source.extractall(BUILD, filter="data")
+        source.extractall(BUILD, filter=source_archive_filter)
     source = BUILD / f"NeMo-Fabric-{REVISION}"
     if harness == "hermes":
         patch_hermes(source)
