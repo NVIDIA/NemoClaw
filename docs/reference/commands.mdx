@@ -1433,10 +1433,10 @@ For a stopped, non-paused Docker-driver container, `recover` starts the existing
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
-For a running Podman sandbox whose in-sandbox gateway has stopped, `recover` delegates to the registered runtime provider.
+The `recover` command requires a Podman sandbox to be running and ready in OpenShell before it delegates an in-sandbox gateway failure to the registered runtime provider.
 The provider restarts the exact managed container without changing its identity.
 If provider recovery fails, NemoClaw reports the provider diagnostic and stops before it restores host-side forwards.
-If the Podman container itself is stopped, run `$$nemoclaw <name> start` before `recover`.
+If the Podman container itself is stopped, the command cannot reach provider recovery through the readiness gate; run `$$nemoclaw <name> start` before `recover`.
 
 For providers that use the managed gateway controller, `recover` sends an authenticated lifecycle request through registry-scoped privileged direct-container control.
 The host selects the controller from the live container topology.
