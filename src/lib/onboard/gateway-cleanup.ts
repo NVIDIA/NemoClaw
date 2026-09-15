@@ -3,14 +3,14 @@
 
 import type { GatewayReuseState } from "../state/gateway";
 
-type DestroyGateway = () => boolean;
+type DestroyGateway = () => boolean | Promise<boolean>;
 
-export function destroyGatewayForReuse(
+export async function destroyGatewayForReuse(
   destroyGateway: DestroyGateway,
   successMessage: string,
   failureMessage: string,
-): GatewayReuseState {
-  if (destroyGateway()) {
+): Promise<GatewayReuseState> {
+  if (await destroyGateway()) {
     console.log(successMessage);
     return "missing";
   }
