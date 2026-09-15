@@ -205,10 +205,12 @@ try {
         actualMsiFormatting=$true; actions=$transport; executableActionsInvoked=$false }
     $commits = @($actions.Keys | Where-Object { ($actions[$_].type -band 0x600) -eq 0x600 })
     $msiOwned = 'NOT UPGRADINGPRODUCTCODE AND NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"'
+    $installCommit = $msiOwned + ' AND NOT (REMOVE ~= "ALL")'
+    $removeCommit = $msiOwned + ' AND REMOVE ~= "ALL"'
     if ($commits.Count -ne 2 -or $commits -cnotcontains 'NativeRuntimeCommitInstall' -or
         $commits -cnotcontains 'NativeRuntimeCommitRemove' -or
-        $sequence.NativeRuntimeCommitInstall.condition -cne ($msiOwned + ' AND NOT (REMOVE ~= "ALL")') -or
-        $sequence.NativeRuntimeCommitRemove.condition -cne ($msiOwned + ' AND REMOVE ~= "ALL")') {
+        $sequence.NativeRuntimeCommitInstall.condition -cne $installCommit -or
+        $sequence.NativeRuntimeCommitRemove.condition -cne $removeCommit) {
         throw 'Runtime admission requires the sole applicable final commit action.'
     }
     if (($actions.NativeRuntimeRollback.type -band 0x500) -ne 0x500 -or
