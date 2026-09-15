@@ -161,7 +161,9 @@ try {
     $preauthorizedAcl=Get-Acl -LiteralPath $preauthorized
     $preauthorizedRows=@($preauthorizedAcl.Access|ForEach-Object{
         $identity=$_.IdentityReference
-        $sid=if($identity -is [Security.Principal.SecurityIdentifier]){$identity.Value}else{
+        $sid=if($identity.Value -ceq 'APPLICATION PACKAGE AUTHORITY\ALL APPLICATION PACKAGES'){'S-1-15-2-1'}
+        elseif($identity.Value -ceq 'APPLICATION PACKAGE AUTHORITY\ALL RESTRICTED APPLICATION PACKAGES'){'S-1-15-2-2'}
+        elseif($identity -is [Security.Principal.SecurityIdentifier]){$identity.Value}else{
             try{$identity.Translate([Security.Principal.SecurityIdentifier]).Value}catch{$identity.Value}
         }
         $mask=[uint32]([int64]([int32]$_.FileSystemRights) -band 0xffffffffL)
