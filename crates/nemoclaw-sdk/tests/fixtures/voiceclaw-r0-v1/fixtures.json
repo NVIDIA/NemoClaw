@@ -1,0 +1,490 @@
+{
+  "profile": "nemoclaw-voice-r0/1",
+  "clock": "2030-01-01T00:00:00Z",
+  "syntheticCredential": "r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+  "targetRef": "target-r0-fixture",
+  "notes": "Fixtures only. Ready scenario holds open and emits heartbeats. Errors are isolated scenarios. Production uses its issuer clock, native probe and identity binding.",
+  "onboarding": {
+    "prepared": {
+      "profile": "nemoclaw-voice-r0/1",
+      "status": "prepared"
+    },
+    "ready": {
+      "profile": "nemoclaw-voice-r0/1",
+      "status": "ready",
+      "targetRef": "target-r0-fixture",
+      "clientInstructions": "Use fixture client instructions."
+    },
+    "failed": {
+      "profile": "nemoclaw-voice-r0/1",
+      "status": "failed",
+      "code": "setup_failed"
+    }
+  },
+  "cases": [
+    {
+      "name": "ready",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/x-ndjson",
+        "records": [
+          {
+            "type": "ready",
+            "profile": "nemoclaw-voice-r0/1",
+            "targetRef": "target-r0-fixture",
+            "expiresAt": "2030-01-01T00:15:00Z"
+          },
+          {
+            "type": "heartbeat"
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing_auth",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 401,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "authentication_failed"
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_auth",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer invalid-fixture",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 401,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "authentication_failed"
+          }
+        }
+      }
+    },
+    {
+      "name": "expired",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 401,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "credential_expired"
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong_target",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "another-target"
+        }
+      },
+      "response": {
+        "status": 403,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "target_not_authorized"
+          }
+        }
+      }
+    },
+    {
+      "name": "replaced",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 409,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "target_replaced"
+          }
+        }
+      }
+    },
+    {
+      "name": "unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 503,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "agent_unavailable"
+          }
+        }
+      }
+    },
+    {
+      "name": "unsupported_profile",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "unsupported/0",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 409,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "unsupported_profile"
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_request",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture",
+          "extra": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "invalid_request"
+          }
+        }
+      }
+    },
+    {
+      "name": "active",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 409,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "connection_active"
+          }
+        }
+      }
+    },
+    {
+      "name": "oversized",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture",
+          "padding": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "response": {
+        "status": 413,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "request_too_large"
+          }
+        }
+      }
+    },
+    {
+      "name": "media_type",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "text/plain",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 415,
+        "contentType": "application/json",
+        "body": {
+          "error": {
+            "code": "unsupported_media_type"
+          }
+        }
+      }
+    },
+    {
+      "name": "stream_credential_expired",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/x-ndjson",
+        "records": [
+          {
+            "type": "ready",
+            "profile": "nemoclaw-voice-r0/1",
+            "targetRef": "target-r0-fixture",
+            "expiresAt": "2030-01-01T00:15:00Z"
+          },
+          {
+            "type": "closed",
+            "reason": "credential_expired"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stream_agent_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/x-ndjson",
+        "records": [
+          {
+            "type": "ready",
+            "profile": "nemoclaw-voice-r0/1",
+            "targetRef": "target-r0-fixture",
+            "expiresAt": "2030-01-01T00:15:00Z"
+          },
+          {
+            "type": "closed",
+            "reason": "agent_unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stream_target_replaced",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/x-ndjson",
+        "records": [
+          {
+            "type": "ready",
+            "profile": "nemoclaw-voice-r0/1",
+            "targetRef": "target-r0-fixture",
+            "expiresAt": "2030-01-01T00:15:00Z"
+          },
+          {
+            "type": "closed",
+            "reason": "target_replaced"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stream_server_stopping",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/x-ndjson",
+        "records": [
+          {
+            "type": "ready",
+            "profile": "nemoclaw-voice-r0/1",
+            "targetRef": "target-r0-fixture",
+            "expiresAt": "2030-01-01T00:15:00Z"
+          },
+          {
+            "type": "closed",
+            "reason": "server_stopping"
+          }
+        ]
+      }
+    },
+    {
+      "name": "abrupt_eof",
+      "request": {
+        "method": "POST",
+        "path": "/r0/connect",
+        "headers": {
+          "Authorization": "Bearer r0-fixture-only-0123456789abcdef0123456789abcdef0123456789abcdef",
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        "body": {
+          "profile": "nemoclaw-voice-r0/1",
+          "targetRef": "target-r0-fixture"
+        }
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/x-ndjson",
+        "records": [
+          {
+            "type": "ready",
+            "profile": "nemoclaw-voice-r0/1",
+            "targetRef": "target-r0-fixture",
+            "expiresAt": "2030-01-01T00:15:00Z"
+          }
+        ]
+      },
+      "clientOutcome": "disconnected"
+    }
+  ]
+}
