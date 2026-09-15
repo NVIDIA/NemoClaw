@@ -14,6 +14,7 @@ import {
   preflightAuthoritativeRebuildTarget,
   rebuildProviderFlowOptions,
   resolveAuthoritativeOnboardGatewayBinding,
+  resolveAuthoritativeRebuildDashboardBind,
 } from "./authoritative-rebuild-target";
 import type { InferenceRouteState } from "./inference-route";
 import {
@@ -113,6 +114,37 @@ describe("authoritative rebuild runtime preflight options", () => {
       allowDeferredN1xManagedVllm: false,
       allowLegacyDgxStationQualification: false,
     });
+  });
+});
+
+describe("authoritative rebuild dashboard bind", () => {
+  it.each([
+    {
+      scenario: "persisted remote preparation",
+      env: {},
+      context: { sandbox: { dashboardRemoteBindPrepared: true }, wsl: false },
+    },
+    {
+      scenario: "current remote request",
+      env: { NEMOCLAW_DASHBOARD_BIND: "0.0.0.0" },
+      context: { sandbox: null, wsl: false },
+    },
+    {
+      scenario: "WSL host",
+      env: {},
+      context: { sandbox: null, wsl: true },
+    },
+  ])("preserves a remote bind for $scenario", ({ env, context }) => {
+    expect(resolveAuthoritativeRebuildDashboardBind(env, context)).toBe("0.0.0.0");
+  });
+
+  it("keeps an unprepared native dashboard on loopback", () => {
+    expect(
+      resolveAuthoritativeRebuildDashboardBind(
+        {},
+        { sandbox: { dashboardRemoteBindPrepared: false }, wsl: false },
+      ),
+    ).toBe("127.0.0.1");
   });
 });
 

@@ -14,6 +14,7 @@ import {
   createOpenShellForwardAdapterForAuthority,
   openShellForwardIdentity,
 } from "../adapters/openshell/forward-runtime";
+import { resolveDashboardForwardBind, type DashboardForwardBind } from "./dashboard-runtime";
 import { resolveGatewayName } from "./gateway-binding";
 import type { InferenceRouteState } from "./inference-route";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
@@ -275,6 +276,22 @@ export type AuthoritativeRebuildTargetDeps = {
   env?: NodeJS.ProcessEnv;
 };
 
+type AuthoritativeRebuildForwardObserverContext = {
+  sandbox?: { dashboardRemoteBindPrepared?: boolean } | null;
+  wsl?: boolean;
+};
+
+/** Derive rebuild observations from the same persisted and platform-aware bind contract as launch. */
+export function resolveAuthoritativeRebuildDashboardBind(
+  env: NodeJS.ProcessEnv,
+  context: AuthoritativeRebuildForwardObserverContext = {},
+): DashboardForwardBind {
+  return resolveDashboardForwardBind(context.sandbox, {
+    requestedBind: env.NEMOCLAW_DASHBOARD_BIND,
+    wsl: context.wsl === true,
+  });
+}
+
 /** Bind authoritative rebuild port observations to one exact gateway runtime. */
 export function forwardObserver(
   target: Pick<
@@ -282,6 +299,7 @@ export function forwardObserver(
     "runtimeSelection" | "sandboxName" | "targetGatewayName"
   >,
   inputAuthority: { gatewayEndpoint: string; localTlsDir?: string },
+  context: AuthoritativeRebuildForwardObserverContext,
   env: NodeJS.ProcessEnv = process.env,
 ): OpenShellForwardPortObserver {
   const authority = {
@@ -296,7 +314,7 @@ export function forwardObserver(
       openShellForwardIdentity(
         authority,
         target.sandboxName,
-        env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1",
+        resolveAuthoritativeRebuildDashboardBind(env, context),
         port,
       ),
   });
