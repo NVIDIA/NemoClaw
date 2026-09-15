@@ -18,7 +18,7 @@ pub fn render_reference(schema: &Value) -> Result<String, String> {
         "<!-- Generated from the SDK schema. Edit Rust field descriptions and constraints, then run cargo run --locked -p nemoclaw-build -- schema. -->\n\n",
         "This reference and the [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) describe authored YAML for this source revision.\n",
         "See [schema maintenance](../configuration-schema.md) for generation and validation commands.\n\n",
-        "Paths use `[]` for an array element.\n",
+        "Paths use `[]` for an array element and `{key}` for a map entry.\n",
         "Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.\n",
         "An optional object can contain required fields if you choose to declare it.\n",
         "Omit optional fields instead of assigning `null`; only nested values inside a Pi `piModel` object may be null.\n",
@@ -82,6 +82,10 @@ fn section(
     for path in paths {
         writeln!(output, "- `{path}`").unwrap();
     }
+    if schema.get("properties").is_none() {
+        writeln!(output, "\nAccepted input: {}.\n", input_type(schema)).unwrap();
+        return Ok(());
+    }
     output.push_str("\n| Field | Input type | Required | Default | Description and constraints |\n|---|---|---|---|---|\n");
     let required = schema["required"].as_array();
     for (field, property) in schema["properties"]
@@ -123,6 +127,10 @@ fn section(
 
 fn guide(name: &str) -> &'static str {
     match name {
+        "Network" | "Proxy" | "ExplicitPolicy" | "ExplicitPolicySelection" => {
+            "[Sandbox policy and proxy](../sandbox-network.md)"
+        }
+        name if name.starts_with("Policy") => "[Sandbox policy and proxy](../sandbox-network.md)",
         "InlineRecipe" | "Compatibility" | "Tool" | "Resources" | "Settings" | "Compilation"
         | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../recipes.md)",
         "ServicePlacement" | "ServicePublication" => "[SSH model service](../remote-service.md)",
@@ -144,6 +152,18 @@ fn input_type(schema: &Value) -> String {
     }
     if schema["type"] == "object" && schema["additionalProperties"].is_object() {
         return format!("map of {}", input_type(&schema["additionalProperties"]));
+    }
+    if let Some(kind) = schema["type"].as_str() {
+        return kind.into();
+    }
+    for key in ["anyOf", "oneOf"] {
+        if let Some(variants) = schema[key].as_array() {
+            return variants
+                .iter()
+                .map(input_type)
+                .collect::<Vec<_>>()
+                .join(" or ");
+        }
     }
     schema["type"]
         .as_str()
@@ -242,6 +262,16 @@ fn collect_paths(
             collect_paths(root, property, &child, paths, active)?;
         }
     }
+    if let Some(values) = schema.get("additionalProperties").filter(|v| v.is_object()) {
+        collect_paths(root, values, &format!("{path}.{{key}}"), paths, active)?;
+    }
+    for key in ["anyOf", "oneOf"] {
+        if let Some(variants) = schema[key].as_array() {
+            for variant in variants {
+                collect_paths(root, variant, path, paths, active)?;
+            }
+        }
+    }
     if let Some(items) = schema.get("items") {
         collect_paths(root, items, &format!("{path}[]"), paths, active)?;
     }
@@ -251,6 +281,15 @@ fn collect_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reference_documents_map_values_and_matcher_alternatives() {
+        let markdown = render_reference(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
+        assert!(markdown.contains("network_policies.{key}.endpoints[].rules[].allow"));
+        assert!(markdown.contains("## PolicyValueMatcher"));
+        assert!(!markdown.contains("any JSON value or any JSON value"));
+        assert!(markdown.contains("| `consecutiveSamples` | integer |"));
+        assert!(markdown.contains("[PolicyAnyMatcher](#policyanymatcher)"));
+    }
     #[test]
     fn reference_requires_field_descriptions_and_reflects_schema_metadata() {
         let mut schema = nemoclaw_sdk::config::schema::input_schema();

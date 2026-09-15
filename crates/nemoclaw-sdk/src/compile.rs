@@ -102,6 +102,19 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             values.insert("workspace".into(), workspace.clone());
         }
         values.extend(extra.into_iter().map(|(k, v)| (k.into(), v)));
+        if kind == "sandbox" {
+            if sandbox.network.policy.is_some() {
+                values.insert(
+                    "policy_json".into(),
+                    crate::openshell::policy_json(&sandbox.network.policy_proto()?)
+                        .map_err(|_| ConfigError("cannot encode sandbox policy"))?,
+                );
+            }
+            if let Some(proxy) = &sandbox.network.proxy {
+                values.insert("proxy_host".into(), proxy.host.clone());
+                values.insert("proxy_port".into(), proxy.port.to_string());
+            }
+        }
         result.push(Target {
             kind: kind.into(),
             address: format!("nemoclaw_{kind}.{logical}"),
@@ -167,6 +180,11 @@ pub fn compile(
             }
         }
         if target.kind == "sandbox" {
+            // JSON configuration strings are still OpenTofu templates. Preserve
+            // literal policy paths and matchers across that interpretation layer.
+            if let Some(policy) = attributes["policy_json"].as_str() {
+                attributes["policy_json"] = json!(policy.replace("${", "$${").replace("%{", "%%{"));
+            }
             attributes["depends_on"] = json!(["nemoclaw_route.primary"]);
         }
         attributes["lifecycle"] = json!({"prevent_destroy":true});

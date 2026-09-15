@@ -11,6 +11,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 |---|---|
 | Build the CLI bundle and runtime images | [Build local artifacts](build.md) |
 | Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
+| Declare sandbox filesystem, process, egress, and proxy settings | [Sandbox policy and proxy](sandbox-network.md) |
 | Look up YAML fields, defaults, and constraints | [Configuration reference](reference/configuration.md) |
 | Choose an agent and access its native runtime | [Agent runtimes](agents.md) |
 | Choose a public model for managed vLLM | [Select a managed model](models.md) |

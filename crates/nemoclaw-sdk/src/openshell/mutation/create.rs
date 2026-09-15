@@ -84,14 +84,18 @@ impl OpenShell {
                             image: value(want, "image").into(),
                             ..Default::default()
                         }),
-                        command: command(value(want, "agent_runtime")),
-                        environment: environment(
+                        command: launch_command(
+                            value(want, "agent_runtime"),
+                            row_proxy(want)?.as_ref(),
+                        ),
+                        environment: launch_environment(
                             value(want, "agent_name"),
                             value(want, "agent_runtime"),
+                            row_proxy(want)?.as_ref(),
                         )
                         .into_iter()
                         .collect(),
-                        policy: Some(policy()),
+                        policy: Some(row_policy(want)?),
                         ..Default::default()
                     }),
                     ..Default::default()

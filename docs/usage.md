@@ -67,9 +67,11 @@ Credentialed endpoints require HTTPS.
 Uncredentialed inference HTTP endpoints must be literal private or loopback addresses; plaintext gateway addresses must be loopback.
 The isolated policy permits inference routing without general network egress.
 
-Filesystem enforcement uses OpenShell's `best_effort` Landlock mode and depends on the host kernel.
+The isolated preset uses OpenShell's `best_effort` Landlock mode and depends on the host kernel.
 Unavailable Landlock restrictions are not enforced.
 The [validation evidence](validation/README.md) records policy tests, not a security qualification.
+
+Use [sandbox policy and proxy configuration](sandbox-network.md) to replace the isolated preset or select an agent HTTP proxy.
 
 ## Editor Schema Assistance
 

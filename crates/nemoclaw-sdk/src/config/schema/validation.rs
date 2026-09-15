@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Conditional input rules supplement the structure derived from Rust types.
+use crate::config::network as n;
 use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, constraints as c};
 use serde_json::{Value, json};
 
@@ -91,6 +92,51 @@ pub(super) fn constrain(root: &mut Value) {
         c::NETWORK_TIER,
         json!({"const": c::NETWORK_TIER}),
     );
+    property(
+        &mut defs["Network"],
+        "tier",
+        json!({"x-nemoclaw-default-rule": "Omitted or empty selects isolated only without policy.explicit."}),
+    );
+    defs["Network"]["if"] = json!({"required": ["policy"]});
+    defs["Network"]["then"] = json!({"properties": {"tier": {"const": ""}}});
+    property(
+        &mut defs["Proxy"],
+        "host",
+        json!({"pattern": "^[A-Za-z0-9._-]+$", "minLength": 1, "maxLength": 256}),
+    );
+    property(&mut defs["Proxy"], "port", json!({"minimum": 1}));
+    property(&mut defs["ExplicitPolicy"], "version", json!({"const": 1}));
+    property(
+        &mut defs["PolicyLandlock"],
+        "compatibility",
+        json!({"enum": ["best_effort", "hard_requirement", "strict"]}),
+    );
+    for (field, choices) in [
+        ("protocol", json!(n::POLICY_PROTOCOLS)),
+        ("tls", json!(n::POLICY_TLS)),
+        ("enforcement", json!(n::POLICY_ENFORCEMENT)),
+        ("access", json!(n::POLICY_ACCESS)),
+    ] {
+        property(&mut defs["PolicyEndpoint"], field, json!({"enum": choices}));
+    }
+    property(&mut defs["PolicyEndpoint"], "port", json!({"minimum": 1}));
+    property(
+        &mut defs["PolicyEndpoint"],
+        "ports",
+        json!({"minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 65535}}),
+    );
+    defs["PolicyEndpoint"]["allOf"] = json!([
+        {"oneOf": [{"required": ["port"], "not": {"required": ["ports"]}}, {"required": ["ports"], "not": {"required": ["port"]}}]},
+        {"anyOf": [{"required": ["host"]}, {"required": ["allowed_ips"]}]},
+        {"not": {"required": ["access", "rules"]}}
+    ]);
+    for name in ["PolicyJsonRpc", "PolicyMcp"] {
+        property(
+            &mut defs[name],
+            "max_body_bytes",
+            json!({"minimum": 1, "maximum": n::POLICY_BODY_MAX}),
+        );
+    }
     property(&mut defs["Agent"], "harness", json!({"enum": c::HARNESSES}));
     property(&mut defs["Route"], "name", json!({"const": "primary"}));
     property(
@@ -183,6 +229,7 @@ pub(super) fn constrain(root: &mut Value) {
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
+        "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."

@@ -257,3 +257,108 @@ async fn failed_readback_retains_each_created_identity_until_explicit_recovery()
         }
     }
 }
+
+#[tokio::test]
+async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
+    let fixture = Fixture::start().await;
+    let mut document =
+        Document::parse(include_bytes!("../../../examples/explicit-policy.yaml").as_slice())
+            .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|k| (k.into(), format!("{k}-generation")))
+        .into();
+    let targets = targets(&document, &generations).unwrap();
+    let mut rows = Vec::new();
+    for target in &targets {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(
+            result.error.is_none(),
+            "{}: {:?}",
+            target.kind,
+            result.error
+        );
+        rows.push(result.state.unwrap());
+    }
+    let sandbox = &rows[3];
+    let key = format!("{}/{}", document.workspace(), sandbox["name"]);
+    let spec = fixture.state.lock().unwrap().sandboxes[&key]
+        .spec
+        .clone()
+        .unwrap();
+    assert_eq!(
+        nemoclaw_sdk::openshell::policy_json(spec.policy.as_ref().unwrap()).unwrap(),
+        nemoclaw_sdk::openshell::policy_json(
+            &document.spec.sandboxes[0].network.policy_proto().unwrap()
+        )
+        .unwrap()
+    );
+    assert_eq!(spec.command[0], "/usr/bin/env");
+    assert!(
+        spec.command
+            .contains(&"HTTPS_PROXY=http://10.200.0.1:3128".into())
+    );
+    assert_eq!(spec.environment["NEMOCLAW_PROXY_PORT"], "3128");
+    let effects = fixture.state.lock().unwrap().effects;
+    assert!(client.ensure("sandbox", sandbox).await.error.is_none());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // A loaded revision must match the sandbox specification, not just its status.
+    fixture.state.lock().unwrap().active_policy = Some(nemoclaw_sdk::openshell::policy());
+    assert!(client.read("sandbox", sandbox, false).await.is_err());
+    fixture.state.lock().unwrap().active_policy = None;
+    // A coherent but different policy is observed as drift and never overwritten.
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .spec
+        .as_mut()
+        .unwrap()
+        .policy
+        .as_mut()
+        .unwrap()
+        .network_policies
+        .clear();
+    let observed = client
+        .read("sandbox", sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(observed["policy_json"], sandbox["policy_json"]);
+    assert!(client.ensure("sandbox", sandbox).await.error.is_some());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .spec = Some(spec.clone());
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .spec
+        .as_mut()
+        .unwrap()
+        .environment
+        .insert("NEMOCLAW_PROXY_PORT".into(), "9999".into());
+    assert!(client.read("sandbox", sandbox, false).await.is_err());
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .spec = Some(spec);
+    assert!(client.remove("sandbox", sandbox, true).await.is_ok());
+}

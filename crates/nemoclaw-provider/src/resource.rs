@@ -127,7 +127,15 @@ impl ResourceAdapter {
     }
 }
 fn optional(field: &str) -> bool {
-    matches!(field, "credential_env" | "agent_runtime" | "provider_type")
+    matches!(
+        field,
+        "credential_env"
+            | "agent_runtime"
+            | "provider_type"
+            | "policy_json"
+            | "proxy_host"
+            | "proxy_port"
+    )
 }
 
 #[async_trait]

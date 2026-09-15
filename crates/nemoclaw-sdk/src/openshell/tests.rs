@@ -71,7 +71,7 @@ fn workspace_reader_requires_complete_matching_active_identity() {
 }
 #[test]
 fn active_policy_absence_and_drift_never_mean_sandbox_absence() {
-    assert!(active_policy(proto::GetSandboxPolicyStatusResponse::default()).is_err());
+    assert!(active_policy(proto::GetSandboxPolicyStatusResponse::default(), "").is_err());
     let mut policy = policy();
     policy
         .filesystem

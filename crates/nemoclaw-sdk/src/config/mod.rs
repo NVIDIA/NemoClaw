@@ -3,6 +3,8 @@
 
 pub(crate) mod constraints;
 mod inference;
+mod network;
+pub use network::*;
 #[doc(hidden)]
 pub mod schema;
 mod types;
@@ -168,7 +170,9 @@ impl Document {
         for sandbox in &mut self.spec.sandboxes {
             default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
             default_string(&mut sandbox.runtime.provider, constraints::RUNTIME);
-            default_string(&mut sandbox.network.tier, constraints::NETWORK_TIER);
+            if sandbox.network.policy.is_none() {
+                default_string(&mut sandbox.network.tier, constraints::NETWORK_TIER);
+            }
         }
     }
 }

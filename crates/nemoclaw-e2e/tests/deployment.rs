@@ -8,15 +8,38 @@ use std::{fs, path::PathBuf, process::Command};
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
+    lifecycle(include_str!(
+        "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
+    ))
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn explicit_network_sdk_apply_cli_export_reapply_and_destroy_preserve_intent() {
+    lifecycle(include_str!("../../../examples/explicit-policy.yaml")).await;
+}
+
+async fn lifecycle(input: &str) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
     assert!(bundle.is_absolute());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
+    let mut document = Document::parse(input.as_bytes()).unwrap();
+    if let Some(policy) = &mut document.spec.sandboxes[0].network.policy {
+        policy
+            .explicit
+            .network_policies
+            .get_mut("documentation")
+            .unwrap()
+            .endpoints[0]
+            .rules
+            .as_mut()
+            .unwrap()[0]
+            .allow
+            .path = Some("/docs/${file}/%{literal}".into());
+    }
     document.spec.gateway.endpoint = fixture.endpoint.clone();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -62,6 +85,57 @@ async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
             .is_empty()
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    if document.spec.sandboxes[0].network.policy.is_some() {
+        let mut changed = document.clone();
+        changed.spec.sandboxes[0]
+            .network
+            .proxy
+            .as_mut()
+            .unwrap()
+            .port = 3129;
+        assert!(deployment.plan(&changed, &cancel).await.is_err());
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        let key = format!(
+            "{}/{}",
+            document.workspace(),
+            document.spec.sandboxes[0].name
+        );
+        let original = fixture.state.lock().unwrap().sandboxes[&key]
+            .spec
+            .as_ref()
+            .unwrap()
+            .policy
+            .clone();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .policy
+            .as_mut()
+            .unwrap()
+            .network_policies
+            .clear();
+        assert!(deployment.export(&cancel).await.is_err());
+        assert!(deployment.plan(&document, &cancel).await.is_err());
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .policy = original;
+    }
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
     assert_eq!(preview.changes.len(), 3);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);

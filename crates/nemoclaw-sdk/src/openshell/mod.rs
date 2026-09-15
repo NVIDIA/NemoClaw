@@ -5,6 +5,9 @@
 mod tests;
 
 mod agent;
+mod network;
+pub use network::policy_json;
+use network::{launch_command, launch_environment, observed_proxy, row_policy, row_proxy};
 mod transport;
 use crate::{ObservationError, backend::Row};
 pub use agent::{command, environment, policy, policy_matches};
@@ -137,10 +140,12 @@ fn sandbox_row(
     }
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
     let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
+    let environment: Row = spec.environment.into_iter().collect();
+    let proxy = observed_proxy(&environment)?;
+    let policy = policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?;
     if image.is_empty()
-        || spec.command != command(&runtime)
-        || spec.environment.into_iter().collect::<Row>() != environment(agent, &runtime)
-        || !spec.policy.as_ref().is_some_and(policy_matches)
+        || spec.command != launch_command(&runtime, proxy.as_ref())
+        || environment != launch_environment(agent, &runtime, proxy.as_ref())
     {
         return Err(ObservationError::BindingMismatch);
     }
@@ -154,15 +159,32 @@ fn sandbox_row(
     row.insert("agent_name".into(), agent.clone());
     row.insert("agent_runtime".into(), runtime);
     row.insert("image".into(), image);
+    row.insert("policy_json".into(), policy);
+    row.insert(
+        "proxy_host".into(),
+        proxy.as_ref().map(|p| p.host.clone()).unwrap_or_default(),
+    );
+    row.insert(
+        "proxy_port".into(),
+        proxy.map(|p| p.port.to_string()).unwrap_or_default(),
+    );
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready))
 }
-fn active_policy(response: proto::GetSandboxPolicyStatusResponse) -> Result<(), ObservationError> {
+fn active_policy(
+    response: proto::GetSandboxPolicyStatusResponse,
+    expected: &str,
+) -> Result<(), ObservationError> {
     let revision = response.revision.ok_or(ObservationError::Incomplete)?;
     if response.active_version == 0
         || response.active_version != revision.version
         || revision.status != proto::PolicyStatus::Loaded as i32
-        || !revision.policy.as_ref().is_some_and(policy_matches)
+        || policy_json(
+            revision
+                .policy
+                .as_ref()
+                .ok_or(ObservationError::Incomplete)?,
+        )? != expected
     {
         return Err(ObservationError::Incomplete);
     }

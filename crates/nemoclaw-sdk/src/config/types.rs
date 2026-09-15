@@ -208,12 +208,21 @@ pub struct Runtime {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Sandbox inference network policy.
+/// Sandbox policy selection and optional agent HTTP proxy.
 pub struct Network {
     #[serde(rename = "tier")]
     #[schemars(default)]
-    /// Only isolated is accepted. Host enforcement and its limits are described in the usage guide.
+    /// Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub tier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::ExplicitPolicySelection")]
+    /// Complete authored OpenShell policy, replacing the isolated preset.
+    pub policy: Option<super::ExplicitPolicySelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::Proxy")]
+    /// HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking.
+    pub proxy: Option<super::Proxy>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -18,6 +18,7 @@ pub struct State {
     pub providers: HashMap<String, p::Provider>,
     pub routes: HashMap<String, p::SetInferenceRouteRequest>,
     pub sandboxes: HashMap<String, p::Sandbox>,
+    pub active_policy: Option<p::SandboxPolicy>,
     pub exec_exit: i32,
     pub inference_exit: i32,
     pub exec_truncated: bool,
@@ -445,7 +446,10 @@ fn policy_status(
         active_version: 1,
         revision: Some(p::SandboxPolicyRevision {
             version: 1,
-            policy: sandbox.spec.as_ref().unwrap().policy.clone(),
+            policy: state
+                .active_policy
+                .clone()
+                .or_else(|| sandbox.spec.as_ref().unwrap().policy.clone()),
             status: p::PolicyStatus::Loaded as i32,
             ..Default::default()
         }),

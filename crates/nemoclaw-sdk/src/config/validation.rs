@@ -190,10 +190,7 @@ impl Document {
             gateway.management != "managed" || sandbox.runtime.provider == "docker",
             "managed gateway requires the qualified Docker driver",
         )?;
-        require(
-            sandbox.network.tier == constraints::NETWORK_TIER,
-            "this slice supports only the isolated network tier",
-        )?;
+        sandbox.network.validate()?;
         require(
             sandbox.agents.len() == 1,
             "this slice requires exactly one agent",

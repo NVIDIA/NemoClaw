@@ -88,7 +88,8 @@ pub fn policy_matches(actual: &proto::SandboxPolicy) -> bool {
     let mut expected_filesystem = expected.filesystem.unwrap();
     expected_filesystem.read_only.sort();
     expected_filesystem.read_write.sort();
-    actual.process == expected.process
+    actual.version == expected.version
+        && actual.process == expected.process
         && actual.landlock == expected.landlock
         && filesystem == expected_filesystem
         && actual.network_policies.is_empty()

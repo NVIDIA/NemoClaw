@@ -92,10 +92,19 @@ async fn export_sandbox(
     expected: &mut Row,
     observed: &Row,
 ) -> Result<(), Error> {
-    if ["image", "agent_name", "agent_runtime"]
-        .iter()
-        .any(|key| observed.get(*key) != expected.get(*key))
-    {
+    if [
+        "image",
+        "agent_name",
+        "agent_runtime",
+        "policy_json",
+        "proxy_host",
+        "proxy_port",
+    ]
+    .iter()
+    .any(|key| {
+        observed.get(*key).map(String::as_str).unwrap_or("")
+            != expected.get(*key).map(String::as_str).unwrap_or("")
+    }) {
         return Err(Error::Conflict(
             "sandbox configuration drift requires inspection",
         ));

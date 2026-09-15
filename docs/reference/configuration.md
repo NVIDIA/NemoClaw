@@ -8,7 +8,7 @@
 This reference and the [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) describe authored YAML for this source revision.
 See [schema maintenance](../configuration-schema.md) for generation and validation commands.
 
-Paths use `[]` for an array element.
+Paths use `[]` for an array element and `{key}` for a map entry.
 Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.
 An optional object can contain required fields if you choose to declare it.
 Omit optional fields instead of assigning `null`; only nested values inside a Pi `piModel` object may be null.
@@ -19,6 +19,7 @@ Empty or zero selects a default only where stated.
 
 - Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.
+- Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
@@ -107,6 +108,38 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `env` | string | Yes | — | Uppercase environment variable name. For TLS fields, its value is a local certificate or key file path; otherwise it is a bearer/API credential. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+
+## ExplicitPolicy
+
+Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `filesystem_policy` | [PolicyFilesystem](#policyfilesystem) | No | — | Filesystem grants. Omission retains OpenShell filesystem defaults, not the isolated preset. |
+| `landlock` | [PolicyLandlock](#policylandlock) | No | — | Kernel filesystem enforcement compatibility. |
+| `network_policies` | map of [PolicyRule](#policyrule) | Yes | — | Named egress rules. An empty map grants no general egress. |
+| `process` | [PolicyProcess](#policyprocess) | No | — | Sandbox process user and group. |
+| `version` | integer | Yes | — | Policy format version; currently 1. Constraints: `1`; minimum 0. |
+
+## ExplicitPolicySelection
+
+Select an explicit policy; no isolated defaults are merged into it.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `explicit` | [ExplicitPolicy](#explicitpolicy) | Yes | — | Complete sandbox policy in OpenShell YAML field names. |
 
 ## File
 
@@ -298,9 +331,9 @@ Paths:
 
 ## Network
 
-Sandbox inference network policy.
+Sandbox policy selection and optional agent HTTP proxy.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
 
 Paths:
 
@@ -308,7 +341,9 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `tier` | string | No | `"isolated"` | Only isolated is accepted. Host enforcement and its limits are described in the usage guide. Constraints: `""` or `"isolated"`. Omitted or empty selects the default. |
+| `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. |
+| `proxy` | [Proxy](#proxy) | No | — | HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking. |
+| `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
 
 ## Overrides
 
@@ -324,6 +359,219 @@ Paths:
 |---|---|---|---|---|
 | `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `piModel` | object | No | — | Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object. |
+
+## PolicyAllowRule
+
+One allowed application-protocol action.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[]`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `allow` | [PolicyMatcher](#policymatcher) | Yes | — | Request matcher. |
+
+## PolicyAnyMatcher
+
+Alternative values for a policy matcher.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `any` | array of string | Yes | — | Nonempty list of nonempty glob strings. |
+
+## PolicyBinary
+
+Executable identity for an egress grant.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.binaries[]`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `path` | string | Yes | — | Absolute executable path inside the sandbox. |
+
+## PolicyEndpoint
+
+TCP destination and optional application-protocol policy. Invalid or conflicting combinations are rejected by OpenShell.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[]`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `access` | string | No | — | full or read-only preset; mutually exclusive with rules. Constraints: `"full"` or `"read-only"`. |
+| `allow_encoded_slash` | boolean | No | — | Allow encoded slash path segments when required by the upstream API. |
+| `allowed_ips` | array of string | No | — | Resolved IP addresses or CIDRs allowed by OpenShell destination validation. |
+| `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. |
+| `enforcement` | string | No | — | enforce or audit; omission follows OpenShell defaults. Constraints: `"enforce"` or `"audit"`. |
+| `host` | string | No | — | Destination hostname or DNS glob; may be omitted with allowed_ips. |
+| `json_rpc` | [PolicyJsonRpc](#policyjsonrpc) | No | — | JSON-RPC inspection limits. |
+| `mcp` | [PolicyMcp](#policymcp) | No | — | MCP method and tool inspection settings. |
+| `path` | string | No | — | HTTP path glob selecting the endpoint on a shared host. |
+| `port` | integer | No | — | Single TCP port; mutually exclusive with ports. Constraints: minimum 1; maximum 65535. |
+| `ports` | array of integer | No | — | Nonempty unique TCP ports; mutually exclusive with port. Constraints: minimum items 1; items: minimum 1; maximum 65535. |
+| `protocol` | string | No | — | rest, websocket, json-rpc, or mcp; omit for TCP. Constraints: `"rest"` or `"websocket"` or `"json-rpc"` or `"mcp"`. |
+| `request_body_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting in supported REST request bodies. |
+| `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. |
+| `tls` | string | No | — | terminate, passthrough, or skip, subject to protocol validation. Constraints: `"terminate"` or `"passthrough"` or `"skip"`. |
+| `websocket_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade. |
+
+## PolicyFilesystem
+
+Filesystem access grants inside the sandbox.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.filesystem_policy`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `include_workdir` | boolean | No | — | Whether to include the working directory as writable; omitted means false in a declared filesystem policy. |
+| `read_only` | array of string | No | — | Absolute read-only paths. |
+| `read_write` | array of string | No | — | Absolute writable paths. |
+
+## PolicyJsonRpc
+
+JSON-RPC request inspection bounds.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].json_rpc`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `max_body_bytes` | integer | No | — | Maximum buffered request bytes, 1 through 1048576. Constraints: minimum 1; maximum 1048576. |
+
+## PolicyLandlock
+
+Landlock compatibility; hard_requirement refuses unavailable enforcement.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.landlock`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `compatibility` | string | Yes | — | best_effort or hard_requirement. The main-branch spelling strict maps to hard_requirement. Constraints: `"best_effort"` or `"hard_requirement"` or `"strict"`. |
+
+## PolicyMatcher
+
+Request method/path or MCP tool selector; protocol-specific combinations are validated by OpenShell.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[]`
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `method` | string | No | — | HTTP or RPC method. |
+| `params` | map of [PolicyValueMatcher](#policyvaluematcher) | No | — | MCP parameters; only name is supported by the pinned protocol. |
+| `path` | string | No | — | HTTP path glob. |
+| `tool` | [PolicyValueMatcher](#policyvaluematcher) | No | — | MCP tool-name selector. |
+
+## PolicyMcp
+
+MCP request inspection and tool-name restrictions.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].mcp`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `allow_all_known_mcp_methods` | boolean | No | — | Allow known MCP methods, subject to tool restrictions; defaults to false. |
+| `max_body_bytes` | integer | No | — | Maximum buffered request bytes, 1 through 1048576. Constraints: minimum 1; maximum 1048576. |
+| `strict_tool_names` | boolean | No | — | Enforce standard MCP tool-name syntax; defaults to true. |
+
+## PolicyProcess
+
+Process identity resolved inside the sandbox image.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.process`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `run_as_group` | string | No | — | sandbox or a numeric non-root sandbox GID accepted by OpenShell. |
+| `run_as_user` | string | No | — | sandbox or a numeric non-root sandbox UID accepted by OpenShell. |
+
+## PolicyRule
+
+Named endpoint grants restricted to declared executable paths.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `binaries` | array of [PolicyBinary](#policybinary) | Yes | — | Executable identities allowed to use these destinations. |
+| `endpoints` | array of [PolicyEndpoint](#policyendpoint) | Yes | — | Allowed destinations and optional application-protocol restrictions. |
+| `name` | string | Yes | — | Human-readable rule name. |
+
+## PolicyValueMatcher
+
+A literal glob or a nonempty list of alternative globs.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
+
+Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
+
+## Proxy
+
+Agent HTTP proxy, reachable from inside the sandbox. Credentials and URL syntax are excluded.
+
+Guide: [Sandbox policy and proxy](../sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes[].network.proxy`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
+| `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
 ## Resources
 

@@ -152,6 +152,57 @@
       ],
       "type": "object"
     },
+    "ExplicitPolicy": {
+      "additionalProperties": false,
+      "description": "Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.",
+      "properties": {
+        "filesystem_policy": {
+          "$ref": "#/$defs/PolicyFilesystem",
+          "description": "Filesystem grants. Omission retains OpenShell filesystem defaults, not the isolated preset."
+        },
+        "landlock": {
+          "$ref": "#/$defs/PolicyLandlock",
+          "description": "Kernel filesystem enforcement compatibility."
+        },
+        "network_policies": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PolicyRule"
+          },
+          "description": "Named egress rules. An empty map grants no general egress.",
+          "type": "object"
+        },
+        "process": {
+          "$ref": "#/$defs/PolicyProcess",
+          "description": "Sandbox process user and group."
+        },
+        "version": {
+          "const": 1,
+          "description": "Policy format version; currently 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "network_policies"
+      ],
+      "type": "object"
+    },
+    "ExplicitPolicySelection": {
+      "additionalProperties": false,
+      "description": "Select an explicit policy; no isolated defaults are merged into it.",
+      "properties": {
+        "explicit": {
+          "$ref": "#/$defs/ExplicitPolicy",
+          "description": "Complete sandbox policy in OpenShell YAML field names."
+        }
+      },
+      "required": [
+        "explicit"
+      ],
+      "type": "object"
+    },
     "File": {
       "additionalProperties": false,
       "description": "One immutable file in a model snapshot.",
@@ -794,8 +845,21 @@
     },
     "Network": {
       "additionalProperties": false,
-      "description": "Sandbox inference network policy.",
+      "description": "Sandbox policy selection and optional agent HTTP proxy.",
+      "if": {
+        "required": [
+          "policy"
+        ]
+      },
       "properties": {
+        "policy": {
+          "$ref": "#/$defs/ExplicitPolicySelection",
+          "description": "Complete authored OpenShell policy, replacing the isolated preset."
+        },
+        "proxy": {
+          "$ref": "#/$defs/Proxy",
+          "description": "HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking."
+        },
         "tier": {
           "anyOf": [
             {
@@ -806,9 +870,16 @@
             }
           ],
           "default": "isolated",
-          "description": "Only isolated is accepted. Host enforcement and its limits are described in the usage guide.",
+          "description": "Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated.",
           "type": "string",
-          "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+          "x-nemoclaw-default-rule": "Omitted or empty selects isolated only without policy.explicit."
+        }
+      },
+      "then": {
+        "properties": {
+          "tier": {
+            "const": ""
+          }
         }
       },
       "type": "object"
@@ -830,6 +901,397 @@
       },
       "required": [
         "model"
+      ],
+      "type": "object"
+    },
+    "PolicyAllowRule": {
+      "additionalProperties": false,
+      "description": "One allowed application-protocol action.",
+      "properties": {
+        "allow": {
+          "$ref": "#/$defs/PolicyMatcher",
+          "description": "Request matcher."
+        }
+      },
+      "required": [
+        "allow"
+      ],
+      "type": "object"
+    },
+    "PolicyAnyMatcher": {
+      "additionalProperties": false,
+      "description": "Alternative values for a policy matcher.",
+      "properties": {
+        "any": {
+          "description": "Nonempty list of nonempty glob strings.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "any"
+      ],
+      "type": "object"
+    },
+    "PolicyBinary": {
+      "additionalProperties": false,
+      "description": "Executable identity for an egress grant.",
+      "properties": {
+        "path": {
+          "description": "Absolute executable path inside the sandbox.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "PolicyEndpoint": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "not": {
+                "required": [
+                  "ports"
+                ]
+              },
+              "required": [
+                "port"
+              ]
+            },
+            {
+              "not": {
+                "required": [
+                  "port"
+                ]
+              },
+              "required": [
+                "ports"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "host"
+              ]
+            },
+            {
+              "required": [
+                "allowed_ips"
+              ]
+            }
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "access",
+              "rules"
+            ]
+          }
+        }
+      ],
+      "description": "TCP destination and optional application-protocol policy. Invalid or conflicting combinations are rejected by OpenShell.",
+      "properties": {
+        "access": {
+          "description": "full or read-only preset; mutually exclusive with rules.",
+          "enum": [
+            "full",
+            "read-only"
+          ],
+          "type": "string"
+        },
+        "allow_encoded_slash": {
+          "description": "Allow encoded slash path segments when required by the upstream API.",
+          "type": "boolean"
+        },
+        "allowed_ips": {
+          "description": "Resolved IP addresses or CIDRs allowed by OpenShell destination validation.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deny_rules": {
+          "description": "Application-protocol deny rules, evaluated before allow rules.",
+          "items": {
+            "$ref": "#/$defs/PolicyMatcher"
+          },
+          "type": "array"
+        },
+        "enforcement": {
+          "description": "enforce or audit; omission follows OpenShell defaults.",
+          "enum": [
+            "enforce",
+            "audit"
+          ],
+          "type": "string"
+        },
+        "host": {
+          "description": "Destination hostname or DNS glob; may be omitted with allowed_ips.",
+          "type": "string"
+        },
+        "json_rpc": {
+          "$ref": "#/$defs/PolicyJsonRpc",
+          "description": "JSON-RPC inspection limits."
+        },
+        "mcp": {
+          "$ref": "#/$defs/PolicyMcp",
+          "description": "MCP method and tool inspection settings."
+        },
+        "path": {
+          "description": "HTTP path glob selecting the endpoint on a shared host.",
+          "type": "string"
+        },
+        "port": {
+          "description": "Single TCP port; mutually exclusive with ports.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "ports": {
+          "description": "Nonempty unique TCP ports; mutually exclusive with port.",
+          "items": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "protocol": {
+          "description": "rest, websocket, json-rpc, or mcp; omit for TCP.",
+          "enum": [
+            "rest",
+            "websocket",
+            "json-rpc",
+            "mcp"
+          ],
+          "type": "string"
+        },
+        "request_body_credential_rewrite": {
+          "description": "Enable OpenShell placeholder rewriting in supported REST request bodies.",
+          "type": "boolean"
+        },
+        "rules": {
+          "description": "Application-protocol allow rules.",
+          "items": {
+            "$ref": "#/$defs/PolicyAllowRule"
+          },
+          "type": "array"
+        },
+        "tls": {
+          "description": "terminate, passthrough, or skip, subject to protocol validation.",
+          "enum": [
+            "terminate",
+            "passthrough",
+            "skip"
+          ],
+          "type": "string"
+        },
+        "websocket_credential_rewrite": {
+          "description": "Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "PolicyFilesystem": {
+      "additionalProperties": false,
+      "description": "Filesystem access grants inside the sandbox.",
+      "properties": {
+        "include_workdir": {
+          "description": "Whether to include the working directory as writable; omitted means false in a declared filesystem policy.",
+          "type": "boolean"
+        },
+        "read_only": {
+          "description": "Absolute read-only paths.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "read_write": {
+          "description": "Absolute writable paths.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "PolicyJsonRpc": {
+      "additionalProperties": false,
+      "description": "JSON-RPC request inspection bounds.",
+      "properties": {
+        "max_body_bytes": {
+          "description": "Maximum buffered request bytes, 1 through 1048576.",
+          "format": "uint32",
+          "maximum": 1048576,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "PolicyLandlock": {
+      "additionalProperties": false,
+      "description": "Landlock compatibility; hard_requirement refuses unavailable enforcement.",
+      "properties": {
+        "compatibility": {
+          "description": "best_effort or hard_requirement. The main-branch spelling strict maps to hard_requirement.",
+          "enum": [
+            "best_effort",
+            "hard_requirement",
+            "strict"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "compatibility"
+      ],
+      "type": "object"
+    },
+    "PolicyMatcher": {
+      "additionalProperties": false,
+      "description": "Request method/path or MCP tool selector; protocol-specific combinations are validated by OpenShell.",
+      "properties": {
+        "method": {
+          "description": "HTTP or RPC method.",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PolicyValueMatcher"
+          },
+          "description": "MCP parameters; only name is supported by the pinned protocol.",
+          "type": "object"
+        },
+        "path": {
+          "description": "HTTP path glob.",
+          "type": "string"
+        },
+        "tool": {
+          "$ref": "#/$defs/PolicyValueMatcher",
+          "description": "MCP tool-name selector."
+        }
+      },
+      "type": "object"
+    },
+    "PolicyMcp": {
+      "additionalProperties": false,
+      "description": "MCP request inspection and tool-name restrictions.",
+      "properties": {
+        "allow_all_known_mcp_methods": {
+          "description": "Allow known MCP methods, subject to tool restrictions; defaults to false.",
+          "type": "boolean"
+        },
+        "max_body_bytes": {
+          "description": "Maximum buffered request bytes, 1 through 1048576.",
+          "format": "uint32",
+          "maximum": 1048576,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "strict_tool_names": {
+          "description": "Enforce standard MCP tool-name syntax; defaults to true.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "PolicyProcess": {
+      "additionalProperties": false,
+      "description": "Process identity resolved inside the sandbox image.",
+      "properties": {
+        "run_as_group": {
+          "description": "sandbox or a numeric non-root sandbox GID accepted by OpenShell.",
+          "type": "string"
+        },
+        "run_as_user": {
+          "description": "sandbox or a numeric non-root sandbox UID accepted by OpenShell.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PolicyRule": {
+      "additionalProperties": false,
+      "description": "Named endpoint grants restricted to declared executable paths.",
+      "properties": {
+        "binaries": {
+          "description": "Executable identities allowed to use these destinations.",
+          "items": {
+            "$ref": "#/$defs/PolicyBinary"
+          },
+          "type": "array"
+        },
+        "endpoints": {
+          "description": "Allowed destinations and optional application-protocol restrictions.",
+          "items": {
+            "$ref": "#/$defs/PolicyEndpoint"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Human-readable rule name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "endpoints",
+        "binaries"
+      ],
+      "type": "object"
+    },
+    "PolicyValueMatcher": {
+      "anyOf": [
+        {
+          "description": "A single glob.",
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/PolicyAnyMatcher",
+          "description": "Alternative globs."
+        }
+      ],
+      "description": "A literal glob or a nonempty list of alternative globs."
+    },
+    "Proxy": {
+      "additionalProperties": false,
+      "description": "Agent HTTP proxy, reachable from inside the sandbox. Credentials and URL syntax are excluded.",
+      "properties": {
+        "host": {
+          "description": "Proxy hostname or IPv4 address, without scheme, path, or credentials.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "type": "string"
+        },
+        "port": {
+          "description": "Proxy TCP port, from 1 through 65535.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "host",
+        "port"
       ],
       "type": "object"
     },
@@ -1918,6 +2380,7 @@
   "x-nemoclaw-parser-checks": [
     "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
+    "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."

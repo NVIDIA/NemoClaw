@@ -24,6 +24,7 @@ regex.workspace = true
 url.workspace = true
 ipnet.workspace = true
 openshell-core.workspace = true
+openshell-policy.workspace = true
 tonic.workspace = true
 tokio.workspace = true
 tempfile.workspace = true

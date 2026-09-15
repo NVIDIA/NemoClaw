@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: explicit-policy-agent
+  uid: 6bf061fe-34ce-492a-9be0-f81182de72b2
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17671
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11436/v1
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd
+      runtime:
+        provider: docker
+      network:
+        proxy:
+          host: 10.200.0.1
+          port: 3128
+        policy:
+          explicit:
+            version: 1
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
+            landlock:
+              compatibility: best_effort
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            network_policies:
+              documentation:
+                name: documentation
+                endpoints:
+                  - host: docs.example.com
+                    port: 443
+                    protocol: rest
+                    tls: terminate
+                    enforcement: enforce
+                    rules:
+                      - allow:
+                          method: GET
+                          path: /docs/**
+                binaries:
+                  - path: /usr/bin/curl
+      agents:
+        - name: main
+          harness: openclaw
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: qwen3.5:0.8b
