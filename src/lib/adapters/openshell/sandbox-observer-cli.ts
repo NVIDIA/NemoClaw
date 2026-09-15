@@ -271,6 +271,10 @@ export function isExplicitMissingOpenShellSandboxOutput(
   const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
   return (
     new RegExp(
+      `^(?:error:\\s*)?status:\\s*NotFound,\\s*sandbox\\s+${namedSandbox}\\s+not\\s+found[.!]?$`,
+      "iu",
+    ).test(clean) ||
+    new RegExp(
       `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
       "iu",
     ).test(clean) ||
@@ -290,30 +294,44 @@ function streamText(value: string | Buffer | null | undefined): string {
   return String(value ?? "");
 }
 
+function captureOpenShellCommandFromRunner(run: RunSandboxCommand): CaptureOpenShellCommand {
+  return (args, options) => {
+    const result = run(args, {
+      ignoreError: true,
+      killProcessTreeOnTimeout: true,
+      killSignal: "SIGKILL",
+      suppressOutput: true,
+      timeout: options.timeout,
+    });
+    const stdout = streamText(result.stdout);
+    const stderr = streamText(result.stderr);
+    return {
+      status: result.status ?? null,
+      output: `${stdout}\n${stderr}`.trim(),
+      stdout,
+      stderr,
+      ...(result.error ? { error: result.error } : {}),
+    };
+  };
+}
+
 /** Normalize structured runner results inside the CLI implementation. */
 export function createCliOpenShellSandboxObserverFromRunner(
   run: RunSandboxCommand,
   defaultTimeoutMs?: number,
 ): OpenShellSandboxObserver {
   return createCliOpenShellSandboxObserver({
-    capture: (args, options) => {
-      const result = run(args, {
-        ignoreError: true,
-        killProcessTreeOnTimeout: true,
-        killSignal: "SIGKILL",
-        suppressOutput: true,
-        timeout: options.timeout,
-      });
-      const stdout = streamText(result.stdout);
-      const stderr = streamText(result.stderr);
-      return {
-        status: result.status ?? null,
-        output: `${stdout}${stderr}`.trim(),
-        stdout,
-        stderr,
-        ...(result.error ? { error: result.error } : {}),
-      };
-    },
+    capture: captureOpenShellCommandFromRunner(run),
+    ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+  });
+}
+
+export function createCliOpenShellSandboxLookupFromRunner(
+  run: RunSandboxCommand,
+  defaultTimeoutMs?: number,
+): CliOpenShellSandboxLookup {
+  return createCliOpenShellSandboxLookup({
+    capture: captureOpenShellCommandFromRunner(run),
     ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
   });
 }

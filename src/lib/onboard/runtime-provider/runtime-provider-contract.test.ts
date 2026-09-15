@@ -1149,6 +1149,7 @@ describe("socket-free MXC action contract", () => {
       await expect(
         executeSandboxDestroy({
           force: false,
+          deleteGatewayName: "nemoclaw",
           runOpenshell,
           sandbox: entry,
           sandboxConfirmedAbsent: false,
