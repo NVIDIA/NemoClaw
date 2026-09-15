@@ -374,6 +374,10 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     { kind: "path", path: "options.progress" },
   ],
   ["test/e2e/fixtures/shell-probe.ts#run", { kind: "path", path: "this.progress" }],
+  [
+    "tools/e2e/dgx-station-cleanup.mts#runStationCleanupCommand",
+    { kind: "path", path: "options.progress" },
+  ],
   ["test/e2e/fixtures/docker-probe.ts#run", { kind: "path", path: "this.progress" }],
   [
     "test/e2e/live/openshell-gateway-auth-source-contract-helpers.ts#runOpenShellGatewayAuthSourceContractScenarioUnchecked",

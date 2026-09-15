@@ -126,6 +126,7 @@ describe("E2E workflow plan", () => {
       "staging-brev-launchable-identity",
       "external-gateway-health",
       "mcp-bridge-dev",
+      "dgx-station-express",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
@@ -1295,4 +1296,33 @@ describe("E2E workflow plan", () => {
       rmSync(directory, { force: true, recursive: true });
     }
   });
+});
+
+it.each(["jobs", "targets"] as const)(
+  "selects only the external Station controller through %s",
+  (selector) => {
+    const plan = buildE2eWorkflowPlan({ [selector]: "dgx-station-express" });
+    expect(plan.selectedJobs).toEqual(["dgx-station-express"]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+    expect(plan.runtimeProvidersByJob).toEqual({ "dgx-station-express": ["none"] });
+    expect(plan.explicitOnlyJobs).toContain("dgx-station-express");
+    expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("dgx-station-express");
+  },
+);
+
+it.each([
+  { jobs: "dgx-station-express,hermes-e2e" },
+  { jobs: "hermes-e2e,dgx-station-express" },
+  { targets: "dgx-station-express,ubuntu-repo-cloud-openclaw" },
+  { targets: "ubuntu-repo-cloud-openclaw,dgx-station-express" },
+  { jobs: "dgx-station-express", targets: "ubuntu-repo-cloud-openclaw" },
+  { jobs: "hermes-e2e", targets: "dgx-station-express" },
+  { jobs: "dgx-station-express", targets: "dgx-station-express" },
+  { jobs: "dgx-station-express,dgx-station-express" },
+  { targets: "dgx-station-express,dgx-station-express" },
+])("rejects Station selectors that its controller cannot execute: %j", (selectors) => {
+  expect(() => buildE2eWorkflowPlan(selectors)).toThrow(
+    "dgx-station-express must be selected by itself",
+  );
 });
