@@ -18,7 +18,10 @@ interface ProcessScanResult {
 
 interface DockerDriverGatewayStateOwnershipDeps {
   getDockerDriverGatewayPid(): number | null;
+  getDockerDriverGatewayProcessTarget(pid: number): { name: string; port: number } | null;
   getDockerDriverGatewayStateDir(): string;
+  getGatewayName(): string;
+  getGatewayPort(): number;
   isDockerDriverGatewayProcess(
     pid: number,
     gatewayBin?: string | null,
@@ -112,7 +115,14 @@ export function createDockerDriverGatewayStateOwnership(
         return true;
       }
       const processEnv = readProcessEnvironment(pid);
-      if (!processEnv) return true;
+      if (!processEnv) {
+        const target = deps.getDockerDriverGatewayProcessTarget(pid);
+        if (!target) return true;
+        if (target.name === deps.getGatewayName() && target.port === deps.getGatewayPort()) {
+          return true;
+        }
+        continue;
+      }
       if (
         processEnvironmentUsesSelectedGatewayState(
           processEnv,

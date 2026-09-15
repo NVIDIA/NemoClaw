@@ -18,7 +18,10 @@ function makeOwnership(
 ) {
   return createDockerDriverGatewayStateOwnership({
     getDockerDriverGatewayPid: () => null,
+    getDockerDriverGatewayProcessTarget: () => ({ name: "nemoclaw", port: 8080 }),
     getDockerDriverGatewayStateDir: () => STATE_DIR,
+    getGatewayName: () => "nemoclaw",
+    getGatewayPort: () => 8080,
     isDockerDriverGatewayProcess: () => true,
     isPidAlive: () => true,
     readProcessEnvironment: () => ({
@@ -189,5 +192,25 @@ describe("docker-driver gateway selected-state ownership", () => {
 
   it("proves selected state is unused after a complete empty process scan", () => {
     expect(makeOwnership().isDockerDriverGatewayStateInUse()).toBe(false);
+  });
+
+  it("proves selected state is unused when macOS can only identify an unrelated gateway target", () => {
+    const ownership = makeOwnership({
+      getDockerDriverGatewayProcessTarget: () => ({ name: "nemoclaw-8081", port: 8081 }),
+      readProcessEnvironment: () => null,
+      runCaptureEx: () => ({ stdout: "4242\n", exitCode: 0, timedOut: false }),
+    });
+
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(false);
+  });
+
+  it("fails closed when macOS cannot recover a gateway target without process environment", () => {
+    const ownership = makeOwnership({
+      getDockerDriverGatewayProcessTarget: () => null,
+      readProcessEnvironment: () => null,
+      runCaptureEx: () => ({ stdout: "4242\n", exitCode: 0, timedOut: false }),
+    });
+
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
   });
 });

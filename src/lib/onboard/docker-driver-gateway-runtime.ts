@@ -34,6 +34,7 @@ import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
 } from "./gateway-process-identity";
+import { resolveOpenShellGatewayProcessTarget } from "./gateway-process-target-identity";
 import { resolveOpenshell } from "./openshell-cli";
 import type { PortProbeResult } from "./preflight";
 
@@ -143,6 +144,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     gatewayBin?: string | null;
   }): DockerDriverGatewayRuntimeDrift | null;
   getDockerDriverGatewayStateDir(): string;
+  getDockerDriverGatewayProcessTarget(pid: number): { name: string; port: number } | null;
   isDockerDriverGatewayPortListener(
     portCheck: PortProbeResult,
     opts?: Parameters<
@@ -475,6 +477,12 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       .trim();
   }
 
+  function getDockerDriverGatewayProcessTarget(pid: number): { name: string; port: number } | null {
+    return resolveOpenShellGatewayProcessTarget(
+      readDockerDriverGatewayProcessIdentity(pid, captureProcessArgs),
+    );
+  }
+
   function isDockerDriverGatewayProcess(
     pid: number,
     gatewayBin?: string | null,
@@ -604,6 +612,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     getDockerDriverGatewayRuntimeDrift,
     getDockerDriverGatewayRuntimeDriftFromSnapshot,
     getDockerDriverGatewayStateDir,
+    getDockerDriverGatewayProcessTarget,
     isDockerDriverGatewayPortListener,
     isDockerDriverGatewayProcess,
     isDockerDriverGatewayProcessAlive,

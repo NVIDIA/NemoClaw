@@ -8,10 +8,33 @@ import {
   hasDockerDriverGatewayEnvironment,
   isDockerDriverGatewayProcessIdentity,
 } from "./docker-driver-gateway-process-identity";
+import { resolveOpenShellGatewayProcessTarget } from "./gateway-process-target-identity";
 
 const normalizeGatewayExecutablePath = (value: string | null | undefined) => value ?? null;
 
 describe("Docker-driver gateway target identity", () => {
+  it("recovers canonical targets from annotated argv0 and explicit flags", () => {
+    expect(
+      resolveOpenShellGatewayProcessTarget("openshell-gateway[nemoclaw=nemoclaw-8081;port=8081]"),
+    ).toEqual({ name: "nemoclaw-8081", port: 8081 });
+    expect(
+      resolveOpenShellGatewayProcessTarget("/opt/openshell-gateway --name nemoclaw --port 8080"),
+    ).toEqual({ name: "nemoclaw", port: 8080 });
+  });
+
+  it("rejects ambiguous or noncanonical explicit targets", () => {
+    expect(
+      resolveOpenShellGatewayProcessTarget(
+        "/opt/openshell-gateway --name nemoclaw --port 8080 --port 8081",
+      ),
+    ).toBeNull();
+    expect(
+      resolveOpenShellGatewayProcessTarget(
+        "/opt/openshell-gateway --name nemoclaw-8081 --port 8080",
+      ),
+    ).toBeNull();
+  });
+
   it("requires replacement of a legacy untagged gateway before reuse", () => {
     expect(
       getDockerDriverGatewayTargetIdentityDrift({

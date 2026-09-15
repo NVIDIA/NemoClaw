@@ -53,6 +53,7 @@ export interface DockerDriverGatewayStartDeps {
   getDockerDriverGatewayEnv: GatewayRuntimeHelpers["getDockerDriverGatewayEnv"];
   getDockerDriverGatewayPid: GatewayRuntimeHelpers["getDockerDriverGatewayPid"];
   getDockerDriverGatewayPortListenerScan: GatewayRuntimeHelpers["getDockerDriverGatewayPortListenerScan"];
+  getDockerDriverGatewayProcessTarget: GatewayRuntimeHelpers["getDockerDriverGatewayProcessTarget"];
   getDockerDriverGatewayRuntimeDrift: GatewayRuntimeHelpers["getDockerDriverGatewayRuntimeDrift"];
   getDockerDriverGatewayStateDir: GatewayRuntimeHelpers["getDockerDriverGatewayStateDir"];
   getGatewayPortListenerRawScan: GatewayRuntimeHelpers["getGatewayPortListenerRawScan"];
@@ -150,7 +151,10 @@ export function createDockerDriverGatewayStart(
 ): DockerDriverGatewayStart {
   const stateOwnership = createDockerDriverGatewayStateOwnership({
     getDockerDriverGatewayPid: deps.getDockerDriverGatewayPid,
+    getDockerDriverGatewayProcessTarget: deps.getDockerDriverGatewayProcessTarget,
     getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
+    getGatewayName: deps.gatewayName,
+    getGatewayPort: deps.gatewayPort,
     isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
     isPidAlive: deps.isPidAlive,
     readProcessEnvironment: deps.readDockerDriverGatewayProcessEnvironment,
