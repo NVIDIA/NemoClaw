@@ -93,11 +93,12 @@ protects the registry-target catalogue when collection includes
 `npm run test:e2e-phases:check` include that file, but a collection command that
 omits it does not run this guard.
 
-A declared target that is not wired for live fixtures still collects. The
-typed-registry matrix reports it as skipped with its `[not wired]` reason and
-exits 0. That exit-0 skip is specific to the typed-registry matrix; the
-catalogue path sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` and exits nonzero
-when its selection runs no tests.
+Every typed-registry declaration must have executable platform, install,
+runtime, and onboarding routes plus resolved coverage metadata. A declared
+lifecycle route must also be executable. Registry construction rejects invalid
+declarations. Proposed combinations belong in planning issues until their live
+fixtures exist; they must not be added as empty skipped tests. Selecting a
+removed or unknown target ID fails and lists the available IDs.
 
 ## Run Live E2E Locally
 
