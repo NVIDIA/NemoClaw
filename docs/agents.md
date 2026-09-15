@@ -95,6 +95,33 @@ Changing execution settings changes the sandbox launch specification; it is not 
 Startup, refresh, and export reject conflicting retained native timeout or heartbeat settings without overwriting them.
 Restore the expected settings before retrying, or use a fresh deployment with separate state and storage.
 
+## OpenClaw Tracing
+
+Declare tracing on the first OpenClaw agent:
+
+```yaml
+observability:
+  otlp:
+    enabled: true
+    endpoint: http://host.openshell.internal:4318
+    serviceName: my-agent
+    sampleRate: 1
+```
+
+The collector must already be running and reachable from the sandbox at this host alias and port.
+NemoClaw configures the native diagnostics plugin to send traces using OTLP/HTTP protobuf; it does not create the collector.
+This profile excludes metrics, logs, collector credentials, and custom headers.
+Omit `observability` to leave native telemetry unconfigured.
+The [field reference](reference/configuration.md#otlptracing) defines the service-name and sampling bounds.
+
+Enabling tracing adds the `nemoclaw-otlp` policy rule for the native Node executable to POST `/v1/traces` to the collector.
+The rule is added to the selected sandbox policy; an explicit rule with that reserved name is rejected.
+Export retains the integration declaration, and refresh checks the resulting policy and native configuration without rewriting drift.
+Configuration readiness does not establish collector delivery; verify incoming traces in your collector.
+
+Use an image built with the updated [runtime build procedure](#runtime-lifecycle) and a fresh deployment when changing image or tracing intent.
+The offline native test proves trace delivery to a disposable collector; it does not qualify a production collector or its retention settings.
+
 ## Hermes Native Server
 
 Fabric owns one authenticated native Hermes HTTP API server per sandbox.
