@@ -682,16 +682,19 @@ async function deleteSandboxForRestore(name: string): Promise<void> {
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
-function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
-  if (!selectSandboxGatewayIfRegistered(sandboxName)) return null;
-  if (!probeGatewayRunning(sandboxName)) return null;
+async function listLiveSandboxesOnSandboxGateway(sandboxName: string): Promise<Set<string> | null> {
+  if (!(await selectSandboxGatewayIfRegistered(sandboxName))) return null;
+  if (!(await probeGatewayRunning(sandboxName))) return null;
   const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (isLive.status !== 0) return null;
   return parseLiveSandboxNames(isLive.output || "");
 }
 
-function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string): Set<string> {
-  const liveNames = listLiveSandboxesOnSandboxGateway(sandboxName);
+async function requireLiveSandboxesOnSandboxGateway(
+  sandboxName: string,
+  error: string,
+): Promise<Set<string>> {
+  const liveNames = await listLiveSandboxesOnSandboxGateway(sandboxName);
   if (!liveNames) {
     console.error(error);
     snapshotExit(1);
@@ -699,8 +702,8 @@ function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string
   return liveNames;
 }
 
-function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+async function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     targetSandbox,
     `  Cannot verify destination sandbox '${targetSandbox}' on its registered gateway. Aborting restore.`,
   );
@@ -853,11 +856,11 @@ function removeIncompleteSnapshot(sandboxName: string, backupPath: string): void
   );
 }
 
-function runSnapshotCreate(
+async function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
-): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -983,7 +986,7 @@ async function runSnapshotRestoreUnlocked(
   request: Extract<SnapshotRequest, { kind: "restore" }>,
   targetSandbox: string,
 ): Promise<void> {
-  const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+  const sourceLiveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -1319,10 +1322,10 @@ async function runSnapshotRestoreUnlocked(
         clonePolicy = refreshedClonePolicy;
         if (targetExists) {
           if (targetEntry) {
-            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+            await verifyRestoreDestinationOnOwnGateway(targetSandbox);
           }
           await deleteSandboxForRestore(targetSandbox);
-          requireLiveSandboxesOnSandboxGateway(
+          await requireLiveSandboxesOnSandboxGateway(
             sandboxName,
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );

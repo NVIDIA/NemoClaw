@@ -1318,7 +1318,7 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
       dependencies.teardownOrphanManagedGatewayOnAbort ??
       (require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy"))
         .teardownOrphanManagedGatewayOnAbort;
-    teardownOrphanManagedGatewayOnAbort();
+    await teardownOrphanManagedGatewayOnAbort();
   } catch (error) {
     // Helper never throws; this covers require/load failures only.
     console.error(

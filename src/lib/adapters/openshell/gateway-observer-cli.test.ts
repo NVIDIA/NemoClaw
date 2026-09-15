@@ -78,6 +78,16 @@ describe("CLI gateway observation", () => {
       "Gateway 'nemoclaw-8090' is not configured.",
     ],
     [
+      "No gateway configured",
+      "Error:   × Unknown gateway 'nemoclaw-8090'.\n  │ Register it first",
+      1,
+      1,
+      "missing_named",
+      true,
+      null,
+      "Gateway 'nemoclaw-8090' is not configured.",
+    ],
+    [
       connected,
       "gateway info is not supported by this gateway version",
       0,
