@@ -62,6 +62,7 @@ describe("onboarding command failures", () => {
     expect(leaf.stack).toContain("<REDACTED>");
     expect(cause.message).toBe("Retry after correcting permissions.");
     expect(inspect(failure, { depth: null })).not.toContain(secret);
+    expect(String(failure)).toBe("Error: Onboarding failed");
   });
 
   it("redacts nested aggregate members and causes before structured rendering", async () => {
@@ -230,6 +231,80 @@ describe("onboarding command failures", () => {
     expect(JSON.stringify(nested)).not.toContain(inheritedSecret);
     expect(ownRenderer).not.toHaveBeenCalled();
     expect(inheritedRenderer).not.toHaveBeenCalled();
+  });
+
+  it("neutralizes an inherited toString hook without invoking it", async () => {
+    const secret = `nvapi-${"w".repeat(60)}`;
+    const toString = vi.fn(() => `Leaked diagnostic: ${secret}`);
+    class CoercionError extends Error {}
+    Object.defineProperty(CoercionError.prototype, "toString", {
+      configurable: true,
+      value: toString,
+    });
+    const failure = new CoercionError("Onboarding failed");
+
+    await rethrowOnboardFailure(failure);
+
+    expect(toString).not.toHaveBeenCalled();
+    expect(String(failure)).toBe("[REDACTED ERROR]");
+    expect(String(failure)).not.toContain(secret);
+    expect(toString).not.toHaveBeenCalled();
+  });
+
+  it("neutralizes an inherited Symbol.toPrimitive hook without invoking it", async () => {
+    const secret = `nvapi-${"x".repeat(60)}`;
+    const toPrimitive = vi.fn(() => `Leaked diagnostic: ${secret}`);
+    class PrimitiveError extends Error {}
+    Object.defineProperty(PrimitiveError.prototype, Symbol.toPrimitive, {
+      configurable: true,
+      value: toPrimitive,
+    });
+    const failure = new PrimitiveError("Onboarding failed");
+    Object.preventExtensions(failure);
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(toPrimitive).not.toHaveBeenCalled();
+    expect(caught).not.toBe(failure);
+    expect(String(caught)).toBe("[REDACTED ERROR]");
+    expect(String(caught)).not.toContain(secret);
+    expect(toPrimitive).not.toHaveBeenCalled();
+  });
+
+  it("neutralizes an inherited valueOf hook before numeric coercion", async () => {
+    const secret = `nvapi-${"y".repeat(60)}`;
+    const valueOf = vi.fn(() => `1${secret}`);
+    class NumericError extends Error {}
+    Object.defineProperty(NumericError.prototype, "valueOf", {
+      configurable: true,
+      value: valueOf,
+    });
+    const failure = new NumericError("Onboarding failed");
+
+    await rethrowOnboardFailure(failure);
+
+    expect(valueOf).not.toHaveBeenCalled();
+    expect(Number(failure)).toBeNaN();
+    expect(valueOf).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an own coercion hook is immutable", async () => {
+    const secret = `nvapi-${"z".repeat(60)}`;
+    const toString = vi.fn(() => `Leaked diagnostic: ${secret}`);
+    const failure = new Error("Onboarding failed");
+    Object.defineProperty(failure, "toString", {
+      configurable: false,
+      value: toString,
+      writable: false,
+    });
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(caught).not.toBe(failure);
+    expect(toString).not.toHaveBeenCalled();
+    expect(String(caught)).toBe("[REDACTED ERROR]");
+    expect(String(caught)).not.toContain(secret);
+    expect(toString).not.toHaveBeenCalled();
   });
 
   it("fails closed when a diagnostic function name contains a secret", async () => {

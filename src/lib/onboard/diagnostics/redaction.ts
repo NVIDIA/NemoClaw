@@ -23,8 +23,17 @@ interface DiagnosticWalk {
 
 const CUSTOM_INSPECT = Symbol.for("nodejs.util.inspect.custom");
 const RENDERER_HOOKS = ["toJSON", CUSTOM_INSPECT] as const;
+const COERCION_HOOKS = ["toString", "valueOf", Symbol.toPrimitive] as const;
+const SAFE_ERROR_TO_STRING = Object.getOwnPropertyDescriptor(Error.prototype, "toString")?.value;
+const SAFE_OBJECT_TO_STRING = Object.getOwnPropertyDescriptor(Object.prototype, "toString")?.value;
+const SAFE_OBJECT_VALUE_OF = Object.getOwnPropertyDescriptor(Object.prototype, "valueOf")?.value;
 const REDACTED_ERROR_MESSAGE =
   "Onboarding failed; diagnostic details were redacted because they could not be sanitized safely.";
+
+/** Return a fixed primitive without consulting any diagnostic object state. */
+function safeDiagnosticCoercion(): string {
+  return "[REDACTED ERROR]";
+}
 
 /** Identify a key whose visible description contains credential material. */
 function isSensitiveDiagnosticKey(key: PropertyKey): boolean {
@@ -36,6 +45,24 @@ function isSensitiveDiagnosticKey(key: PropertyKey): boolean {
 /** Renderer hooks are removed rather than treated as ordinary diagnostic values. */
 function isRendererHook(key: PropertyKey): boolean {
   return key === "toJSON" || key === CUSTOM_INSPECT;
+}
+
+/** Identify coercion properties that renderers can invoke implicitly. */
+function isCoercionHook(key: PropertyKey): boolean {
+  return key === "toString" || key === "valueOf" || key === Symbol.toPrimitive;
+}
+
+/** Retain only the captured built-in Error/Object coercion implementations. */
+function isSafeBuiltinCoercion(key: PropertyKey, value: unknown): boolean {
+  if (key === "toString") {
+    return value === SAFE_ERROR_TO_STRING || value === SAFE_OBJECT_TO_STRING;
+  }
+  return key === "valueOf" && value === SAFE_OBJECT_VALUE_OF;
+}
+
+/** Select the inert value used to replace an executable diagnostic hook. */
+function neutralizedHookValue(key: PropertyKey): unknown {
+  return isCoercionHook(key) ? safeDiagnosticCoercion : undefined;
 }
 
 /** Limit property traversal to plain records so class instances retain their behavior. */
@@ -100,7 +127,7 @@ function redactAccessor(
     descriptor: {
       configurable: descriptor.configurable,
       enumerable: descriptor.enumerable,
-      value: isRendererHook(key) ? undefined : "<REDACTED>",
+      value: isRendererHook(key) || isCoercionHook(key) ? neutralizedHookValue(key) : "<REDACTED>",
       writable: true,
     },
   });
@@ -114,10 +141,16 @@ function redactStoredValue(
   descriptor: PropertyDescriptor,
   walk: DiagnosticWalk,
 ): void {
-  const value =
-    isRendererHook(key) && descriptor.value !== undefined
-      ? undefined
-      : redactNestedDiagnostic(descriptor.value, walk);
+  let value: unknown;
+  if (isRendererHook(key) && descriptor.value !== undefined) {
+    value = neutralizedHookValue(key);
+  } else if (isCoercionHook(key) && typeof descriptor.value === "function") {
+    value = isSafeBuiltinCoercion(key, descriptor.value)
+      ? descriptor.value
+      : neutralizedHookValue(key);
+  } else {
+    value = redactNestedDiagnostic(descriptor.value, walk);
+  }
   const replacement = { ...descriptor, value };
   if (source !== target) {
     Object.defineProperty(target, key, replacement);
@@ -131,20 +164,23 @@ function redactStoredValue(
   walk.updates.push({ target, key, descriptor: replacement });
 }
 
-/** Shadow inherited rendering hooks without reading or invoking their values. */
-function neutralizeInheritedRendererHooks(
-  source: object,
-  target: object,
-  walk: DiagnosticWalk,
-): void {
-  for (const key of RENDERER_HOOKS) {
+/** Determine whether an inherited descriptor can execute during diagnostic rendering. */
+function isExecutableInheritedHook(key: PropertyKey, descriptor: PropertyDescriptor): boolean {
+  if (!("value" in descriptor)) return true;
+  if (typeof descriptor.value !== "function") return false;
+  return !isCoercionHook(key) || !isSafeBuiltinCoercion(key, descriptor.value);
+}
+
+/** Shadow inherited rendering and coercion hooks without invoking their values. */
+function neutralizeInheritedHooks(source: object, target: object, walk: DiagnosticWalk): void {
+  for (const key of [...RENDERER_HOOKS, ...COERCION_HOOKS]) {
     if (Object.hasOwn(source, key)) continue;
     let prototype = Object.getPrototypeOf(source) as object | null;
     let inherited = false;
     while (prototype) {
       const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
       if (descriptor) {
-        inherited = !("value" in descriptor) || typeof descriptor.value === "function";
+        inherited = isExecutableInheritedHook(key, descriptor);
         break;
       }
       prototype = Object.getPrototypeOf(prototype) as object | null;
@@ -157,7 +193,7 @@ function neutralizeInheritedRendererHooks(
     const descriptor = {
       configurable: true,
       enumerable: false,
-      value: undefined,
+      value: neutralizedHookValue(key),
       writable: true,
     };
     if (source === target) walk.updates.push({ target, key, descriptor });
@@ -171,7 +207,7 @@ function redactStoredDiagnosticProperties(
   target: object,
   walk: DiagnosticWalk,
 ): void {
-  neutralizeInheritedRendererHooks(source, target, walk);
+  neutralizeInheritedHooks(source, target, walk);
   for (const key of Reflect.ownKeys(source)) {
     if (walk.unsafe) return;
     if (isSensitiveDiagnosticKey(key)) {
@@ -219,11 +255,43 @@ function redactDiagnosticTask(task: DiagnosticTask, walk: DiagnosticWalk): void 
 /** Construct an opaque replacement when the original graph cannot be safely rewritten. */
 function createFailClosedError(): Error {
   const fallback = new Error(REDACTED_ERROR_MESSAGE);
-  Object.defineProperty(fallback, "stack", {
-    configurable: true,
-    enumerable: false,
-    value: `Error: ${REDACTED_ERROR_MESSAGE}`,
-    writable: true,
+  Object.defineProperties(fallback, {
+    stack: {
+      configurable: true,
+      enumerable: false,
+      value: `Error: ${REDACTED_ERROR_MESSAGE}`,
+      writable: true,
+    },
+    toJSON: {
+      configurable: true,
+      enumerable: false,
+      value: undefined,
+      writable: true,
+    },
+    toString: {
+      configurable: true,
+      enumerable: false,
+      value: safeDiagnosticCoercion,
+      writable: true,
+    },
+    valueOf: {
+      configurable: true,
+      enumerable: false,
+      value: safeDiagnosticCoercion,
+      writable: true,
+    },
+    [CUSTOM_INSPECT]: {
+      configurable: true,
+      enumerable: false,
+      value: undefined,
+      writable: true,
+    },
+    [Symbol.toPrimitive]: {
+      configurable: true,
+      enumerable: false,
+      value: safeDiagnosticCoercion,
+      writable: true,
+    },
   });
   return fallback;
 }
