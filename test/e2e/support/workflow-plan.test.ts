@@ -101,7 +101,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(85);
+    expect(plan.coverageMatrix).toHaveLength(84);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -147,12 +147,7 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix).toEqual([]);
     expect(catalogueIds).toHaveLength(50);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining([
-        "bootstrap-install-smoke",
-        "gateway-guard-recovery",
-        "rebuild-hermes",
-        "rebuild-openclaw",
-      ]),
+      expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
@@ -287,16 +282,11 @@ describe("E2E workflow plan", () => {
 
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
-      jobs: "gateway-guard-recovery,hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
+      jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
     });
 
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          id: "gateway-guard-recovery",
-          host_packages: "",
-          install_non_interactive: true,
-        }),
         expect.objectContaining({
           id: "hermes-slack",
           display_name: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
@@ -687,6 +677,21 @@ describe("E2E workflow plan", () => {
       );
     },
   );
+
+  it.each([
+    "src/lib/adapters/openshell/command-execution.ts",
+    "src/lib/adapters/openshell/forward-cli.ts",
+    "src/lib/adapters/openshell/forward-runtime.ts",
+    "src/lib/adapters/openshell/forward.ts",
+  ])("selects OpenClaw and Hermes forward lifecycles when %s changes (#9808)", (changedFile) => {
+    const targetIds = catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id);
+
+    expect(targetIds).toEqual([
+      "dashboard-remote-bind",
+      "double-onboard-hermes",
+      "onboard-resume-hermes",
+    ]);
+  });
 
   it.each(["double-onboard-hermes", "onboard-resume-hermes"])(
     "prepares Hermes swap for the %s execution",
