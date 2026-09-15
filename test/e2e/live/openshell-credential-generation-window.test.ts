@@ -621,7 +621,7 @@ test(
         const expiredRebuildOutput = resultText(expiredRebuild);
         expect(expiredRebuild.exitCode, expiredRebuildOutput).not.toBe(0);
         expect(expiredRebuildOutput).toContain(
-          `provider '${HOSTED_INFERENCE_PROVIDER_NAME}' credential ${HOSTED_INFERENCE_CREDENTIAL_ENV} is expired`,
+          `provider '${HOSTED_INFERENCE_PROVIDER_NAME}' credential <REDACTED> is expired`,
         );
         expect(expiredRebuildOutput).not.toMatch(/Backing up sandbox state|Deleting old sandbox/u);
         expect(
