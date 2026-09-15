@@ -60,6 +60,7 @@ export interface OpenShellSandboxLogFollowSession {
 
 /** Typed public-log capabilities used by the sandbox logs action. */
 export interface OpenShellSandboxLogs {
+  checkAvailability(): OpenShellSandboxLogError | null;
   read(request: OpenShellSandboxLogRequest): Promise<OpenShellSandboxLogRead>;
   follow(request: OpenShellSandboxLogRequest): OpenShellSandboxLogFollowSession;
 }

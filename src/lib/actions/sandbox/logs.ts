@@ -142,9 +142,15 @@ async function streamSandboxFollowLogs(
   deps: SandboxLogsRuntimeDeps,
 ): Promise<void> {
   const logs = deps.logs ?? cliOpenShellSandboxLogs;
+  const exit = deps.exit ?? process.exit;
+  const availabilityError = logs.checkAvailability();
+  if (availabilityError?.kind === "unavailable") {
+    console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
+    exit(1);
+    return;
+  }
   const target = selectedOpenShellGateway();
   const includeGateway = !options.since && shouldIncludeGatewayLogSource(sandboxName, deps);
-  const exit = deps.exit ?? process.exit;
   const outputStream = deps.stdout ?? process.stdout;
   const writesThroughOutputStream = deps.writeStdout === undefined;
   const writeStderr = deps.writeStderr ?? process.stderr.write.bind(process.stderr);
@@ -214,6 +220,11 @@ async function streamSandboxFollowLogs(
     forcedExitTimer.unref?.();
     maybeExit();
   };
+  const requestUnavailableExit = () => {
+    if (requestedExitCode !== null) return;
+    console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
+    requestExitAfterSignal("SIGTERM", 1);
+  };
 
   process.once("SIGINT", onInterrupt);
   process.once("SIGTERM", onTerminate);
@@ -262,6 +273,9 @@ async function streamSandboxFollowLogs(
     const stdout = tagged ? session.output : null;
     if (!stdout) {
       void session.completion.then(({ outcome }) => {
+        if (isOpenShellUnavailable(outcome)) {
+          requestUnavailableExit();
+        }
         if (outcome.kind === "completed" && outcome.termination === "broken_pipe") {
           requestExitAfterSignal("SIGTERM", LOG_RELAY_BROKEN_PIPE_EXIT_CODE);
         }

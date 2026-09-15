@@ -23,6 +23,7 @@ describe("sandbox logs for terminal agents", () => {
           enableAuditLogs,
           isDockerRuntimeDown: () => false,
           logs: {
+            checkAvailability: () => null,
             read: async (request) => {
               calls.push(request.source);
               return {
@@ -76,6 +77,7 @@ describe("sandbox logs for terminal agents", () => {
         enableAuditLogs,
         isDockerRuntimeDown: () => false,
         logs: {
+          checkAvailability: () => null,
           read: vi.fn(),
           follow: (request) => {
             calls.push(request.source);

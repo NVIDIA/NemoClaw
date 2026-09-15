@@ -92,6 +92,7 @@ async function captureLogsRun(
   });
 
   const logs: OpenShellSandboxLogs = {
+    checkAvailability: () => null,
     async read(request) {
       reads.push(request);
       const result = results[request.source === "gateway" ? "sandbox" : "logs"] ?? {
@@ -486,6 +487,7 @@ async function startFollowRun(
   });
 
   const logs: OpenShellSandboxLogs = {
+    checkAvailability: () => null,
     read: vi.fn(),
     follow() {
       spawnCount += 1;
@@ -559,6 +561,44 @@ describe("follow-mode log source attribution (#10340)", () => {
     "└────",
   ].join("\n");
 
+  it("exits follow mode with guidance before audit setup when OpenShell is unavailable", async () => {
+    const follow = vi.fn();
+    const enableAuditLogs = vi.fn();
+    const exit = vi.fn(failExit);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await expect(
+        showSandboxLogsWithDeps(
+          "alpha",
+          { follow: true, lines: "50", since: null },
+          {
+            enableAuditLogs,
+            exit,
+            isDockerRuntimeDown: () => false,
+            logs: {
+              checkAvailability: () => ({
+                kind: "unavailable",
+                message: "OpenShell binary not found",
+              }),
+              read: vi.fn(),
+              follow,
+            },
+          },
+        ),
+      ).rejects.toMatchObject({ code: 1 });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "openshell CLI not found. Install OpenShell before using sandbox commands.",
+      );
+      expect(exit).toHaveBeenCalledOnce();
+      expect(follow).not.toHaveBeenCalled();
+      expect(enableAuditLogs).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("does not start an OpenShell follower after interruption during audit enablement", async () => {
     const gateway = createStreamingChild();
     const follow = vi.fn(() => gateway.session);
@@ -584,7 +624,7 @@ describe("follow-mode log source attribution (#10340)", () => {
             return undefined as never;
           }) as never,
           isDockerRuntimeDown: () => false,
-          logs: { read: vi.fn(), follow },
+          logs: { checkAvailability: () => null, read: vi.fn(), follow },
           stdout: createCapturedOutput([]),
         },
       );
@@ -601,6 +641,66 @@ describe("follow-mode log source attribution (#10340)", () => {
       gateway.child.emit("exit", null, "SIGINT");
       await expect(exited).resolves.toBe(130);
     } finally {
+      restoreProcessSignalListeners("SIGINT", sigintListeners);
+      restoreProcessSignalListeners("SIGTERM", sigtermListeners);
+    }
+  });
+
+  it("cancels an active gateway follower when OpenShell becomes unavailable", async () => {
+    const gateway = createStreamingChild();
+    const unavailableCancel = vi.fn();
+    const unavailable: OpenShellSandboxLogFollowSession = {
+      completion: Promise.resolve({
+        outcome: {
+          kind: "failed",
+          error: { kind: "unavailable", message: "OpenShell binary not found" },
+          exitCode: 1,
+        },
+      }),
+      diagnostic: null,
+      output: null,
+      cancel: unavailableCancel,
+    };
+    const follow = vi
+      .fn<OpenShellSandboxLogs["follow"]>()
+      .mockReturnValueOnce(gateway.session)
+      .mockReturnValueOnce(unavailable);
+    const sigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
+    const sigtermListeners = process.listeners("SIGTERM") as NodeJS.SignalsListener[];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let settleExit: (code: number) => void = () => {};
+    const exited = new Promise<number>((resolve) => {
+      settleExit = resolve;
+    });
+
+    try {
+      await showSandboxLogsWithDeps(
+        "alpha",
+        { follow: true, lines: "50", since: null },
+        {
+          enableAuditLogs: async () => ({ ok: true, value: undefined }),
+          exit: ((code: number) => {
+            settleExit(code);
+            return undefined as never;
+          }) as never,
+          isDockerRuntimeDown: () => false,
+          logs: { checkAvailability: () => null, read: vi.fn(), follow },
+          stdout: createCapturedOutput([]),
+        },
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "openshell CLI not found. Install OpenShell before using sandbox commands.",
+      );
+      expect(gateway.child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(unavailableCancel).toHaveBeenCalledWith("terminate");
+
+      gateway.stdout.end();
+      gateway.child.emit("exit", null, "SIGTERM");
+      await expect(exited).resolves.toBe(1);
+    } finally {
+      errorSpy.mockRestore();
       restoreProcessSignalListeners("SIGINT", sigintListeners);
       restoreProcessSignalListeners("SIGTERM", sigtermListeners);
     }

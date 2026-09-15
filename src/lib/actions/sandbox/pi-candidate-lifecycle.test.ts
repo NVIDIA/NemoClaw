@@ -142,7 +142,7 @@ describe("Pi candidate operational surfaces", () => {
         isDockerRuntimeDown: () => false,
         getSessionAgent: () => agent,
         enableAuditLogs: async () => ({ ok: true, value: undefined }),
-        logs: { read: readLogs, follow: vi.fn() as never },
+        logs: { checkAvailability: () => null, read: readLogs, follow: vi.fn() as never },
         writeStdout: () => {},
       },
     );

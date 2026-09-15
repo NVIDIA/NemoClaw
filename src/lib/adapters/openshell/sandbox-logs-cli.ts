@@ -241,6 +241,15 @@ export function createCliOpenShellSandboxLogs(
   const runBuffered = deps.runBuffered ?? runCliOpenShellBufferedCommand;
   const hostCwd = deps.hostCwd ?? ROOT;
   return {
+    checkAvailability() {
+      try {
+        return resolveBinary()
+          ? null
+          : { kind: "unavailable", message: "OpenShell binary not found" };
+      } catch (error) {
+        return classifyError(error instanceof Error ? error : new Error(String(error)));
+      }
+    },
     async read(request) {
       const sourceEnvironment = deps.environment ?? process.env;
       try {

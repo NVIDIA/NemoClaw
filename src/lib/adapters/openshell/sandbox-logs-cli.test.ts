@@ -169,6 +169,10 @@ describe("CLI OpenShell sandbox logs adapter", () => {
       runBuffered,
       environment: {},
     });
+    expect(unavailable.checkAvailability()).toEqual({
+      kind: "unavailable",
+      message: "OpenShell binary not found",
+    });
     await expect(unavailable.read(gatewayRequest)).resolves.toMatchObject({
       outcome: { kind: "failed", error: { kind: "unavailable" } },
     });
