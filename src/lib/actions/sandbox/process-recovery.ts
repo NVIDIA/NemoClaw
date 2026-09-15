@@ -767,7 +767,8 @@ export async function isSandboxGatewayRunningForStatus(
 type SandboxProcessRecovery =
   | { kind: "managed"; managedControlCompletion?: ManagedGatewayControlCompletion }
   | { kind: "custom" }
-  | { kind: "provider" };
+  | { kind: "provider" }
+  | { kind: "unsupported-provider"; failureDetail: string };
 
 async function recoverSandboxProcesses(
   sandboxName: string,
@@ -812,8 +813,10 @@ async function recoverSandboxProcesses(
     const result = recoverRegisteredRuntimeProviderSandbox(persistedSandbox);
     if (result) {
       if (result.exitCode === 0) return { kind: "provider" };
-      if (!quiet && result.message) console.error(result.message);
-      return null;
+      return {
+        kind: "unsupported-provider",
+        failureDetail: result.message ?? "The registered runtime provider recovery failed.",
+      };
     }
   }
   const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
@@ -1536,6 +1539,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     quiet = false,
     requestGatewaySupervisorAction = executeGatewaySupervisorAction,
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
+    waitForRecoveredSandboxGatewayImpl = waitForRecoveredSandboxGateway,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
     commandExecutor,
     managedControlNowImpl,
@@ -1552,6 +1556,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       sandboxName: string,
       runtimeSelection?: OpenShellRuntimeSelection,
     ) => Promise<boolean | null>;
+    waitForRecoveredSandboxGatewayImpl?: typeof waitForRecoveredSandboxGateway;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     managedControlNowImpl?: () => number;
@@ -1753,6 +1758,17 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         },
       }),
   );
+  if (recovery?.kind === "unsupported-provider") {
+    if (!quiet) console.error(recovery.failureDetail);
+    onRecoveryFailureLayer?.("unsupported agent", recovery.failureDetail);
+    return {
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail: recovery.failureDetail,
+    };
+  }
   if (recovery !== null) {
     const withManagedControlCompletion = <T extends { recovered: true }>(
       result: T,
@@ -1763,7 +1779,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
     const gatewayReady = await measureAsync("processes", () =>
-      waitForRecoveredSandboxGateway(sandboxName, {
+      waitForRecoveredSandboxGatewayImpl(sandboxName, {
         quiet,
         initialManagedHealthPassed: recovery.kind === "managed",
         runtimeSelection,
@@ -1915,6 +1931,7 @@ export async function checkAndRecoverSandboxProcesses(
       sandboxName: string,
       runtimeSelection?: OpenShellRuntimeSelection,
     ) => Promise<boolean | null>;
+    waitForRecoveredSandboxGatewayImpl?: typeof waitForRecoveredSandboxGateway;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     managedControlNowImpl?: () => number;

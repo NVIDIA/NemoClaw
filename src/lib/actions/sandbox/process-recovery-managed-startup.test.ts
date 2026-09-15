@@ -9,6 +9,7 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as wait from "../../core/wait";
 import * as gatewayTeardownAuthority from "../../onboard/gateway-teardown-authority";
+import * as runtimeProviderSelection from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 import * as privilegedExec from "../../sandbox/privileged-exec";
 import * as forwardHealth from "./forward-health";
@@ -243,10 +244,81 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
         wasRunning: false,
         recovered: false,
         forwardRecovered: false,
+        recoveryFailureDetail: expect.any(String),
       });
       expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
     },
   );
+
+  it("dispatches Podman provider recovery through the public recovery boundary", async () => {
+    const sandboxName = "podman-box";
+    mockGatewaySandbox(sandboxName, "openclaw", "podman");
+    mockRecoveredForward(sandboxName);
+    const recover = vi.fn(() => ({ exitCode: 0 }));
+    vi.spyOn(runtimeProviderSelection, "resolveRegisteredRuntimeProvider").mockReturnValue({
+      gateway: { supported: true, launcher: "openshell" },
+      lifecycle: { supported: false },
+      recovery: { supported: true, recover },
+    } as never);
+    const requestGatewaySupervisorAction = vi.fn();
+    const waitForRecoveredSandboxGatewayImpl = vi.fn(async () => true);
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(async () => true);
+
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      isSandboxGatewayRunningImpl: async () => false,
+      requestGatewaySupervisorAction,
+      waitForRecoveredSandboxGatewayImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    });
+    expect(recover).toHaveBeenCalledWith(expect.objectContaining({ name: sandboxName }));
+    expect(waitForRecoveredSandboxGatewayImpl).toHaveBeenCalledOnce();
+    expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledOnce();
+    expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
+  });
+
+  it("returns a Podman provider failure without restoring forwards", async () => {
+    const sandboxName = "podman-failure";
+    mockGatewaySandbox(sandboxName, "openclaw", "podman");
+    mockRecoveredForward(sandboxName);
+    const recover = vi.fn(() => ({
+      exitCode: 1,
+      message: "Podman recovery is unavailable.",
+    }));
+    vi.spyOn(runtimeProviderSelection, "resolveRegisteredRuntimeProvider").mockReturnValue({
+      gateway: { supported: true, launcher: "openshell" },
+      lifecycle: { supported: false },
+      recovery: { supported: true, recover },
+    } as never);
+    const requestGatewaySupervisorAction = vi.fn();
+    const waitForRecoveredSandboxGatewayImpl = vi.fn(async () => true);
+
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      isSandboxGatewayRunningImpl: async () => false,
+      requestGatewaySupervisorAction,
+      waitForRecoveredSandboxGatewayImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail: "Podman recovery is unavailable.",
+    });
+    expect(recover).toHaveBeenCalledWith(expect.objectContaining({ name: sandboxName }));
+    expect(waitForRecoveredSandboxGatewayImpl).not.toHaveBeenCalled();
+    expect(forwardHealth.isLocalForwardReachable).not.toHaveBeenCalled();
+    expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["SUPERVISOR_NOT_RUNNING", false],
