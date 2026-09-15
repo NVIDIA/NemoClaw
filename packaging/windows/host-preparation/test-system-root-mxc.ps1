@@ -167,13 +167,13 @@ try {
             accessControlType=[string]$_.AccessControlType}
     })
     $requiredReadMask=[uint32]0x001200a9
+    $receipt.preauthorizedRuntime=[ordered]@{imageReceipt=(Get-Content -LiteralPath $imageReceipt -Raw|ConvertFrom-Json);
+        workersSddl=$preauthorizedAcl.Sddl;workersAccess=$preauthorizedRows;readMask=$requiredReadMask;readOnlyAttachment=$true}
     foreach($sid in @('S-1-15-2-1','S-1-15-2-2')){
         $matches=@($preauthorizedRows|Where-Object{$_.sid -ceq $sid -and $_.accessControlType -ceq 'Allow' -and
             ($_.mask -band $requiredReadMask) -eq $requiredReadMask -and $_.inherited})
         if($matches.Count -ne 1){throw "The runtime image did not inherit the required AppContainer read grant for $sid."}
     }
-    $receipt.preauthorizedRuntime=[ordered]@{imageReceipt=(Get-Content -LiteralPath $imageReceipt -Raw|ConvertFrom-Json);
-        workersSddl=$preauthorizedAcl.Sddl;workersAccess=$preauthorizedRows;readMask=$requiredReadMask;readOnlyAttachment=$true}
     $worker=Join-Path $work 'worker.mjs';$result=Join-Path $work 'result.json'
     [IO.File]::WriteAllText((Join-Path $work 'input.txt'),'owned read')
     [IO.File]::WriteAllText($worker,@'
