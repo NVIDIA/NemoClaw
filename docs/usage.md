@@ -116,6 +116,9 @@ Plan reads remote capacity and resource state without creating runtime resources
 Changing a bound engine endpoint requires migration and is rejected. Failed
 observations never authorize recreation. Destroy retains model data and network.
 
-The bundled fixture lifecycle and real read-only SSH host collector are tested.
-A separate-host GPU apply and agent reply remain a live qualification gate; the
-example is not evidence that an arbitrary remote GPU box is compatible.
+The bundled fixture lifecycle and a live two-daemon Spark test are qualified.
+The live test used a second Docker daemon in a network namespace, SSH control,
+rootless Podman sandboxes, and actual OpenClaw replies through OpenShell.
+See [the validation evidence](validation/rust-dual-daemon-linux-arm64.json).
+Both daemons shared the physical host and GPU; a separate-host deployment and
+other hardware remain qualification gates.

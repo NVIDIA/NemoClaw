@@ -262,3 +262,12 @@ retargeting without recreation, and retained storage on destroy. Its readiness
 and artifact receipts are simulated; it does not download or serve a model.
 The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly
 selected Linux ARM64 NVIDIA host without provisioning resources.
+
+The existing `fabric_live` test also accepts an external gateway with a managed
+SSH inference service. Managed applies retain their active agent-reply check,
+including applies with no resource changes. The test checks managed runtime
+bindings as well as the hosted agent identity across export/reapply and destroys
+only the supplied deployment. The
+[two-daemon evidence](validation/rust-dual-daemon-linux-arm64.json) records its
+live rootless Podman run, controlled download interruption, protection trip,
+engine retarget rejection, and retained model data.

@@ -374,3 +374,33 @@ and volume paths outside that root. Ownership labels, generation, volume
 configuration and durable daemon/container identities remain required. The
 remote lifecycle fixture uses a non-default root to exercise this through the
 CLI and provider; a fixture result does not qualify the two-daemon live setup.
+
+The two-daemon live experiment now qualifies SSH-managed inference with an
+external native OpenShell gateway and rootless Podman sandbox on this Spark.
+The second Docker daemon had a separate containerd, data root, socket, daemon
+identity and network namespace. OpenClaw answered FOUR through OpenShell using
+the pinned Qwen3-4B service. Plan created no runtime resources; an oversized
+capacity request failed before allocation.
+
+An interrupted download retained partial files and the established container.
+Explicit apply completed the snapshot without replacing the container.
+No-op and export/reapply preserved model-file timestamps and runtime bindings.
+Transport failure and retargeting the same SSH alias to the original daemon
+stopped plan and preserved state bytes, despite identically named, owned
+fixtures on both engines. Destroy touched only the selected engine and retained
+the model volume and completion receipt.
+
+The resident supervisor also handled its explicit protection-trip signal after
+the CLI exited, stopped inference without an automatic restart, and recovered
+on explicit apply with the same container and model data. Memory-threshold
+behavior remains covered by fixtures; the live test did not exhaust host memory.
+Managed applies still perform the actual agent-reply probe when resource plans
+are unchanged.
+
+The experiment confirms that connection selection, publication and durable
+daemon identity are separate concerns. Both daemons share physical capacity:
+a distinct daemon ID does not imply another GPU or memory pool. Network
+namespaces exercise routing isolation but do not qualify a separate physical
+host, WAN behavior, or another operating system. The daemon fixture must retain
+cgroup mount visibility and use an isolated containerd; these are fixture
+requirements, not reasons to add another product execution framework.

@@ -1,0 +1,318 @@
+{
+  "sourceRevision": "e7b66a63a801d96397cb78b1c33ba62c1c3f3486",
+  "date": "2026-09-15",
+  "platform": "linux_arm64",
+  "scope": "Live managed inference through SSH to a second Docker daemon in a network namespace on the same DGX Spark, with native rootless Podman OpenShell sandboxes. Both daemons share the physical host, memory and GPU.",
+  "versions": {
+    "docker": "29.2.1",
+    "containerd": "2.2.1",
+    "podman": "4.9.3",
+    "openshell": "0.0.116",
+    "openshellSource": "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
+    "vllm": "0.1.dev20073+g8e685d198",
+    "kernel": "6.17.0-1014-nvidia",
+    "nvidiaDriver": "580.142"
+  },
+  "bundle": {
+    "Version": "0.1.0-dev.79325bb984a190a7",
+    "Rust": "1.98.1",
+    "OpenTofu": "1.12.6",
+    "Files": {
+      "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bin/nemoclaw": "e5052dc5acb0511ed7be2bc917623a834ea7fd55c5cf9e3269410a4a8fda4257",
+      "libexec/tofu": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59",
+      "licenses/OpenTofu-LICENSE": "142b957651baf401646dd7f3d855cb7c4f6f0921d645faa27e7cb540bc33cf4c",
+      "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.79325bb984a190a7/linux_arm64/terraform-provider-nemoclaw_v0.1.0-dev.79325bb984a190a7": "58afbaf00c8782bc03c7c26cc1d395832f4323e12243e6cdeded998483f1ccba"
+    }
+  },
+  "bundleNote": "The verified bundle contains the daemon data-root fix. The subsequent source change extends only the live test; production SDK, CLI and provider code is unchanged.",
+  "topology": {
+    "originalDockerId": "9003d825-ec2b-414b-a043-d70389061d6d",
+    "modelDockerId": "d51d13ae-c196-446d-b6f0-d6c5cfaf10f7",
+    "modelSshAlias": "ssh://nc-dual-model",
+    "namespace": "nc-dual-model",
+    "namespaceAddress": "172.31.249.2/30",
+    "hostVethAddress": "172.31.249.1/30",
+    "modelPublication": "http://172.31.249.2:18898/v1",
+    "sandboxEngine": "native rootless Podman, uid 1000",
+    "gateway": "192.168.1.16:17706 with loopback relay 127.0.0.1:17707",
+    "daemonConfig": {
+      "data-root": "/home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.local/dual-daemon/data",
+      "exec-root": "/home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.local/dual-daemon/exec",
+      "pidfile": "/home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.local/dual-daemon/dockerd.pid",
+      "hosts": [
+        "unix:///home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.local/dual-daemon/docker.sock"
+      ],
+      "bridge": "none",
+      "runtimes": {
+        "nvidia": {
+          "path": "/usr/bin/nvidia-container-runtime",
+          "runtimeArgs": []
+        }
+      },
+      "dns": [
+        "1.1.1.1",
+        "8.8.8.8"
+      ],
+      "containerd": "/home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.local/dual-daemon/containerd.sock"
+    },
+    "containerdConfig": "version = 2\nroot = \"/home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.local/dual-daemon/containerd-data\"\nstate = \"/home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.local/dual-daemon/containerd-state\"\ndisabled_plugins = [\"io.containerd.grpc.v1.cri\", \"io.containerd.cri.v1.images\", \"io.containerd.cri.v1.runtime\"]\n[grpc]\n  address = \"/home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.local/dual-daemon/containerd.sock\"\n"
+  },
+  "configuration": "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: Apache-2.0\napiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nmetadata:\n  name: dual-daemon-proof\n  uid: c36213af-c9c2-422f-ac94-2bd220abc925\nspec:\n  gateway:\n    management: external\n    endpoint: http://127.0.0.1:17707\n  inferenceProviders:\n    - name: qwen\n      provider: openai\n      service:\n        placement:\n          engine: ssh://nc-dual-model\n          networkCidr: 172.30.119.0/24\n        publication:\n          endpoint: http://172.31.249.2:18898/v1\n          bindAddress: 172.31.249.2\n        backend: vllm\n        image: nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e\n        model:\n          repository: Qwen/Qwen3-4B\n          revision: 1cfa9a7208912126459214e8b04321603b3df60c\n        serving:\n          toolParser: hermes\n          reasoningParser: qwen3\n          port: 18898\n          contextTokens: 32768\n          maxSequences: 1\n          batchTokens: 1024\n          speculativeTokens: 0\n          startupTimeoutSeconds: 1800\n        memory:\n          gpuMemoryGiB: 20\n          hostReserveGiB: 32\n          kvCacheGiB: 6\n          minAvailableGiB: 8\n          minFreeGiB: 3\n          freeGateGiB: 12\n          consecutiveSamples: 5\n  sandboxes:\n    - name: assistant\n      image:\n        ref: docker.io/library/nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd\n      runtime:\n        provider: podman\n      network:\n        tier: isolated\n      agents:\n        - name: assistant\n          harness: openclaw\n          inference:\n            routes:\n              - name: primary\n                providerRef: qwen\n                overrides:\n                  model: Qwen/Qwen3-4B\n",
+  "result": {
+    "firstSuccessfulApply": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "update"
+          ]
+        },
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_workspace.deployment",
+          "actions": [
+            "create"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "nativeAgentReply": "FOUR",
+    "policy": {
+      "externalEgressDenied": true,
+      "proxyStatus": 403
+    },
+    "lifecycle": {
+      "deployment": "c36213af-c9c2-422f-ac94-2bd220abc925",
+      "destroyed": true,
+      "exportReapply": true,
+      "harness": "openclaw",
+      "hostedRuntimePreserved": true,
+      "nativeResponse": true,
+      "passed": true,
+      "resourceBindings": {
+        "nemoclaw_provider.inference": "fe45ba95-199d-4ce1-b362-7f2c7055751e",
+        "nemoclaw_route.primary": "be7ae565-2b20-480b-990c-ee65064d8e6d/primary",
+        "nemoclaw_sandbox.agent": "c5c12960-32ab-49dc-bc9e-dc540ba25523",
+        "nemoclaw_workspace.deployment": "be7ae565-2b20-480b-990c-ee65064d8e6d"
+      },
+      "runtimeId": "runtime-1789450894784-43-2",
+      "unchangedApply": true
+    },
+    "managedRuntimeBindings": {
+      "nemoclaw_inference_service.runtime": "d51d13ae-c196-446d-b6f0-d6c5cfaf10f7/bac53636fa6f65823b05be6301859cd1b9e382104028393ffd64b8c47737efd0/2026-09-14T22:33:15-07:00/b1c112577d9f2740ea7e3b79ebf593170a6e6fde7f9f5be99e044484058cdac7",
+      "nemoclaw_inference_storage.runtime": "d51d13ae-c196-446d-b6f0-d6c5cfaf10f7/nc-d1ad88cf17ff3ee2-inference-data/2026-09-14T22:33:15-07:00"
+    },
+    "isolation": {
+      "transportFailureStoppedPlan": true,
+      "daemonRetargetStoppedPlan": true,
+      "stateBytesPreserved": true,
+      "secondDaemonInventoryPreserved": true,
+      "originalDaemonCollisionPreserved": true
+    },
+    "retention": {
+      "serviceDeletedOnSecondDaemon": true,
+      "originalCollisionSurvivedManagedDestroy": true,
+      "modelVolumeIdentityPreserved": true,
+      "modelReceiptBytesPreservedAfterDestroy": true,
+      "temporaryCollisionAndReadOnlyHelperRemoved": true
+    }
+  },
+  "failureBoundaries": [
+    "Plan left the second daemon with no containers or volumes; an oversized GPU budget failed before allocation.",
+    "Controlled interruption retained two partial model shards and the established container. Explicit apply resumed the snapshot and returned an agent reply.",
+    "Unchanged apply and export/reapply retained model-file sizes and modification times, container ID and start time. Managed applies still verify an actual agent reply.",
+    "Unavailable SSH transport and retargeting the same alias to the original daemon rejected plan and preserved both state files byte-for-byte. Same-named owned fixtures on the original daemon were untouched.",
+    "USR1 explicitly tripped the resident protection path after the CLI exited. The container stayed stopped with restart count zero. Explicit apply recovered the same container using unchanged model files.",
+    "Native Fabric lifecycle verified external egress denial, actual OpenClaw replies, hosted runtime continuity, model bindings across export/reapply, and managed destroy.",
+    "After destroy, a temporary read-only helper verified identical model receipt bytes in the retained volume. The original-engine collision survived managed destroy before explicit fixture cleanup."
+  ],
+  "discoveries": [
+    "Volume verification must use the selected daemon DockerRootDir instead of a client-side /var/lib/docker assumption; fixed in 290ab48394.",
+    "ip netns exec hid the cgroup mount for dockerd. The corrected fixture uses nsenter --net to preserve mount visibility.",
+    "A separate containerd socket, state and data root are required for this fixture. Containerd 2.2 configuration requires fully qualified disabled-plugin names.",
+    "Two distinct daemon identities can refer to the same physical capacity pool; this setup does not prove independent-host capacity observation."
+  ],
+  "validation": {
+    "workspace": {
+      "passed": 128,
+      "failed": 0,
+      "ignored": 35
+    },
+    "format": "passed",
+    "strictClippy": "passed",
+    "realSshCollectorContracts": 2,
+    "nativeManagedFabricLifecycle": "passed",
+    "nativeLifecycleSeconds": 345.17
+  },
+  "cleanup": {
+    "experimentContainersRemoved": true,
+    "podmanNetworkAndUserHelpersStopped": true,
+    "modelDataAndImagesRetained": true,
+    "rootHelperTeardown": "pending administrator cleanup command",
+    "oldQwenContainer": "1d6e7d6a18733a74735deba97de697c24cbcc8f3f67c72f7237041e703def3ca",
+    "oldQwenState": "stopped with user authorization; not restored, container and data preserved",
+    "originalGatewayAndSandbox": "still running; unchanged",
+    "systemPackagesDriversAndHostKernelSettings": "unchanged"
+  },
+  "limits": [
+    "Same Linux ARM64 host and shared GB10 GPU; separate physical hosts, WAN behavior and other platforms remain unqualified.",
+    "Private IPv4 HTTP model publication; SSH transports Docker control and host observation, not inference traffic.",
+    "Memory-pressure thresholds remain fixture-tested; the live test used the explicit protection-trip signal without exhausting memory.",
+    "This generic Qwen3-4B recipe does not require packed PLE preparation.",
+    "Pinned images were copied locally, not published."
+  ],
+  "logs": [
+    {
+      "path": ".local/dual-daemon/live-collector.log",
+      "sha256": "203c1f75f9007bf945dc76712ecbf894265126e231f291bfe3518fa27e559b45"
+    },
+    {
+      "path": ".local/dual-daemon/plan.json",
+      "sha256": "2a2a3dcdc388fe1517462dc1fc78051c788ee6d1ef66184c72ed6bc56d7a9c7f"
+    },
+    {
+      "path": ".local/dual-daemon/capacity-reject.err",
+      "sha256": "5477b17f26d8c0179677bf86b9d0f63a91c8a2859732cdeb0bc1bb5812dad5dc"
+    },
+    {
+      "path": ".local/dual-daemon/apply.err",
+      "sha256": "603519f372e9544425dad361c0cc939da85e004de86b18f3c3207031cdf459be"
+    },
+    {
+      "path": ".local/dual-daemon/partial-before-stop.txt",
+      "sha256": "d5a0e34b0ece771aaa3da4c39969e9fbf815ecc3c85e28934c6cd21c4f29a64e"
+    },
+    {
+      "path": ".local/dual-daemon/interrupted-status.json",
+      "sha256": "98a0546112f884d6996bb69e9f4fbfa489ea389d2b71694efcf5e86456f94b6a"
+    },
+    {
+      "path": ".local/dual-daemon/apply-recovery.json",
+      "sha256": "39f5e76f22c8f946b5034f2eaa1834dcc3e287a42030e327df5b4a8298d7863f"
+    },
+    {
+      "path": ".local/dual-daemon/unchanged.json",
+      "sha256": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a"
+    },
+    {
+      "path": ".local/dual-daemon/reapply-export.json",
+      "sha256": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a"
+    },
+    {
+      "path": ".local/dual-daemon/isolation-proof.json",
+      "sha256": "724096136bc462f837326e0b523ae7d1ffe3afb96b6a52805e5883fdc5f5b16d"
+    },
+    {
+      "path": ".local/dual-daemon/transport-plan.err",
+      "sha256": "0953ccdd6d2257ebf590c34791c3ebe46a48b786a18fe16ce7d8efd3129f0949"
+    },
+    {
+      "path": ".local/dual-daemon/retarget-plan.err",
+      "sha256": "351904ae84a09501a296702c4c6682780d529de94d60f6c810901b0768bd79c6"
+    },
+    {
+      "path": ".local/dual-daemon/protection-status.json",
+      "sha256": "d9e4bff8be24263dececfaa0b15c44df501f47a8c513e749adbb752386b1e253"
+    },
+    {
+      "path": ".local/dual-daemon/protection-state.txt",
+      "sha256": "51d554764bf96cc4aa16ded01108fead596967da10cec6f21f98df56d3da14ea"
+    },
+    {
+      "path": ".local/dual-daemon/protection-state-later.txt",
+      "sha256": "51d554764bf96cc4aa16ded01108fead596967da10cec6f21f98df56d3da14ea"
+    },
+    {
+      "path": ".local/dual-daemon/model-files-before.txt",
+      "sha256": "79d399ee5cbfcb8092b7ab080b11abf517f737e02c943870385235248a3f6831"
+    },
+    {
+      "path": ".local/dual-daemon/model-files-after-noop.txt",
+      "sha256": "79d399ee5cbfcb8092b7ab080b11abf517f737e02c943870385235248a3f6831"
+    },
+    {
+      "path": ".local/dual-daemon/model-files-after-protection-recovery.txt",
+      "sha256": "79d399ee5cbfcb8092b7ab080b11abf517f737e02c943870385235248a3f6831"
+    },
+    {
+      "path": ".local/dual-daemon/model-receipt-before.json",
+      "sha256": "c25f2e16aa8aa4d8be007fd0ee3c572b00649a53b9a7af85d747ef729c58e0ad"
+    },
+    {
+      "path": ".local/dual-daemon/model-receipt-after-destroy.json",
+      "sha256": "c25f2e16aa8aa4d8be007fd0ee3c572b00649a53b9a7af85d747ef729c58e0ad"
+    },
+    {
+      "path": ".local/dual-daemon/retention-proof.json",
+      "sha256": "8a3b72900a815c04aef216c9f1f1de5e0858f8a0cf1f3f32af9f70f5bcbc504f"
+    },
+    {
+      "path": ".local/dual-daemon/fabric-managed-red.log",
+      "sha256": "65da8c0087672560b3acc1195e4993655edd1c71d0b0e0be86189b078a73bbfb"
+    },
+    {
+      "path": ".local/dual-daemon/fabric-managed-live.log",
+      "sha256": "f330cc46fccf1191c2fed35d324417ad529427c3264ee786945f252db895a287"
+    },
+    {
+      "path": ".local/dual-daemon/state/proof.json",
+      "sha256": "cbeb7c043db86f10fccda74171367a16502f7d259bec6ae526103d75447f4550"
+    },
+    {
+      "path": ".local/dual-daemon/state/policy-denial.json",
+      "sha256": "9b4dbf79a8a12f5fa19beefea38a816fece95131343a1eb120c0a6fd7de30d2e"
+    },
+    {
+      "path": ".local/dual-daemon/state/native-response.json",
+      "sha256": "1f9ea87669b3366226fa26b0a2d1cd8c4a87d1d67c35830a55e83003f2871335"
+    },
+    {
+      "path": ".local/dual-daemon/state/destroy.json",
+      "sha256": "be954e94a2746b35c75dc984e2dd0c5f45cd6e8d2341c439829312d9728901b7"
+    },
+    {
+      "path": ".local/dual-daemon/final-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".local/dual-daemon/final-clippy.log",
+      "sha256": "36d19b0f74e876cae9fd1191dd098a8d583af201130cf99d6f38df3ae87d4c5c"
+    },
+    {
+      "path": ".local/dual-daemon/final-workspace.log",
+      "sha256": "f04238d16be81c68528e17b10972d7f035605490d5cd379535828415911a6592"
+    },
+    {
+      "path": ".local/dual-daemon/inference.log",
+      "sha256": "03ec5b9b7cc57891e969fb3714a2574274070943aa07d122ccb43a0f685488cb"
+    },
+    {
+      "path": ".local/dual-daemon/final-second-containers.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".local/dual-daemon/final-podman-containers.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

@@ -44,3 +44,8 @@ remote managed deployment.
 [Remote service evidence](rust-remote-service-linux-arm64.json) records the
 bundled SSH model lifecycle fixtures and real read-only host collector. A
 separate-host GPU apply and agent reply remain an explicit qualification gate.
+
+[Live two-daemon qualification](rust-dual-daemon-linux-arm64.json) exercises an
+SSH-managed Qwen3-4B service with native rootless Podman OpenClaw, real replies,
+policy denial, retained downloads, protection-trip recovery, engine retarget
+rejection, no-op/export and destroy. Both daemons share the same Spark.
