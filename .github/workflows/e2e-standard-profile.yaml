@@ -656,6 +656,10 @@ jobs:
           fi
           npx tsx tools/e2e/target-catalogue.mts run "$CATALOGUE_ID" "$TEST_FILE"
 
+      - name: Scan managed-image MCP artifacts for fixture credentials
+        if: ${{ always() && inputs.target_id == 'managed-image-mcp-discovery' }}
+        run: npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"
+
       - name: Finalize runner comparison telemetry
         if: ${{ always() && inputs.runner_comparison && inputs.trusted_main }}
         continue-on-error: true

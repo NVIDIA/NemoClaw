@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { OPENSHELL_V0116_QUALIFICATION } from "../../e2e/fixtures/openshell-v0116-qualification";
+import { E2E_TARGET_CATALOGUE } from "../../../tools/e2e/target-catalogue.mts";
 
 import {
   publicationAgents,
@@ -68,17 +69,6 @@ function managedPrReviewedAudit(workflow: Workflow): Job {
     workflow.jobs?.["pr-reviewed-npm-audit"],
     "managed-image workflow is missing its PR npm audit",
   );
-}
-
-function managedPrActivation(workflow: Workflow): Job {
-  return required(
-    workflow.jobs?.["pr-managed-activation"],
-    "managed-image workflow is missing its exact all-agent PR activation gate",
-  );
-}
-
-function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
-  return required(workflow.jobs?.["pr-openclaw-mcp-discovery"], "missing exact PR MCP gate");
 }
 
 describe("complete managed-image publication workflow", () => {
@@ -570,14 +560,8 @@ describe("complete managed-image publication workflow", () => {
       name: "managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}",
       overwrite: true,
     });
-    expect(
-      step(managedPrActivation(workflow), "Download exact published all-agent contracts").with
-        ?.pattern,
-    ).toBe("managed-pr-contract-${{ github.run_id }}-*");
-    expect(
-      step(managedPrOpenClawMcpDiscovery(workflow), "Download exact published all-agent contracts")
-        .with?.pattern,
-    ).toBe("managed-pr-contract-${{ github.run_id }}-*");
+    expect(workflow.jobs).not.toHaveProperty("pr-managed-activation");
+    expect(workflow.jobs).not.toHaveProperty("pr-openclaw-mcp-discovery");
     expect(contract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     const contractSource = required(contract.run, "PR managed image contract is missing");
     expect(contractSource).toContain(".[0].RootFS.Layers | length");
@@ -749,53 +733,30 @@ describe("complete managed-image publication workflow", () => {
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
   });
 
-  it("runs the exact candidate CLI through real all-agent Docker and OpenShell activation (#7744)", () => {
-    const workflow = readWorkflow("managed-images.yaml");
-    const activation = managedPrActivation(workflow);
-    const steps = activation.steps ?? [];
-
-    expect(workflow.on?.pull_request?.paths).toEqual(
-      expect.arrayContaining([
-        "src/lib/onboard/**",
-        "test/e2e/fixtures/gateway-runtime-start.ts",
-        "test/e2e/fixtures/phases/lifecycle.ts",
-        "test/e2e/live/managed-image-activation-e2e*.ts",
-      ]),
+  it("keeps all-agent activation downstream from managed-image publication (#11828)", () => {
+    const publication = readWorkflow("managed-images.yaml");
+    const activation = required(
+      E2E_TARGET_CATALOGUE.find(({ id }) => id === "managed-image-activation"),
+      "unified E2E catalogue is missing managed-image activation",
     );
-    expect(readWorkflow("base-image.yaml").on?.push?.paths).toEqual(
-      expect.arrayContaining([
-        "test/e2e/fixtures/gateway-runtime-start.ts",
-        "test/e2e/fixtures/phases/lifecycle.ts",
-      ]),
+    expect(publication.jobs).not.toHaveProperty("pr-managed-activation");
+    expect(publication.on?.pull_request?.paths).not.toContain(
+      "test/e2e/live/managed-image-activation-e2e*.ts",
     );
-    expect(activation.needs).toBe("pr-build-and-entrypoint");
-    expect(activation.if).toContain(
-      "github.event.pull_request.head.repo.full_name == github.repository",
+    expect(readWorkflow("base-image.yaml").on?.push?.paths).not.toContain(
+      "test/e2e/live/managed-image-activation-e2e*.ts",
     );
-    expect(activation.permissions).toEqual({ contents: "read" });
-    expect(activation.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
-    expect(activation.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
-      "${{ github.workspace }}/managed-pr-catalog.json",
-    );
-    expect(JSON.stringify(activation)).not.toContain("secrets.");
-    expect(JSON.stringify(activation)).not.toContain("github.token");
-    expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
-      "${{ github.event.pull_request.head.sha }}",
-    );
-    expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
-      /npm ci --ignore-scripts --no-audit --no-fund[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
-    );
-    expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
-    expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
-    const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
-    expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
-    expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
-    expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
+    expect(activation.testFile).toBe("test/e2e/live/managed-image-activation-e2e.test.ts");
+    expect(activation.installMode).toBe("credential-free");
+    expect(activation.restoreCli).toBe(true);
+    expect(activation.gatewayRuntimes).toEqual(["docker"]);
   });
 
-  it("passes the reported OpenClaw managed-image MCP discovery twice on one exact PR cohort (#8746)", () => {
+  it("keeps both OpenClaw managed-image MCP discovery passes downstream (#11828)", () => {
     const workflow = readWorkflow("managed-images.yaml");
-    const discovery = managedPrOpenClawMcpDiscovery(workflow);
+    const discoveries = E2E_TARGET_CATALOGUE.filter(
+      ({ targetId }) => targetId === "managed-image-mcp-discovery",
+    );
     const stableMcp = required(
       readWorkflow("e2e.yaml").jobs?.["mcp-bridge"],
       "unified E2E workflow is missing its stable MCP job",
@@ -804,54 +765,33 @@ describe("complete managed-image publication workflow", () => {
       readWorkflow("e2e.yaml").jobs?.["openshell-credential-generation-window"],
       "unified E2E workflow is missing its stable credential-generation job",
     );
-    expect(workflow.on?.pull_request?.paths).toContain("test/e2e/live/mcp-bridge*.ts");
-    expect(discovery.needs).toBe("pr-build-and-entrypoint");
-    expect(discovery.if).toContain(
-      "github.event.pull_request.head.repo.full_name == github.repository",
-    );
-    expect(discovery.permissions).toEqual({ contents: "read" });
-    expect(discovery.strategy?.["fail-fast"]).toBe(false);
-    expect(discovery.strategy?.matrix?.pass).toEqual([1, 2]);
-    expect(discovery.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
-    expect(discovery.env?.NEMOCLAW_E2E_EXPECTED_SHA).toBe(
-      "${{ github.event.pull_request.head.sha }}",
-    );
-    expect(discovery.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG).toContain("managed-pr-catalog.json");
-    expect(discovery.env?.NEMOCLAW_MCP_BRIDGE_AGENT).toBe("openclaw");
-    expect(discovery.env?.NEMOCLAW_MCP_BRIDGE_E2E_SCOPE).toBe("managed-image-discovery");
-    expect(discovery.env?.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
-    expect(discovery.env?.NEMOCLAW_E2E_SHARD).toBe("openclaw");
-    expect(discovery.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(workflow.jobs).not.toHaveProperty("pr-openclaw-mcp-discovery");
+    expect(workflow.on?.pull_request?.paths).not.toContain("test/e2e/live/mcp-bridge*.ts");
+    expect(discoveries).toHaveLength(2);
+    expect(discoveries.map(({ shard }) => shard)).toEqual(["pass-1", "pass-2"]);
+    expect(discoveries.every(({ cloudflared }) => cloudflared)).toBe(true);
     const stableSupervisorImage = required(
       stableMcp.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
       "stable MCP job is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
-    );
-    const discoverySupervisorImage = required(
-      discovery.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-      "OpenClaw MCP discovery is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
     );
     expect(stableSupervisorImage).toBe(OPENSHELL_V0116_QUALIFICATION.supervisorImage);
     expect(credentialWindow.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
       OPENSHELL_V0116_QUALIFICATION.supervisorImage,
     );
-    expect(discoverySupervisorImage).toBe(OPENSHELL_V0116_QUALIFICATION.supervisorImage);
-    expect(discovery.env).not.toHaveProperty("E2E_MANAGED_IMAGE_REVISION");
-    expect(JSON.stringify(discovery)).not.toContain("secrets.");
-    expect(JSON.stringify(discovery)).not.toContain("github.token");
-    expect(step(discovery, "Checkout exact PR head").with?.ref).toBe(
-      "${{ github.event.pull_request.head.sha }}",
-    );
-    expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
-    const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
-    expect(assemble).toMatch(
-      /npm ci --ignore-scripts --no-audit --no-fund[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
-    );
-    const run = step(discovery, "Run exact OpenClaw managed-image MCP discovery").run ?? "";
-    expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
-    expect(JSON.stringify(discovery)).not.toContain("jq ");
-    expect(run).toMatch(/npx --no-install tsx[\s\S]*test\/e2e\/live\/mcp-bridge\.test\.ts/u);
-    expect(run).not.toContain("--selector");
-    expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");
+    expect(
+      discoveries.every(
+        ({ environment }) =>
+          environment.NEMOCLAW_MCP_BRIDGE_E2E_SCOPE === "managed-image-discovery" &&
+          environment.OPENSHELL_DOCKER_SUPERVISOR_IMAGE ===
+            OPENSHELL_V0116_QUALIFICATION.supervisorImage,
+      ),
+    ).toBe(true);
+    expect(
+      step(
+        required(readWorkflow("e2e-standard-profile.yaml").jobs?.run, "missing standard job"),
+        "Scan managed-image MCP artifacts for fixture credentials",
+      ).if,
+    ).toContain("always()");
   });
 
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {

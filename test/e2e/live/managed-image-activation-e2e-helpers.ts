@@ -107,9 +107,11 @@ export function managedActivationOnboardArgs(
 }
 
 function requiredCatalogPath(): string {
-  const value = process.env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG;
+  const value =
+    process.env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG ??
+    process.env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG;
   if (!value || !path.isAbsolute(value)) {
-    throw new Error("NEMOCLAW_MANAGED_ACTIVATION_CATALOG must be an absolute path");
+    throw new Error("managed activation catalog must be an absolute path");
   }
   const metadata = fs.lstatSync(value);
   if (!metadata.isFile() || metadata.isSymbolicLink()) {
