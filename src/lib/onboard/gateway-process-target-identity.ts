@@ -63,45 +63,6 @@ function cliFlagValue(tokens: string[], names: string[]): string | null {
   return values.length === 1 ? values[0] : null;
 }
 
-/** Recover a canonical gateway target only from explicit process arguments. */
-export function resolveOpenShellGatewayProcessTarget(
-  cmdline: string,
-): { name: string; port: number } | null {
-  const tokens = cmdline
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((token) => token.replace(/^['"]|['"]$/g, "").replace(/ \(deleted\)$/, ""));
-  const argvTarget = ownedHostGatewayTarget(tokens[0] ?? "");
-  if (argvTarget) return argvTarget;
-
-  const actualName = cliFlagValue(tokens, ["--name"]);
-  const actualPortValue = cliFlagValue(tokens, ["--port"]);
-  const hasNameFlag = tokens.some((token) => token === "--name" || token.startsWith("--name="));
-  const hasPortFlag = tokens.some((token) => token === "--port" || token.startsWith("--port="));
-  if ((hasNameFlag && actualName === null) || (hasPortFlag && actualPortValue === null)) {
-    return null;
-  }
-  const actualPort = actualPortValue === null ? null : Number(actualPortValue);
-  if (
-    actualPort !== null &&
-    (!Number.isInteger(actualPort) || actualPort < 1 || actualPort > 65535)
-  ) {
-    return null;
-  }
-  if (actualName !== null && actualPort !== null) {
-    return canonicalGatewayTargetMatches(actualName, actualPort)
-      ? { name: actualName, port: actualPort }
-      : null;
-  }
-  if (actualPort !== null) return { name: resolveGatewayName(actualPort), port: actualPort };
-  if (actualName !== null) {
-    const port = resolveGatewayPortFromName(actualName);
-    return port === null ? null : { name: actualName, port };
-  }
-  return null;
-}
-
 export function openShellGatewayMatchesTarget(
   tokens: string[],
   target: OpenShellGatewayProcessTarget | undefined,
