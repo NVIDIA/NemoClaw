@@ -22,6 +22,7 @@ const { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } = sandboxNameContr
 
 const SANDBOX_ALREADY_ABSENT =
   /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/i;
+const GATEWAY_ALREADY_ABSENT = /Unknown gateway|No active gateway|No gateway metadata found/i;
 const INITIAL_OPENCLAW_PAIRING_TIMEOUT_MS = 60_000;
 const OPENCLAW_STATE_DIR = "/sandbox/.openclaw";
 
@@ -135,6 +136,15 @@ export class SandboxClient {
     });
     if (result.exitCode === 0 || SANDBOX_ALREADY_ABSENT.test(resultText(result))) return;
     assertExitZero(result, `cleanup OpenShell sandbox ${name}`);
+  }
+
+  async bestEffortCleanupSandbox(name: string, options: ShellProbeRunOptions = {}): Promise<void> {
+    try {
+      await this.cleanupSandbox(name, options);
+    } catch (error) {
+      if (error instanceof Error && GATEWAY_ALREADY_ABSENT.test(error.message)) return;
+      throw error;
+    }
   }
 
   exec(

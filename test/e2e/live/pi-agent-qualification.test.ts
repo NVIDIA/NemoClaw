@@ -142,7 +142,7 @@ async function preclean(
     env,
     timeoutMs: 3 * 60_000,
   });
-  await sandbox.cleanupSandbox(SANDBOX_NAME, {
+  await sandbox.bestEffortCleanupSandbox(SANDBOX_NAME, {
     artifactName: "pre-cleanup-pi-openshell",
     env,
     timeoutMs: 60_000,

@@ -785,6 +785,27 @@ describe("E2E fixture clients", () => {
     );
   });
 
+  it.each(["Unknown gateway 'nemoclaw'", "No active gateway", "No gateway metadata found"])(
+    "sandbox client accepts an absent gateway during best-effort pre-cleanup: %s",
+    async (stderr) => {
+      const runner = new FakeRunner();
+      runner.enqueue({ exitCode: 1, stderr });
+      const sandbox = new SandboxClient(runner);
+
+      await expect(sandbox.bestEffortCleanupSandbox("assistant")).resolves.toBeUndefined();
+    },
+  );
+
+  it("sandbox client preserves unexpected best-effort cleanup failures", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    const sandbox = new SandboxClient(runner);
+
+    await expect(sandbox.bestEffortCleanupSandbox("assistant")).rejects.toThrow(
+      "cleanup OpenShell sandbox assistant failed: permission denied",
+    );
+  });
+
   it("sandbox client validates list output using the OpenShell gateway env", async () => {
     const runner = new FakeRunner();
     runner.stdout = "NAME\nassistant\n";
