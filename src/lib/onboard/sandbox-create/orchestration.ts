@@ -1519,6 +1519,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       ensureAgentFixedForward,
       ensureDashboardForward,
       filterEnabledChannelsByAgent,
+      forwardObserver,
       formatSandboxAgentName,
       formatSandboxBuildEstimateNote,
       getDashboardForwardPort,
@@ -1545,7 +1546,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       normalizeHermesAuthMethod,
       normalizeHermesToolGatewaySelections,
       note,
-      ownsForwardServicePort,
       observabilityPolicy,
       onboardHermesDashboard,
       onboardSession,
@@ -1665,6 +1665,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       agent,
     );
     const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
+    const observeLoopbackForwardPorts = forwardObserver(sandboxName, "loopback");
     let effectivePort = 0,
       chatUiUrl = "",
       hermesApiPortReservationInput = {
@@ -1672,9 +1673,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         env: process.env,
         getSandbox: registry.getSandbox,
-        captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-        ownsExistingForward: (port: number) =>
-          ownsForwardServicePort(sandboxName, port, "loopback"),
+        observeForwardPorts: observeLoopbackForwardPorts,
         warn: (message: string) => console.warn(message),
       };
     if (manageDashboard) {
@@ -1685,8 +1684,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
         agentForwardPort: dashboardRuntime.getAgentPrimaryForwardPort(agent, DASHBOARD_PORT),
         defaultPort: DASHBOARD_PORT,
-        forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-        ownsExistingForward: (port) => ownsForwardServicePort(sandboxName, port),
+        observeForwardPorts: forwardObserver(sandboxName),
         warn: (message: string) => console.warn(message),
       });
       ({ effectivePort, chatUiUrl } = dashboardSelection);
@@ -2305,9 +2303,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
     } else if (!liveExists || agentCreateInput.hermesPortableLifecycle) {
-      if (!agentCreateInput.hermesPortableLifecycle) {
-        await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
-      }
+      await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       finalizeRecreatedSourceHermesVolume(

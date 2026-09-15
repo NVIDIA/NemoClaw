@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Updates the pinned sha256 digest for node:22-trixie-slim in the Dockerfile.
+# Updates the pinned sha256 digest for node:24.18.1-trixie-slim in the Dockerfile.
 # Queries Docker Hub for the current multi-arch image-index digest and
-# rewrites every FROM line that references node:22-trixie-slim.
+# rewrites every FROM line that references node:24.18.1-trixie-slim.
 #
 # Usage:
 #   scripts/update-docker-pin.sh            # update Dockerfile in repo root
@@ -21,7 +21,7 @@ case "${1:-}" in
 esac
 
 IMAGE="node"
-TAG="22-trixie-slim"
+TAG="24.18.1-trixie-slim"
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOCKERFILE_PATH="${REPO_ROOT}/${DOCKERFILE}"

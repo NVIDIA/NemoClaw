@@ -21,7 +21,7 @@ export function writeReviewedNpmFixture(
   ]);
   const packCases = packages.map((reviewed) => {
     const filename = path.basename(new URL(reviewed.tarballUrl).pathname);
-    return `  ${JSON.stringify(reviewed.tarballUrl)}) printf 'fixture' > "$pack_dir/${filename}"; printf '[{"filename":"${filename}","integrity":"%s"}]\\n' ${JSON.stringify(reviewed.integrity)} ;;`;
+    return `  ${JSON.stringify(reviewed.packageSpec)}) printf 'fixture' > "$pack_dir/${filename}"; printf '{"${reviewed.packageSpec}":{"filename":"${filename}","integrity":"%s"}}\\n' ${JSON.stringify(reviewed.integrity)} ;;`;
   });
   fs.writeFileSync(
     fixturePath,

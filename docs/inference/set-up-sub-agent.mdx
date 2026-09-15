@@ -186,20 +186,18 @@ Refer to [Customize the Network Policy](../network-policy/customize-network-poli
 
 ## Sub-Agent Gateway Connectivity
 
-Spawned sub-agents connect back to the OpenClaw gateway over WebSocket at `OPENCLAW_GATEWAY_URL`.
-Inside the sandbox, this connection runs through the enforced process tree.
-The OpenShell proxy always blocks loopback destinations in that process tree.
-NemoClaw points `OPENCLAW_GATEWAY_URL` at the sandbox's own interface address, such as `ws://10.200.0.2:18790`.
-The base sandbox policy allowlists that endpoint through `openclaw_gateway_dialback`.
+Spawned agents connect to the selected sandbox's gateway through OpenClaw's native loopback endpoint.
+NemoClaw leaves `OPENCLAW_GATEWAY_URL` unset by default, so the gateway, CLI, daemon RPC, and spawned agents share OpenClaw's configured local port without routing sandbox-local traffic through the external proxy.
+An explicit operator endpoint remains authoritative.
 
-### Troubleshoot Dial-Back Failures
+### Troubleshoot Gateway Connectivity
 
-The dial-back path is blocked if `sessions_spawn` returns `gateway closed (1006 abnormal closure (no close frame))` and the gateway log shows no connection attempt.
+The local path is unhealthy if `sessions_spawn` returns `gateway closed (1006 abnormal closure (no close frame))` and the gateway log shows no connection attempt.
 Check the following:
 
-1. `OPENCLAW_GATEWAY_URL` in the gateway process environment targets the sandbox interface address, not `127.0.0.1`.
-2. The active policy allows that address and port. Custom `NEMOCLAW_DASHBOARD_PORT` or proxy subnet values need a matching `openshell policy update`.
-3. Do not point the dial-back at `127.0.0.1`; the proxy denies loopback regardless of policy.
+1. The gateway and client resolve the same `NEMOCLAW_DASHBOARD_PORT`.
+2. No unexpected `OPENCLAW_GATEWAY_URL` override is present.
+3. Gateway authentication and device pairing are healthy for the selected sandbox.
 
 ## Add Delegation Instructions
 

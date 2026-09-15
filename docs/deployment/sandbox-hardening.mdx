@@ -4,7 +4,7 @@
 title: "Review Sandbox Hardening"
 sidebar-title: "Review Sandbox Hardening"
 description: "Security hardening measures applied to the NemoClaw sandbox container image."
-description-agent: "Includes the sandbox container image hardening reference, covering Docker capabilities and process limits. Use when reviewing sandbox image security controls, auditing capability drops, or looking up the runtime resource limits."
+description-agent: "Includes the sandbox container image hardening reference, covering Docker capabilities and process limits. Use when reviewing sandbox image security controls, auditing capability ownership, or looking up the runtime resource limits."
 keywords: ["nemoclaw sandbox hardening", "container security", "docker capabilities", "process limits"]
 content:
   type: "reference"
@@ -53,23 +53,17 @@ Enforce both limits at the container runtime when that residual risk matters to 
 
 ## Dropping Linux Capabilities
 
-Under full enforcement, OpenShell clears the child bounding set before starting the entrypoint.
-The entrypoint skips the duplicate drop only when its effective, permitted, inheritable, ambient, and bounding capability sets are present and empty.
-Other states retain the legacy fallback, which can attempt `capsh` once when it is available and the process has `CAP_SETPCAP`.
-The fallback removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`, `CAP_DAC_OVERRIDE`, `CAP_SYS_CHROOT`, `CAP_FSETID`, `CAP_SETFCAP`, `CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
+OpenShell owns capability enforcement for managed entrypoints, exec processes, and connect shells.
+The OpenClaw and Hermes entrypoints do not maintain a second capability drop, verification, sentinel, or fallback layer.
+A direct container runtime that explicitly overrides the image user to `root` retains the existing `capsh` compatibility drop and `NEMOCLAW_REQUIRE_CAP_DROP=1` fail-closed option.
+OpenShell-managed launches do not call that path.
 The managed images install `setpriv` from `util-linux` and require it for the switch from root to the `sandbox` and `gateway` users.
 When `CAP_SETPCAP` is available, the same `setpriv` operation also removes the remaining privilege-separation capabilities from the child process bounding set.
 
 For root-to-user transitions, the extra bounding-set drop is best effort: if `capsh` or `CAP_SETPCAP` is unavailable, the entrypoint warns and uses `setpriv` without that drop.
 When a root entrypoint must change identity, it fails closed if `setpriv` is missing instead of starting an agent service as root.
 
-Set `NEMOCLAW_REQUIRE_CAP_DROP=1` to refuse startup unless the entrypoint verifies that its bounding set is free of the listed dangerous capabilities.
-This strict-mode gate checks the bounding set only; it does not require all five capability sets to be empty.
-This is opt-in because many hosts cannot drop capabilities, including cloud VMs, Docker Desktop, and WSL environments without `CAP_SETPCAP`.
-
-This startup check does not inspect fresh exec or connect processes.
-
-For defense-in-depth, also drop all Linux capabilities at the container runtime when you launch the image directly.
+When you launch the image directly, make the container runtime the capability owner and drop all Linux capabilities there.
 In the examples below, `nemoclaw-sandbox` is a placeholder for the sandbox image NemoClaw builds during onboarding; substitute the image tag your install produced, which you can find with `docker images`.
 
 ```bash
