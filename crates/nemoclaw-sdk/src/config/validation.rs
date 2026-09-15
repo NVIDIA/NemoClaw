@@ -245,6 +245,12 @@ impl Document {
                 && MODEL.is_match(&route.overrides.model),
             "primary route must reference the declared provider and valid model",
         )?;
+        // The pinned image selects Pi's gpt-4o catalog metadata. A different
+        // route model would silently retain that model's limits and capabilities.
+        require(
+            agent.harness != "pi" || route.overrides.model == "gpt-4o",
+            "the pinned Pi recipe requires route model gpt-4o; other models are unsupported",
+        )?;
         require(
             provider.service.is_none()
                 || (route.overrides.model == provider.service.as_ref().unwrap().served_model()

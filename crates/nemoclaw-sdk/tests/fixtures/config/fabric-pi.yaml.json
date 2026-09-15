@@ -1,5 +1,5 @@
 {
-  "digest": "03f787ad8a5f6d0da444b496c583d06b7e0e9daf36f27c473e344aedfb4820ec",
+  "digest": "79c861c103c2dcaf032a6b9cc865ae3edb1d9fae4cf4cf8976e37d1fe634bde7",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -41,7 +41,7 @@
                     "name": "primary",
                     "providerRef": "local",
                     "overrides": {
-                      "model": "fixture-model"
+                      "model": "gpt-4o"
                     }
                   }
                 ]
