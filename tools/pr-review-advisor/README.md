@@ -119,8 +119,8 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   reachable. A separate trusted package job stages the reviewed private SDK archive, but its package
   token never reaches the candidate or validation sandbox. The remote E2E target
   `pr-review-advisor-repair-validation-e2e` runs this boundary against a minimal candidate in a real
-  OpenShell sandbox and uploads the sealed validation receipt. Select it through the repository E2E
-  workflow for pre-merge proof; do not invoke it locally.
+  OpenShell sandbox and uploads the sealed validation receipt. After this target lands on trusted
+  `main`, select it through the repository E2E workflow for staging proof; do not invoke it locally.
 - The model session runs in a digest-pinned OpenShell sandbox under a hard-required Landlock policy with no direct network policy and no ambient workdir. Four canonical host inputs are mounted read-only through the advisor's ephemeral Docker gateway outside `/sandbox`, so OpenShell v0.0.99 applies the final immutable boundary before the first process starts. Landlock independently grants those inputs read-only access. It grants application-data writes only to a bounded runtime tmpfs; required device access remains writable under `/dev`. The sandbox pins Git to `/pr-workdir/.git` and `/pr-workdir` instead of relying on cross-UID repository discovery. A startup proof must read every input canary, resolve the checkout and `HEAD`, fail chmod, overwrite, replacement, and creation in each input, and complete runtime writes. The model-facing Advisor tools remain repository-confined and read-only; generated configuration and artifacts use the dedicated runtime subtree.
 - The advisor receives repo-confined read-only repository tools plus deterministic context tools. Repository paths must remain inside the checked-out analysis workspace after lexical and symlink resolution. None of these tools can change repository or GitHub state.
 - PR bodies, comments, titles, branch names, and diffs are treated as untrusted evidence, never as instructions.
