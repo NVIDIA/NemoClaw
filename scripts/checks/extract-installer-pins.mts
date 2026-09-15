@@ -71,7 +71,10 @@ type OpenShellReleaseTrust = {
     sha256: string;
   }[];
   pinLayout: OpenShellPinLayout;
+  releaseTag?: string;
+  runtimeVersion?: string;
   sandboxBuilds: readonly TrustedSandboxBuild[];
+  sourceSha?: string;
   supervisor: TrustedSupervisorManifest | null;
   version: string;
 };
@@ -138,7 +141,7 @@ type CliOptions = {
 
 const FUNCTION_LOCAL_SOURCE_PATTERN =
   /^local[ \t]+release_tag[ \t]*=[ \t]*(?:"\$1"|\$1)[ \t]+asset[ \t]*=[ \t]*(?:"\$2"|\$2)$/u;
-const LITERAL_PIN_PATTERN = /^v([0-9]+\.[0-9]+\.[0-9]+):([A-Za-z0-9._+-]+)$/u;
+const LITERAL_PIN_PATTERN = /^([A-Za-z0-9._+-]+):([A-Za-z0-9._+-]+)$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // Each release record is one base-trusted qualification unit. The parser
@@ -565,7 +568,58 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
     version: "0.0.116",
   },
+  {
+    // The moving dev label is authenticated only as the exact reviewed
+    // runtime identity below. Keeping this record dormant lets a later pin PR
+    // add target asset rows without changing the base-owned trust anchor or
+    // changing today's stable selectors.
+    brevTemplateSha256: [
+      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+      "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+      "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
+      "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
+      "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
+    ],
+    formula: {
+      asset: "openshell.rb",
+      sha256: "9d6c209c0eb4c3bbebb15f3650377c264d4e3e80f4aa685f89018c6beba10252",
+      url: "https://github.com/NVIDIA/OpenShell/releases/download/dev/openshell.rb",
+    },
+    installerTemplateSha256: [
+      "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
+      "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+    ],
+    manifests: [
+      {
+        asset: "openshell-checksums-sha256.txt",
+        sha256: "41ab872f184a34cbfac8af876c6310117e790884b2cd423826f7aee7b0375cb5",
+      },
+      {
+        asset: "openshell-gateway-checksums-sha256.txt",
+        sha256: "34b49e96c7230a3ca05b3a9b94c9d6fbf212004f1e26053d8aab9249cdaed414",
+      },
+      {
+        asset: "openshell-sandbox-checksums-sha256.txt",
+        sha256: "9a45d76f6ef80ec99e75f50168513e14d72932d7f7b30d50363ee5abaf1956bc",
+      },
+    ],
+    pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
+    releaseTag: "dev",
+    runtimeVersion: "0.0.117-dev.142-g26f2f9639",
+    // Inner sandbox-build and supervisor OCI identities are deliberately not
+    // inferred from release-asset hashes. The target remains unselectable by
+    // those consumers until their own exact identities are reviewed.
+    sandboxBuilds: [],
+    sourceSha: "26f2f963936f68c0d5be36b34cda570d8f79f315",
+    supervisor: null,
+    version: "0.0.117",
+  },
 ] as const;
+
+function trustedReleaseTag(release: OpenShellReleaseTrust): string {
+  return release.releaseTag ?? `v${release.version}`;
+}
+
 function fail(message: string): never {
   throw new Error(`Installer pin extraction failed: ${message}`);
 }
@@ -577,13 +631,27 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
     "openshell-sandbox-checksums-sha256.txt",
   ] as const;
   const manifestAssets = release.manifests.map((manifest) => manifest.asset).sort();
+  const hasExactPrereleaseIdentity =
+    release.releaseTag !== undefined ||
+    release.runtimeVersion !== undefined ||
+    release.sourceSha !== undefined;
   if (
-    !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(release.version) ||
+    !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(release.version) ||
     manifestAssets.length !== requiredManifests.length ||
     manifestAssets.some((asset, index) => asset !== [...requiredManifests].sort()[index]) ||
     release.manifests.some((manifest) => !SHA256_PATTERN.test(manifest.sha256))
   ) {
     fail(`OpenShell v${release.version} must have exactly three trusted release-manifest digests`);
+  }
+  if (
+    hasExactPrereleaseIdentity &&
+    (!release.releaseTag ||
+      !release.runtimeVersion ||
+      !release.sourceSha ||
+      !/^[a-f0-9]{40}$/u.test(release.sourceSha) ||
+      release.runtimeVersion !== `${release.version}-dev.142-g${release.sourceSha.slice(0, 9)}`)
+  ) {
+    fail(`OpenShell v${release.version} prerelease identity record is incomplete or inconsistent`);
   }
   const trustedManifestAssets = new Set(release.manifests.map((manifest) => manifest.asset));
   for (const [consumer, layout] of [
@@ -603,7 +671,7 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
     !release.formula ||
     release.formula.asset !== "openshell.rb" ||
     release.formula.url !==
-      `https://github.com/NVIDIA/OpenShell/releases/download/v${release.version}/openshell.rb` ||
+      `https://github.com/NVIDIA/OpenShell/releases/download/${trustedReleaseTag(release)}/openshell.rb` ||
     !SHA256_PATTERN.test(release.formula.sha256)
   ) {
     fail(`trusted OpenShell v${release.version} formula record is invalid`);
@@ -636,6 +704,16 @@ function trustedRelease(version: string): OpenShellReleaseTrust {
     fail(
       `trusted OpenShell release records contain duplicate versions: ${[
         ...new Set(duplicateVersions),
+      ].join(", ")}`,
+    );
+  }
+  const duplicateTags = TRUSTED_OPENSHELL_RELEASES.map(trustedReleaseTag).filter(
+    (candidate, index, tags) => tags.indexOf(candidate) !== index,
+  );
+  if (duplicateTags.length > 0) {
+    fail(
+      `trusted OpenShell release records contain duplicate tags: ${[
+        ...new Set(duplicateTags),
       ].join(", ")}`,
     );
   }
@@ -1514,9 +1592,16 @@ function staticPinFromArm(
   if (![sha256, `'${sha256}'`, `"${sha256}"`].includes(rawToken(source, staticCommandTokens[2]))) {
     fail(`case arm ${pattern} must print one literal lowercase SHA-256 digest`);
   }
+  const releaseTag = match[1] ?? "";
+  const release = TRUSTED_OPENSHELL_RELEASES.find(
+    (candidate) => trustedReleaseTag(candidate) === releaseTag,
+  );
+  if (!release) {
+    fail(`case arm ${pattern} does not name a base-trusted OpenShell release tag`);
+  }
   return {
     asset: match[2] ?? "",
-    releaseVersion: match[1] ?? "",
+    releaseVersion: release.version,
     sha256,
     source: "",
   };

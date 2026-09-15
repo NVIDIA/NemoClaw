@@ -116,7 +116,7 @@ check_openshell_release_assets() {
   fi
 
   while IFS=$'\t' read -r record_type parsed_version source asset pinned record_extra; do
-    if [[ ! "$parsed_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || -z "$source" || -z "$asset" || ! "$pinned" =~ ^[a-f0-9]{64}$ || -n "$record_extra" ]]; then
+    if [[ ! "$parsed_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ || -z "$source" || -z "$asset" || ! "$pinned" =~ ^[a-f0-9]{64}$ || -n "$record_extra" ]]; then
       echo "  STALE: trusted parser returned an invalid OpenShell release record."
       return 1
     fi
@@ -128,7 +128,7 @@ check_openshell_release_assets() {
         }
         ;;
       formula)
-        if [[ "$asset" != "openshell.rb" || "$source" != "https://github.com/NVIDIA/OpenShell/releases/download/v${parsed_version}/${asset}" ]]; then
+        if [[ "$asset" != "openshell.rb" || "$source" != https://github.com/NVIDIA/OpenShell/releases/download/*/${asset} ]]; then
           echo "  STALE: trusted parser returned an invalid OpenShell formula record."
           return 1
         fi
@@ -215,7 +215,10 @@ check_openshell_release_assets() {
       return 1
     fi
 
-    release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${release_version}"
+    # The trusted parser binds the runtime identity to its exact immutable
+    # release tag. Stable records use vX.Y.Z while the reviewed prerelease uses
+    # the authenticated dev publication URL.
+    release_base="${formula_url%/*}"
     echo "Checking OpenShell v${release_version} release assets..."
     for spec in "${manifest_specs[@]}"; do
       manifest="${spec%%:*}"
