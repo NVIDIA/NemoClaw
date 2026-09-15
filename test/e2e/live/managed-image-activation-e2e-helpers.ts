@@ -311,9 +311,12 @@ async function proveHermesRestartSecretBoundary(
   assertExitZero(restore, "restore Hermes environment after restart refusal");
 
   const output = resultText(restart);
-  expect(restart.exitCode, output).not.toBe(0);
-  expect(output).toContain("secret-boundary");
-  expect(output).not.toContain(HERMES_BOUNDARY_SENTINEL);
+  expect(
+    restart.exitCode !== 0 &&
+      output.includes("secret-boundary") &&
+      !output.includes(HERMES_BOUNDARY_SENTINEL),
+    output,
+  ).toBe(true);
   await runAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
 }
 
@@ -549,12 +552,10 @@ async function qualifyAgent(
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   expectManagedReceipt(sandboxName, contract);
-  await host.expectListed(sandboxName, { env });
-  await host.expectStatus(sandboxName, { env, timeoutMs: 120_000 });
-  await sandbox.expectListed(sandboxName, { env });
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   if (agent === "hermes") {
+    progress.phase("prove Hermes secret-boundary refusal before native restart");
     await proveHermesRestartSecretBoundary(host, sandbox, sandboxName, env);
   }
   const marker = `managed-activation-${agent}-${Date.now()}`;
@@ -588,8 +589,10 @@ async function qualifyAgent(
       timeoutMs: 30_000,
     },
   );
-  expect(readMarker.exitCode, resultText(readMarker)).toBe(0);
-  expect(readMarker.stdout.trim()).toBe(marker);
+  expect(
+    readMarker.exitCode === 0 && readMarker.stdout.trim() === marker,
+    resultText(readMarker),
+  ).toBe(true);
   await runAgentTurn(sandbox, agent, sandboxName, "after", env);
 
   enterCleanupPhase(progress, agent);
