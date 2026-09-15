@@ -91,6 +91,30 @@ it.each([
     "needs.require-green-checks.outputs.base_sha || ''",
     "Unified advisor must prepare the PR revision from the successful checks run",
   ],
+  [
+    "blocker gate dependency",
+    "needs: [require-green-checks, build-advisor-runtime, review-specialists]",
+    "needs: [require-green-checks, build-advisor-runtime]",
+    "Unified advisor blocker gate must fail closed after every specialist",
+  ],
+  [
+    "blocker artifact attempt binding",
+    "pattern: pr-review-specialist-*-${{ github.run_attempt }}",
+    "pattern: pr-review-specialist-*",
+    "Unified advisor blocker gate must validate exact-attempt specialist evidence",
+  ],
+  [
+    "publisher after blocker gate",
+    "needs: [require-green-checks, review-specialists, advisor-blockers]",
+    "needs: [require-green-checks, review-specialists]",
+    "Unified advisor publisher must run after a red blocker gate",
+  ],
+  [
+    "publisher always condition",
+    "if: ${{ always() && github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}",
+    "if: ${{ github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}",
+    "Unified advisor publisher must run after a red blocker gate",
+  ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-"));
   const advisorPath = join(directory, "advisor.yaml");

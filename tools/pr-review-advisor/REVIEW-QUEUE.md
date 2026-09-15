@@ -31,6 +31,10 @@ Missing recording fails the specialist run. Missing artifacts never mean zero bl
 Require every trusted specialist, a successful matching workflow, and the provenance checks below before calculating the blocker count.
 The ledger does not authenticate itself; bind its candidate and specialist to the shared context and GitHub artifact envelope.
 
+The workflow's `Require no Advisor blockers` job validates every specialist ledger and E2E receipt.
+It fails when any P0/P1 finding or unresolved E2E recommendation remains, or when the evidence is incomplete or malformed.
+The publication job still posts the run link after a blocker failure so the contributor can inspect the evidence.
+
 `test/fixtures/review-queue-findings-clear.json` and `test/fixtures/review-queue-findings-excluded-blocker.json` are producer-generated synthetic fixtures.
 The focused ledger tests rebuild both fixtures, validate canonical identity, and prove excluded findings remain present.
 

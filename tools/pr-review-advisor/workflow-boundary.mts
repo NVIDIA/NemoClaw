@@ -19,11 +19,13 @@ type WorkflowStep = {
   env?: Record<string, unknown>;
   name?: string;
   run?: string;
+  uses?: string;
   with?: Record<string, unknown>;
 };
 type WorkflowJob = {
   env?: Record<string, unknown>;
   if?: string;
+  name?: string;
   needs?: unknown;
   outputs?: Record<string, unknown>;
   permissions?: WorkflowPermissions;
@@ -188,6 +190,46 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}"
   ) {
     errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
+  }
+  const blockerGate = advisor.jobs?.["advisor-blockers"] ?? {};
+  const blockerGateSteps = blockerGate.steps ?? [];
+  const blockerDownload = blockerGateSteps.find(
+    (step) => step.name === "Download specialist reviews",
+  );
+  const blockerEvaluation = blockerGateSteps.find(
+    (step) => step.name === "Require clear specialist evidence",
+  );
+  if (
+    blockerGate.name !== "Require no Advisor blockers" ||
+    !sameMembers(needs(blockerGate), [
+      "require-green-checks",
+      "build-advisor-runtime",
+      "review-specialists",
+    ]) ||
+    blockerGate.if !==
+      "${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.build-advisor-runtime.result == 'success' && needs.review-specialists.result == 'success' }}" ||
+    !isDeepStrictEqual(permissionMap(blockerGate.permissions), {
+      actions: "read",
+      contents: "read",
+    })
+  ) {
+    errors.push("Unified advisor blocker gate must fail closed after every specialist");
+  }
+  if (
+    blockerDownload?.with?.pattern !== "pr-review-specialist-*-${{ github.run_attempt }}" ||
+    !String(blockerEvaluation?.run ?? "").includes("blocker-gate.mts") ||
+    blockerGate.env?.EXPECTED_HEAD_SHA !== "${{ needs.require-green-checks.outputs.head_sha }}" ||
+    blockerGate.env?.EXPECTED_BASE_SHA !== "${{ needs.require-green-checks.outputs.base_sha }}"
+  ) {
+    errors.push("Unified advisor blocker gate must validate exact-attempt specialist evidence");
+  }
+  const publisher = advisor.jobs?.publish ?? {};
+  if (
+    !needs(publisher).includes("advisor-blockers") ||
+    publisher.if !==
+      "${{ always() && github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}"
+  ) {
+    errors.push("Unified advisor publisher must run after a red blocker gate");
   }
   return errors;
 }

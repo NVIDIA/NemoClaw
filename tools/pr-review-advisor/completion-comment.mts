@@ -112,6 +112,8 @@ export function buildCompletionComment(
   return `${validateMarker(marker)}
 **PR Review Advisor finished for commit \`${commitSha.slice(0, 7)}\`.** Include the [Advisor findings](${reviewUrl.href}) in the complete PR feedback collection. Verify and group valid findings before repair.
 
+Request review only when **Require no Advisor blockers** is green.
+
 [All previous runs](${historyUrl.href})
 `;
 }
