@@ -11,11 +11,6 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChildExitState } from "./child-exit-tracker";
-import {
-  getNemoclawOpenShellGatewayUserServicePath,
-  getOpenShellGatewayServiceStopCommand,
-  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
-} from "./docker-driver-gateway-service";
 import { createDockerDriverGatewayStateOwnership } from "./gateway/state-ownership";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import { reportDockerDriverGatewayStartFailure } from "./docker-driver-gateway-failure";
@@ -320,16 +315,13 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     }
   });
 
-  it("routes a real active service through the stop-and-recheck recovery (#11720)", () => {
+  it("routes a verified service command through stop-and-recheck recovery (#11720)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
       log,
       "migration 6 was previously applied and is missing in the resolved migrations\n",
     );
-    const home = path.join(dir, "home");
-    const env: NodeJS.ProcessEnv = { HOME: home, PATH: "/usr/bin" };
-    const unitPath = getNemoclawOpenShellGatewayUserServicePath(home, env);
     const stateInUse = vi.fn(() => true);
     try {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
@@ -337,19 +329,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
         gatewayPort: 8080,
         isGatewayStateInUse: stateInUse,
         launchLogOffset: 0,
-        resolveGatewayStopCommand: () =>
-          getOpenShellGatewayServiceStopCommand({
-            platform: "linux",
-            env,
-            home,
-            existsSync: (filePath) => filePath === unitPath,
-            lstatSync: (() => ({
-              isSymbolicLink: () => false,
-            })) as unknown as typeof fs.lstatSync,
-            readFileSync: () => NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
-            commandExists: () => true,
-            spawnSyncImpl: () => ({ status: 0, stdout: "ActiveState=active\n" }),
-          }),
+        resolveGatewayStopCommand: () => "systemctl --user stop nemoclaw-openshell-gateway",
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(stateInUse).not.toHaveBeenCalled();
@@ -362,55 +342,6 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
-
-  it.each([
-    ["inactive", { status: 0, stdout: "ActiveState=inactive\n" }],
-    ["indeterminate", { status: 1, stdout: "" }],
-  ])(
-    "routes a real %s service-state result through the standalone ownership guard (#11720)",
-    (_scenario, showResult) => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
-      const log = path.join(dir, "openshell-gateway.log");
-      fs.writeFileSync(
-        log,
-        "migration 6 was previously applied and is missing in the resolved migrations\n",
-      );
-      const home = path.join(dir, "home");
-      const env: NodeJS.ProcessEnv = { HOME: home, PATH: "/usr/bin" };
-      const unitPath = getNemoclawOpenShellGatewayUserServicePath(home, env);
-      const stateInUse = vi.fn(() => true);
-      try {
-        reportDockerDriverGatewayStartFailure(log, makeExitState(), {
-          exitOnFailure: false,
-          gatewayPort: 8080,
-          isGatewayStateInUse: stateInUse,
-          launchLogOffset: 0,
-          resolveGatewayStopCommand: () =>
-            getOpenShellGatewayServiceStopCommand({
-              platform: "linux",
-              env,
-              home,
-              existsSync: (filePath) => filePath === unitPath,
-              lstatSync: (() => ({
-                isSymbolicLink: () => false,
-              })) as unknown as typeof fs.lstatSync,
-              readFileSync: () => NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
-              commandExists: () => true,
-              spawnSyncImpl: () => showResult,
-            }),
-        });
-        const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
-        expect(stateInUse).toHaveBeenCalledOnce();
-        expect(joined).toContain("could not confirm that the standalone gateway process stopped");
-        expect(joined).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
-        expect(joined).toContain("ps -p <PID> -o user=,args=");
-        expect(joined).not.toContain(`mkdir -m 700 '${dir}.incompatible'`);
-        expect(joined).not.toContain("systemctl --user stop");
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
 
   it("moves state after a complete scan proves the standalone gateway is unused (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
