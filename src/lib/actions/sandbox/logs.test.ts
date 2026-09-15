@@ -28,6 +28,7 @@ type CapturedLogsRun = {
   exitCode: number | null;
   follows: OpenShellSandboxLogRequest[];
   reads: OpenShellSandboxLogRequest[];
+  signalListenersRestored: boolean;
   stderr: string;
   stdout: string;
 };
@@ -82,6 +83,7 @@ async function captureLogsRun(
   const stdout: string[] = [];
   const errors: string[] = [];
   let exitCode: number | null = null;
+  let signalListenersRestored = false;
   const sigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
   const sigtermListeners = process.listeners("SIGTERM") as NodeJS.SignalsListener[];
   const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
@@ -142,11 +144,26 @@ async function captureLogsRun(
     if (!(error instanceof ExitError)) throw error;
   } finally {
     errorSpy.mockRestore();
+    signalListenersRestored =
+      process.listeners("SIGINT").every((listener, index) => listener === sigintListeners[index]) &&
+      process.listeners("SIGINT").length === sigintListeners.length &&
+      process
+        .listeners("SIGTERM")
+        .every((listener, index) => listener === sigtermListeners[index]) &&
+      process.listeners("SIGTERM").length === sigtermListeners.length;
     restoreProcessSignalListeners("SIGINT", sigintListeners);
     restoreProcessSignalListeners("SIGTERM", sigtermListeners);
   }
 
-  return { errors, exitCode, follows, reads, stderr: stderr.join(""), stdout: stdout.join("") };
+  return {
+    errors,
+    exitCode,
+    follows,
+    reads,
+    signalListenersRestored,
+    stderr: stderr.join(""),
+    stdout: stdout.join(""),
+  };
 }
 
 describe("showSandboxLogsWithDeps", () => {
@@ -216,6 +233,7 @@ describe("showSandboxLogsWithDeps", () => {
     );
 
     expect(result.exitCode).toBe(0);
+    expect(result.signalListenersRestored).toBe(true);
     expect(result.reads).toEqual([]);
     expect(result.follows).toEqual([
       {

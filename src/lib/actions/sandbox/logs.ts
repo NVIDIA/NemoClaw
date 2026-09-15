@@ -154,8 +154,12 @@ async function streamSandboxFollowLogs(
   let forcedExitTimer: NodeJS.Timeout | null = null;
   let setupComplete = false;
   let outputErrorHandler: ((error: NodeJS.ErrnoException) => void) | null = null;
+  const onInterrupt = () => requestExitAfterSignal("SIGINT", 130);
+  const onTerminate = () => requestExitAfterSignal("SIGTERM", 143);
 
   const exitRelay = (code: number): never => {
+    process.removeListener("SIGINT", onInterrupt);
+    process.removeListener("SIGTERM", onTerminate);
     if (outputErrorHandler) {
       outputStream.off("error", outputErrorHandler);
       outputErrorHandler = null;
@@ -204,12 +208,8 @@ async function streamSandboxFollowLogs(
     maybeExit();
   };
 
-  process.once("SIGINT", () => {
-    requestExitAfterSignal("SIGINT", 130);
-  });
-  process.once("SIGTERM", () => {
-    requestExitAfterSignal("SIGTERM", 143);
-  });
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onTerminate);
   // Node reports a closed downstream pipe on process.stdout asynchronously, as
   // an `error` event rather than a throw from write(), and an unhandled one
   // crashes the CLI. Own that channel only when this relay is the writer, so an

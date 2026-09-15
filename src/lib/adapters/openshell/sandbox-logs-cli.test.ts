@@ -248,4 +248,39 @@ describe("CLI OpenShell sandbox logs adapter", () => {
       { cwd: "/repo", env: environment, stdio: ["inherit", "pipe", "inherit"] },
     );
   });
+
+  it("spawns an OpenShell follow request with its source and time filter", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: null,
+      exitCode: null,
+      signalCode: null,
+      killed: false,
+      kill: vi.fn(() => true),
+    }) as unknown as OpenShellLogChild;
+    const spawnChild = vi.fn<OpenShellLogSpawner>(() => child);
+    const environment = { HOME: "/tmp/home", PATH: "/bin" };
+    const logs = createCliOpenShellSandboxLogs({
+      resolveBinary: () => "/usr/bin/openshell",
+      spawnChild,
+      environment,
+      hostCwd: "/repo",
+    });
+
+    const session = logs.follow({
+      ...gatewayRequest,
+      source: "openshell",
+      since: "5m",
+    });
+    expect(session.output).toBeNull();
+    expect(spawnChild).toHaveBeenCalledWith(
+      "/usr/bin/openshell",
+      ["logs", "alpha", "-n", "50", "--source", "all", "--since", "5m", "--tail"],
+      { cwd: "/repo", env: environment, stdio: "inherit" },
+    );
+
+    (child as unknown as EventEmitter).emit("exit", 0, null);
+    await expect(session.completion).resolves.toEqual({
+      outcome: { kind: "completed", exitCode: 0 },
+    });
+  });
 });
