@@ -762,3 +762,81 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
     expect(finalizationHandlerDeps.readRegistryAgent("alpha")).toBeNull();
   });
 });
+
+describe("finalization process-recovery refusal propagation", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("pauses when process inspection cannot complete (#11758)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(false);
+  });
+
+  it("allows checked terminal recovery without a gateway process (#11758)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+        runtime: "terminal" as const,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+  });
+
+  it.each([
+    "raw-secret",
+    "exec-failed",
+    "validator-missing",
+    "unexpected-marker",
+    "agent-missing",
+  ] as const)(
+    "preserves %s refusal for the onboarding state machine (#11758)",
+    async (secretBoundaryReason) => {
+      const recover = vi.fn(async () => ({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        secretBoundaryRefused: true,
+        secretBoundaryReason,
+      }));
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: recover,
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      });
+      await expect(
+        finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+      ).resolves.toBe(false);
+      expect(recover).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
+    },
+  );
+
+  it("allows final verification when recovery did not refuse the boundary (#11758)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+  });
+});

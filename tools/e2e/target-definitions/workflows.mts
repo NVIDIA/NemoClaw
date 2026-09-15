@@ -108,7 +108,11 @@ export const workflowTargets: readonly WorkflowE2eTarget[] = [
     defaultEnabled: true,
     gatewayRuntimes: ["docker", "podman"],
     testFiles: ["test/e2e/live/mcp-bridge.test.ts"],
-    owningPaths: ["test/e2e/live/mcp-bridge.test.ts"],
+    owningPaths: [
+      "test/e2e/live/mcp-bridge.test.ts",
+      "test/helpers/openshell-components.ts",
+      "test/e2e/live/openshell-driver-config-test-wrapper.ts",
+    ],
     coverage: [
       {
         row: {
@@ -421,6 +425,7 @@ export const workflowTargets: readonly WorkflowE2eTarget[] = [
     testFiles: ["test/e2e/live/openclaw-plugin-runtime-exdev.test.ts"],
     owningPaths: [
       "test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts",
+      "test/helpers/openshell-components.ts",
       "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
       "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
     ],

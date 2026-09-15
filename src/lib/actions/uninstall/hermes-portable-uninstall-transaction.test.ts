@@ -280,9 +280,9 @@ describe("Hermes Portable uninstall transaction", () => {
     const state = stateDir();
     const fixture = transactionDeps(state, phase);
 
-    await expect(
-      async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
-    ).rejects.toThrow(`interrupted after ${phase}`);
+    await expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).rejects.toThrow(
+      `interrupted after ${phase}`,
+    );
     expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe(phase);
 
     const resumed = await runHermesPortableUninstallTransaction(state, fixture.deps);
@@ -307,15 +307,15 @@ describe("Hermes Portable uninstall transaction", () => {
   it("cleans the phase temporary file when journal replacement fails (#9608)", async () => {
     const state = stateDir();
     const fixture = transactionDeps(state, "prepared");
-    await expect(
-      async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
-    ).rejects.toThrow("interrupted after prepared");
+    await expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).rejects.toThrow(
+      "interrupted after prepared",
+    );
     const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
       throw new Error("rename failed");
     });
     try {
-      await expect(
-        async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
+      await expect(() =>
+        runHermesPortableUninstallTransaction(state, fixture.deps),
       ).rejects.toThrow("rename failed");
       expect(fs.readdirSync(state).filter((entry) => entry.endsWith(".next"))).toEqual([]);
     } finally {
@@ -346,14 +346,56 @@ describe("Hermes Portable uninstall transaction", () => {
     const state = stateDir();
     const fixture = transactionDeps(state, "prepared");
 
-    await expect(
-      async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
-    ).rejects.toThrow("interrupted after prepared");
+    await expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).rejects.toThrow(
+      "interrupted after prepared",
+    );
     fixture.setReplacement(true);
-    await expect(
-      async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
-    ).rejects.toThrow("same-name replacement");
+    await expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).rejects.toThrow(
+      "same-name replacement",
+    );
     expect(fixture.mutations).toEqual(["sandbox"]);
     expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe("prepared");
   });
 });
+
+it.each(["prepare", "revalidateResources", "reconcileSandboxes", "verifyResourcesAbsent"] as const)(
+  "does not advance uninstall while %s is pending or rejected",
+  async (boundary) => {
+    const state = stateDir();
+    const fixture = transactionDeps(state);
+    let release!: () => void;
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const observing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const fail = async () => {
+      entered();
+      await pending;
+      throw new Error("policy observation rejected");
+    };
+    const operation = runHermesPortableUninstallTransaction(state, {
+      ...fixture.deps,
+      [boundary]: fail,
+    });
+    const result = expect(operation).rejects.toThrow("policy observation rejected");
+    await observing;
+    const phase = inspectHermesPortableUninstallJournal(state)?.phase ?? null;
+    expect(phase).toBe(
+      boundary === "prepare"
+        ? null
+        : boundary === "verifyResourcesAbsent"
+          ? "inference-retired"
+          : "prepared",
+    );
+    const mutations = [...fixture.mutations];
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fixture.mutations).toEqual(mutations);
+    release();
+    await result;
+    expect(inspectHermesPortableUninstallJournal(state)?.phase ?? null).toBe(phase);
+    expect(fixture.mutations).toEqual(mutations);
+  },
+);
