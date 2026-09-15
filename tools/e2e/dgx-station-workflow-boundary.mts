@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 const TARGET = "dgx-station-express";
 const TRUSTED_SELECTOR =
@@ -61,6 +62,20 @@ export function validateDgxStationDispatchBoundary(workflow: unknown): string[] 
     },
     "Station controller checkout must use the trusted workflow revision without stored credentials",
   );
+  requireEqual(
+    step("Set up Node for Station controller"),
+    {
+      name: "Set up Node for Station controller",
+      uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      with: { "node-version": "24.18.1" },
+    },
+    "Station controller must use the reviewed Node setup",
+  );
+  requireEqual(
+    step("Install reviewed npm"),
+    { name: "Install reviewed npm", uses: E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference },
+    "Station controller must install reviewed npm immutably",
+  );
   const dispatch = step("Dispatch exact commit to Station through operator backend");
   requireEqual(
     dispatch.env,
@@ -89,9 +104,15 @@ export function validateDgxStationDispatchBoundary(workflow: unknown): string[] 
     "Station artifacts must use their own namespace",
   );
   requireEqual(
-    steps.length,
-    4,
-    "Station controller must contain only checkout, Node setup, dispatch, and upload",
+    steps.map((entry) => entry.name),
+    [
+      "Check out trusted Station controller",
+      "Set up Node for Station controller",
+      "Install reviewed npm",
+      "Dispatch exact commit to Station through operator backend",
+      "Upload Station Express artifacts",
+    ],
+    "Station controller must run checkout, Node setup, npm setup, dispatch, and upload in order",
   );
   return errors;
 }

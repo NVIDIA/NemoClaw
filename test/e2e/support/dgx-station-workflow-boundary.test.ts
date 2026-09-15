@@ -58,10 +58,15 @@ describe("Station workflow authorization and ownership", () => {
       },
       "trusted workflow revision",
     ],
-    [2, "env", { DGX_STATION_DISPATCH_URL: "${{ vars.JETSON_DISPATCH_URL }}" }, "own URL variable"],
-    [2, "run", "bash install.sh", "fixed controller client"],
-    [3, "if", "success()", "failure and cancellation"],
-    [3, "with", { name: "e2e-jetson-nvmap-gpu" }, "own namespace"],
+    [1, "uses", "actions/setup-node@main", "reviewed Node setup"],
+    [1, "with", { "node-version": ">=22.19.0 <23" }, "reviewed Node setup"],
+    [1, "if", "false", "reviewed Node setup"],
+    [2, "uses", "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@main", "npm immutably"],
+    [2, "if", "false", "npm immutably"],
+    [3, "env", { DGX_STATION_DISPATCH_URL: "${{ vars.JETSON_DISPATCH_URL }}" }, "own URL variable"],
+    [3, "run", "bash install.sh", "fixed controller client"],
+    [4, "if", "success()", "failure and cancellation"],
+    [4, "with", { name: "e2e-jetson-nvmap-gpu" }, "own namespace"],
   ])("rejects an unsafe controller step %s %s", (index, field, value, expected) => {
     const workflow = readWorkflow();
     const job = (workflow.jobs as Record<string, { steps: Record<string, unknown>[] }>)[
@@ -69,5 +74,26 @@ describe("Station workflow authorization and ownership", () => {
     ];
     job.steps[index as number][field as string] = value;
     expect(validateDgxStationDispatchBoundary(workflow).join("\n")).toContain(expected);
+  });
+
+  it("rejects a Station controller without reviewed npm setup", () => {
+    const workflow = readWorkflow();
+    const job = (workflow.jobs as Record<string, { steps: Record<string, unknown>[] }>)[
+      "dgx-station-express"
+    ];
+    job.steps.splice(2, 1);
+    expect(validateDgxStationDispatchBoundary(workflow).join("\n")).toContain("npm immutably");
+  });
+
+  it.each([
+    [1, 2],
+    [2, 3],
+  ])("rejects Station bootstrap steps reordered at %i and %i", (first, second) => {
+    const workflow = readWorkflow();
+    const job = (workflow.jobs as Record<string, { steps: Record<string, unknown>[] }>)[
+      "dgx-station-express"
+    ];
+    [job.steps[first], job.steps[second]] = [job.steps[second], job.steps[first]];
+    expect(validateDgxStationDispatchBoundary(workflow).join("\n")).toContain("in order");
   });
 });

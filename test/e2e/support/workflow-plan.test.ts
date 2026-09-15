@@ -1310,3 +1310,19 @@ it.each(["jobs", "targets"] as const)(
     expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("dgx-station-express");
   },
 );
+
+it.each([
+  { jobs: "dgx-station-express,hermes-e2e" },
+  { jobs: "hermes-e2e,dgx-station-express" },
+  { targets: "dgx-station-express,ubuntu-repo-cloud-openclaw" },
+  { targets: "ubuntu-repo-cloud-openclaw,dgx-station-express" },
+  { jobs: "dgx-station-express", targets: "ubuntu-repo-cloud-openclaw" },
+  { jobs: "hermes-e2e", targets: "dgx-station-express" },
+  { jobs: "dgx-station-express", targets: "dgx-station-express" },
+  { jobs: "dgx-station-express,dgx-station-express" },
+  { targets: "dgx-station-express,dgx-station-express" },
+])("rejects Station selectors that its controller cannot execute: %j", (selectors) => {
+  expect(() => buildE2eWorkflowPlan(selectors)).toThrow(
+    "dgx-station-express must be selected by itself",
+  );
+});

@@ -88,30 +88,31 @@ describe("Station Express smoke boundaries", () => {
       Cmd: ["-lc", stationVllmCommands()[0]],
     },
   };
-  it("pins the default Ultra serving alias in both Station commands", () => {
-    for (const command of stationVllmCommands()) {
-      expect(command).toMatch(
-        /(?:^|\s)--served-model-name nvidia\/nemotron-3-ultra-550b-a55b(?:\s|$)/u,
-      );
-    }
+  it.each([0, 1])("pins the default Ultra serving alias in Station command %i", (index) => {
+    expect(stationVllmCommands()[index]).toMatch(
+      /(?:^|\s)--served-model-name nvidia\/nemotron-3-ultra-550b-a55b(?:\s|$)/u,
+    );
   });
 
-  it.each(["", "--served-model-name another/model"])(
-    "rejects a Station command with a missing or changed serving alias: %j",
-    (replacement) => {
-      for (const command of stationVllmCommands()) {
-        const changed = command.replace(
-          "--served-model-name nvidia/nemotron-3-ultra-550b-a55b",
-          replacement,
-        );
-        expect(() =>
-          assertStationVllm(
-            JSON.stringify([
-              { ...container, Config: { ...container.Config, Cmd: ["-lc", changed] } },
-            ]),
-          ),
-        ).toThrow("default Ultra");
-      }
+  it.each([
+    [0, ""],
+    [1, ""],
+    [0, "--served-model-name another/model"],
+    [1, "--served-model-name another/model"],
+  ] as const)(
+    "rejects a missing or changed alias in Station command %i: %j",
+    (index, replacement) => {
+      const changed = stationVllmCommands()[index]!.replace(
+        "--served-model-name nvidia/nemotron-3-ultra-550b-a55b",
+        replacement,
+      );
+      expect(() =>
+        assertStationVllm(
+          JSON.stringify([
+            { ...container, Config: { ...container.Config, Cmd: ["-lc", changed] } },
+          ]),
+        ),
+      ).toThrow("default Ultra");
     },
   );
 
