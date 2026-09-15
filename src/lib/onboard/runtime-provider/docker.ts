@@ -4,6 +4,7 @@
 import {
   captureHostCommand,
   captureOpenShellHostCommand,
+  readOpenShellSandboxPhase,
 } from "../../actions/sandbox/doctor-host-command";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import {
@@ -78,6 +79,12 @@ export interface DockerRuntimeProviderDependencies {
     gatewayName: string,
     environment: NodeJS.ProcessEnv,
   ) => ReturnType<typeof captureOpenShellHostCommand>;
+  /** Read the sandbox phase OpenShell reports, or null when it cannot be observed. */
+  readonly readSandboxPhase: (
+    sandboxName: string,
+    gatewayName: string,
+    environment: NodeJS.ProcessEnv,
+  ) => string | null;
   readonly captureHostCommand: (
     command: string,
     args: string[],
@@ -100,6 +107,8 @@ export interface DockerRuntimeProviderDependencies {
 
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
 const AT_REST_STATUS_PREFIXES = ["Exited", "Created", "Dead"] as const;
+/** The phase OpenShell reports for a sandbox that was stopped on purpose. */
+const STOPPED_SANDBOX_PHASE = "Stopped";
 
 function inspectDockerGatewayNetwork(networkName: string) {
   const raw = dockerCapture(
@@ -245,6 +254,15 @@ function resolveDependencies(
       ((action, sandboxName, gatewayName, environment) =>
         captureOpenShellHostCommand(
           ["sandbox", action, "-g", gatewayName, sandboxName],
+          environment,
+          DOCKER_OPERATION_TIMEOUT_MS,
+        )),
+    readSandboxPhase:
+      overrides.readSandboxPhase ??
+      ((sandboxName, gatewayName, environment) =>
+        readOpenShellSandboxPhase(
+          sandboxName,
+          gatewayName,
           environment,
           DOCKER_OPERATION_TIMEOUT_MS,
         )),
@@ -400,10 +418,32 @@ async function startDockerSandboxUnlocked(
     return { exitCode: 0 };
   }
 
+  // Docker container status alone does not decide whether the sandbox needs a
+  // lifecycle start: OpenShell owns the sandbox phase, and a container can run
+  // while its sandbox is still `Stopped` — for example after something started
+  // the container behind OpenShell's back. Reporting "already running" for that
+  // pair skips the only operation that advances the phase, so every later
+  // `start` waits out the readiness timeout and the sandbox never recovers
+  // (#11790). Read the phase only when no container is at rest; an at-rest
+  // container already needs the same start and the extra probe would be waste.
+  const containerAtRest = containers.some((container) => isAtRestStatus(container.status));
+  const stoppedPhaseWithRunningContainer =
+    !containerAtRest &&
+    containers.length > 0 &&
+    deps.readSandboxPhase(
+      input.sandboxName,
+      input.sandbox.gatewayName ?? "nemoclaw",
+      input.environment,
+    ) === STOPPED_SANDBOX_PHASE;
   if (
-    containers.some((container) => isAtRestStatus(container.status)) &&
+    (containerAtRest || stoppedPhaseWithRunningContainer) &&
     !containers.some((container) => isGpuBackupSibling(container.name))
   ) {
+    if (stoppedPhaseWithRunningContainer) {
+      input.log(
+        `  Sandbox '${input.sandboxName}' is still stopped while its container runs; starting it through OpenShell.`,
+      );
+    }
     const result = deps.captureSandboxLifecycle(
       "start",
       input.sandboxName,

@@ -1003,22 +1003,44 @@ export async function getReconciledSandboxGatewayState(
 const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
 
 /**
- * Start a sandbox's Docker container when it exists but is stopped, before the
- * probe-only readiness wait begins polling. `recover` and `connect --probe-only`
- * both advertise that they restart a stopped sandbox, but the wait loop only
- * observes readiness. A container in `exited` cannot reach Ready. A plain
- * `docker start` can restore the same container with its workspace state and
- * managed configuration preserved (#8967). A nonzero or missing `docker start`
- * status continues to the readiness wait, which surfaces the existing
- * stopped-container guidance. The function returns true only when Docker
- * starts the stopped container. It leaves an unresolved, running, or paused
- * container unchanged. A paused container keeps its `docker unpause` guidance.
- * A caller that reaches this function after container startup makes no change.
+ * Start a stopped sandbox before the probe-only readiness wait begins polling.
+ * `recover` and `connect --probe-only` both advertise that they restart a
+ * stopped sandbox, but the wait loop only observes the sandbox phase.
+ *
+ * OpenShell — not Docker — owns that phase. A bare `docker start` puts the
+ * container back in `Up` without advancing the sandbox out of `Stopped`, so the
+ * readiness wait can never succeed, and the resulting running-container /
+ * stopped-phase pair is exactly the state that makes a later `start` report
+ * "already running" and skip the lifecycle start too (#11790). Issuing
+ * `openshell sandbox start` restarts the same container — workspace state and
+ * managed configuration preserved, as #8967 requires — and advances the phase.
+ *
+ * `docker start` remains the fallback for the case #8967 was filed for: an
+ * exited container whose OpenShell start did not succeed still gets running
+ * again, and the Docker-driver start path repairs the phase on the next
+ * `start`. A nonzero or missing status from both continues to the readiness
+ * wait, which surfaces the existing stopped-container guidance. The function
+ * returns true only when one of them started the stopped sandbox. It leaves an
+ * unresolved, running, or paused container unchanged. A paused container keeps
+ * its `docker unpause` guidance. A caller that reaches this function after
+ * container startup makes no change.
  */
 export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): boolean {
   const runtime = getSandboxDockerRuntime(sandboxName);
   if (!runtime.containerName || runtime.running || runtime.paused) return false;
   console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
+  const lifecycle = captureOpenshell(["sandbox", "start", "-g", gatewayName, sandboxName], {
+    ignoreError: true,
+    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
+  });
+  if (lifecycle.status === 0) {
+    console.error(`  ${G}✓${R} Started sandbox '${sandboxName}' through OpenShell.`);
+    return true;
+  }
+  console.error(
+    `  OpenShell could not start sandbox '${sandboxName}' (exit ${lifecycle.status ?? "unknown"}); starting its container directly.`,
+  );
   const result = dockerStart(runtime.containerName, {
     ignoreError: true,
     timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,

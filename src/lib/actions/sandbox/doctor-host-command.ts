@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { resolveOpenshellBinaryOrNull } from "../../adapters/openshell/resolve-shared";
+import { parseSandboxPhase } from "../../state/gateway";
 import { ROOT } from "../../state/paths";
 
 export type CommandCapture = {
@@ -63,4 +64,27 @@ export function captureOpenShellHostCommand(
     output: `${result.stdout}${result.stderr}`.trim(),
     ...(result.error ? { error: result.error } : {}),
   };
+}
+
+/**
+ * Read the phase OpenShell reports for one sandbox, or null when the command
+ * does not complete. OpenShell owns the sandbox phase, so a caller deciding
+ * whether a sandbox still needs a lifecycle start must read it here rather than
+ * infer it from the container's runtime status (#11790).
+ */
+export function readOpenShellSandboxPhase(
+  sandboxName: string,
+  gatewayName: string,
+  environment: NodeJS.ProcessEnv,
+  timeout: number,
+  deps: OpenShellHostCommandDeps = {},
+): string | null {
+  const probe = captureOpenShellHostCommand(
+    ["sandbox", "get", "-g", gatewayName, sandboxName],
+    environment,
+    timeout,
+    deps,
+  );
+  if (probe.status !== 0 || probe.error) return null;
+  return parseSandboxPhase(probe.output);
 }
