@@ -5,6 +5,10 @@ use super::*;
 
 impl Deployment {
     pub async fn export(&self, cancel: &CancellationToken) -> Result<Document, Error> {
+        Box::pin(self.export_inner(cancel)).await
+    }
+
+    async fn export_inner(&self, cancel: &CancellationToken) -> Result<Document, Error> {
         let (_, store) = self.open()?;
         let record = store.load()?.ok_or(Error::Conflict(
             "export requires established resource bindings",
