@@ -178,6 +178,28 @@ Print the installed NemoClaw CLI version.
 $$nemoclaw --version
 ```
 
+<AgentOnly variant="hermes">
+
+### `nemoclaw-acp`
+
+Connect an external Agent Client Protocol (ACP) client to a managed Hermes sandbox.
+The adapter sends ACP traffic through standard input and standard output, and writes diagnostics to standard error.
+
+```bash
+nemoclaw-acp --sandbox <name> [--gateway <name>] [--timeout <seconds>]
+```
+
+`--sandbox` is required.
+When the sandbox name is registered on more than one gateway, pass `--gateway <name>` to select its owning NemoClaw gateway.
+`--timeout` ends the ACP session after the specified positive number of seconds, up to `86,400`.
+
+Before the adapter starts the session, it revalidates the registered sandbox and its ready state under the sandbox lifecycle lock.
+It also revalidates the sandbox lifecycle generation, identity, and OpenShell gateway.
+It can select and, when required, start only that exact gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
+A conflicting or ambiguous gateway identity, authentication, schema, timeout, or other observation failure stops the adapter before gateway startup or session creation.
+
+</AgentOnly>
+
 ### `$$nemoclaw completion`
 
 Generate a tab-completion script for Bash, Zsh, or Fish from the commands and flags available in the installed CLI. The script completes public global commands, the sandbox-first `$$nemoclaw <name> ...` grammar, flags, shell choices, and locally registered sandbox names. If you omit the shell name, `$$nemoclaw completion` detects the target from `$SHELL` and defaults to Bash when it cannot identify Zsh or Fish. The generated script is bound to the CLI name that created it, so install a separate script for each CLI alias you use. It loads sandbox names from the local registry the first time completion runs and caches them for the rest of that shell session.
@@ -438,6 +460,14 @@ OpenClaw onboarding does not enter the `complete` state until NemoClaw proves th
 </Warning>
 
 Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice. If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again. A non-interactive `--resume` run reuses the recorded choice and continues to inference setup. After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts. If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name. If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices. Run `$$nemoclaw onboard` to make new choices after exit. During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior. For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`. If onboarding returns without reaching the final `complete` state, the command exits with status `1`. When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
+
+<AgentOnly variant="openclaw,hermes">
+
+During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
+It does not report the sandbox as ready.
+Run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
+
+</AgentOnly>
 
 #### Inspect retained sandbox recovery
 
@@ -1098,7 +1128,8 @@ The command does not take over a system service or an unrelated user-managed Oll
 
 <AgentOnly variant="hermes">
 For an active Portable Hermes sandbox, `connect --probe-only` can resume only the stopped Ollama runner named by the published receipt.
-The `recover` command uses the same inference recovery path, but ordinary `connect` does not.
+When ordinary `connect` finds that its recorded `ollama-local` route is unavailable, it uses the same recovery path before it opens an interactive session.
+The `recover` command also uses that path.
 Follow [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks, route proof, rollback, and failure handling.
 </AgentOnly>
 
@@ -1171,8 +1202,9 @@ These diagnostics report durations and counts for authority, container, health, 
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
 
 <AgentOnly variant="hermes">
-For Portable Hermes, `connect --probe-only` and `recover` can resume a stopped published Ollama runner only for the recorded `ollama-local` provider.
-For another configured provider, they verify the recorded inference route and required forwards without Ollama recovery.
+For Portable Hermes, `connect`, `connect --probe-only`, and `recover` can resume a stopped published Ollama runner only for the recorded `ollama-local` provider.
+Ordinary `connect` starts recovery only when its recorded inference route is unavailable.
+For another configured provider, `connect --probe-only` and `recover` verify the recorded inference route and required forwards without Ollama recovery.
 Refer to [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks and rollback handling.
 </AgentOnly>
 
@@ -1451,6 +1483,7 @@ For a portable experimental-profile sandbox with the recorded `ollama-local` pro
 <AgentOnly variant="hermes">
 
 Hermes Portable forward repair reports the failed boundary and the affected port or operation when available.
+It allows 30 seconds for forward verification and 60 seconds for the complete inspection, start, and verification operation.
 Before mutation, it distinguishes an occupied port, a failed or invalid `openshell forward list` result, unresolved recorded ports, and an inconclusive reachability check.
 After mutation begins, it distinguishes a failed `start` or `stop` operation from a settlement timeout.
 NemoClaw does not stop an unproved owner and does not publish launch-readiness evidence after any of these failures.
@@ -2927,6 +2960,8 @@ The export keeps its original success or failure result, so a cleanup warning af
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
 Host-side wrapper around `openshell sandbox download` that checks the live sandbox.
+For a registered sandbox, it sends the transfer and source checks to the sandbox's recorded OpenShell gateway.
+It waits for the OpenShell transfer process, verification, publication, and cleanup before it returns.
 The command confirms before and after transfer that the source remains a file or directory.
 Symbolic links, source-type changes, and other special source types are refused.
 A directory source is refused when any member is a symbolic link or another special file, and the host destination is not created for a refused source.
@@ -2970,6 +3005,8 @@ $$nemoclaw my-assistant download /sandbox/.deepagents/.state/ ./deepagents-state
 
 Host-side wrapper around `openshell sandbox upload`.
 It confirms that the sandbox is live and resolves relative host source paths from the caller's working directory.
+For a registered sandbox, it sends the transfer to the sandbox's recorded OpenShell gateway.
+It waits for the OpenShell transfer process to close before it returns.
 OpenShell performs the transfer.
 With no `sandbox-dest`, the destination defaults to `/sandbox/` inside the sandbox.
 
@@ -3000,7 +3037,16 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 
 ### `$$nemoclaw <name> rebuild`
 
-Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state. Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
+Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state.
+
+<AgentOnly variant="openclaw,hermes">
+
+Prepared backup recovery for a legacy upgrade reuses the digest-verified pre-upgrade policy handoff instead.
+It stops before deletion if that handoff is missing or changed.
+
+</AgentOnly>
+
+Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
 
 If replacement onboarding returns nonzero, rebuild stops before post-create state restoration and retains recovery state.
 
@@ -3035,7 +3081,7 @@ If that source cannot be read safely, rebuild stops before deletion even with `-
 NemoClaw carries the source entries only in the bounded rebuild transaction and does not persist a second MCP registry.
 NemoClaw rechecks the source, recorded gateway, resolved targets, policy, and provider identities immediately before deletion.
 Legacy, conflicting, or ambiguous bridge state stops before deletion and points to `mcp migrate` when conversion is available.
-Rebuild independently captures the complete current OpenShell policy and hands it to replacement creation.
+Except for prepared legacy backup recovery, rebuild independently captures the complete current OpenShell policy and hands it to replacement creation.
 NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
 Across every rebuild path, NemoClaw does not attempt to stop local NIM until sandbox deletion is positively confirmed.
 It then attempts NIM cleanup on a best-effort basis.

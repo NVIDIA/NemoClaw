@@ -185,11 +185,8 @@ validate_tmp_permissions() {
 }
 
 # ── Capability dropping ──────────────────────────────────────────
-# OpenShell full enforcement clears the child bounding set before launch.
-# Skip compatibility handling only when all five capability sets are empty.
-# Do not infer enforcement from runtime environment values.
-#
-# Direct-root entrypoints can still need capsh. Their retained bounding caps
+# OpenShell-managed entrypoints do not call this section. Direct-root
+# entrypoints can still need capsh. Their retained bounding caps
 # (chown, fowner, setuid, setgid, kill) support initialization and supervised
 # shutdown; init_step_down_prefixes can remove them when changing user.
 # NEMOCLAW_REQUIRE_CAP_DROP=1 retains fail-closed verification for unavailable
@@ -218,31 +215,20 @@ dangerous_caps_drop_list() {
   printf '%s' "$out"
 }
 
-# Use built-ins: exec'ing a reader can lower its permitted/effective set and
-# hide capabilities still held by this shell. The caller supplies the fixed
-# procfs path; an explicit file argument also permits deterministic fixtures.
-read_capability_state() {
-  local key value rest bit seen=0 all_zero=1 cap_bnd_hex=""
+# Use built-ins so verification observes the calling shell rather than an
+# exec'd reader whose capability state can differ. An explicit file argument
+# permits deterministic direct-root fixtures.
+read_capability_bounding_set() {
+  local key value rest seen=0 cap_bnd_hex=""
   while IFS=$' \t' read -r key value rest; do
-    case "$key" in
-      CapInh:) bit=1 ;;
-      CapPrm:) bit=2 ;;
-      CapEff:) bit=4 ;;
-      CapBnd:)
-        bit=8
-        cap_bnd_hex="$value"
-        ;;
-      CapAmb:) bit=16 ;;
-      *) continue ;;
-    esac
-    [ $((seen & bit)) -eq 0 ] || return 1
-    seen=$((seen | bit))
-    case "$value" in
-      "" | *[!0]*) all_zero=0 ;;
-    esac
-    [ -z "$rest" ] || all_zero=0
+    [ "$key" = CapBnd: ] || continue
+    [ "$seen" -eq 0 ] || return 1
+    seen=1
+    cap_bnd_hex="$value"
+    [ -z "$rest" ] || return 1
   done <"$1" || return 1
-  printf '%s:%s\n' "$cap_bnd_hex" "$((seen == 31 && all_zero == 1))"
+  [ "$seen" -eq 1 ] && [ -n "$cap_bnd_hex" ] || return 1
+  printf '%s\n' "$cap_bnd_hex"
 }
 
 # The first argument is the absolute entrypoint path; remaining args are forwarded.
@@ -250,15 +236,11 @@ drop_capabilities() {
   local entrypoint="$1"
   shift
 
-  local cap_state cap_bnd_hex present reason=""
-  if ! cap_state="$(read_capability_state /proc/self/status 2>/dev/null)"; then
+  local cap_bnd_hex present reason=""
+  if ! cap_bnd_hex="$(read_capability_bounding_set /proc/self/status 2>/dev/null)"; then
     reason="could not read bounding set from /proc/self/status"
   else
-    cap_bnd_hex="${cap_state%:*}"
-    [ "${cap_state##*:}" = 1 ] && return 0
-    if [ -z "$cap_bnd_hex" ]; then
-      reason="could not read bounding set from /proc/self/status"
-    elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+    if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
       reason="could not parse bounding set (CapBnd=${cap_bnd_hex})"
     elif [ -n "$present" ]; then
       reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
