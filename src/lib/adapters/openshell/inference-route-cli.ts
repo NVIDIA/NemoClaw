@@ -107,7 +107,6 @@ function routeError(
       message: "The OpenShell CLI and gateway inference schemas do not match.",
     };
   }
-  if (effectiveStatus === 0 && !result.error) return null;
   if (
     /\b(?:authentication failed|unauthorized|forbidden|permission denied|requires admin privileges|missing gateway auth token|device identity required|invalid token|expired token)\b/iu.test(
       output,
@@ -118,6 +117,7 @@ function routeError(
       message: "OpenShell could not authenticate the inference route observation.",
     };
   }
+  if (effectiveStatus === 0 && !result.error) return null;
   if (/\bhandshake verification failed\b/iu.test(output)) {
     return {
       kind: "transport",

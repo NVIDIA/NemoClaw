@@ -143,6 +143,11 @@ describe("CLI inference route observation", () => {
       { kind: "authentication" },
     ],
     [
+      "status-zero authentication",
+      { status: 0, output: "Error: unauthorized token=secret" },
+      { kind: "authentication" },
+    ],
+    [
       "timeout",
       {
         status: null,
