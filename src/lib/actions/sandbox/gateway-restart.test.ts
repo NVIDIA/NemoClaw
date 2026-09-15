@@ -94,11 +94,33 @@ describe("restartSandboxGateway native lifecycle", () => {
     });
 
     expect(result).toMatchObject({ ok: true });
-    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
+    expect(deps.executeSandboxExecCommand).toHaveBeenNthCalledWith(
+      2,
       "hermes-box",
       "hermes gateway restart",
       210000,
     );
+  });
+
+  it("refuses Hermes restart before reload when the secret boundary fails", async () => {
+    silenceConsole();
+    const execute = vi.fn(async () => ({ status: 1, stdout: "", stderr: "refused" }));
+    const deps = baseDeps({
+      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
+      getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
+      executeSandboxExecCommand: execute,
+    });
+
+    const result = await restartSandboxGateway("hermes-box", { quiet: true, deps });
+
+    expect(result).toEqual({
+      ok: false,
+      failureLayer: "secret-boundary refusal",
+      detail: "Hermes secret-boundary validation did not pass before native restart",
+    });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]?.[1]).toContain("validate-hermes-env-secret-boundary.py");
+    expect(execute).not.toHaveBeenCalledWith("hermes-box", "hermes gateway restart", 210000);
   });
 
   it("reports the native agent failure without an authorization verdict", async () => {
