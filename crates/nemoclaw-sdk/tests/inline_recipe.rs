@@ -141,3 +141,68 @@ fn qwen_example_preserves_snapshot_identity_and_typed_vllm_behavior() {
     }
     assert_eq!(service.gpu_bytes().unwrap(), old.gpu_bytes().unwrap());
 }
+
+#[tokio::test]
+async fn failed_verification_never_publishes_a_completion_receipt() {
+    use nemoclaw_sdk::{
+        CancellationToken, Error,
+        recipes::preparation::{self, Action, Request, Runner},
+    };
+    struct UntrustedEvidence(Vec<u8>);
+    #[async_trait::async_trait]
+    impl Runner for UntrustedEvidence {
+        async fn run(
+            &self,
+            action: Action,
+            request: &Request<'_>,
+            _: &CancellationToken,
+        ) -> Result<Vec<u8>, Error> {
+            match action {
+                Action::Prepare => {
+                    std::fs::write(request.output_directory.join("packed"), b"packed bytes")
+                        .unwrap();
+                    Ok(Vec::new())
+                }
+                Action::Verify => Ok(self.0.clone()),
+            }
+        }
+    }
+    let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
+    let service = document.spec.inference_providers[0]
+        .service
+        .as_ref()
+        .unwrap();
+    let file = serde_json::json!({"name":"packed","size":12,"sha256":"a".repeat(64)});
+    for evidence in [
+        b"not JSON".to_vec(),
+        vec![b' '; (1 << 20) + 1],
+        serde_json::to_vec(&serde_json::json!({"files":[]})).unwrap(),
+        serde_json::to_vec(&serde_json::json!({"files":[file.clone()]})).unwrap(),
+        serde_json::to_vec(&serde_json::json!({"files":[file.clone(),file]})).unwrap(),
+        serde_json::to_vec(
+            &serde_json::json!({"files":[{"name":"../packed","size":12,"sha256":"a".repeat(64)}]}),
+        )
+        .unwrap(),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let key = service.recipe.as_ref().unwrap().key(service);
+        assert!(
+            preparation::prepare(
+                root.path(),
+                root.path(),
+                service,
+                &UntrustedEvidence(evidence),
+                &CancellationToken::new()
+            )
+            .await
+            .is_err()
+        );
+        assert!(!root.path().join(&key).exists());
+        let staging = root.path().join(format!("{key}.preparing"));
+        assert_eq!(
+            std::fs::read(staging.join("packed")).unwrap(),
+            b"packed bytes"
+        );
+        assert!(!staging.join("complete.json").exists());
+    }
+}
