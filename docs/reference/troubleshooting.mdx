@@ -1656,7 +1656,7 @@ When status reports `sandbox_container_stopped`, Docker still has a container fo
 $$nemoclaw <name> recover
 ```
 
-For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness. It leaves a running or paused container unchanged. If Docker cannot start the container, the command continues to the readiness check and reports the resulting failure.
+For a stopped, non-paused Docker-driver container, `recover` starts the sandbox through OpenShell before it waits for readiness. If the container already runs while OpenShell reports `Stopped`, `recover` still starts the sandbox through OpenShell to repair the phase. It leaves paused containers and running sandboxes in other phases unchanged. If OpenShell cannot start a stopped container, recovery starts the container directly when needed, then continues to the readiness check and reports the resulting failure.
 
 </AgentOnly>
 
