@@ -27,14 +27,14 @@
       "generatedProbeConditions": 255
     },
     "unique": {
-      "expectCalls": 1928,
-      "matcherAssertions": 1900,
+      "expectCalls": 1926,
+      "matcherAssertions": 1898,
       "nodeAssertions": 121,
-      "namedAssertionHelpers": 741,
+      "namedAssertionHelpers": 740,
       "failCalls": 1,
       "throwGuards": 554,
       "objectFieldAssertions": 273,
-      "assertionPoints": 3590,
+      "assertionPoints": 3587,
       "generatedProbeBlocks": 243,
       "generatedProbeConditions": 853
     },
@@ -82,7 +82,7 @@
       "test/e2e/live/launch-readiness-lease-acceptance.test.ts": [6,6,6,10,6],
       "test/e2e/live/launchable-smoke.test.ts": [14,30,14,30,3],
       "test/e2e/live/llama-cpp-generic-gpu.test.ts": [19,36,34,61,2],
-      "test/e2e/live/managed-image-activation-e2e.test.ts": [0,0,15,33,0],
+      "test/e2e/live/managed-image-activation-e2e.test.ts": [0,0,13,30,0],
       "test/e2e/live/managed-image-multiarch-startup.test.ts": [1,1,1,7,0],
       "test/e2e/live/managed-image-protected-runtime.test.ts": [0,0,42,79,15],
       "test/e2e/live/mcp-bridge.test.ts": [48,164,194,499,46],

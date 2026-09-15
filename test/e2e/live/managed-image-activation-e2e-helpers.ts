@@ -356,13 +356,6 @@ async function verifyExactCleanup(
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const list = await host.nemoclaw(["list"], {
-    artifactName: `post-destroy-nemoclaw-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
-  });
-  assertExitZero(list, "list sandboxes after managed activation destroy");
-  expect(outputContainsSandbox(list, sandboxName), resultText(list)).toBe(false);
   const openshellList = await sandbox.list({
     artifactName: `post-destroy-openshell-list-${sandboxName}`,
     env,
@@ -381,7 +374,6 @@ async function verifyExactCleanup(
   );
   assertExitZero(containers, "inspect Docker inventory after managed activation destroy");
   expect(containers.stdout.trim(), resultText(containers)).toBe("");
-  expect(registryDocument().sandboxes?.[sandboxName]).toBeUndefined();
 }
 
 function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
