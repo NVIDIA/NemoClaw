@@ -96,6 +96,7 @@ type SdkPackageLocatorFixture = Readonly<{
   runs: readonly unknown[];
   step: WorkflowStep;
   workflowRunFailure?: boolean;
+  unrelatedRunsFillFirstPage?: boolean;
 }>;
 
 function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
@@ -134,7 +135,9 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
         '    process.stderr.write("untrusted API failure detail\\n");',
         "    process.exit(1);",
         "  }",
-        "  process.stdout.write(JSON.stringify({ workflow_runs: JSON.parse(process.env.FAKE_WORKFLOW_RUNS) }));",
+        "  const scoped = request.includes(`head_sha=${process.env.HEAD_SHA}`);",
+        '  const runs = process.env.FAKE_UNRELATED_RUNS_FILL_FIRST_PAGE === "true" && !scoped ? [] : JSON.parse(process.env.FAKE_WORKFLOW_RUNS);',
+        "  process.stdout.write(JSON.stringify({ workflow_runs: runs }));",
         "  process.exit(0);",
         "}",
         "const artifactMatch = request.match(/actions\\/runs\\/(\\d+)\\/artifacts/);",
@@ -158,6 +161,7 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
         FAKE_ARTIFACT_FAILURE_RUN_ID: String(fixture.artifactFailureRunId ?? 0),
         FAKE_WORKFLOW_RUNS: JSON.stringify(fixture.runs),
         FAKE_WORKFLOW_RUN_FAILURE: String(fixture.workflowRunFailure ?? false),
+        FAKE_UNRELATED_RUNS_FILL_FIRST_PAGE: String(fixture.unrelatedRunsFillFirstPage ?? false),
         GH_TOKEN: "test-token",
         GITHUB_OUTPUT: outputPath,
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
@@ -744,6 +748,23 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       "Then rerun the failed openshell-sdk-package job in CI / Pull Request",
     );
     expect(githubOutput).not.toContain("run_id=");
+  });
+
+  it("finds the SDK package when unrelated runs fill the repository listing", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      artifactsByRunId: {
+        "320": { artifacts: [{ expired: false, name: "openshell-sdk-head-sha" }] },
+      },
+      runs: [sdkPackageWorkflowRun(320, "completed", "success", "2026-08-27T00:00:00Z")],
+      unrelatedRunsFillFirstPage: true,
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(githubOutput).toContain("run_id=320\n");
   });
 
   it("uses an older exact SDK package run after a newer run is cancelled", () => {

@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -19,7 +20,6 @@ import {
   getOpenShellGatewayUserServicePaths,
   getOpenShellUserConfigHome,
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
-  getTrustedActiveOpenShellGatewayUserServiceStopTarget,
   getTrustedActiveOpenShellGatewayUserServicePid,
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
@@ -32,21 +32,6 @@ import {
   startPackageManagedDockerDriverGateway,
   stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
-
-const STATUS_CONNECTED = `
-Server Status
-
-Gateway: nemoclaw
-Server: https://127.0.0.1:8080/
-Connected
-`;
-
-const GATEWAY_INFO = `
-Gateway Info
-
-Gateway: nemoclaw
-Gateway endpoint: https://127.0.0.1:8080/
-`;
 
 function trustedBrew(spawnSyncImpl: SpawnSyncLike): (args: string[]) => SpawnSyncLikeResult {
   return (args) => spawnSyncImpl("brew", args);
@@ -295,36 +280,6 @@ describe("docker-driver-gateway-service", () => {
     );
   });
 
-  it("binds a trusted active systemd identity to its stop command (#11720)", () => {
-    const home = "/home/nvidia";
-    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
-    const gatewayBin = `${home}/.local/bin/openshell-gateway`;
-
-    expect(
-      getTrustedActiveOpenShellGatewayUserServiceStopTarget({
-        commandExists: (command) => command === "systemctl",
-        env: { HOME: home },
-        existsSync: (candidate) => candidate === servicePath,
-        home,
-        lstatSync: nonSymlinkStat,
-        platform: "linux",
-        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-        spawnSyncImpl: () =>
-          spawnResult(
-            0,
-            "",
-            [trustedShowOutput(servicePath, gatewayBin), "ActiveState=active", "MainPID=4242"].join(
-              "\n",
-            ),
-          ),
-      }),
-    ).toEqual({
-      executablePath: gatewayBin,
-      pid: 4242,
-      stopCommand: "systemctl --user stop nemoclaw-openshell-gateway",
-    });
-  });
-
   it("does not trust an inactive or foreign systemd gateway process (#6903)", () => {
     const existsSync = (candidate: string) =>
       candidate === "/lib/systemd/user/openshell-gateway.service";
@@ -514,10 +469,11 @@ describe("docker-driver-gateway-service", () => {
     const verifySandboxBridgeGatewayReachableOrExit = vi.fn(async () => {
       events.push("verify");
     });
-    let registerCount = 0;
+    let readinessCount = 0;
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: () => events.push("clear"),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -526,16 +482,15 @@ describe("docker-driver-gateway-service", () => {
         healthPollInterval: 1,
         isDockerDriverGatewayReady: async () => {
           events.push("ready");
-          return true;
+          readinessCount += 1;
+          return readinessCount >= 2;
         },
         now: clock.now,
         output,
         registerDockerDriverGatewayEndpoint: () => {
           events.push("register");
-          registerCount += 1;
-          return registerCount >= 2;
+          return true;
         },
-        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
         skipSandboxBridgeReachability: false,
         sleepSeconds: (seconds) => {
           events.push("sleep");
@@ -550,12 +505,50 @@ describe("docker-driver-gateway-service", () => {
       }),
     ).resolves.toBe(true);
 
-    expect(events).toEqual(["register", "sleep", "register", "ready", "clear", "verify"]);
+    expect(events).toEqual(["register", "ready", "sleep", "ready", "clear", "verify"]);
     expect(output.log).toHaveBeenCalledWith("  Starting OpenShell gateway via managed service...");
     expect(verifySandboxBridgeGatewayReachableOrExit).toHaveBeenCalledWith(false, {
       output,
       skip: false,
     });
+  });
+
+  it("stops immediately after one failed registration without polling or retrying", async () => {
+    const adapters = gatewayAdaptersForTest();
+    const register = vi.fn(async () => false);
+    const sleepSeconds = vi.fn();
+    const ready = vi.fn(async () => true);
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        observer: adapters.observer,
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        healthPollCount: 30,
+        healthPollInterval: 2,
+        isDockerDriverGatewayReady: ready,
+        output: { error: vi.fn(), log: vi.fn(), warn: vi.fn() },
+        registerDockerDriverGatewayEndpoint: register,
+        skipSandboxBridgeReachability: false,
+        sleepSeconds,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          started: true,
+          manager: "homebrew",
+        }),
+        stopOpenShellGatewayUserService: () => ({
+          attempted: true,
+          stopped: true,
+          standaloneFallbackAllowed: false,
+        }),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("remains lifecycle authority");
+    expect(register).toHaveBeenCalledOnce();
+    expect(sleepSeconds).not.toHaveBeenCalled();
+    expect(ready).not.toHaveBeenCalled();
+    expect(adapters.observer.observeGatewayReuse).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -578,12 +571,12 @@ describe("docker-driver-gateway-service", () => {
 
       await expect(
         startPackageManagedDockerDriverGateway({
+          observer: gatewayAdaptersForTest().observer,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           exitOnFailure: false,
           gatewayName: "nemoclaw",
           hasOpenShellGatewayUserService: () => true,
           registerDockerDriverGatewayEndpoint: register,
-          runCaptureOpenshell: vi.fn(),
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: () => ({
             attempted: true,
@@ -608,12 +601,12 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
         hasOpenShellGatewayUserService: () => true,
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
@@ -640,6 +633,7 @@ describe("docker-driver-gateway-service", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: clear,
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -649,7 +643,6 @@ describe("docker-driver-gateway-service", () => {
         isDockerDriverGatewayReady: async () => false,
         now: clock.now,
         registerDockerDriverGatewayEndpoint: () => true,
-        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
         skipSandboxBridgeReachability: false,
         sleepSeconds: clock.advance,
         startOpenShellGatewayUserService: () => ({
@@ -679,6 +672,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -688,7 +682,6 @@ describe("docker-driver-gateway-service", () => {
         isDockerDriverGatewayReady: async () => false,
         now: clock.now,
         registerDockerDriverGatewayEndpoint: () => true,
-        runCaptureOpenshell: () => "unhealthy",
         skipSandboxBridgeReachability: false,
         sleepSeconds: clock.advance,
         startOpenShellGatewayUserService: () => ({
@@ -707,12 +700,12 @@ describe("docker-driver-gateway-service", () => {
   it("blocks standalone fallback when managed service cleanup fails without permission (#8926)", async () => {
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
         hasOpenShellGatewayUserService: () => true,
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
@@ -732,12 +725,12 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
         hasOpenShellGatewayUserService: () => true,
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
@@ -763,12 +756,12 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
         hasOpenShellGatewayUserService: () => true,
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
@@ -793,6 +786,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: true,
         gatewayName: "nemoclaw",
@@ -802,7 +796,6 @@ describe("docker-driver-gateway-service", () => {
         managedServiceLogCommand:
           'tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"',
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: vi.fn(),
         stopOpenShellGatewayUserService: stopService,
@@ -818,6 +811,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: true,
         gatewayName: "nemoclaw",
@@ -831,7 +825,6 @@ describe("docker-driver-gateway-service", () => {
           platform: "darwin",
         }),
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: startService,
         stopOpenShellGatewayUserService: vi.fn(),
@@ -846,6 +839,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -855,7 +849,6 @@ describe("docker-driver-gateway-service", () => {
         managedServiceLogCommand:
           "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: startService,
         stopOpenShellGatewayUserService: vi.fn(),
@@ -868,12 +861,12 @@ describe("docker-driver-gateway-service", () => {
   it("blocks standalone fallback when managed service cleanup fails trust validation (#8104)", async () => {
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
         hasOpenShellGatewayUserService: () => true,
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
@@ -902,6 +895,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: true,
         gatewayName: "nemoclaw",
@@ -911,7 +905,6 @@ describe("docker-driver-gateway-service", () => {
         isDockerDriverGatewayReady: async () => false,
         now: clock.now,
         registerDockerDriverGatewayEndpoint: () => true,
-        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
         skipSandboxBridgeReachability: false,
         sleepSeconds: clock.advance,
         startOpenShellGatewayUserService: () => ({ attempted: true, started: true }),
@@ -938,6 +931,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: true,
         gatewayName: "nemoclaw",
@@ -945,7 +939,6 @@ describe("docker-driver-gateway-service", () => {
         managedServiceLogCommand:
           "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
         registerDockerDriverGatewayEndpoint: vi.fn(),
-        runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => {
           throw new Error("systemctl invocation failed");
