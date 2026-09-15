@@ -5,15 +5,20 @@ import {
   type CaptureOpenshellOptions,
   type CaptureOpenshellResult,
   captureOpenshellCommand,
-  stripAnsi,
 } from "../adapters/openshell/client";
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { observeOpenShellSandboxIdentity } from "../adapters/openshell/sandbox-presence";
+import {
+  isExplicitMissingOpenShellSandboxOutput,
+  isLegacyOpenShellSandboxConfigUnavailableOutput,
+} from "../adapters/openshell/sandbox-observer-cli";
 import { parseSandboxPhase } from "../state/gateway";
 import {
   fingerprintSandboxLiveIdentity,
+  fingerprintSandboxRecreateValue,
   type SandboxRecreateObservation,
 } from "./sandbox-recreate-transaction";
 
@@ -42,37 +47,35 @@ type SandboxGatewayPresenceTarget = Pick<SandboxRecreateTarget, "sandboxName" | 
 export type SandboxRecreateObserver = (target: SandboxRecreateTarget) => SandboxRecreateObservation;
 export type SandboxRecreateCapture = typeof captureOpenshell;
 
-/**
- * Strict absence classifier for destructive owner-gateway reconciliation.
- * Bare NotFound is not sufficient because OpenShell uses it for missing
- * gateways and providers as well as sandboxes.
- */
-export function isExplicitMissingSandboxGatewayOutput(
-  output: string,
-  sandboxName: string,
-): boolean {
-  const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
-  // Miette wraps long OpenShell 0.0.116 diagnostics onto a `│` continuation
-  // line. Collapse only that renderer-owned boundary before exact matching.
-  const structured = clean.replace(/\n\s*│\s*/g, " ");
-  const exactNoSpec =
-    /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i;
-  if (exactNoSpec.test(clean)) return true;
-  // OpenShell can omit the requested name from an owner-scoped lookup.
-  // Require both exact structured fields so gateway/provider absence and
-  // transport diagnostics remain ambiguous.
-  const exactStructuredNotFound =
-    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/i;
-  if (exactStructuredNotFound.test(structured)) return true;
+export const isExplicitMissingSandboxGatewayOutput = isExplicitMissingOpenShellSandboxOutput;
 
-  const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
-  return (
-    new RegExp(
-      `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
-      "i",
-    ).test(clean) ||
-    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${namedSandbox}[.!]?$`, "i").test(clean)
+/** Resolve a retained legacy identity without treating unreadable config as deletion. */
+export function observeLegacySandboxOnGateway(
+  target: SandboxGatewayPresenceTarget,
+  probe: CaptureOpenshellResult,
+  capture: SandboxRecreateCapture,
+  options: Parameters<SandboxRecreateCapture>[1],
+): SandboxRecreateObservation | null {
+  const combined = `${probe.stdout ?? ""}\n${probe.stderr ?? probe.output ?? ""}`.trim();
+  if (
+    probe.error ||
+    probe.signal ||
+    probe.status === null ||
+    probe.status === 0 ||
+    !isLegacyOpenShellSandboxConfigUnavailableOutput(combined)
+  )
+    return null;
+  const gatewayArgs = target.gatewayName ? ["-g", target.gatewayName] : [];
+  const inventory = capture(["sandbox", "list", ...gatewayArgs, "-o", "json"], options);
+  const listed = observeOpenShellSandboxIdentity(target.sandboxName, inventory);
+  if (!inventory.error && !inventory.signal && listed.kind === "present") {
+    return {
+      state: listed.phase === "Ready" || listed.phase === "Running" ? "ready" : "not_ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(listed.id),
+    };
+  }
+  throw new Error(
+    `Cannot journal sandbox '${target.sandboxName}' replacement: gateway '${target.gatewayName}' reported neither a live sandbox nor explicit absence. Legacy config is unreadable; inventory=${listed.kind}, exit=${String(inventory.status)}, interrupted=${Boolean(inventory.error || inventory.signal)}.`,
   );
 }
 
@@ -86,6 +89,13 @@ export function observeSandboxPresenceOnGateway(
     includeStreams: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
+  const legacy = observeLegacySandboxOnGateway(target, probe, captureOpenshell, {
+    ignoreError: true,
+    includeStderr: true,
+    includeStreams: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (legacy) return "present";
   const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
   const failedCleanly =
@@ -109,7 +119,7 @@ export function observeSandboxOnGateway(
       `Cannot journal sandbox '${target.sandboxName}' replacement: selected gateway does not match the recorded target.`,
     );
   }
-  const probe = capture(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
+  const captureOptions = {
     ignoreError: true,
     includeStderr: true,
     includeStreams: true,
@@ -120,11 +130,17 @@ export function observeSandboxOnGateway(
           replaceEnv: true,
         }
       : {}),
-  });
+  } as const;
+  const probe = capture(
+    ["sandbox", "get", "-g", target.gatewayName, target.sandboxName],
+    captureOptions,
+  );
   const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
   const failedCleanly =
     !probe.error && !probe.signal && probe.status !== null && probe.status !== 0;
+  const legacy = observeLegacySandboxOnGateway(target, probe, capture, captureOptions);
+  if (legacy) return legacy;
   if (failedCleanly && isExplicitMissingSandboxGatewayOutput(combined, target.sandboxName)) {
     return { state: "missing", liveIdentityFingerprint: null };
   }

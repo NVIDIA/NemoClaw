@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   context,
   createPhases,
@@ -10,8 +10,24 @@ import {
 } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
 import type { VerifyDeploymentResult } from "../../verify-deployment";
+import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
 import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
+
+const refusedRecovery = {
+  checked: true,
+  wasRunning: true,
+  recovered: false,
+  forwardRecovered: false,
+  secretBoundaryRefused: true,
+  secretBoundaryReason: "unexpected-marker",
+};
+const uncheckedRecovery = {
+  checked: false,
+  wasRunning: null,
+  recovered: false,
+  forwardRecovered: false,
+};
 
 function deploymentResult(healthy: boolean): VerifyDeploymentResult {
   return {
@@ -32,6 +48,7 @@ function deploymentResult(healthy: boolean): VerifyDeploymentResult {
 }
 
 describe("final onboard flow runtime boundary", () => {
+  afterEach(() => vi.restoreAllMocks());
   it.each([
     { label: "fresh", resume: false },
     { label: "resumed", resume: true },
@@ -462,5 +479,97 @@ describe("final onboard flow runtime boundary", () => {
       resumable: false,
       machine: { state: "complete" },
     });
+  });
+
+  it.each([
+    ["finalizing", "refused", refusedRecovery],
+    ["post_verify", "refused", refusedRecovery],
+    ["finalizing", "unchecked", uncheckedRecovery],
+    ["post_verify", "unchecked", uncheckedRecovery],
+  ] as const)(
+    "retains the %s session after %s recovery and completes only after repair (#11758)",
+    async (initialState, _outcome, recoveryResult) => {
+      const harness = createRuntimeHarness(sessionAt(initialState));
+      const recorders = harness.boundary.recorders();
+      const recovery = vi.fn().mockResolvedValue(recoveryResult);
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: recovery,
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      });
+      const dashboard = vi.fn();
+      const reportReadiness = vi.fn();
+      const phases = createPhases("agent_setup", [], {
+        loadSession: harness.getSession,
+        recordStepSkipped: recorders.recordStepSkipped,
+        recordStateSkipped: recorders.recordStateSkipped,
+        startRecordedStep: recorders.startRecordedStep,
+        recordStepComplete: recorders.recordStepComplete,
+        finalizationDeps: {
+          checkAndRecoverSandboxProcesses: finalizationHandlerDeps.checkAndRecoverSandboxProcesses,
+          printDashboard: dashboard,
+          reportDeploymentReadiness: reportReadiness,
+          readRegistryAgent: () => "hermes",
+        },
+      });
+      const first = await runFinalOnboardFlowSlice({
+        context: context({ agent: { name: "hermes" }, session: harness.getSession() }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: recorders.recordRepairEvent,
+      });
+      expect(first.session).toMatchObject({ status: "in_progress", resumable: true });
+      expect(first.session?.machine.state).not.toBe("complete");
+      expect(reportReadiness).toHaveBeenCalledWith(false);
+      expect(dashboard).not.toHaveBeenCalled();
+      recovery.mockResolvedValue({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      });
+      const resumed = await runFinalOnboardFlowSlice({
+        context: context({
+          agent: { name: "hermes" },
+          resume: true,
+          session: harness.getSession(),
+        }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: recorders.recordRepairEvent,
+      });
+      expect(resumed.session).toMatchObject({
+        status: "complete",
+        resumable: false,
+        machine: { state: "complete" },
+      });
+      expect(reportReadiness).toHaveBeenLastCalledWith(true);
+      expect(dashboard).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    {
+      label: "session mutation",
+      updates: { model: "replacement" },
+      metadata: { state: "finalizing" },
+    },
+    { label: "wrong phase", updates: {}, metadata: { state: "policies" } },
+  ])("rejects a prerequisite pause with $label (#11758)", async ({ updates, metadata }) => {
+    const harness = createRuntimeHarness(sessionAt("post_verify"));
+    const phases = createPhases("agent_setup");
+    vi.spyOn(phases[2], "run").mockResolvedValue({
+      context: context(),
+      result: { type: "pause", updates, metadata },
+    });
+    await expect(
+      runFinalOnboardFlowSlice({
+        context: context({ agent: { name: "hermes" }, session: harness.getSession() }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: harness.boundary.recorders().recordRepairEvent,
+      }),
+    ).rejects.toThrow("Invalid final onboarding prerequisite repair result");
+    expect(harness.getSession().machine.state).toBe("post_verify");
+    expect(harness.getSession().model).not.toBe("replacement");
   });
 });

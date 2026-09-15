@@ -32,6 +32,7 @@ type SdkPackageWorkflow = Readonly<{
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
+const reviewedNpmAction = "./.github/actions/setup-reviewed-npm";
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
@@ -345,7 +346,11 @@ describe("pull request and main workflow contracts", () => {
     ).toBe(true);
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
-    expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
+    expect(stepUses(job)).toEqual([
+      trustedCheckoutAction,
+      trustedSetupNodeAction,
+      reviewedNpmAction,
+    ]);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
       "npm ci --ignore-scripts --no-audit --no-fund",
@@ -414,6 +419,62 @@ describe("pull request and main workflow contracts", () => {
     ]);
   });
 
+  it.each([
+    [
+      "docs-only checks",
+      requiredWorkflowStep(prWorkflow.jobs["docs-only-checks"], "Install hadolint"),
+    ],
+    ["shared static checks", requiredStep(sharedActions.staticChecks, "Install hadolint")],
+  ])("retries transient hadolint downloads in %s", (_name, step) => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-hadolint-retry-"));
+    try {
+      const bin = join(root, "bin");
+      const target = join(bin, "hadolint");
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "curl"),
+        `#!/bin/sh
+set -eu
+retry=0
+all_errors=0
+delay=0
+destination=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --retry) [ "\${2:-}" = 3 ] || exit 91; retry=1; shift 2 ;;
+    --retry-all-errors) all_errors=1; shift ;;
+    --retry-delay) [ "\${2:-}" = 2 ] || exit 92; delay=1; shift 2 ;;
+    -o) destination="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ "$retry:$all_errors:$delay" = 1:1:1 ] || exit 93
+printf 'fake hadolint' > "$destination"
+`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(bin, "sha256sum"),
+        `#!/bin/sh
+printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47' "$1"
+`,
+        { mode: 0o755 },
+      );
+      const testStep = {
+        ...step,
+        run: step.run?.replaceAll("/usr/local/bin/hadolint", target),
+      };
+      const result = runWorkflowShellStep(testStep, {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(readFileSync(target, "utf8")).toBe("fake hadolint");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
   it.each([
     ["pull request", prWorkflow],
@@ -469,6 +530,9 @@ describe("pull request and main workflow contracts", () => {
 
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
   it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
+    expect(
+      requiredWorkflowStep(prWorkflow.jobs["build-typecheck"], "Install dependencies").env,
+    ).toEqual({ NPM_CONFIG_ALLOW_REMOTE: "root" });
     const packageJob = prWorkflow.jobs["openshell-sdk-package"];
     expect(packageJob["timeout-minutes"]).toBe(10);
     expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });

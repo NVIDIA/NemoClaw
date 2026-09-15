@@ -749,6 +749,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         with: {},
       },
       {
+        name: "Install reviewed npm",
+        uses: "./.github/actions/setup-reviewed-npm",
+      },
+      {
         id: "select_pr_source",
         name: "Resolve exact PR managed-image publication",
         if: "${{ inputs.pr_number != '' }}",
@@ -783,7 +787,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           "export GITHUB_REF=refs/heads/main",
           'export GITHUB_SHA="$EXPECTED_SHA"',
           "wait_seconds=3000",
-          'if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then',
+          'if [[ "$PUBLICATION_HISTORY_ALLOW_NON_HEAD" == "1" ]]; then',
           "  wait_seconds=300",
           "fi",
           'node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30',

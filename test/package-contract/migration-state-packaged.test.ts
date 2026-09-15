@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 test("packaged migration converts and restores external OpenClaw state", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "migration-home-"));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "migration-home-")));
   homes.push(home);
   const state = path.join(home, "external-state");
   const config = path.join(home, "external-config", "openclaw.json");
@@ -106,7 +106,10 @@ test("packaged migration converts and restores external OpenClaw state", async (
   fs.writeFileSync(config, "{}");
   expect(restoreSnapshotToHost(bundle!.snapshotDir, logger)).toBe(true);
   expect(fs.readFileSync(path.join(state, "state-marker"), "utf8")).toBe("before");
-  expect(fs.readFileSync(path.join(workspace, "workspace-marker"), "utf8")).toBe("before");
+  expect(
+    fs.readFileSync(path.join(workspace, "workspace-marker"), "utf8"),
+    messages.join("\n"),
+  ).toBe("before");
   expect(fs.readFileSync(path.join(agentDir, "agent-marker"), "utf8")).toBe("before");
   const restored = JSON.parse(fs.readFileSync(config, "utf8"));
   expect(restored.agents.defaults.workspace).toBe(workspace);

@@ -392,7 +392,7 @@ describe("service environment", () => {
       (dir) => {
         const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
         const start = src.indexOf("# Pre-create redirected directories");
-        const end = src.indexOf("# ── Drop unnecessary Linux capabilities", start);
+        const end = src.indexOf('NEMOCLAW_CMD=("$@")', start);
         if (start === -1 || end === -1 || end <= start) {
           throw new Error("Failed to extract redirected-directory setup block");
         }

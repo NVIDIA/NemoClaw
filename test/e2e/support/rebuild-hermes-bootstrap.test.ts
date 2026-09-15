@@ -4,7 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { findAvailableDashboardPort } from "../../../src/lib/onboard/dashboard-port";
+import type {
+  OpenShellForwardAdapter,
+  OpenShellForwardObservation,
+} from "../../../src/lib/adapters/openshell/forward";
 import type { HostCliClient } from "../fixtures/clients/index.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -83,12 +86,44 @@ const envFactory = (_apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Pro
   ...extra,
 });
 
-const deterministicDashboardPort = (
+function forwardObservations(
   sandboxName: string,
-  preferredPort: number,
-  forwardListOutput: string | null,
-) =>
-  findAvailableDashboardPort(sandboxName, preferredPort, forwardListOutput, () => false, new Map());
+  states: ReadonlyMap<number, "absent" | "foreign" | "owned" | "stale">,
+): OpenShellForwardObservation[] {
+  return [...states].map(([port, state]) => ({
+    state,
+    forward: {
+      gatewayEndpoint: "https://127.0.0.1:8080",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName,
+      localHost: "127.0.0.1",
+      port,
+    },
+  }));
+}
+
+function fakeForwardAdapter(
+  state: "absent" | "foreign" | "owned" | "stale",
+  observeFailure?: Error,
+) {
+  const observeForwards = vi.fn<OpenShellForwardAdapter["observeForwards"]>(
+    async ({ forwards }) => {
+      await (observeFailure ? Promise.reject(observeFailure) : Promise.resolve());
+      return forwards.map((forward) => ({ state, forward }));
+    },
+  );
+  const retireLegacyForward = vi.fn<OpenShellForwardAdapter["retireLegacyForward"]>(
+    async ({ forward }) => ({ state: "retired", forward }),
+  );
+  const adapter: OpenShellForwardAdapter = {
+    observeForwards,
+    retireLegacyForward,
+    startForward: async ({ forward }) => ({ state: "reused", forward }),
+    verifyForwardRelease: async () => ({ state: "released" }),
+  };
+  return { adapter, observeForwards, retireLegacyForward };
+}
 
 describe("rebuild-Hermes direct bootstrap", () => {
   it("resolves the current base without onboarding or constructing a sandbox (#7144)", () => {
@@ -317,23 +352,33 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(
       resolveRebuildHermesDashboardPort({
         sandboxName: "e2e-rebuild-hermes-port",
-        forwardListOutput: "",
-        findAvailablePort: deterministicDashboardPort,
+        forwardObservations: forwardObservations(
+          "e2e-rebuild-hermes-port",
+          new Map([[18789, "absent"]]),
+        ),
         registryOccupiedPorts: new Map(),
       }).effectivePort,
     ).toBe(18789);
     expect(
       resolveRebuildHermesDashboardPort({
         sandboxName: "e2e-rebuild-hermes-port",
-        forwardListOutput: "other 127.0.0.1 18789 99 running",
-        findAvailablePort: deterministicDashboardPort,
+        forwardObservations: forwardObservations(
+          "e2e-rebuild-hermes-port",
+          new Map([
+            [18789, "foreign"],
+            [18790, "absent"],
+          ]),
+        ),
         registryOccupiedPorts: new Map(),
       }).effectivePort,
     ).toBe(18790);
     expect(() =>
       resolveRebuildHermesDashboardPort({
         sandboxName: "e2e-rebuild-hermes-port",
-        forwardListOutput: "",
+        forwardObservations: forwardObservations(
+          "e2e-rebuild-hermes-port",
+          new Map([[18789, "absent"]]),
+        ),
         findAvailablePort: () => 8642,
         registryOccupiedPorts: new Map(),
       }),
@@ -352,60 +397,87 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect([...cleanupPorts]).toEqual([18791]);
   });
 
-  it("stops only sandbox-owned Hermes forwards and fails closed on list errors (#7144)", async () => {
-    const own = fakeHost([
-      probe("SANDBOX BIND PORT PID STATUS\nhermes-box 127.0.0.1 18789 42 running"),
-      probe(""),
-    ]);
+  it("retires only exact stale Hermes forwards and fails closed on observation errors (#7144)", async () => {
+    const own = fakeHost([]);
+    const ownForward = fakeForwardAdapter("stale");
     await expect(
-      cleanupRebuildHermesForward(own.host, envFactory, "secret", "hermes-box", 18789, ["secret"]),
+      cleanupRebuildHermesForward(own.host, envFactory, "secret", "hermes-box", 18789, ["secret"], {
+        adapter: ownForward.adapter,
+      }),
     ).resolves.toBe("stopped");
-    expect(own.command.mock.calls[1]?.[1]).toEqual(["forward", "stop", "18789", "hermes-box"]);
+    expect(ownForward.retireLegacyForward).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        forward: expect.objectContaining({ port: 18789, sandboxName: "hermes-box" }),
+      }),
+    );
 
-    const other = fakeHost([
-      probe("SANDBOX BIND PORT PID STATUS\nother-box 127.0.0.1 18789 43 running"),
-    ]);
+    const other = fakeHost([]);
+    const foreignForward = fakeForwardAdapter("foreign");
     await expect(
-      cleanupRebuildHermesForward(other.host, envFactory, "secret", "hermes-box", 18789, [
+      cleanupRebuildHermesForward(
+        other.host,
+        envFactory,
         "secret",
-      ]),
+        "hermes-box",
+        18789,
+        ["secret"],
+        { adapter: foreignForward.adapter },
+      ),
     ).resolves.toBe("owned-other");
-    expect(other.command).toHaveBeenCalledTimes(1);
+    expect(foreignForward.retireLegacyForward).not.toHaveBeenCalled();
 
-    const absent = fakeHost([probe(""), probe("", 1, "forward not running")]);
+    const absent = fakeHost([]);
+    const absentForward = fakeForwardAdapter("absent");
     await expect(
-      cleanupRebuildHermesForward(absent.host, envFactory, "secret", "hermes-box", 18789, [
+      cleanupRebuildHermesForward(
+        absent.host,
+        envFactory,
         "secret",
-      ]),
+        "hermes-box",
+        18789,
+        ["secret"],
+        { adapter: absentForward.adapter },
+      ),
     ).resolves.toBe("no-entry");
-    expect(absent.command.mock.calls[1]?.[1]).toEqual(["forward", "stop", "18789", "hermes-box"]);
+    expect(absentForward.retireLegacyForward).not.toHaveBeenCalled();
 
-    const unavailable = fakeHost([probe("", 1, "gateway unavailable")]);
+    const unavailable = fakeHost([]);
+    const unavailableForward = fakeForwardAdapter("absent", new Error("gateway unavailable"));
     await expect(
-      cleanupRebuildHermesForward(unavailable.host, envFactory, "secret", "hermes-box", 18789, [
+      cleanupRebuildHermesForward(
+        unavailable.host,
+        envFactory,
         "secret",
-      ]),
+        "hermes-box",
+        18789,
+        ["secret"],
+        { adapter: unavailableForward.adapter },
+      ),
     ).rejects.toThrow(/gateway unavailable/);
-    expect(unavailable.command).toHaveBeenCalledTimes(1);
   });
 
   it("records malformed captured ports without stopping foreign forwards (#7144)", async () => {
-    const foreign = fakeHost([
-      probe("SANDBOX BIND PORT PID STATUS\nother-box 127.0.0.1 18789 43 running"),
-    ]);
+    const foreign = fakeHost([]);
+    const foreignForward = fakeForwardAdapter("foreign");
     const writeEvidence = vi.fn(async (_evidence: unknown) => undefined);
 
     await cleanupRebuildHermesTrackedForwards(
       new Set([18789]),
       "not-a-port",
       (port) =>
-        cleanupRebuildHermesForward(foreign.host, envFactory, "secret", "hermes-box", port, [
+        cleanupRebuildHermesForward(
+          foreign.host,
+          envFactory,
           "secret",
-        ]),
+          "hermes-box",
+          port,
+          ["secret"],
+          { adapter: foreignForward.adapter },
+        ),
       writeEvidence,
     );
 
-    expect(foreign.command).toHaveBeenCalledTimes(1);
+    expect(foreignForward.retireLegacyForward).not.toHaveBeenCalled();
     expect(writeEvidence).toHaveBeenCalledWith({
       rejectedPort: {
         source: "cleanup registry dashboardPort",
