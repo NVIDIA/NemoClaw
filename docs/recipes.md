@@ -12,7 +12,8 @@ Recipe authors package their executables, patches, licenses and source notices i
 
 See [the inline Qwen example](../examples/spark-inline.yaml).
 Use [the Qwen3.8 image build](build.md#build-a-runtime-image); the example pins an OCI manifest from the recorded experiment.
-Reproduce the pins from the implementation revision recorded in [the validation evidence](validation/rust-inline-recipes-linux-arm64.json); building later source can produce a different digest.
+Build the pinned images from `sourceRevision` in [the validation evidence](validation/rust-recipe-removal-linux-arm64.json).
+Later revisions can produce different digests.
 
 This experiment does not publish the image.
 Its model-specific adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside the generic execution path.

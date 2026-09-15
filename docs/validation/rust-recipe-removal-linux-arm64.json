@@ -1,0 +1,297 @@
+{
+  "sourceRevision": "c9bf6197742e566bcc9728ac025fc0d3eee022e6",
+  "workspaceCheckRevision": "5632374b1679d639768da7a7bf69a3f1d0095e30",
+  "platform": "linux_arm64",
+  "hardware": "NVIDIA GB10 / DGX Spark",
+  "scope": "Remove built-in model recipes and compatibility paths; rebuild and exercise both runtime artifacts",
+  "bundleVersion": "0.1.0-dev.5c93f50846512924",
+  "images": {
+    "qwen": "nc-prototype-qwen38@sha256:f031d87311acb3d29114897d08b44374b3475d5445c9927e762042df2125302f",
+    "basic": "nc-prototype-vllm@sha256:e3f95d68664394c97ed9ea31f55f2183a5f1b6f07a61ffa15177f5dcacdb8b5e"
+  },
+  "artifactsPublished": false,
+  "artifactMetadata": {
+    "qwen": {
+      "nemoclaw-runtime": "ba0ab7ac9aa40607ffc36ed16c16bedb7e417a02f7f37bec50bed8c65e24e847",
+      "rust": "1.98.1",
+      "sourceVersion": "0.1.0-dev.5c93f50846512924",
+      "supervisor-source.tar.gz": "bb3bcd2de589d3028c34bfbf3fce6b0356227ffca6ed74e20cb5f132c2d09c78"
+    },
+    "basic": {
+      "nemoclaw-runtime": "57369ebbe1e67528baa51b64a9eee75cf31cec3e18c2ea31baaf9a69ca0d910a",
+      "rust": "1.98.1",
+      "sourceVersion": "0.1.0-dev.5c93f50846512924",
+      "supervisor-source.tar.gz": "bb3bcd2de589d3028c34bfbf3fce6b0356227ffca6ed74e20cb5f132c2d09c78"
+    }
+  },
+  "checks": {
+    "workspacePassed": 150,
+    "workspaceIgnored": 35,
+    "workspaceFailed": 0,
+    "strictClippy": "passed",
+    "format": "passed",
+    "explicitProviderFixtureTestsPassed": 7,
+    "artifactPreparationTestsPassed": 2
+  },
+  "sourceAudit": {
+    "roots": [
+      "crates/nemoclaw-sdk/src",
+      "crates/nemoclaw-runtime/src",
+      "crates/nemoclaw-build/src"
+    ],
+    "rustFilesChecked": 82,
+    "qwen38OrPleMatches": []
+  },
+  "imageCompatibilityRejection": {
+    "nc-prototype-qwen38:spark-rust-v1": {
+      "removedEntrypointAbsent": true,
+      "oldBackendExitCode": 1,
+      "diagnostic": "unsupported inference backend"
+    },
+    "nc-prototype-vllm:rust-v1": {
+      "removedEntrypointAbsent": true,
+      "oldBackendExitCode": 1,
+      "diagnostic": "unsupported inference backend"
+    }
+  },
+  "cacheReuse": {
+    "priorSnapshotAndReceiptFiles": 107,
+    "metadataUnchangedAtStartup": true
+  },
+  "limits": [
+    "Live runtime qualification is limited to DGX Spark on Linux ARM64.",
+    "Both deployments reused retained model data; this cleanup run did not repeat a fresh multi-hundred-GB download.",
+    "Earlier failure and cache-import live evidence remains revision-specific; this cleanup reran deterministic preparation and provider failure boundaries.",
+    "Artifact source predates the documentation reorganization and subsequent evidence-only commits."
+  ],
+  "live": {
+    "qwen": {
+      "initial": {
+        "outcome": "succeeded",
+        "changes": [
+          {
+            "resource": "nemoclaw_inference_service.runtime",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_managed_gateway.runtime",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "create"
+            ]
+          }
+        ],
+        "agentResponse": "FOUR"
+      },
+      "noop": {
+        "outcome": "succeeded",
+        "changes": [],
+        "agentResponse": "FOUR"
+      },
+      "exportReapply": {
+        "outcome": "succeeded",
+        "changes": [],
+        "agentResponse": "FOUR"
+      },
+      "container": {
+        "id": "54b332c254433c794e002d84763222b70fc4f23c9d4a8b3cc09e872e40a7eb6a",
+        "startedAt": "2026-09-15T08:33:44.377219074Z",
+        "image": "nc-prototype-qwen38@sha256:f031d87311acb3d29114897d08b44374b3475d5445c9927e762042df2125302f"
+      },
+      "resourceIds": {
+        "nemoclaw_provider.inference": "d7cf3bac-c850-42fe-bfe2-32fadfb9e5eb",
+        "nemoclaw_route.primary": "6f75fedc-e4c9-4d28-8157-ab84f7e35085/primary",
+        "nemoclaw_sandbox.agent": "ee207a10-a232-494c-bc90-d65c9cc34dc1",
+        "nemoclaw_workspace.deployment": "6f75fedc-e4c9-4d28-8157-ab84f7e35085",
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-6dab5410b807b0d0-gateway-data/2026-09-15T00:39:42-07:00/07b4e3dceadd53b88bd69ac0ea4e6c4a8a9088fc74975e0894ee4816dbe958a4/8326bfb41efaaeddee77f6bf865261ce2573a3abb6afe21f0971fb166fa7ea89",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/54b332c254433c794e002d84763222b70fc4f23c9d4a8b3cc09e872e40a7eb6a/2026-09-15T00:37:44-07:00/07b4e3dceadd53b88bd69ac0ea4e6c4a8a9088fc74975e0894ee4816dbe958a4",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-6dab5410b807b0d0-inference-data/2026-09-15T00:37:44-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/cb3d571d9ffb6972e35ae9ad14eb6c6c7baabd2b97b6203004a00b78ca85d50f/2026-09-15T00:39:42-07:00/07b4e3dceadd53b88bd69ac0ea4e6c4a8a9088fc74975e0894ee4816dbe958a4/8326bfb41efaaeddee77f6bf865261ce2573a3abb6afe21f0971fb166fa7ea89/97375f2bced82e0c72c42c05f312cafd7582d02f0df4fd641a6e44876bdd4eb3"
+      },
+      "cacheFiles": 110,
+      "cacheMetadataUnchanged": true,
+      "identitiesUnchanged": true,
+      "destroyRemovedInference": true,
+      "retainedVolumeUnchanged": true
+    },
+    "basic": {
+      "initial": {
+        "outcome": "succeeded",
+        "changes": [
+          {
+            "resource": "nemoclaw_inference_service.runtime",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_managed_gateway.runtime",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "create"
+            ]
+          }
+        ],
+        "agentResponse": "FOUR"
+      },
+      "noop": {
+        "outcome": "succeeded",
+        "changes": [],
+        "agentResponse": "FOUR"
+      },
+      "exportReapply": {
+        "outcome": "succeeded",
+        "changes": [],
+        "agentResponse": "FOUR"
+      },
+      "container": {
+        "id": "50fc114e8d7333a6c177d26f4c75aeb406b84f3bd688f4cb4932ff3748af135e",
+        "startedAt": "2026-09-15T08:45:21.623080189Z",
+        "image": "nc-prototype-vllm@sha256:e3f95d68664394c97ed9ea31f55f2183a5f1b6f07a61ffa15177f5dcacdb8b5e"
+      },
+      "resourceIds": {
+        "nemoclaw_provider.inference": "d6cbed48-8a65-4f3d-a2af-1266f938ca02",
+        "nemoclaw_route.primary": "a0ea6885-6329-4ffd-b0ff-1180625f0232/primary",
+        "nemoclaw_sandbox.agent": "cd1d1676-491d-4d0d-9e8e-d09a45f61def",
+        "nemoclaw_workspace.deployment": "a0ea6885-6329-4ffd-b0ff-1180625f0232",
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-7486c6d262517886-gateway-data/2026-09-14T18:40:02-07:00/ce28d4abe546c4e020fd95fc59af6c5a3ff02ea67e28e0e559c3afe7dc68045c/45c024609e537d675722a1f242b77c619dfc36fbcdf7c2d4af2f4a3132457df4",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/50fc114e8d7333a6c177d26f4c75aeb406b84f3bd688f4cb4932ff3748af135e/2026-09-14T18:40:02-07:00/ce28d4abe546c4e020fd95fc59af6c5a3ff02ea67e28e0e559c3afe7dc68045c",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-7486c6d262517886-inference-data/2026-09-14T18:40:02-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/9f28cdffb5831a2688a38cf159f9b6ac0528b5c7813ac31605f45e9990a1faf5/2026-09-14T18:40:02-07:00/ce28d4abe546c4e020fd95fc59af6c5a3ff02ea67e28e0e559c3afe7dc68045c/45c024609e537d675722a1f242b77c619dfc36fbcdf7c2d4af2f4a3132457df4/2ee194c9ea12092c0a9cdcc4a5759ca3cdb0c912677c0e553e28b9ab27289266"
+      },
+      "cacheFiles": 24,
+      "cacheMetadataUnchanged": true,
+      "identitiesUnchanged": true,
+      "destroyRemovedInference": true,
+      "retainedVolumeUnchanged": true
+    }
+  },
+  "planAfterPreviousDestroy": {
+    "outcome": "diagnostic",
+    "message": "runtime restart is planned but OpenShell observations are unavailable; apply unchanged intent to reconcile the runtime stage",
+    "interpretation": "The prior test had destroyed workloads while retaining bindings and storage. Explicit apply reconciled this state. Plan did not launch resources."
+  },
+  "unrelatedResourcesUnchanged": {
+    "nc-0179426feb940b73-gateway": true,
+    "nc-0179426feb940b73-inference": true,
+    "openshell-nc-0179426feb940b73--assistant-8863bbab-7053-4353-afe9-a24c380a2bc5": true
+  },
+  "logs": {
+    ".local/remove-legacy-live/qwen-apply.log": {
+      "bytes": 381,
+      "sha256": "d1d7fbc0e3c90baad26da4093fb5c0a7b2c85a487afc05ec2b1cd32f677f15f4"
+    },
+    ".local/remove-legacy-live/basic-export-1.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    ".local/remove-legacy-live/basic-inference.log": {
+      "bytes": 18797,
+      "sha256": "75a6b2daa3ed3bfc2cf10814b60486205dc628dc92e8f6a6eb4095f9084fd88e"
+    },
+    ".local/remove-legacy-live/qwen-apply-2.log": {
+      "bytes": 60,
+      "sha256": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a"
+    },
+    ".local/remove-legacy-live/basic-apply-2.log": {
+      "bytes": 60,
+      "sha256": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a"
+    },
+    ".local/remove-legacy-live/basic-apply-3.log": {
+      "bytes": 60,
+      "sha256": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a"
+    },
+    ".local/remove-legacy-live/basic-apply-1.log": {
+      "bytes": 381,
+      "sha256": "d1d7fbc0e3c90baad26da4093fb5c0a7b2c85a487afc05ec2b1cd32f677f15f4"
+    },
+    ".local/remove-legacy-live/basic-destroy-1.log": {
+      "bytes": 475,
+      "sha256": "0720354f386d1b8dbe3d0ebcb23ce46cfc203be3ea29ebc1ce5afe138ead28c9"
+    },
+    ".local/remove-legacy-live/qwen-export-1.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    ".local/remove-legacy-live/qwen-destroy-1.log": {
+      "bytes": 475,
+      "sha256": "0720354f386d1b8dbe3d0ebcb23ce46cfc203be3ea29ebc1ce5afe138ead28c9"
+    },
+    ".local/remove-legacy-live/qwen-apply-1.log": {
+      "bytes": 60,
+      "sha256": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a"
+    },
+    ".local/remove-legacy-live/qwen-inference.log": {
+      "bytes": 43322,
+      "sha256": "4527e18fc8799b78ff32b116023b448302fb4ab3b9fe2cec76762dbccba73014"
+    },
+    ".local/remove-legacy-live/qwen-plan.log": {
+      "bytes": 125,
+      "sha256": "4e99296e97fb8dfe5f18676e3a7cf169bbe5d50d6f4650cfa219a85a6433eb75"
+    },
+    ".local/remove-legacy-workspace-current.log": {
+      "bytes": 27115,
+      "sha256": "51b3f1c47a9fdf934cd41443ac3346a8dfeeec71957e91fcc1088b907714814f"
+    },
+    ".local/remove-legacy-clippy-current.log": {
+      "bytes": 292,
+      "sha256": "2141f4b07645e36ef51c2fd92d600a2355284fec2a4b83dc4a089ba789fd1e25"
+    },
+    ".local/remove-legacy-provider-fixtures.log": {
+      "bytes": 1693,
+      "sha256": "1a449f66fe09ee4d5e1000ec51b1cb86d096c29ba3721157552ca13eca1ffa86"
+    },
+    ".local/remove-legacy-artifact-tests.log": {
+      "bytes": 100,
+      "sha256": "24adda79e21044fef19cdc7f0606a9cd7770fc9a99c705a8622ee923c13bce5d"
+    },
+    ".local/remove-legacy-qwen38-image.log": {
+      "bytes": 84964,
+      "sha256": "f3e401d949c5685a0ed4118bf306c4f1f031adcbbcb2dc91800901b74ad2902b"
+    },
+    ".local/remove-legacy-vllm-image.log": {
+      "bytes": 11241,
+      "sha256": "5c5479ab883c2f0ee545c545be39b6cc1c421cf0eecc4b7161eb97fde19eba8a"
+    },
+    ".local/remove-legacy-bundle.log": {
+      "bytes": 804,
+      "sha256": "195324dd7481fc11cf2d88db0d0a06ecd258ba5418d0e695f95866e29b25aae9"
+    }
+  }
+}

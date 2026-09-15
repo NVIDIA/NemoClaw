@@ -47,3 +47,12 @@ This supports keeping preparation inside the shared runtime lifecycle rather tha
 
 The experiment does not qualify other GPUs or native-agent state migration.
 See [the retained evidence](../validation/rust-inline-recipes-linux-arm64.json).
+
+## Built-in Recipe Removal
+
+The cleanup at `c9bf619774` removes the built-in Qwen3.8 implementation from production Rust and rejects the retired backend name.
+It also removes the SDK compatibility facade, old runtime environment variable, and old executable alias.
+Both rebuilt images returned an agent response through OpenShell on DGX Spark.
+The generic builder selects artifact files from an explicit build manifest.
+
+See [cleanup validation](../validation/rust-recipe-removal-linux-arm64.json) for the tested source, image pins, retained-data checks, and qualification limits.
