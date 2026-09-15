@@ -4,7 +4,6 @@
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import * as gatewayRestart from "../gateway-restart";
 import * as processRecovery from "../process-recovery";
 
 export function createHermesCredentialEnvReconciliationRuntime(
@@ -21,19 +20,21 @@ export function createHermesCredentialEnvReconciliationRuntime(
           return result;
         },
       }),
-    restartGateway: (sandboxName: string, revalidate: (operation: string) => void) => {
+    restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const result = processRecovery.executeGatewaySupervisorAction(sandboxName, "restart", 210000);
+      const result = await processRecovery.executeSandboxExecCommand(
+        sandboxName,
+        "hermes gateway restart",
+        210000,
+      );
       revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
       return result;
     },
-    parseRestartCompletion: gatewayRestart.parseManagedGatewayControlCompletion,
     waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);
       const healthy = await processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
         quiet: true,
-        initialManagedHealthPassed: true,
-        requireManagedProbe: true,
+        initialManagedHealthPassed: false,
       });
       revalidate(`confirming Hermes gateway health for sandbox '${sandboxName}'`);
       return healthy;
@@ -54,12 +55,6 @@ export function checkAndRecoverSandboxProcesses(
   ...args: Parameters<typeof processRecovery.checkAndRecoverSandboxProcesses>
 ) {
   return processRecovery.checkAndRecoverSandboxProcesses(...args);
-}
-
-export function executeGatewaySupervisorAction(
-  ...args: Parameters<typeof processRecovery.executeGatewaySupervisorAction>
-) {
-  return processRecovery.executeGatewaySupervisorAction(...args);
 }
 
 export function executePrivilegedSandboxCommand(

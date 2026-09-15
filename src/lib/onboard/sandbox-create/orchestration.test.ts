@@ -59,7 +59,7 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("restarts and rechecks the managed gateway after changing the env file", async () => {
+  it("restarts and rechecks the native gateway after changing the env file", async () => {
     const events: string[] = [];
     const restart = { status: 0, stdout: "managed completion", stderr: "" };
 
@@ -71,13 +71,9 @@ describe("created Hermes credential environment reconciliation", () => {
           events.push("reconcile");
           return { changed: true };
         },
-        restartGateway: () => {
+        restartGateway: async () => {
           events.push("restart");
           return restart;
-        },
-        parseRestartCompletion: (result) => {
-          events.push("parse");
-          return result === restart ? {} : null;
         },
         waitForGateway: async () => {
           events.push("wait");
@@ -92,7 +88,6 @@ describe("created Hermes credential environment reconciliation", () => {
       "reconcile",
       expect.stringMatching(/^identity:confirming/u),
       "restart",
-      "parse",
       "wait",
       expect.stringMatching(/^identity:completing/u),
     ]);
@@ -108,7 +103,6 @@ describe("created Hermes credential environment reconciliation", () => {
         revalidateSandboxIdentity: vi.fn(),
         reconcileCredentialEnv: () => ({ changed: false }),
         restartGateway,
-        parseRestartCompletion: vi.fn(),
         waitForGateway,
       },
       vi.fn(),
@@ -141,7 +135,6 @@ describe("created Hermes credential environment reconciliation", () => {
             return { changed: true };
           }) as never,
           restartGateway: vi.fn(),
-          parseRestartCompletion: vi.fn(),
           waitForGateway: vi.fn(),
         },
         vi.fn(),
@@ -150,7 +143,7 @@ describe("created Hermes credential environment reconciliation", () => {
     expect(mutations).toEqual([]);
   });
 
-  it("fails onboarding when the changed gateway cannot prove restart completion", async () => {
+  it("fails onboarding when the native gateway restart fails", async () => {
     const recordRecovery = vi.fn();
     await expect(
       reconcileCreatedHermesCredentialEnvironment(
@@ -158,13 +151,16 @@ describe("created Hermes credential environment reconciliation", () => {
         {
           revalidateSandboxIdentity: vi.fn(),
           reconcileCredentialEnv: () => ({ changed: true }),
-          restartGateway: () => ({ status: 1, stdout: "", stderr: "failed" }),
-          parseRestartCompletion: () => null,
+          restartGateway: async () => ({
+            status: 1,
+            stdout: "",
+            stderr: "failed",
+          }),
           waitForGateway: vi.fn(),
         },
         recordRecovery,
       ),
-    ).rejects.toThrow("managed gateway restart did not complete");
+    ).rejects.toThrow("native Hermes restart failed");
     expect(recordRecovery).toHaveBeenCalledOnce();
   });
 });
@@ -648,7 +644,10 @@ describe("managed MCP rebuild handoff", () => {
 
 describe("sandbox recreate registry authority", () => {
   it("re-reads the durable source row for Hermes portable recreation (#10056)", () => {
-    const durable = { name: "alpha", lifecycleGeneration: "source-generation" } as SandboxEntry;
+    const durable = {
+      name: "alpha",
+      lifecycleGeneration: "source-generation",
+    } as SandboxEntry;
     const readRegistry = vi.fn(() => durable);
 
     expect(
@@ -1135,7 +1134,9 @@ describe("sandbox create identity checks", () => {
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ message: "temporary source cleanup failed" }),
-        expect.objectContaining({ message: expect.stringContaining("left sandbox 'alpha'") }),
+        expect.objectContaining({
+          message: expect.stringContaining("left sandbox 'alpha'"),
+        }),
       ]),
     );
   });
@@ -1212,7 +1213,9 @@ describe("sandbox create identity checks", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ message: "identity boundary capture failed" }),
+        expect.objectContaining({
+          message: "identity boundary capture failed",
+        }),
       ]),
     );
     expect(persistCreateIdentity).not.toHaveBeenCalled();
@@ -1395,7 +1398,9 @@ describe("sandbox create identity checks", () => {
     );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ message: expect.stringContaining("post-create verification") }),
+        expect.objectContaining({
+          message: expect.stringContaining("post-create verification"),
+        }),
       ]),
     );
     expect(cleanupTemporarySources).toHaveBeenCalledOnce();

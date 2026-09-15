@@ -268,10 +268,9 @@ export AWS_EC2_METADATA_DISABLED=true
 # exists if-and-only-if this container is about to start the gateway. Both the
 # root and non-root entrypoint paths call `mark_in_container_gateway` directly
 # before their `openclaw gateway run` invocation.
-# Internal test seam shared by the PID writer and watchdog. This is deliberately
-# not documented as a public env API; production always keeps the default path.
+# Internal test seam for the PID writer. This is deliberately not documented as
+# a public env API; production always keeps the default path.
 GATEWAY_PID_FILE=/tmp/nemoclaw-gateway.pid
-GATEWAY_WATCHDOG_KILL_FILE="${_NEMOCLAW_GATEWAY_WATCHDOG_KILL_FILE:-/tmp/nemoclaw-gateway-watchdog-kill}"
 
 # A numeric PID is not a process identity: Linux may reuse it immediately
 # after the child is reaped.  Capture `/proc/<pid>/stat` field 22 (starttime)
@@ -284,7 +283,6 @@ AUTO_PAIR_PID_START_IDENTITY=""
 GATEWAY_LOG_TAIL_PID_START_IDENTITY=""
 GATEWAY_LOG_PERSIST_PID_START_IDENTITY=""
 PLUGIN_REFRESH_PID_START_IDENTITY=""
-GATEWAY_WATCHDOG_PID_START_IDENTITY=""
 
 openclaw_load_pid_identity() {
   local pid="$1"
@@ -392,19 +390,6 @@ record_gateway_pid() {
 
 clear_gateway_pid_record() {
   printf '' | _nemoclaw_safe_replace_tmp_file "$GATEWAY_PID_FILE" 600 "" best-effort 2>/dev/null || true
-}
-
-record_gateway_watchdog_kill() {
-  printf '%s\n' "${1:-}" \
-    | _nemoclaw_safe_replace_tmp_file "$GATEWAY_WATCHDOG_KILL_FILE" 600 "" best-effort 2>/dev/null || true
-}
-
-consume_gateway_watchdog_kill() {
-  local expected="$1" marked=""
-  [ -f "$GATEWAY_WATCHDOG_KILL_FILE" ] || return 1
-  IFS= read -r marked <"$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
-  rm -f "$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
-  [ -n "$marked" ] && [ "$marked" = "$expected" ]
 }
 
 _chat_ui_url_port() {
@@ -4675,57 +4660,6 @@ wait_for_plugin_registry_refresh() {
   fi
 }
 
-# Watchdog for the in-container gateway HTTP listener (#4710). OpenClaw's
-# config reloader can SIGUSR1-restart the gateway in-process; in containers a
-# failed restart parks the process alive with its listener closed ("gateway
-# startup failed: ... Process will stay alive"). The #2757 respawn loop only
-# observes process exit, so a gateway process that is alive but not serving
-# would remain in that state until a human runs `nemoclaw <sandbox> recover`.
-# This watchdog probes the local health endpoint. After the gateway returns a
-# serving response, the watchdog kills it after the configured number of
-# not-serving probes without another serving response. Before the gateway has
-# served, the watchdog preserves it through the longer boot grace window, then
-# kills it if it still does not serve. In both cases, the respawn loop relaunches
-# the gateway after the watchdog terminates it.
-#
-# "Serving" uses the same response requirement as the boot-time readiness gate
-# (openclaw_gateway_healthy): /health must answer 200 or 401. Before #7377 the
-# watchdog instead armed on "curl did not exit 7", so only an unbroken series
-# of pure connection-refused probes could ever trigger recovery. Every other
-# not-serving outcome read as "serving" and silently reset the count:
-#
-#   * curl 28: the socket accepts but nothing answers within the timeout
-#   * curl 52/56: accepted then dropped without a reply, which is what the
-#     `gateway closed (1006 abnormal closure (no close frame))` transport
-#     error on the WebSocket side looks like from an HTTP probe
-#   * curl 0 with an HTTP error status: the process answers /health but is
-#     not serving sessions
-#
-# Those outcomes were delegated to the Docker HEALTHCHECK, but an unhealthy
-# OpenShell sandbox container is never restarted by anything, so the gateway
-# stopped serving indefinitely. A gateway that alternated between refused and
-# any other failure also reset the consecutive-refusal counter on every other
-# probe and never reached the threshold, leaving a running watchdog that
-# logged nothing and recovered nothing (#7377).
-#
-# A missing `curl` command disables the watchdog before it probes. Other local
-# failures that prevent a probe from running are inconclusive. They preserve
-# the armed state and not-serving count, so a broken probe cannot create a kill
-# loop.
-#
-# Source boundary: the condition originates inside OpenClaw's gateway
-# lifecycle, which can leave the process running after its listener is gone
-# instead of exiting. NemoClaw cannot repair that from outside the process, so
-# it does two things it can do: the generated config pins `gateway.reload.mode`
-# to `hot` to remove the configuration-change trigger, and this watchdog
-# turns the surviving cases back into process exits that the #2757 respawn loop
-# already handles. Remove this watchdog once an OpenClaw gateway that cannot
-# serve exits on its own. The respawn loop then observes the exit directly, so
-# no external probe is needed.
-
-# Human-readable cause for a not-serving probe, used in the watchdog's log
-# lines so an operator can distinguish a refused port from one that accepts a
-# connection but does not serve a response.
 openclaw_gateway_pid_owns_listener() {
   local pid="$1"
   local port="$2"
@@ -4955,9 +4889,6 @@ refresh_openclaw_supervised_child_pids() {
   openclaw_supervised_aux_pid_is_live \
     "${PLUGIN_REFRESH_PID:-}" "${PLUGIN_REFRESH_PID_START_IDENTITY:-}" \
     && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
-  openclaw_supervised_aux_pid_is_live \
-    "${GATEWAY_WATCHDOG_PID:-}" "${GATEWAY_WATCHDOG_PID_START_IDENTITY:-}" \
-    && SANDBOX_CHILD_PIDS+=("$GATEWAY_WATCHDOG_PID")
   return 0
 }
 

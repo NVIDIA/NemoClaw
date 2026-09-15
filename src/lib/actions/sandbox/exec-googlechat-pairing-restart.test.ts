@@ -210,9 +210,6 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                 getSessionAgent: () => null,
                 getSandbox: () => ({ name: sandboxName, agent: "openclaw" }),
                 resolveSandboxDashboardPort: () => 18789,
-                requestGatewaySupervisorAction: () => {
-                  throw new Error("native restart must not use the NemoClaw supervisor");
-                },
                 executeSandboxExecCommand: async (_name, command) => {
                   const result = spawnSync(
                     process.execPath,

@@ -32,7 +32,10 @@ describe("legacy recovery failure classification", () => {
         stdout: "MANAGED_CONTROL_IDENTITY_CHANGED\ncontainer changed",
         stderr: "",
       }),
-    ).toEqual({ layer: "container identity changed", detail: "container changed" });
+    ).toEqual({
+      layer: "container identity changed",
+      detail: "container changed",
+    });
   });
 });
 
@@ -47,12 +50,11 @@ describe("restartSandboxGateway native lifecycle", () => {
       getSessionAgent: () => null,
       getSandbox: () => ({ name: "alpha", agent: "openclaw" }),
       resolveSandboxDashboardPort: () => 18789,
-      requestGatewaySupervisorAction: vi.fn(() => ({
+      executeSandboxExecCommand: vi.fn(async () => ({
         status: 0,
-        stdout: "GATEWAY_PID=123",
+        stdout: "",
         stderr: "",
       })),
-      executeSandboxExecCommand: vi.fn(async () => ({ status: 0, stdout: "", stderr: "" })),
       waitForRecoveredSandboxGateway: vi.fn(async () => true),
       ensureSandboxPortForward: vi.fn(() => true),
       ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => null),
@@ -68,13 +70,16 @@ describe("restartSandboxGateway native lifecycle", () => {
     const deps = baseDeps();
     const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
-    expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
+    expect(result).toMatchObject({
+      ok: true,
+      restarted: true,
+      healthPassed: true,
+    });
     expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
       "alpha",
       "openclaw gateway restart",
       210000,
     );
-    expect(deps.requestGatewaySupervisorAction).not.toHaveBeenCalled();
   });
 
   it("asks Hermes to restart its gateway", async () => {
@@ -83,7 +88,10 @@ describe("restartSandboxGateway native lifecycle", () => {
       getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
       getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
     });
-    const result = await restartSandboxGateway("hermes-box", { quiet: true, deps });
+    const result = await restartSandboxGateway("hermes-box", {
+      quiet: true,
+      deps,
+    });
 
     expect(result).toMatchObject({ ok: true });
     expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
@@ -91,7 +99,6 @@ describe("restartSandboxGateway native lifecycle", () => {
       "hermes gateway restart",
       210000,
     );
-    expect(deps.requestGatewaySupervisorAction).not.toHaveBeenCalled();
   });
 
   it("reports the native agent failure without an authorization verdict", async () => {
@@ -116,7 +123,9 @@ describe("restartSandboxGateway native lifecycle", () => {
 
   it("waits for health after the native command", async () => {
     silenceConsole();
-    const deps = baseDeps({ waitForRecoveredSandboxGateway: vi.fn(async () => false) });
+    const deps = baseDeps({
+      waitForRecoveredSandboxGateway: vi.fn(async () => false),
+    });
     const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
     expect(result).toMatchObject({ ok: false, failureLayer: "health timeout" });
@@ -139,7 +148,9 @@ describe("restartSandboxGateway native lifecycle", () => {
       forwardRecovered: true,
     });
     expect(deps.ensureSandboxPortForward).toHaveBeenCalledWith("alpha");
-    expect(deps.recoverMessagingHostForward).toHaveBeenCalledWith("alpha", { quiet: true });
+    expect(deps.recoverMessagingHostForward).toHaveBeenCalledWith("alpha", {
+      quiet: true,
+    });
   });
 
   it("refuses an agent without a gateway runtime", async () => {
@@ -154,7 +165,10 @@ describe("restartSandboxGateway native lifecycle", () => {
     });
     const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
-    expect(result).toMatchObject({ ok: false, failureLayer: "unsupported agent" });
+    expect(result).toMatchObject({
+      ok: false,
+      failureLayer: "unsupported agent",
+    });
     expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,12 @@ description: "Defines the trusted computing base, privilege boundaries, and revi
 description-agent: >-
   Maps NemoClaw lifecycle components to their trust boundaries, threats, privilege levels, and verification requirements.
   Use when reviewing privileged gateway restart, config mutation, process identity, or lifecycle locking.
-keywords: ["nemoclaw trusted computing base", "gateway lifecycle security", "sandbox lifecycle security"]
+keywords:
+  [
+    "nemoclaw trusted computing base",
+    "gateway lifecycle security",
+    "sandbox lifecycle security",
+  ]
 content:
   type: "reference"
 agent-variants: ["openclaw", "hermes", "deepagents"]
@@ -37,24 +42,21 @@ The lifecycle boundary maintains these invariants:
 - The OpenShell-managed topology authenticates the host action but does not create gateway and agent user-ID isolation.
 
 <Warning>
-Changes to a component or invariant on this page require sensitive-path review and focused regression coverage before merge.
-A successful build does not replace review of privilege, process identity, descriptor safety, rollback, and fail-closed behavior.
+  Changes to a component or invariant on this page require sensitive-path review
+  and focused regression coverage before merge. A successful build does not
+  replace review of privilege, process identity, descriptor safety, rollback,
+  and fail-closed behavior.
 </Warning>
 
 ## Component Map
 
-| Component | Execution and privilege | Trusted input | Security responsibility |
-|---|---|---|---|
-| `src/lib/sandbox/privileged-exec.ts` and `src/lib/adapters/sandbox/command-transport.ts` | Run in the host CLI under the operator account. | The canonical registry entry, sandbox lifecycle identity, and selected command transport. | Scope privileged execution to the registered sandbox and keep transport selection from changing the target. |
-| `scripts/openclaw-config-guard.py` | The installed source is root-owned and mode `0555`. CLI actions require root; the normalizer imports its read-only process checks. | Bounded strict JSON for writes, stable captured config bytes for restart validation, and fixed installed parser paths for existing JSON5 config. | Validate config with no-follow descriptors, stable inode checks, atomic replacement, hash coherence, and recoverable transaction journals. |
-| `scripts/managed-gateway-control.py` | The installed copy is root-owned and mode `0500`; the host invokes it through registry-scoped privileged execution. | A fixed action, fresh nonce, fixed installed helpers, and a live OpenShell process tree observed through `/proc`. | Authenticate the host action, prove the managed supervisor and gateway identity, authorize one exact gateway exit, wait for normal respawn, and verify listener and HTTP health. |
-| `agents/hermes/runtime-config-guard.py` | The installed copy is root-owned; privileged actions require authenticated startup or host authority. | Fixed Hermes paths, bounded actions, stable descriptor snapshots, a transaction token, and authenticated startup or host authority. | Enforce the Hermes secret boundary, config and hash transactions, restart validation, rollback, and stable file replacement. |
-| `agents/hermes/cron-restore-control.py` and the patched Hermes drain predicate | The installed controller is root-owned; the host invokes it through registry-scoped privileged execution. | Fixed control actions, a root-owned lock and marker, a pinned gateway identity, and bounded restored cron state. | Serialize restore ownership, validate restored jobs and scripts while the gateway is idle, and clear only the NemoClaw-owned gate. |
-| `src/lib/onboard/runtime-provider/docker-operation-authority.ts` | Runs in the host CLI and invokes Docker without a shell from a fixed working directory and sanitized environment. | A qualified Docker executable and interpreter chain, fixed `PATH`, endpoint bindings, and the relevant execution-environment identity. | Revalidate the Docker command and endpoint before active provider and lifecycle operations can target a container. |
-
-The root-owned `/usr/local/bin/nemoclaw-gateway-control` entry point and the sourced `gateway-supervisor.sh` library are adjacent trusted entry points.
-The entry point validates the action and nonce, rejects nonroot callers, classifies the direct and OpenShell-managed topologies, and forwards only to the matching controller.
-The supervisor owns the direct PID 1 request channel and publishes bounded status for the matching nonce.
+| Component                                                                                | Execution and privilege                                                                                                            | Trusted input                                                                                                                                    | Security responsibility                                                                                                                    |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/lib/sandbox/privileged-exec.ts` and `src/lib/adapters/sandbox/command-transport.ts` | Run in the host CLI under the operator account.                                                                                    | The canonical registry entry, sandbox lifecycle identity, and selected command transport.                                                        | Scope privileged execution to the registered sandbox and keep transport selection from changing the target.                                |
+| `scripts/openclaw-config-guard.py`                                                       | The installed source is root-owned and mode `0555`. CLI actions require root; the normalizer imports its read-only process checks. | Bounded strict JSON for writes, stable captured config bytes for restart validation, and fixed installed parser paths for existing JSON5 config. | Validate config with no-follow descriptors, stable inode checks, atomic replacement, hash coherence, and recoverable transaction journals. |
+| `agents/hermes/runtime-config-guard.py`                                                  | The installed copy is root-owned; startup actions use fixed installed paths.                                                       | Fixed Hermes paths, bounded actions, and stable descriptor snapshots.                                                                            | Enforce credential projection, config integrity, and stable file replacement without controlling the native gateway lifecycle.             |
+| `agents/hermes/cron-restore-control.py` and the patched Hermes drain predicate           | The installed controller is root-owned; the host invokes it through registry-scoped privileged execution.                          | Fixed control actions, a root-owned lock and marker, a pinned gateway identity, and bounded restored cron state.                                 | Serialize restore ownership, validate restored jobs and scripts while the gateway is idle, and clear only the NemoClaw-owned gate.         |
+| `src/lib/onboard/runtime-provider/docker-operation-authority.ts`                         | Runs in the host CLI and invokes Docker without a shell from a fixed working directory and sanitized environment.                  | A qualified Docker executable and interpreter chain, fixed `PATH`, endpoint bindings, and the relevant execution-environment identity.           | Revalidate the Docker command and endpoint before active provider and lifecycle operations can target a container.                         |
 
 ## Interaction Model
 
@@ -62,21 +64,18 @@ The supervisor owns the direct PID 1 request channel and publishes bounded statu
 flowchart LR
     Operator[Operator] --> CLI[NemoClaw host CLI]
     CLI --> Registry[Registry target resolution]
-    Registry --> Lock[Per-sandbox mutation lock]
-    Lock --> RootExec[Registry-scoped root execution]
-    RootExec --> Control[nemoclaw-gateway-control]
-    Control --> Direct[Direct root PID 1 supervisor]
-    Control --> Managed[Managed gateway controller]
-    Direct --> Config[OpenClaw or Hermes config guard]
-    Managed --> Config
-    Config --> Gateway[Proven gateway process]
+    Registry --> OpenShell[Exact OpenShell sandbox command]
+    OpenShell --> Agent[Native OpenClaw or Hermes lifecycle]
+    Agent --> Gateway[Agent-owned gateway and child processes]
+    CLI --> Health[Gateway health observation]
     CLI --> Policy[OpenShell policy API]
 ```
 
 The host CLI first resolves the sandbox from host-owned registry state and selects the built-in agent topology.
-Gateway restart generates a fresh nonce and enters `nemoclaw-gateway-control` as root with injection-capable environment variables cleared.
-The direct topology publishes a root-owned request to PID 1, while the OpenShell-managed topology executes `managed-gateway-control.py` directly.
-Both paths prove the replacement gateway and health state before the host repairs port forwards or reports success.
+Gateway restart executes the native agent command inside that exact OpenShell sandbox.
+OpenShell owns sandbox containment and lifecycle; the agent owns gateway, cron,
+hook, subprocess, and background-work lifecycle. NemoClaw observes health before
+repairing host forwards or reporting success.
 
 NemoClaw policy commands read and update the live OpenShell policy.
 They do not persist a second desired-policy document.

@@ -142,7 +142,9 @@ function commandTransportDependencies(): CommandTransportDependencies {
     buildSubprocessEnv,
     executePrivilegedSandboxCommand: executeProviderPrivilegedSandboxCommand,
     extractSandboxExecCommandStdout,
-    commandExecutor: createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT }),
+    commandExecutor: createCliOpenShellSandboxCommandExecutor({
+      hostCwd: ROOT,
+    }),
     isDirectSandboxFallbackUnavailableError,
   };
 }
@@ -764,7 +766,10 @@ export async function isSandboxGatewayRunningForStatus(
  * Legacy custom agents retain their SSH-owned compatibility path.
  */
 type SandboxProcessRecovery =
-  | { kind: "managed"; managedControlCompletion?: ManagedGatewayControlCompletion }
+  | {
+      kind: "managed";
+      managedControlCompletion?: ManagedGatewayControlCompletion;
+    }
   | { kind: "custom" }
   | { kind: "provider" }
   | { kind: "unsupported-provider"; failureDetail: string };
@@ -953,9 +958,6 @@ export async function restartSandboxGateway(
   sandboxName: string,
   { quiet = false, deps = {}, runtimeSelection }: RestartSandboxGatewayOptions = {},
 ): Promise<GatewayRestartResult> {
-  const defaultSupervisorAction = runtimeSelection
-    ? refuseHostLocalSupervisorForSelectedRuntime
-    : executeGatewaySupervisorAction;
   return withSandboxLifecycleLock(sandboxName, () =>
     restartSandboxGatewayWithDeps(sandboxName, {
       quiet,
@@ -963,7 +965,6 @@ export async function restartSandboxGateway(
         getSessionAgent: agentRuntime.getSessionAgent,
         getSandbox: registry.getSandbox,
         resolveSandboxDashboardPort,
-        requestGatewaySupervisorAction: defaultSupervisorAction,
         executeSandboxExecCommand: (name, command, timeout) =>
           executeSandboxExecCommand(
             name,
@@ -1519,7 +1520,10 @@ async function recoverUnhealthyDashboardForward(
     };
   }
   return {
-    recovered: await ensureSandboxPortForwardImpl(sandboxName, { isWsl, runtimeSelection }),
+    recovered: await ensureSandboxPortForwardImpl(sandboxName, {
+      isWsl,
+      runtimeSelection,
+    }),
     failureDetail: "the primary dashboard/API host forward could not be re-established",
   };
 }
@@ -1601,7 +1605,12 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl(sandboxName, runtimeSelection),
   );
   if (running === null) {
-    return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
+    return {
+      checked: false,
+      wasRunning: null,
+      recovered: false,
+      forwardRecovered: false,
+    };
   }
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
   if (running) {
@@ -1639,8 +1648,14 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         }),
       );
       const auxiliaryResults = [
-        { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
-        { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
+        {
+          label: "the Hermes dashboard host forward",
+          recovered: dashboardForwardRecovered,
+        },
+        {
+          label: "the messaging webhook host forward",
+          recovered: messagingForwardRecovered,
+        },
         {
           label: "one or more agent-declared host forwards",
           recovered: declaredForwardsRecovered,
@@ -1693,12 +1708,24 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
     const declaredForwardsRecovered = await measureAsync("forward", () =>
-      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
+      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
+        quiet,
+        runtimeSelection,
+      }),
     );
     const auxiliaryResults = [
-      { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
-      { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
-      { label: "one or more agent-declared host forwards", recovered: declaredForwardsRecovered },
+      {
+        label: "the Hermes dashboard host forward",
+        recovered: dashboardForwardRecovered,
+      },
+      {
+        label: "the messaging webhook host forward",
+        recovered: messagingForwardRecovered,
+      },
+      {
+        label: "one or more agent-declared host forwards",
+        recovered: declaredForwardsRecovered,
+      },
     ];
     const auxiliaryFailureDetail = auxiliaryRecoveryFailureDetail(auxiliaryResults);
     if (auxiliaryFailureDetail !== null) {
@@ -1766,7 +1793,10 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       result: T,
     ): T | (T & { managedControlCompletion: ManagedGatewayControlCompletion }) =>
       recovery.kind === "managed" && recovery.managedControlCompletion
-        ? { ...result, managedControlCompletion: recovery.managedControlCompletion }
+        ? {
+            ...result,
+            managedControlCompletion: recovery.managedControlCompletion,
+          }
         : result;
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
@@ -1823,7 +1853,10 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
           ? await waitForRecreatedSandboxOpenShellReadyResult(sandboxName, readinessOptions)
           : (await waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, readinessOptions))
             ? ({ ready: true } as const)
-            : ({ failure: "openshell-readiness-failure", ready: false } as const);
+            : ({
+                failure: "openshell-readiness-failure",
+                ready: false,
+              } as const);
       return readiness.ready
         ? null
         : recreatedSandboxOpenShellReadinessFailureDetail(
@@ -1856,12 +1889,24 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
     const declaredForwardsRecovered = await measureAsync("forward", () =>
-      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
+      recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
+        quiet,
+        runtimeSelection,
+      }),
     );
     const auxiliaryResults = [
-      { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
-      { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
-      { label: "one or more agent-declared host forwards", recovered: declaredForwardsRecovered },
+      {
+        label: "the Hermes dashboard host forward",
+        recovered: dashboardForwardRecovered,
+      },
+      {
+        label: "the messaging webhook host forward",
+        recovered: messagingForwardRecovered,
+      },
+      {
+        label: "one or more agent-declared host forwards",
+        recovered: declaredForwardsRecovered,
+      },
     ];
     const auxiliaryFailureDetail = auxiliaryRecoveryFailureDetail(auxiliaryResults);
     if (!quiet) {
@@ -1911,7 +1956,12 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
   }
 
   onRecoveryFailureLayer?.(managedRecoveryFailureLayer, managedRecoveryFailureDetail ?? undefined);
-  return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
+  return {
+    checked: true,
+    wasRunning: false,
+    recovered: false,
+    forwardRecovered: false,
+  };
 }
 
 export async function checkAndRecoverSandboxProcesses(

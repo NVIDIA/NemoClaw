@@ -3000,8 +3000,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # macOS VM and OpenShell-managed startup run this entrypoint as the sandbox
   # user. In that mode the strict /etc hash cannot remain a root-owned trust
   # anchor, so use the same locked-aware mutable verifier as OpenClaw. Repeat
-  # this preparation before every automatic respawn so a stopped gateway never
-  # relaunches with stale or boundary-unsafe runtime inputs.
+  # this preparation before the native gateway reads runtime inputs.
   prepare_hermes_nonroot_runtime || exit 1
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then

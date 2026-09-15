@@ -31,7 +31,6 @@ import {
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
-import { executeGatewaySupervisorAction } from "./runtime/hermes-lifecycle";
 import {
   type McpRebuildPreparation,
   postRestoreCompleted,
@@ -188,15 +187,10 @@ export async function runRebuildPostRestorePhase(
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
   // Rebuild freezes the OpenShell target before deletion and revalidates the
-  // recreated registry binding above. That exact binding can safely authorize
-  // the provider-scoped root controller while every OpenShell operation stays
-  // pinned to the selected runtime. The ordinary gateway restart command keeps
-  // its fail-closed selected-runtime fence.
+  // recreated registry binding above. Native restart and health checks remain
+  // pinned to that selected runtime.
   const hermesPostRestoreGatewayDeps = mcpRuntimeSelection
     ? {
-        ...(targetAgentName === "hermes"
-          ? { frozenTargetGatewaySupervisorAction: executeGatewaySupervisorAction }
-          : {}),
         runtimeSelection: mcpRuntimeSelection,
       }
     : {};

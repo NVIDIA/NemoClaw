@@ -76,12 +76,6 @@ export type GatewayRestartResult =
 
 type SandboxAgentLookup = (sandboxName: string) => { agent?: string | null } | null | undefined;
 
-type SupervisorAction = (
-  sandboxName: string,
-  action: "restart" | "recover" | "probe",
-  timeout?: number,
-) => GatewayRestartCommandResult | null;
-
 type SandboxExec = (
   sandboxName: string,
   command: string,
@@ -105,7 +99,6 @@ export type GatewayRestartDeps = {
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
-  requestGatewaySupervisorAction: SupervisorAction;
   executeSandboxExecCommand: SandboxExec;
   waitForRecoveredSandboxGateway: (
     sandboxName: string,
@@ -231,7 +224,10 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     };
   }
   if (output.includes(MARKERS.SECRET_BOUNDARY_REFUSED)) {
-    return { layer: "secret-boundary refusal", detail: detail || "boundary refused" };
+    return {
+      layer: "secret-boundary refusal",
+      detail: detail || "boundary refused",
+    };
   }
   if (
     output.includes(MARKERS.GATEWAY_UNSAFE_CONFIG_PATH) ||
@@ -239,7 +235,10 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     output.includes(MARKERS.HERMES_RUNTIME_CONFIG_GUARD_MISSING) ||
     output.includes(MARKERS.SECRET_BOUNDARY_VALIDATOR_MISSING)
   ) {
-    return { layer: "unsafe config path", detail: detail || "unsafe config path" };
+    return {
+      layer: "unsafe config path",
+      detail: detail || "unsafe config path",
+    };
   }
   // A quarantined supervisor is the strictly more specific and terminal fact:
   // it stops attempting relaunch entirely, so the controller then reports the
@@ -269,9 +268,15 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     };
   }
   if (output.includes("GATEWAY_HEALTH_TIMEOUT") || output.includes("SUPERVISOR_TIMEOUT")) {
-    return { layer: "health timeout", detail: detail || "gateway health timeout" };
+    return {
+      layer: "health timeout",
+      detail: detail || "gateway health timeout",
+    };
   }
-  return { layer: "launch failure", detail: detail || `restart exited ${result.status}` };
+  return {
+    layer: "launch failure",
+    detail: detail || `restart exited ${result.status}`,
+  };
 }
 
 export function isGatewayTerminalRepairLayer(
@@ -476,9 +481,18 @@ export async function restartSandboxGatewayWithDeps(
     { quiet },
   );
   const auxiliaryFailureDetail = failedAuxiliaryRecoveryDetail([
-    { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
-    { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
-    { label: "one or more agent-declared host forwards", recovered: declaredForwardsRecovered },
+    {
+      label: "the Hermes dashboard host forward",
+      recovered: dashboardForwardRecovered,
+    },
+    {
+      label: "the messaging webhook host forward",
+      recovered: messagingForwardRecovered,
+    },
+    {
+      label: "one or more agent-declared host forwards",
+      recovered: declaredForwardsRecovered,
+    },
   ]);
 
   if (!forwardRecovered) {
@@ -489,7 +503,11 @@ export async function restartSandboxGatewayWithDeps(
   }
   if (auxiliaryFailureDetail !== null) {
     printGatewayRestartFailure(sandboxName, "forward recovery failure", auxiliaryFailureDetail);
-    return { ok: false, failureLayer: "forward recovery failure", detail: auxiliaryFailureDetail };
+    return {
+      ok: false,
+      failureLayer: "forward recovery failure",
+      detail: auxiliaryFailureDetail,
+    };
   }
 
   if (!quiet) {

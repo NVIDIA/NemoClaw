@@ -80,7 +80,6 @@ function runRefreshBlock(
   hashRefreshState: string;
   preRefreshState: string;
   registryState: string;
-  startupContinueState: string;
   tmpDir: string;
 } {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-refresh-"));
@@ -92,7 +91,6 @@ function runRefreshBlock(
   const hashRefreshState = path.join(tmpDir, "hash-refresh-state.txt");
   const preRefreshState = path.join(tmpDir, "registry-state.pre.txt");
   const registryState = path.join(tmpDir, "registry-state.txt");
-  const startupContinueState = path.join(tmpDir, "startup-continue-state.txt");
   const readyCounter = path.join(tmpDir, "ready-counter");
   fs.writeFileSync(
     registryState,
@@ -179,8 +177,6 @@ function runRefreshBlock(
     "GATEWAY_LOG_PERSIST_PID_START_IDENTITY=",
     "GATEWAY_PID=0",
     "GATEWAY_PID_START_IDENTITY=",
-    "GATEWAY_WATCHDOG_PID=",
-    "GATEWAY_WATCHDOG_PID_START_IDENTITY=",
     'gateway_control_pid_is_live() { case "$1" in ""|0|1|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }',
     opts.normalizationFails
       ? "normalize_mutable_config_perms() { return 1; }"
@@ -188,7 +184,6 @@ function runRefreshBlock(
         ? `normalize_mutable_config_perms() { chmod 660 ${JSON.stringify(registryState)}; }`
         : "normalize_mutable_config_perms() { :; }",
     `ensure_mutable_openclaw_config_hash() { cp ${JSON.stringify(registryState)} ${JSON.stringify(hashRefreshState)}; }`,
-    `start_gateway_serving_watchdog() { if [ -f ${JSON.stringify(hashRefreshState)} ]; then printf stable; else printf raced; fi > ${JSON.stringify(startupContinueState)}; }`,
     block,
   ].join("\n");
 
@@ -209,7 +204,6 @@ function runRefreshBlock(
     hashRefreshState,
     preRefreshState,
     registryState,
-    startupContinueState,
     tmpDir,
   };
 }
@@ -239,7 +233,10 @@ describe("plugin refresh log preparation", () => {
         { mode: 0o755 },
       );
 
-      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("refusing to use symlinked plugin-refresh log");
       expect(fs.readFileSync(sensitiveTarget, "utf-8")).toBe("do not truncate");
@@ -270,7 +267,10 @@ describe("plugin refresh log preparation", () => {
         { mode: 0o755 },
       );
 
-      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("refusing to use non-regular plugin-refresh log");
     } finally {
@@ -304,7 +304,10 @@ describe("plugin refresh log preparation", () => {
         { mode: 0o755 },
       );
 
-      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fs.lstatSync(refreshLog).isSymbolicLink()).toBe(false);
       expect((fs.statSync(refreshLog).mode & 0o777).toString(8)).toBe("600");
@@ -463,7 +466,9 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
     // seconds to start serving. The loop must keep trying, then refresh once
     // ready. Setting readiness at the 3rd probe checks the loop is actually
     // looping rather than refreshing on the first iteration regardless.
-    const { result, refreshLog, callLog, tmpDir } = runRefreshBlock({ gatewayReadyAfter: 3 });
+    const { result, refreshLog, callLog, tmpDir } = runRefreshBlock({
+      gatewayReadyAfter: 3,
+    });
     try {
       expect(result.status).toBe(0);
       expect(fs.readFileSync(refreshLog, "utf-8")).toBe("refreshed");
