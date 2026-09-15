@@ -37,13 +37,14 @@ const DEFAULT_PRIVILEGED_SANDBOX_COMMAND_TIMEOUT_MS = 15_000;
 export function executePortableGatewaySupervisorAction(
   sandboxName: string,
   request: Parameters<typeof executeHermesPortableGatewaySupervisorAction>[2],
+  env?: NodeJS.ProcessEnv,
 ) {
   const entry = registry.getSandbox(sandboxName);
   return executeHermesPortableGatewaySupervisorAction(
     sandboxName,
     entry?.gatewayName ? { ...entry, gatewayName: entry.gatewayName } : null,
     request,
-    { readRegistry: registry.getSandbox },
+    { readRegistry: registry.getSandbox, ...(env ? { env } : {}) },
   );
 }
 

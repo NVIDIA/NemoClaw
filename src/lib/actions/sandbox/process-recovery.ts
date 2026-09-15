@@ -276,16 +276,16 @@ function executeGatewaySupervisorActionPinned(
   action: "restart" | "recover" | "probe",
   timeout: number,
   expectedContainerId?: string,
+  portableEnvironment?: NodeJS.ProcessEnv,
 ): ManagedGatewaySupervisorActionResult | null {
   const nonce = randomBytes(32).toString("hex");
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
-      const portableResult = executePortableGatewaySupervisorAction(sandboxName, {
-        action,
-        nonce,
-        timeoutMs: timeout,
-        expectedContainerId,
-      });
+      const portableResult = executePortableGatewaySupervisorAction(
+        sandboxName,
+        { action, nonce, timeoutMs: timeout, expectedContainerId },
+        portableEnvironment,
+      );
       if (portableResult) {
         if (portableResult.error) return null;
         return {
@@ -293,6 +293,9 @@ function executeGatewaySupervisorActionPinned(
           stdout: portableResult.stdout.trim(),
           stderr: portableResult.stderr.trim(),
         };
+      }
+      if (portableEnvironment) {
+        throw new Error("Hermes portable supervisor receipt is unavailable");
       }
       const targetContainerId =
         expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
@@ -1706,6 +1709,40 @@ async function recoverUnhealthyDashboardForward(
   };
 }
 
+function bindPortableSupervisorEnvironment(
+  portableSupervisorEnvironment: NodeJS.ProcessEnv | undefined,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  requestGatewaySupervisorAction: typeof executeGatewaySupervisorAction,
+  requestPinnedGatewaySupervisorAction: RequestPinnedGatewaySupervisorAction,
+) {
+  if (portableSupervisorEnvironment) {
+    if (runtimeSelection) {
+      throw new Error("Portable supervisor environment cannot control a selected remote runtime");
+    }
+    if (requestGatewaySupervisorAction === executeGatewaySupervisorAction) {
+      requestGatewaySupervisorAction = (name, action, timeout = 210000) =>
+        executeGatewaySupervisorActionPinned(
+          name,
+          action,
+          timeout,
+          undefined,
+          portableSupervisorEnvironment,
+        );
+    }
+    if (requestPinnedGatewaySupervisorAction === executeGatewaySupervisorActionPinned) {
+      requestPinnedGatewaySupervisorAction = (name, action, timeout, expected) =>
+        executeGatewaySupervisorActionPinned(
+          name,
+          action,
+          timeout,
+          expected,
+          portableSupervisorEnvironment,
+        );
+    }
+  }
+  return { requestGatewaySupervisorAction, requestPinnedGatewaySupervisorAction };
+}
+
 /**
  * Detect and recover from a sandbox that survived a gateway restart but
  * whose OpenClaw processes are not running. Also re-establishes the
@@ -1722,6 +1759,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
   sandboxName: string,
   {
     quiet = false,
+    portableSupervisorEnvironment,
     requestGatewaySupervisorAction = executeGatewaySupervisorAction,
     requestPinnedGatewaySupervisorAction = executeGatewaySupervisorActionPinned,
     relaunchManagedSupervisorSessionImpl = relaunchManagedSupervisorSession,
@@ -1736,6 +1774,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     runtimeSelection,
   }: {
     quiet?: boolean;
+    portableSupervisorEnvironment?: NodeJS.ProcessEnv;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
@@ -1753,6 +1792,13 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ) {
+  ({ requestGatewaySupervisorAction, requestPinnedGatewaySupervisorAction } =
+    bindPortableSupervisorEnvironment(
+      portableSupervisorEnvironment,
+      runtimeSelection,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+    ));
   const measure = <T>(stage: "processes" | "forward", operation: () => T): T =>
     probeTiming ? probeTiming.measure(stage, operation) : operation();
   const measureAsync = <T>(
@@ -2224,6 +2270,7 @@ export async function checkAndRecoverSandboxProcesses(
   sandboxName: string,
   options: {
     quiet?: boolean;
+    portableSupervisorEnvironment?: NodeJS.ProcessEnv;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;

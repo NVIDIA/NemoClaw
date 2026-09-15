@@ -9,6 +9,7 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as wait from "../../core/wait";
 import * as registry from "../../state/registry";
+import * as privilegedExec from "../../sandbox/privileged-exec";
 import * as forwardHealth from "./forward-health";
 import {
   checkAndRecoverSandboxProcesses,
@@ -64,6 +65,57 @@ afterEach(() => {
 });
 
 describe("checkAndRecoverSandboxProcesses managed startup", () => {
+  it("does not fall back to Docker when scoped Hermes receipt control is absent", async () => {
+    mockGatewaySandbox("fresh-hermes", "hermes");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(privilegedExec, "executePortableGatewaySupervisorAction").mockReturnValue(null);
+    const discover = vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget");
+    await expect(
+      checkAndRecoverSandboxProcesses("fresh-hermes", {
+        portableSupervisorEnvironment: { HOME: "/home/kiosk" },
+        isSandboxGatewayRunningImpl: async () => true,
+      }),
+    ).resolves.toMatchObject({ secretBoundaryRefused: true });
+    expect(discover).not.toHaveBeenCalled();
+  });
+  it("rejects a portable supervisor environment for a selected remote runtime", async () => {
+    const request = vi.spyOn(privilegedExec, "executePortableGatewaySupervisorAction");
+    await expect(
+      checkAndRecoverSandboxProcesses("remote-hermes", {
+        portableSupervisorEnvironment: { HOME: "/home/kiosk" },
+        runtimeSelection: { gatewayName: "remote", workspace: "default" },
+      }),
+    ).rejects.toThrow("cannot control a selected remote runtime");
+    expect(request).not.toHaveBeenCalled();
+  });
+  it("uses the onboarding environment for Hermes control and preserves validator refusal", async () => {
+    mockGatewaySandbox("fresh-hermes", "hermes");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const request = vi
+      .spyOn(privilegedExec, "executePortableGatewaySupervisorAction")
+      .mockReturnValue({
+        status: 1,
+        stdout: "",
+        stderr: "SECRET_BOUNDARY_REFUSED",
+      });
+    const environment = { HOME: "/home/kiosk", PATH: "/usr/bin" };
+    await expect(
+      checkAndRecoverSandboxProcesses("fresh-hermes", {
+        quiet: true,
+        portableSupervisorEnvironment: environment,
+        isSandboxGatewayRunningImpl: async () => true,
+      }),
+    ).resolves.toMatchObject({
+      checked: true,
+      secretBoundaryRefused: true,
+      secretBoundaryReason: "raw-secret",
+    });
+    expect(request).toHaveBeenCalledWith(
+      "fresh-hermes",
+      expect.objectContaining({ action: "recover" }),
+      environment,
+    );
+  });
   it.each([
     ["SUPERVISOR_NOT_RUNNING", false],
     ["SUPERVISOR_DISCOVERY_PENDING", false],

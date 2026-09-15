@@ -766,6 +766,31 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
 describe("finalization process-recovery refusal propagation", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("passes the scope-validated portable environment to process recovery", async () => {
+    const recover = vi.fn(async () => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: false,
+    }));
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: recover,
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    const environment = { HOME: "/home/kiosk", PATH: "/usr/bin" };
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
+        "fresh-hermes",
+        { quiet: true },
+        environment,
+      ),
+    ).resolves.toBe(true);
+    expect(recover).toHaveBeenCalledExactlyOnceWith("fresh-hermes", {
+      quiet: true,
+      portableSupervisorEnvironment: environment,
+    });
+  });
+
   it("pauses when process inspection cannot complete (#11758)", async () => {
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: vi.fn(async () => ({
