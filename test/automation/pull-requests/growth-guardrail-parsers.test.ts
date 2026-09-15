@@ -24,9 +24,11 @@ function fixtureDiff(
   files: GrowthGuardrailDiff["files"],
   base: Readonly<Record<string, string>>,
   head: Readonly<Record<string, string>>,
+  pullRequestNumber: number | null = null,
 ): GrowthGuardrailDiff {
   return {
     files,
+    pullRequestNumber,
     /**
      * Return each requested base-revision fixture file.
      *
@@ -198,6 +200,83 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
   }
 
   it("allows the root Dockerfile budget to shrink", allowDockerfileBudgetShrinkage);
+
+  it("allows the trusted-base Dockerfile ceiling only (#11105)", async () => {
+    const policy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [{ pullRequest: 11105, maxLines: 4, maxBytes: 51 }],
+    });
+    const files = [{ filename: "Dockerfile", status: "modified" }] as const;
+    const base = {
+      Dockerfile: "FROM scratch\nRUN true\n",
+      "ci/dockerfile-growth-exceptions.json": policy,
+    };
+    const head = {
+      Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n",
+    };
+
+    expect(await dockerfileBudgetGrowthViolations(fixtureDiff(files, base, head, 11105))).toEqual(
+      [],
+    );
+    expect(await dockerfileBudgetGrowthViolations(fixtureDiff(files, base, head, 11106))).toEqual([
+      "Dockerfile line budget increased from 2 to 4",
+      "Dockerfile byte budget increased from 22 to 51",
+    ]);
+  });
+
+  it("rejects either approved Dockerfile ceiling when exceeded (#11105)", async () => {
+    const policy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [{ pullRequest: 11105, maxLines: 3, maxBytes: 40 }],
+    });
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      {
+        Dockerfile: "FROM scratch\nRUN true\n",
+        "ci/dockerfile-growth-exceptions.json": policy,
+      },
+      { Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n" },
+      11105,
+    );
+
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile line budget exceeded the PR #11105 maximum of 3 with 4",
+      "Dockerfile byte budget exceeded the PR #11105 maximum of 40 with 51",
+    ]);
+  });
+
+  it("does not let a candidate revision add its own Dockerfile exception", async () => {
+    const candidatePolicy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [{ pullRequest: 11106, maxLines: 4, maxBytes: 51 }],
+    });
+    const diff = fixtureDiff(
+      [
+        { filename: "Dockerfile", status: "modified" },
+        {
+          filename: "ci/dockerfile-growth-exceptions.json",
+          status: "modified",
+        },
+      ],
+      {
+        Dockerfile: "FROM scratch\nRUN true\n",
+        "ci/dockerfile-growth-exceptions.json": JSON.stringify({
+          schemaVersion: 1,
+          exceptions: [],
+        }),
+      },
+      {
+        Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n",
+        "ci/dockerfile-growth-exceptions.json": candidatePolicy,
+      },
+      11106,
+    );
+
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile line budget increased from 2 to 4",
+      "Dockerfile byte budget increased from 22 to 51",
+    ]);
+  });
 
   /** The remediation text records the escalation path for intentional growth. */
   function requireDockerfileBudgetDecision(): void {
