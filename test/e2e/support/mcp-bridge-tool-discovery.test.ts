@@ -16,6 +16,7 @@ import {
   startCompatibleMock,
 } from "../live/mcp-bridge-servers.ts";
 import {
+  assertAuthenticatedMcpDiscovery,
   assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpToolDiscovery,
   hasSuccessfulAuthenticatedMcpDiscovery,
@@ -211,6 +212,29 @@ function recordToolResult(
 }
 
 describe("authenticated MCP rediscovery evidence", () => {
+  it("accepts status discovery after the credential control request", async () => {
+    const fakeMcp = fakeDiscoveryServer([
+      request("initialize", {
+        auth: "",
+        sessionId: "",
+        protocolVersion: "",
+        responseStatus: 401,
+        responseHasResult: false,
+      }),
+      successfulInitialize(),
+      request("notifications/initialized"),
+      request("tools/list"),
+    ]);
+
+    await expect(
+      assertAuthenticatedMcpDiscovery(fakeMcp, {
+        requestOffset: 0,
+        expectedSecret: EXPECTED_SECRET,
+        label: "trusted-private status discovery",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("accepts successful tool discovery in one negotiated session", () => {
     expect(
       hasSuccessfulAuthenticatedMcpDiscovery(
