@@ -260,14 +260,16 @@ impl OpenShell {
         // Upstream deletion is name-addressed without an ID/version condition.
         // Verify immediately before sending; never retry an ambiguous mutation.
         let result = match kind {
-            "sandbox" => self
-                .grpc()
-                .delete_sandbox(self.request(proto::DeleteSandboxRequest {
+            "sandbox" => {
+                let mut request = self.request(proto::DeleteSandboxRequest {
                     name: name.into(),
                     workspace: workspace.into(),
-                }))
-                .await
-                .map(|_| ()),
+                });
+                // Podman's default graceful stop is 45 seconds. Allow cleanup
+                // after that stop without retrying an ambiguous deletion.
+                request.set_timeout(std::time::Duration::from_secs(90));
+                self.grpc().delete_sandbox(request).await.map(|_| ())
+            }
             "provider" => self
                 .grpc()
                 .delete_provider(self.request(proto::DeleteProviderRequest {

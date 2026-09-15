@@ -42,7 +42,7 @@ impl OpenShell {
         let mut endpoint = Channel::from_shared(gateway.endpoint.clone())
             .map_err(|_| ObservationError::Transport)?
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30));
+            .timeout(Duration::from_secs(90));
         if gateway.endpoint.starts_with("https:") {
             let mut tls = ClientTlsConfig::new().with_native_roots();
             if let Some(references) = &gateway.tls {

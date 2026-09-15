@@ -263,3 +263,28 @@ async fn unreachable_remote_inference_fails_the_sandbox_probe_without_recreation
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     deployment.destroy(&cancel).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; exercises a slow graceful sandbox stop"]
+async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    deployment.apply(&document, &cancel).await.unwrap();
+    fixture.state.lock().unwrap().delete_delay = std::time::Duration::from_secs(31);
+    assert_eq!(
+        deployment.destroy(&cancel).await.unwrap().outcome,
+        Outcome::Destroyed
+    );
+    let state = fixture.state.lock().unwrap();
+    assert!(state.sandboxes.is_empty());
+    assert_eq!(state.workspaces.len(), 1); // Destroy retains the owned workspace.
+    assert_eq!(state.delete_calls, 1);
+}

@@ -27,6 +27,8 @@ pub struct State {
     pub conditional_updates: usize,
     pub lose_create: bool,
     pub lose_delete: bool,
+    pub delete_delay: std::time::Duration,
+    pub delete_calls: usize,
     pub fail_read: Option<(&'static str, tonic::Code)>,
 }
 impl State {
@@ -172,6 +174,12 @@ impl tower::Service<http::Request<Body>> for Service {
                 }
                 "/openshell.v1.OpenShell/GetSandbox" => unary(request, state, get_sandbox).await,
                 "/openshell.v1.OpenShell/DeleteSandbox" => {
+                    let delay = {
+                        let mut state = state.lock().unwrap();
+                        state.delete_calls += 1;
+                        state.delete_delay
+                    };
+                    tokio::time::sleep(delay).await;
                     unary(request, state, delete_sandbox).await
                 }
                 "/openshell.v1.OpenShell/GetSandboxPolicyStatus" => {
