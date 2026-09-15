@@ -7,6 +7,7 @@ import type { OpenShellGatewayReuseObserver } from "../../adapters/openshell/gat
 
 export interface GatewayRegistrationDeps {
   gatewayName(): string;
+  gatewayPort(): number;
   getDockerDriverGatewayEndpointArg(): string;
   getGatewayLocalEndpoint(): string;
   isLinuxDockerDriverGatewayEnabled(): boolean;
@@ -33,9 +34,12 @@ export function createGatewayRegistration(deps: GatewayRegistrationDeps): Gatewa
       );
     }
     const request = { target: { kind: "named" as const, gatewayName }, runtimeSelection };
-    const existing = await deps.observer.observeGatewayReuse(request);
+    const existing = await deps.observer.observeGatewayReuse({
+      ...request,
+      expectedGatewayPort: deps.gatewayPort(),
+    });
     if (existing.error) return false;
-    if (existing.healthy && existing.namedMetadata) {
+    if (existing.namedMetadata && (existing.healthy || existing.endpointBinding === "match")) {
       const selected = await deps.lifecycle.selectGateway(request);
       if (!selected.ok) return false;
       process.env.OPENSHELL_GATEWAY = gatewayName;

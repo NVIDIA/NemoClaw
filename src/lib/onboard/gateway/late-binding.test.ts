@@ -55,6 +55,7 @@ describe("gateway lifecycle late binding", () => {
       revalidateAuthority,
       ...adapters,
       gatewayName: () => name,
+      gatewayPort: () => 9443,
       getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:9443",
       getGatewayLocalEndpoint: () => "https://127.0.0.1:9443",
       isLinuxDockerDriverGatewayEnabled: () => true,
@@ -63,6 +64,7 @@ describe("gateway lifecycle late binding", () => {
     await expect(registration.registerDockerDriverGatewayEndpoint()).resolves.toBe(true);
     expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "resumed" },
+      expectedGatewayPort: 9443,
     });
     expect(adapters.lifecycle.registerGateway).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "resumed" },
@@ -80,6 +82,7 @@ describe("gateway lifecycle late binding", () => {
       revalidateAuthority,
       ...adapters,
       gatewayName: () => "nemoclaw-8090",
+      gatewayPort: () => 8090,
       getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8090",
       getGatewayLocalEndpoint: () => "https://127.0.0.1:8090",
       isLinuxDockerDriverGatewayEnabled: () => true,
@@ -93,9 +96,60 @@ describe("gateway lifecycle late binding", () => {
       true,
     );
     const request = { target: { kind: "named", gatewayName: "nemoclaw-8090" }, runtimeSelection };
-    expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith(request);
+    expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith({
+      ...request,
+      expectedGatewayPort: 8090,
+    });
     expect(adapters.lifecycle.selectGateway).toHaveBeenCalledWith(request);
     expect(adapters.lifecycle.registerGateway).not.toHaveBeenCalled();
+  });
+
+  it("reuses matching offline metadata while the managed gateway restarts (#11741)", async () => {
+    const adapters = gatewayAdaptersForTest({
+      healthy: false,
+      namedMetadata: true,
+      gatewayReuseState: "stale",
+      endpointBinding: "match",
+    });
+    const registration = createGatewayRegistration({
+      revalidateAuthority: vi.fn(),
+      ...adapters,
+      gatewayName: () => "nemoclaw",
+      gatewayPort: () => 8080,
+      getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+      getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
+      isLinuxDockerDriverGatewayEnabled: () => true,
+    });
+
+    await expect(registration.registerDockerDriverGatewayEndpoint()).resolves.toBe(true);
+
+    expect(adapters.lifecycle.selectGateway).toHaveBeenCalledOnce();
+    expect(adapters.lifecycle.registerGateway).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse offline metadata bound to another managed gateway port (#11741)", async () => {
+    const adapters = gatewayAdaptersForTest({
+      healthy: false,
+      namedMetadata: true,
+      gatewayReuseState: "stale",
+      endpointBinding: "mismatch",
+    });
+    const registration = createGatewayRegistration({
+      revalidateAuthority: vi.fn(),
+      ...adapters,
+      gatewayName: () => "nemoclaw",
+      gatewayPort: () => 8080,
+      getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+      getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
+      isLinuxDockerDriverGatewayEnabled: () => true,
+    });
+
+    await expect(registration.registerDockerDriverGatewayEndpoint()).resolves.toBe(true);
+
+    expect(adapters.lifecycle.registerGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      endpoint: "https://127.0.0.1:8080",
+    });
   });
 
   it.each(["registration", "metadata"] as const)(
@@ -117,6 +171,7 @@ describe("gateway lifecycle late binding", () => {
         revalidateAuthority,
         ...adapters,
         gatewayName: () => "nemoclaw",
+        gatewayPort: () => 8080,
         getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
         getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
         isLinuxDockerDriverGatewayEnabled: () => operation === "registration",

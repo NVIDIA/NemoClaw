@@ -1342,6 +1342,7 @@ const {
 const gatewayRegistration = createGatewayRegistration({
   revalidateAuthority: getGatewayOwner,
   gatewayName: () => GATEWAY_NAME,
+  gatewayPort: () => GATEWAY_PORT,
   getDockerDriverGatewayEndpointArg,
   getGatewayLocalEndpoint,
   isLinuxDockerDriverGatewayEnabled,
