@@ -166,6 +166,10 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     });
     try {
       const result = await runInterruptedUninstall(tmpHome, port, {
+        prepareState: () =>
+          fs.mkdirSync(path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`), {
+            mode: 0o700,
+          }),
         realpathSync: () => {
           throw resolutionFailure;
         },

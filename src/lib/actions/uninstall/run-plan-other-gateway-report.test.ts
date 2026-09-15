@@ -233,7 +233,6 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
         isTty: false,
         kill: vi.fn(() => true),
         log: vi.fn(),
-        realpathSync: (target) => path.resolve(target),
         requireCompleteGatewayProcessCleanup: true,
         rmSync: vi.fn(),
         run: (command, args) =>

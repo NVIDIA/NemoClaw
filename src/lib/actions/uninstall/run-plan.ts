@@ -3621,12 +3621,13 @@ function interruptedUninstallStagingTrustFailure(stat: fs.Stats): string | null 
   return null;
 }
 
+function interruptedUninstallStagingRootForHome(home: string): string {
+  return path.join(home, `${INTERRUPTED_UNINSTALL_STAGING_PREFIX}${String(GATEWAY_PORT)}`);
+}
+
 function interruptedUninstallStagingRoot(paths: UninstallPaths, runtime: UninstallRuntime): string {
   const home = runtime.realpathSync(path.resolve(runtime.env.HOME || os.homedir()));
-  const stagingRoot = path.join(
-    home,
-    `${INTERRUPTED_UNINSTALL_STAGING_PREFIX}${String(GATEWAY_PORT)}`,
-  );
+  const stagingRoot = interruptedUninstallStagingRootForHome(home);
   const sharedStateRoot = path.resolve(path.dirname(paths.managedSwapMarkerPath));
   const relativeToSharedRoot = path.relative(sharedStateRoot, stagingRoot);
   if (
@@ -3791,6 +3792,19 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
   runtime: UninstallRuntime,
   preservedEntries: readonly string[],
 ): boolean {
+  let recoveryRoots: string[];
+  try {
+    recoveryRoots = interruptedUninstallRecoveryRoots(
+      interruptedUninstallStagingRootForHome(path.resolve(runtime.env.HOME || os.homedir())),
+    );
+  } catch (error) {
+    runtime.warn(
+      `Unable to inspect interrupted-uninstall recovery state before cleanup: ${formatError(error)}. The selected state was preserved.`,
+    );
+    return false;
+  }
+  if (recoveryRoots.length === 0) return true;
+
   let stagingRoot: string;
   try {
     stagingRoot = interruptedUninstallStagingRoot(paths, runtime);
@@ -3800,7 +3814,6 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
     );
     return false;
   }
-  let recoveryRoots: string[];
   try {
     recoveryRoots = interruptedUninstallRecoveryRoots(stagingRoot);
   } catch (error) {
@@ -3809,7 +3822,12 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
     );
     return false;
   }
-  if (recoveryRoots.length === 0) return true;
+  if (recoveryRoots.length === 0) {
+    runtime.warn(
+      "Interrupted-uninstall recovery state changed while its home was resolved. The selected state was preserved.",
+    );
+    return false;
+  }
 
   let migrationLock: GatewayStateMigrationLockHandle;
   try {
