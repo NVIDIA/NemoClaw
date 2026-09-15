@@ -604,3 +604,51 @@ describe("generation-safe registry lock removal", () => {
     expect(quarantineDirectories(test.lockDir)).toEqual([]);
   });
 });
+
+describe("asynchronous registry authority", () => {
+  it("holds the exact process lock through an awaited probe", async () => {
+    const test = fixture("nemoclaw-await-registry-");
+    let complete!: () => void;
+    const probe = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const operation = withProcessBoundRegistryLockAtAsync(
+      test.registryFile,
+      async () => {
+        await probe;
+        expect(fs.existsSync(test.lockDir)).toBe(true);
+        return "observed";
+      },
+      exactDeps(),
+    );
+    expect(fs.existsSync(test.lockDir)).toBe(true);
+    expect(() =>
+      withProcessBoundRegistryLockAt(
+        test.registryFile,
+        () => undefined,
+        exactDeps({ maxRetries: 1, wait: () => undefined }),
+      ),
+    ).toThrow(ProcessBoundLockContentionError);
+    complete();
+    await expect(operation).resolves.toBe("observed");
+    expect(fs.existsSync(test.lockDir)).toBe(false);
+  });
+
+  it("releases registry authority when an awaited probe rejects", async () => {
+    const test = fixture("nemoclaw-rejected-registry-");
+    await expect(
+      withProcessBoundRegistryLockAtAsync(
+        test.registryFile,
+        async () => {
+          await Promise.resolve();
+          throw new Error("probe failed");
+        },
+        exactDeps(),
+      ),
+    ).rejects.toThrow("probe failed");
+    expect(fs.existsSync(test.lockDir)).toBe(false);
+    expect(withProcessBoundRegistryLockAt(test.registryFile, () => "reacquired", exactDeps())).toBe(
+      "reacquired",
+    );
+  });
+});
