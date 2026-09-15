@@ -16,7 +16,7 @@ import urllib.request
 import subprocess
 from interfaces import dashboard, gateway_settings, token
 from fabric import openclaw_execution
-from openclaw_features import native_features, features_match
+from openclaw_features import native_features, features_match, search_agents
 
 
 from nemo_fabric_adapter_contract.models import AgentRunError, AgentRunResult, AgentRunStatus
@@ -69,6 +69,12 @@ def agent_entries(name, inference):
             'workspace': '/sandbox/workspace' if agent_name == name else f'/sandbox/workspaces/{agent_name}',
             **({'tools': {'allow': ['read']}} if agent.get('tools') == {'allow': ['read']} else {}),
         }
+    selected = search_agents(inference)
+    if selected:
+        for agent_name, entry in entries.items():
+            if 'tools' not in entry:
+                entry['tools'] = ({'alsoAllow': ['web_search']} if agent_name in selected
+                                  else {'deny': ['web_search']})
     return entries
 
 
@@ -95,7 +101,9 @@ def native_configuration(name, inference=None):
         'cron': {'enabled': False},
         'update': {'checkOnStart': False, 'auto': {'enabled': False}},
         'tools': {'profile': 'coding', 'exec': {'host': 'gateway', 'mode': 'full'},
-                  'toolSearch': tool_search(inference)},
+                  'toolSearch': tool_search(inference),
+                  **({'web': {'search': {'enabled': True, 'provider': 'brave'}}}
+                     if search_agents(inference) else {})},
     }
 
     if inference is not None and 'agents' in inference:

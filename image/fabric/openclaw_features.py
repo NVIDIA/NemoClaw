@@ -5,7 +5,7 @@ import math
 import re
 
 
-def native_features(inference):
+def tracing_features(inference):
     observability = (inference or {}).get('observability')
     if observability is None:
         return {}
@@ -26,13 +26,45 @@ def native_features(inference):
     }
 
 
+
+def search_agents(inference):
+    search = (inference or {}).get('webSearch')
+    if search is None:
+        return []
+    agents = {a['name']: a for a in inference.get('agents', [])}
+    if (not isinstance(search, dict) or set(search) != {'provider', 'agentRefs', 'credential'}
+            or search['provider'] != 'brave' or not isinstance(search['agentRefs'], list)
+            or not search['agentRefs'] or any(not isinstance(n, str) for n in search['agentRefs'])
+            or len(set(search['agentRefs'])) != len(search['agentRefs'])
+            or any(n not in agents or agents[n].get('tools') == {'allow': ['read']}
+                   for n in search['agentRefs'])
+            or not isinstance(search['credential'], dict) or set(search['credential']) != {'env'}
+            or not isinstance(search['credential']['env'], str)
+            or not re.fullmatch(r'[A-Z_][A-Z0-9_]*', search['credential']['env'])):
+        raise ValueError('invalid Brave search configuration')
+    return search['agentRefs']
+
+
+def native_features(inference):
+    result = tracing_features(inference)
+    if search_agents(inference):
+        plugins = result.setdefault('plugins', {'allow': [], 'entries': {}})
+        plugins['allow'].append('brave')
+        plugins['load'] = {'paths': ['/opt/nemoclaw/plugins/brave']}
+        plugins['entries']['brave'] = {'enabled': True, 'config': {'webSearch': {
+            'apiKey': {'source': 'env', 'provider': 'default', 'id': 'BRAVE_API_KEY'}}}}
+    return result
+
+
 def features_match(actual, inference):
     expected = native_features(inference)
     if not expected:
         return True
     plugins = actual.get('plugins', {})
-    return (actual.get('diagnostics') == expected['diagnostics']
+    return (('diagnostics' not in expected or actual.get('diagnostics') == expected['diagnostics'])
             and plugins.get('enabled', True) is True
+            and all(path in plugins.get('load', {}).get('paths', [])
+                    for path in expected['plugins'].get('load', {}).get('paths', []))
             and all(name in plugins.get('allow', []) and name not in plugins.get('deny', [])
                     and plugins.get('entries', {}).get(name) == entry
                     for name, entry in expected['plugins']['entries'].items()))

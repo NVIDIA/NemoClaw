@@ -14,6 +14,14 @@ RUN /opt/fabric/bin/pip install --no-index --find-links=/opt/wheels --require-ha
 COPY --from=openclaw /app /app
 COPY --from=openclaw /usr/local/bin/node /usr/local/bin/node
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
+# Matching upstream Brave plugin, unmodified; retain OpenClaw's MIT license.
+ADD --checksum=sha256:2b403a4b2d2be7a793235a458e2d376f38588fd913f41b92e208e8421a2a1617 https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.4.tgz /tmp/brave.tgz
+RUN mkdir -p /opt/nemoclaw/plugins/brave/node_modules \
+    && tar -xzf /tmp/brave.tgz -C /opt/nemoclaw/plugins/brave --strip-components=1 \
+    && ln -s /app /opt/nemoclaw/plugins/brave/node_modules/openclaw \
+    && rm /tmp/brave.tgz
+COPY BRAVE-LICENSE /opt/nemoclaw/plugins/brave/LICENSE
+COPY BRAVE-NOTICE.md /opt/nemoclaw/plugins/brave/NOTICE.md
 COPY openclaw_adapter.py openclaw_features.py openclaw.fabric-adapter.json interfaces.py /opt/nemoclaw/
 COPY fabric.py /opt/nemoclaw/fabric.py
 COPY provenance.json /opt/nemoclaw/provenance.json
