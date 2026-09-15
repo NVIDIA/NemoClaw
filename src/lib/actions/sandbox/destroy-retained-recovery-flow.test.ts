@@ -573,7 +573,8 @@ describe("destroySandbox retained recovery flow", () => {
       expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
         "alpha",
         matchingRecovery.gatewayName,
-        harness.runOpenshellSpy,
+        expect.objectContaining({ selectGateway: expect.any(Function) }),
+        undefined,
       );
       expect(harness.gatewayPinsAtSandboxList).toEqual([matchingRecovery.gatewayName]);
       expect(exitSpy).not.toHaveBeenCalled();

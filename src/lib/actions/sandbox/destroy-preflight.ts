@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
 import os from "node:os";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
@@ -296,7 +297,7 @@ export async function stopModelRouterForDestroyedSandbox(
   return true;
 }
 
-export function prepareSandboxDestroy(
+export async function prepareSandboxDestroy(
   sandboxName: string,
   {
     retainedRecoveryGatewayName,
@@ -305,7 +306,7 @@ export function prepareSandboxDestroy(
     retainedRecoveryGatewayName?: string;
     operationRuntimeSelection?: OpenShellRuntimeSelection;
   } = {},
-): SandboxDestroyPreflight {
+): Promise<SandboxDestroyPreflight> {
   const sandbox = registry.getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { captureOpenshell, runOpenshell } = require("../../adapters/openshell/runtime") as Pick<
@@ -345,7 +346,12 @@ export function prepareSandboxDestroy(
           replaceEnv: true,
         })
     : undefined;
-  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, selectedRunOpenshell);
+  await selectGatewayForSandboxDestroy(
+    sandboxName,
+    cleanupGatewayName,
+    createCliOpenShellGatewayLifecycleFromRunner(selectedRunOpenshell),
+    runtimeSelection,
+  );
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
   const sandboxPresence = classifyDestroySandboxPresence(
