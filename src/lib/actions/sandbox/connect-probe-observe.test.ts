@@ -357,6 +357,24 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("falls back to Docker when OpenShell reports no lifecycle-start status (#8967)", async () => {
+    const harness = createConnectHarness({
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      sandboxLifecycleStartStatus: null,
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    expect(
+      harness.captureOpenshellSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "start",
+      ),
+    ).toHaveLength(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("leaves a running container untouched on probe-only recovery (#8967)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: true, paused: false },
@@ -384,11 +402,23 @@ describe("connectSandbox probe-only observe mode", () => {
 
     // Without this, recover exhausts its readiness timeout on a sandbox that a
     // single lifecycle start would have returned to Ready.
-    expect(
-      harness.captureOpenshellSpy.mock.calls.filter(
-        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "start",
-      ),
-    ).toHaveLength(1);
+    const sandboxInvocations = (subcommand: string) =>
+      harness.captureOpenshellSpy.mock.calls
+        .map((call, index) => ({
+          call,
+          order: harness.captureOpenshellSpy.mock.invocationCallOrder[index]!,
+        }))
+        .filter(
+          ({ call }) =>
+            Array.isArray(call?.[0]) &&
+            (call[0] as string[])[0] === "sandbox" &&
+            (call[0] as string[])[1] === subcommand,
+        );
+    const startInvocations = sandboxInvocations("start");
+    const listInvocations = sandboxInvocations("list");
+    expect(startInvocations).toHaveLength(1);
+    expect(listInvocations.length).toBeGreaterThan(0);
+    expect(startInvocations[0]!.order).toBeLessThan(listInvocations[0]!.order);
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });

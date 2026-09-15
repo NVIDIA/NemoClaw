@@ -518,7 +518,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     const argv = Array.isArray(args) ? args : [];
     if (argv[0] === "sandbox" && argv[1] === "start") {
       return {
-        status: options.sandboxLifecycleStartStatus ?? 0,
+        status:
+          options.sandboxLifecycleStartStatus === undefined
+            ? 0
+            : options.sandboxLifecycleStartStatus,
         output: "",
       };
     }
