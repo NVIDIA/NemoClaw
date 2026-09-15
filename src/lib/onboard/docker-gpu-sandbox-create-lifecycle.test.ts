@@ -581,6 +581,10 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(output).not.toContain(secret);
     expect(output).toContain("Rollback failed: <REDACTED>");
     expect(proofError.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(proofError.message).toContain(
+      "Managed bootstrap rollback requires attention: Rollback failed: <REDACTED>",
+    );
+    expect(proofError.message).not.toContain(secret);
     expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
     expect(rollbackError.stack).toBe("Rollback stack: <REDACTED>");
   });

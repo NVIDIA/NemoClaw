@@ -29,7 +29,10 @@ import {
   type RecreateGpuPatchFn,
   type RecreateStartupPatchFn,
 } from "./docker-startup-command-sandbox-create";
-import { ManagedBootstrapOwnerCleanupRequiredError } from "./managed-bootstrap/adapter";
+import {
+  attachManagedBootstrapRollbackError,
+  ManagedBootstrapOwnerCleanupRequiredError,
+} from "./managed-bootstrap/adapter";
 import type {
   ManagedBootstrapNativeGpuFallbackRollbackOutcome,
   ManagedBootstrapNativeGpuFallbackRollbackRequest,
@@ -291,8 +294,7 @@ export function createDockerGpuSandboxCreatePatch(
 
   const attachRollbackError = (failure: Error, rollbackError: Error): void => {
     redactOnboardError(rollbackError);
-    (failure as Error & { managedBootstrapRollbackError?: unknown }).managedBootstrapRollbackError =
-      rollbackError;
+    attachManagedBootstrapRollbackError(failure, rollbackError);
   };
 
   const reportPatchErrorAndExit = async (): Promise<void> => {
