@@ -68,7 +68,11 @@ function groupExists(pid: number): boolean {
     process.kill(-pid, 0);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    // Darwin can report EPERM while a signalled detached group is being reaped.
+    // Keep waiting for ESRCH; a persistently inaccessible group still fails closed.
+    if (code === "EPERM") return true;
     throw error;
   }
 }
