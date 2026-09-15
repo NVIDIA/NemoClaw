@@ -129,11 +129,34 @@ export function parseCliOpenShellProviderMetadata(
   };
 }
 
-/** Parse one provider's non-secret expiry map from `openshell provider list --output json`. */
-export function parseCliOpenShellProviderCredentialExpirations(
+export type CliOpenShellProviderCredentialState = Readonly<{
+  credentialKeys: readonly string[];
+  credentialExpiresAtMs: Readonly<Record<string, number>>;
+}>;
+
+function parseProviderKeyArray(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_PROVIDER_KEYS) return null;
+  const keys: string[] = [];
+  for (const key of value) {
+    if (
+      typeof key !== "string" ||
+      key.length === 0 ||
+      key.length > MAX_PROVIDER_KEY_LENGTH ||
+      !SAFE_PROVIDER_KEY.test(key) ||
+      keys.includes(key)
+    ) {
+      return null;
+    }
+    keys.push(key);
+  }
+  return Object.freeze(keys);
+}
+
+/** Parse one provider's non-secret credential state from one provider inventory record. */
+export function parseCliOpenShellProviderCredentialState(
   output: string,
   providerName: string,
-): Readonly<Record<string, number>> | null | undefined {
+): CliOpenShellProviderCredentialState | null | undefined {
   if (
     !isValidCliOpenShellProviderIdentifier(providerName) ||
     Buffer.byteLength(output, "utf8") > MAX_PROVIDER_INVENTORY_OUTPUT_BYTES
@@ -164,8 +187,13 @@ export function parseCliOpenShellProviderCredentialExpirations(
   }
   if (matchingProviders.length !== 1) return null;
 
+  const credentialKeys = parseProviderKeyArray(matchingProviders[0].credential_keys);
+  if (!credentialKeys) return null;
+
   const rawExpirations = matchingProviders[0].credential_expires_at_ms;
-  if (rawExpirations === undefined) return Object.freeze({});
+  if (rawExpirations === undefined) {
+    return Object.freeze({ credentialKeys, credentialExpiresAtMs: Object.freeze({}) });
+  }
   if (!rawExpirations || typeof rawExpirations !== "object" || Array.isArray(rawExpirations)) {
     return null;
   }
@@ -186,5 +214,11 @@ export function parseCliOpenShellProviderCredentialExpirations(
     }
     expirations[credentialKey] = expiresAtMs;
   }
-  return Object.freeze(expirations);
+  if (Object.keys(expirations).some((credentialKey) => !credentialKeys.includes(credentialKey))) {
+    return null;
+  }
+  return Object.freeze({
+    credentialKeys,
+    credentialExpiresAtMs: Object.freeze(expirations),
+  });
 }

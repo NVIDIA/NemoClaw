@@ -221,7 +221,7 @@ if (a[0] === "provider" && a[1] === "get") {
   process.exit(0);
 }
 if (a[0] === "provider" && a[1] === "list") {
-  process.stdout.write(${JSON.stringify(JSON.stringify(providerRegistered ? [{ name: provider, credential_expires_at_ms: { [credentialEnv]: opts.credentialExpiresAtMs } }] : []) + "\n")});
+  process.stdout.write(${JSON.stringify(JSON.stringify(providerRegistered ? [{ name: provider, credential_keys: [credentialEnv], credential_expires_at_ms: { [credentialEnv]: opts.credentialExpiresAtMs } }] : []) + "\n")});
   process.exit(0);
 }
 if (a[0] === "provider") process.exit(0);

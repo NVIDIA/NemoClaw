@@ -2961,7 +2961,7 @@ function writeManifest(
   }
 }
 
-export const __test = { writeManifest };
+export const __test = { writeManifest, readManifest };
 
 function readBoundRebuildHandoff(filePath: string): string | null {
   let descriptor: number | null = null;

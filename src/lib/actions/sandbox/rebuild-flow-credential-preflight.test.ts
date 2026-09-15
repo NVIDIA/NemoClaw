@@ -35,12 +35,17 @@ function providerRuntime(
   credentialKeys: Record<string, string> = {},
   credentialExpiresAtMs: Record<string, Record<string, number>> = {},
 ) {
+  const providerCredentialKeys = (provider: string) => [
+    ...new Set([
+      credentialKeys[provider] ?? "NVIDIA_INFERENCE_API_KEY",
+      ...Object.keys(credentialExpiresAtMs[provider] ?? {}),
+    ]),
+  ];
   const describeProvider = (provider: string) => {
-    const credentialEnv = credentialKeys[provider] ?? "NVIDIA_INFERENCE_API_KEY";
     const output = [
       `Name: ${provider}`,
       "Type: openai",
-      `Credential keys: ${credentialEnv}`,
+      `Credential keys: ${providerCredentialKeys(provider).join(", ")}`,
       "Config keys: OPENAI_BASE_URL",
     ].join("\n");
     return { status: 0, output, stdout: output, stderr: "" };
@@ -49,6 +54,7 @@ function providerRuntime(
   const inventoryOutput = JSON.stringify(
     registeredProviders.map((provider) => ({
       name: provider,
+      credential_keys: providerCredentialKeys(provider),
       ...(credentialExpiresAtMs[provider]
         ? { credential_expires_at_ms: credentialExpiresAtMs[provider] }
         : {}),

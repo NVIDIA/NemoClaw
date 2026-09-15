@@ -29,10 +29,12 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
           JSON.stringify([
             {
               name: "other-provider",
+              credential_keys: ["OTHER_API_KEY"],
               credential_expires_at_ms: { OTHER_API_KEY: 999 },
             },
             {
               name: "search-prod",
+              credential_keys: ["TAVILY_API_KEY"],
               credentials: { TAVILY_API_KEY: credentialValue },
               credential_expires_at_ms: { TAVILY_API_KEY: 1_234_567_890 },
             },
@@ -90,7 +92,11 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
         captured(
           0,
           JSON.stringify([
-            { name: "search-prod", credential_expires_at_ms: { TAVILY_API_KEY: 1000 } },
+            {
+              name: "search-prod",
+              credential_keys: ["TAVILY_API_KEY"],
+              credential_expires_at_ms: { TAVILY_API_KEY: 1000 },
+            },
           ]),
         ),
       );
@@ -113,6 +119,38 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
       "--output",
       "json",
     ]);
+  });
+
+  it("uses one inventory record for credential membership and expiration", async () => {
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0, PROVIDER_GET_OUTPUT))
+      .mockReturnValueOnce(
+        captured(
+          0,
+          JSON.stringify([
+            {
+              name: "search-prod",
+              credential_keys: ["OTHER_API_KEY"],
+              credential_expires_at_ms: { OTHER_API_KEY: 0 },
+            },
+          ]),
+        ),
+      );
+
+    const result = await createCliOpenShellProviderAdapter({ run }).getProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+      includeCredentialExpirations: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        credentialKeys: ["OTHER_API_KEY"],
+        credentialExpiresAtMs: { OTHER_API_KEY: 0 },
+      },
+    });
   });
 
   it("stops at the bounded inventory limit when the provider cannot be found", async () => {
@@ -139,20 +177,38 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
     [
       "duplicate target",
       JSON.stringify([
-        { name: "search-prod", credential_expires_at_ms: {} },
-        { name: "search-prod", credential_expires_at_ms: {} },
+        { name: "search-prod", credential_keys: [], credential_expires_at_ms: {} },
+        { name: "search-prod", credential_keys: [], credential_expires_at_ms: {} },
+      ]),
+    ],
+    [
+      "invalid credential keys",
+      JSON.stringify([
+        {
+          name: "search-prod",
+          credential_keys: "TAVILY_API_KEY",
+          credential_expires_at_ms: { TAVILY_API_KEY: 1_000 },
+        },
       ]),
     ],
     [
       "unsafe credential key",
       JSON.stringify([
-        { name: "search-prod", credential_expires_at_ms: { "TAVILY_API_KEY=value": 1_000 } },
+        {
+          name: "search-prod",
+          credential_keys: ["TAVILY_API_KEY"],
+          credential_expires_at_ms: { "TAVILY_API_KEY=value": 1_000 },
+        },
       ]),
     ],
     [
       "unsafe expiry timestamp",
       JSON.stringify([
-        { name: "search-prod", credential_expires_at_ms: { TAVILY_API_KEY: "1000" } },
+        {
+          name: "search-prod",
+          credential_keys: ["TAVILY_API_KEY"],
+          credential_expires_at_ms: { TAVILY_API_KEY: "1000" },
+        },
       ]),
     ],
     [
@@ -160,6 +216,7 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
       JSON.stringify([
         {
           name: "search-prod",
+          credential_keys: ["TAVILY_API_KEY"],
           credential_expires_at_ms: { TAVILY_API_KEY: Number.MAX_SAFE_INTEGER },
         },
       ]),

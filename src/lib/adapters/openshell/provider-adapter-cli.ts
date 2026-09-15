@@ -40,7 +40,7 @@ import {
 } from "./provider-diagnostic-cli";
 import {
   isValidCliOpenShellProviderIdentifier,
-  parseCliOpenShellProviderCredentialExpirations,
+  parseCliOpenShellProviderCredentialState,
   parseCliOpenShellProviderMetadata,
 } from "./provider-metadata-cli";
 import {
@@ -620,13 +620,17 @@ export function createCliOpenShellProviderAdapter(
       );
       const inventoryError = commandError(inventory);
       if (inventoryError) return failure(inventoryError);
-      const credentialExpiresAtMs = parseCliOpenShellProviderCredentialExpirations(
+      const credentialState = parseCliOpenShellProviderCredentialState(
         commandStdout(inventory),
         request.providerName,
       );
-      if (credentialExpiresAtMs === undefined) continue;
-      return credentialExpiresAtMs
-        ? success({ ...metadata, credentialExpiresAtMs })
+      if (credentialState === undefined) continue;
+      return credentialState
+        ? success({
+            ...metadata,
+            credentialKeys: credentialState.credentialKeys,
+            credentialExpiresAtMs: credentialState.credentialExpiresAtMs,
+          })
         : failure({
             kind: "schema",
             message: "OpenShell returned invalid provider credential expiration metadata.",

@@ -327,9 +327,11 @@ describe("bounded rebuild MCP handoff", () => {
     const published = manifest(backupPath);
     __test.writeManifest(backupPath, published);
 
-    const withHandoff = writeRebuildMcpHandoff(published, [], runtimeSelection);
+    writeRebuildMcpHandoff(published, [], runtimeSelection);
+    const persisted = __test.readManifest(backupPath);
 
-    expect(readRebuildMcpHandoff(withHandoff)).toEqual({ entries: [], runtimeSelection });
+    expect(persisted).not.toBeNull();
+    expect(readRebuildMcpHandoff(persisted!)).toEqual({ entries: [], runtimeSelection });
   });
 
   it("rejects fields that could persist credential material", () => {
