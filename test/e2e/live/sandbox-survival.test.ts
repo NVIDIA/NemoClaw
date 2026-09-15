@@ -301,10 +301,13 @@ test(
       timeoutMs: 30_000,
     });
     for (const command of ["recover", "start"] as const) {
-      if (command === "recover") {
-        progress.phase("create a running-container and OpenShell-Stopped mismatch");
-      } else {
-        progress.phase("recreate and repair the mismatch through nemoclaw start");
+      switch (command) {
+        case "recover":
+          progress.phase("create a running-container and OpenShell-Stopped mismatch");
+          break;
+        case "start":
+          progress.phase("recreate and repair the mismatch through nemoclaw start");
+          break;
       }
       const artifactPrefix = `${command}-mismatch`;
       const stop = await sandbox.openshell(["sandbox", "stop", "-g", "nemoclaw", SANDBOX_NAME], {
@@ -355,8 +358,12 @@ test(
         timeoutMs: 180_000,
       });
       assertExitZero(lifecycleRepair, `nemoclaw ${SANDBOX_NAME} ${command}`);
-      if (command === "start") {
-        progress.phase("recheck native agent readiness, host-forward usability, and state");
+      switch (command) {
+        case "recover":
+          break;
+        case "start":
+          progress.phase("recheck native agent readiness, host-forward usability, and state");
+          break;
       }
 
       await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
