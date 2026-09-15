@@ -5,6 +5,7 @@ import type {
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxTarget,
 } from "../../../src/lib/onboard/runtime-provider/contract.ts";
+import { liveE2eManagedImageCatalog } from "../../../src/lib/onboard/workload/preparation.ts";
 import {
   executePrivilegedSandboxCommand,
   resolvePrivilegedSandboxTarget,
@@ -418,6 +419,7 @@ function selectedManagedImageRevision(environment: NodeJS.ProcessEnv): string {
   const revision =
     environment.E2E_MANAGED_IMAGE_REVISION?.trim() ||
     environment.NEMOCLAW_E2E_MANAGED_IMAGE_REVISION?.trim() ||
+    liveE2eManagedImageCatalog(environment)?.revision ||
     "";
   if (!REVISION_PATTERN.test(revision)) {
     throw new Error("security-posture requires one exact managed-image revision");

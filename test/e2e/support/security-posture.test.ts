@@ -9,6 +9,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeProviderPrivilegedSandboxCommandResult } from "../../../src/lib/onboard/runtime-provider/contract.ts";
+import {
+  MANAGED_IMAGE_REPOSITORIES,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+} from "../../../src/lib/onboard/managed-image/contract.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
@@ -31,6 +35,7 @@ const ZERO_CAPABILITIES = "0000000000000000";
 const SUPERVISOR_EXECUTABLE = "/opt/openshell/bin/openshell-sandbox";
 const SANDBOX_NAME = "secure-sandbox";
 const RESOURCE_HANDLE = "opaque-runtime-resource";
+const MANAGED_IMAGE_REVISION = "a".repeat(40);
 const CONTROLLED_PROC_HARNESS = String.raw`import contextlib
 import grp
 import json
@@ -297,6 +302,39 @@ function capabilitySurfaceProof(
   )
     .map(([name, value]) => `${name}=${value}`)
     .join(" ")}\n`;
+}
+
+function inlineManagedImageCatalogEnvironment(): NodeJS.ProcessEnv {
+  const catalog = Object.fromEntries(
+    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+      const image = MANAGED_IMAGE_REPOSITORIES[agent];
+      const digest = `sha256:${String(index + 1).repeat(64)}`;
+      return [
+        agent,
+        {
+          agent,
+          capabilityContractVersion: 1,
+          contractVersion: 1,
+          digest,
+          image,
+          platform: "linux/amd64",
+          reference: `${image}@${digest}`,
+          source: {
+            cohort: "ghrun-1-1",
+            release: "v0.0.124",
+            repository: "NVIDIA/NemoClaw",
+            revision: MANAGED_IMAGE_REVISION,
+          },
+          startupProfileContractVersion: 1,
+        },
+      ];
+    }),
+  );
+  return {
+    GITHUB_ACTIONS: "true",
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(catalog),
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+  };
 }
 
 afterEach(() => vi.unstubAllEnvs());
@@ -1023,7 +1061,7 @@ describe("security posture fixture", () => {
       }));
 
       const summary = await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw", {
-        environment: { NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+        environment: inlineManagedImageCatalogEnvironment(),
         executePrivilegedCommand,
         resolvePrivilegedTarget,
       });
@@ -1066,7 +1104,7 @@ describe("security posture fixture", () => {
         rcFilesMutable: true,
         runtimeProxyEnvLocked: true,
         runtimeVersions: {
-          managedImageRevision: "a".repeat(40),
+          managedImageRevision: MANAGED_IMAGE_REVISION,
           openshell: "0.0.116",
         },
         splitProcess: {
@@ -1116,7 +1154,7 @@ describe("security posture fixture", () => {
         SANDBOX_NAME,
         "openclaw",
         {
-          environment: { NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+          environment: inlineManagedImageCatalogEnvironment(),
           executePrivilegedCommand,
           resolvePrivilegedTarget,
         },
@@ -1154,7 +1192,7 @@ describe("security posture fixture", () => {
         SANDBOX_NAME,
         "openclaw",
         {
-          environment: { NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+          environment: inlineManagedImageCatalogEnvironment(),
           executePrivilegedCommand,
           resolvePrivilegedTarget,
         },
