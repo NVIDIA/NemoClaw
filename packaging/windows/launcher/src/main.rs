@@ -3,9 +3,9 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod edge_trust;
 #[cfg(not(feature = "immutable-runtime"))]
 mod inference_job;
-mod edge_trust;
 mod native_ui_file_owner;
 #[cfg(any(feature = "immutable-runtime", all(windows, test)))]
 mod runtime_host;
@@ -292,12 +292,31 @@ fn main() {
             credential_error("The Microsoft Edge trust query requires one path.");
         }
         let path = PathBuf::from(&forwarded[1]);
-        edge_trust::verify(&path).unwrap_or_else(|status| {
+        let identity = edge_trust::inspect(&path).unwrap_or_else(|status| {
             credential_error(&format!(
-                "Microsoft Edge offline Authenticode verification failed (0x{status:08x})."
+                "Microsoft Edge native identity verification failed (0x{status:08x})."
             ))
         });
-        println!("{{\"schemaVersion\":1,\"signatureStatus\":\"Valid\"}}");
+        println!("{}", identity.json());
+        return;
+    }
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--edge-process-identity")
+    {
+        if forwarded.len() != 2 {
+            credential_error("The Microsoft Edge process query requires one process ID.");
+        }
+        let pid = forwarded[1]
+            .to_string_lossy()
+            .parse::<u32>()
+            .unwrap_or_else(|_| credential_error("The Microsoft Edge process ID is invalid."));
+        let identity = edge_trust::process(pid).unwrap_or_else(|status| {
+            credential_error(&format!(
+                "Microsoft Edge process identity verification failed (0x{status:08x})."
+            ))
+        });
+        println!("{}", identity.json());
         return;
     }
     // Dormant helper API. Normal launch selection is not changed until the

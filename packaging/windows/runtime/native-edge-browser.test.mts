@@ -59,6 +59,10 @@ test("Edge metadata requires a valid Microsoft signature and exact path", () => 
     { reparsePoint: true },
   ])
     assert.throws(() => validateEdgeMetadata({ ...value, ...change }, path));
+  assert.equal(
+    validateEdgeMetadata({ ...value, signerSubject: "Microsoft Corporation" }, path).signerSubject,
+    "Microsoft Corporation",
+  );
 });
 
 test("DevTools endpoint is an ephemeral port and exact browser path", () => {
