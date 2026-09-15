@@ -77,9 +77,6 @@ export const E2E_TEARDOWN_PHASE = "release registered E2E resources";
 
 export function runnerComparisonSampleIntervalMs(targetId: string | null): number {
   switch (targetId) {
-    case "rebuild-hermes":
-    case "rebuild-hermes-stale-base":
-      return 15_000;
     default:
       return 60_000;
   }

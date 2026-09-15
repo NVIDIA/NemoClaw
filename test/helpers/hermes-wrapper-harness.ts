@@ -88,6 +88,7 @@ export function runWrapper(
     sessionBoundaries?: string[];
     upstreamVersion?: string;
     validatorScript?: string;
+    envFileContent?: string;
   } = {},
 ): WrapperRun {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-"));
@@ -103,6 +104,10 @@ export function runWrapper(
     fs.writeFileSync(path.join(dir, "validate-env-secret-boundary.py"), validatorContent, {
       mode: 0o755,
     });
+    fs.writeFileSync(
+      path.join(dir, ".env"),
+      opts.envFileContent ?? "API_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=8642\n",
+    );
     fs.chmodSync(path.join(dir, "hermes"), 0o755);
 
     const marker = path.join(dir, "real-invoked.txt");
