@@ -351,6 +351,14 @@ def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
     return proc.returncode
 
 
+def _gateway_guard_process_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for key in tuple(env):
+        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
+            env.pop(key, None)
+    return env
+
+
 def _run_gateway_guard(guard_path: str) -> int:
     python3 = _resolve_trusted_python3()
     if python3 is None:
@@ -360,17 +368,13 @@ def _run_gateway_guard(guard_path: str) -> int:
         )
         return 127
     logical_env = dict(os.environ)
-    env = dict(logical_env)
-    for key in tuple(env):
-        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
-            env.pop(key, None)
     payload = json.dumps(
         logical_env, ensure_ascii=True, separators=(",", ":")
     ).encode("ascii")
     return subprocess.run(
         [python3, "-I", guard_path, "runtime-env-json"],
         input=payload,
-        env=env,
+        env=_gateway_guard_process_env(),
         check=False,
     ).returncode
 
@@ -433,6 +437,7 @@ def _run_gateway_env_file_guard(guard_path: str) -> int:
         before = _gateway_env_fingerprint(env_path)
         rc = subprocess.run(
             [python3, "-I", guard_path, "env-file", env_path],
+            env=_gateway_guard_process_env(),
             check=False,
         ).returncode
         if rc != 0:

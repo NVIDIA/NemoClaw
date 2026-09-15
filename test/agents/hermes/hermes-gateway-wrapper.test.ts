@@ -149,6 +149,7 @@ raise SystemExit(0)
       {
         validatorScript: [
           "import json, os, sys",
+          "if sys.argv[1] == 'env-file': raise SystemExit(0)",
           "logical_env = json.load(sys.stdin)",
           "assert logical_env.get('PIP_CONFIG_FILE') == '/sandbox/pip.conf'",
           "assert logical_env.get('LD_PRELOAD') == '/sandbox/hostile.so'",
@@ -343,7 +344,7 @@ raise SystemExit(0)
     },
   );
 
-  it("invokes the runtime-env validator with python3 -I (isolated mode)", () => {
+  it("invokes the env-file validator with python3 -I before the runtime guard", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-"));
     try {
       const argvLog = path.join(dir, "argv.log");
@@ -357,7 +358,8 @@ raise SystemExit(0)
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
-      expect(argv[argv.length - 1]).toBe("runtime-env-json");
+      expect(argv[argv.length - 2]).toBe("env-file");
+      expect(path.basename(argv[argv.length - 1] as string)).toBe(".env");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
