@@ -17,6 +17,7 @@ function makeOwnership(
   overrides: Partial<Parameters<typeof createDockerDriverGatewayStateOwnership>[0]> = {},
 ) {
   return createDockerDriverGatewayStateOwnership({
+    getDockerDriverGatewayPid: () => null,
     getDockerDriverGatewayStateDir: () => STATE_DIR,
     isDockerDriverGatewayProcess: () => true,
     isPidAlive: () => true,
@@ -113,6 +114,24 @@ describe("docker-driver gateway selected-state ownership", () => {
     });
 
     expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
+  });
+
+  it("treats an alive recorded Docker compatibility parent as a selected-state owner", () => {
+    const processScan = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+    const isDockerDriverGatewayProcess = vi.fn(() => true);
+    const ownership = makeOwnership({
+      getDockerDriverGatewayPid: () => 4242,
+      isDockerDriverGatewayProcess,
+      runCaptureEx: processScan,
+    });
+
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
+    expect(isDockerDriverGatewayProcess).toHaveBeenCalledWith(
+      4242,
+      "/opt/openshell/openshell-gateway",
+      { requireDockerDriverEnv: false },
+    );
+    expect(processScan).not.toHaveBeenCalled();
   });
 
   it.each([

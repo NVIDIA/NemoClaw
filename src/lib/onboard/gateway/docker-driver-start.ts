@@ -148,6 +148,7 @@ export function createDockerDriverGatewayStart(
   deps: DockerDriverGatewayStartDeps,
 ): DockerDriverGatewayStart {
   const stateOwnership = createDockerDriverGatewayStateOwnership({
+    getDockerDriverGatewayPid: deps.getDockerDriverGatewayPid,
     getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
     isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
     isPidAlive: deps.isPidAlive,

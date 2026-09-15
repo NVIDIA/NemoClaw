@@ -17,6 +17,7 @@ interface ProcessScanResult {
 }
 
 interface DockerDriverGatewayStateOwnershipDeps {
+  getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayStateDir(): string;
   isDockerDriverGatewayProcess(
     pid: number,
@@ -103,6 +104,21 @@ export function createDockerDriverGatewayStateOwnership(
 
   /** Fail closed unless one process scan proves no gateway uses the selected state. */
   function isDockerDriverGatewayStateInUse(): boolean {
+    const gatewayBin = deps.resolveOpenShellGatewayBinary();
+    try {
+      const recordedPid = deps.getDockerDriverGatewayPid();
+      if (
+        recordedPid !== null &&
+        deps.isPidAlive(recordedPid) &&
+        deps.isDockerDriverGatewayProcess(recordedPid, gatewayBin, {
+          requireDockerDriverEnv: false,
+        })
+      ) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
     let scan: ProcessScanResult;
     try {
       scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
@@ -113,7 +129,6 @@ export function createDockerDriverGatewayStateOwnership(
     if (scan.exitCode === 1) return false;
     const lines = scan.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
     if (lines.length === 0) return true;
-    const gatewayBin = deps.resolveOpenShellGatewayBinary();
     for (const line of lines) {
       const recorded = line.trim();
       if (!/^[1-9]\d*$/.test(recorded)) return true;

@@ -420,6 +420,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       "migration 6 was previously applied and is missing in the resolved migrations\n",
     );
     const stateOwnership = createDockerDriverGatewayStateOwnership({
+      getDockerDriverGatewayPid: () => null,
       getDockerDriverGatewayStateDir: () => dir,
       isDockerDriverGatewayProcess: () => true,
       isPidAlive: () => true,
