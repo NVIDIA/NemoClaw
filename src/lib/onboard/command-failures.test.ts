@@ -96,6 +96,25 @@ describe("onboarding command failures", () => {
     expect(inspect(failure, { depth: null })).not.toContain(secret);
   });
 
+  it("redacts managed bootstrap rollback diagnostics before rethrow", async () => {
+    const secret = `nvapi-${"f".repeat(60)}`;
+    const rollback = new Error(`Rollback failed: ${secret}`);
+    rollback.stack = `Rollback stack: ${secret}`;
+    const failure = new Error("Managed bootstrap failed") as Error & {
+      managedBootstrapRollbackError?: unknown;
+    };
+    failure.managedBootstrapRollbackError = rollback;
+    rollback.cause = failure;
+
+    await rethrowOnboardFailure(failure);
+
+    expect(failure.managedBootstrapRollbackError).toBe(rollback);
+    expect(rollback.cause).toBe(failure);
+    expect(rollback.message).toBe("Rollback failed: <REDACTED>");
+    expect(rollback.stack).toBe("Rollback stack: <REDACTED>");
+    expect(inspect(failure, { depth: null })).not.toContain(secret);
+  });
+
   it("redacts string causes and aggregate members while retaining non-string values", async () => {
     const secret = `nvapi-${"e".repeat(60)}`;
     const failure = new AggregateError([secret, null, 42], "Onboarding failed", { cause: secret });
@@ -135,6 +154,42 @@ describe("onboarding command failures", () => {
     expect(failure.message).toContain("<REDACTED>");
     expect(failure.message).toContain("Retry after correcting permissions.");
     expect(failure.stack).toContain("Retry after correcting permissions.");
+  });
+
+  it("redacts credential strings nested in plain diagnostic objects without following cycles", async () => {
+    const payload = "plain-object-key-payload".repeat(20);
+    const pem = [
+      "-----BEGIN " + "PRIVATE KEY-----",
+      payload,
+      "-----END " + "PRIVATE KEY-----",
+    ].join("\n");
+    const details: Record<string, unknown> = {
+      diagnostic: `Nested failure\n${pem}\nInspect the rejected credential.`,
+    };
+    details.self = details;
+    const failure = new AggregateError([details], "Onboarding cleanup failed", {
+      cause: details,
+    });
+
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw failure;
+        },
+        error: vi.fn(),
+        exit: exitWithCode,
+      }),
+    ).rejects.toBe(failure);
+
+    const redacted = failure.cause as Record<string, unknown>;
+    expect(failure.errors[0]).toBe(redacted);
+    expect(redacted.self).toBe(redacted);
+    expect(String(redacted.diagnostic)).not.toContain(payload);
+    expect(String(redacted.diagnostic)).not.toContain("PRIVATE KEY");
+    expect(String(redacted.diagnostic)).toContain("<REDACTED>");
+    expect(String(redacted.diagnostic)).toContain("Inspect the rejected credential.");
   });
 
   it("redacts a complete private-key block before reporting a typed onboarding error", async () => {

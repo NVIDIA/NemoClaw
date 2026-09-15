@@ -3,30 +3,93 @@
 
 import { redact, redactFull, redactFullWithUrls, redactSensitiveText } from "../../security/redact";
 
-/** Queue nested errors without cloning them; scalar causes can also carry credentials. */
-function redactNestedOnboardError(value: unknown, pending: Error[]): unknown {
-  if (typeof value === "string") return redactOnboardErrorText(value);
-  if (value instanceof Error) pending.push(value);
-  return value;
+interface DiagnosticTask {
+  source: object;
+  target: object;
 }
 
-/** Redact causes and aggregate members in place; shared or cyclic links retain their identity. */
-export function redactOnboardError(error: Error): void {
-  const pending = [error];
-  const seen = new WeakSet<Error>();
-  // An iterative walk also supports deep cause chains without consuming the call stack.
-  for (const current of pending) {
-    if (seen.has(current)) continue;
-    seen.add(current);
-    current.message = redactOnboardErrorText(current.message);
-    current.stack = current.stack && redactOnboardErrorText(current.stack);
-    if ("cause" in current) current.cause = redactNestedOnboardError(current.cause, pending);
-    if (current instanceof AggregateError) {
-      for (const [index, member] of current.errors.entries()) {
-        current.errors[index] = redactNestedOnboardError(member, pending);
-      }
+interface DiagnosticWalk {
+  pending: DiagnosticTask[];
+  seen: WeakMap<object, object>;
+}
+
+function isPlainDiagnosticObject(value: object): value is Record<PropertyKey, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function createDiagnosticTarget(value: object): object | null {
+  if (value instanceof Error) return value;
+  if (Array.isArray(value)) return [];
+  if (isPlainDiagnosticObject(value)) return Object.create(Object.getPrototypeOf(value)) as object;
+  return null;
+}
+
+function redactNestedDiagnostic(value: unknown, walk: DiagnosticWalk): unknown {
+  if (typeof value === "string") return redactOnboardErrorText(value);
+  if (typeof value !== "object" || value === null) return value;
+  if (walk.seen.has(value)) return walk.seen.get(value);
+
+  const target = createDiagnosticTarget(value);
+  if (!target) return value;
+  walk.seen.set(value, target);
+  walk.pending.push({ source: value, target });
+  return target;
+}
+
+function redactErrorDiagnostic(error: Error, walk: DiagnosticWalk): void {
+  error.message = redactOnboardErrorText(error.message);
+  error.stack = error.stack && redactOnboardErrorText(error.stack);
+  if ("cause" in error) error.cause = redactNestedDiagnostic(error.cause, walk);
+  if (error instanceof AggregateError) {
+    for (const [index, member] of error.errors.entries()) {
+      error.errors[index] = redactNestedDiagnostic(member, walk);
     }
   }
+  const rollbackCarrier = error as Error & { managedBootstrapRollbackError?: unknown };
+  if ("managedBootstrapRollbackError" in rollbackCarrier) {
+    rollbackCarrier.managedBootstrapRollbackError = redactNestedDiagnostic(
+      rollbackCarrier.managedBootstrapRollbackError,
+      walk,
+    );
+  }
+}
+
+function redactArrayDiagnostic(source: unknown[], target: unknown[], walk: DiagnosticWalk): void {
+  for (const value of source) target.push(redactNestedDiagnostic(value, walk));
+}
+
+function redactPlainDiagnostic(
+  source: Record<PropertyKey, unknown>,
+  target: Record<PropertyKey, unknown>,
+  walk: DiagnosticWalk,
+): void {
+  for (const key of Reflect.ownKeys(source)) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (!descriptor) continue;
+    if ("value" in descriptor) descriptor.value = redactNestedDiagnostic(descriptor.value, walk);
+    Object.defineProperty(target, key, descriptor);
+  }
+}
+
+function redactDiagnosticTask(task: DiagnosticTask, walk: DiagnosticWalk): void {
+  if (task.source instanceof Error) return redactErrorDiagnostic(task.source, walk);
+  if (Array.isArray(task.source) && Array.isArray(task.target)) {
+    return redactArrayDiagnostic(task.source, task.target, walk);
+  }
+  if (isPlainDiagnosticObject(task.source) && isPlainDiagnosticObject(task.target)) {
+    redactPlainDiagnostic(task.source, task.target, walk);
+  }
+}
+
+/** Redact causes and aggregate members; Error identities and shared cyclic links remain intact. */
+export function redactOnboardError(error: Error): void {
+  const walk: DiagnosticWalk = {
+    pending: [{ source: error, target: error }],
+    seen: new WeakMap([[error, error]]),
+  };
+  // An iterative walk also supports deep cause chains without consuming the call stack.
+  for (const task of walk.pending) redactDiagnosticTask(task, walk);
 }
 
 /** Redact complete secret blocks before bounding individual diagnostic lines. */
