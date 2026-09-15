@@ -17,6 +17,7 @@ const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
 const RETRYABLE_OBSERVATION_EXIT_STATUS = 3;
 const SHA256_RE = /^[a-f0-9]{64}$/;
+const OPENCLAW_VERSION_RE = /\bopenclaw\b[^\r\n0-9]*([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/i;
 export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
 // Reuse one fixed pairing lifecycle across ordinary onboarding and Portable.
 // A contended gateway list can consume the watcher's complete child bound, so
@@ -46,6 +47,10 @@ export const OPENCLAW_PAIRING_REQUIRED_SCOPES = [
 ] as const;
 
 export type OpenClawPairingQualification = LaunchReadinessOpenClawSessionQualification;
+
+export function parseOpenClawVersionFromText(value: string): string | null {
+  return value.match(OPENCLAW_VERSION_RE)?.[1] ?? null;
+}
 
 export type OpenClawPairingSettlementObservation = {
   readonly state: "pairing-only" | "scope-upgrade-pending" | "settled";

@@ -4,7 +4,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
-import { parseVersionFromText } from "../../adapters/openshell/client";
 import {
   createCliOpenShellSandboxPolicyReader,
   namedOpenShellGateway,
@@ -81,6 +80,7 @@ import {
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
+  parseOpenClawVersionFromText,
   type OpenClawPairingRepairObservation,
   type OpenClawPairingSettlementObservation,
 } from "./launch-readiness/openclaw-pairing-qualification";
@@ -673,7 +673,7 @@ async function resolveOpenClawPairingVersion(
       outputLimitBytes: LIVE_AGENT_VERSION_MAX_BYTES,
     });
     return observed.outcome.kind === "completed" && observed.outcome.exitCode === 0
-      ? parseVersionFromText(observed.stdout, agent.versionCommand)
+      ? parseOpenClawVersionFromText(observed.stdout)
       : null;
   } catch {
     return null;
