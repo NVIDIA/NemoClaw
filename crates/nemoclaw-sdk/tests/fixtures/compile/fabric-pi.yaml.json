@@ -25,7 +25,7 @@
         "lifecycle": {
           "prevent_destroy": true
         },
-        "model": "fixture-model",
+        "model": "gpt-4o",
         "name": "primary",
         "owner": "c4a639f3-2bd3-42ba-8f5d-658d7913b0f9",
         "provider_name": "${nemoclaw_provider.inference.name}",

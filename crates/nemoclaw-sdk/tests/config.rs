@@ -5,6 +5,41 @@ use nemoclaw_sdk::config::{Document, validate_endpoint};
 use serde_json::Value;
 
 #[test]
+fn pi_rejects_route_models_that_do_not_match_its_catalog_profile() {
+    let input = include_str!("fixtures/config/fabric-pi.yaml");
+    let original = Document::parse(input.as_bytes()).unwrap();
+    for model in ["fixture-model", "qwen3:4b", "gpt-4o-mini", "primary"] {
+        let mut changed = original.clone();
+        changed.spec.sandboxes[0].agents[0].inference.routes[0]
+            .overrides
+            .model = model.into();
+        let error = changed.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the pinned Pi recipe requires route model gpt-4o; other models are unsupported"
+        );
+        assert!(
+            Document::parse(
+                input
+                    .replace("model: gpt-4o", &format!("model: {model}"))
+                    .as_bytes()
+            )
+            .is_err()
+        );
+        assert_eq!(
+            nemoclaw_sdk::compile::targets(&changed, &Default::default()).unwrap_err(),
+            error
+        );
+    }
+    let mut other_harness = original;
+    other_harness.spec.sandboxes[0].agents[0].harness = "codex".into();
+    other_harness.spec.sandboxes[0].agents[0].inference.routes[0]
+        .overrides
+        .model = "fixture-model".into();
+    assert!(other_harness.validate().is_ok());
+}
+
+#[test]
 fn all_recipes_preserve_defaults_digest_workspace_and_round_trip() {
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config");
     for entry in std::fs::read_dir(&fixtures).unwrap() {
@@ -154,6 +189,11 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
     ] {
         let mut document = original.clone();
         document.spec.sandboxes[0].agents[0].harness = harness.into();
+        if harness == "pi" {
+            document.spec.sandboxes[0].agents[0].inference.routes[0]
+                .overrides
+                .model = "gpt-4o".into();
+        }
         document.spec.inference_providers[0].provider = if harness == "claude" {
             "anthropic"
         } else {

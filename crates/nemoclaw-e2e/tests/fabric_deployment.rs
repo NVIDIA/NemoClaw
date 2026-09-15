@@ -65,6 +65,11 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     .unwrap();
     document.spec.gateway.endpoint = fixture.endpoint.clone();
     document.spec.sandboxes[0].agents[0].harness = harness.into();
+    if harness == "pi" {
+        document.spec.sandboxes[0].agents[0].inference.routes[0]
+            .overrides
+            .model = "gpt-4o".into();
+    }
     if harness == "claude" {
         document.spec.inference_providers[0].provider = "anthropic".into();
     }

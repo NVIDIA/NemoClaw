@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Replace the fixture endpoint/model with your own compatible service.
-# See docs/reference/fabric-harnesses.md for protocol requirements and test commands.
+# Replace the fixture endpoint with a service serving gpt-4o through Responses.
+# The pinned Pi recipe rejects other model IDs. See docs/agents.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -32,4 +32,4 @@ spec:
               - name: primary
                 providerRef: local
                 overrides:
-                  model: fixture-model
+                  model: gpt-4o

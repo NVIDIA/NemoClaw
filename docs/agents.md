@@ -13,6 +13,15 @@ or `pi`. OpenClaw supports external services, managed OpenShell gateways, and
 managed Spark or Ollama inference. Other harnesses currently require external
 gateway and inference services. The strict schema rejects unsupported combinations.
 
+The pinned Pi recipe requires the route model `gpt-4o` and an OpenAI Responses
+endpoint serving that model. Its Fabric adapter resolves models from Pi's catalog
+and does not expose custom-model metadata. NemoClaw rejects other route model IDs,
+including model changes on existing Pi deployments, before applying them. This
+keeps Pi's context limits and capabilities consistent with the configured model.
+Earlier configurations could route a different model behind Pi's GPT-4o profile;
+that substitution is no longer accepted. Retained fixture evidence establishes
+protocol behavior, not compatibility with those substituted models.
+
 Fabric is the only runtime integration, so agents have no `type` field. Remove
 `type: fabric` from older YAML. The strict schema rejects the obsolete field.
 Previously retained intent files still contain that field and are not migrated
