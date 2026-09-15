@@ -256,8 +256,8 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     mockRecoveredForward(sandboxName);
     const recover = vi.fn(() => ({ exitCode: 0 }));
     vi.spyOn(runtimeProviderSelection, "resolveRegisteredRuntimeProvider").mockReturnValue({
-      gateway: { supported: true, launcher: "openshell" },
-      lifecycle: { supported: false },
+      gateway: { supported: true, launcher: "nemoclaw" },
+      lifecycle: { supported: true },
       recovery: { supported: true, recover },
     } as never);
     const requestGatewaySupervisorAction = vi.fn();
@@ -293,8 +293,8 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
       message: "Podman recovery is unavailable.",
     }));
     vi.spyOn(runtimeProviderSelection, "resolveRegisteredRuntimeProvider").mockReturnValue({
-      gateway: { supported: true, launcher: "openshell" },
-      lifecycle: { supported: false },
+      gateway: { supported: true, launcher: "nemoclaw" },
+      lifecycle: { supported: true },
       recovery: { supported: true, recover },
     } as never);
     const requestGatewaySupervisorAction = vi.fn();

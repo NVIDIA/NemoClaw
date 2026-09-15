@@ -806,10 +806,15 @@ async function recoverSandboxProcesses(
     return null;
   }
   const persistedSandbox = registry.getSandbox(sandboxName);
-  // Providers that launch NemoClaw's managed in-sandbox controller recover the
-  // gateway through that controller. Restarting their runtime first replaces
-  // the still-healthy supervisor and changes gateway parentage.
-  if (persistedSandbox && !usesManagedGatewayController(persistedSandbox)) {
+  const persistedProvider = resolveRegisteredRuntimeProvider(persistedSandbox?.openshellDriver);
+  // An explicit provider recovery surface owns its runtime transition. Other
+  // providers that launch NemoClaw's managed controller recover through that
+  // controller without replacing the still-healthy supervisor.
+  if (
+    persistedSandbox &&
+    (persistedProvider?.recovery.supported === true ||
+      !usesManagedGatewayController(persistedSandbox))
+  ) {
     const result = recoverRegisteredRuntimeProviderSandbox(persistedSandbox);
     if (result) {
       if (result.exitCode === 0) return { kind: "provider" };
