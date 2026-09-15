@@ -520,10 +520,14 @@ function gatewayPortConflictRemediation(
   }
   const subject =
     stopPids.length === 1 ? `PID ${stopPids[0]} is` : `PIDs ${stopPids.join(", ")} are`;
+  // A listener is not proof that a service manager still owns it: after the
+  // standalone fallback runs, the gateway user service is inactive while a
+  // standalone gateway holds the port, so its stop exits 0 and frees nothing
+  // (#11720). Make the port, not the stop command, the success signal.
   const stopInstruction =
     stopPids.length === 1
-      ? "Stop that process through its service manager, or signal only the matching PID from that fresh result before retrying."
-      : "Stop each matching process through its service manager, or signal only the matching PIDs from that fresh result before retrying.";
+      ? "If a service manager owns that process, stop it there and recheck the port; a service that is already inactive reports success without releasing it. Otherwise signal only the matching PID from that fresh result before retrying."
+      : "If a service manager owns those processes, stop them there and recheck the port; a service that is already inactive reports success without releasing it. Otherwise signal only the matching PIDs from that fresh result before retrying.";
   return (
     `Confirm ${subject} not another NemoClaw gateway. ` +
     `Recheck the listener set immediately before stopping a process: sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n. ` +
