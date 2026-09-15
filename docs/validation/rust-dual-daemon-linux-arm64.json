@@ -168,11 +168,13 @@
     "experimentContainersRemoved": true,
     "podmanNetworkAndUserHelpersStopped": true,
     "modelDataAndImagesRetained": true,
-    "rootHelperTeardown": "pending administrator cleanup command",
+    "rootHelperTeardown": "verified: helper processes, network namespace, host veth and namespace configuration absent",
     "oldQwenContainer": "1d6e7d6a18733a74735deba97de697c24cbcc8f3f67c72f7237041e703def3ca",
     "oldQwenState": "stopped with user authorization; not restored, container and data preserved",
     "originalGatewayAndSandbox": "still running; unchanged",
-    "systemPackagesDriversAndHostKernelSettings": "unchanged"
+    "systemPackagesDriversAndHostKernelSettings": "unchanged",
+    "experimentSshPrivateKeysRemoved": true,
+    "firewallVerification": "Administrator cleanup reported complete; firewall rules not independently inspected."
   },
   "limits": [
     "Same Linux ARM64 host and shared GB10 GPU; separate physical hosts, WAN behavior and other platforms remain unqualified.",
@@ -337,6 +339,10 @@
     {
       "path": ".local/dual-daemon/final-merge-workspace.log",
       "sha256": "f131702ee5ff33873096ee5cb7030f50f4d60c588fe9db93cfce926d7e5091e0"
+    },
+    {
+      "path": ".local/dual-daemon/cleanup-verification.json",
+      "sha256": "df21eafe5ab61f1d00fa6c9697e6ec55f1ee30bebd61c4f4bc7a8bf69e70a375"
     }
   ],
   "integration": {
