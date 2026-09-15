@@ -2,6 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test]
+fn native_ci_disables_incremental_without_disabling_debug_symbols() {
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
+    let env = workflow["jobs"]["native"]["env"].as_object().unwrap();
+    assert_eq!(env.get("CARGO_INCREMENTAL"), Some(&serde_json::json!("0")));
+    for name in [
+        "CARGO_PROFILE_DEV_DEBUG",
+        "CARGO_PROFILE_TEST_DEBUG",
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+    ] {
+        assert!(
+            !env.contains_key(name),
+            "CI must preserve the existing debug-symbol settings"
+        );
+    }
+}
+
+#[test]
 fn fixture_lifecycles_have_bounded_parallelism_on_every_platform() {
     let workflow: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
