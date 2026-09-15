@@ -18,9 +18,11 @@ diagnostic, and learning-mode sidecars from the upstream SDK archive are not
 packaged. Windows Installer registers normal Add/Remove Programs metadata and
 adds the installed `bin` directory to the machine PATH.
 
-The workflow first builds and qualifies the unmodified NVIDIA/OpenShell#2721
-merge commit, then applies the checked-in Node compatibility patch and rebuilds
-the packaged derivative. The patch and its exact hash are installed with the
+The finished-installer workflow checks out the pinned NVIDIA/OpenShell#2721
+merge commit, applies the current compatibility patch, and builds and tests the
+ARM64 derivative. It records both executable hashes, the source and patch identities,
+and the workflow run. Host preparation rejects mismatched receipts or binaries;
+it does not reuse binaries from a previous MSI. The patch and its exact hash are installed with the
 product. Packaged Node workloads explicitly set `windows_ui=true` so the
 contained Node process can initialize. Other sandboxes retain MXC's disabled-UI
 default. The derivative also adds per-sandbox `host_loopback`, `host_console`, and
