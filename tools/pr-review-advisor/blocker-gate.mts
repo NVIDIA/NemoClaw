@@ -157,7 +157,7 @@ function requireDirectory(directory: string): void {
 }
 
 function requireExpectedSha(expected: string | undefined, actual: string, label: string): void {
-  if (!expected) return;
+  if (!expected) throw new Error(`Advisor blocker gate requires expected ${label} SHA`);
   if (fullSha(expected, `expected ${label} SHA`) !== actual) {
     throw new Error(`Advisor blocker gate ${label} SHA does not match the checked revision`);
   }

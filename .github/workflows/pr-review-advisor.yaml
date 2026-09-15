@@ -56,13 +56,14 @@ jobs:
       endsWith(github.event.workflow_run.display_title, ' gate true')))
       }}
     permissions:
+      contents: read
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     outputs:
-      pr_number: ${{ steps.target.outputs.pr_number }}
-      head_sha: ${{ steps.target.outputs.head_sha }}
-      base_sha: ${{ steps.target.outputs.base_sha }}
+      pr_number: ${{ steps.target.outputs.pr_number || steps.manual-target.outputs.pr_number }}
+      head_sha: ${{ steps.target.outputs.head_sha || steps.manual-target.outputs.head_sha }}
+      base_sha: ${{ steps.target.outputs.base_sha || steps.manual-target.outputs.base_sha }}
     steps:
       - name: Resolve checked PR revision
         id: target
@@ -95,9 +96,45 @@ jobs:
           jq -r --arg base_sha "$run_base_sha" \
             '"pr_number=\(.number)\nhead_sha=\(.head.sha)\nbase_sha=\($base_sha)"' \
             <<< "$target" >> "$GITHUB_OUTPUT"
-      - name: Accept manual dispatch
+      - name: Resolve manual review revision
+        id: manual-target
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: echo "A maintainer dispatched the advisor."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_BASE_REF: ${{ inputs.base_ref }}
+          INPUT_HEAD_REF: ${{ inputs.head_ref }}
+          TARGET_BASE: ${{ inputs.target_base }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$TARGET_REPO" || -n "$TARGET_PR" ]]; then
+            [[ -n "$TARGET_REPO" && "$TARGET_PR" =~ ^[1-9][0-9]*$ ]] || {
+              echo "Manual PR analysis requires target_repo and a positive target_pr" >&2
+              exit 1
+            }
+            pull="$(gh api --method GET "repos/$TARGET_REPO/pulls/$TARGET_PR")"
+            jq -e --arg repo "$TARGET_REPO" --arg base "$TARGET_BASE" \
+              '.state == "open" and .base.repo.full_name == $repo and .base.ref == $base' \
+              <<< "$pull" >/dev/null
+            pr_number="$TARGET_PR"
+            head_sha="$(jq -r '.head.sha' <<< "$pull")"
+            base_sha="$(jq -r '.base.sha' <<< "$pull")"
+          else
+            [[ "$INPUT_HEAD_REF" == "HEAD" ]] && head_sha="$WORKFLOW_SHA" || \
+              head_sha="$(gh api --method GET "repos/$GITHUB_REPOSITORY/commits" \
+                -f "sha=${INPUT_HEAD_REF#origin/}" -f per_page=1 --jq '.[0].sha')"
+            base_sha="$(gh api --method GET "repos/$GITHUB_REPOSITORY/commits" \
+              -f "sha=${INPUT_BASE_REF#origin/}" -f per_page=1 --jq '.[0].sha')"
+            pr_number=""
+          fi
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$base_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Manual Advisor refs must resolve to full SHAs" >&2
+            exit 1
+          }
+          printf 'pr_number=%s\nhead_sha=%s\nbase_sha=%s\n' \
+            "$pr_number" "$head_sha" "$base_sha" >> "$GITHUB_OUTPUT"
 
   discover-specialists:
     name: Discover review specialists and collect GitHub context

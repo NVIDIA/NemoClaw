@@ -169,3 +169,16 @@ it("rejects evidence for a different checked commit", () => {
     }),
   ).toThrow("head SHA does not match");
 });
+
+it.each([
+  ["head", { expectedBaseSha: BASE_SHA }],
+  ["base", { expectedHeadSha: HEAD_SHA }],
+])("requires the expected %s SHA", (label, expected) => {
+  expect(() =>
+    evaluateAdvisorBlockers({
+      artifactsRoot: artifactTree(),
+      attempt: ATTEMPT,
+      ...expected,
+    }),
+  ).toThrow(`requires expected ${label} SHA`);
+});

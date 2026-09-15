@@ -101,16 +101,19 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     errors.push("Unified advisor green checks gate must require the exact successful CI condition");
   }
   if (
-    !isDeepStrictEqual(permissionMap(gate.permissions), { "pull-requests": "read" }) ||
+    !isDeepStrictEqual(permissionMap(gate.permissions), {
+      contents: "read",
+      "pull-requests": "read",
+    }) ||
     JSON.stringify(gate).includes("PR_REVIEW_ADVISOR_API_KEY")
   ) {
-    errors.push("Unified advisor green checks gate must only read pull requests");
+    errors.push("Unified advisor green checks gate must retain read-only source permissions");
   }
   if (
     !isDeepStrictEqual(gate.outputs, {
-      pr_number: "${{ steps.target.outputs.pr_number }}",
-      head_sha: "${{ steps.target.outputs.head_sha }}",
-      base_sha: "${{ steps.target.outputs.base_sha }}",
+      pr_number: "${{ steps.target.outputs.pr_number || steps.manual-target.outputs.pr_number }}",
+      head_sha: "${{ steps.target.outputs.head_sha || steps.manual-target.outputs.head_sha }}",
+      base_sha: "${{ steps.target.outputs.base_sha || steps.manual-target.outputs.base_sha }}",
     })
   ) {
     errors.push("Unified advisor green checks gate must expose the checked PR revision");
@@ -143,6 +146,35 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     targetStep.env?.RUN_DISPLAY_TITLE !== "${{ github.event.workflow_run.display_title }}"
   ) {
     errors.push("Unified advisor green checks gate must resolve the source run PR");
+  }
+  const manualTarget = (gate.steps ?? []).find(
+    (step) => step.name === "Resolve manual review revision",
+  );
+  if (
+    manualTarget?.env?.GH_TOKEN !== "${{ github.token }}" ||
+    manualTarget.env?.INPUT_BASE_REF !== "${{ inputs.base_ref }}" ||
+    manualTarget.env?.INPUT_HEAD_REF !== "${{ inputs.head_ref }}" ||
+    manualTarget.env?.TARGET_BASE !== "${{ inputs.target_base }}" ||
+    manualTarget.env?.TARGET_PR !== "${{ inputs.target_pr }}" ||
+    manualTarget.env?.TARGET_REPO !== "${{ inputs.target_repo }}" ||
+    manualTarget.env?.WORKFLOW_SHA !== "${{ github.sha }}"
+  ) {
+    errors.push("Unified advisor manual dispatch must bind the selected review revision");
+  }
+  for (const fragment of [
+    'pull="$(gh api --method GET "repos/$TARGET_REPO/pulls/$TARGET_PR")"',
+    '.state == "open" and .base.repo.full_name == $repo and .base.ref == $base',
+    'head_sha="$(jq -r \'.head.sha\' <<< "$pull")"',
+    'base_sha="$(jq -r \'.base.sha\' <<< "$pull")"',
+    '[[ "$INPUT_HEAD_REF" == "HEAD" ]] && head_sha="$WORKFLOW_SHA"',
+    '-f "sha=${INPUT_HEAD_REF#origin/}" -f per_page=1',
+    '-f "sha=${INPUT_BASE_REF#origin/}" -f per_page=1',
+    '[[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$base_sha" =~ ^[0-9a-f]{40}$ ]]',
+    "pr_number=%s\\nhead_sha=%s\\nbase_sha=%s\\n",
+  ]) {
+    if (!String(manualTarget?.run ?? "").includes(fragment)) {
+      errors.push(`Unified advisor manual dispatch must retain ${fragment}`);
+    }
   }
   const specialist = advisor.jobs?.["review-specialists"] ?? {};
   const specialistSteps = specialist.steps ?? [];
@@ -217,7 +249,10 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   }
   if (
     blockerDownload?.with?.pattern !== "pr-review-specialist-*-${{ github.run_attempt }}" ||
-    !String(blockerEvaluation?.run ?? "").includes("blocker-gate.mts") ||
+    blockerEvaluation?.env?.PR_REVIEW_ADVISOR_ARTIFACTS !==
+      "${{ runner.temp }}/pr-review-specialists" ||
+    blockerEvaluation.run !==
+      'node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/blocker-gate.mts" --attempt "$GITHUB_RUN_ATTEMPT"' ||
     blockerGate.env?.EXPECTED_HEAD_SHA !== "${{ needs.require-green-checks.outputs.head_sha }}" ||
     blockerGate.env?.EXPECTED_BASE_SHA !== "${{ needs.require-green-checks.outputs.base_sha }}"
   ) {
