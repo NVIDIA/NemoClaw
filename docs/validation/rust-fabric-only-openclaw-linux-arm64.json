@@ -1,0 +1,63 @@
+{
+  "scope": "Fabric-only OpenClaw; Linux ARM64 SDK, provider, CLI and live OpenShell boundary",
+  "implementationCommit": "90472172f3e323d2a3f0d57d1a29a8914db54c0d",
+  "bundleVersion": "0.1.0-dev.bc1b13319d3046d5",
+  "workspace": {
+    "passed": 104,
+    "failed": 0,
+    "ignored": 17
+  },
+  "format": "passed",
+  "strictClippy": "passed",
+  "openclawAdapterTests": {
+    "passed": 4,
+    "network": "none",
+    "image": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd"
+  },
+  "live": {
+    "deployment": "65437e13-3e71-4b5f-bfeb-90ca5907fe06",
+    "destroyed": true,
+    "exportReapply": true,
+    "harness": "openclaw",
+    "hostedRuntimePreserved": true,
+    "nativeResponse": true,
+    "passed": true,
+    "resourceBindings": {
+      "nemoclaw_provider.inference": "39ea83da-8c62-4b18-8b50-a7bc035d401a",
+      "nemoclaw_route.primary": "62e1d358-5cbb-4bec-bfaf-430249a71c09/primary",
+      "nemoclaw_sandbox.agent": "9b81e378-de57-456a-ac70-20b6482ed67f",
+      "nemoclaw_workspace.deployment": "62e1d358-5cbb-4bec-bfaf-430249a71c09"
+    },
+    "runtimeId": "runtime-1789431661334-53-2",
+    "unchangedApply": true
+  },
+  "managedApplyAgentProbe": {
+    "response": "FOUR"
+  },
+  "liveTestSha256": "1a586ce03fb0cca542d2df7441e659e26fde2903d9a026640cbdc6eb54a9235d",
+  "limitations": [
+    "Managed dependency combinations validated by schema and graph tests; this run did not provision a new managed gateway or inference service.",
+    "Live Fabric sandbox used the existing Spark gateway and inference service as external dependencies; that deployment and its data were left unchanged.",
+    "Existing standalone OpenClaw state is not migrated; previous bundle required for export or teardown.",
+    "Other Fabric harnesses still require external services."
+  ],
+  "evidenceDirectory": ".local/fabric-only-live",
+  "openTofuLifecycle": {
+    "passed": 5,
+    "failed": 0,
+    "coverage": [
+      "SDK apply, CLI export, unchanged reapply and destroy",
+      "Credential references retained during destroy",
+      "Readiness and observation failure preserve state and recover without recreation",
+      "Missing runtime declaration rejects plan/apply/export without state loss",
+      "All ten Fabric harnesses preserve conversations and reject runtime drift"
+    ]
+  },
+  "logSha256": {
+    ".local/fabric-only-workspace.log": "f3346b64a882735f5bd3e9571e596f97eb258110b6ae7d42129934a95902beb9",
+    ".local/fabric-only-clippy.log": "24e3bff0acdcb689cc7dbadc0c557ec7f5ec78d3562c9609e440e8d68ddafe42",
+    ".local/fabric-only-lifecycle.log": "f18ec9c7b1a2511ce321c72fd94a5adce53a14360923481ea7486d993d06931b",
+    ".local/fabric-only-adapter.log": "dcf0a7fc200cab9ab36e5d3037278eb791f53b95cc73af6040c74a0a911416bc",
+    ".local/fabric-only-live/run.log": "318589b8adfd3dedcd397afdc5d562984c2086defa1ac18b594d5c87721e1c7b"
+  }
+}

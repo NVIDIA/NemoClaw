@@ -191,6 +191,11 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         )
         .await;
         assert!(String::from_utf8_lossy(&setting).contains("per-channel-peer"));
+        // Managed Spark apply uses this shared active probe. Qualify it against
+        // the same Fabric-hosted OpenClaw runtime as native sandbox access.
+        let reply = client.agent_response(&binding).await.unwrap();
+        save("managed-agent-probe.json", &json!({"response": reply}));
+        assert_eq!(runtime_id(&client, &binding).await, hosted);
         let params = json!({"agentId":agent.name,"sessionKey":format!("agent:{}:native-live",agent.name),"message":"Reply with exactly the word FOUR.","idempotencyKey":format!("{}-native-live",document.metadata.uid),"deliver":false}).to_string();
         exec(
             &client,

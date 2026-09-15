@@ -60,3 +60,8 @@ attaching to the one hosted by NemoClaw.
 Deep Agents, Hermes, and Fabric OpenClaw. Hermes rejects the example Spark
 service's 32K context; its successful short-response run used Ollama/Qwen3. This
 does not qualify long-context accuracy or general tool-use reliability.
+
+[Fabric-only OpenClaw validation](validation/rust-fabric-only-openclaw-linux-arm64.json)
+covers the shared managed-apply agent probe, a real response through OpenShell,
+unchanged apply, export/reapply, and stable Fabric runtime identity. The test
+creates and removes an owned sandbox against an existing inference service.
