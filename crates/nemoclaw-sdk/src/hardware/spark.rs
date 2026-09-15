@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::{Capacity, GIB};
-use crate::Error;
+use crate::{Error, config::constraints as c};
 
 pub(super) fn check_compatibility(c: &Capacity) -> Result<(), Error> {
     if c.architecture != "arm64"
@@ -27,12 +27,13 @@ pub(crate) fn validate_memory(
         }
     }
     require(
-        (28..=64).contains(&memory.host_reserve_gib)
-            && (4..=12).contains(&memory.kv_cache_gib)
-            && (6..=16).contains(&memory.min_available_gib)
-            && (2..=8).contains(&memory.min_free_gib)
-            && (memory.min_available_gib..=24).contains(&memory.free_gate_gib)
-            && (1..=5).contains(&memory.consecutive_samples),
+        c::HOST_RESERVE.contains(memory.host_reserve_gib)
+            && c::KV_CACHE.contains(memory.kv_cache_gib)
+            && c::MIN_AVAILABLE.contains(memory.min_available_gib)
+            && c::MIN_FREE.contains(memory.min_free_gib)
+            && c::FREE_GATE.contains(memory.free_gate_gib)
+            && memory.free_gate_gib >= memory.min_available_gib
+            && c::CONSECUTIVE_SAMPLES.contains(memory.consecutive_samples),
         "memory policy exceeds qualified Spark bounds",
     )
 }

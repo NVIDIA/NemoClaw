@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
     Error,
-    config::{ConfigError, Service},
+    config::{ConfigError, Service, constraints as c},
     hardware::GIB,
     snapshot::Manifest,
 };
@@ -11,14 +11,14 @@ pub(crate) fn gpu_bytes(service: &Service) -> u64 {
         return recipe.resources.gpu_memory_bytes;
     }
     (if service.memory.gpu_memory_gib == 0 {
-        16
+        c::GPU_MEMORY_DEFAULT
     } else {
         service.memory.gpu_memory_gib
     }) as u64
         * GIB
 }
 pub fn validate(service: &Service) -> Result<(), ConfigError> {
-    if service.backend != "vllm" {
+    if service.backend != c::BACKEND {
         return Err(ConfigError("unsupported inference backend"));
     }
     crate::recipes::huggingface::validate_model(service)?;
@@ -26,18 +26,15 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
         recipe.validate(service)?;
     }
     let v = &service.serving;
-    if !(1024..=65535).contains(&v.port)
-        || !(8192..=65536).contains(&v.context_tokens)
-        || !(1..=2).contains(&v.max_sequences)
-        || !(512..=2048).contains(&v.batch_tokens)
+    if !c::PORT.contains(v.port)
+        || !c::CONTEXT_TOKENS.contains(v.context_tokens)
+        || !c::MAX_SEQUENCES.contains(v.max_sequences)
+        || !c::BATCH_TOKENS.contains(v.batch_tokens)
         || (service.recipe.is_none() && v.speculative_tokens != 0)
-        || !(0..=3).contains(&v.speculative_tokens)
-        || !(60..=3600).contains(&v.startup_timeout_seconds)
-        || !matches!(
-            v.tool_parser.as_str(),
-            "" | "hermes" | "qwen3_coder" | "llama3_json" | "mistral"
-        )
-        || !matches!(v.reasoning_parser.as_str(), "" | "qwen3" | "deepseek_r1")
+        || !(0..=c::SPECULATIVE_TOKENS_MAX).contains(&v.speculative_tokens)
+        || !c::STARTUP_TIMEOUT.contains(v.startup_timeout_seconds)
+        || !c::TOOL_PARSERS.contains(&v.tool_parser.as_str())
+        || !c::REASONING_PARSERS.contains(&v.reasoning_parser.as_str())
     {
         return Err(ConfigError(
             "serving settings are unsupported by the generic vLLM backend",
@@ -47,7 +44,7 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
     if service.recipe.is_some() {
         return Ok(());
     }
-    if !(0..=96).contains(&service.memory.gpu_memory_gib)
+    if !(0..=c::GPU_MEMORY_MAX).contains(&service.memory.gpu_memory_gib)
         || gpu_bytes(service) < (service.memory.kv_cache_gib as u64 + 4) * GIB
     {
         return Err(ConfigError(

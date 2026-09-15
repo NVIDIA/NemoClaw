@@ -9,17 +9,13 @@ use std::{
 };
 use url::Url;
 
-static SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9-]{0,39}$").unwrap());
-static UUID: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$").unwrap()
-});
-static ENV: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Z_][A-Z0-9_]{0,127}$").unwrap());
-static MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$").unwrap());
+static SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::SLUG).unwrap());
+static UUID: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::UUID).unwrap());
+static ENV: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::ENV).unwrap());
+static MODEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::MODEL).unwrap());
 static OLLAMA_MODEL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$").unwrap());
-static IMAGE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$").unwrap());
+    LazyLock::new(|| Regex::new(constraints::OLLAMA_MODEL).unwrap());
+static IMAGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::IMAGE).unwrap());
 fn require(valid: bool, reason: &'static str) -> Result<(), ConfigError> {
     if valid {
         Ok(())
@@ -109,24 +105,12 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
 }
 
 pub fn is_fabric_harness(harness: &str) -> bool {
-    matches!(
-        harness,
-        "deepagents"
-            | "hermes"
-            | "openclaw"
-            | "claude"
-            | "codex"
-            | "mini-swe-agent"
-            | "nooa"
-            | "nooa-bench"
-            | "remote-agent"
-            | "pi"
-    )
+    constraints::HARNESSES.contains(&harness)
 }
 impl Document {
     pub fn validate(&self) -> Result<(), ConfigError> {
         require(
-            self.api_version == API_VERSION && self.kind == "NemoClawConfig",
+            self.api_version == API_VERSION && self.kind == constraints::KIND,
             "expected nemoclaw.nvidia.com/v1alpha1 NemoClawConfig",
         )?;
         require(
@@ -135,7 +119,7 @@ impl Document {
         )?;
         let gateway = &self.spec.gateway;
         require(
-            matches!(gateway.management.as_str(), "managed" | "external"),
+            constraints::MANAGEMENT.contains(&gateway.management.as_str()),
             "gateway management must be external or managed",
         )?;
         if gateway.management == "managed" {
@@ -170,7 +154,7 @@ impl Document {
         let provider = &self.spec.inference_providers[0];
         require(
             SLUG.is_match(&provider.name)
-                && matches!(provider.provider.as_str(), "openai" | "anthropic"),
+                && constraints::PROVIDERS.contains(&provider.provider.as_str()),
             "provider requires a lowercase name and openai or anthropic implementation",
         )?;
         if let Some(service) = &provider.service {
@@ -199,7 +183,7 @@ impl Document {
             "sandbox requires a lowercase name and image pinned by SHA-256 digest",
         )?;
         require(
-            matches!(sandbox.runtime.provider.as_str(), "docker" | "podman"),
+            constraints::RUNTIMES.contains(&sandbox.runtime.provider.as_str()),
             "sandbox runtime must be docker or podman",
         )?;
         require(
@@ -207,7 +191,7 @@ impl Document {
             "managed gateway requires the qualified Docker driver",
         )?;
         require(
-            sandbox.network.tier == "isolated",
+            sandbox.network.tier == constraints::NETWORK_TIER,
             "this slice supports only the isolated network tier",
         )?;
         require(
@@ -310,7 +294,7 @@ impl Gateway {
                 && bind.is_some_and(|a| a.port() >= 1024)
                 && self.credential.is_none()
                 && self.tls.is_none()
-                && self.engine == "unix:///var/run/docker.sock"
+                && self.engine == constraints::GATEWAY_ENGINE
                 && self.image == DEFAULT_GATEWAY_IMAGE,
             "managed gateway requires pinned image, local Docker, and unprivileged loopback HTTP port without credentials",
         )?;

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+pub(crate) mod constraints;
 mod inference;
 mod types;
 pub use inference::InferenceConnection;
@@ -146,8 +147,8 @@ impl Document {
     pub fn defaults(&mut self) {
         let gateway = &mut self.spec.gateway;
         if gateway.management == "managed" {
-            default_string(&mut gateway.endpoint, "http://127.0.0.1:17681");
-            default_string(&mut gateway.engine, "unix:///var/run/docker.sock");
+            default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
+            default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
             default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
             default_string(
                 &mut gateway.network_cidr,
@@ -164,8 +165,8 @@ impl Document {
         }
         for sandbox in &mut self.spec.sandboxes {
             default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
-            default_string(&mut sandbox.runtime.provider, "docker");
-            default_string(&mut sandbox.network.tier, "isolated");
+            default_string(&mut sandbox.runtime.provider, constraints::RUNTIME);
+            default_string(&mut sandbox.network.tier, constraints::NETWORK_TIER);
         }
     }
 }
@@ -197,17 +198,41 @@ impl Service {
 
     pub fn defaults(&mut self) {
         for (value, default) in [
-            (&mut self.serving.port, 18888),
-            (&mut self.serving.context_tokens, 32768),
-            (&mut self.serving.max_sequences, 1),
-            (&mut self.serving.batch_tokens, 1024),
-            (&mut self.serving.startup_timeout_seconds, 1800),
-            (&mut self.memory.host_reserve_gib, 32),
-            (&mut self.memory.kv_cache_gib, 8),
-            (&mut self.memory.min_available_gib, 8),
-            (&mut self.memory.min_free_gib, 3),
-            (&mut self.memory.free_gate_gib, 12),
-            (&mut self.memory.consecutive_samples, 5),
+            (&mut self.serving.port, constraints::PORT.default),
+            (
+                &mut self.serving.context_tokens,
+                constraints::CONTEXT_TOKENS.default,
+            ),
+            (
+                &mut self.serving.max_sequences,
+                constraints::MAX_SEQUENCES.default,
+            ),
+            (
+                &mut self.serving.batch_tokens,
+                constraints::BATCH_TOKENS.default,
+            ),
+            (
+                &mut self.serving.startup_timeout_seconds,
+                constraints::STARTUP_TIMEOUT.default,
+            ),
+            (
+                &mut self.memory.host_reserve_gib,
+                constraints::HOST_RESERVE.default,
+            ),
+            (&mut self.memory.kv_cache_gib, constraints::KV_CACHE.default),
+            (
+                &mut self.memory.min_available_gib,
+                constraints::MIN_AVAILABLE.default,
+            ),
+            (&mut self.memory.min_free_gib, constraints::MIN_FREE.default),
+            (
+                &mut self.memory.free_gate_gib,
+                constraints::FREE_GATE.default,
+            ),
+            (
+                &mut self.memory.consecutive_samples,
+                constraints::CONSECUTIVE_SAMPLES.default,
+            ),
         ] {
             if *value == 0 {
                 *value = default;

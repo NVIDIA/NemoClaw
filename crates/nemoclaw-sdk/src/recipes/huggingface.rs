@@ -3,7 +3,7 @@
 //! Pinned model identity and snapshot resolution.
 use crate::{
     Error,
-    config::{ConfigError, Service},
+    config::{ConfigError, Service, constraints as c},
     snapshot::Manifest,
 };
 use sha2::{Digest, Sha256};
@@ -23,11 +23,11 @@ pub fn directory(service: &Service) -> String {
 }
 pub(crate) fn validate_model(service: &Service) -> Result<(), ConfigError> {
     let repository = &service.model.repository;
-    if !regex::Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+    if !regex::Regex::new(c::REPOSITORY)
         .unwrap()
         .is_match(repository)
         || repository.len() > 200
-        || !regex::Regex::new(r"^[a-f0-9]{40}$")
+        || !regex::Regex::new(c::REVISION)
             .unwrap()
             .is_match(&service.model.revision)
     {
