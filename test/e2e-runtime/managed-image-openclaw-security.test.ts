@@ -12,10 +12,12 @@ const RUN_MANAGED_IMAGE_SECURITY = Boolean(
 );
 
 const ENTRYPOINT_CONFIG_REPAIR_PROOF = Buffer.from(
-  String.raw`test "$(id -un)" = sandbox
+  String.raw`set -eu
+test "$(id -un)" = sandbox
 test "$(stat -c '%a %U:%G' /sandbox/.openclaw)" = '2770 sandbox:sandbox'
 test "$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)" = '660 sandbox:sandbox'
-grep -qx '{}' /sandbox/.openclaw/openclaw.json
+test "$(wc -c </sandbox/.openclaw/openclaw.json)" -eq 3
+test "$(cat /sandbox/.openclaw/openclaw.json)" = '{}'
 `,
 ).toString("base64");
 

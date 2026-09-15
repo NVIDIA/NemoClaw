@@ -203,7 +203,7 @@ prepare_restricted_log() {
 }
 
 _START_LOG="/tmp/nemoclaw-start.log"
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$EUID" -eq 0 ]; then
   prepare_restricted_log "$_START_LOG" root:root 600
 else
   prepare_restricted_log "$_START_LOG" "" 600

@@ -167,7 +167,7 @@ record_portable_openclaw_gateway_startup_timing() {
 }
 
 _START_LOG="/tmp/nemoclaw-start.log"
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$EUID" -eq 0 ]; then
   _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 root:root
 else
   _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 "" best-effort

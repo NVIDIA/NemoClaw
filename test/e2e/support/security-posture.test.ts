@@ -19,6 +19,7 @@ import {
   assertSecurityPosture,
   OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   parseCapabilitySurfaceReport,
+  parseExpectedOpenShellVersion,
   PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   type ProcessSecurityIdentity,
   parseSplitProcessSecurityReport,
@@ -340,6 +341,16 @@ function inlineManagedImageCatalogEnvironment(): NodeJS.ProcessEnv {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("security posture fixture", () => {
+  it("accepts only the exact stable OpenShell version token", () => {
+    expect(parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116\n"))).toBe("0.0.116");
+    expect(() =>
+      parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116-rc.1\n")),
+    ).toThrow(/expected OpenShell 0\.0\.116/u);
+    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116+dev\n"))).toThrow(
+      /expected OpenShell 0\.0\.116/u,
+    );
+  });
+
   it("compiles the embedded split-process probe as Python", () => {
     const compiled = spawnSync(
       "python3",

@@ -427,6 +427,20 @@ function selectedManagedImageRevision(environment: NodeJS.ProcessEnv): string {
   return revision;
 }
 
+/** Require the exact stable OpenShell version token from a successful probe. */
+export function parseExpectedOpenShellVersion(result: ShellProbeResult): string {
+  requireSuccess("OpenShell version", result);
+  const versions = [...resultText(result).matchAll(/(?:^|\s)(\d+\.\d+\.\d+)(?=\s|$)/gu)].map(
+    (match) => match[1]!,
+  );
+  if (versions.length !== 1 || versions[0] !== EXPECTED_OPENSHELL_VERSION) {
+    throw new Error(
+      `security-posture expected OpenShell ${EXPECTED_OPENSHELL_VERSION}, got ${versions.join(", ") || "unreported"}`,
+    );
+  }
+  return versions[0];
+}
+
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -884,15 +898,7 @@ export async function assertSecurityPosture(
     env: probeEnv(),
     timeoutMs: 15_000,
   });
-  requireSuccess("OpenShell version", openshellVersionProbe);
-  const openshellVersions = [
-    ...resultText(openshellVersionProbe).matchAll(/\b\d+\.\d+\.\d+\b/gu),
-  ].map((match) => match[0]);
-  if (openshellVersions.length !== 1 || openshellVersions[0] !== EXPECTED_OPENSHELL_VERSION) {
-    throw new Error(
-      `security-posture expected OpenShell ${EXPECTED_OPENSHELL_VERSION}, got ${openshellVersions.join(", ") || "unreported"}`,
-    );
-  }
+  const openshellVersion = parseExpectedOpenShellVersion(openshellVersionProbe);
   const managedImageRevision = selectedManagedImageRevision(
     dependencies.environment ?? process.env,
   );
@@ -1105,7 +1111,7 @@ tail -n 20 "$log"
     runtimeProxyEnvLocked: true,
     runtimeVersions: {
       managedImageRevision,
-      openshell: openshellVersions[0],
+      openshell: openshellVersion,
     },
     splitProcess: {
       childSupervisor,
