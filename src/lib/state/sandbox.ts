@@ -57,6 +57,7 @@ import {
   createTempSshConfig,
   runWithTempSshConfigCleanup,
   runWithTempSshConfigCleanupAsync,
+  type TempSshConfig,
   TempSshConfigCleanupError,
 } from "../sandbox/temp-ssh-config.js";
 import {
@@ -1709,6 +1710,17 @@ function retainedTempSshConfigMessage(error: TempSshConfigCleanupError): string 
   return `${error.message}. Remove that directory before continuing.`;
 }
 
+function retainedTempSshConfigCreationMessage(error: TempSshConfigCleanupError): string {
+  const creationError = error.cause instanceof AggregateError ? error.cause.errors[0] : undefined;
+  const detail =
+    creationError instanceof Error
+      ? `: ${creationError.message}`
+      : creationError === undefined
+        ? ""
+        : `: ${String(creationError)}`;
+  return `Temporary OpenShell SSH configuration creation failed${detail}. ${retainedTempSshConfigMessage(error)}`;
+}
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
@@ -1879,7 +1891,21 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
   _log(`SSH config obtained (${sshConfig.length} bytes)`);
 
-  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  let tempSshConfig: TempSshConfig;
+  try {
+    tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  } catch (error) {
+    if (!(error instanceof TempSshConfigCleanupError)) throw error;
+    return {
+      success: false,
+      manifest,
+      backedUpDirs,
+      failedDirs: [...stateDirs],
+      backedUpFiles,
+      failedFiles: stateFiles.map((file) => file.path),
+      error: retainedTempSshConfigCreationMessage(error),
+    };
+  }
   const configFile = tempSshConfig.file;
   const sshPhase = runWithTempSshConfigCleanup(tempSshConfig, (): BackupResult | null => {
     if (hasBackupDirectories) {
@@ -2729,7 +2755,13 @@ async function restoreSandboxStateInternal(
     };
   }
 
-  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  let tempSshConfig: TempSshConfig;
+  try {
+    tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
+  } catch (error) {
+    if (!(error instanceof TempSshConfigCleanupError)) throw error;
+    return failRestoreContract(retainedTempSshConfigCreationMessage(error));
+  }
   const configFile = tempSshConfig.file;
   const previousOpenClawImagePluginInstalls =
     freshOpenClawImagePluginInstalls !== undefined

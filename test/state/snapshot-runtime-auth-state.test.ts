@@ -42,6 +42,10 @@ function throwInjectedManifestFailure(): never {
   throw new Error("injected manifest publication failure");
 }
 
+function throwInjectedConfigWriteFailure(): never {
+  throw new Error("injected SSH configuration write failure");
+}
+
 function isSnapshotSshTempDirectory(target: fs.PathLike): boolean {
   return /^nemoclaw-state-[A-Za-z0-9]{6}$/u.test(path.basename(String(target)));
 }
@@ -296,6 +300,7 @@ describe("snapshot temporary SSH credential cleanup", () => {
 
       const originalRmSync = fs.rmSync;
       const originalRenameSync = fs.renameSync;
+      const originalWriteFileSync = fs.writeFileSync;
       const retainedDirectories: string[] = [];
       fs.rmSync = ((target, options) =>
         isSnapshotSshTempDirectory(target)
@@ -335,7 +340,31 @@ describe("snapshot temporary SSH credential cleanup", () => {
           }),
         ]);
         expect(retainedDirectories).toHaveLength(3);
+
+        fs.renameSync = originalRenameSync;
+        fs.writeFileSync = ((file, data, options) =>
+          path.basename(String(file)) === "ssh_config"
+            ? throwInjectedConfigWriteFailure()
+            : originalWriteFileSync(file, data, options)) as typeof fs.writeFileSync;
+        syncBuiltinESMExports();
+        expect(
+          sandboxState.backupSandboxState("alpha", { name: "creation-cleanup-failure" }),
+        ).toMatchObject({
+          success: false,
+          error: expect.stringMatching(
+            /injected SSH configuration write failure.*Remove that directory before continuing/u,
+          ),
+          manifest: { backupComplete: false },
+        });
+        await expect(sandboxState.restoreSandboxState("alpha", backupPath)).resolves.toMatchObject({
+          success: false,
+          error: expect.stringMatching(
+            /injected SSH configuration write failure.*Remove that directory before continuing/u,
+          ),
+        });
+        expect(retainedDirectories).toHaveLength(5);
       } finally {
+        fs.writeFileSync = originalWriteFileSync;
         fs.renameSync = originalRenameSync;
         fs.rmSync = originalRmSync;
         syncBuiltinESMExports();
@@ -348,6 +377,14 @@ describe("snapshot temporary SSH credential cleanup", () => {
           force: true,
         });
         originalRmSync(retainedDirectories[2] ?? path.join(fixture, "missing-temp-2"), {
+          recursive: true,
+          force: true,
+        });
+        originalRmSync(retainedDirectories[3] ?? path.join(fixture, "missing-temp-3"), {
+          recursive: true,
+          force: true,
+        });
+        originalRmSync(retainedDirectories[4] ?? path.join(fixture, "missing-temp-4"), {
           recursive: true,
           force: true,
         });
