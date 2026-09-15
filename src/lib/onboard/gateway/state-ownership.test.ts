@@ -19,8 +19,6 @@ function makeOwnership(
   return createDockerDriverGatewayStateOwnership({
     getDockerDriverGatewayPid: () => null,
     getDockerDriverGatewayStateDir: () => STATE_DIR,
-    getGatewayName: () => "nemoclaw",
-    getGatewayPort: () => 8080,
     isDockerDriverGatewayProcess: () => true,
     isPidAlive: () => true,
     readProcessEnvironment: () => ({
@@ -51,6 +49,18 @@ describe("docker-driver gateway selected-state ownership", () => {
         STATE_DIR,
       ),
     ).toBe(false);
+  });
+
+  it("treats the exact database URL as authoritative across gateway targets", () => {
+    expect(
+      processEnvironmentUsesSelectedGatewayState(
+        {
+          NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir("/another/state"),
+          OPENSHELL_DB_URL: `sqlite:${path.join(STATE_DIR, "openshell.db")}`,
+        },
+        STATE_DIR,
+      ),
+    ).toBe(true);
   });
 
   it("matches legacy default state only through its exact database path", () => {
@@ -193,31 +203,23 @@ describe("docker-driver gateway selected-state ownership", () => {
     expect(makeOwnership().isDockerDriverGatewayStateInUse()).toBe(false);
   });
 
-  it("proves selected state is unused when macOS can only identify an unrelated gateway target", () => {
+  it("fails closed when process environment evidence is unavailable for an unrelated target", () => {
+    const processScan = vi.fn((args: readonly string[]) =>
+      args[0] === "pgrep"
+        ? { stdout: "4242\n", exitCode: 0, timedOut: false }
+        : {
+            stdout: "openshell-gateway[nemoclaw=nemoclaw-8081;port=8081]\n",
+            exitCode: 0,
+            timedOut: false,
+          },
+    );
     const ownership = makeOwnership({
       readProcessEnvironment: () => null,
-      runCaptureEx: (args) =>
-        args[0] === "pgrep"
-          ? { stdout: "4242\n", exitCode: 0, timedOut: false }
-          : {
-              stdout: "openshell-gateway[nemoclaw=nemoclaw-8081;port=8081]\n",
-              exitCode: 0,
-              timedOut: false,
-            },
-    });
-
-    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(false);
-  });
-
-  it("fails closed when macOS cannot recover a gateway target without process environment", () => {
-    const ownership = makeOwnership({
-      readProcessEnvironment: () => null,
-      runCaptureEx: (args) =>
-        args[0] === "pgrep"
-          ? { stdout: "4242\n", exitCode: 0, timedOut: false }
-          : { stdout: "/opt/openshell-gateway\n", exitCode: 0, timedOut: false },
+      runCaptureEx: processScan,
     });
 
     expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
+    expect(processScan).toHaveBeenCalledOnce();
+    expect(processScan).toHaveBeenCalledWith(["pgrep", "-f", expect.any(String)]);
   });
 });

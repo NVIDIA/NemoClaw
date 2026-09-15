@@ -8,7 +8,6 @@ import {
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "../docker-driver-gateway-config";
 import { readDockerDriverGatewayProcessEnvironment } from "../docker-driver-gateway-process-identity";
-import { resolveOpenShellGatewayProcessTarget } from "../gateway-process-target-identity";
 import { HOST_GATEWAY_PGREP_PATTERN } from "../host-gateway-process";
 
 interface ProcessScanResult {
@@ -20,8 +19,6 @@ interface ProcessScanResult {
 interface DockerDriverGatewayStateOwnershipDeps {
   getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayStateDir(): string;
-  getGatewayName(): string;
-  getGatewayPort(): number;
   isDockerDriverGatewayProcess(
     pid: number,
     gatewayBin?: string | null,
@@ -46,11 +43,9 @@ export function processEnvironmentUsesSelectedGatewayState(
   const namespace = processEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
   const databaseUrl = processEnv.OPENSHELL_DB_URL;
   const selectedDatabaseUrl = `sqlite:${path.join(stateDir, "openshell.db")}`;
-  if (databaseUrl !== undefined && databaseUrl !== selectedDatabaseUrl) return false;
+  if (databaseUrl !== undefined) return databaseUrl === selectedDatabaseUrl;
   if (namespace === selectedNamespace) return true;
-  return (
-    (namespace === undefined || namespace === "default") && databaseUrl === selectedDatabaseUrl
-  );
+  return false;
 }
 
 export function createDockerDriverGatewayStateOwnership(
@@ -115,21 +110,7 @@ export function createDockerDriverGatewayStateOwnership(
         return true;
       }
       const processEnv = readProcessEnvironment(pid);
-      if (!processEnv) {
-        let targetScan: ProcessScanResult;
-        try {
-          targetScan = deps.runCaptureEx(["ps", "-p", String(pid), "-o", "args="]);
-        } catch {
-          return true;
-        }
-        if (targetScan.timedOut || targetScan.exitCode !== 0) return true;
-        const target = resolveOpenShellGatewayProcessTarget(targetScan.stdout);
-        if (!target) return true;
-        if (target.name === deps.getGatewayName() && target.port === deps.getGatewayPort()) {
-          return true;
-        }
-        continue;
-      }
+      if (!processEnv) return true;
       if (
         processEnvironmentUsesSelectedGatewayState(
           processEnv,
