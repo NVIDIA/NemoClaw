@@ -37,7 +37,9 @@ It then creates the runner, sends one validation request for the selected model,
 This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
 
 If the published runner later stops, use `$$nemoclaw <name> recover` or `$$nemoclaw <name> connect --probe-only` to resume only the exact receipt-owned runner.
-Ordinary `connect` and direct `launch` do not recover it.
+Ordinary `connect` also resumes it when the recorded inference route is unavailable.
+When `launch` runs its complete preflight, it uses the same recovery path before it starts the agent.
+A launch that accepts existing launch-readiness evidence skips that preflight.
 Follow [Recover Portable Published Ollama](../../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for the authority checks, route proof, and failure procedure.
 
 <Warning title="Portable Cleanup Boundary">
