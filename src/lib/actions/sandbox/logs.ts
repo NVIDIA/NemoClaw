@@ -34,6 +34,8 @@ const DRAIN_GRACE_MS = 200;
 // Source attribution depends only on the start of a line. Relay the rest after
 // this bound so one unterminated log line cannot grow host memory without limit.
 const MAX_BUFFERED_GATEWAY_LINE_PREFIX_CHARS = 4_096;
+const OPENSHELL_UNAVAILABLE_GUIDANCE =
+  "openshell CLI not found. Install OpenShell before using sandbox commands.";
 
 type GatewayLogChunkTagger = {
   finish: () => string;
@@ -122,6 +124,10 @@ function describeLogOutcome(outcome: OpenShellSandboxLogOutcome): string {
   if (outcome.termination === "terminated") return "signal SIGTERM";
   if (outcome.termination === "other_signal") return "signal unknown";
   return `exit ${outcome.exitCode}`;
+}
+
+function isOpenShellUnavailable(outcome: OpenShellSandboxLogOutcome): boolean {
+  return outcome.kind === "failed" && outcome.error.kind === "unavailable";
 }
 
 function shouldIncludeGatewayLogSource(sandboxName: string, deps: SandboxLogsRuntimeDeps): boolean {
@@ -416,6 +422,11 @@ async function streamSandboxFollowLogs(
     addSource("OpenClaw log source", "gateway", true);
   }
   await enableSandboxAuditLogs(sandboxName, deps);
+  if (requestedExitCode !== null) {
+    setupComplete = true;
+    maybeExit();
+    return;
+  }
   addSource("OpenShell log source", "openshell");
   setupComplete = true;
   maybeExit();
@@ -483,6 +494,11 @@ export async function showSandboxLogsWithDeps(
     if (gatewayResult.diagnostic) {
       (deps.writeStderr ?? process.stderr.write.bind(process.stderr))(gatewayResult.diagnostic);
     }
+    if (isOpenShellUnavailable(gatewayResult.outcome)) {
+      console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
+      (deps.exit ?? process.exit)(1);
+      return;
+    }
     if (gatewayResult.outcome.kind === "failed" || gatewayResult.outcome.exitCode !== 0) {
       console.error(
         `  OpenClaw log source unavailable (${describeLogOutcome(gatewayResult.outcome)}).`,
@@ -500,6 +516,11 @@ export async function showSandboxLogsWithDeps(
   });
   if (openshellResult.diagnostic) {
     (deps.writeStderr ?? process.stderr.write.bind(process.stderr))(openshellResult.diagnostic);
+  }
+  if (isOpenShellUnavailable(openshellResult.outcome)) {
+    console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
+    (deps.exit ?? process.exit)(1);
+    return;
   }
 
   const targetLines = Number(logsOptions.lines);

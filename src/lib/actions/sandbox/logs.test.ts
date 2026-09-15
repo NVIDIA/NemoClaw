@@ -38,6 +38,7 @@ type FakeLogProbeResult = {
   stdout?: string;
   stderr?: string;
   error?: Error;
+  errorKind?: "capture" | "configuration" | "invocation" | "timeout" | "unavailable";
   signal?: NodeJS.Signals | null;
 };
 
@@ -45,7 +46,7 @@ function outcome(result: FakeLogProbeResult) {
   return result.error
     ? {
         kind: "failed" as const,
-        error: { kind: "invocation" as const, message: result.error.message },
+        error: { kind: result.errorKind ?? ("invocation" as const), message: result.error.message },
         exitCode: 1,
       }
     : {
@@ -319,6 +320,29 @@ describe("showSandboxLogsWithDeps", () => {
     expect(result.follows).toEqual([]);
   });
 
+  it("prints OpenShell installation guidance and exits before a second log probe", async () => {
+    const exit = vi.fn(failExit);
+    const result = await captureLogsRun(
+      { follow: false, lines: "200", since: null },
+      {
+        settings: { status: 0 },
+        sandbox: {
+          status: null,
+          error: new Error("OpenShell binary not found"),
+          errorKind: "unavailable",
+        },
+      },
+      { exit },
+    );
+
+    expect(exit).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(result.errors).toEqual([
+      "openshell CLI not found. Install OpenShell before using sandbox commands.",
+    ]);
+    expect(result.reads.map(({ source }) => source)).toEqual(["gateway"]);
+  });
+
   it("surfaces a sparse gateway breadcrumb when OpenShell output dominates the tail", async () => {
     const gatewayStdout = [
       "[1779488800.000] [gateway] starting HTTP server",
@@ -534,6 +558,53 @@ describe("follow-mode log source attribution (#10340)", () => {
     "│  - plugins.entries.tavily: plugin not installed: tavily - install the",
     "└────",
   ].join("\n");
+
+  it("does not start an OpenShell follower after interruption during audit enablement", async () => {
+    const gateway = createStreamingChild();
+    const follow = vi.fn(() => gateway.session);
+    const sigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
+    const sigtermListeners = process.listeners("SIGTERM") as NodeJS.SignalsListener[];
+    let resolveAudit: (result: { ok: true; value: undefined }) => void = () => {};
+    const auditResult = new Promise<{ ok: true; value: undefined }>((resolve) => {
+      resolveAudit = resolve;
+    });
+    let settleExit: (code: number) => void = () => {};
+    const exited = new Promise<number>((resolve) => {
+      settleExit = resolve;
+    });
+
+    try {
+      const setup = showSandboxLogsWithDeps(
+        "alpha",
+        { follow: true, lines: "50", since: null },
+        {
+          enableAuditLogs: () => auditResult,
+          exit: ((code: number) => {
+            settleExit(code);
+            return undefined as never;
+          }) as never,
+          isDockerRuntimeDown: () => false,
+          logs: { read: vi.fn(), follow },
+          stdout: createCapturedOutput([]),
+        },
+      );
+
+      expect(follow).toHaveBeenCalledOnce();
+      process.emit("SIGINT");
+      expect(gateway.child.kill).toHaveBeenCalledWith("SIGINT");
+
+      resolveAudit({ ok: true, value: undefined });
+      await setup;
+      expect(follow).toHaveBeenCalledOnce();
+
+      gateway.stdout.end();
+      gateway.child.emit("exit", null, "SIGINT");
+      await expect(exited).resolves.toBe(130);
+    } finally {
+      restoreProcessSignalListeners("SIGINT", sigintListeners);
+      restoreProcessSignalListeners("SIGTERM", sigtermListeners);
+    }
+  });
 
   it("relays typed source diagnostics to stderr", async () => {
     const run = await startFollowRun({ keepOpenshellRunning: true });
