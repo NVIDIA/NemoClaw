@@ -53,6 +53,7 @@ export type OpenShellSandboxLogFollowCompletion = Readonly<{
 
 export interface OpenShellSandboxLogFollowSession {
   completion: Promise<OpenShellSandboxLogFollowCompletion>;
+  diagnostic: OpenShellSandboxLogOutput | null;
   output: OpenShellSandboxLogOutput | null;
   cancel(reason: "interrupt" | "terminate"): void;
 }

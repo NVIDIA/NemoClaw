@@ -94,6 +94,20 @@ describe("CLI OpenShell sandbox logs adapter", () => {
     );
   });
 
+  it("preserves a completed nonzero buffered exit", async () => {
+    const logs = createCliOpenShellSandboxLogs({
+      resolveBinary: () => "/usr/bin/openshell",
+      runBuffered: async () => ({ status: 23, stdout: "partial\n", stderr: "diagnostic\n" }),
+      environment: {},
+    });
+
+    await expect(logs.read(gatewayRequest)).resolves.toEqual({
+      content: "partial\n",
+      diagnostic: "diagnostic\n",
+      outcome: { kind: "completed", exitCode: 23 },
+    });
+  });
+
   it("retains selected OpenShell routing without forwarding ambient credentials", async () => {
     const runBuffered = vi.fn<OpenShellBufferedCommandRunner>(async () => ({
       status: 0,
@@ -214,7 +228,9 @@ describe("CLI OpenShell sandbox logs adapter", () => {
 
   it("supervises followed output and cancellation behind the typed session", async () => {
     const output = new PassThrough();
+    const diagnostic = new PassThrough();
     const child = Object.assign(new EventEmitter(), {
+      stderr: diagnostic,
       stdout: output,
       exitCode: null,
       signalCode: null,
@@ -232,8 +248,15 @@ describe("CLI OpenShell sandbox logs adapter", () => {
 
     const session = logs.follow(gatewayRequest);
     const chunks: string[] = [];
+    const diagnostics: string[] = [];
     session.output?.onChunk((chunk) => chunks.push(chunk));
+    session.diagnostic?.onChunk((chunk) => diagnostics.push(chunk));
     output.write("gateway line\n");
+    const secret = ["follow", "secret"].join("-");
+    diagnostic.write("Authorization: Bearer follow-");
+    diagnostic.write("secret\n");
+    diagnostic.write("x".repeat(64 * 1024 + 1));
+    diagnostic.write("\nvisible diagnostic\n");
     session.cancel("terminate");
     (child as unknown as EventEmitter).emit("exit", null, "SIGTERM");
 
@@ -241,16 +264,25 @@ describe("CLI OpenShell sandbox logs adapter", () => {
       outcome: { kind: "completed", exitCode: 143, termination: "terminated" },
     });
     expect(chunks).toEqual(["gateway line\n"]);
+    expect(diagnostics).toEqual([
+      "Authorization: <REDACTED> <REDACTED>\n",
+      "OpenShell diagnostic omitted: line exceeded safe display limit.\n",
+      "visible diagnostic\n",
+    ]);
+    expect(diagnostics.join("")).not.toContain(secret);
+    expect(diagnostics.join("")).not.toContain("x".repeat(64));
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(spawnChild).toHaveBeenCalledWith(
       "/usr/bin/openshell",
       ["sandbox", "exec", "-n", "alpha", "--", "tail", "-n", "50", "-f", "/tmp/gateway.log"],
-      { cwd: "/repo", env: environment, stdio: ["inherit", "pipe", "inherit"] },
+      { cwd: "/repo", env: environment, stdio: ["inherit", "pipe", "pipe"] },
     );
   });
 
   it("spawns an OpenShell follow request with its source and time filter", async () => {
+    const diagnostic = new PassThrough();
     const child = Object.assign(new EventEmitter(), {
+      stderr: diagnostic,
       stdout: null,
       exitCode: null,
       signalCode: null,
@@ -272,10 +304,11 @@ describe("CLI OpenShell sandbox logs adapter", () => {
       since: "5m",
     });
     expect(session.output).toBeNull();
+    expect(session.diagnostic).not.toBeNull();
     expect(spawnChild).toHaveBeenCalledWith(
       "/usr/bin/openshell",
       ["logs", "alpha", "-n", "50", "--source", "all", "--since", "5m", "--tail"],
-      { cwd: "/repo", env: environment, stdio: "inherit" },
+      { cwd: "/repo", env: environment, stdio: ["inherit", "inherit", "pipe"] },
     );
 
     (child as unknown as EventEmitter).emit("exit", 0, null);

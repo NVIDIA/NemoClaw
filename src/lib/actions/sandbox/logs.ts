@@ -141,6 +141,7 @@ async function streamSandboxFollowLogs(
   const exit = deps.exit ?? process.exit;
   const outputStream = deps.stdout ?? process.stdout;
   const writesThroughOutputStream = deps.writeStdout === undefined;
+  const writeStderr = deps.writeStderr ?? process.stderr.write.bind(process.stderr);
   const writeStdout = deps.writeStdout ?? outputStream.write.bind(outputStream);
   const sources: Array<{
     label: string;
@@ -243,6 +244,14 @@ async function streamSandboxFollowLogs(
       done: false,
     };
     sources.push(source);
+
+    session.diagnostic?.onChunk((chunk) => {
+      writeStderr(chunk);
+    });
+    session.diagnostic?.onError((error: NodeJS.ErrnoException) => {
+      const suffix = typeof error.code === "string" ? ` (${error.code})` : "";
+      console.error(`  ${label} diagnostic read failed${suffix}.`);
+    });
 
     const stdout = tagged ? session.output : null;
     if (!stdout) {

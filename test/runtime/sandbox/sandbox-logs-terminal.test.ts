@@ -79,7 +79,7 @@ describe("sandbox logs for terminal agents", () => {
           read: vi.fn(),
           follow: (request) => {
             calls.push(request.source);
-            return { output: null, completion, cancel() {} };
+            return { diagnostic: null, output: null, completion, cancel() {} };
           },
         },
         exit: ((code: number): never => {

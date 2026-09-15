@@ -25,6 +25,7 @@ import type {
 } from "./sandbox-logs";
 
 const LOG_OUTPUT_LIMIT_BYTES = 1024 * 1024;
+const LOG_DIAGNOSTIC_LINE_LIMIT_CHARS = 64 * 1024;
 
 type LogChildOutput = {
   on(event: "data", listener: (chunk: Buffer | string) => void): unknown;
@@ -37,6 +38,7 @@ type LogChildOutput = {
 };
 
 export type OpenShellLogChild = {
+  stderr: LogChildOutput | null;
   stdout: LogChildOutput | null;
   exitCode: number | null;
   signalCode: NodeJS.Signals | null;
@@ -176,8 +178,56 @@ function outputView(output: LogChildOutput): OpenShellSandboxLogOutput {
   };
 }
 
+function redactedDiagnosticOutputView(output: LogChildOutput): OpenShellSandboxLogOutput {
+  output.setEncoding("utf8");
+  return {
+    onChunk(listener) {
+      let pending = "";
+      let discardingOversizedLine = false;
+      output.on("data", (chunk) => {
+        let remaining = String(chunk);
+        while (remaining) {
+          const newlineIndex = remaining.indexOf("\n");
+          const segment = newlineIndex === -1 ? remaining : remaining.slice(0, newlineIndex + 1);
+          remaining = newlineIndex === -1 ? "" : remaining.slice(newlineIndex + 1);
+
+          if (discardingOversizedLine) {
+            if (newlineIndex !== -1) discardingOversizedLine = false;
+            continue;
+          }
+
+          pending += segment;
+          if (pending.length > LOG_DIAGNOSTIC_LINE_LIMIT_CHARS) {
+            listener("OpenShell diagnostic omitted: line exceeded safe display limit.\n");
+            pending = "";
+            discardingOversizedLine = newlineIndex === -1;
+            continue;
+          }
+          if (newlineIndex !== -1) {
+            listener(redactCredentialText(pending));
+            pending = "";
+          }
+        }
+      });
+      output.on("end", () => {
+        if (pending) listener(redactCredentialText(pending));
+      });
+    },
+    onEnd(listener) {
+      output.on("end", listener);
+    },
+    onError(listener) {
+      output.on("error", listener);
+    },
+    pause: () => output.pause(),
+    resume: () => output.resume(),
+    close: () => output.destroy(),
+  };
+}
+
 function immediateFailure(error: OpenShellSandboxLogError): OpenShellSandboxLogFollowSession {
   return {
+    diagnostic: null,
     output: null,
     cancel() {},
     completion: Promise.resolve({ outcome: failed(error) }),
@@ -298,7 +348,10 @@ export function createCliOpenShellSandboxLogs(
         child = spawnChild(binary, buildCliOpenShellSandboxLogArgs(request, true), {
           cwd: hostCwd,
           env: environment,
-          stdio: request.source === "gateway" ? ["inherit", "pipe", "inherit"] : "inherit",
+          stdio:
+            request.source === "gateway"
+              ? ["inherit", "pipe", "pipe"]
+              : ["inherit", "inherit", "pipe"],
         });
       } catch (error) {
         return immediateFailure(
@@ -320,6 +373,7 @@ export function createCliOpenShellSandboxLogs(
         });
       });
       return {
+        diagnostic: child.stderr ? redactedDiagnosticOutputView(child.stderr) : null,
         output: child.stdout ? outputView(child.stdout) : null,
         completion,
         cancel(reason) {

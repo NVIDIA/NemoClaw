@@ -105,6 +105,7 @@ async function captureLogsRun(
     follow(request) {
       follows.push(request);
       return {
+        diagnostic: null,
         output: null,
         cancel() {},
         completion: Promise.resolve({
@@ -349,10 +350,12 @@ type FakeFollowChild = EventEmitter & {
 type StreamingChild = {
   child: FakeFollowChild;
   session: OpenShellSandboxLogFollowSession;
+  stderr: PassThrough;
   stdout: PassThrough;
 };
 
 function createStreamingChild(withOutput = true): StreamingChild {
+  const stderr = new PassThrough();
   const stdout = new PassThrough();
   const child = Object.assign(new EventEmitter(), {
     kill: vi.fn<(signal: NodeJS.Signals) => boolean>(() => true),
@@ -390,6 +393,20 @@ function createStreamingChild(withOutput = true): StreamingChild {
   );
   const session: OpenShellSandboxLogFollowSession = {
     completion,
+    diagnostic: {
+      onChunk(listener) {
+        stderr.on("data", (chunk) => listener(String(chunk)));
+      },
+      onEnd(listener) {
+        stderr.on("end", listener);
+      },
+      onError(listener) {
+        stderr.on("error", listener);
+      },
+      pause: () => stderr.pause(),
+      resume: () => stderr.resume(),
+      close: () => stderr.destroy(),
+    },
     output: withOutput
       ? {
           onChunk(listener) {
@@ -410,10 +427,11 @@ function createStreamingChild(withOutput = true): StreamingChild {
       child.kill(reason === "interrupt" ? "SIGINT" : "SIGTERM");
     },
   };
-  return { child, session, stdout };
+  return { child, session, stderr, stdout };
 }
 
 type FollowRun = {
+  diagnostics: string[];
   written: string[];
   gateway: StreamingChild;
   openshell: StreamingChild | null;
@@ -430,6 +448,7 @@ function createCapturedOutput(written: string[]): PassThrough {
 async function startFollowRun(
   options: { output?: Writable; keepOpenshellRunning?: boolean } = {},
 ): Promise<FollowRun> {
+  const diagnostics: string[] = [];
   const written: string[] = [];
   let spawnCount = 0;
   const gateway = createStreamingChild();
@@ -449,6 +468,7 @@ async function startFollowRun(
       return spawnCount === 1
         ? gateway.session
         : (openshell?.session ?? {
+            diagnostic: null,
             output: null,
             cancel() {},
             completion: Promise.resolve({ outcome: { kind: "completed", exitCode: 0 } }),
@@ -470,10 +490,13 @@ async function startFollowRun(
       logs,
       enableAuditLogs: async () => ({ ok: true, value: undefined }),
       stdout: output,
+      writeStderr: (chunk) => {
+        diagnostics.push(chunk);
+      },
     },
   );
 
-  return { written, gateway, openshell, output, exited };
+  return { diagnostics, written, gateway, openshell, output, exited };
 }
 
 class DeferredOutput extends Writable {
@@ -511,6 +534,17 @@ describe("follow-mode log source attribution (#10340)", () => {
     "│  - plugins.entries.tavily: plugin not installed: tavily - install the",
     "└────",
   ].join("\n");
+
+  it("relays typed source diagnostics to stderr", async () => {
+    const run = await startFollowRun({ keepOpenshellRunning: true });
+    run.openshell?.stderr.write("safe OpenShell diagnostic\n");
+    run.openshell?.child.emit("exit", 0, null);
+    run.gateway.stdout.end();
+    run.gateway.child.emit("exit", 0, null);
+
+    await expect(run.exited).resolves.toBe(0);
+    expect(run.diagnostics).toEqual(["safe OpenShell diagnostic\n"]);
+  });
 
   it("attributes every streamed banner line to a source", async () => {
     const run = await startFollowRun();
