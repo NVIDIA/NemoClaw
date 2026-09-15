@@ -178,9 +178,18 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   }
   const specialist = advisor.jobs?.["review-specialists"] ?? {};
   const specialistSteps = specialist.steps ?? [];
+  const dispatchCheckout = specialistSteps.find(
+    (step) => step.name === "Checkout dispatch workspace (read-only data)",
+  );
   const targetPreparation = specialistSteps.find(
     (step) => step.name === "Prepare isolated analysis workspace",
   );
+  const sandboxPreparation = specialistSteps.find(
+    (step) => step.name === "Prepare advisor sandbox inputs",
+  );
+  if (dispatchCheckout?.with?.ref !== "${{ needs.require-green-checks.outputs.head_sha }}") {
+    errors.push("Unified advisor ref dispatch must check out the resolved head SHA");
+  }
   if (
     targetPreparation?.env?.TARGET_REPO !==
       "${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}" ||
@@ -196,13 +205,17 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     errors.push("Unified advisor must prepare the resolved PR revision");
   }
   const specialistEnv = specialist.env ?? {};
+  const resolvedBaseRef =
+    "${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}";
+  const resolvedHeadRef =
+    "${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}";
   if (
-    specialistEnv.BASE_REF !==
-      "${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}" ||
-    specialistEnv.HEAD_REF !==
-      "${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}"
+    specialistEnv.BASE_REF !== resolvedBaseRef ||
+    specialistEnv.HEAD_REF !== resolvedHeadRef ||
+    sandboxPreparation?.env?.BASE_REF !== resolvedBaseRef ||
+    sandboxPreparation.env?.HEAD_REF !== resolvedHeadRef
   ) {
-    errors.push("Unified advisor specialists must retain target refs through execution");
+    errors.push("Unified advisor specialists must analyze the resolved revisions");
   }
   const discoverySteps = advisor.jobs?.["discover-specialists"]?.steps ?? [];
   const contextUpload = discoverySteps.find((step) => step.name === "Upload GitHub review context");

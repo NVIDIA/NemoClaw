@@ -272,8 +272,8 @@ jobs:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
       TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo || github.repository }}
       PR_NUMBER: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
-      BASE_REF: ${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
-      HEAD_REF: ${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+      BASE_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
+      HEAD_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}
     steps: &advisor-analysis-steps
       - name: Checkout trusted advisor code (workflow revision)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -292,7 +292,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.require-green-checks.outputs.head_sha }}
           path: pr-workdir
           fetch-depth: 0
           persist-credentials: false
@@ -365,8 +365,8 @@ jobs:
       # Preparation reads the checked-out PR only before the model credential enters the environment.
       - name: Prepare advisor sandbox inputs
         env:
-          BASE_REF: ${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
-          HEAD_REF: ${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          BASE_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
+          HEAD_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}
           PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: ${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" prepare
 

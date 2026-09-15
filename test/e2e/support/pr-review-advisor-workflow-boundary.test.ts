@@ -116,6 +116,36 @@ it.each([
     "Unified advisor must prepare the resolved PR revision",
   ],
   [
+    "ref dispatch checkout",
+    "ref: ${{ needs.require-green-checks.outputs.head_sha }}",
+    "ref: ${{ github.sha }}",
+    "Unified advisor ref dispatch must check out the resolved head SHA",
+  ],
+  [
+    "ref dispatch base analysis",
+    "needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha",
+    "needs.require-green-checks.outputs.pr_number != '' && 'target/base' || inputs.base_ref",
+    "Unified advisor specialists must analyze the resolved revisions",
+  ],
+  [
+    "ref dispatch head analysis",
+    "needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha",
+    "needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || inputs.head_ref",
+    "Unified advisor specialists must analyze the resolved revisions",
+  ],
+  [
+    "ref dispatch sandbox inputs",
+    `      - name: Prepare advisor sandbox inputs
+        env:
+          BASE_REF: \${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
+          HEAD_REF: \${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}`,
+    `      - name: Prepare advisor sandbox inputs
+        env:
+          BASE_REF: \${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
+          HEAD_REF: \${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || inputs.head_ref }}`,
+    "Unified advisor specialists must analyze the resolved revisions",
+  ],
+  [
     "blocker gate dependency",
     "needs: [require-green-checks, build-advisor-runtime, review-specialists]",
     "needs: [require-green-checks, build-advisor-runtime]",

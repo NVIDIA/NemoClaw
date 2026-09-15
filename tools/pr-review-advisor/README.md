@@ -52,10 +52,10 @@ On automatic runs, the gate accepts a successful `CI / Pull Request` run whose n
 `gate true`. It uses the source repository, branch, and commit to resolve one open PR through the
 GitHub API. Manual dispatch does not require CI-run evidence. A PR-targeted dispatch requires both
 `target_repo` and a positive `target_pr`, resolves the open PR's head and base SHAs through the
-GitHub API, and requires its base branch to match `target_base`. The analysis workspace uses those
-same resolved SHAs, so later PR movement cannot change the reviewed revision. A ref-targeted
-dispatch resolves `head_ref` and `base_ref` to full SHAs in `NVIDIA/NemoClaw`. The blocker gate
-rejects missing or mismatched expected SHAs.
+GitHub API, and requires its base branch to match `target_base`. A ref-targeted dispatch resolves
+`head_ref` and `base_ref` to full SHAs in `NVIDIA/NemoClaw`. In both cases, the analysis checkout
+and sandbox inputs use those resolved SHAs, so later PR or ref movement cannot change the reviewed
+revision. The blocker gate rejects missing or mismatched expected SHAs.
 
 ## Author and agent follow-up
 
