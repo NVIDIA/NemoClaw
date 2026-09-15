@@ -3,9 +3,69 @@
 
 # Execution Target Design
 
-These findings record the Rust experiment, including intermediate results and limits.
+Execution placement determines where resources live; a connection determines how the client reaches them.
 The [accepted scope](../../DESIGN.md) governs implementation changes.
-For current procedures, use the [documentation index](../README.md).
+The opening explanation describes the current boundaries, followed by the experiments that established them.
+
+## Connection, Identity, and Publication
+
+An SSH alias can keep the same name while its destination changes.
+An engine can also become temporarily inaccessible without losing any resources.
+Neither the alias nor a failed connection tells the SDK which daemon owns an existing model volume.
+
+The design separates three values:
+
+| Value | Question it answers | Example |
+|---|---|---|
+| Connection endpoint | How does the client contact the engine? | An SSH URL resolved through OpenSSH configuration. |
+| Durable target identity | Is this the daemon and resource namespace recorded in state? | A verified Docker daemon ID combined with bound resource identities. |
+| Inference publication | How does the sandbox's OpenShell router reach the model API? | A private host address and declared `/v1` URL. |
+
+This separation permits an external OpenShell gateway to own Podman sandboxes while a selected Docker daemon owns inference.
+It does not require the inference engine to own the gateway or sandbox.
+
+The diagram distinguishes management traffic from an agent's inference request:
+
+```mermaid
+flowchart TD
+    Client[SDK and provider] -->|SSH Docker API| Engine[Selected Docker daemon]
+    Client -->|OpenShell API| Gateway[External OpenShell gateway]
+    subgraph Sandbox[Rootless Podman sandbox]
+        Agent[Fabric agent] -->|inference.local| Router[Sandbox-local OpenShell router]
+    end
+    Gateway -->|native driver manages| Sandbox
+    Gateway -. supplies route configuration .-> Router
+    Engine -->|owns| Model[Inference container and retained volume]
+    Router -->|private publication URL| Model
+```
+
+The SSH connection carries engine operations; it does not tunnel inference traffic.
+The sandbox-local OpenShell router must reach the publication URL.
+The gateway supplies route configuration; inference requests do not pass through the gateway API server.
+A successful model request from the CLI host cannot establish that reachability.
+The [connection-resolution change](https://github.com/NVIDIA/NemoClaw/commit/80deefbd97) and [independent placement change](https://github.com/NVIDIA/NemoClaw/commit/8bdf4960c0) established these separate paths.
+
+The pinned OpenShell implementation [loads route bundles](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/inference_routes.rs) and [handles inference in the sandbox proxy](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/l7/inference.rs).
+
+For example, suppose the alias used by an established deployment is redirected to a second daemon containing identically named containers.
+The observed daemon identity no longer matches the binding, so planning stops before mutation.
+Restoring access to the original daemon preserves the binding; matching names on the second daemon do not authorize adoption.
+The [alias-retarget tests](https://github.com/NVIDIA/NemoClaw/commit/5c8936f115) exercise this distinction.
+
+## Why Capacity Must Follow the Engine
+
+The client may run on a laptop while the selected engine runs beside a GPU.
+Reading the laptop's `/proc` files would produce valid measurements for the wrong machine.
+The SDK needs both measurements and evidence that they belong to the execution target being checked.
+
+The [SSH host collector](https://github.com/NVIDIA/NemoClaw/commit/853a729490) verifies that its remote Docker context is local and associates measurements with the daemon ID.
+Missing or mismatched observations stop the capacity check; the SDK never substitutes client-host memory or disk measurements.
+The resident supervisor separately checks its own execution host during startup and serving.
+Refer to [host observation boundaries](../engine-assumptions.md#host-observations-and-supervision) for the implementation owners.
+
+Two daemons can still share one physical GPU and memory pool.
+The [two-daemon experiment](https://github.com/NVIDIA/NemoClaw/commit/d3f45ce1a6) tested daemon isolation and routing on one DGX Spark.
+Its result does not establish independent physical capacity or separate-host qualification.
 
 ## Execution-target Preparation
 

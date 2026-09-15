@@ -30,13 +30,17 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 
 ## Understand the Design
 
+Start with the architecture page to follow one deployment through the SDK, OpenTofu, and backend APIs.
+Then use the runtime, execution-target, and recipe pages to understand decisions inside that lifecycle.
+Each explanation includes diagrams and links to the commits that established its boundaries; historical findings retain their original qualification limits.
+
 | Topic | Owner |
 |---|---|
 | Accepted scope, implementation boundaries, and invariants | [Design decision](../DESIGN.md) |
-| SDK and OpenTofu architecture | [Architecture](design/architecture.md) |
-| Runtime, model, and agent design findings | [Runtime design](design/runtime.md) |
-| Engine identity, Podman, and SSH experiments | [Execution targets](design/execution-targets.md) |
-| Inline recipe design findings | [Recipe design](design/recipes.md) |
+| SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
+| Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
+| Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
+| Artifact ownership, preparation verification, and receipt publication | [Recipe design](design/recipes.md) |
 | Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |
 
 ## Sources and Fixtures

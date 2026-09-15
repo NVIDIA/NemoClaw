@@ -48,6 +48,22 @@ Refer to [lifecycle behavior](usage.md#destroy) for retained resources and delet
 
 ## Host Observations and Supervision
 
+An engine API result and a host capacity measurement need a common identity before the SDK can use them together.
+The diagram shows the fixed SSH collector path; local collection follows the same requirement to match the selected daemon:
+
+```mermaid
+flowchart TD
+    API[Selected Docker API] -->|daemon identity| Match{Identities match?}
+    SSH[SSH host collector] -->|memory, GPU, disk, and daemon identity| Match
+    Match -->|yes| Rules[Typed capacity rules]
+    Match -->|no or incomplete| Stop[Stop before resource allocation]
+    Rules -->|capacity accepted| Start[Continue deployment preflight]
+```
+
+This check addresses the location of the measurements.
+Capacity can change after preflight, so the runtime also checks startup headroom and monitors memory while serving.
+A failed collector never authorizes using client-host values as a fallback.
+
 | Boundary and owner | Constraint |
 |---|---|
 | SDK `managed/capacity.rs` and `hardware/` | Capacity rules consume measurements associated with the selected daemon identity. Missing or mismatched observations fail. |

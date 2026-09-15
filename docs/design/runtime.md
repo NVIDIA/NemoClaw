@@ -3,10 +3,76 @@
 
 # Runtime and Model Design
 
-These findings record the Rust experiment, including intermediate results and limits.
+The runtime manages the lifetime of inference inside its container, including preparation, startup, readiness, and protective shutdown.
 The [accepted scope](../../DESIGN.md) governs implementation changes.
-These stages predate [removal of built-in recipes and runtime aliases](recipes.md).
-For current procedures, use the [documentation index](../README.md).
+The opening sections explain the current design.
+The later findings describe stages that predate [removal of built-in recipes and runtime aliases](recipes.md).
+
+## Separate What Changes Independently
+
+A model change, a hardware measurement, and a process exit answer different questions.
+The first selects artifacts and serving settings; the second determines available capacity; the third requires a lifecycle decision.
+Keeping those decisions separate lets an ordinary fixture process exercise the supervisor without loading a model or requiring a GPU.
+
+The [supervisor extraction](https://github.com/NVIDIA/NemoClaw/commit/4fee9768e2) removed its need for a complete DGX Spark service configuration.
+The [module separation](https://github.com/NVIDIA/NemoClaw/commit/8d998e02d2) then assigned artifact preparation, hardware rules, and backend behavior to their respective owners.
+Today, an inline recipe supplies model-specific tools; vLLM is the serving backend; the managed hardware profile remains DGX Spark.
+
+For example, changing a recipe's preparation executable should not change how the supervisor terminates a process group.
+Changing a memory threshold should not change the model snapshot's identity.
+These boundaries allow focused tests, but they do not qualify an additional backend or GPU.
+
+## Why the Watchdog Lives with Inference
+
+Model loading and serving can continue after the CLI exits.
+Memory protection therefore runs inside the inference runtime, where it can observe its host and stop its owned process group.
+The CLI's operation lifetime does not determine the watchdog's lifetime.
+
+The diagram shows the inference lifecycle and its explicit recovery boundary:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Prepare
+    Prepare: Validate artifacts and prepare model
+    Loading: Start backend and wait for readiness
+    Ready: Serve with resident memory monitoring
+    Stopped: Inference stopped with data and bindings retained
+    Prepare --> Loading: Preparation and startup capacity checks pass
+    Prepare --> Stopped: Preparation or capacity check fails
+    Loading --> Ready: Backend readiness succeeds
+    Loading --> Stopped: Deadline, pressure, observation failure, or child exit
+    Ready --> Stopped: Pressure, observation failure, operator stop, or child exit
+    Stopped --> Prepare: Explicit apply verifies bindings and capacity
+```
+
+The startup deadline applies while the backend is loading; download and preparation have separate limits.
+A failed readiness check does not prove that the container was never created.
+The SDK retains its identity so recovery can restart the verified resource instead of allocating another one.
+
+After a protective stop, Docker does not automatically restart inference.
+An immediate restart could repeat the same memory demand before the operator changes the condition that caused shutdown.
+Explicit apply rechecks capacity and retained identities before recovery.
+
+The [watchdog diagnostic correction](https://github.com/NVIDIA/NemoClaw/commit/35199ef56d) shows why the reason for a stop also matters.
+A memory parser incorrectly assumed that Linux `MemAvailable` must exceed `MemFree`.
+That observation failure required a different fix from real memory pressure, but the original diagnostic did not distinguish them.
+The [supervisor](../../crates/nemoclaw-runtime/src/supervisor.rs) now reports pressure, failed observations, closed sample streams, and operator trips separately.
+The parser validates free and available memory independently against total memory; refer to the [kernel memory field definitions](https://www.kernel.org/doc/html/v6.5/filesystems/proc.html).
+
+## Why Fabric Owns the Agent Process
+
+There are two process lifecycles in a managed deployment: the inference runtime and the agent inside its OpenShell sandbox.
+The inference supervisor protects model serving.
+Fabric owns the agent runtime, while OpenShell supplies sandbox isolation and inference routing.
+
+The [single OpenClaw path](https://github.com/NVIDIA/NemoClaw/commit/90472172f3) removed a standalone bootstrap that duplicated agent lifecycle and configuration behavior.
+Choosing managed inference therefore does not require choosing a different OpenClaw launcher.
+Once Fabric became the only integration, the [harness-only schema](https://github.com/NVIDIA/NemoClaw/commit/207cdf9472) removed a constant `type` field.
+
+Native agent configuration remains the agent's responsibility where NemoClaw has no deployment invariant to enforce.
+For Pi, [delegating model metadata validation](https://github.com/NVIDIA/NemoClaw/commit/85be561d33) avoided maintaining a second, incomplete copy of Pi's schema.
+NemoClaw still supplies the declared route model ID and OpenShell endpoint.
+Refer to [agent runtime usage](../agents.md) for supported combinations and native access.
 
 ## Runtime Boundaries
 

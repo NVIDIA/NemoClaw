@@ -17,6 +17,23 @@ OpenTofu continues to own graph execution and resource state.
 A Rust provider adapts its protocol to shared typed backend operations.
 No Rust/Go FFI is required.
 
+## Read the Design
+
+The experiment tests whether one public SDK can preserve deployment ownership and recovery across CLI and programmatic callers.
+The architectural tradeoff is explicit: the SDK centralizes deployment rules while retaining OpenTofu's provider protocol and bundle requirements.
+The [architecture explanation](docs/design/architecture.md#why-the-sdk-owns-the-operation) shows how those responsibilities interact.
+
+Three boundaries guide extensions to the experiment:
+
+- [Runtime lifetime](docs/design/runtime.md#why-the-watchdog-lives-with-inference): protection must continue beside inference after the CLI exits.
+- [Execution identity](docs/design/execution-targets.md#connection-identity-and-publication): a connection alias cannot prove ownership or resource location.
+- [Recipe ownership](docs/design/recipes.md#why-the-contract-is-data): model-specific tools belong to their pinned artifact; shared code owns verification and publication rules.
+
+These explanations cite the implementation commits that motivated the decisions.
+The accepted invariants below remain requirements even when an experimental schema or runtime interface changes.
+
+## Implementation and Recovery Invariants
+
 Start with the contracts most likely to invalidate the port, in green commits:
 
 1. Durable identity and observation semantics in the public SDK.

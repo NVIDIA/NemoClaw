@@ -3,23 +3,129 @@
 
 # SDK and OpenTofu Architecture
 
-These findings record the Rust experiment, including intermediate results and limits.
+The SDK turns a deployment document into checked OpenTofu operations and preserves enough state to recover after failure.
 The [accepted scope](../../DESIGN.md) governs implementation changes.
-For current procedures, use the [documentation index](../README.md).
+The explanations below describe the current boundaries; the later findings retain intermediate results and their limits.
+
+## Why the SDK Owns the Operation
+
+A Rust application and a CLI user need the same answer to an interrupted apply: which resources exist, who owns them, and what can resume?
+Putting locking or recovery in the CLI would leave programmatic callers to implement those rules again.
+The SDK therefore owns the complete deployment operation, while OpenTofu owns dependency ordering and resource state.
+
+The diagram shows logical responsibilities across the SDK and its child processes:
+
+```mermaid
+flowchart TD
+    CLI[CLI arguments and output] --> SDK[SDK deployment orchestration]
+    App[Rust application] --> SDK
+    SDK -->|compile and check saved plans| Tofu[OpenTofu child process]
+    Tofu -->|provider protocol| Provider[Rust provider process]
+    Provider --> Backend[Shared SDK backend operations]
+    SDK -->|preflight, export, and active probes| Backend
+    Backend --> OpenShell[OpenShell API]
+    Backend --> Docker[Docker API]
+    Backend --> Ollama[Ollama API]
+```
+
+The shared backend code is compiled into its callers; it is not another server.
+The provider translates the OpenTofu protocol into those operations.
+The SDK also checks proposed changes against its deployment contract before asking OpenTofu to execute a saved plan.
+For example, an undeclared resource or an unverified replacement stops apply even if OpenTofu can express that change.
+
+The [public SDK lifecycle commit](https://github.com/NVIDIA/NemoClaw/commit/bd45fa3297) tested SDK apply followed by CLI export and destroy.
+That mixed-client test established that recovery belongs below the CLI boundary.
+The current implementation is in [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs) and [saved-plan checks](../../crates/nemoclaw-sdk/src/deployment/plan.rs).
+
+## Intent, Identity, and Observation
+
+Desired configuration answers “what should exist?”
+A durable binding answers “which existing resource did this deployment establish?”
+Keeping both matters when a process replacement is requested but the old process still exists.
+Deletion must verify the old bound specification, even though the new YAML describes its replacement.
+
+The local state directory retains distinct kinds of evidence:
+
+| Record | Meaning | Why recovery needs it |
+|---|---|---|
+| Deployment UID and generation tokens | Deployment ownership and creation identity | Matching a resource name alone cannot authorize adoption. |
+| Intent document and digest | Configuration selected for an operation | An interrupted graph mutation rejects different intent until reconciled. |
+| OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check must not erase a created container. |
+| Operation flags and saved-plan digest | Apply or destroy progress | Recovery can verify intent and resume the remaining graph boundary. |
+
+An observation has three outcomes, with different consequences:
+
+| Observation | Meaning | Consequence |
+|---|---|---|
+| Present and verified | The owning API returned a complete result with matching identity | Compare configuration and plan permitted changes. |
+| Confirmed absent | The owning API established that the resource is missing | The provider can report absence; deployment rules still forbid automatic recreation of bound storage. |
+| Failed or incomplete | The resource may exist, but the client cannot verify it | Stop and preserve the prior binding. |
+
+For example, an authentication error from Docker cannot mean that a model volume disappeared.
+Likewise, a container that exits immediately can have a valid ID while failing readiness.
+The [first observation contract](https://github.com/NVIDIA/NemoClaw/commit/93c146f285) and [immediate-exit correction](https://github.com/NVIDIA/NemoClaw/commit/238d0ef294) established these distinctions.
+The current [backend result types](../../crates/nemoclaw-sdk/src/backend.rs) allow a mutation to return established state together with an error.
+
+## Why Managed Apply Has Stages
+
+OpenShell registrations require a reachable gateway.
+For a fresh managed deployment, the SDK must establish runtime infrastructure before it can obtain a complete OpenShell plan.
+This is a dependency between two checked graphs, not one atomic transaction.
+
+The successful managed apply path is:
+
+```mermaid
+flowchart TD
+    Input[Validate document and lock state] --> Runtime[Plan and check runtime graph]
+    Runtime --> SaveRuntime[Save intent and apply runtime graph]
+    SaveRuntime --> Wait[Wait for gateway and inference readiness]
+    Wait --> Shell[Plan and check OpenShell graph]
+    Shell --> SaveShell[Save intent and apply OpenShell graph]
+    SaveShell --> Probe[Check agent configuration and managed inference reply]
+    Probe --> Done[Record successful deployment]
+    SaveRuntime -. failure .-> Keep[Retain established bindings for explicit recovery]
+    Wait -. failure .-> Keep
+    SaveShell -. failure .-> Keep
+    Probe -. failure .-> Keep
+```
+
+A public plan performs observations and can report a deferred OpenShell graph; it does not execute either apply stage.
+Planning can write local intent and plan files, so “read-only” refers to runtime resources.
+Apply obtains and checks its own plans rather than consuming a previous public preview as approval.
+
+Suppose gateway creation succeeds but inference startup fails.
+The gateway and model-storage bindings remain recorded, and a later explicit apply can reconcile them.
+Automatic rollback could delete useful data or repeat an operation whose response was lost.
+
+The pending-intent guard applies while a graph mutation is unfinished.
+After OpenTofu apply completes, the SDK clears that guard before readiness checks.
+A later readiness failure still retains bindings, but revised intent can proceed if it satisfies validation and ownership checks.
+
+Destroy reverses the dependency direction: remove OpenShell workloads before stopping the gateway that owns them.
+It checks both saved plans before deletion and records when the OpenShell stage finishes.
+That checkpoint lets an interrupted destroy continue even after the gateway becomes unavailable.
+The [managed orchestration commit](https://github.com/NVIDIA/NemoClaw/commit/b18e282837) records the failure cases behind this order.
+
+Ollama has a related dependency: a stopped service cannot return authoritative model inventory.
+Its [recovery stage](https://github.com/NVIDIA/NemoClaw/commit/ca2ece58e8) repairs the verified service, waits for the API, and then requests a complete plan.
+It does not treat unavailable inventory as an empty model list.
+
+## Why Storage Has Its Own Binding
+
+A runtime process and its data have different lifetimes.
+Updating an image can require a new container while model files, prepared artifacts, or gateway signing keys must remain intact.
+Separate storage bindings let the SDK verify those dependencies before authorizing process replacement.
+
+This distinction also changed Ollama teardown.
+The [storage separation commit](https://github.com/NVIDIA/NemoClaw/commit/8040b1ef99) made it possible to remove the verified service container while retaining model bytes.
+For gateways, an [independent storage binding](https://github.com/NVIDIA/NemoClaw/commit/8eb8a72852) prevents an interrupted initializer from regenerating established credentials.
+
+Storage retention does not cover every file in a deployment.
+Destroy deletes sandbox files and conversation history; [the lifecycle guide](../usage.md#destroy) owns the complete retention and recovery procedure.
 
 ## Public Contract
 
-The SDK owns `plan`, `apply`, `export`, and `destroy`.
-The CLI delegates those operations and handles arguments, terminal output, signals, and exit codes.
-Programmatic callers use the same validation, deployment lock, saved-plan checks, resource bindings, secret references, cancellation, and recovery paths.
-
 For operational commands and deletion effects, use [the lifecycle guide](../usage.md).
-
-A deployment UID identifies intent.
-Random generation tokens identify creation operations.
-OpenTofu state records physical identities and the configurations actually established.
-
-Intent may describe a replacement while state still binds the old process; deletion must verify that old configuration.
 
 Unknown fields, inline credentials, conflicting provider forms, mutable artifact pins, and unsupported combinations fail validation before runtime mutation.
 Agent image, runtime and isolation defaults belong to the schema version.
@@ -29,7 +135,6 @@ There are no shell hooks or arbitrary argument fields.
 
 ## What the Implementation Has Confirmed
 
-The Rust provider can use the existing OpenTofu protocol as a separate process.
 The CLI bundle contains the CLI, OpenTofu, and one provider executable in a known mirror path.
 Source-derived provider versions prevent stale installations from being reused after a build.
 
@@ -40,12 +145,8 @@ The pinned Go reference retired osquery in favor of the owning OpenShell, Docker
 The relevant observations are resource identities, configuration, policy, and complete model inventories.
 
 A host inventory collector would not replace the owning APIs for these checks.
-Capacity uses local host and GPU facts; credential references, intent and OpenTofu state remain local.
+Capacity uses observations from the selected execution host; credential references, intent, and OpenTofu state remain client-side.
 Mutations and active readiness or inference probes remain direct.
-
-Only confirmed resource absence permits removal from provider state.
-Failed authentication, permission checks, transport, incomplete results, and identity or policy mismatches stop planning and retain bindings.
-Bound persistent storage must never be recreated automatically, even when its absence is confirmed.
 
 Export writes YAML only after all required observations succeed.
 
@@ -55,29 +156,13 @@ The gateway process additionally binds the persisted encryption key.
 
 A bound initializer cannot generate credentials again.
 Inference storage retains both the exact model snapshot and prepared data.
-Process replacement requires an independently verified storage binding.
-
-OpenShell cannot be planned before a new managed gateway exists.
-Apply therefore executes two separately checked graphs: runtime infrastructure, then OpenShell registration, routing, and sandbox resources.
-A fresh plan reports the second graph as deferred.
-
-Plan never starts containers, downloads models, prepares data, or invokes the upstream launcher's `--no-launch` path.
 
 Configuration and readiness are separate.
 A process can exit immediately after start while retaining valid identity and storage.
 Managed `running` is computed and becomes unknown during create or an explicit restart, so OpenTofu does not taint a valid resource merely because startup failed.
 
-The runtime has the full configured loading budget; model download and preparation have separate bounds.
-The resident supervisor samples memory independently of readiness probes, stops its own process group, and latches after a protective shutdown.
-Docker restart is disabled.
-
-Explicit apply rechecks capacity before recovery.
-
-Destroy checks both complete saved plans before the first deletion, removes OpenShell children before managed processes, and persists the completed graph boundary.
-It retains the workspace, storage, keys, bridge, initializer, images, and local state.
-An interrupted destroy can resume after the gateway disappears.
-
-It cannot infer ownership from missing local state or delete a whole workspace with an unverified cascading operation.
+The [runtime lifecycle](runtime.md#why-the-watchdog-lives-with-inference) explains loading deadlines and protective shutdown.
+Destroy cannot infer ownership from missing local state or delete a whole workspace with an unverified cascading operation.
 
 ## Costs and Hypotheses Still to Test
 
@@ -110,10 +195,6 @@ The Ollama recovery experiment changed the inherited Go resource boundary.
 Existing deployments must apply once to establish the independently verified storage binding before destroy.
 Storage still uses the original labels and configuration digest, so this change does not establish image or network migration semantics.
 
-A stopped Ollama process cannot provide authoritative model inventory.
-Plan therefore produces a checked service-recovery plan and explicitly defers the remaining graph.
-Apply executes that saved targeted plan, preserving pending intent, then obtains a fresh complete plan after an active API readiness check.
-
 Only startup connection refusal is polled, within the existing 30-second budget; authentication, transport and partial-inventory failures stop the operation.
 No refresh is disabled and no stale inventory is substituted.
 The ordinary provider refresh and export remain strict when the service is stopped.
@@ -129,13 +210,6 @@ This is deterministic Docker/HTTP/OpenShell fixture qualification with the real 
 Managed apply also exposed a Rust async allocation cost that the release CLI hid: composing several debug-build SDK calls overflowed a normal executor thread stack.
 Public plan/apply now heap-allocate their orchestration future, with a tested per-operation stack-size budget.
 SDK qualification must exercise its public API directly as well as its CLI consumer.
-
-The live watchdog run also exposed an inherited observation assumption: `MemAvailable` is an estimate after kernel reserves, so it may be less than `MemFree`.
-Validate each against total memory independently.
-The old supervisor reported pressure and sampling failure identically; that message could not establish the cause of its live stop.
-
-Distinct diagnostics and measured pressure values are required for recovery evidence.
-See the [kernel memory field definitions](https://www.kernel.org/doc/html/v6.5/filesystems/proc.html).
 
 ## Acceptance Evidence
 
