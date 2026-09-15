@@ -279,3 +279,12 @@ belong to the process that reads them. A remote daemon's architecture does not p
 that local memory, GPU or disk observations belong to it. Missing remote capacity
 must fail, never fall back to local measurements. The resident supervisor remains
 responsible for its own execution host's immediate checks and memory protection.
+
+The first extraction introduces an explicit host-observation boundary. Capacity
+rules consume measurements tagged with the selected daemon identity; missing,
+incomplete, or mismatched observations fail. The default collector is still the
+qualified local Linux collector. An injected observer never falls back to it.
+This establishes a test seam, not remote-host detection or a remote observation
+agent. In-process SDK connection injection does not serialize transport clients
+or observers into OpenTofu subprocesses; those still use the explicit compiled
+endpoints. Remote placement must address that boundary before it is exposed.

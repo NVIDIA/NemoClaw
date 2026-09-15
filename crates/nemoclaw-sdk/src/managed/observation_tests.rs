@@ -148,3 +148,69 @@ async fn invalid_managed_capacity_requests_fail_before_host_observation() {
     let error = engine.check_capacity(&spec, None).await.unwrap_err();
     assert!(matches!(error, Error::Conflict(_)));
 }
+
+#[tokio::test]
+async fn capacity_requires_measurements_from_the_selected_execution_target() {
+    use crate::hardware::{Capacity, GIB, HostObservation, HostObserver};
+    struct Source(&'static str);
+    #[async_trait::async_trait]
+    impl HostObserver for Source {
+        async fn observe(&self, _: &Engine) -> Result<HostObservation, Error> {
+            if self.0 == "missing" {
+                return Err(Error::State("remote host measurements unavailable"));
+            }
+            Ok(HostObservation {
+                engine_id: if self.0 == "wrong" {
+                    "wrong-daemon"
+                } else {
+                    "selected-daemon"
+                }
+                .into(),
+                capacity: if self.0 == "incomplete" {
+                    Capacity::default()
+                } else {
+                    Capacity {
+                        architecture: "arm64".into(),
+                        gpu: "NVIDIA GB10".into(),
+                        driver_major: 580,
+                        total: 128 * GIB,
+                        available: 120 * GIB,
+                        free: 110 * GIB,
+                        disk_free: 1000 * GIB,
+                        foreign_gpu_processes: 0,
+                    }
+                },
+            })
+        }
+    }
+    let (spec, _, _, _) = reference();
+    let fixture = Fixture::start(|request| {
+        assert_eq!(
+            request.path, "/info",
+            "invalid host observation reached artifact or resource operations"
+        );
+        Some((200, br#"{"ID":"selected-daemon"}"#.to_vec()))
+    })
+    .await;
+    for available in ["missing", "wrong", "selected", "incomplete"] {
+        let engine = fixture
+            .engine_for(&spec.gateway.engine)
+            .with_host_observer(std::sync::Arc::new(Source(available)));
+        let result = engine.check_capacity(&spec, None).await;
+        if available == "selected" {
+            result.unwrap();
+            continue;
+        }
+        let error = result.unwrap_err();
+        if available == "wrong" {
+            assert!(matches!(
+                error,
+                Error::Observation(ObservationError::BindingMismatch)
+            ));
+        } else if available == "missing" {
+            assert_eq!(error.to_string(), "remote host measurements unavailable");
+        } else {
+            assert!(matches!(error, Error::Conflict(_)));
+        }
+    }
+}

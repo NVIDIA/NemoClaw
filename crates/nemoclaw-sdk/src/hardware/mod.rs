@@ -160,3 +160,7 @@ impl Profile {
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod nvidia;
+
+mod observation;
+pub(crate) use observation::LocalHost;
+pub use observation::{HostObservation, HostObserver};

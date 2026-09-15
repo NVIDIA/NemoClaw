@@ -15,6 +15,7 @@ use std::{io::Read, time::Duration};
 pub struct Engine {
     pub(crate) api: bollard::Docker,
     endpoint: String,
+    pub(crate) host_observer: std::sync::Arc<dyn crate::hardware::HostObserver>,
 }
 impl Engine {
     pub fn connect(endpoint: &str) -> Result<Self, Error> {
@@ -31,6 +32,7 @@ impl Engine {
             Ok(Self {
                 api,
                 endpoint: endpoint.into(),
+                host_observer: std::sync::Arc::new(crate::hardware::LocalHost),
             })
         }
         #[cfg(not(unix))]
@@ -39,6 +41,14 @@ impl Engine {
                 "local managed runtime topology is not qualified on this platform",
             ))
         }
+    }
+    /// Replace host collection explicitly; failures never fall back to local data.
+    pub fn with_host_observer(
+        mut self,
+        observer: std::sync::Arc<dyn crate::hardware::HostObserver>,
+    ) -> Self {
+        self.host_observer = observer;
+        self
     }
     pub fn endpoint(&self) -> &str {
         &self.endpoint
