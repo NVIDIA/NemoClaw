@@ -72,14 +72,71 @@ describe("startStoppedSandboxContainerForProbeRecovery", () => {
     expect(startStoppedSandboxContainerForProbeRecovery("alpha")).toBe(false);
   });
 
-  it("leaves a running container untouched", () => {
+  it("leaves a running container whose sandbox is not Stopped untouched", () => {
     stubRuntime({ running: true });
-    const captureOpenshell = vi.spyOn(openshellRuntime, "captureOpenshell");
+    vi.spyOn(gatewayTarget, "getSandboxTargetGatewayName").mockReturnValue("nemoclaw");
+    const captureOpenshell = vi
+      .spyOn(openshellRuntime, "captureOpenshell")
+      .mockReturnValue({ status: 0, output: "Phase: Ready\n" } as never);
     const dockerStart = vi.spyOn(dockerContainer, "dockerStart");
 
     expect(startStoppedSandboxContainerForProbeRecovery("alpha")).toBe(false);
-    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(captureOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "start", "-g", "nemoclaw", "alpha"],
+      expect.anything(),
+    );
     expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("starts a running container whose sandbox is still Stopped (#11790)", () => {
+    stubRuntime({ running: true });
+    vi.spyOn(gatewayTarget, "getSandboxTargetGatewayName").mockReturnValue("nemoclaw");
+    const captureOpenshell = vi
+      .spyOn(openshellRuntime, "captureOpenshell")
+      .mockImplementation(((args: string[]) =>
+        args[1] === "get"
+          ? { status: 0, output: "Phase: Stopped\n" }
+          : { status: 0, output: "" }) as never);
+    const dockerStart = vi.spyOn(dockerContainer, "dockerStart");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(startStoppedSandboxContainerForProbeRecovery("alpha")).toBe(true);
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "start", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    // The container already runs, so there is nothing for Docker to start.
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("reports no start when a Stopped sandbox with a running container fails to start", () => {
+    stubRuntime({ running: true });
+    vi.spyOn(gatewayTarget, "getSandboxTargetGatewayName").mockReturnValue("nemoclaw");
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(((args: string[]) =>
+      args[1] === "get" ? { status: 0, output: "Phase: Stopped\n" } : { status: 1 }) as never);
+    const dockerStart = vi.spyOn(dockerContainer, "dockerStart");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(startStoppedSandboxContainerForProbeRecovery("alpha")).toBe(false);
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("does not start a running container when the phase cannot be read", () => {
+    stubRuntime({ running: true });
+    vi.spyOn(gatewayTarget, "getSandboxTargetGatewayName").mockReturnValue("nemoclaw");
+    const captureOpenshell = vi
+      .spyOn(openshellRuntime, "captureOpenshell")
+      .mockReturnValue({ status: 1, output: "gateway unreachable" } as never);
+
+    expect(startStoppedSandboxContainerForProbeRecovery("alpha")).toBe(false);
+    expect(captureOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "start", "-g", "nemoclaw", "alpha"],
+      expect.anything(),
+    );
   });
 
   it("leaves a paused container to its docker unpause guidance", () => {

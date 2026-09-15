@@ -19,7 +19,11 @@ import {
   gatewayStartGuidance,
 } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
+import {
+  isTerminalSandboxPhase,
+  parseSandboxPhase,
+  TERMINAL_SANDBOX_PHASES,
+} from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
@@ -1001,6 +1005,44 @@ export async function getReconciledSandboxGatewayState(
 }
 
 const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
+/** The phase OpenShell reports for a sandbox that is not running. */
+const STOPPED_SANDBOX_PHASE = "Stopped";
+
+function startSandboxThroughOpenShell(sandboxName: string, gatewayName: string) {
+  return captureOpenshell(["sandbox", "start", "-g", gatewayName, sandboxName], {
+    ignoreError: true,
+    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
+  });
+}
+
+/**
+ * Start a sandbox whose container already runs while OpenShell still reports it
+ * `Stopped`. Only that phase is started: any other phase means the sandbox is
+ * running or settling, and the readiness wait owns the outcome (#11790).
+ */
+function startStoppedSandboxPhaseForProbeRecovery(
+  sandboxName: string,
+  gatewayName: string,
+): boolean {
+  const probe = captureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
+    ignoreError: true,
+    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
+  });
+  const phase = probe.status === 0 ? parseSandboxPhase(probe.output ?? "") : null;
+  if (phase !== STOPPED_SANDBOX_PHASE) return false;
+  console.error(
+    `  Sandbox '${sandboxName}' is still stopped while its container runs — starting it...`,
+  );
+  const lifecycle = startSandboxThroughOpenShell(sandboxName, gatewayName);
+  if (lifecycle.status === 0) {
+    console.error(`  ${G}✓${R} Started sandbox '${sandboxName}' through OpenShell.`);
+    return true;
+  }
+  console.error(
+    `  OpenShell could not start sandbox '${sandboxName}' (exit ${lifecycle.status ?? "unknown"}); continuing with readiness checks.`,
+  );
+  return false;
+}
 
 /**
  * Start a stopped sandbox before the probe-only readiness wait begins polling.
@@ -1015,25 +1057,31 @@ const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
  * `openshell sandbox start` restarts the same container — workspace state and
  * managed configuration preserved, as #8967 requires — and advances the phase.
  *
+ * A container that already runs is not proof that the sandbox is running: the
+ * same stopped-phase / running-container pair reaches this function whenever
+ * something started the container outside OpenShell, and returning early there
+ * left the readiness wait to expire on a sandbox that one lifecycle start would
+ * have recovered. So a running container is started through OpenShell too when
+ * OpenShell still reports the sandbox `Stopped`, and left alone for any other
+ * phase.
+ *
  * `docker start` remains the fallback for the case #8967 was filed for: an
  * exited container whose OpenShell start did not succeed still gets running
  * again, and the Docker-driver start path repairs the phase on the next
- * `start`. A nonzero or missing status from both continues to the readiness
- * wait, which surfaces the existing stopped-container guidance. The function
- * returns true only when one of them started the stopped sandbox. It leaves an
- * unresolved, running, or paused container unchanged. A paused container keeps
- * its `docker unpause` guidance. A caller that reaches this function after
- * container startup makes no change.
+ * `start`. It is not a fallback for an already-running container, which needs
+ * no Docker start at all. A nonzero or missing status continues to the
+ * readiness wait, which surfaces the existing stopped-container guidance. The
+ * function returns true only when it started the sandbox. It leaves an
+ * unresolved or paused container unchanged, and a paused container keeps its
+ * `docker unpause` guidance.
  */
 export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): boolean {
   const runtime = getSandboxDockerRuntime(sandboxName);
-  if (!runtime.containerName || runtime.running || runtime.paused) return false;
-  console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
+  if (!runtime.containerName || runtime.paused) return false;
   const gatewayName = getSandboxTargetGatewayName(sandboxName);
-  const lifecycle = captureOpenshell(["sandbox", "start", "-g", gatewayName, sandboxName], {
-    ignoreError: true,
-    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
-  });
+  if (runtime.running) return startStoppedSandboxPhaseForProbeRecovery(sandboxName, gatewayName);
+  console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
+  const lifecycle = startSandboxThroughOpenShell(sandboxName, gatewayName);
   if (lifecycle.status === 0) {
     console.error(`  ${G}✓${R} Started sandbox '${sandboxName}' through OpenShell.`);
     return true;
