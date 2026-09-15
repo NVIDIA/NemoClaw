@@ -1945,14 +1945,14 @@ hermes_tracked_service_owns_listener() {
       "${STEP_DOWN_PREFIX_GATEWAY[@]}" env -u BASH_ENV \
         bash --noprofile --norc -c \
         'source "$1"; gateway_control_pid_owns_tcp_listener "$2" "$3"' \
-        bash "$_GATEWAY_SUPERVISOR" "$pid" "$port"
+        bash "$_SANDBOX_INIT" "$pid" "$port"
       ;;
     sandbox)
       # shellcheck disable=SC2016  # positional args expand in the stepped-down shell
       "${STEP_DOWN_PREFIX_SANDBOX[@]}" env -u BASH_ENV \
         bash --noprofile --norc -c \
         'source "$1"; gateway_control_pid_owns_tcp_listener "$2" "$3"' \
-        bash "$_GATEWAY_SUPERVISOR" "$pid" "$port"
+        bash "$_SANDBOX_INIT" "$pid" "$port"
       ;;
     *) return 1 ;;
   esac

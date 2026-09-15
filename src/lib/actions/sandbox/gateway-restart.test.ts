@@ -131,6 +131,7 @@ describe("restartSandboxGateway native lifecycle", () => {
     expect(result).toMatchObject({ ok: false, failureLayer: "health timeout" });
     expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledWith("alpha", {
       initialManagedHealthPassed: false,
+      managedProbeImpl: expect.any(Function),
       quiet: true,
     });
     expect(deps.printGatewayWedgeDiagnostics).toHaveBeenCalled();

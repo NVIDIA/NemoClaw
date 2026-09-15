@@ -106,6 +106,7 @@ export type GatewayRestartDeps = {
       quiet?: boolean;
       timeoutSeconds?: number;
       initialManagedHealthPassed?: boolean;
+      managedProbeImpl?: (sandboxName: string) => boolean | null;
     },
   ) => Promise<boolean>;
   ensureSandboxPortForward: (sandboxName: string) => boolean | Promise<boolean>;
@@ -463,6 +464,7 @@ export async function restartSandboxGatewayWithDeps(
     !(await deps.waitForRecoveredSandboxGateway(sandboxName, {
       quiet,
       initialManagedHealthPassed: false,
+      managedProbeImpl: () => null,
     }))
   ) {
     const detail = "gateway process restarted but health did not pass before timeout";

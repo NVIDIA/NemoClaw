@@ -658,8 +658,13 @@ gateway_control_pid_matches_start_identity() {
 gateway_control_pid_owns_tcp_listener() {
   local pid="$1"
   local port="$2"
-  local proc_root="${3:-/proc}"
+  local proc_root
   local port_hex listener_inodes inode fd_path target listener_inode
+  if [ "$#" -ge 3 ]; then
+    proc_root="$3"
+  else
+    proc_root="$(gateway_control_proc_root)" || return 1
+  fi
   case "$port" in
     '' | *[!0-9]*) return 1 ;;
   esac

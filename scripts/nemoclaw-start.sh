@@ -4671,7 +4671,7 @@ openclaw_gateway_pid_owns_listener() {
   "${STEP_DOWN_PREFIX_GATEWAY[@]}" env -u BASH_ENV \
     bash --noprofile --norc -c \
     'source "$1"; gateway_control_pid_owns_tcp_listener "$2" "$3"' \
-    bash "$_GATEWAY_SUPERVISOR" "$pid" "$port"
+    bash "$_SANDBOX_INIT" "$pid" "$port"
 }
 
 openclaw_gateway_healthy() {
