@@ -16,8 +16,8 @@ it("binds typed gateway capabilities to the onboarding executable", async () => 
       `#!/bin/sh
 case "$*" in
   'gateway select nemoclaw-8091') exit 0 ;;
-  'status -g nemoclaw-8091') printf 'Connected to gateway nemoclaw-8091\\n'; exit 0 ;;
-  'gateway info -g nemoclaw-8091'|'gateway info') printf 'Gateway: nemoclaw-8091\\nGateway endpoint: http://127.0.0.1:8091\\n'; exit 0 ;;
+  'status -g nemoclaw-8091') printf 'Gateway: nemoclaw-8091\\nStatus: Connected\\nServer: http://127.0.0.1:8091/\\n'; exit 0 ;;
+  'gateway list -o json') printf '[{"name":"nemoclaw-8091","endpoint":"http://127.0.0.1:8091","active":true}]'; exit 0 ;;
 esac
 exit 91
 `,

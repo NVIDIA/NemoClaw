@@ -79,8 +79,9 @@ async function runUninstallPlanWithBackup(options: UninstallRunOptions, deps: Un
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
   const outputs: Record<string, string> = {
-    "openshell gateway info": "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080\n",
-    "openshell gateway list": JSON.stringify([{ name: "nemoclaw" }]),
+    "openshell gateway list": JSON.stringify([
+      { name: "nemoclaw", endpoint: "https://127.0.0.1:8080", active: true },
+    ]),
   };
   return ok(outputs[[command, ...args.slice(0, 2)].join(" ")] ?? "");
 }
@@ -1238,7 +1239,20 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
             ["pgrep", "lsof"].includes(command)
               ? notFound()
               : command === "openshell" && args.join(" ") === "gateway list -o json"
-                ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9000" }]))
+                ? ok(
+                    JSON.stringify([
+                      {
+                        name: "nemoclaw",
+                        endpoint: "https://127.0.0.1:8080",
+                        active: true,
+                      },
+                      {
+                        name: "nemoclaw-9000",
+                        endpoint: "https://127.0.0.1:9000",
+                        active: false,
+                      },
+                    ]),
+                  )
                 : ok(),
           runDocker: () => ok(""),
           runPortableRuntimeCleanupTransaction: runPortableCleanup,

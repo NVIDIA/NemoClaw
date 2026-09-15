@@ -275,6 +275,13 @@ describe("managed gateway port readiness (#7411)", () => {
     const gatewayName = "nemoclaw-readiness";
     const status = `Server Status\n\nGateway: ${gatewayName}\nStatus: Connected`;
     const info = `Gateway Info\n\nGateway: ${gatewayName}\nGateway endpoint: https://127.0.0.1:${gatewayPort}`;
+    const gatewayList = JSON.stringify([
+      {
+        name: gatewayName,
+        endpoint: `https://127.0.0.1:${String(gatewayPort)}`,
+        active: true,
+      },
+    ]);
     const resultByInvocation = new Map([
       [
         ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
@@ -291,6 +298,7 @@ describe("managed gateway port readiness (#7411)", () => {
       [[openshellBin, "status", "-g", gatewayName].join("\0"), commandResult(status, 0)],
       [[openshellBin, "gateway", "info", "-g", gatewayName].join("\0"), commandResult(info, 0)],
       [[openshellBin, "gateway", "info"].join("\0"), commandResult(info, 0)],
+      [[openshellBin, "gateway", "list", "-o", "json"].join("\0"), commandResult(gatewayList, 0)],
       [[openshellBin, "--version"].join("\0"), commandResult("openshell 0.0.106", 0)],
       [
         ["lsof", "-ti", `:${gatewayPort}`, "-sTCP:LISTEN"].join("\0"),
@@ -575,7 +583,7 @@ describe("managed gateway port readiness (#7411)", () => {
       "  ├─▶ tcp connect error",
       "  ╰─▶ Connection refused (os error 111)",
     ].join("\n");
-    const infoConnectionRefused = [
+    const registryConnectionRefused = [
       "Error:   × transport error",
       "  ╰─▶ Connection refused (os error 111)",
     ].join("\n");
@@ -593,12 +601,8 @@ describe("managed gateway port readiness (#7411)", () => {
         commandResult("", 1, statusConnectionRefused),
       ],
       [
-        ["/usr/local/bin/openshell", "gateway", "info", "-g", "nemoclaw-readiness"].join("\0"),
-        commandResult("", 1, infoConnectionRefused),
-      ],
-      [
-        ["/usr/local/bin/openshell", "gateway", "info"].join("\0"),
-        commandResult("", 1, infoConnectionRefused),
+        ["/usr/local/bin/openshell", "gateway", "list", "-o", "json"].join("\0"),
+        commandResult("", 1, registryConnectionRefused),
       ],
     ]);
     subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
@@ -625,12 +629,7 @@ describe("managed gateway port readiness (#7411)", () => {
     );
     expect(subprocess.spawnSync).toHaveBeenCalledWith(
       "/usr/local/bin/openshell",
-      ["gateway", "info", "-g", "nemoclaw-readiness"],
-      expect.any(Object),
-    );
-    expect(subprocess.spawnSync).toHaveBeenCalledWith(
-      "/usr/local/bin/openshell",
-      ["gateway", "info"],
+      ["gateway", "list", "-o", "json"],
       expect.any(Object),
     );
   });
@@ -688,14 +687,7 @@ describe("managed gateway port readiness (#7411)", () => {
         [openshell, "status", "-g", "nemoclaw-readiness"].join("\0"),
         commandResult("", 1, "No active gateway"),
       ],
-      [
-        [openshell, "gateway", "info", "-g", "nemoclaw-readiness"].join("\0"),
-        commandResult("", 1, "No gateway metadata found"),
-      ],
-      [
-        [openshell, "gateway", "info"].join("\0"),
-        commandResult("", 1, "No gateway metadata found"),
-      ],
+      [[openshell, "gateway", "list", "-o", "json"].join("\0"), commandResult("[]", 0)],
     ]);
     subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
       return results.get([command, ...args].join("\0")) ?? commandResult();
@@ -768,19 +760,14 @@ describe("managed gateway port readiness (#7411)", () => {
       `Server: ${endpoint}/`,
       "Connected",
     ].join("\n");
-    const gatewayInfo = [
-      "Gateway Info",
-      `Gateway: ${gatewayName}`,
-      `Gateway endpoint: ${endpoint}/`,
-    ].join("\n");
+    const gatewayList = JSON.stringify([{ name: gatewayName, endpoint, active: true }]);
     const results = new Map([
       [
         ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
         commandResult(`${openshell}\n`, 0),
       ],
       [[openshell, "status", "-g", gatewayName].join("\0"), commandResult(statusOutput, 0)],
-      [[openshell, "gateway", "info", "-g", gatewayName].join("\0"), commandResult(gatewayInfo, 0)],
-      [[openshell, "gateway", "info"].join("\0"), commandResult(gatewayInfo, 0)],
+      [[openshell, "gateway", "list", "-o", "json"].join("\0"), commandResult(gatewayList, 0)],
     ]);
     subprocess.spawnSync.mockImplementation(
       (command: string, args: readonly string[] = []) =>
@@ -962,14 +949,7 @@ esac
         [openshell, "status", "-g", "nemoclaw-readiness"].join("\0"),
         commandResult("", 1, "No active gateway"),
       ],
-      [
-        [openshell, "gateway", "info", "-g", "nemoclaw-readiness"].join("\0"),
-        commandResult("", 1, "No gateway metadata found"),
-      ],
-      [
-        [openshell, "gateway", "info"].join("\0"),
-        commandResult("", 1, "No gateway metadata found"),
-      ],
+      [[openshell, "gateway", "list", "-o", "json"].join("\0"), commandResult("[]", 0)],
     ]);
     subprocess.spawnSync.mockImplementation(
       (command: string, args: readonly string[] = []) =>
