@@ -84,16 +84,18 @@ describe("destroySandbox final gateway decision", () => {
     );
   });
 
-  it("reports a failed live list instead of preserving the gateway silently", async () => {
+  it("reports a failed live list when gateway cleanup is explicitly requested", async () => {
     const harness = createDestroyHarness();
     harness.captureOpenshellSpy.mockReturnValue({ status: 1, output: "transport error" });
 
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).toHaveBeenCalledOnce();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
     expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
-    expect(warnOutput(harness)).not.toContain("--cleanup-gateway was not applied");
+    expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
     expect(warnOutput(harness)).toContain("'openshell sandbox list' failed");
     expect(warnOutput(harness)).toContain("openshell gateway remove nemoclaw-19080");
   });
