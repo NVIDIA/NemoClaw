@@ -403,7 +403,26 @@ describe("sandbox inference invocation probe", () => {
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
       endpoint: "https://inference.local/v1/chat/completions",
+      unavailable: true,
     });
+  });
+
+  it("marks a rejected route as reachable (not unavailable) so terminal-phase degrade cannot apply (#11165)", async () => {
+    // A probe that reaches the route and is rejected must NOT set `unavailable`,
+    // so a genuinely invalid recorded route on a healthy sandbox still fails
+    // the rebuild preflight even though the terminal-phase degrade exists.
+    const runBuffered = vi.fn(async () => bufferedResult(0, '401\n{"error":"unauthorized"}', ""));
+    const result = await probeSandboxInferenceInvocation(
+      { ...input, agentName: "langchain-deepagents-code" },
+      { commandExecutor: { runBuffered } },
+    );
+    expect(result).toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe returned an invalid response body",
+      httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+    expect(result).not.toHaveProperty("unavailable");
   });
 
   it("accepts a served response body that serializes an empty tool call list (#9108)", async () => {

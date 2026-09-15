@@ -445,6 +445,7 @@ async function rebuildSandboxUnlocked(
           observabilityEnabled: recreateOptions.observabilityEnabled,
         },
         staleRecovery,
+        terminalPhase: liveState.terminalPhase,
         preparedRecoveryManifest: recoveryManifest,
         ...(activeRecoveryTransaction?.sandboxName === sandboxName
           ? { recoveryTransactionId: activeRecoveryTransaction.id }
@@ -577,6 +578,7 @@ async function rebuildSandboxUnlocked(
           durableConfig.toolDisclosure,
           durableConfig.dcodeAutoApprovalMode,
           recoveryRecreate,
+          liveState.terminalPhase,
           recreateOptions.targetGatewayPort,
           recreateOptions.runtimeSelection,
         ))
@@ -818,6 +820,7 @@ async function rebuildSandboxUnlocked(
             durableConfig.toolDisclosure,
             durableConfig.dcodeAutoApprovalMode,
             recoveryRecreate,
+            liveState.terminalPhase,
             recreateOptions.targetGatewayPort,
             preparation.runtimeSelection,
           );
