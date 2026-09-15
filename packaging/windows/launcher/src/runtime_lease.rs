@@ -267,6 +267,16 @@ pub(crate) mod native {
             value: *mut c_void,
             size: u32,
         ) -> i32;
+        fn GetVolumeInformationByHandleW(
+            handle: RawHandle,
+            volume_name: *mut u16,
+            volume_name_size: u32,
+            serial: *mut u32,
+            maximum_component_length: *mut u32,
+            filesystem_flags: *mut u32,
+            filesystem_name: *mut u16,
+            filesystem_name_size: u32,
+        ) -> i32;
         fn ReadFile(
             handle: RawHandle,
             buffer: *mut c_void,
@@ -449,12 +459,37 @@ pub(crate) mod native {
         Ok(handle)
     }
 
-    fn open_runtime_root(parent: Option<&Handle>, id: &str) -> Result<Handle, &'static str> {
+    fn verify_read_only_volume(handle: &Handle) -> Result<(), &'static str> {
+        const FILE_READ_ONLY_VOLUME: u32 = 0x0008_0000;
+        let mut flags = 0;
+        if unsafe {
+            GetVolumeInformationByHandleW(
+                handle.0,
+                null_mut(),
+                0,
+                null_mut(),
+                null_mut(),
+                &mut flags,
+                null_mut(),
+                0,
+            )
+        } == 0
+            || flags & FILE_READ_ONLY_VOLUME == 0
+        {
+            return Err("runtime-volume-writable");
+        }
+        Ok(())
+    }
+
+    fn open_runtime_root(
+        parent: Option<&Handle>,
+        id: &str,
+    ) -> Result<(Handle, bool), &'static str> {
         if !lower_hex(id, 64) {
             return Err("runtime-identity");
         }
         match open(parent, id, true, DIR_ACCESS, 3) {
-            Ok(handle) => Ok(handle),
+            Ok(handle) => Ok((handle, false)),
             Err("runtime-reparse") => {
                 let mount = open_mode_kind(
                     parent,
@@ -468,8 +503,8 @@ pub(crate) mod native {
                 )?;
                 verify_security(&mount)?;
                 let volume = open_mode_kind(parent, id, true, DIR_ACCESS, 3, 1, None, true)?;
-                verify_security(&volume)?;
-                Ok(volume)
+                verify_read_only_volume(&volume)?;
+                Ok((volume, true))
             }
             Err(error) => Err(error),
         }
@@ -540,8 +575,7 @@ pub(crate) mod native {
         Ok(())
     }
 
-    fn descriptor(handle: &Handle) -> Result<Descriptor, &'static str> {
-        verify_security(handle)?;
+    fn read_descriptor(handle: &Handle) -> Result<Descriptor, &'static str> {
         let mut info = StandardInfo {
             allocation: 0,
             size: 0,
@@ -587,6 +621,11 @@ pub(crate) mod native {
             count += read as usize;
         }
         Descriptor::parse(&bytes[..count])
+    }
+
+    fn descriptor(handle: &Handle) -> Result<Descriptor, &'static str> {
+        verify_security(handle)?;
+        read_descriptor(handle)
     }
 
     pub(crate) fn installed_path() -> Result<String, &'static str> {
@@ -648,6 +687,7 @@ pub(crate) mod native {
     struct Runtime {
         path: String,
         handles: Vec<Handle>,
+        mounted_read_only: bool,
     }
     impl Runtime {
         fn open(installation: &str, id: &str) -> Result<Self, &'static str> {
@@ -655,22 +695,35 @@ pub(crate) mod native {
                 return Err("runtime-identity");
             }
             let mut handles = open_installation(installation)?;
+            let mut mounted_read_only = false;
             for component in ["runtimes", id] {
                 let handle = if component == id {
-                    open_runtime_root(handles.last(), component)?
+                    let (handle, mounted) = open_runtime_root(handles.last(), component)?;
+                    mounted_read_only = mounted;
+                    handle
                 } else {
                     open(handles.last(), component, true, DIR_ACCESS, 3)?
                 };
-                verify_security(&handle)?;
+                if !mounted_read_only {
+                    verify_security(&handle)?;
+                }
                 handles.push(handle);
             }
             Ok(Self {
                 path: format!("{installation}\\runtimes\\{id}"),
                 handles,
+                mounted_read_only,
             })
         }
         fn marker(&self, name: &str, access: u32, share: u32) -> Result<Handle, &'static str> {
             open(self.handles.last(), name, false, access, share)
+        }
+        fn descriptor(&self, handle: &Handle) -> Result<Descriptor, &'static str> {
+            if self.mounted_read_only {
+                read_descriptor(handle)
+            } else {
+                descriptor(handle)
+            }
         }
     }
 
@@ -740,7 +793,7 @@ pub(crate) mod native {
             let selected = descriptor(&package_lease)?;
             let runtime = Runtime::open(installation, &selected.runtime_id)?;
             let lease = runtime.marker("runtime.ready", READ_ACCESS, 1)?;
-            if descriptor(&lease)? != selected {
+            if runtime.descriptor(&lease)? != selected {
                 return Err("runtime-identity");
             }
             let bin = open(control.handles.last(), "bin", true, DIR_ACCESS, 3)?;
@@ -762,9 +815,18 @@ pub(crate) mod native {
         }
         pub(crate) fn validate(&self) -> Result<(), &'static str> {
             verify_security(&self.package)?;
-            verify_security(&self.version)?;
+            if self.runtime.mounted_read_only {
+                verify_read_only_volume(self.runtime.handles.last().unwrap())?;
+            } else {
+                verify_security(&self.version)?;
+            }
             verify_security(&self.node)?;
-            for parent in &self.runtime.handles[1..] {
+            let parents = if self.runtime.mounted_read_only {
+                &self.runtime.handles[1..self.runtime.handles.len() - 1]
+            } else {
+                &self.runtime.handles[1..]
+            };
+            for parent in parents {
                 verify_security(parent)?;
             }
             verify_security(&self._bin)?;
@@ -939,14 +1001,19 @@ pub(crate) mod native {
                 content_components(relative)?
             };
             let mut parents = Vec::new();
+            let mut mounted_read_only = false;
             for (index, part) in parts.iter().enumerate() {
                 let parent = parents.last().or_else(|| self.handles.last());
                 let handle = if index == 1 && parts[0] == "runtimes" {
-                    open_runtime_root(parent, part)?
+                    let (handle, mounted) = open_runtime_root(parent, part)?;
+                    mounted_read_only = mounted;
+                    handle
                 } else {
                     open(parent, part, true, DIR_ACCESS, 3)?
                 };
-                verify_security(&handle)?;
+                if !mounted_read_only {
+                    verify_security(&handle)?;
+                }
                 parents.push(handle);
             }
             Ok(ContentDirectory {
@@ -960,14 +1027,19 @@ pub(crate) mod native {
         ) -> Result<ContentFile<'a>, &'static str> {
             let parts = content_components(relative)?;
             let mut parents = Vec::new();
+            let mut mounted_read_only = false;
             for (index, part) in parts[..parts.len() - 1].iter().enumerate() {
                 let parent = parents.last().or_else(|| self.handles.last());
                 let handle = if index == 1 && parts[0] == "runtimes" {
-                    open_runtime_root(parent, part)?
+                    let (handle, mounted) = open_runtime_root(parent, part)?;
+                    mounted_read_only = mounted;
+                    handle
                 } else {
                     open(parent, part, true, DIR_ACCESS, 3)?
                 };
-                verify_security(&handle)?;
+                if !mounted_read_only {
+                    verify_security(&handle)?;
+                }
                 parents.push(handle);
             }
             let file = open(
@@ -977,7 +1049,9 @@ pub(crate) mod native {
                 READ_ACCESS,
                 1,
             )?;
-            verify_security(&file)?;
+            if !mounted_read_only {
+                verify_security(&file)?;
+            }
             let mut info = StandardInfo {
                 allocation: 0,
                 size: 0,
