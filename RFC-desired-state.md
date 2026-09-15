@@ -300,5 +300,7 @@ Upstream inspection found a native OpenShell Podman driver in the pinned gateway
 It uses Podman image volumes, secrets and rootless networking rather than merely
 substituting a socket in the Docker driver. Manual qualification must exercise
 that driver and record daemon identity behavior by rootless/rootful namespace.
-The host installation prerequisite is still pending; fixture success does not
-qualify either Podman mode or remote managed placement.
+The approved host installation is blocked on interactive sudo. The native client
+requests the Podman v5.0.0 API; compatibility with Ubuntu’s 4.9.3 package must be
+measured rather than assumed. Fixture success does not qualify either Podman mode
+or remote managed placement. See the [preparatory validation](docs/validation/rust-engine-preparation-linux-arm64.json).

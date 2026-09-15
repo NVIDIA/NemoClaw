@@ -1,0 +1,92 @@
+{
+  "sourceRevision": "80deefbd97bcdf4ed22d3455ed4aad7c3d77e482",
+  "platform": "linux_arm64",
+  "purpose": "Prepare explicit engine selection, identity isolation, host observations and inference connectivity without exposing remote placement or changing resource bindings.",
+  "checks": {
+    "integrated-workspace.log": {
+      "passed": 118,
+      "failed": 0,
+      "ignored": 29
+    },
+    "integrated-lifecycle.log": {
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    },
+    "final-bundle-lifecycle.log": {
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    "live-docker-observation.log": {
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    "format": "passed",
+    "strictWorkspaceClippy": "passed"
+  },
+  "bundle": {
+    "sourceRevision": "d3d88c06d6",
+    "version": "0.1.0-dev.970882d2133c0833",
+    "note": "Built before integrating concurrent CI/cache and Fabric test scheduling changes; production SDK/provider sources are identical to the integrated tree."
+  },
+  "behavioralEvidence": [
+    "Two isolated socket fixtures contain same-named resources; selection, observation failures and cleanup remain on the requested engine.",
+    "A fixed injected connection set rejects missing and duplicate entries without a local fallback.",
+    "Same-daemon access recovery preserves storage identity; alias retarget and mismatched injected endpoints fail before mutation.",
+    "Capacity accepts complete typed observations from the selected daemon; missing, incomplete or wrong-target measurements fail.",
+    "Inference resolution preserves external URLs and credential references independently of sandbox placement and performs no reachability probe during plan.",
+    "A failed sandbox inference probe retains established state; subsequent successful apply has no resource changes or credential leakage.",
+    "Three read-only live Docker tests preserved the original deployment runtime and retained storage bindings."
+  ],
+  "podman": {
+    "status": "blocked before installation; not qualified",
+    "installationAuthorized": true,
+    "blocker": "sudo requires an interactive password; no system packages changed",
+    "candidate": "Ubuntu Podman 4.9.3+ds1-1ubuntu0.2+esm3",
+    "upstreamOpenShellRevision": "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
+    "findings": [
+      "Pinned gateway includes a native Podman driver using image volumes and secrets.",
+      "Native client requests the v5.0.0 API; compatibility with the Ubuntu candidate remains untested."
+    ],
+    "pending": [
+      "Native rootless/rootful version and namespace identity evidence",
+      "Sandbox start, policy enforcement, inference route, actual agent response, deletion"
+    ]
+  },
+  "limits": [
+    "Fixture engines are isolated HTTP daemons, not live Docker or Podman engines.",
+    "No engineRef YAML, remote transport, TLS credential rotation implementation or migration operation was added.",
+    "Default capacity collection remains the existing local Linux topology; injected remote observers must supply their own measurements.",
+    "SDK in-process connection/observer injection does not cross OpenTofu subprocess boundaries.",
+    "Managed local inference still publishes at its Docker bridge address; a fixture unreachable endpoint is not remote network qualification.",
+    "Refresh/export retain osquery; immediate version checks, mutations, active probes, local credentials/state and resident memory checks remain direct."
+  ],
+  "localLogs": [
+    {
+      "path": ".local/engine-preparation/integrated-clippy.log",
+      "sha256": "f96f1a6732142a8cddcd489b3a8de14c01258ba934002e9344f2691b4435d279"
+    },
+    {
+      "path": ".local/engine-preparation/integrated-workspace.log",
+      "sha256": "b6cff2b863f53178e02e86869818cf795681ee42f582c38d71cb90732b8269d7"
+    },
+    {
+      "path": ".local/engine-preparation/integrated-lifecycle.log",
+      "sha256": "e9813798e9d1754b6f8db6235b4c8f6f021d20711dbf29ba9278367d01b61bef"
+    },
+    {
+      "path": ".local/engine-preparation/final-bundle-build.log",
+      "sha256": "11d036bd2677409a1439fd2f3fd3081204286f82aa3f1535b17fe1edd556e536"
+    },
+    {
+      "path": ".local/engine-preparation/final-bundle-lifecycle.log",
+      "sha256": "916fcb5811c25dde3ba6b9280406de163b497b2ce14a2dd3c909da1707986aa9"
+    },
+    {
+      "path": ".local/engine-preparation/live-docker-observation.log",
+      "sha256": "82ac569c4a3de6be66139274b7753b977a5c60f3fe93e6009902878deaf99581"
+    }
+  ]
+}
