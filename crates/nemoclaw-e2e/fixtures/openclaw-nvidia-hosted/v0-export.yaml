@@ -1,34 +1,32 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Generated from the representative v0 export modeled at NVIDIA/NemoClaw revision
+# Modeled from config export at NVIDIA/NemoClaw revision
 # f47724f29838fe08898993fad1c8c6b7fcb3e080.
-# 2026-09-15: bound explicit v1 gateway and Fabric runtime identities.
+# 2026-09-15: reduced the explicit policy to deterministic representative rules.
 
-apiVersion: nemoclaw.nvidia.com/v1alpha1
+apiVersion: nemoclaw.nvidia.com/v1
 kind: NemoClawConfig
 metadata:
   name: openclaw-nvidia-hosted
   uid: b8f25ac9-8e58-4c0b-98c3-17648f9a5575
 spec:
   gateway:
-    management: managed
-    endpoint: http://127.0.0.1:17691
-    engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792
-    networkCIDR: 172.30.111.0/24
+    management: nemoclaw
+    name: nemoclaw
+    port: 17691
   inferenceProviders:
     - name: hosted-nvidia-prod
-      provider: openai
+      provider: nvidia-prod
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1
       credential:
         env: NVIDIA_INFERENCE_API_KEY
   sandboxes:
     - name: assistant
-      image:
-        ref: nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd
       runtime:
         provider: docker
+        image:
+          ref: nemoclaw-sandbox-local@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       network:
         policy:
           explicit:
@@ -52,7 +50,7 @@ spec:
                 - /sandbox
       agents:
         - name: primary
-          harness: openclaw
+          type: openclaw
           inference:
             routes:
               - name: primary
