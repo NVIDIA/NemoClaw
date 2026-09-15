@@ -239,7 +239,12 @@ describe("onboard helpers", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, {
+        inferenceRoute: {
+          provider: "hermes-provider",
+          model: "moonshotai/kimi-k2.6",
+        },
+      });
       fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
       const script = String.raw`
