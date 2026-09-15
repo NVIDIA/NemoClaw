@@ -66,16 +66,18 @@ const DOCKER_PREFLIGHT_TIMEOUT_MS = 15_000;
 /** The only endpoint scheme onboarding supports; see `isSupportedGatewayDockerHost`. */
 const DOCKER_UNIX_SCHEME = "unix://";
 
-/**
- * Whether a daemon could be listening at this path. Existence alone is not
- * enough: a regular file or directory at the selected path is just as
- * unreachable as nothing at all, and must not read as a live endpoint.
- */
-function isUnixSocket(socketPath: string): boolean {
+type UnixSocketInspection = "socket" | "missing" | "unknown";
+
+/** Classify a selected endpoint without treating permission failures as absence. */
+function inspectUnixSocket(
+  socketPath: string,
+  statSyncImpl: (filePath: string) => { isSocket(): boolean } = fs.statSync,
+): UnixSocketInspection {
   try {
-    return fs.statSync(socketPath).isSocket();
-  } catch {
-    return false;
+    return statSyncImpl(socketPath).isSocket() ? "socket" : "missing";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
   }
 }
 
@@ -235,7 +237,7 @@ export interface AssessHostOpts {
   resolveOpenshellImpl?: () => string | null;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
-  isUnixSocketImpl?: (filePath: string) => boolean;
+  statSyncImpl?: (filePath: string) => { isSocket(): boolean };
   observeDockerAuthorityConflictImpl?: (opts: {
     env: NodeJS.ProcessEnv;
     platform: NodeJS.Platform;
@@ -616,15 +618,12 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const packageManager = detectPackageManager(runCaptureImpl);
   const systemctlAvailable =
     opts.commandExistsImpl?.("systemctl") ?? commandExists("systemctl", runCaptureImpl);
-  // DOCKER_HOST wins over DOCKER_CONTEXT in the Docker CLI, so a context
-  // selector decides the endpoint only when no host is set. Authority detection
+  // DOCKER_CONTEXT overrides DOCKER_HOST in the Docker CLI. Authority detection
   // reduces a context naming a supported local socket to DOCKER_HOST, so a
   // selector that survives to here names an endpoint onboarding cannot use --
   // and probing the default socket instead would certify a daemon the operator
   // did not select (#11719).
-  const dockerContextInvalid = String(env.DOCKER_HOST ?? "").trim()
-    ? undefined
-    : String(env.DOCKER_CONTEXT ?? "").trim() || undefined;
+  const dockerContextInvalid = String(env.DOCKER_CONTEXT ?? "").trim() || undefined;
   const dockerHostInvalid =
     !isSupportedGatewayDockerHost(env.DOCKER_HOST) || dockerContextInvalid !== undefined;
 
@@ -671,7 +670,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     !dockerReachable &&
     !dockerHostInvalid &&
     selectedDockerSocketPath &&
-    !(opts.isUnixSocketImpl ?? isUnixSocket)(selectedDockerSocketPath)
+    inspectUnixSocket(selectedDockerSocketPath, opts.statSyncImpl) === "missing"
       ? selectedDockerEndpoint
       : undefined;
 

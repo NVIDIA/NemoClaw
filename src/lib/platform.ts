@@ -370,18 +370,8 @@ interface DockerAuthoritySelection {
  */
 function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAuthoritySelection {
   const env = opts.env ?? process.env;
-  if (env.DOCKER_HOST) {
-    return {
-      selection: {
-        dockerHost: env.DOCKER_HOST,
-        source: "env",
-        socketPath: null,
-      },
-      conflict: null,
-    };
-  }
-
-  // DOCKER_CONTEXT selects the daemon authority exactly as DOCKER_HOST does, so
+  // DOCKER_CONTEXT overrides DOCKER_HOST in the Docker CLI. It selects the
+  // daemon authority exactly as DOCKER_HOST does, so
   // a discovered fallback socket must never replace it: redirecting a host that
   // named its own authority runs NemoClaw against a daemon the operator did not
   // choose, and reports readiness for that other daemon (#11719). Resolving the
@@ -400,6 +390,17 @@ function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAut
         contextHost && isSupportedGatewayDockerHost(contextHost)
           ? { dockerHost: contextHost, source: "context", socketPath: null }
           : null,
+      conflict: null,
+    };
+  }
+
+  if (env.DOCKER_HOST) {
+    return {
+      selection: {
+        dockerHost: env.DOCKER_HOST,
+        source: "env",
+        socketPath: null,
+      },
       conflict: null,
     };
   }

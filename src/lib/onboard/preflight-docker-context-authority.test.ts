@@ -91,18 +91,18 @@ describe("Docker context authority selection (#11719)", () => {
     },
   );
 
-  it("lets DOCKER_HOST win over a selected context, as the Docker CLI does", () => {
+  it("lets DOCKER_CONTEXT override DOCKER_HOST, as the Docker CLI does", () => {
     const { opts, resolveDockerContextHost } = twoEngineHost(
       { DOCKER_HOST: `unix://${DOCKER_SOCKET}`, DOCKER_CONTEXT: "qa-unreachable" },
       DEAD_CONTEXT_SOCKET,
     );
 
     expect(detectDockerHost(opts)).toEqual({
-      dockerHost: `unix://${DOCKER_SOCKET}`,
-      source: "env",
+      dockerHost: DEAD_CONTEXT_SOCKET,
+      source: "context",
       socketPath: null,
     });
-    expect(resolveDockerContextHost).not.toHaveBeenCalled();
+    expect(resolveDockerContextHost).toHaveBeenCalledWith("qa-unreachable");
   });
 
   it.each(["", "   "])("treats a blank context selector as no selection: %j", (value) => {
@@ -179,7 +179,7 @@ describe("assessHost Docker context endpoint (#11719)", () => {
     expect(invalid?.commands?.join("\n")).toContain("'qa'\\''; rm -rf ~'");
   });
 
-  it("keeps DOCKER_HOST as the selector that decided the endpoint", () => {
+  it("reports an unresolved DOCKER_CONTEXT even when DOCKER_HOST is set", () => {
     const assessment = assessHost({
       platform: "linux",
       release: "6.8.0-generic",
@@ -189,12 +189,12 @@ describe("assessHost Docker context endpoint (#11719)", () => {
       runCaptureImpl,
     });
 
-    expect(assessment.dockerContextInvalid).toBeUndefined();
+    expect(assessment.dockerContextInvalid).toBe("qa-remote");
     expect(assessment.dockerHostInvalid).toBe(true);
     const invalid = planHostAdvisories(assessment).find(
       (action) => action.id === "invalid_docker_host",
     );
-    expect(invalid?.title).toBe("Fix the DOCKER_HOST endpoint");
+    expect(invalid?.title).toBe("Fix the DOCKER_CONTEXT endpoint");
   });
 
   it("names the missing socket instead of a root-level group grant", () => {
@@ -206,7 +206,9 @@ describe("assessHost Docker context endpoint (#11719)", () => {
       dockerInfoOutput: "",
       commandExistsImpl,
       runCaptureImpl,
-      isUnixSocketImpl: () => false,
+      statSyncImpl: () => {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      },
     });
 
     expect(assessment.dockerEndpointSocketMissing).toBe(DEAD_CONTEXT_SOCKET);
@@ -234,7 +236,7 @@ describe("assessHost Docker context endpoint (#11719)", () => {
       dockerInfoOutput: "",
       commandExistsImpl,
       runCaptureImpl,
-      isUnixSocketImpl: () => true,
+      statSyncImpl: () => ({ isSocket: () => true }),
     });
 
     expect(assessment.dockerEndpointSocketMissing).toBeUndefined();
@@ -254,7 +256,7 @@ describe("assessHost Docker context endpoint (#11719)", () => {
       dockerInfoOutput: "",
       commandExistsImpl,
       runCaptureImpl,
-      isUnixSocketImpl: () => false,
+      statSyncImpl: () => ({ isSocket: () => false }),
     });
 
     expect(assessment.dockerEndpointSocketMissing).toBe("unix:///tmp/not-a-socket");
@@ -274,7 +276,6 @@ describe("assessHost Docker context endpoint (#11719)", () => {
       dockerInfoOutput: "",
       commandExistsImpl,
       runCaptureImpl: () => "",
-      isUnixSocketImpl: () => false,
       observeDockerAuthorityConflictImpl: () => null,
     });
 
@@ -282,6 +283,26 @@ describe("assessHost Docker context endpoint (#11719)", () => {
     const ids = planHostAdvisories(assessment).map((action) => action.id);
     expect(ids).toContain("start_docker");
     expect(ids).not.toContain("docker_endpoint_socket_missing");
+  });
+
+  it("does not report a socket as missing when access prevents inspection", () => {
+    const assessment = assessHost({
+      platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
+      env: { DOCKER_HOST: `unix://${DOCKER_SOCKET}` },
+      dockerInfoOutput: "",
+      commandExistsImpl,
+      runCaptureImpl,
+      statSyncImpl: () => {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      },
+    });
+
+    expect(assessment.dockerEndpointSocketMissing).toBeUndefined();
+    const ids = planHostAdvisories(assessment).map((action) => action.id);
+    expect(ids).not.toContain("docker_endpoint_socket_missing");
+    expect(ids).toContain("docker_group_permission");
   });
 
   it("classifies a reduced context endpoint exactly like the DOCKER_HOST it became", () => {

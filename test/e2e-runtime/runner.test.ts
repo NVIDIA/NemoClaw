@@ -243,7 +243,7 @@ describe("runner env merging", () => {
     expect(initializedContext).toBeUndefined();
   });
 
-  it("keeps a named context when initialization uses an explicit Docker host (#8816)", () => {
+  it("clears a named context when initialization selects an explicit Docker host (#8816)", () => {
     const platform = require(platformPath);
     const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
       dockerHost: "unix:///explicit.sock",
@@ -267,7 +267,41 @@ describe("runner env merging", () => {
     }
 
     expect(initializedHost).toBe("unix:///explicit.sock");
-    expect(initializedContext).toBe("ambient-context");
+    expect(initializedContext).toBeUndefined();
+  });
+
+  it("carries a resolved context host and its Docker config into Docker children (#11719)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///context.sock",
+      source: "context",
+      socketPath: null,
+    });
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "selected-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/context-docker-config");
+      vi.stubEnv("DOCKER_HOST", "unix:///ignored-host.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const dockerEnv = requireCall(withoutDockerAuthorityProbe(calls), 0)[2]?.env;
+    expect(dockerEnv).toMatchObject({
+      DOCKER_HOST: "unix:///context.sock",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
+    });
+    expect(dockerEnv?.DOCKER_CONTEXT).toBeUndefined();
   });
 
   it("preserves Docker context and config only for Docker subprocesses (#8816)", () => {
