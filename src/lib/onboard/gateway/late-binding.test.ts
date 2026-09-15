@@ -76,7 +76,7 @@ describe("gateway lifecycle late binding", () => {
   });
 
   it("passes the frozen target to observation and selection (#10514)", async () => {
-    const adapters = gatewayAdaptersForTest();
+    const adapters = gatewayAdaptersForTest({ endpointBinding: "match" });
     const revalidateAuthority = vi.fn();
     const registration = createGatewayRegistration({
       revalidateAuthority,
@@ -150,6 +150,32 @@ describe("gateway lifecycle late binding", () => {
       target: { kind: "named", gatewayName: "nemoclaw" },
       endpoint: "https://127.0.0.1:8080",
     });
+  });
+
+  it("repairs healthy metadata bound to another managed gateway port (#11741)", async () => {
+    const adapters = gatewayAdaptersForTest({
+      healthy: true,
+      namedMetadata: true,
+      gatewayReuseState: "healthy",
+      endpointBinding: "mismatch",
+    });
+    const registration = createGatewayRegistration({
+      revalidateAuthority: vi.fn(),
+      ...adapters,
+      gatewayName: () => "nemoclaw",
+      gatewayPort: () => 8080,
+      getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+      getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
+      isLinuxDockerDriverGatewayEnabled: () => true,
+    });
+
+    await expect(registration.registerDockerDriverGatewayEndpoint()).resolves.toBe(true);
+
+    expect(adapters.lifecycle.registerGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      endpoint: "https://127.0.0.1:8080",
+    });
+    expect(adapters.lifecycle.selectGateway).toHaveBeenCalledOnce();
   });
 
   it.each(["registration", "metadata"] as const)(

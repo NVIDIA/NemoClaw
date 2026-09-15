@@ -39,7 +39,7 @@ export function createGatewayRegistration(deps: GatewayRegistrationDeps): Gatewa
       expectedGatewayPort: deps.gatewayPort(),
     });
     if (existing.error) return false;
-    if (existing.namedMetadata && (existing.healthy || existing.endpointBinding === "match")) {
+    if (existing.namedMetadata && existing.endpointBinding === "match") {
       const selected = await deps.lifecycle.selectGateway(request);
       if (!selected.ok) return false;
       process.env.OPENSHELL_GATEWAY = gatewayName;
