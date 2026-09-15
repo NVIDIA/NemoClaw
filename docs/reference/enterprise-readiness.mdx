@@ -124,7 +124,7 @@ Each one includes the current workaround or next step.
 </AgentOnly>
 | In-sandbox config edits do not persist | Direct edits to agent config inside the running sandbox do not survive rebuilds. | Make durable config changes from the host by re-running `$$nemoclaw onboard`, not inside the sandbox. Refer to [Troubleshooting](troubleshooting). |
 | Landlock filesystem enforcement degrades on old kernels | Filesystem restrictions fall back to container mounts below Linux kernel 5.13. | Run on kernel 5.13 or later for full enforcement. Refer to [Landlock LSM Enforcement](../security/security-controls/filesystem-controls#landlock-lsm-enforcement). |
-| Best-effort capability and resource limits | Capability drops and ulimits skip silently when the runtime blocks them. | Pass `--cap-drop=ALL` and `--ulimit` at the container runtime, or set `NEMOCLAW_REQUIRE_CAP_DROP=1` to fail closed. Refer to [Process Controls](../security/security-controls/process-controls). |
+| Runtime-owned capability and resource limits | OpenShell owns capabilities for managed processes. Entrypoint resource limits remain best effort when the runtime blocks them. | Keep OpenShell enforcement enabled. For direct containers, pass `--cap-drop=ALL` and `--ulimit` at the container runtime. Refer to [Process Controls](../security/security-controls/process-controls). |
 
 ## Field Conversation Guidance
 

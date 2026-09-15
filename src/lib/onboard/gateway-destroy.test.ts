@@ -1,32 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
+import { resolveGatewayOwner } from "./gateway-ownership";
 import { describe, expect, it, vi } from "vitest";
 
 import { destroyGatewayWithVolumeCleanup, type DestroyGatewayDeps } from "./gateway-destroy";
 
 function deps(overrides: Partial<DestroyGatewayDeps> = {}): DestroyGatewayDeps {
   return {
+    lifecycle: gatewayAdaptersForTest().lifecycle,
+    resolveAuthority: () =>
+      resolveGatewayOwner({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        declaration: null,
+        hasPackagedService: false,
+      }),
     clearRegistry: vi.fn(),
     dockerRemoveVolumesByPrefix: vi.fn(),
     gatewayName: "nemoclaw",
     hasLifecycleCommands: vi.fn(() => true),
     isDockerDriverGatewayEnabled: vi.fn(() => false),
     removeDockerDriverGatewayRegistration: vi.fn(() => true),
-    runOpenshell: vi.fn(() => ({ status: 0 })),
     stopDockerDriverGatewayProcess: vi.fn(),
     ...overrides,
   };
 }
 
 describe("destroyGatewayWithVolumeCleanup", () => {
-  it("removes lifecycle gateways and deletes their OpenShell cluster volumes", () => {
+  it("removes lifecycle gateways and deletes their OpenShell cluster volumes", async () => {
     const d = deps();
 
-    expect(destroyGatewayWithVolumeCleanup(d)).toBe(true);
+    expect(await destroyGatewayWithVolumeCleanup(d)).toBe(true);
 
-    expect(d.runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
-      ignoreError: true,
+    expect(d.lifecycle.removeGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
     });
     expect(d.clearRegistry).toHaveBeenCalledOnce();
     expect(d.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith("openshell-cluster-nemoclaw", {
@@ -34,73 +43,79 @@ describe("destroyGatewayWithVolumeCleanup", () => {
     });
   });
 
-  it("falls back to gateway destroy when remove is unavailable", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stderr: "unrecognized subcommand 'remove'" })
-      .mockReturnValueOnce({ status: 0 });
-    const d = deps({ runOpenshell });
-
-    expect(destroyGatewayWithVolumeCleanup(d)).toBe(true);
-
-    expect(runOpenshell).toHaveBeenNthCalledWith(1, ["gateway", "remove", "nemoclaw"], {
-      ignoreError: true,
+  it("falls back to gateway destroy when remove is unavailable", async () => {
+    const { lifecycle } = gatewayAdaptersForTest();
+    lifecycle.removeGateway.mockResolvedValue({
+      ok: false,
+      unsupported: true,
+      ambiguous: false,
+      error: { kind: "command", reason: "failed", message: "Unsupported." },
     });
-    expect(runOpenshell).toHaveBeenNthCalledWith(2, ["gateway", "destroy", "-g", "nemoclaw"], {
-      ignoreError: true,
+    const d = deps({ lifecycle });
+    expect(await destroyGatewayWithVolumeCleanup(d)).toBe(true);
+    expect(lifecycle.removeGateway).toHaveBeenCalledOnce();
+    expect(lifecycle.destroyGateway).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
     });
   });
 
-  it("does not hide a current remove failure behind gateway destroy", () => {
-    const runOpenshell = vi.fn().mockReturnValueOnce({ status: 1, stderr: "connection refused" });
-    const d = deps({ runOpenshell });
-
-    expect(destroyGatewayWithVolumeCleanup(d)).toBe(false);
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
-    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
-      ignoreError: true,
+  it("retains registry and volumes after ambiguous removal without legacy destruction", async () => {
+    const { lifecycle } = gatewayAdaptersForTest();
+    lifecycle.removeGateway.mockResolvedValue({
+      ok: false,
+      unsupported: false,
+      ambiguous: true,
+      error: { kind: "timeout", message: "Timed out." },
     });
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["gateway", "destroy", "-g", "nemoclaw"],
-      expect.anything(),
-    );
+    const d = deps({ lifecycle });
+    expect(await destroyGatewayWithVolumeCleanup(d)).toBe(false);
+    expect(lifecycle.removeGateway).toHaveBeenCalledOnce();
+    expect(lifecycle.listGateways).toHaveBeenCalledOnce();
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
     expect(d.clearRegistry).not.toHaveBeenCalled();
     expect(d.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
 
-  it("stops Docker-driver gateways, unregisters them, and removes cluster volumes", () => {
+  it("stops Docker-driver gateways, unregisters them, and removes cluster volumes", async () => {
     const d = deps({
       hasLifecycleCommands: vi.fn(() => false),
       isDockerDriverGatewayEnabled: vi.fn(() => true),
     });
 
-    expect(destroyGatewayWithVolumeCleanup(d)).toBe(true);
+    expect(await destroyGatewayWithVolumeCleanup(d)).toBe(true);
 
     expect(d.stopDockerDriverGatewayProcess).toHaveBeenCalledOnce();
     expect(d.removeDockerDriverGatewayRegistration).toHaveBeenCalledOnce();
-    expect(d.runOpenshell).not.toHaveBeenCalled();
+    expect(d.lifecycle.removeGateway).not.toHaveBeenCalled();
     expect(d.clearRegistry).toHaveBeenCalledOnce();
     expect(d.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith("openshell-cluster-nemoclaw", {
       ignoreError: true,
     });
   });
 
-  it("does not clear registry or remove volumes when gateway removal fails", () => {
-    const d = deps({ runOpenshell: vi.fn(() => ({ status: 1 })) });
+  it("does not clear registry or remove volumes when gateway removal fails", async () => {
+    const { lifecycle } = gatewayAdaptersForTest();
+    lifecycle.removeGateway.mockResolvedValue({
+      ok: false,
+      unsupported: false,
+      ambiguous: false,
+      error: { kind: "command", reason: "failed", message: "Removal failed." },
+    });
+    const d = deps({ lifecycle });
 
-    expect(destroyGatewayWithVolumeCleanup(d)).toBe(false);
+    expect(await destroyGatewayWithVolumeCleanup(d)).toBe(false);
 
     expect(d.clearRegistry).not.toHaveBeenCalled();
     expect(d.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
 
-  it("preserves legacy gateway behavior without Docker volume cleanup", () => {
+  it("preserves legacy gateway behavior without Docker volume cleanup", async () => {
     const d = deps({ hasLifecycleCommands: vi.fn(() => false) });
 
-    expect(destroyGatewayWithVolumeCleanup(d)).toBe(true);
+    expect(await destroyGatewayWithVolumeCleanup(d)).toBe(true);
 
-    expect(d.runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
-      ignoreError: true,
+    expect(d.lifecycle.removeGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
     });
     expect(d.clearRegistry).toHaveBeenCalledOnce();
     expect(d.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();

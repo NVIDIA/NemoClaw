@@ -234,6 +234,38 @@ function normalizedInstructionBody(source: string): string {
     .replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
 }
 
+export function requireDockerfileCopySources(
+  source: string,
+  sourcePath: string,
+  destinationPath: string,
+  expectedCount: number,
+): readonly DockerfileInstruction[] {
+  const destinationDirectory = destinationPath.slice(0, destinationPath.lastIndexOf("/") + 1);
+  const matches = dockerfileInstructions(source).filter((instruction) => {
+    if (instruction.keyword !== "COPY") return false;
+    const words = normalizedInstructionBody(instruction.body).split(" ");
+    const destination = words.at(-1);
+    return (
+      words.slice(0, -1).includes(sourcePath) &&
+      (destination === destinationPath || destination === destinationDirectory)
+    );
+  });
+  if (matches.length !== expectedCount) {
+    throw new Error(
+      `Expected ${expectedCount} COPY instruction(s) of ${sourcePath} to ${destinationPath}, found ${matches.length}`,
+    );
+  }
+  return matches;
+}
+
+export function requireSingleDockerfileCopySource(
+  source: string,
+  sourcePath: string,
+  destinationPath: string,
+): DockerfileInstruction {
+  return requireDockerfileCopySources(source, sourcePath, destinationPath, 1)[0]!;
+}
+
 export function requireReviewedDockerfileRunCommands(
   source: string,
   command: string,

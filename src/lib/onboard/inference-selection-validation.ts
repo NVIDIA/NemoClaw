@@ -100,7 +100,7 @@ export interface InferenceSelectionValidationDeps {
    * Optional abort teardown hook for tests. Production loads the helper lazily
    * so openshell binaries stay out of the validation unit graph.
    */
-  teardownOrphanManagedGatewayOnAbort?: () => boolean;
+  teardownOrphanManagedGatewayOnAbort?: () => boolean | Promise<boolean>;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -169,7 +169,7 @@ export function createInferenceSelectionValidationHelpers(
   const trustedPrivateEndpointHosts =
     deps.trustedPrivateEndpointHosts ?? parseTrustedPrivateInferenceHostsFromEnv(process.env);
 
-  function exitNonInteractiveValidationFailure(): never {
+  async function exitNonInteractiveValidationFailure(): Promise<never> {
     // #8952: tear down an unowned managed gateway before fatal exit.
     let gatewayCleanupComplete = false;
     try {
@@ -180,7 +180,7 @@ export function createInferenceSelectionValidationHelpers(
             require("./gateway-destroy") as typeof import("./gateway-destroy");
           return teardownOrphanManagedGatewayOnAbort();
         });
-      gatewayCleanupComplete = teardown();
+      gatewayCleanupComplete = await teardown();
     } catch (error) {
       // Helper never throws; this covers require/load / inject failures.
       console.error(
@@ -352,7 +352,7 @@ export function createInferenceSelectionValidationHelpers(
     };
     printValidationFailure(label, syntheticProbe);
     if (deps.isNonInteractive()) {
-      exitNonInteractiveValidationFailure();
+      await exitNonInteractiveValidationFailure();
     }
     const retry = await deps.promptValidationRecovery(
       label,
@@ -401,7 +401,7 @@ export function createInferenceSelectionValidationHelpers(
         probe,
       );
       if (deps.isNonInteractive()) {
-        exitNonInteractiveValidationFailure();
+        await exitNonInteractiveValidationFailure();
       }
       const retry = await deps.promptValidationRecovery(
         label,
@@ -451,7 +451,7 @@ export function createInferenceSelectionValidationHelpers(
     if (!probe.ok) {
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
-        exitNonInteractiveValidationFailure();
+        await exitNonInteractiveValidationFailure();
       }
       const retry = await deps.promptValidationRecovery(
         label,
@@ -528,7 +528,7 @@ export function createInferenceSelectionValidationHelpers(
     }
     printValidationFailure(label, probe);
     if (deps.isNonInteractive()) {
-      exitNonInteractiveValidationFailure();
+      await exitNonInteractiveValidationFailure();
     }
     const retry = await deps.promptValidationRecovery(
       label,
@@ -615,7 +615,7 @@ export function createInferenceSelectionValidationHelpers(
       printOpenAiSurfaceGuidance();
     }
     if (deps.isNonInteractive()) {
-      exitNonInteractiveValidationFailure();
+      await exitNonInteractiveValidationFailure();
     }
     const retry = await deps.promptValidationRecovery(
       label,

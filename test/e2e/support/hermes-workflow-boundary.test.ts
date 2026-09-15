@@ -238,14 +238,23 @@ describe("Hermes GPU boundary", () => {
   });
 
   it("requires the shared reviewed SDK installer for external gateway health", () => {
-    const errors = wfErrors((workflow) => {
+    const wrongArtifact = wfErrors((workflow) => {
+      step(
+        workflow.jobs["external-gateway-health"],
+        "Download reviewed OpenShell SDK archive",
+      ).with.path = "${{ runner.temp }}/unreviewed-sdk";
+    }, validateE2eWorkflowBoundary);
+    const unsafeInstall = wfErrors((workflow) => {
       step(
         workflow.jobs["external-gateway-health"],
         "Install reviewed OpenShell SDK archive without package credentials",
       ).uses = "./.github/actions/install-reviewed-openshell-sdk";
     }, validateE2eWorkflowBoundary);
 
-    expect(errors).toContain(
+    expect(wrongArtifact).toContain(
+      "external-gateway-health job must download the run-scoped reviewed SDK archive",
+    );
+    expect(unsafeInstall).toContain(
       "external-gateway-health job must install the reviewed SDK with the shared action",
     );
   });

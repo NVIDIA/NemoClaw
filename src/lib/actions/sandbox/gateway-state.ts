@@ -21,9 +21,10 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
-import { selectSandboxOwningGateway } from "./gateway-select";
+import { selectNamedGateway, selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
+  getKnownSandboxTarget,
   getKnownSandboxTargetGatewayName,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -62,9 +63,7 @@ import {
   captureResolvedOpenshell,
   getOpenshellBinary,
   getStatusProbeTimeoutMs,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-  runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { D, G, R } from "../../cli/terminal-style";
 import {
@@ -221,7 +220,7 @@ export function captureSandboxOwnershipPhases(
   return { output: result.output, status: result.status };
 }
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
-export function recoverPortableDemoSandboxLifecycleForConnect(
+export async function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry | null,
   gatewayName: string,
@@ -229,7 +228,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   lifecycleTiming?: HermesPortableLifecycleRecoveryTiming,
   currentnessTiming?: HermesPortableCurrentnessTiming,
   inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming,
-): PortableDemoLifecycleRecoveryResult {
+): Promise<PortableDemoLifecycleRecoveryResult> {
   const capture = (args: readonly string[], timeoutMs: number) => {
     commandAuthority?.assertTransactionCurrent();
     try {
@@ -259,7 +258,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   };
   commandAuthority?.assertCurrent();
   try {
-    return recoverPortableAgentSandboxLifecycle(
+    return await recoverPortableAgentSandboxLifecycle(
       sandboxName,
       {
         agent: sandbox?.agent,
@@ -286,7 +285,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
             }
           : {}),
         captureOpenshell: capture,
-        readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
+        readRegistry: getKnownSandboxTarget,
         ...(lifecycleTiming ? { recoveryTiming: lifecycleTiming } : {}),
         ...(currentnessTiming ? { currentnessTiming } : {}),
         ...(inspectionTiming ? { inspectionTiming } : {}),
@@ -298,12 +297,12 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
 }
 
 /** Requalify Hermes receipt authority without starting or mutating its sandbox. */
-export function assertHermesPortableLifecycleForConnect(
+export async function assertHermesPortableLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry,
   gatewayName: string,
-): void {
-  assertHermesPortableAgentLifecycleAuthority(
+): Promise<void> {
+  await assertHermesPortableAgentLifecycleAuthority(
     sandboxName,
     {
       agent: sandbox.agent,
@@ -312,7 +311,7 @@ export function assertHermesPortableLifecycleForConnect(
       openshellDriver: sandbox.openshellDriver,
       provider: sandbox.provider,
     },
-    { readRegistry: (name: string) => (name === sandboxName ? sandbox : null) },
+    { readRegistry: getKnownSandboxTarget },
   );
 }
 
@@ -513,7 +512,7 @@ export async function getSandboxGatewayState(
 ): Promise<SandboxGatewayState> {
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ gatewayName });
+  const preflightIssue = await detectOpenShellStateRpcPreflightIssue({ gatewayName });
   if (preflightIssue) {
     return {
       state: "gateway_schema_mismatch",
@@ -582,7 +581,7 @@ export async function getSandboxGatewayStateForStatus(
   const timeoutMs = getStatusProbeTimeoutMs();
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ gatewayName, timeoutMs });
+  const preflightIssue = await detectOpenShellStateRpcPreflightIssue({ gatewayName, timeoutMs });
   if (preflightIssue) {
     return {
       state: "gateway_schema_mismatch",
@@ -667,10 +666,8 @@ export async function reconcileMissingAgainstNamedGateway(
     return missingLookup;
   }
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", targetGatewayName], {
-      ignoreError: true,
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
+    const selection = await selectNamedGateway(targetGatewayName);
+    if (!selection.ok) return missingLookup;
     const retry = await getSandboxGatewayState(sandboxName, targetGatewayName);
     if (retry.state === "present") {
       return { ...retry, recoveredGateway: true, recoveryVia: "select" };
@@ -788,6 +785,10 @@ export function printGatewayLifecycleHint(
   const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
   if (observation?.error) {
     writer(observation.error.message);
+    return;
+  }
+  if (observation?.state === "observation_failed") {
+    writer(observation.diagnostic || "OpenShell gateway observation failed.");
     return;
   }
   // The gateway-side gRPC reply `sandbox has no spec` is returned when the
@@ -920,7 +921,7 @@ export async function getReconciledSandboxGatewayState(
     // never trust that process-global state for this lookup: another CLI can
     // change it immediately after selection. The explicit gateway argument
     // below is the per-subprocess authority for the status RPC.
-    const selection = selectSandboxOwningGateway(sandboxName);
+    const selection = await selectSandboxOwningGateway(sandboxName);
     if (selection.outcome !== "selected") {
       const lifecycle = await getNamedGatewayLifecycleState(targetGatewayName);
       return {

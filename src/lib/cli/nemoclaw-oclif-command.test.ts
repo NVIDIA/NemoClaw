@@ -15,6 +15,7 @@ import {
   isMcpLifecycleLockHeld,
   withMcpLifecycleLock,
 } from "../state/mcp-lifecycle-lock-acquisition";
+import { getMcpLifecycleLockPath } from "../state/mcp-lifecycle-lock-storage";
 import { log } from "./logger";
 import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
 
@@ -128,7 +129,7 @@ class ProbeOnlyConnectCommand extends NemoClawCommand {
   static args = { sandboxName: Args.string({ required: true }) };
   static flags = { "probe-only": Flags.boolean() };
   static observed = { host: false, lifecycle: false, portableLifecycle: false };
-  static operation: (sandboxName: string) => void = () => undefined;
+  static operation: (sandboxName: string) => Promise<void> = async () => undefined;
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ProbeOnlyConnectCommand);
@@ -143,7 +144,7 @@ class ProbeOnlyConnectCommand extends NemoClawCommand {
         path.join(portableHostAuthority.defaultPortableStateDir(process.env), "state"),
       ),
     };
-    ProbeOnlyConnectCommand.operation(sandboxName);
+    await ProbeOnlyConnectCommand.operation(sandboxName);
   }
 }
 
@@ -242,7 +243,7 @@ describe("NemoClawCommand", () => {
     ParsedSupportedSandboxCommand.operation = async () => undefined;
     GlobalUnsupportedMutationCommand.ran = false;
     GlobalUseMutationCommand.ran = false;
-    ProbeOnlyConnectCommand.operation = () => undefined;
+    ProbeOnlyConnectCommand.operation = async () => undefined;
     PortableStartCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
     PortableLaunchCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
     PortableLaunchCommand.operation = async () => undefined;
@@ -506,9 +507,17 @@ describe("NemoClawCommand", () => {
         throw new Error("incomplete or unknown publication evidence");
       });
     vi.spyOn(receiptAuthority, "hasHermesPortableReceiptCandidate").mockReturnValue(true);
+    let release!: () => void;
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const observing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
     const requalify = vi
       .spyOn(portableAgentLifecycle, "requalifyPortableAgentSandboxAuthority")
-      .mockImplementation((sandboxName) => {
+      .mockImplementation(async (sandboxName) => {
         expect(
           fs.existsSync(
             portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir()),
@@ -520,15 +529,50 @@ describe("NemoClawCommand", () => {
             path.join(portableHostAuthority.defaultPortableStateDir(process.env), "state"),
           ),
         ).toBe(true);
+        entered();
+        await pending;
         return { kind: "already-current", snapshot: {} as never, assertCurrent: vi.fn() };
       });
-    ProbeOnlyConnectCommand.operation = (sandboxName) => {
-      portableAgentLifecycle.requalifyPortableAgentSandboxAuthority(sandboxName, {
+    ProbeOnlyConnectCommand.operation = async (sandboxName) => {
+      await portableAgentLifecycle.requalifyPortableAgentSandboxAuthority(sandboxName, {
         readRegistry: () => null,
       });
     };
 
-    await ProbeOnlyConnectCommand.run(["alpha", "--probe-only"], process.cwd());
+    let bodyCompleted = false;
+    const runBody = ProbeOnlyConnectCommand.prototype.run;
+    vi.spyOn(ProbeOnlyConnectCommand.prototype, "run").mockImplementation(
+      async function (this: ProbeOnlyConnectCommand) {
+        await runBody.call(this);
+        bodyCompleted = true;
+      },
+    );
+    let completed = false;
+    const command = ProbeOnlyConnectCommand.run(["alpha", "--probe-only"], process.cwd()).then(
+      () => {
+        completed = true;
+      },
+    );
+    try {
+      await Promise.race([observing, command]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(bodyCompleted).toBe(false);
+      expect(completed).toBe(false);
+      expect(fs.existsSync(portableHostAuthority.portableHostFencePath(stateDir))).toBe(true);
+      expect(
+        fs.existsSync(
+          getMcpLifecycleLockPath(
+            "alpha",
+            path.join(portableHostAuthority.defaultPortableStateDir(process.env), "state"),
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      release();
+      await command;
+    }
+    expect(bodyCompleted).toBe(true);
+    expect(completed).toBe(true);
 
     expect(requalify).toHaveBeenCalledOnce();
     expect(ordinaryClassification).not.toHaveBeenCalled();

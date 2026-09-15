@@ -4,17 +4,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadAgent } from "../../../src/lib/agent/defs";
+import { createCliOpenShellForwardAdapter } from "../../../src/lib/adapters/openshell/forward-cli";
+import type {
+  OpenShellForwardAdapter,
+  OpenShellForwardIdentity,
+  OpenShellForwardObservation,
+} from "../../../src/lib/adapters/openshell/forward";
+import { DASHBOARD_PORT_RANGE_END, DASHBOARD_PORT_RANGE_START } from "../../../src/lib/core/ports";
 import { parseGatewayInference } from "../../../src/lib/inference/config";
 import {
-  type CreateSandboxDashboardPortInput,
   type CreateSandboxDashboardPortResult,
-  findDashboardForwardOwner,
-  resolveCreateSandboxDashboardPort,
+  type ObservedCreateSandboxDashboardPortInput,
+  resolveCreateSandboxDashboardPortFromObservations,
 } from "../../../src/lib/onboard/dashboard-port";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero, type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -58,9 +63,32 @@ interface RebuildHermesGatewayBootstrapOptions extends RebuildHermesBootstrapOpt
 
 interface RebuildHermesDashboardPortOptions {
   sandboxName: string;
-  forwardListOutput: string;
-  findAvailablePort?: CreateSandboxDashboardPortInput["findAvailablePort"];
+  forwardObservations: readonly OpenShellForwardObservation[];
+  findAvailablePort?: ObservedCreateSandboxDashboardPortInput["findAvailablePort"];
   registryOccupiedPorts?: ReadonlyMap<string, string>;
+}
+
+function rebuildHermesForwardIdentity(sandboxName: string, port: number): OpenShellForwardIdentity {
+  return {
+    gatewayEndpoint: "https://127.0.0.1:8080",
+    gatewayName: "nemoclaw",
+    workspace: "default",
+    sandboxName,
+    localHost: "127.0.0.1",
+    port,
+  };
+}
+
+function rebuildHermesForwardAdapter(
+  executable: string,
+  environment: NodeJS.ProcessEnv,
+): OpenShellForwardAdapter {
+  return createCliOpenShellForwardAdapter({
+    executable,
+    environment,
+    gatewayEndpoint: "https://127.0.0.1:8080",
+    runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -262,34 +290,30 @@ export async function cleanupRebuildHermesForward(
   sandboxName: string,
   port: number,
   redactionValues: string[],
+  deps: { adapter?: OpenShellForwardAdapter } = {},
 ): Promise<"stopped" | "owned-other" | "no-entry"> {
-  const list = await host.command(host.openshellCommandPath, ["forward", "list"], {
-    artifactName: `cleanup-hermes-rebuild-resources-forward-list-${port}`,
-    env: envFactory(apiKey),
-    redactionValues,
+  void redactionValues;
+  const forward = rebuildHermesForwardIdentity(sandboxName, port);
+  const adapter =
+    deps.adapter ?? rebuildHermesForwardAdapter(host.openshellCommandPath, envFactory(apiKey));
+  const [observation] = await adapter.observeForwards({
+    forwards: [forward],
     timeoutMs: 2 * 60_000,
   });
-  assertExitZero(list, `inspect Hermes forward ${port} ownership before cleanup`);
-  const owner = findDashboardForwardOwner(resultText(list), String(port));
-  if (owner !== null && owner !== sandboxName) {
+  if (!observation || !("forward" in observation)) {
     return "owned-other";
   }
-  const result = await host.command(
-    host.openshellCommandPath,
-    ["forward", "stop", String(port), sandboxName],
-    {
-      artifactName: `cleanup-hermes-rebuild-resources-forward-stop-${port}`,
-      env: envFactory(apiKey),
-      redactionValues,
-      timeoutMs: 3 * 60_000,
-    },
+  if (observation.state === "absent") return "no-entry";
+  if (observation.state !== "stale") return "owned-other";
+  const retirement = await adapter.retireLegacyForward({
+    forward,
+    timeoutMs: 3 * 60_000,
+    authorize: async () => undefined,
+  });
+  if (retirement.state === "retired" || retirement.state === "not_needed") return "stopped";
+  return Promise.reject(
+    new Error(`cleanup Hermes forward ${port} did not prove release (${retirement.state})`),
   );
-  assertCleanupSucceededOrAbsent(
-    result,
-    /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/iu,
-    `cleanup Hermes forward ${port}`,
-  );
-  return owner === sandboxName ? "stopped" : "no-entry";
 }
 
 export async function resolveRebuildHermesCurrentBase(
@@ -442,13 +466,13 @@ export function resolveRebuildHermesDashboardPort(
       `Hermes manifest dashboard port must be 18789; received ${hermesAgent.forwardPort}`,
     );
   }
-  const dashboard = resolveCreateSandboxDashboardPort({
+  const dashboard = resolveCreateSandboxDashboardPortFromObservations({
     sandboxName: options.sandboxName,
     controlUiPort: null,
     chatUiUrlEnv: null,
     persistedPort: null,
     agentForwardPort: hermesAgent.forwardPort,
-    forwardListOutput: options.forwardListOutput,
+    forwardObservations: options.forwardObservations,
     ...(options.findAvailablePort ? { findAvailablePort: options.findAvailablePort } : {}),
     ...(options.registryOccupiedPorts
       ? { registryOccupiedPorts: options.registryOccupiedPorts }
@@ -501,19 +525,21 @@ export async function bootstrapRebuildHermesGateway(
     options.redactionValues,
   );
 
-  const forwardList = await options.host.command(options.activeOpenshellBin, ["forward", "list"], {
-    artifactName: "phase-1-forward-list-before-historical-sandbox",
-    env: options.envFactory(options.apiKey),
-    redactionValues: options.redactionValues,
+  const forwardAdapter = rebuildHermesForwardAdapter(
+    options.activeOpenshellBin,
+    options.envFactory(options.apiKey),
+  );
+  const forwardObservations = await forwardAdapter.observeForwards({
+    forwards: Array.from(
+      { length: DASHBOARD_PORT_RANGE_END - DASHBOARD_PORT_RANGE_START + 1 },
+      (_, index) =>
+        rebuildHermesForwardIdentity(options.sandboxName, DASHBOARD_PORT_RANGE_START + index),
+    ),
     timeoutMs: 2 * 60_000,
   });
-  assertExitZero(
-    forwardList,
-    "inspect occupied forwards before historical Hermes sandbox creation",
-  );
   const dashboard = resolveRebuildHermesDashboardPort({
     sandboxName: options.sandboxName,
-    forwardListOutput: resultText(forwardList),
+    forwardObservations,
   });
   await options.artifacts.writeJson("phase-1-gateway-inference-bootstrap.json", {
     gateway: "nemoclaw",

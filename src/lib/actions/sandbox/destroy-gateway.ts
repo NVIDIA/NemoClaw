@@ -4,11 +4,10 @@
 import os from "node:os";
 import path from "node:path";
 
+import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
+import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
 import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
-import {
-  OPENSHELL_HEAVY_TIMEOUT_MS,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-} from "../../adapters/openshell/timeouts";
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
@@ -19,8 +18,7 @@ import {
   GatewayAuthorityError,
   type GatewayTeardownAuthorityResolver,
   gatewayAuthorityFailureLines,
-  gatewayRegistrationRemovalFailureMessage,
-  removeGatewayRegistrationWithPolicy,
+  removeGatewayRegistrationThroughAdapter,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
@@ -40,6 +38,8 @@ export type DestroyRunOpenshell = (
 export const SANDBOX_DESTROY_TIMEOUT_MS = OPENSHELL_HEAVY_TIMEOUT_MS;
 
 export interface CleanupGatewayDeps {
+  lifecycle?: OpenShellGatewayLifecycle;
+  runtimeSelection?: import("../../adapters/openshell/gateway-observer").ObserveOpenShellGatewayRequest["runtimeSelection"];
   clearGatewayRuntimeFiles?: typeof clearHostGatewayRuntimeFiles;
   isGatewayPortFree?: typeof isHostPortFree;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
@@ -94,33 +94,29 @@ export function resolveGatewayCleanupRuntimeProviderId(
   return registered ?? recorded;
 }
 
-export function selectGatewayForSandboxDestroy(
+export async function selectGatewayForSandboxDestroy(
   sandboxName: string,
   gatewayName: string,
-  runOpenshell: DestroyRunOpenshell,
-): void {
-  const result = runOpenshell(["gateway", "select", gatewayName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+  lifecycle: Pick<OpenShellGatewayLifecycle, "selectGateway">,
+  runtimeSelection?: CleanupGatewayDeps["runtimeSelection"],
+): Promise<void> {
+  const selected = await lifecycle.selectGateway({
+    target: { kind: "named", gatewayName },
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   });
-  if (result.status === 0) return;
-
-  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-  if (output) {
-    console.error(`  ${output}`);
-  }
+  if (selected.ok) return;
+  console.error(`  ${selected.error.message}`);
   console.error(
     `  Failed to select gateway '${gatewayName}' before destroying sandbox '${sandboxName}'.`,
   );
-  process.exit(result.status || 1);
+  process.exit(1);
 }
 
-export function cleanupGatewayAfterLastSandbox(
+export async function cleanupGatewayAfterLastSandbox(
   gatewayName: string,
   runOpenshell?: DestroyRunOpenshell,
   deps: CleanupGatewayDeps = {},
-): void {
+): Promise<void> {
   const perGatewayState = resolvePerGatewayState(gatewayName);
   if (!perGatewayState) {
     throw new Error(`Refusing cleanup for noncanonical NemoClaw gateway '${gatewayName}'.`);
@@ -269,27 +265,25 @@ export function cleanupGatewayAfterLastSandbox(
    * Docker-driver sandbox-operations run proves final unattended destroy
    * releases the gateway port without this fallback.
    */
-  const registrationRemoval = removeGatewayRegistrationWithPolicy({
+  const registrationRemoval = await removeGatewayRegistrationThroughAdapter({
+    gatewayName,
     allowLegacyDestroy: !externallySupervised,
-    gatewayLabel: gatewayName,
-    run: (args) =>
-      openshell(args, {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
+    ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
+    lifecycle: deps.lifecycle ?? createCliOpenShellGatewayLifecycleFromRunner(openshell),
+    revalidateAuthority: () =>
+      (deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority)(
+        { gatewayName, gatewayPort: perGatewayState.port },
+        { env: process.env },
+      ),
   });
-  if (!registrationRemoval.ok && registrationRemoval.reason === "legacy-disabled") {
+  if (!registrationRemoval.ok && registrationRemoval.unsupported && externallySupervised) {
     console.warn(
       `Could not remove local registration for externally supervised gateway '${gatewayName}'. ` +
         "NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
     );
   } else if (!registrationRemoval.ok) {
     throw new Error(
-      `${gatewayRegistrationRemovalFailureMessage(
-        gatewayName,
-        registrationRemoval.operation,
-        registrationRemoval.result,
-      )} Resolve the reported OpenShell error, then rerun destroy.`,
+      `${registrationRemoval.error.message} Resolve the reported OpenShell error, then rerun destroy.`,
     );
   }
   if (externallySupervised) {

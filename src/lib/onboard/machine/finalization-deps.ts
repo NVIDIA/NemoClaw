@@ -356,9 +356,21 @@ export const finalizationHandlerDeps = {
       .loadProcessRecovery()
       .waitForRecreatedSandboxOpenShellReady(name);
   },
-  async checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): Promise<void> {
+  async checkAndRecoverSandboxProcesses(
+    name: string,
+    options: { quiet: boolean },
+    portableSupervisorEnvironment?: NodeJS.ProcessEnv,
+  ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    await processRecovery.checkAndRecoverSandboxProcesses(name, options);
+    const result = await processRecovery.checkAndRecoverSandboxProcesses(name, {
+      ...options,
+      ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
+    });
+    return (
+      result.checked === true &&
+      (result.wasRunning !== false || result.recovered === true) &&
+      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
+    );
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());

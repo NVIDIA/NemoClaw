@@ -775,6 +775,8 @@ const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
   ["test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts", ["openclaw-plugin-runtime-exdev"]],
+  ["test/helpers/openshell-components.ts", ["mcp-bridge", "openclaw-plugin-runtime-exdev"]],
+  ["test/e2e/live/openshell-driver-config-test-wrapper.ts", ["mcp-bridge"]],
   [
     "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
     ["openclaw-plugin-runtime-exdev"],
@@ -1324,10 +1326,29 @@ function validateExternalGatewayHealthSdkInstall(errors: string[], jobs: Workflo
   const jobName = "external-gateway-health";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) return;
+  const jobSteps = asSteps(job.steps);
+  const sdkDownload = requireJobStep(
+    errors,
+    jobName,
+    jobSteps,
+    "Download reviewed OpenShell SDK archive",
+  );
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("external-gateway-health job must download the run-scoped reviewed SDK archive");
+  }
   const sdkInstall = requireJobStep(
     errors,
     jobName,
-    asSteps(job.steps),
+    jobSteps,
     REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
   );
   if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
@@ -1971,6 +1992,10 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   } else {
     requireFullShaAction(errors, setupNode, "jetson-nvmap-gpu Node setup");
   }
+  const setupNpm = namedStep(steps, "Install reviewed npm");
+  if (setupNpm?.uses !== E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference) {
+    errors.push("jetson-nvmap-gpu controller must install reviewed npm immutably");
+  }
   const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through operator backend");
   if (
     dispatch?.run !== "node --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
@@ -1997,9 +2022,9 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   ) {
     errors.push("jetson-nvmap-gpu controller must upload its bounded dispatch artifact");
   }
-  if (steps.length !== 4) {
+  if (steps.length !== 5 || steps.indexOf(setupNpm ?? {}) !== steps.indexOf(setupNode ?? {}) + 1) {
     errors.push(
-      "jetson-nvmap-gpu controller must contain only checkout, Node setup, dispatch, and upload",
+      "jetson-nvmap-gpu controller must contain only checkout, Node/npm setup, dispatch, and upload",
     );
   }
 }
@@ -2628,6 +2653,11 @@ function validateTrustedE2ePlannerBoundary(
     generateSteps,
     "Install trusted E2E planner dependencies",
   );
+  const trustedNpmInstall = requireStep(
+    errors,
+    generateSteps,
+    "Install reviewed npm for trusted E2E planning",
+  );
   requireFullShaAction(errors, trustedPlannerCheckout, "trusted E2E planner checkout");
   if (
     !isDeepStrictEqual(asRecord(trustedPlannerCheckout?.with), {
@@ -2643,6 +2673,9 @@ function validateTrustedE2ePlannerBoundary(
   if (Object.keys(asRecord(trustedPlannerSetup?.with)).some((key) => key !== "node-version")) {
     errors.push("trusted E2E planner must not enable additional Node setup inputs");
   }
+  if (trustedNpmInstall?.uses !== E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference) {
+    errors.push("trusted E2E planner must install reviewed npm from an immutable action");
+  }
   if (trustedPlannerInstall?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
     errors.push("trusted E2E planner dependencies must install without lifecycle scripts");
   }
@@ -2650,6 +2683,7 @@ function validateTrustedE2ePlannerBoundary(
     ? generateSteps.indexOf(trustedPlannerCheckout)
     : -1;
   const trustedSetupIndex = trustedPlannerSetup ? generateSteps.indexOf(trustedPlannerSetup) : -1;
+  const trustedNpmIndex = trustedNpmInstall ? generateSteps.indexOf(trustedNpmInstall) : -1;
   const trustedInstallIndex = trustedPlannerInstall
     ? generateSteps.indexOf(trustedPlannerInstall)
     : -1;
@@ -2658,7 +2692,8 @@ function validateTrustedE2ePlannerBoundary(
   if (
     trustedPlannerIndex < 0 ||
     trustedSetupIndex <= trustedPlannerIndex ||
-    trustedInstallIndex <= trustedSetupIndex ||
+    trustedNpmIndex <= trustedSetupIndex ||
+    trustedInstallIndex <= trustedNpmIndex ||
     generateIndex <= trustedInstallIndex ||
     candidateCheckoutIndex <= generateIndex
   ) {

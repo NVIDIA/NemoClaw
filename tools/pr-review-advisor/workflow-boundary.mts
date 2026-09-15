@@ -19,11 +19,13 @@ type WorkflowStep = {
   env?: Record<string, unknown>;
   name?: string;
   run?: string;
+  uses?: string;
   with?: Record<string, unknown>;
 };
 type WorkflowJob = {
   env?: Record<string, unknown>;
   if?: string;
+  name?: string;
   needs?: unknown;
   outputs?: Record<string, unknown>;
   permissions?: WorkflowPermissions;
@@ -99,16 +101,19 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     errors.push("Unified advisor green checks gate must require the exact successful CI condition");
   }
   if (
-    !isDeepStrictEqual(permissionMap(gate.permissions), { "pull-requests": "read" }) ||
+    !isDeepStrictEqual(permissionMap(gate.permissions), {
+      contents: "read",
+      "pull-requests": "read",
+    }) ||
     JSON.stringify(gate).includes("PR_REVIEW_ADVISOR_API_KEY")
   ) {
-    errors.push("Unified advisor green checks gate must only read pull requests");
+    errors.push("Unified advisor green checks gate must retain read-only source permissions");
   }
   if (
     !isDeepStrictEqual(gate.outputs, {
-      pr_number: "${{ steps.target.outputs.pr_number }}",
-      head_sha: "${{ steps.target.outputs.head_sha }}",
-      base_sha: "${{ steps.target.outputs.base_sha }}",
+      pr_number: "${{ steps.target.outputs.pr_number || steps.manual-target.outputs.pr_number }}",
+      head_sha: "${{ steps.target.outputs.head_sha || steps.manual-target.outputs.head_sha }}",
+      base_sha: "${{ steps.target.outputs.base_sha || steps.manual-target.outputs.base_sha }}",
     })
   ) {
     errors.push("Unified advisor green checks gate must expose the checked PR revision");
@@ -142,11 +147,49 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   ) {
     errors.push("Unified advisor green checks gate must resolve the source run PR");
   }
+  const manualTarget = (gate.steps ?? []).find(
+    (step) => step.name === "Resolve manual review revision",
+  );
+  if (
+    manualTarget?.env?.GH_TOKEN !== "${{ github.token }}" ||
+    manualTarget.env?.INPUT_BASE_REF !== "${{ inputs.base_ref }}" ||
+    manualTarget.env?.INPUT_HEAD_REF !== "${{ inputs.head_ref }}" ||
+    manualTarget.env?.TARGET_BASE !== "${{ inputs.target_base }}" ||
+    manualTarget.env?.TARGET_PR !== "${{ inputs.target_pr }}" ||
+    manualTarget.env?.TARGET_REPO !== "${{ inputs.target_repo }}" ||
+    manualTarget.env?.WORKFLOW_SHA !== "${{ github.sha }}"
+  ) {
+    errors.push("Unified advisor manual dispatch must bind the selected review revision");
+  }
+  for (const fragment of [
+    'pull="$(gh api --method GET "repos/$TARGET_REPO/pulls/$TARGET_PR")"',
+    '.state == "open" and .base.repo.full_name == $repo and .base.ref == $base',
+    'head_sha="$(jq -r \'.head.sha\' <<< "$pull")"',
+    'base_sha="$(jq -r \'.base.sha\' <<< "$pull")"',
+    '[[ "$INPUT_HEAD_REF" == "HEAD" ]] && head_sha="$WORKFLOW_SHA"',
+    '-f "sha=${INPUT_HEAD_REF#origin/}" -f per_page=1',
+    '-f "sha=${INPUT_BASE_REF#origin/}" -f per_page=1',
+    '[[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$base_sha" =~ ^[0-9a-f]{40}$ ]]',
+    "pr_number=%s\\nhead_sha=%s\\nbase_sha=%s\\n",
+  ]) {
+    if (!String(manualTarget?.run ?? "").includes(fragment)) {
+      errors.push(`Unified advisor manual dispatch must retain ${fragment}`);
+    }
+  }
   const specialist = advisor.jobs?.["review-specialists"] ?? {};
   const specialistSteps = specialist.steps ?? [];
+  const dispatchCheckout = specialistSteps.find(
+    (step) => step.name === "Checkout dispatch workspace (read-only data)",
+  );
   const targetPreparation = specialistSteps.find(
     (step) => step.name === "Prepare isolated analysis workspace",
   );
+  const sandboxPreparation = specialistSteps.find(
+    (step) => step.name === "Prepare advisor sandbox inputs",
+  );
+  if (dispatchCheckout?.with?.ref !== "${{ needs.require-green-checks.outputs.head_sha }}") {
+    errors.push("Unified advisor ref dispatch must check out the resolved head SHA");
+  }
   if (
     targetPreparation?.env?.TARGET_REPO !==
       "${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}" ||
@@ -155,20 +198,24 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     targetPreparation.env?.TARGET_BASE !==
       "${{ github.event_name == 'workflow_run' && 'main' || inputs.target_base }}" ||
     targetPreparation.env?.PR_BASE_SHA !==
-      "${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || '' }}" ||
+      "${{ needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.base_sha || '' }}" ||
     targetPreparation.env?.EXPECTED_HEAD_SHA !==
-      "${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}"
+      "${{ needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.head_sha || '' }}"
   ) {
-    errors.push("Unified advisor must prepare the PR revision from the successful checks run");
+    errors.push("Unified advisor must prepare the resolved PR revision");
   }
   const specialistEnv = specialist.env ?? {};
+  const resolvedBaseRef =
+    "${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}";
+  const resolvedHeadRef =
+    "${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}";
   if (
-    specialistEnv.BASE_REF !==
-      "${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}" ||
-    specialistEnv.HEAD_REF !==
-      "${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}"
+    specialistEnv.BASE_REF !== resolvedBaseRef ||
+    specialistEnv.HEAD_REF !== resolvedHeadRef ||
+    sandboxPreparation?.env?.BASE_REF !== resolvedBaseRef ||
+    sandboxPreparation.env?.HEAD_REF !== resolvedHeadRef
   ) {
-    errors.push("Unified advisor specialists must retain target refs through execution");
+    errors.push("Unified advisor specialists must analyze the resolved revisions");
   }
   const discoverySteps = advisor.jobs?.["discover-specialists"]?.steps ?? [];
   const contextUpload = discoverySteps.find((step) => step.name === "Upload GitHub review context");
@@ -188,6 +235,49 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}"
   ) {
     errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
+  }
+  const blockerGate = advisor.jobs?.["advisor-blockers"] ?? {};
+  const blockerGateSteps = blockerGate.steps ?? [];
+  const blockerDownload = blockerGateSteps.find(
+    (step) => step.name === "Download specialist reviews",
+  );
+  const blockerEvaluation = blockerGateSteps.find(
+    (step) => step.name === "Require clear specialist evidence",
+  );
+  if (
+    blockerGate.name !== "Require no Advisor blockers" ||
+    !sameMembers(needs(blockerGate), [
+      "require-green-checks",
+      "build-advisor-runtime",
+      "review-specialists",
+    ]) ||
+    blockerGate.if !==
+      "${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.build-advisor-runtime.result == 'success' && needs.review-specialists.result == 'success' }}" ||
+    !isDeepStrictEqual(permissionMap(blockerGate.permissions), {
+      actions: "read",
+      contents: "read",
+    })
+  ) {
+    errors.push("Unified advisor blocker gate must fail closed after every specialist");
+  }
+  if (
+    blockerDownload?.with?.pattern !== "pr-review-specialist-*-${{ github.run_attempt }}" ||
+    blockerEvaluation?.env?.PR_REVIEW_ADVISOR_ARTIFACTS !==
+      "${{ runner.temp }}/pr-review-specialists" ||
+    blockerEvaluation.run !==
+      'node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/blocker-gate.mts" --attempt "$GITHUB_RUN_ATTEMPT"' ||
+    blockerGate.env?.EXPECTED_HEAD_SHA !== "${{ needs.require-green-checks.outputs.head_sha }}" ||
+    blockerGate.env?.EXPECTED_BASE_SHA !== "${{ needs.require-green-checks.outputs.base_sha }}"
+  ) {
+    errors.push("Unified advisor blocker gate must validate exact-attempt specialist evidence");
+  }
+  const publisher = advisor.jobs?.publish ?? {};
+  if (
+    !needs(publisher).includes("advisor-blockers") ||
+    publisher.if !==
+      "${{ always() && github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}"
+  ) {
+    errors.push("Unified advisor publisher must run after a red blocker gate");
   }
   return errors;
 }
