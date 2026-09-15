@@ -150,6 +150,7 @@ runs:
           --coverage.reportsDirectory="coverage/cli/shard-${CLI_SHARD}" \
           --coverage.include="bin/**/*.js" \
           --coverage.include="src/**/*.ts" \
+          --coverage.include="nemoclaw/src/shared/snapshot-sanitizer-boundary.cts" \
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
 

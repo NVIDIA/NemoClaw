@@ -98,6 +98,7 @@ runs:
           --coverage.reportsDirectory=coverage/cli \
           --coverage.include="bin/**/*.js" \
           --coverage.include="src/**/*.ts" \
+          --coverage.include="nemoclaw/src/shared/snapshot-sanitizer-boundary.cts" \
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
         npx tsx scripts/check-coverage-ratchet.mts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
