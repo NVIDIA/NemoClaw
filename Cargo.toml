@@ -49,6 +49,7 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 bollard = { version = "0.21.1", default-features = false, features = ["pipe"] }
 tar = "0.4"
 rustix = { version = "1", features = ["fs"] }
+command-fds = "0.3.3"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 flate2 = "1.1"
 schemars = "=1.2.2"
