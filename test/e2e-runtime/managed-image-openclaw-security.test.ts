@@ -534,10 +534,6 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       host,
       image,
       [
-        "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &",
-        "gateway_pid=$!",
-        'if /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- kill "$gateway_pid" 2>/dev/null; then exit 20; fi',
-        'kill "$gateway_pid"',
         "printf secret >/tmp/auto-pair.log",
         "chown root:root /tmp/auto-pair.log",
         "chmod 600 /tmp/auto-pair.log",

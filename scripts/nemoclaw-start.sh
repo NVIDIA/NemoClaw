@@ -4668,7 +4668,7 @@ openclaw_gateway_pid_owns_listener() {
     return $?
   fi
   # shellcheck disable=SC2016  # positional args expand in the inner bash
-  "${STEP_DOWN_PREFIX_GATEWAY[@]}" env -u BASH_ENV \
+  "${STEP_DOWN_PREFIX_SANDBOX[@]}" env -u BASH_ENV \
     bash --noprofile --norc -c \
     'source "$1"; gateway_control_pid_owns_tcp_listener "$2" "$3"' \
     bash "$_SANDBOX_INIT" "$pid" "$port"
@@ -4716,11 +4716,9 @@ launch_openclaw_gateway_process() {
   shift 2
   case "$launch_identity" in
     current) ;;
-    gateway)
-      # The gateway cannot create native Git config in the sandbox-owned HOME.
-      # Keep its fallback private so user commands retain native Git settings.
+    sandbox)
       gateway_launch_prefix=(
-        "${STEP_DOWN_PREFIX_GATEWAY[@]}" /usr/bin/env HOME=/sandbox GIT_CONFIG_GLOBAL=/tmp/.gitconfig sh -c
+        "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox sh -c
         'umask 0007; exec "$@"' sh
       )
       ;;
@@ -4734,8 +4732,8 @@ launch_openclaw_gateway_process() {
     truncate)
       # Replace the predictable log path immediately before the initial launch.
       # The descriptor-safe launcher below then pins that exact regular file.
-      if [ "$launch_identity" = gateway ] && [ "$(id -u)" -eq 0 ]; then
-        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway || return 1
+      if [ "$launch_identity" = sandbox ] && [ "$(id -u)" -eq 0 ]; then
+        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 sandbox:sandbox || return 1
       else
         _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 || return 1
       fi
@@ -4822,7 +4820,7 @@ launch_openclaw_gateway() {
   # script -- keeps it in place.
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  launch_openclaw_gateway_process truncate gateway \
+  launch_openclaw_gateway_process truncate sandbox \
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
@@ -4837,7 +4835,7 @@ launch_openclaw_gateway() {
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
-  echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
+  echo "[gateway] openclaw gateway launched as native 'sandbox' agent user (pid $GATEWAY_PID)" >&2
 }
 
 launch_openclaw_gateway_non_root() {
@@ -5254,13 +5252,10 @@ seed_default_workspace_templates_as_sandbox
 # inject code into any Node process via NODE_OPTIONS).
 validate_nemoclaw_tmp_permissions
 
-# Start the gateway as the 'gateway' user.
-# SECURITY: The sandbox user cannot kill this process because it runs
-# under a different UID. The fake-HOME attack no longer works because
-# the agent cannot restart the gateway with a tampered config.
-# Marking, privilege step-down, log redirection, and PID recording are kept in
-# one reusable launch primitive so PID 1 owns initial start, crash respawn, and
-# host-requested restart identically.
+# Start the gateway as the native sandbox agent user. OpenClaw owns its gateway
+# lifecycle, including in-process restart; NemoClaw only performs initial
+# startup, records the process for health integration, and forwards sandbox
+# shutdown signals.
 # The launch primitive arms signal and EXIT cleanup before writing the marker.
 launch_openclaw_gateway
 
