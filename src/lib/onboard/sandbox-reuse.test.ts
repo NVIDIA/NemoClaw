@@ -342,6 +342,51 @@ describe("createSandboxReuseHelpers", () => {
     );
   });
 
+  it.each([
+    ["Ready", `Error:   × code: 'Internal error', message: "sandbox has no spec"`],
+    ["Stopped", `Error:   × code: 'Internal error', message: "sandbox has no spec"`],
+    [
+      "Provisioning",
+      `Error:   × code: 'The system is not in a state required for the operation's\n  │ execution', message: "provider 'compatible-endpoint' not found"`,
+    ],
+  ])("observes retained legacy identity in phase %s through onboarding", (phase, diagnostic) => {
+    const captureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(failedCapture(diagnostic))
+      .mockReturnValueOnce(
+        successfulCapture(
+          JSON.stringify([
+            {
+              id: "legacy-source-id",
+              name: "alpha",
+              labels: {},
+              resource_version: 1,
+              created_at: "2026-09-14T00:00:00Z",
+              phase,
+              current_policy_version: 1,
+            },
+          ]),
+        ),
+      );
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(),
+      captureOpenshell,
+      getSandboxStateFromOutputs: vi.fn(() => "missing"),
+      getGatewayName: () => "wrong-gateway",
+    });
+    expect(helpers.getSandboxRecreateObservation("alpha", "nemoclaw-9090")).toEqual({
+      state: phase === "Ready" ? "ready" : "not_ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("legacy-source-id"),
+    });
+    expect(captureOpenshell).toHaveBeenLastCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
+      expect.objectContaining({
+        includeStreams: true,
+        timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+      }),
+    );
+  });
+
   it("observes a resumed replacement on the gateway its journal records (#7734)", () => {
     const captureOpenshell = vi.fn(() =>
       successfulCapture("Name: alpha\nId: openshell-source-id\nState: Ready\n"),

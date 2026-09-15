@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
 import type { ContainerEngine } from "../../adapters/container-engine";
 import type { PodmanContainerEngine } from "../../adapters/podman";
@@ -62,7 +62,15 @@ const TEST_WORKLOAD_PROFILE = {
 
 const temporaryDirectories: string[] = [];
 
+beforeEach(() => {
+  const executableRoot = temporaryHome();
+  fs.writeFileSync(path.join(executableRoot, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  fs.writeFileSync(path.join(executableRoot, "ssh"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  vi.stubEnv("PATH", executableRoot);
+});
+
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }

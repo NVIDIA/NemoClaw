@@ -181,9 +181,10 @@ describe("rebuild gateway drift preflight", () => {
       const registrySnapshot = { sandboxes: { alpha: entry } };
       vi.mocked(registry.getSandbox).mockReturnValue(entry as never);
       vi.mocked(registryPersistence.load).mockReturnValue(registrySnapshot as never);
-      captureOpenshellSpy
-        .mockReturnValueOnce({ status: 0, output: "" })
-        .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
+      captureOpenshellSpy.mockReturnValueOnce({ status: 0, output: "" }).mockReturnValueOnce({
+        status: 1,
+        output: `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
+      });
       getNamedGatewayLifecycleStateSpy.mockResolvedValue({
         state: "connected_other",
         activeGateway,
@@ -231,7 +232,10 @@ describe("rebuild gateway drift preflight", () => {
       vi.mocked(registryPersistence.load).mockReturnValue(registrySnapshot as never);
       captureOpenshellSpy
         .mockReturnValueOnce({ status: 0, output: "beta Ready" })
-        .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
+        .mockReturnValueOnce({
+          status: 1,
+          output: `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
+        });
       getNamedGatewayLifecycleStateSpy.mockResolvedValue({
         state: "healthy_named",
         activeGateway: gatewayName,
@@ -279,7 +283,7 @@ describe("rebuild gateway drift preflight", () => {
       .mockReturnValueOnce({ status: 0, output: "beta Ready" })
       .mockReturnValueOnce({
         status: 1,
-        output: "Error:   × Not Found: sandbox not found",
+        output: `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
       });
     const behaviorLog = vi.fn();
 

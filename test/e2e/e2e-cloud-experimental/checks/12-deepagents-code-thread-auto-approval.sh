@@ -2,13 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Case: managed Deep Agents Code thread-scoped auto-approval (#6478).
+# Case: managed Deep Agents Code native Auto mode (#6478).
 #
 # This check starts from the typed target's default-disabled DCode sandbox,
 # enables the root-owned capability through NemoClaw's named rebuild surface,
-# selects the upstream "Auto-approve for this thread" action in a real TUI,
-# and proves that a new thread returns to manual approval. It then reruns the
-# established network and credential boundary checks in the enabled posture.
+# selects the upstream "Enable Auto for this thread" action in a real TUI,
+# and confirms the native Auto notice. It then reruns the established network
+# and credential boundary checks in the enabled posture.
 
 set -euo pipefail
 
@@ -23,7 +23,6 @@ CREDENTIAL_BOUNDARY_CHECK="${REPO}/test/e2e/e2e-cloud-experimental/checks/08-dee
 SHELL_ROUND_ONE="/sandbox/.nemoclaw-e2e-autorun-shell-1"
 WRITE_ROUND="/sandbox/.nemoclaw-e2e-autorun-write"
 SHELL_ROUND_THREE="/sandbox/.nemoclaw-e2e-autorun-shell-3"
-RESET_ROUND="/sandbox/.nemoclaw-e2e-autorun-reset-must-not-run"
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -156,23 +155,22 @@ assert_default_denial_ignores_ambient_override() {
 
 run_autorun_tui() {
   local marker_file="$1"
-  local first_prompt reset_prompt
+  local first_prompt
   first_prompt="Use tools in exactly four sequential rounds, waiting for each result before starting the next. Round 1: use the shell execute tool to write the text shell-round-1 to ${SHELL_ROUND_ONE}. Round 2: use the non-shell write_file tool to write the text write-round-2 to ${WRITE_ROUND}. Round 3: use the shell execute tool to write the text shell-round-3 to ${SHELL_ROUND_THREE}. Round 4: use the non-shell read_file tool to read all three files and verify their text. Do not combine rounds or substitute shell for write_file or read_file. After all four rounds succeed, reply with exactly the concatenation of NEMOCLAW_AUTORUN_ and COMPLETE."
-  reset_prompt="Use the shell execute tool once to write reset-should-not-run followed by a newline to ${RESET_ROUND}, then report completion."
 
   env \
     NEMOCLAW_AUTORUN_EXPECT_MARKERS="$marker_file" \
     NEMOCLAW_AUTORUN_FIRST_PROMPT="$first_prompt" \
-    NEMOCLAW_AUTORUN_RESET_PROMPT="$reset_prompt" \
     NEMOCLAW_AUTORUN_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_AUTORUN_TUI_TIMEOUT="$TUI_TIMEOUT" \
     expect <<'EXPECT'
 set timeout $env(NEMOCLAW_AUTORUN_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_AUTORUN_SANDBOX_NAME)
 set first_prompt $env(NEMOCLAW_AUTORUN_FIRST_PROMPT)
-set reset_prompt $env(NEMOCLAW_AUTORUN_RESET_PROMPT)
 set markers $env(NEMOCLAW_AUTORUN_EXPECT_MARKERS)
 log_user 0
+# Preserve a terminal frame for redacted failure diagnostics across repaints.
+match_max -d 65536
 
 proc append_marker {markers marker} {
   set fh [open $markers a]
@@ -190,6 +188,8 @@ proc submit_text {text delay_ms} {
 }
 
 proc abort_tui {markers marker code} {
+  global expect_out
+  if {[info exists expect_out(buffer)]} { puts $expect_out(buffer) }
   append_marker $markers $marker
   catch {send -- "\003"}
   after 200
@@ -197,12 +197,13 @@ proc abort_tui {markers marker code} {
   exit $code
 }
 
-set remote_script {cd /sandbox && /usr/local/bin/dcode -m "$1"; status=$?; printf "\nNEMOCLAW_AUTORUN_TUI_EXIT:%s\n" "$status"}
+# Exercise direct tool approvals; interpreter-mediated calls bypass these gates.
+set remote_script {cd /sandbox && /usr/local/bin/dcode --no-interpreter -m "$1"; status=$?; printf "\nNEMOCLAW_AUTORUN_TUI_EXIT:%s\n" "$status"}
 set cmd [list openshell sandbox exec --name $sandbox --tty -- env HOME=/sandbox TERM=xterm-256color bash -lc $remote_script nemoclaw-e2e $first_prompt]
 spawn {*}$cmd
 
 expect {
-  -nocase -re {auto-approve for this thread} {
+  -nocase -re {enable auto for this thread} {
     append_marker $markers "NEMOCLAW_AUTORUN_APPROVAL_MENU"
     send -- "a"
   }
@@ -211,8 +212,9 @@ expect {
 }
 
 expect {
-  -nocase -re {auto-approval is enabled} {
+  -nocase -re {enter to keep auto} {
     append_marker $markers "NEMOCLAW_AUTORUN_WARNING"
+    send -- "\r"
   }
   timeout { abort_tui $markers "NEMOCLAW_AUTORUN_TIMEOUT_WARNING" 22 }
   eof { abort_tui $markers "NEMOCLAW_AUTORUN_EOF_WARNING" 23 }
@@ -224,27 +226,6 @@ expect {
   }
   timeout { abort_tui $markers "NEMOCLAW_AUTORUN_TIMEOUT_WORKFLOW" 24 }
   eof { abort_tui $markers "NEMOCLAW_AUTORUN_EOF_WORKFLOW" 25 }
-}
-
-after 1000
-submit_text "/clear" 100
-expect {
-  -nocase -re {started new thread:} {
-    append_marker $markers "NEMOCLAW_AUTORUN_NEW_THREAD"
-  }
-  timeout { abort_tui $markers "NEMOCLAW_AUTORUN_TIMEOUT_NEW_THREAD" 26 }
-  eof { abort_tui $markers "NEMOCLAW_AUTORUN_EOF_NEW_THREAD" 27 }
-}
-
-after 500
-submit_text $reset_prompt 5
-expect {
-  -nocase -re {auto-approve for this thread} {
-    append_marker $markers "NEMOCLAW_AUTORUN_MANUAL_APPROVAL_RESTORED"
-    send -- "n"
-  }
-  timeout { abort_tui $markers "NEMOCLAW_AUTORUN_TIMEOUT_MANUAL_APPROVAL" 28 }
-  eof { abort_tui $markers "NEMOCLAW_AUTORUN_EOF_MANUAL_APPROVAL" 29 }
 }
 
 after 700
@@ -274,19 +255,17 @@ assert_autorun_evidence() {
   for marker in \
     NEMOCLAW_AUTORUN_APPROVAL_MENU \
     NEMOCLAW_AUTORUN_WARNING \
-    NEMOCLAW_AUTORUN_WORKFLOW_COMPLETE \
-    NEMOCLAW_AUTORUN_NEW_THREAD \
-    NEMOCLAW_AUTORUN_MANUAL_APPROVAL_RESTORED; do
+    NEMOCLAW_AUTORUN_WORKFLOW_COMPLETE; do
     grep -Fxq "$marker" "$marker_file" || fail "TUI evidence marker is missing: $marker"
   done
   grep -Eq '^NEMOCLAW_AUTORUN_TUI_EXIT:(0|130)$' "$marker_file" \
-    || fail "DCode TUI did not exit cleanly after the thread reset proof: $(tr '\n' ' ' <"$marker_file")"
+    || fail "DCode TUI did not exit cleanly after the Auto workflow: $(tr '\n' ' ' <"$marker_file")"
 
   local file_output
   file_output="$(
     sandbox_exec \
-      "{ cmp -s <(printf '%s' shell-round-1) ${SHELL_ROUND_ONE@Q} || cmp -s <(printf '%s\\n' shell-round-1) ${SHELL_ROUND_ONE@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_SHELL_ROUND_1_INVALID; exit 1; }; { cmp -s <(printf '%s' write-round-2) ${WRITE_ROUND@Q} || cmp -s <(printf '%s\\n' write-round-2) ${WRITE_ROUND@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_WRITE_ROUND_INVALID; exit 1; }; { cmp -s <(printf '%s' shell-round-3) ${SHELL_ROUND_THREE@Q} || cmp -s <(printf '%s\\n' shell-round-3) ${SHELL_ROUND_THREE@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_SHELL_ROUND_3_INVALID; exit 1; }; test ! -e ${RESET_ROUND@Q} || { printf '%s\\n' NEMOCLAW_AUTORUN_RESET_ROUND_RAN; exit 1; }; printf '%s\\n' NEMOCLAW_AUTORUN_FILES_VERIFIED"
-  )" || fail "autorun output files or reset-thread denial evidence are invalid: $file_output"
+      "{ cmp -s <(printf '%s' shell-round-1) ${SHELL_ROUND_ONE@Q} || cmp -s <(printf '%s\\n' shell-round-1) ${SHELL_ROUND_ONE@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_SHELL_ROUND_1_INVALID; exit 1; }; { cmp -s <(printf '%s' write-round-2) ${WRITE_ROUND@Q} || cmp -s <(printf '%s\\n' write-round-2) ${WRITE_ROUND@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_WRITE_ROUND_INVALID; exit 1; }; { cmp -s <(printf '%s' shell-round-3) ${SHELL_ROUND_THREE@Q} || cmp -s <(printf '%s\\n' shell-round-3) ${SHELL_ROUND_THREE@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_SHELL_ROUND_3_INVALID; exit 1; }; printf '%s\\n' NEMOCLAW_AUTORUN_FILES_VERIFIED"
+  )" || fail "autorun output files are invalid: $file_output"
   [ "$file_output" = "NEMOCLAW_AUTORUN_FILES_VERIFIED" ] \
     || fail "autorun file verification marker is missing"
 }
@@ -305,7 +284,7 @@ run_boundary_check() {
 
 cleanup_probe_files() {
   sandbox_exec \
-    "rm -f ${SHELL_ROUND_ONE@Q} ${WRITE_ROUND@Q} ${SHELL_ROUND_THREE@Q} ${RESET_ROUND@Q}" \
+    "rm -f ${SHELL_ROUND_ONE@Q} ${WRITE_ROUND@Q} ${SHELL_ROUND_THREE@Q}" \
     >/dev/null 2>&1 || true
 }
 
@@ -347,14 +326,14 @@ main() {
   capture_dir="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}.XXXXXX")"
   marker_file="${capture_dir}/markers.log"
   : >"$marker_file"
-  # Raw PTY bytes are intentionally neither logged nor persisted. The marker
-  # file contains only fixed, non-secret phase names and is deleted below.
-  if ! run_autorun_tui "$marker_file"; then
+  # Failure captures pass through the canonical redactor before reaching logs.
+  if ! run_autorun_tui "$marker_file" \
+    | node --no-warnings "${REPO}/test/e2e/fixtures/redaction.ts"; then
     fail "finite DCode autorun TUI harness failed: $(tr '\n' ' ' <"$marker_file")"
   fi
   assert_autorun_evidence "$marker_file"
   rm -rf "$capture_dir"
-  pass "approval-menu opt-in autoruns repeated shell and non-shell rounds only for the current thread"
+  pass "native Auto opt-in runs sequential shell and non-shell rounds"
 
   run_boundary_check "OpenShell network policy boundary" "$NETWORK_BOUNDARY_CHECK"
   run_boundary_check "managed credential boundary" "$CREDENTIAL_BOUNDARY_CHECK"
