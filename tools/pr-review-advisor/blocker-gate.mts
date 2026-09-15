@@ -134,14 +134,19 @@ function parseGateContext(value: unknown, expectedSpecialists: string[]): GateCo
 }
 
 function readBoundedJson(file: string): unknown {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) {
-    throw new Error("Advisor blocker gate requires nonempty regular artifact files");
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size === 0) {
+      throw new Error("Advisor blocker gate requires nonempty regular artifact files");
+    }
+    if (stat.size > MAX_GATE_ARTIFACT_BYTES) {
+      throw new Error("Advisor blocker gate artifact exceeds its size limit");
+    }
+    return JSON.parse(fs.readFileSync(descriptor, "utf8"));
+  } finally {
+    fs.closeSync(descriptor);
   }
-  if (stat.size > MAX_GATE_ARTIFACT_BYTES) {
-    throw new Error("Advisor blocker gate artifact exceeds its size limit");
-  }
-  return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
 function requireDirectory(directory: string): void {

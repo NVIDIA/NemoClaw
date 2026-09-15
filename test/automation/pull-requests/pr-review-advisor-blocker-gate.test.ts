@@ -139,6 +139,14 @@ it("blocks an unresolved E2E recommendation from any specialist", () => {
 it.each([
   ["missing", (file: string) => fs.unlinkSync(file)],
   ["malformed", (file: string) => fs.writeFileSync(file, "{}")],
+  [
+    "symlinked",
+    (file: string) => {
+      const target = `${file}.target`;
+      fs.renameSync(file, target);
+      fs.symlinkSync(target, file);
+    },
+  ],
 ])("fails closed for %s specialist evidence", (_variant, mutate) => {
   const root = artifactTree();
   const interest = expectedSpecialists[0]!;
