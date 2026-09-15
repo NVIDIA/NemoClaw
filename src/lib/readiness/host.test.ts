@@ -181,15 +181,20 @@ describe("host readiness projection (#7408)", () => {
     );
   });
 
-  it("treats a malformed selected OS release field as inconclusive (#11026)", () => {
+  it.each([
+    [
+      "a malformed selected field",
+      'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS\n',
+    ],
+    ["a repeated selected field", "ID=ubuntu\nVERSION_ID=24.04\nID=debian\nVERSION_ID=12\n"],
+  ])("treats %s as inconclusive (#11026)", (_scenario, osRelease) => {
     const platformIdentity = collectPlatformIdentity({
       readFile: () => "",
       readdir: () => [],
       openFile: () => {
         throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
       },
-      readBoundedOsRelease: () =>
-        'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS\n',
+      readBoundedOsRelease: () => osRelease,
     });
     const result = report({}, { platformIdentity });
 

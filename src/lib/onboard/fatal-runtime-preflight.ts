@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { warnLine } from "../cli/terminal-style";
 import { getBuildIdentity } from "../core/version";
 import { detectGpu, type DetectGpuDeps, type GpuDetection } from "../inference/nim";
 import { isWsl as detectWsl } from "../platform";
@@ -122,6 +123,10 @@ const JETSON_INAPPLICABLE_CDI_ADVISORY_IDS = new Set([
   "refresh_nvidia_cdi_spec",
   "install_nvidia_container_toolkit",
 ]);
+const ONBOARD_OS_RELEASE_WARNING_IDS = new Set([
+  "host.os.release_unqualified",
+  "host.os.release_inconclusive",
+]);
 
 export interface OnboardHostReadinessOptions {
   explicitlyOptedOutGpuPassthrough: boolean;
@@ -135,7 +140,7 @@ export interface OnboardHostReadinessOptions {
   allowDeferredN1xOnboarding?: boolean;
   /** Verified legacy rebuild authority; never inferred from ambient process state. */
   allowLegacyDgxStationQualification?: boolean;
-  /** Print warning-severity host advisories before returning an admitted report. */
+  /** Print OS-release warnings and host advisories before returning an admitted report. */
   presentAdvisories?: boolean;
   exitProcess?: (code: number) => never;
   observedAt?: string;
@@ -204,6 +209,14 @@ function printReadinessFailure(
   }
 }
 
+function printOnboardOsReleaseWarnings(report: Pick<SystemReadinessReport, "findings">): void {
+  for (const finding of report.findings) {
+    if (finding.severity === "warning" && ONBOARD_OS_RELEASE_WARNING_IDS.has(finding.id)) {
+      console.error(warnLine(finding.summary));
+    }
+  }
+}
+
 function printGatewayReadinessEvidence(gateway: GatewayReadinessProjection): void {
   const actionableEvidenceIds = new Set([
     "gateway.attachment.failure",
@@ -241,6 +254,9 @@ export function assertOnboardSystemReadiness(
     providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
     resuming: options.resuming,
   });
+  if (!admission.admitted || options.presentAdvisories !== false) {
+    printOnboardOsReleaseWarnings(readinessReport);
+  }
   if (admission.admitted) {
     if (options.presentAdvisories !== false) {
       printRemediationActions(advisories.filter(({ severity }) => severity === "warning"));
