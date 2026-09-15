@@ -206,3 +206,54 @@ async fn incomplete_desired_ownership_is_rejected_before_any_create() {
         );
     }
 }
+
+#[tokio::test]
+async fn failed_readback_retains_each_created_identity_until_explicit_recovery() {
+    for failed_kind in ["workspace", "provider", "route", "sandbox"] {
+        let fixture = Fixture::start().await;
+        let mut document = Document::parse(
+            include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        )
+        .unwrap();
+        document.spec.gateway.endpoint = fixture.endpoint.clone();
+        let client =
+            OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+        let generations = ["workspace", "provider", "sandbox"]
+            .into_iter()
+            .map(|kind| (kind.into(), format!("{kind}-generation")))
+            .collect();
+        for target in targets(&document, &generations).unwrap() {
+            if target.kind != failed_kind {
+                assert!(
+                    client
+                        .ensure(&target.kind, &target.values)
+                        .await
+                        .error
+                        .is_none()
+                );
+                continue;
+            }
+            fixture.state.lock().unwrap().fail_after_create =
+                Some((failed_kind, tonic::Code::Unavailable));
+            let created = client.ensure(&target.kind, &target.values).await;
+            assert!(created.error.is_some(), "{failed_kind}");
+            let bound = created
+                .state
+                .expect("successful create must retain its identity on failed readback");
+            assert!(!bound["id"].is_empty());
+            let effects = fixture.state.lock().unwrap().effects;
+            assert!(client.ensure(&target.kind, &bound).await.error.is_some());
+            assert_eq!(fixture.state.lock().unwrap().effects, effects);
+            fixture.state.lock().unwrap().fail_read = None;
+            let recovered = client.ensure(&target.kind, &bound).await;
+            assert!(
+                recovered.error.is_none(),
+                "{failed_kind}: {:?}",
+                recovered.error
+            );
+            assert_eq!(recovered.state.unwrap()["id"], bound["id"]);
+            assert_eq!(fixture.state.lock().unwrap().effects, effects);
+            break;
+        }
+    }
+}

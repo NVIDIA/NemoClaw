@@ -27,12 +27,21 @@ pub struct State {
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
     pub lose_create: bool,
+    pub fail_after_create: Option<(&'static str, tonic::Code)>,
     pub lose_delete: bool,
     pub delete_delay: std::time::Duration,
     pub delete_calls: usize,
     pub fail_read: Option<(&'static str, tonic::Code)>,
 }
 impl State {
+    fn created(&mut self, kind: &str) {
+        if self
+            .fail_after_create
+            .is_some_and(|(resource, _)| resource == kind)
+        {
+            self.fail_read = self.fail_after_create.take();
+        }
+    }
     fn metadata(
         &mut self,
         name: String,
@@ -249,6 +258,7 @@ fn create_workspace(
         status: Some(p::WorkspaceStatus { phase: 1 }),
     };
     state.workspaces.insert(q.name, workspace.clone());
+    state.created("workspace");
     Ok(p::CreateWorkspaceResponse {
         workspace: Some(workspace),
     })
@@ -285,6 +295,7 @@ fn create_provider(
     }
     provider.metadata = Some(state.metadata(meta.name, q.workspace, meta.labels));
     state.providers.insert(key, provider.clone());
+    state.created("provider");
     if std::mem::take(&mut state.lose_create) {
         return Err(Status::unavailable("lost create reply secret"));
     }
@@ -391,6 +402,7 @@ fn create_sandbox(
         }),
     };
     state.sandboxes.insert(key, sandbox.clone());
+    state.created("sandbox");
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),
     })
@@ -468,6 +480,7 @@ fn set_route(
         ..Default::default()
     };
     state.routes.insert(q.workspace.clone(), q);
+    state.created("route");
     state.effects += 1;
     Ok(response)
 }
