@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../../core/errno";
+import { shellQuote } from "../../core/shell-quote";
 import { ensureConfigDir } from "../config-io";
 import { REGISTRY_FILE } from "./persistence";
 
@@ -37,8 +38,12 @@ export type RegistryLockDecision = "break" | "wait";
 export type ProcessBoundLockHandle = object;
 
 export class ProcessBoundLockContentionError extends Error {
-  constructor(directory: string, retries: number) {
-    super(`Failed to acquire lock on ${directory} after ${String(retries)} retries`);
+  constructor(directory: string, retries: number, remediation?: string) {
+    super(
+      `Failed to acquire lock on ${directory} after ${String(retries)} retries${
+        remediation === undefined ? "" : `. ${remediation}`
+      }`,
+    );
     this.name = "ProcessBoundLockContentionError";
   }
 }
@@ -335,7 +340,48 @@ function* acquisitionAttempts(
     }
     return { ...generation, ownerFile, processFile, processRecord: record };
   }
-  throw new ProcessBoundLockContentionError(directory, retries);
+  throw new ProcessBoundLockContentionError(
+    directory,
+    retries,
+    lockHolderRemediation(paths, alive, readIdentity, directory),
+  );
+}
+
+/**
+ * Describe who holds an unacquirable lock and how to clear it.
+ *
+ * Exhausting the retry budget reported only that the budget ran out, which
+ * leaves the documented recovery path — rerunning onboard with `--resume` —
+ * with nothing to act on. Name the recorded owner, whether it still exists,
+ * and the command that clears the lock, matching the guidance the onboard
+ * lock already prints in `beginPortableOnboardRetirementEntry` (#10461).
+ */
+function lockHolderRemediation(
+  paths: Paths,
+  alive: (pid: number) => boolean,
+  readIdentity: (pid: number) => string | null,
+  directory: string,
+): string {
+  // `shellQuote` rather than JSON: an operator copies this command into a
+  // shell, and a directory holding `$(...)` or a backtick would otherwise
+  // substitute instead of being treated as a path.
+  const removal = `remove it with: rm -rf ${shellQuote(directory)}`;
+  const pid = ownerPid(paths.owner);
+  if (pid === null) return `The lock records no owner; ${removal}`;
+  const live = alive(pid);
+  // A dead owner is stale whatever its recorded identity says: `status` reports
+  // `recycled` for any owner that is not alive, which is not the same as the
+  // operating system having handed that PID to something else.
+  if (!live) return `Owner PID ${String(pid)} is no longer running, so the lock is stale; ${removal}`;
+  // Classify a live PID exactly as the acquisition loop does. A PID the
+  // operating system reused belongs to an unrelated process, so reporting it as
+  // the owner would send the operator to stop the wrong one.
+  const ownerStatus = status(pid, live, readProcessRecord(paths.processStart, pid), readIdentity);
+  if (ownerStatus === "recycled")
+    return `PID ${String(pid)} now belongs to an unrelated process, so the recorded owner is gone and the lock is stale; ${removal}`;
+  if (ownerStatus === "unverifiable")
+    return `PID ${String(pid)} exists but cannot be confirmed as the recorded owner; confirm it before stopping it, then ${removal}`;
+  return `Owner PID ${String(pid)} is still running; wait for it to finish, or stop it and ${removal}`;
 }
 
 function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acquired {
