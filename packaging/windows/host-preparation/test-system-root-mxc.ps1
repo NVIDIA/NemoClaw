@@ -24,9 +24,17 @@ $work = Join-Path $root ('NemoClawHostPrepProof-' + [guid]::NewGuid().ToString('
 $container = 'hp-' + [guid]::NewGuid().ToString('N').Substring(0,12)
 $wxc = Join-Path $MxcDirectory 'wxc-exec.exe'
 $nullPrep = Join-Path $MxcDirectory 'wxc-host-prep.exe'
+$imageBuilder = Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\build-finished-runtime-image.ps1'
+$imageSource = Join-Path $output 'preauthorized-image-source'
+$image = Join-Path $output 'preauthorized-runtime.vhdx'
+$imageReceipt = Join-Path $output 'preauthorized-runtime-image.json'
+$imageMount = Join-Path $output 'preauthorized-runtime-mount'
+$imageAttach = Join-Path $output 'preauthorized-runtime-attach.txt'
+$imageDetach = Join-Path $output 'preauthorized-runtime-detach.txt'
+$diskpart = Join-Path $env:SystemRoot 'System32\diskpart.exe'
 $commands = [Collections.Generic.List[object]]::new()
 $cleanupErrors = [Collections.Generic.List[string]]::new()
-$primary = $null; $mxcAttempted = $false; $mxcStopped = $true
+$primary = $null; $mxcAttempted = $false; $mxcStopped = $true; $imageAttached = $false
 $receipt = [ordered]@{schemaVersion=1;classification='actual-system-root-and-mxc-proof';sourceRevision=$env:GITHUB_SHA
     status='failed';systemDriveRoot=$root;commands=$commands;cleanupErrors=$cleanupErrors;admissionAllowed=$false;
     requestProfile='existing-personal-node-compatibility';stdio='explicit-pipes-with-closed-input';networkAccessTested=$false}
@@ -131,17 +139,46 @@ try {
     $nodeAcl=(Get-Acl -LiteralPath $NodePath).Sddl
     $receipt.nodeSddlBefore=$nodeAcl
     $denied=Join-Path $output 'not-granted.txt';[IO.File]::WriteAllText($denied,'not granted')
+    $imageWorkers = Join-Path $imageSource 'workers'
+    [IO.Directory]::CreateDirectory($imageWorkers) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $imageSource 'runtime.manifest'),'focused preauthorized runtime manifest',[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $imageSource 'runtime.ready'),'focused preauthorized runtime ready',[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $imageWorkers 'input.txt'),'preauthorized read',[Text.UTF8Encoding]::new($false))
+    & $imageBuilder -RuntimeRoot $imageSource -RuntimeId ('a' * 64) -OutputImage $image -ReceiptPath $imageReceipt
+    [IO.Directory]::CreateDirectory($imageMount) | Out-Null
+    @("select vdisk file=`"$image`"",'attach vdisk readonly',"assign mount=`"$imageMount`"",'exit') |
+        Set-Content -LiteralPath $imageAttach -Encoding ascii
+    & $diskpart /s $imageAttach | Out-Null
+    if($LASTEXITCODE -ne 0){throw 'The preauthorized runtime image could not be attached read-only.'}
+    $imageAttached=$true
+    $preauthorized=Join-Path $imageMount 'workers'
+    $preauthorizedAcl=Get-Acl -LiteralPath $preauthorized
+    $preauthorizedRows=@($preauthorizedAcl.Access|ForEach-Object{
+        $sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        [pscustomobject]@{sid=$sid;mask=[uint32]$_.FileSystemRights;inherited=$_.IsInherited;
+            inheritanceFlags=[string]$_.InheritanceFlags;propagationFlags=[string]$_.PropagationFlags;
+            accessControlType=[string]$_.AccessControlType}
+    })
+    $requiredReadMask=[uint32]0x001200a9
+    foreach($sid in @('S-1-15-2-1','S-1-15-2-2')){
+        $matches=@($preauthorizedRows|Where-Object{$_.sid -ceq $sid -and $_.accessControlType -ceq 'Allow' -and
+            ($_.mask -band $requiredReadMask) -eq $requiredReadMask -and $_.inherited})
+        if($matches.Count -ne 1){throw "The runtime image did not inherit the required AppContainer read grant for $sid."}
+    }
+    $receipt.preauthorizedRuntime=[ordered]@{imageReceipt=(Get-Content -LiteralPath $imageReceipt -Raw|ConvertFrom-Json);
+        workersSddl=$preauthorizedAcl.Sddl;workersAccess=$preauthorizedRows;readMask=$requiredReadMask;readOnlyAttachment=$true}
     $worker=Join-Path $work 'worker.mjs';$result=Join-Path $work 'result.json'
     [IO.File]::WriteAllText((Join-Path $work 'input.txt'),'owned read')
     [IO.File]::WriteAllText($worker,@'
 import fs from 'node:fs';
 import path from 'node:path';
-const [result,denied]=process.argv.slice(2);
+const [result,denied,preauthorized]=process.argv.slice(2);
 if(process.platform!=='win32'||process.arch!=='arm64'||process.versions.node!=='22.23.2')throw Error('Unexpected Node');
 if(fs.readFileSync(path.join(process.cwd(),'input.txt'),'utf8')!=='owned read')throw Error('Allowed read failed');
+if(fs.readFileSync(path.join(preauthorized,'input.txt'),'utf8')!=='preauthorized read')throw Error('Preauthorized read failed');
 let deniedRead=false;try{fs.readFileSync(denied)}catch(error){deniedRead=['EACCES','EPERM'].includes(error.code)}
 if(!deniedRead)throw Error('Unlisted file read was not denied');
-fs.writeFileSync(result,JSON.stringify({schemaVersion:1,marker:'NEMOCLAW_SYSTEM_METADATA_MXC_OK',platform:process.platform,architecture:process.arch,node:process.versions.node,pid:process.pid,allowedRead:true,deniedRead:true,ownedWrite:true}));
+fs.writeFileSync(result,JSON.stringify({schemaVersion:1,marker:'NEMOCLAW_SYSTEM_METADATA_MXC_OK',platform:process.platform,architecture:process.arch,node:process.versions.node,pid:process.pid,allowedRead:true,preauthorizedRead:true,deniedRead:true,ownedWrite:true}));
 console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
 '@,[Text.UTF8Encoding]::new($false))
     # Match the existing Personal Node request used by the OpenShell derivative.
@@ -160,9 +197,9 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     $receipt.childEnvironmentKeys=@($childEnvironment.Keys)
     $policy=Join-Path $output 'policy.json'
     $request=[ordered]@{version='0.6.0-alpha';containerId=$container;containment='processcontainer'
-        process=@{commandLine='"'+$NodePath+'" "'+$worker+'" "'+$result+'" "'+$denied+'"';cwd=$work;timeout=30000;env=@($childEnvironment.GetEnumerator()|ForEach-Object {$_.Key+'='+$_.Value})}
+        process=@{commandLine='"'+$NodePath+'" "'+$worker+'" "'+$result+'" "'+$denied+'" "'+$preauthorized+'"';cwd=$work;timeout=30000;env=@($childEnvironment.GetEnumerator()|ForEach-Object {$_.Key+'='+$_.Value})}
         processContainer=@{leastPrivilege=$false;capabilities=@('privateNetworkClientServer','internetClient')};ui=@{disable=$false}
-        network=@{defaultPolicy='allow';allowedHosts=@();blockedHosts=@();allowLocalNetwork=$true};filesystem=@{readonlyPaths=@($NodePath);readwritePaths=@($work)}
+        network=@{defaultPolicy='allow';allowedHosts=@();blockedHosts=@();allowLocalNetwork=$true};filesystem=@{readonlyPaths=@($NodePath,$preauthorized);readwritePaths=@($work)}
         lifecycle=@{destroyOnExit=$false;preservePolicy=$false}}
     [IO.File]::WriteAllText($policy,($request|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
     $receipt.policySha256=(Get-FileHash -LiteralPath $policy -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -171,7 +208,8 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     $null=Invoke-ProofProcess $wxc @($policy,'--log-file',(Join-Path $output 'mxc-native.log')) 'mxc-execution' 40
     $mxcStopped=$commands[$commands.Count-1].stopped
     $guest=Get-Content -LiteralPath $result -Raw|ConvertFrom-Json
-    if($guest.marker  -cne  'NEMOCLAW_SYSTEM_METADATA_MXC_OK'  -or  $guest.allowedRead  -ne  $true  -or  $guest.deniedRead  -ne  $true  -or  $guest.ownedWrite  -ne  $true){throw 'The actual MXC file-access controls failed.'}
+    if($guest.marker  -cne  'NEMOCLAW_SYSTEM_METADATA_MXC_OK'  -or  $guest.allowedRead  -ne  $true  -or
+        $guest.preauthorizedRead  -ne  $true  -or  $guest.deniedRead  -ne  $true  -or  $guest.ownedWrite  -ne  $true){throw 'The actual MXC file-access controls failed.'}
     $mxcLog = [regex]::Replace((Get-Content -LiteralPath (Join-Path $output 'mxc-native.log') -Raw), '\[\d+\][ \t]*', '')
     if($mxcLog -notmatch '(?m)^selected isolation tier:\s*appcontainer-dacl\s*$'){throw 'The system-root-dependent AppContainer DACL tier was not exercised.'}
     if($mxcLog -match 'Win32k mitigation applied to child process'){throw 'The existing Personal Node UI compatibility setting was not honored.'}
@@ -190,7 +228,16 @@ finally{
         if($mxcStopped){try{$null=Invoke-ProofProcess $wxc @('--delete','--containername',$container) 'owned-profile-delete'}catch{$cleanupErrors.Add($_.Exception.Message)}}
         else{$cleanupErrors.Add('The owned MXC process did not stop; profile cleanup was not overlapped.')}
     }
-    try{if([IO.Directory]::Exists($work)){[IO.Directory]::Delete($work,$true)}}catch{$cleanupErrors.Add($_.Exception.Message)}
+    if($imageAttached){
+        try{
+            @("select vdisk file=`"$image`"",'detach vdisk noerr','exit')|Set-Content -LiteralPath $imageDetach -Encoding ascii
+            & $diskpart /s $imageDetach|Out-Null
+            if($LASTEXITCODE -ne 0){throw 'The preauthorized runtime image did not detach.'}
+            $imageAttached=$false
+        }catch{$cleanupErrors.Add($_.Exception.Message)}
+    }
+    foreach($file in @($image,$imageAttach,$imageDetach)){try{if(Test-Path -LiteralPath $file){Remove-Item -LiteralPath $file -Force}}catch{$cleanupErrors.Add($_.Exception.Message)}}
+    foreach($directory in @($imageMount,$imageSource,$work)){try{if([IO.Directory]::Exists($directory)){[IO.Directory]::Delete($directory,$true)}}catch{$cleanupErrors.Add($_.Exception.Message)}}
     $receipt.mxcStopped=$mxcStopped;$receipt.workspaceRemoved=  -not  [IO.Directory]::Exists($work)
     if($cleanupErrors.Count){$receipt.status='failed'}
     try{[IO.File]::WriteAllText((Join-Path $output 'system-root-mxc-proof.json'),(($receipt|ConvertTo-Json -Depth 12)+"`n"),[Text.UTF8Encoding]::new($false))}catch{if($null  -eq  $primary){$primary=$_}}
