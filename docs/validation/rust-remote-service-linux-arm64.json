@@ -1,0 +1,111 @@
+{
+  "sourceRevision": "ad1664ade81828e7743003d5447f22468e416526",
+  "platform": "linux_arm64",
+  "scope": "Managed Docker inference through SSH, independent external OpenShell gateway with Podman sandboxes. Simulated remote lifecycle plus real read-only loopback SSH host observation; no separate-host GPU deployment qualification.",
+  "bundle": {
+    "Version": "0.1.0-dev.b0e6316b5eeed64b",
+    "Rust": "1.98.1",
+    "OpenTofu": "1.12.6",
+    "Files": {
+      "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bin/nemoclaw": "50efbb45526b0fa967384e9950c62234224a7b6f9e002f81dcf862058e0cbf12",
+      "libexec/tofu": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59",
+      "licenses/OpenTofu-LICENSE": "142b957651baf401646dd7f3d855cb7c4f6f0921d645faa27e7cb540bc33cf4c",
+      "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.b0e6316b5eeed64b/linux_arm64/terraform-provider-nemoclaw_v0.1.0-dev.b0e6316b5eeed64b": "117c69350b22146f7cdd09c0e3ea68a1cec3f0e512de510bac799171397e6179"
+    }
+  },
+  "validation": {
+    "workspace": {
+      "passed": 126,
+      "failed": 0,
+      "ignored": 35
+    },
+    "integratedCiContracts": 6,
+    "format": "passed",
+    "strictClippy": "passed",
+    "precedingBundleLifecycleContracts": 18,
+    "finalBundleRemoteLifecycleContracts": 1,
+    "realReadOnlySshContracts": 2
+  },
+  "integrationNote": "The workspace run preceded the concurrent CI-only upgrade. Its six CI contracts and workspace formatting/Clippy passed after integration. The 18-contract run used bundle 0.1.0-dev.c7bbd2ad50b935b5 before separating pure endpoint validation from transport construction. The final committed bundle repeats the complete remote-service lifecycle.",
+  "fixtureBehavior": [
+    "Plan rejects missing or insufficient remote capacity without Docker mutations.",
+    "Successful plan creates no runtime resources.",
+    "Failed startup retains one established container identity and model volume; explicit apply recovers.",
+    "Unchanged apply and export/reapply produce no Docker mutations or replacement.",
+    "Transport failure and daemon retarget reject planning and preserve runtime state bytes.",
+    "Destroy removes the service container and retains its volume and owned network.",
+    "External OpenShell fixture reports Podman. Model receipts, capacity and readiness are simulated; no real model download or inference occurs in this fixture."
+  ],
+  "liveObservation": [
+    "Fixed SSH collector reads actual memory, GPU and Docker-root disk measurements on this Spark.",
+    "Measurements match the independently selected Docker daemon; actual missing container is confirmed absent."
+  ],
+  "readsRemainingDirect": [
+    "Capacity preflight and immediate startup capacity checks through the fixed SSH collector.",
+    "Mutations, immediate identity/version guards, readiness and agent response probes, local state and credentials.",
+    "Refresh and export retain the shared typed osquery observation path."
+  ],
+  "cleanup": {
+    "temporarySshServerStopped": true,
+    "temporaryPrivateKeysRemoved": true,
+    "unrelatedResources": "Existing gateway, sandbox and inference resources were not changed."
+  },
+  "remainingGates": [
+    "A separate SSH Docker host was requested but not supplied; cross-host GPU apply and actual agent response remain untested.",
+    "Remote model execution retains the Linux ARM64 DGX Spark profile and Docker volume layout requirements.",
+    "Pinned experiment runtime and sandbox images are unpublished and must be preloaded.",
+    "Publication is private IPv4 HTTP without model credentials; SSH is not an inference tunnel.",
+    "Windows configuration validation is transport-independent, but Windows SSH execution is not qualified."
+  ],
+  "logs": [
+    {
+      "path": ".local/ssh-proof/placement-red.log",
+      "sha256": "af9206104c12a0e025e763ef55f09ed0578bdc6e8e9993f94158d60c012f8283"
+    },
+    {
+      "path": ".local/ssh-proof/gateway-independent-red.log",
+      "sha256": "292c99c1fdde9d7a066ea6792d4f57beeb121e302c0752d96b36a7e5b9ebf180"
+    },
+    {
+      "path": ".local/ssh-proof/endpoint-syntax-red.log",
+      "sha256": "11905a6076cd26e9fd72c914ce0425356da2a4848b3b8725773db4cb688ef67a"
+    },
+    {
+      "path": ".local/ssh-proof/endpoint-syntax-green.log",
+      "sha256": "9f570334b0032acb672a32641ef319f1c3f2a3e7593119244238107d7440f58a"
+    },
+    {
+      "path": ".local/ssh-proof/remote-validated-workspace.log",
+      "sha256": "64f3af0ad10abdba88fe37d79a96fe13cc13712852536212b67f1525e11b835f"
+    },
+    {
+      "path": ".local/ssh-proof/remote-integrated-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".local/ssh-proof/remote-integrated-clippy.log",
+      "sha256": "f7725fa6581214a1c59afaf0f98f2843d79f950ae4d0be30bf3f6d4432ebf6f2"
+    },
+    {
+      "path": ".local/ssh-proof/remote-integrated-ci.log",
+      "sha256": "9e3b28db7a0bb791c843f68a7d8fdbb39fc771437490007137a37b730c0ae327"
+    },
+    {
+      "path": ".local/ssh-proof/remote-final-lifecycle.log",
+      "sha256": "8a46e2fbb65983cf9d0e4165cd55f9e25f21ce15f5ea763c0be6df1a7930bee9"
+    },
+    {
+      "path": ".local/ssh-proof/remote-release-build.log",
+      "sha256": "bf41c212de69cab5518389022a0bf1e6c46b4048fd4183762fa3287f13520d37"
+    },
+    {
+      "path": ".local/ssh-proof/remote-release-lifecycle.log",
+      "sha256": "807d02b315438f57baf0c57ccaa576d7cbf11b59b92a0aeb90b9dcf2acefcffd"
+    },
+    {
+      "path": ".local/remote-observation/validated-live.log",
+      "sha256": "8c27532ddaa2c0ac7db4fceedda669564e3b1cd75a9fd417217d73e55053c5a1"
+    }
+  ]
+}

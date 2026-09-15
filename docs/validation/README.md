@@ -40,3 +40,7 @@ to every Fabric harness or model.
 [SSH engine transport evidence](rust-ssh-linux-arm64.json) covers real loopback
 SSH identity, failure classification and artifact transfers. It does not qualify
 remote managed deployment.
+
+[Remote service evidence](rust-remote-service-linux-arm64.json) records the
+bundled SSH model lifecycle fixtures and real read-only host collector. A
+separate-host GPU apply and agent reply remain an explicit qualification gate.
