@@ -1,0 +1,367 @@
+{
+  "sourceRevision": "5585add1e74fdee9c881fd0e73947db24f8f5e88",
+  "platform": "linux_arm64",
+  "hardware": "NVIDIA GB10 / DGX Spark",
+  "scope": "Inline recipe execution and ordinary vLLM without a recipe",
+  "bundleVersion": "0.1.0-dev.9e7e1da8b5113a6d",
+  "images": {
+    "qwen": "nc-prototype-qwen38@sha256:f414305c9848584811f244e8aee6e8236ecd6b0a9d6ed14bc43a9692bcb21330",
+    "basic": "nc-prototype-vllm@sha256:917cba8269022fac592da2f6353a5308bbf3980b4b949866a3bf4e67f888bfa7"
+  },
+  "artifactsPublished": false,
+  "artifactMetadata": {
+    "qwen": {
+      "nemoclaw-runtime": "6269bc4ed25bed13347138697cf6e09f577fd2c86322e04587230cae237308b5",
+      "rust": "1.98.1",
+      "sourceVersion": "0.1.0-dev.9e7e1da8b5113a6d",
+      "supervisor-source.tar.gz": "f3b8bbf652113ad4ef1cdbbd1ca0dd8bd66cf0d5c14a62f95ad65ec31da4fb52"
+    },
+    "basic": {
+      "nemoclaw-runtime": "d5fba7a30ef7723fd839cea4421f471bfc05c4219e0c895f2652acb1d649bc61",
+      "rust": "1.98.1",
+      "sourceVersion": "0.1.0-dev.9e7e1da8b5113a6d",
+      "supervisor-source.tar.gz": "f3b8bbf652113ad4ef1cdbbd1ca0dd8bd66cf0d5c14a62f95ad65ec31da4fb52"
+    }
+  },
+  "packagedFiles": {
+    "/opt/nemoclaw/recipe/prepare.py": {
+      "bytes": 1456,
+      "sha256": "4e2717fb7554c1c78f8567faa3308bb1e38de4b8d20d1729356b8adda69adbdf"
+    },
+    "/opt/nemoclaw/recipe/verify.py": {
+      "bytes": 870,
+      "sha256": "9cc8e390530b094af2a409bb25586a7fdc7926d9c245f867f9a1a73bd9da7356"
+    },
+    "/opt/nemoclaw/source/Apache-2.0.txt": {
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "/opt/nemoclaw/source/AGPL-3.0-or-later.txt": {
+      "bytes": 34523,
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+    },
+    "/opt/nemoclaw/source/NOTICE.md": {
+      "bytes": 2308,
+      "sha256": "94a6d1cd38946834ee3bf5d39db928734e17225ff6e9bdce94adcb795092a242"
+    }
+  },
+  "checks": {
+    "workspacePassed": 151,
+    "workspaceIgnored": 35,
+    "strictClippy": "passed",
+    "format": "passed",
+    "explicitProviderFixtureTestsPassed": 7
+  },
+  "preparationReceipt": {
+    "key": "d0b423de7e7503226548e9fd48a3e4fc939746f55195371122e387d5a8c34826",
+    "files": [
+      {
+        "name": "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.packed_u8",
+        "size": 28800138240,
+        "sha256": "e404177a577d4f27930df88d8055af66c4b66b5b2d0a194ef66f8a6c55fbefaf",
+        "modified": 1789423860382918291
+      },
+      {
+        "name": "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.packed_u8.json",
+        "size": 192,
+        "sha256": "3111a87e65a108d8440bafca3ceff98710d25b7c68ed13a566084ad91b9e49e0",
+        "modified": 1789423860385123733
+      }
+    ]
+  },
+  "liveSetup": {
+    "nativeStateMigrationTested": false,
+    "originalDeploymentUntouched": true,
+    "cacheSeed": "Copied models and prepared directories from the old owned volume, mounted read-only, to a separately owned fixture volume. The new runtime independently verified the packed bytes before publication.",
+    "seedCopyContainer": "nc-inline-recipe-cache-copy",
+    "volume": {
+      "Name": "nc-6dab5410b807b0d0-inference-data",
+      "Owner": "3f524c9d-e7ec-465b-9c06-f71e2aa31b73",
+      "Generation": "c57f8e5e478e6139df0eceb303e17310",
+      "Engine": "unix:///var/run/docker.sock"
+    }
+  },
+  "limits": [
+    "Only Linux ARM64 GB10 was live-qualified.",
+    "Legacy native OpenClaw state is rejected; this does not qualify migration from that removed schema.",
+    "Initial download/preparation interruption and observation failures are covered by deterministic fixtures; this live run exercises cache import.",
+    "Preparation keys conservatively include the whole inline contract. Recipe authors must version it when helper dependencies change.",
+    "Container memory limits and capacity policy retain the qualified Spark bounds."
+  ],
+  "liveQwen": {
+    "initialApply": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_gateway_storage.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_inference_storage.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_managed_gateway.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_workspace.deployment",
+          "actions": [
+            "create"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "unchangedApply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    },
+    "exportReapply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    },
+    "identitiesAndCache": {
+      "runtimeIdsUnchanged": true,
+      "containerUnchanged": true,
+      "startTimeUnchanged": true,
+      "cacheMetadataUnchanged": true,
+      "runtimeIds": {
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-6dab5410b807b0d0-gateway-data/2026-09-15T00:39:42-07:00/07b4e3dceadd53b88bd69ac0ea4e6c4a8a9088fc74975e0894ee4816dbe958a4/8326bfb41efaaeddee77f6bf865261ce2573a3abb6afe21f0971fb166fa7ea89",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/c21a4ae1e84573491ebafa7aa9f359b2c3e8c6c6761c87f316b3b9fdf3af0238/2026-09-15T00:37:44-07:00/07b4e3dceadd53b88bd69ac0ea4e6c4a8a9088fc74975e0894ee4816dbe958a4",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-6dab5410b807b0d0-inference-data/2026-09-15T00:37:44-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/2cbb73ffe8566f66b9a40969e71b3cbbdeba3bb43a7cbd2257ce34999823c3e2/2026-09-15T00:39:42-07:00/07b4e3dceadd53b88bd69ac0ea4e6c4a8a9088fc74975e0894ee4816dbe958a4/8326bfb41efaaeddee77f6bf865261ce2573a3abb6afe21f0971fb166fa7ea89/97375f2bced82e0c72c42c05f312cafd7582d02f0df4fd641a6e44876bdd4eb3"
+      }
+    },
+    "startupTimeoutSeconds": 1800,
+    "startup": "About 14 minutes including cache re-verification, loading and first-run tuning.",
+    "destroy": {
+      "outcome": "destroyed",
+      "changes": [
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_managed_gateway.runtime",
+          "actions": [
+            "delete"
+          ]
+        }
+      ],
+      "retained": [
+        "nemoclaw_workspace.deployment",
+        "nemoclaw_gateway_storage.runtime",
+        "nemoclaw_inference_storage.runtime"
+      ]
+    }
+  },
+  "capacityRejection": {
+    "diagnostic": "GPU is in use by an unrelated process; service was not started",
+    "memoryExhausted": false,
+    "inferenceStarted": false
+  },
+  "testRevision": "d14bd994bf35aaa0d5b45346c61105b860d2862d",
+  "originalResourcesUnchanged": {
+    "nc-0179426feb940b73-gateway": true,
+    "nc-0179426feb940b73-inference": true,
+    "openshell-nc-0179426feb940b73--assistant-8863bbab-7053-4353-afe9-a24c380a2bc5": true
+  },
+  "liveBasic": {
+    "initialApply": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_managed_gateway.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "create"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "unchangedApply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    },
+    "exportReapply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    },
+    "identities": {
+      "containerUnchanged": true,
+      "startTimeUnchanged": true,
+      "mountsUnchanged": true,
+      "recipePreparationInvoked": false
+    },
+    "destroy": {
+      "outcome": "destroyed",
+      "changes": [
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_managed_gateway.runtime",
+          "actions": [
+            "delete"
+          ]
+        }
+      ],
+      "retained": [
+        "nemoclaw_workspace.deployment",
+        "nemoclaw_gateway_storage.runtime",
+        "nemoclaw_inference_storage.runtime"
+      ]
+    }
+  },
+  "watchdog": {
+    "containerRestartPolicy": {
+      "Name": "no",
+      "MaximumRetryCount": 0
+    },
+    "residentSupervisorFixtures": "passed: protection after readiness, stalled loading, cancellation, and no automatic restart",
+    "liveMemoryExhaustionInduced": false
+  },
+  "commands": [
+    ".tools/cargo-run fmt --check",
+    "CARGO_BUILD_JOBS=2 .tools/cargo-run clippy --workspace --all-targets -- -D warnings",
+    "CARGO_BUILD_JOBS=2 .tools/cargo-run test --workspace",
+    "NEMOCLAW_TEST_BUNDLE=<verified bundle> .tools/cargo-run test -p nemoclaw-e2e --test deployment --test remote_service --test ollama -- --ignored",
+    "nemoclaw plan --state-dir <state> <example>",
+    "nemoclaw apply --state-dir <state> <example>",
+    "nemoclaw export --state-dir <state> --output <export>",
+    "nemoclaw apply --state-dir <state> <export>",
+    "nemoclaw destroy --state-dir <state>"
+  ],
+  "exampleSha256": {
+    "examples/spark-inline.yaml": "398a8a18fe620c6f7e8bfb7cee728b0b6351c364e1a8c92c266337674cc57a6a",
+    "examples/vllm.yaml": "6ff6ed6b408b8aeebbd2596eaf71bba4d04f26f61f7f879d49a84878017d9f14"
+  },
+  "logs": {
+    ".local/inline-recipe-adversarial.log": "14e9aaf7d36bf930f282f504de5cf0694d392daae14482620b7f4baac9210159",
+    ".local/inline-recipe-bundle-fixtures.log": "fe8147fca1e8875eb2cd7818a4dc4df68843d709a0e9e7ab4127e993c3a7ed32",
+    ".local/inline-recipe-clippy-final.log": "3b91ce09e3ad84ffb81b50a4280324592f6cc81747992d5f33d6da03f2a42ff0",
+    ".local/inline-recipe-generic-image.log": "3d9e0f83b319024740ceb4ea92c3783210247804b925b5330e8a7b0a291630aa",
+    ".local/inline-recipe-image.log": "1e47e6b21927c13d89f7a5f3a5bc7ef6aaeb0fb6ffd071d93e57cd7b5bbaa2f0",
+    ".local/inline-recipe-live/apply.log": "ad753a5b3b552b398d2d1ac7ff97ccf4e891f7b73461a31970b5d76712f7025a",
+    ".local/inline-recipe-live/basic-apply.log": "d1d7fbc0e3c90baad26da4093fb5c0a7b2c85a487afc05ec2b1cd32f677f15f4",
+    ".local/inline-recipe-live/basic-capacity-plan.log": "b67c810103364b060bcc5dd1b19eb7c0429d29bfcfb9e6a04a546fc73eb7d443",
+    ".local/inline-recipe-live/basic-destroy.log": "0720354f386d1b8dbe3d0ebcb23ce46cfc203be3ea29ebc1ce5afe138ead28c9",
+    ".local/inline-recipe-live/basic-export-reapply.log": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a",
+    ".local/inline-recipe-live/basic-export.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/inline-recipe-live/basic-inference.log": "a8c2bf60a1fab256bd972204338a66e6a983938df34490b73f8e4dc8e0e1eaf6",
+    ".local/inline-recipe-live/basic-noop.log": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a",
+    ".local/inline-recipe-live/destroy.log": "0720354f386d1b8dbe3d0ebcb23ce46cfc203be3ea29ebc1ce5afe138ead28c9",
+    ".local/inline-recipe-live/export-reapply.log": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a",
+    ".local/inline-recipe-live/export.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/inline-recipe-live/inference.log": "c7f70eeb8e4b4ec4dbb30b009734fa2247b7a69eb94585eb73613066944e9987",
+    ".local/inline-recipe-live/noop.log": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a",
+    ".local/inline-recipe-live/plan.log": "fc7ffa8ce87a884424048b85cda4b39f39e4fa1af49a782da23d4e60aaf67f13",
+    ".local/inline-recipe-workspace-final.log": "0adf9110ef1cb71942bfb68ffcec43cb3f27b717395612a86c06ffdc9975c188"
+  },
+  "cleanup": {
+    "experimentWorkloadsDestroyed": true,
+    "modelAndPreparedStorageRetained": true,
+    "temporaryCopyContainerRemoved": true,
+    "unrelatedResourcesModified": false
+  }
+}

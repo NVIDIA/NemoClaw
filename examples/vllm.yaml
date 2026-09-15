@@ -17,7 +17,7 @@ spec:
       provider: openai
       service:
         backend: vllm
-        image: nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e
+        image: nc-prototype-vllm@sha256:917cba8269022fac592da2f6353a5308bbf3980b4b949866a3bf4e67f888bfa7
         model:
           repository: Qwen/Qwen3-4B
           revision: 1cfa9a7208912126459214e8b04321603b3df60c

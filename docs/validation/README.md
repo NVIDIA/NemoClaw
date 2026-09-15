@@ -50,3 +50,9 @@ separate-host GPU apply and agent reply remain an explicit qualification gate.
 SSH-managed Qwen3-4B service with native rootless Podman OpenClaw, real replies,
 policy denial, retained downloads, protection-trip recovery, engine retarget
 rejection, no-op/export and destroy. Both daemons share the same Spark.
+
+[Inline recipe qualification](rust-inline-recipes-linux-arm64.json) covers a
+declared Qwen3.8 PLE recipe and ordinary Qwen3-4B using the same runtime source:
+actual Fabric OpenClaw replies, unchanged apply, export/reapply, verified cache
+import, safe capacity rejection, and teardown with retained storage. It also
+records the deterministic verification and provider failure boundaries.

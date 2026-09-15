@@ -451,3 +451,20 @@ requirements are evaluated against observations from the selected execution
 host. This contract does not imply that all models or hardware combinations are
 qualified. See [inline recipe execution](docs/recipes.md) for its protocol and
 limits, and the validation records for tested combinations.
+
+The slice keeps one inference-service resource and independent retained storage.
+Preparation is a resumable runtime stage with its own durable receipt; it does
+not need another OpenTofu resource or a long-running preparation controller.
+OpenShell refresh/export still use the existing typed osquery adapter. Recipe
+receipts and image capabilities use the existing engine-scoped Docker observation
+boundary; a new collector would duplicate that boundary without moving the
+observation to a new host. Execution, downloads and active readiness probes stay
+direct.
+
+On the Spark, both the inline Qwen recipe and ordinary Qwen3-4B returned an
+actual Fabric OpenClaw response through OpenShell. The Qwen cache import needed
+verification but no download or repack; unchanged apply and export/reapply kept
+its runtime identities, start time and cache metadata. This supports keeping
+preparation inside the shared runtime lifecycle rather than adding another
+resource. The experiment does not qualify other GPUs or native-agent state
+migration. See [the retained evidence](docs/validation/rust-inline-recipes-linux-arm64.json).

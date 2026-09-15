@@ -1,6 +1,7 @@
 # Inline model recipes
 
-An ordinary vLLM service needs a pinned image and model snapshot. Add
+An [ordinary vLLM service](../examples/vllm.yaml) needs a pinned image and model
+snapshot. Build its local image with `cargo run -p nemoclaw-build -- vllm-runtime`. Add
 `service.recipe` when the model needs preparation or serving features supplied
 by its runtime image. The CLI does not load recipe code. Recipe authors package
 their executables, patches, licenses and source notices in that image; the YAML
@@ -8,7 +9,10 @@ declares their contract.
 
 See [the inline Qwen example](../examples/spark-inline.yaml). Build its local image
 with `cargo run -p nemoclaw-build -- spark-runtime`; the example pins the resulting
-OCI manifest. This experiment does not publish the image. Its model-specific
+OCI manifest. Reproduce the pins from the implementation revision recorded in
+[the validation evidence](validation/rust-inline-recipes-linux-arm64.json);
+building later source can produce a different digest. This experiment does not
+publish the image. Its model-specific
 adapters live in `runtimes/qwen38`, outside the generic execution path. The old
 `vllm-qwen38-spark-v1` backend remains readable for established deployment state
 and older pinned images. New recipes use `backend: vllm` and do not require an
@@ -112,3 +116,10 @@ The legacy backend compatibility does not migrate deployment state from the
 removed native OpenClaw schema. That state must remain available for its original
 CLI; the inline live experiment uses a separate Fabric deployment. Current runtime
 container limits and live hardware qualification still target the Spark.
+
+Recipe declarations are trusted deployment input, and the pinned runtime image
+must be reviewed with its tools and dependencies. The executable hash is an
+additional identity check, not a sandbox for recipe code. Recipe authors must
+version the contract when preparation semantics change, including changes to
+helper code used by their executable. The complete declaration participates in
+the preparation key, so even serving-only edits currently select a new receipt.
