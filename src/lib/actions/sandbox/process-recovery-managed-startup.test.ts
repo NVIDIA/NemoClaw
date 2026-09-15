@@ -147,6 +147,33 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(discover).not.toHaveBeenCalled();
   });
 
+  it("awaits an injected asynchronous recovery request and its settle probes", async () => {
+    mockGatewaySandbox("async-gateway");
+    mockRecoveredForward("async-gateway");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0.001");
+    vi.spyOn(wait, "sleepSeconds").mockImplementation(() => undefined);
+    const request = vi.fn(
+      async (_name: string, _action: "restart" | "recover" | "probe") => ACCEPTED_MANAGED_RECOVERY,
+    );
+    const portableRequest = vi.spyOn(privilegedExec, "executePortableGatewaySupervisorAction");
+    const discover = vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget");
+    await expect(
+      checkAndRecoverSandboxProcesses("async-gateway", {
+        quiet: true,
+        requestGatewaySupervisorAction: request,
+        isSandboxGatewayRunningImpl: async () => false,
+        waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
+      }),
+    ).resolves.toMatchObject({ checked: true, wasRunning: false, recovered: true });
+    const actions = request.mock.calls.map(([, action]) => action);
+    expect(actions[0]).toBe("recover");
+    expect(actions.length).toBeGreaterThanOrEqual(2);
+    expect(actions.slice(1).every((action) => action === "probe")).toBe(true);
+    expect(portableRequest).not.toHaveBeenCalled();
+    expect(discover).not.toHaveBeenCalled();
+  });
+
   it.each(["missing supervisor", "authority rejection", "spawn error"])(
     "refuses portable %s without Docker discovery or supervisor relaunch",
     async (failure) => {

@@ -1800,7 +1800,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     portableSupervisorEnvironment,
   }: {
     quiet?: boolean;
-    requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
+    requestGatewaySupervisorAction?: RecoveryGatewaySupervisorRequest;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     isSandboxGatewayRunningImpl?: (
@@ -2023,10 +2023,6 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         ? { ...result, managedControlCompletion: recovery.managedControlCompletion }
         : result;
     const relaunch = recovery.kind === "relaunched" ? recovery.relaunch : null;
-    const requestManagedProbe = relaunch
-      ? (name: string, action: "restart" | "recover" | "probe", timeout = 210000) =>
-          effectivePinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId)
-      : requestGatewaySupervisorAction;
     const relaunchedManagedHealth = {
       failure: null as ReturnType<typeof classifyGatewayRestartFailure> | null,
     };
@@ -2037,7 +2033,12 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
           try {
             const confirmed = confirmRecoveredSandboxGatewayManaged(sandboxName, {
               requestGatewaySupervisorActionImpl: (name, action) => {
-                probeResult = requestManagedProbe(name, action, timeout);
+                probeResult = effectivePinnedGatewaySupervisorAction(
+                  name,
+                  action,
+                  timeout,
+                  relaunch.containerId,
+                );
                 return probeResult;
               },
             });
@@ -2191,7 +2192,8 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
               managedRecoveryFailureLayer,
             ),
           quiet,
-          requestManagedProbe,
+          requestManagedProbe: (name, action, timeout = 210000) =>
+            effectivePinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId),
           waitForRecoveryReadiness,
         }),
       );
@@ -2287,7 +2289,7 @@ export async function checkAndRecoverSandboxProcesses(
   sandboxName: string,
   options: {
     quiet?: boolean;
-    requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
+    requestGatewaySupervisorAction?: RecoveryGatewaySupervisorRequest;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     isSandboxGatewayRunningImpl?: (
