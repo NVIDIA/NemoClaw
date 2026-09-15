@@ -27,14 +27,14 @@
       "generatedProbeConditions": 255
     },
     "unique": {
-      "expectCalls": 1980,
-      "matcherAssertions": 1952,
+      "expectCalls": 1978,
+      "matcherAssertions": 1950,
       "nodeAssertions": 121,
       "namedAssertionHelpers": 746,
       "failCalls": 1,
       "throwGuards": 554,
       "objectFieldAssertions": 274,
-      "assertionPoints": 3648,
+      "assertionPoints": 3646,
       "generatedProbeBlocks": 243,
       "generatedProbeConditions": 853
     },
@@ -52,7 +52,7 @@
       "test/e2e/live/brave-search.test.ts": [17,20,27,32,1],
       "test/e2e/live/brev-workspace-cleanup.test.ts": [0,0,0,1,0],
       "test/e2e/live/channels-add-remove.test.ts": [40,93,40,93,0],
-      "test/e2e/live/channels-stop-start.test.ts": [0,0,25,95,9],
+      "test/e2e/live/channels-stop-start.test.ts": [0,0,23,93,9],
       "test/e2e/live/cloud-inference.test.ts": [12,18,12,18,1],
       "test/e2e/live/cloud-onboard.test.ts": [22,24,22,24,1],
       "test/e2e/live/common-egress-agent.test.ts": [26,66,27,74,5],
