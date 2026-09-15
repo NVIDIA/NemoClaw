@@ -107,6 +107,42 @@ describe("onboarding command failures", () => {
     expect(String(failure.errors[1])).toContain("Inspect the gateway.");
   });
 
+  it("redacts credential strings nested in plain diagnostic objects without following cycles", async () => {
+    const payload = "plain-object-key-payload".repeat(20);
+    const pem = [
+      "-----BEGIN " + "PRIVATE KEY-----",
+      payload,
+      "-----END " + "PRIVATE KEY-----",
+    ].join("\n");
+    const details: Record<string, unknown> = {
+      diagnostic: `Nested failure\n${pem}\nInspect the rejected credential.`,
+    };
+    details.self = details;
+    const failure = new AggregateError([details], "Onboarding cleanup failed", {
+      cause: details,
+    });
+
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw failure;
+        },
+        error: vi.fn(),
+        exit: exitWithCode,
+      }),
+    ).rejects.toBe(failure);
+
+    const redacted = failure.cause as Record<string, unknown>;
+    expect(failure.errors[0]).toBe(redacted);
+    expect(redacted.self).toBe(redacted);
+    expect(String(redacted.diagnostic)).not.toContain(payload);
+    expect(String(redacted.diagnostic)).not.toContain("PRIVATE KEY");
+    expect(String(redacted.diagnostic)).toContain("<REDACTED>");
+    expect(String(redacted.diagnostic)).toContain("Inspect the rejected credential.");
+  });
+
   it("redacts a complete private-key block before reporting a typed onboarding error", async () => {
     const payload = "synthetic-key-payload".repeat(20);
     const pem = [
