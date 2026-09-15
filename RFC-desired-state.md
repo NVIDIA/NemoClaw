@@ -423,3 +423,31 @@ namespaces exercise routing isolation but do not qualify a separate physical
 host, WAN behavior, or another operating system. The daemon fixture must retain
 cgroup mount visibility and use an isolated containerd; these are fixture
 requirements, not reasons to add another product execution framework.
+
+## Inline recipe contract experiment
+
+Recipe authors own model-specific preparation, semantic verification and patched
+runtime code. NemoClaw owns the versioned execution contract, pinned-artifact
+checks, staging and receipt lifecycle, typed backend settings, host observations,
+and supervision. The complete recipe declaration is inline in `service.recipe`;
+a future reference or file form can resolve into that same structure.
+
+The new path uses `backend: vllm` for both ordinary models and models needing
+preparation. The Qwen adapters run inside its pinned image using structured JSON
+stdin/stdout. No dynamic Rust library or shell command interpolation is involved.
+Image labels declare required capabilities and protocol support; executable
+hashes bind the declaration to packaged code. Licenses and source notices stay
+in the artifact. New recipe identities do not require a Rust enum variant.
+
+The old Qwen backend remains as compatibility code for established state and
+older images. An explicit cache import keeps the earlier snapshot directory and
+offers packed bytes as candidates to the new verifier. It does not accept a
+legacy receipt as proof of the new contract. The shared downloader, supervisor,
+OpenTofu identities and retained storage resources remain in place.
+
+The first declaration also carries resource requirements and typed vLLM settings;
+otherwise those model-specific assumptions would remain hidden in Rust. Hardware
+requirements are evaluated against observations from the selected execution
+host. This contract does not imply that all models or hardware combinations are
+qualified. See [inline recipe execution](docs/recipes.md) for its protocol and
+limits, and the validation records for tested combinations.

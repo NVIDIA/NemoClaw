@@ -3,21 +3,21 @@
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
-  name: spark-recipe
-  uid: 435d6941-9513-470b-9598-441deda2aff0
+  name: spark-inline-recipe
+  uid: 3f524c9d-e7ec-465b-9c06-f71e2aa31b73
 spec:
   gateway:
     management: managed
-    endpoint: http://127.0.0.1:17685
+    endpoint: http://127.0.0.1:17705
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792
-    networkCIDR: 172.30.114.0/24
+    networkCIDR: 172.30.125.0/24
   inferenceProviders:
   - name: qwen
     provider: openai
     service:
       backend: vllm
-      image: nc-prototype-qwen38@sha256:2c306114ca9a07f4e38192541d1072770ef168e461696761bda38dd31ae21af2
+      image: nc-prototype-qwen38@sha256:f414305c9848584811f244e8aee6e8236ecd6b0a9d6ed14bc43a9692bcb21330
       model:
         repository: Mia-AiLab/Qwen3.8-Flash-Next-NVFP4
         revision: 925d7be6c14c6c9442ef83e8f05b5a3c39304f69

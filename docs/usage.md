@@ -29,6 +29,9 @@ OpenShell graph until apply makes it reachable. Apply always creates its own
 checked plan; a previous public plan is not an approval artifact. Apply checks
 inference even when the resource change list is empty.
 
+For model-specific preparation supplied by a pinned image, see
+[inline recipes](recipes.md). Ordinary models can omit `service.recipe`.
+
 ## Configuration and credentials
 
 Unknown fields, duplicate keys, inline secrets, and unsupported combinations are
