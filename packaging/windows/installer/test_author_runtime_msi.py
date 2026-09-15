@@ -87,9 +87,13 @@ class AuthoringTests(unittest.TestCase):
         self.assertIn(
             "NOT UPGRADINGPRODUCTCODE", conditions["NativeRuntimeBeginInstall"]
         )
-        self.assertEqual(conditions["NativeRuntimeJoinRemoval"], "UPGRADINGPRODUCTCODE")
         self.assertEqual(
-            conditions["NativeRuntimeRollback"], "NOT UPGRADINGPRODUCTCODE"
+            conditions["NativeRuntimeJoinRemoval"],
+            'UPGRADINGPRODUCTCODE AND NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"',
+        )
+        self.assertEqual(
+            conditions["NativeRuntimeRollback"],
+            'NOT UPGRADINGPRODUCTCODE AND NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"',
         )
         self.assertEqual(
             tree.find("{" + NAMESPACE + "}Launch").get("Condition"),
@@ -157,14 +161,25 @@ class AuthoringTests(unittest.TestCase):
     def test_identity_properties_are_private_database_defaults_only(self):
         tree, receipt = self.authored()
         properties = tree.findall("{" + NAMESPACE + "}Property")
-        self.assertEqual(len(properties), 5)
+        self.assertEqual(len(properties), 6)
+        identity = [
+            prop
+            for prop in properties
+            if prop.get("Id") != "NEMOCLAW_BUNDLE_MANAGED_RUNTIME"
+        ]
         self.assertEqual(
-            {p.get("Id"): p.get("Value") for p in properties},
+            {p.get("Id"): p.get("Value") for p in identity},
             {name: self.identity[field] for field, name in IDENTITY_PROPERTIES.items()},
         )
-        for prop in properties:
+        for prop in identity:
             self.assertTrue(any(letter.islower() for letter in prop.get("Id")))
             self.assertEqual(set(prop.attrib), {"Id", "Value"})
+        bundle = next(
+            prop
+            for prop in properties
+            if prop.get("Id") == "NEMOCLAW_BUNDLE_MANAGED_RUNTIME"
+        )
+        self.assertEqual(bundle.attrib, {"Id": bundle.get("Id"), "Value": "0", "Secure": "yes"})
         self.assertEqual(receipt["identityTransport"], "database-private-properties")
         self.assertFalse(tree.findall("{" + NAMESPACE + "}SetProperty"))
 

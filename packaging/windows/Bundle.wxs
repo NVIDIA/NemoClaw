@@ -4,6 +4,9 @@
   <?ifndef SystemDriveMetadataPreparation ?>
   <?define SystemDriveMetadataPreparation = "false" ?>
   <?endif ?>
+  <?ifndef RuntimeImageFinalization ?>
+  <?define RuntimeImageFinalization = "false" ?>
+  <?endif ?>
   <Bundle
     Name="NemoClaw"
     Manufacturer="NVIDIA Corporation"
@@ -53,7 +56,28 @@
         Permanent="yes"
         Compressed="yes"
         Vital="yes" />
-      <MsiPackage Id="NemoClawArm64Msi" SourceFile="$(var.MsiPath)" Compressed="yes" Vital="yes" />
+      <MsiPackage Id="NemoClawArm64Msi" SourceFile="$(var.MsiPath)" Compressed="yes" Vital="yes">
+        <?if $(var.RuntimeImageFinalization) = "true" ?>
+        <MsiProperty Name="NEMOCLAW_BUNDLE_MANAGED_RUNTIME" Value="1" />
+        <?endif ?>
+      </MsiPackage>
+      <?if $(var.RuntimeImageFinalization) = "true" ?>
+      <!-- Windows Installer strips SeManageVolumePrivilege from deferred custom
+           actions. Burn runs this package from its elevated engine after MSI
+           file placement and before declaring the bundle installed. -->
+      <ExePackage
+        Id="NemoClawRuntimeFinalization"
+        CacheId="NemoClawRuntimeFinalization-$(var.RuntimeFinalizerSha256)"
+        Name="runtime\NemoClawRuntimeFinalizer.exe"
+        SourceFile="$(var.RuntimeFinalizerPath)"
+        InstallArguments="--runtime-bundle install $(var.RuntimeTuple)"
+        RepairArguments="--runtime-bundle repair $(var.RuntimeTuple)"
+        UninstallArguments="--runtime-bundle remove $(var.RuntimeId)"
+        DetectCondition="WixBundleInstalled"
+        PerMachine="yes"
+        Compressed="yes"
+        Vital="yes" />
+      <?endif ?>
     </Chain>
   </Bundle>
 </Wix>

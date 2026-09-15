@@ -104,8 +104,15 @@ def author(identity, helper: Path, expected_sha256: str):
     # this sealed identity. No UI setter or SecureCustomProperties transport is used.
     for field, name in IDENTITY_PROPERTIES.items():
         element(include, "Property", Id=name, Value=identity[field])
+    element(
+        include,
+        "Property",
+        Id="NEMOCLAW_BUNDLE_MANAGED_RUNTIME",
+        Value="0",
+        Secure="yes",
+    )
     tuple_args = " ".join("[" + name + "]" for name in IDENTITY_PROPERTIES.values())
-    root = "NOT UPGRADINGPRODUCTCODE"
+    root = 'NOT UPGRADINGPRODUCTCODE AND NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"'
     installing = root + ' AND NOT (REMOVE ~= "ALL")'
     removing = root + ' AND REMOVE ~= "ALL"'
     actions = [
@@ -134,7 +141,7 @@ def author(identity, helper: Path, expected_sha256: str):
             "NativeRuntimeJoinRemoval",
             "deferred",
             "join-remove " + identity["runtimeId"] + ' "[UPGRADINGPRODUCTCODE]"',
-            "UPGRADINGPRODUCTCODE",
+            'UPGRADINGPRODUCTCODE AND NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"',
             1504,
         ),
         ("NativeRuntimeVerify", "deferred", "verify " + tuple_args, installing, 6501),

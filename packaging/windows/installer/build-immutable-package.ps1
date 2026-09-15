@@ -259,9 +259,13 @@ try {
         throw 'The proven system-drive helper changed before Burn composition.'
     }
     $setup = Join-Path $OutputDirectory "NemoClawSetup-$ProductVersion-windows-arm64.exe"
+    $runtimeTuple = @($assembly.runtime.runtimeId, $assembly.runtime.manifestSha256, $assembly.runtime.sourceRevision,
+        $assembly.runtime.nodeSha256, $assembly.runtime.nodeVersion) -join ' '
     Invoke-BuildTool $WixPath @('build', '-arch', 'arm64', '-d', "ProductVersion=$ProductVersion", '-d', "SourceRoot=$SourceRoot",
         '-d', "MsiPath=$msi", '-d', "WxcHostPrepPath=$(Join-Path $payload 'mxc\wxc-host-prep.exe')",
         '-d', 'SystemDriveMetadataPreparation=true', '-d', "SystemDrivePrepPath=$SystemDrivePrepPath", '-d', "SystemDrivePrepSha256=$systemDriveSha",
+        '-d', "RuntimeImageFinalization=$($imageDelivery.ToString().ToLowerInvariant())", '-d', "RuntimeFinalizerPath=$helper",
+        '-d', "RuntimeFinalizerSha256=$helperSha", '-d', "RuntimeTuple=$runtimeTuple", '-d', "RuntimeId=$($assembly.runtime.runtimeId)",
         '-d', "BootstrapperPath=$(Join-Path $publish 'NemoClaw.Bootstrapper.exe')", '-d', "BootstrapperRoot=$publish",
         (Join-Path $windows 'Bundle.wxs'), $bootstrapperAuthoring, '-pdbtype', 'none', '-wx', '-sw1161', '-out', $setup) 'burn-build'
     $receipt['runtime'] = $assembly.runtime

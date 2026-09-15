@@ -140,6 +140,38 @@ fn failure_exit_code(error: &str) -> i32 {
     }
 }
 
+#[cfg(windows)]
+fn bundle_transaction(arguments: &[String]) -> Result<(), String> {
+    const OWNER: &str = "{1BA739B8-B632-4A8C-BB02-95058CC3A960}";
+    let Some(action) = arguments.first().map(String::as_str) else {
+        return Err("The native bundle transaction command is invalid.".into());
+    };
+    let mut store = windows_runtime_store::WindowsStore::new();
+    let commands = match (action, &arguments[1..]) {
+        ("install" | "repair", fields) if fields.len() == 5 => vec![
+            [vec!["begin-install".into()], fields.to_vec(), vec![OWNER.into()]].concat(),
+            [vec!["verify".into()], fields.to_vec()].concat(),
+            vec!["commit-install".into(), fields[0].clone()],
+        ],
+        ("remove", fields) if fields.len() == 1 => vec![
+            vec!["begin-remove".into(), fields[0].clone(), OWNER.into()],
+            vec!["commit-remove".into(), fields[0].clone()],
+        ],
+        _ => return Err("The native bundle transaction command is invalid.".into()),
+    };
+    for command in commands {
+        if let Err(error) = runtime_transaction::dispatch(&mut store, &command) {
+            let primary = format!("{error:?}");
+            let _ = runtime_transaction::dispatch(
+                &mut store,
+                &["rollback".into(), arguments.get(1).cloned().unwrap_or_default()],
+            );
+            return Err(primary);
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     #[cfg(not(windows))]
     {
@@ -169,6 +201,9 @@ fn main() {
         if matches!(args.as_slice(), ["--runtime-msi", "begin-install", ..]) {
             diagnostics::clear();
         }
+        if matches!(args.as_slice(), ["--runtime-bundle", "install" | "repair", ..]) {
+            diagnostics::clear();
+        }
         // The same exact native lease entrypoints let Windows integration tests
         // hold real package/version/Node leases against the embedded helper.
         let result = match args.as_slice() {
@@ -185,6 +220,7 @@ fn main() {
                 runtime_transaction::dispatch(&mut store, &arguments[1..])
                     .map_err(|error| format!("{error:?}"))
             }
+            ["--runtime-bundle", ..] => bundle_transaction(&arguments[1..]),
             _ => Err("The native MSI transaction command is invalid.".into()),
         };
         if let Err(error) = result {
@@ -198,10 +234,11 @@ fn main() {
             // codes stable so an early image attach/verification failure remains
             // attributable in the installed acceptance evidence.
             let exit_code = failure_exit_code(&error);
-            if matches!(args.first(), Some(value) if *value == "--runtime-msi") {
+            if matches!(args.first(), Some(value) if matches!(*value, "--runtime-msi" | "--runtime-bundle")) {
                 let stage = match args.get(1).copied() {
                     Some("begin-install" | "begin-remove" | "join-remove" | "verify"
-                        | "commit-install" | "commit-remove" | "rollback") => args[1],
+                        | "commit-install" | "commit-remove" | "rollback" | "install"
+                        | "repair" | "remove") => args[1],
                     _ => "invalid",
                 };
                 diagnostics::record(
