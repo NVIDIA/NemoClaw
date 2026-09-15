@@ -94,6 +94,60 @@ describe("CLI OpenShell sandbox logs adapter", () => {
     );
   });
 
+  it("retains selected OpenShell routing without forwarding ambient credentials", async () => {
+    const runBuffered = vi.fn<OpenShellBufferedCommandRunner>(async () => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const logs = createCliOpenShellSandboxLogs({
+      resolveBinary: () => "/usr/bin/openshell",
+      runBuffered,
+      environment: {
+        HOME: "/tmp/home",
+        PATH: "/bin",
+        OPENSHELL_GATEWAY: "nemoclaw-8090",
+        OPENSHELL_WORKSPACE: "default",
+        OPENSHELL_LOCAL_TLS_DIR: "/tmp/openshell-tls",
+        OPENSHELL_GATEWAY_AUTH_TOKEN: "must-not-cross-child-boundary",
+        AWS_SECRET_ACCESS_KEY: "must-not-cross-child-boundary",
+      },
+    });
+
+    await logs.read(gatewayRequest);
+
+    expect(runBuffered).toHaveBeenCalledOnce();
+    const childEnvironment = runBuffered.mock.calls[0]?.[2].environment;
+    expect(childEnvironment).toMatchObject({
+      HOME: "/tmp/home",
+      PATH: "/bin",
+      OPENSHELL_GATEWAY: "nemoclaw-8090",
+      OPENSHELL_WORKSPACE: "default",
+      OPENSHELL_LOCAL_TLS_DIR: "/tmp/openshell-tls",
+    });
+    expect(childEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY_AUTH_TOKEN");
+    expect(childEnvironment).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+  });
+
+  it("rejects an ambient gateway endpoint override before invoking OpenShell", async () => {
+    const runBuffered = vi.fn<OpenShellBufferedCommandRunner>();
+    const logs = createCliOpenShellSandboxLogs({
+      resolveBinary: () => "/usr/bin/openshell",
+      runBuffered,
+      environment: {
+        OPENSHELL_GATEWAY_ENDPOINT: "https://untrusted.invalid",
+      },
+    });
+
+    await expect(logs.read(gatewayRequest)).resolves.toMatchObject({
+      outcome: {
+        kind: "failed",
+        error: { kind: "configuration", message: expect.stringContaining("Unset") },
+      },
+    });
+    expect(runBuffered).not.toHaveBeenCalled();
+  });
+
   it("returns typed unavailable and invalid-request failures without invoking a child", async () => {
     const runBuffered = vi.fn<OpenShellBufferedCommandRunner>();
     const unavailable = createCliOpenShellSandboxLogs({
@@ -119,33 +173,41 @@ describe("CLI OpenShell sandbox logs adapter", () => {
   });
 
   it("maps timeout and rejected runner failures without leaking transport exceptions", async () => {
+    const secret = ["transport", "secret"].join("-");
+    const timeoutRunner = vi.fn<OpenShellBufferedCommandRunner>(async () => ({
+      status: null,
+      stdout: "partial",
+      stderr: `Authorization: Bearer ${secret}`,
+      timedOut: true,
+    }));
     const timeoutLogs = createCliOpenShellSandboxLogs({
       resolveBinary: () => "/usr/bin/openshell",
-      runBuffered: async () => ({
-        status: null,
-        stdout: "partial",
-        stderr: "detail",
-        timedOut: true,
-      }),
+      runBuffered: timeoutRunner,
       environment: {},
     });
-    await expect(timeoutLogs.read(gatewayRequest)).resolves.toMatchObject({
+    const openshellRequest = {
+      ...gatewayRequest,
+      source: "openshell" as const,
+      since: "5m",
+    };
+    await expect(timeoutLogs.read(openshellRequest)).resolves.toMatchObject({
       content: "partial",
-      diagnostic: "detail",
+      diagnostic: "Authorization: <REDACTED> <REDACTED>",
       outcome: { kind: "failed", error: { kind: "timeout" } },
     });
+    expect(timeoutRunner.mock.calls[0]?.[2].timeoutMilliseconds).toBe(5000);
 
     const rejectedLogs = createCliOpenShellSandboxLogs({
       resolveBinary: () => "/usr/bin/openshell",
       runBuffered: async () => {
-        throw new Error("runner rejected");
+        throw new Error(`runner rejected Bearer ${secret}`);
       },
       environment: {},
     });
     await expect(rejectedLogs.read(gatewayRequest)).resolves.toMatchObject({
       outcome: {
         kind: "failed",
-        error: { kind: "invocation", message: "runner rejected" },
+        error: { kind: "invocation", message: "runner rejected Bearer <REDACTED>" },
       },
     });
   });

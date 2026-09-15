@@ -6,6 +6,7 @@ import type { StdioOptions } from "node:child_process";
 
 import { spawnExitCode } from "../../core/process-exit";
 import { ROOT } from "../../runner";
+import { redactCredentialText } from "../../security/credential-filter";
 import {
   assertCliOpenShellSandboxName,
   assertCliOpenShellTarget,
@@ -135,12 +136,26 @@ function terminationReason(
 
 function classifyError(error: Error): OpenShellSandboxLogError {
   const code = (error as NodeJS.ErrnoException).code;
-  if (code === "ENOENT") return { kind: "unavailable", message: error.message };
-  if (code === "ETIMEDOUT") return { kind: "timeout", message: error.message };
+  const message = redactCredentialText(error.message);
+  if (code === "ENOENT") return { kind: "unavailable", message };
+  if (code === "ETIMEDOUT") return { kind: "timeout", message };
   if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-    return { kind: "capture", message: error.message };
+    return { kind: "capture", message };
   }
-  return { kind: "invocation", message: error.message };
+  return { kind: "invocation", message };
+}
+
+function buildLogEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment = buildOpenShellSubprocessEnv(source);
+  for (const name of [
+    "OPENSHELL_GATEWAY",
+    "OPENSHELL_WORKSPACE",
+    "OPENSHELL_LOCAL_TLS_DIR",
+  ] as const) {
+    const value = source[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
 }
 
 function outputView(output: LogChildOutput): OpenShellSandboxLogOutput {
@@ -177,9 +192,9 @@ export function createCliOpenShellSandboxLogs(
   const hostCwd = deps.hostCwd ?? ROOT;
   return {
     async read(request) {
-      const environment = deps.environment ?? buildOpenShellSubprocessEnv();
+      const sourceEnvironment = deps.environment ?? process.env;
       try {
-        validateRequest(request, environment);
+        validateRequest(request, sourceEnvironment);
       } catch (error) {
         return {
           content: "",
@@ -190,6 +205,7 @@ export function createCliOpenShellSandboxLogs(
           }),
         };
       }
+      const environment = buildLogEnvironment(sourceEnvironment);
       let binary: string | null;
       try {
         binary = resolveBinary();
@@ -214,10 +230,7 @@ export function createCliOpenShellSandboxLogs(
           hostCwd,
           outputLimitBytes: deps.outputLimitBytes ?? LOG_OUTPUT_LIMIT_BYTES,
           timeoutKillSignal: "SIGKILL",
-          timeoutMilliseconds:
-            request.source === "gateway"
-              ? (deps.timeoutMilliseconds ?? request.timeoutMs)
-              : undefined,
+          timeoutMilliseconds: deps.timeoutMilliseconds ?? request.timeoutMs,
         });
       } catch (error) {
         return {
@@ -229,14 +242,14 @@ export function createCliOpenShellSandboxLogs(
       if (result.error) {
         return {
           content: result.stdout,
-          diagnostic: result.stderr,
+          diagnostic: redactCredentialText(result.stderr),
           outcome: failed(classifyError(result.error)),
         };
       }
       if (result.timedOut) {
         return {
           content: result.stdout,
-          diagnostic: result.stderr,
+          diagnostic: redactCredentialText(result.stderr),
           outcome: failed({
             kind: "timeout",
             message: "OpenShell log read timed out (ETIMEDOUT)",
@@ -245,7 +258,7 @@ export function createCliOpenShellSandboxLogs(
       }
       return {
         content: result.stdout,
-        diagnostic: result.stderr,
+        diagnostic: redactCredentialText(result.stderr),
         outcome: {
           kind: "completed",
           exitCode: spawnExitCode(result),
@@ -256,9 +269,9 @@ export function createCliOpenShellSandboxLogs(
       };
     },
     follow(request) {
-      const environment = deps.environment ?? buildOpenShellSubprocessEnv();
+      const sourceEnvironment = deps.environment ?? process.env;
       try {
-        validateRequest(request, environment);
+        validateRequest(request, sourceEnvironment);
       } catch (error) {
         return immediateFailure({
           kind: "configuration",
@@ -276,6 +289,7 @@ export function createCliOpenShellSandboxLogs(
       if (!binary) {
         return immediateFailure({ kind: "unavailable", message: "OpenShell binary not found" });
       }
+      const environment = buildLogEnvironment(sourceEnvironment);
       const spawnChild: OpenShellLogSpawner =
         deps.spawnChild ??
         ((file, args, options) => spawn(file, [...args], options) as OpenShellLogChild);
