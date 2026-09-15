@@ -113,8 +113,24 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("docker");
 
     expect(() => resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", "podman")).toThrow(
-      "does not match gateway runtime provider 'docker'",
+      "runtime providers do not match",
     );
+  });
+
+  it("uses the selected provider before sandbox registration", () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+
+    expect(resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081")).toBe("podman");
+  });
+
+  it("rejects disagreement with the configured provider", () => {
+    mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("docker");
+
+    expect(() =>
+      resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", undefined, {
+        configuredRuntimeProviderId: "podman",
+      }),
+    ).toThrow("runtime providers do not match");
   });
 
   it.each(["systemd-system", "systemd-user"] as const)(
