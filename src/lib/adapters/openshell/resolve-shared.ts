@@ -7,6 +7,7 @@ import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-defin
 import {
   assertPodmanExecutableAuthority,
   capturePodmanExecutableAuthority,
+  PodmanExecutablePermissionError,
   type PodmanExecutableAuthority,
   type PodmanExecutableAuthorityDeps,
 } from "../podman/executable-authority";
@@ -52,8 +53,10 @@ export interface HermesPortableOpenShellExecutableAuthorityDeps extends PodmanEx
   readonly runVersion?: (executable: string, env: NodeJS.ProcessEnv) => VersionResult;
 }
 
-function failExecutableAuthority(message: string): never {
-  throw new Error(`Hermes portable OpenShell executable authority ${message}`);
+/** Preserve permission remedies while keeping unrelated filesystem failures opaque. */
+function failExecutableAuthority(message: string, cause?: unknown): never {
+  const detail = cause instanceof PodmanExecutablePermissionError ? `: ${cause.message}` : "";
+  throw new Error(`Hermes portable OpenShell executable authority ${message}${detail}`);
 }
 
 function runVersion(executable: string, env: NodeJS.ProcessEnv): VersionResult {
@@ -100,8 +103,8 @@ export function captureHermesPortableOpenShellExecutableAuthority(
   let executable: PodmanExecutableAuthority;
   try {
     executable = capturePodmanExecutableAuthority(executablePath, deps);
-  } catch {
-    failExecutableAuthority("could not capture a safe executable generation");
+  } catch (error) {
+    failExecutableAuthority("could not capture a safe executable generation", error);
   }
   return Object.freeze({
     executable,
@@ -124,8 +127,8 @@ export function assertHermesPortableOpenShellExecutableAuthority(
   }
   try {
     assertPodmanExecutableAuthority(expected.executable, deps);
-  } catch {
-    failExecutableAuthority("executable generation changed after reservation");
+  } catch (error) {
+    failExecutableAuthority("executable generation changed after reservation", error);
   }
   requireVersion(expected.executable.executablePath, childEnv, deps.runVersion ?? runVersion);
   return expected.executable.executablePath;
@@ -145,8 +148,8 @@ export function assertHermesPortableOpenShellExecutableFileAuthority(
   }
   try {
     assertPodmanExecutableAuthority(expected.executable, deps);
-  } catch {
-    failExecutableAuthority("executable generation changed after reservation");
+  } catch (error) {
+    failExecutableAuthority("executable generation changed after reservation", error);
   }
   return expected.executable.executablePath;
 }

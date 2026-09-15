@@ -61,6 +61,8 @@ import {
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
   isOnboardDeferredExitError,
+  redactOnboardError,
+  redactOnboardErrorText,
   redactOnboardDiagnosticText,
 } from "./session-bootstrap";
 
@@ -530,12 +532,14 @@ function promptCancellationCode(error: unknown): "EOF" | "SIGINT" | null {
   return code === "EOF" || code === "SIGINT" ? code : null;
 }
 
+/** Report operator errors without exposing multiline secrets or truncating later recovery lines. */
 function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string): number {
-  const redacted = message.split("\n").map(redactOnboardDiagnosticText).join("\n");
+  const redacted = redactOnboardErrorText(message);
   (deps.error ?? console.error)(redacted);
   return 1;
 }
 
+/** Preserve cancellation and failure behavior without exposing secrets through CLI errors. */
 function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
   const cancellationCode = promptCancellationCode(error);
   if (cancellationCode === "SIGINT") {
@@ -574,7 +578,10 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
   // print a clear message and exit non-zero instead of either crashing with
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
-  if (cancellationCode !== "EOF") throw error;
+  if (cancellationCode !== "EOF") {
+    if (error instanceof Error) redactOnboardError(error);
+    throw error;
+  }
   return reportOnboardCommandError(deps, "  Installation cancelled");
 }
 

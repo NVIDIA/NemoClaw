@@ -4,21 +4,27 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import type { PodmanExecutableStat } from "../podman/executable-authority";
+import { assert, describe, expect, it, vi } from "vitest";
+import {
+  PodmanExecutablePermissionError,
+  type PodmanExecutableStat,
+} from "../podman/executable-authority";
 import { openshellNotFoundDiagnosticLines, resolveOpenshell } from "./resolve";
 import {
   assertHermesPortableOpenShellExecutableAuthority,
+  assertHermesPortableOpenShellExecutableFileAuthority,
   captureHermesPortableOpenShellExecutableAuthority,
   type HermesPortableOpenShellExecutableAuthorityDeps,
 } from "./resolve-shared";
 
 const AUTHORITY_BINARY = "/opt/nemoclaw/bin/openshell";
 
+/** Model file and parent replacement independently without running an external executable. */
 function executableAuthorityHarness() {
   let executableInode = 10n;
   let executableBytes = Buffer.from("openshell-binary");
   let parentInode = 20n;
+  /** Keep ownership and modes trusted while tests vary identity and content independently. */
   const stat = (kind: "directory" | "file", inode: bigint, size = 0n): PodmanExecutableStat => ({
     dev: 1n,
     ino: inode,
@@ -48,13 +54,16 @@ function executableAuthorityHarness() {
   };
   return {
     deps,
+    /** Model replacement at the same executable path after authority capture. */
     replaceBinary: () => {
       executableInode += 1n;
       executableBytes = Buffer.from("replacement-binary");
     },
+    /** Preserve metadata while changing content to exercise digest verification. */
     changeDigest: () => {
       executableBytes = Buffer.alloc(executableBytes.byteLength, 0x78);
     },
+    /** Model a replaced parent without changing the executable itself. */
     rotateParent: () => {
       parentInode += 1n;
     },
@@ -190,6 +199,95 @@ describe("lib/resolve-openshell", () => {
 
 describe("Hermes portable OpenShell executable authority", () => {
   const childEnv = { HOME: "/home/test", PATH: "/opt/nemoclaw/bin" };
+
+  it.each(["/opt/nemoclaw/bin", AUTHORITY_BINARY])(
+    "names the writable path %s and its permission remedy before execution (#11717)",
+    (rejectedPath) => {
+      const harness = executableAuthorityHarness();
+      const runVersion = vi.fn(harness.deps.runVersion);
+      let writable = true;
+      const deps = {
+        ...harness.deps,
+        runVersion,
+        /** Change only the selected mode so rejection cannot be attributed to another invariant. */
+        lstat: (filePath: string): PodmanExecutableStat => {
+          const stat = harness.deps.lstat?.(filePath);
+          assert(stat, "Executable stat fixture is missing.");
+          return filePath === rejectedPath && writable
+            ? { ...stat, mode: BigInt(stat.mode) | 0o020n }
+            : stat;
+        },
+      };
+      /** Exercise the same capture boundary before and after repairing the mode. */
+      const capture = () =>
+        captureHermesPortableOpenShellExecutableAuthority(
+          AUTHORITY_BINARY,
+          childEnv,
+          childEnv,
+          deps,
+        );
+
+      expect(capture).toThrow(rejectedPath);
+      expect(capture).toThrow("mode 0775");
+      expect(capture).toThrow("Remove group and other write permission");
+      expect(runVersion).not.toHaveBeenCalled();
+
+      writable = false;
+      expect(capture().executable.executablePath).toBe(AUTHORITY_BINARY);
+      expect(runVersion).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not expose unrelated filesystem errors during capture (#11717)", () => {
+    const harness = executableAuthorityHarness();
+    expect(() =>
+      captureHermesPortableOpenShellExecutableAuthority(AUTHORITY_BINARY, childEnv, childEnv, {
+        ...harness.deps,
+        /** Simulate an unrelated filesystem failure that must remain opaque. */
+        lstat: () => {
+          throw new Error("private filesystem failure detail");
+        },
+      }),
+    ).toThrow(
+      /^Hermes portable OpenShell executable authority could not capture a safe executable generation$/,
+    );
+  });
+
+  it("escapes terminal controls in rejected executable paths (#11717)", () => {
+    const failure = new PodmanExecutablePermissionError("/opt/\u001b[31m/bin", 0o40775n);
+    expect(failure.message).not.toContain("\u001b");
+    expect(failure.message).toContain("\\u001b");
+    expect(failure.message).toContain("mode 0775");
+  });
+
+  it.each(["version", "file"])(
+    "retains permission guidance during %s revalidation (#11717)",
+    (kind) => {
+      const harness = executableAuthorityHarness();
+      const authority = captureHermesPortableOpenShellExecutableAuthority(
+        AUTHORITY_BINARY,
+        childEnv,
+        childEnv,
+        harness.deps,
+      );
+      const deps = {
+        ...harness.deps,
+        /** Invalidate parent permissions after the original authority was captured. */
+        lstat: (filePath: string): PodmanExecutableStat => {
+          const stat = harness.deps.lstat?.(filePath);
+          assert(stat, "Executable stat fixture is missing.");
+          return filePath === "/opt/nemoclaw/bin" ? { ...stat, mode: 0o40775n } : stat;
+        },
+      };
+      /** Exercise the selected revalidation path with the retained authority. */
+      const verify = () =>
+        kind === "version"
+          ? assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, deps)
+          : assertHermesPortableOpenShellExecutableFileAuthority(authority, childEnv, deps);
+      expect(verify).toThrow("executable generation changed after reservation");
+      expect(verify).toThrow("Remove group and other write permission");
+    },
+  );
 
   it("captures and reuses the exact canonical OpenShell 0.0.116 generation (#9211)", () => {
     const harness = executableAuthorityHarness();
