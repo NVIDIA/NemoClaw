@@ -163,10 +163,17 @@ struct ConnectResult {
 fn private_exchange(state_directory: &Path) -> Result<tempfile::TempDir, Error> {
     fs::create_dir_all(state_directory)
         .map_err(|_| Error::State("cannot prepare VoiceClaw exchange directory"))?;
-    tempfile::Builder::new()
+    let exchange = tempfile::Builder::new()
         .prefix("voiceclaw-r0-")
         .tempdir_in(state_directory)
-        .map_err(|_| Error::State("cannot create private VoiceClaw exchange directory"))
+        .map_err(|_| Error::State("cannot create private VoiceClaw exchange directory"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(exchange.path(), fs::Permissions::from_mode(0o700))
+            .map_err(|_| Error::State("cannot protect VoiceClaw exchange directory"))?;
+    }
+    Ok(exchange)
 }
 
 fn write_credential(path: &Path, credential: &str) -> Result<(), Error> {
@@ -285,5 +292,22 @@ async fn wait(
         Err(Error::Conflict(
             "VoiceClaw connection failed; agent retained",
         ))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn exchange_directory_is_owner_only() {
+        let state = tempfile::tempdir().unwrap();
+        let exchange = private_exchange(state.path()).unwrap();
+
+        assert_eq!(
+            fs::metadata(exchange.path()).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
     }
 }
