@@ -16,6 +16,7 @@ have been removed. Commit bodies retain the test-first implementation decisions.
 | Managed Ollama initial apply, no-op, export/reapply | [Real Docker/Ollama lifecycle](rust-ollama-linux-arm64.json) |
 | Deep Agents, Hermes and Fabric OpenClaw native responses, stable hosted runtime, no-op, export/reapply and teardown | [Live Fabric qualification](rust-fabric-live-linux-arm64.json) |
 | Runtime/recipe/backend/hardware separation, renamed executable, image upgrade and offline reproduction | [Runtime boundaries](rust-runtime-boundaries-linux-arm64.json) |
+| Config-selected public model, generic runtime, no-op/export, failed startup recovery and watchdog lifecycle | [Selected-model qualification](rust-selected-model-linux-arm64.json) |
 | Linux ARM64/x64, macOS ARM64/Intel, Windows x64 bundles | [Five native jobs](rust-native-platforms.json); real OpenTofu and production provider execution on each target |
 
 The parity baseline workspace check passed 99 deterministic tests, with 17 explicit
@@ -24,9 +25,13 @@ workspace Clippy passed. The retained platform and live records identify the
 separate execution gates; ignored tests are not counted as passes.
 
 Limits inherited from the reference remain explicit: Ollama's combined process
-and storage resource does not support destroy; Fabric requires external gateway
-and inference; native channel credentials and persistent sandbox mounts are not
+and storage resource does not support destroy; native channel credentials and
+persistent sandbox mounts are not
 provisioned by this schema; invocation replay and conversation recovery are not
 provided. Native bundle tests do not establish Podman or GPU compatibility across
 all operating systems. Reading retained Go storage is not a full state-migration
 qualification. No comparative maintenance-cost reduction has been measured.
+
+The selected-model experiment additionally qualifies Fabric OpenClaw with a
+managed gateway and managed vLLM inference. It does not extend that live result
+to every Fabric harness or model.

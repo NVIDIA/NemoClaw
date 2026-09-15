@@ -244,3 +244,9 @@ setting failed startup safely; declaring 6 GiB allowed it to load from the retai
 snapshot. Weight size alone cannot prove that serving settings or agent behavior
 will work. Keep those failures explicit rather than treating a downloadable model
 as a qualified agent backend or weakening the agent probe.
+
+With the corrected settings, Qwen3-4B passed actual Fabric OpenClaw replies,
+unchanged apply, export/reapply, and watchdog stop with explicit recovery. Resource
+identities and snapshot receipts stayed stable during recovery; intentional destroy
+retained storage, and a later apply reused it. The same generic runtime image served
+both tested models. See the [retained evidence](docs/validation/rust-selected-model-linux-arm64.json).

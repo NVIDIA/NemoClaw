@@ -1,0 +1,206 @@
+{
+  "sourceRevision": "3947aa7456e6ce20a92fb2b45b13878bae91a5c6",
+  "platform": "linux_arm64",
+  "hardware": "NVIDIA GB10 / DGX Spark",
+  "purpose": "Select public native safetensors models through configuration without rebuilding a model-specific runtime.",
+  "localChecks": {
+    "workspaceTestsPassed": 109,
+    "ignoredNotCountedAsPassed": 19,
+    "format": "passed",
+    "strictWorkspaceClippy": "passed"
+  },
+  "runtime": {
+    "image": "nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e",
+    "published": false,
+    "supervisor": {
+      "nemoclaw-runtime": "f01d22029aa65b229d26ccd2d5d087cbb87978fdbbf3cc85319491e0a8c5c85a",
+      "rust": "1.98.1",
+      "sourceVersion": "0.1.0-dev.3e073c6d17e555cc",
+      "supervisor-source.tar.gz": "15b61b7a5e9b99b1e4a171b2c357e365a31e8dbff183b4db3bf6a4c83a29854a"
+    },
+    "bundleVersion": "0.1.0-dev.3e073c6d17e555cc"
+  },
+  "selectedSnapshot": {
+    "repository": "Qwen/Qwen3-4B",
+    "revision": "1cfa9a7208912126459214e8b04321603b3df60c",
+    "files": 11,
+    "bytes": 8060908199,
+    "manifestSha256": "3173c93eb8e826739284ed4545cfe2bd2239757c05319bb1174f431708f85b8b"
+  },
+  "capacityRejection": {
+    "passed": true,
+    "diagnostic": "GPU is in use by an unrelated process; service was not started",
+    "runtimeResourcesCreated": false,
+    "hostMemoryExhausted": false
+  },
+  "smallerModelAttempt": {
+    "repository": "Qwen/Qwen3-0.6B",
+    "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+    "initialApplyAndActualFourReply": true,
+    "unchangedPlan": true,
+    "unchangedApply": "failed agent reply contract despite successful inference routing; resources retained",
+    "readinessContractWeakened": false,
+    "workloadsDestroyed": true,
+    "persistentStorageRetained": true
+  },
+  "limits": [
+    "Public native root-level safetensors snapshots only; no gated authentication, remote Python code, GGUF or nested checkpoints.",
+    "Live qualification is Linux ARM64 GB10 with the pinned image; arbitrary repository acceptance does not establish model or hardware compatibility.",
+    "The specialized Qwen3.8 PLE backend remains pinned separately."
+  ],
+  "logs": {
+    ".local/generic-model-workspace.log": "42df1a32decf67a3d2318dad6a55f00badaa624eab370657525fb36762f2bfcd",
+    ".local/generic-model-clippy.log": "3f48382156e6ac606a7c03b1e6ed483594a6fc455d1cf4a862c64580d88061ac",
+    ".local/generic-runtime-build.log": "7f6a4f2349ac21bc034ebac08bc49baf191f54d99b94849d6c76d98b9adc96f1",
+    ".local/generic-model-live/capacity-plan.log": "b67c810103364b060bcc5dd1b19eb7c0429d29bfcfb9e6a04a546fc73eb7d443",
+    ".local/generic-model-live/run.log": "260ac78f318cf255f43445b987cc237c1308c30c60fbfc208cb188020b5535bd",
+    ".local/generic-model-final-workspace.log": "97d4d1bf82f375ff308b55ea03b29c0367d25c0140a30c75fdaf2647b5e42ed5",
+    ".local/generic-model-final-clippy.log": "c2a01399d536fd290abf38e9e0649aa0646b16adfea953bf2c4e9c4d283ad644",
+    ".local/generic-model-4b-live/inference-failed.log": "50f5075680023383dab94a544faaab292414dd685e92e21c962a9b23796a43d1",
+    ".local/generic-model-4b-live/run-v2.log": "b1f6741d3f513e9fadfae83a82ceba724e6024181166303c378b59abfe394206",
+    ".local/generic-model-4b-live/recover-kv.log": "65d2f43f35d220d7e49fddde048f6f54dae0de6beb6a49a41a4dee802e0045b7",
+    ".local/generic-model-4b-live/resumed-final.log": "b38e57f9b9d27673976dc3566f63eed39c21b98ca44a61f6a592f01cf8903147",
+    ".local/generic-model-4b-live/inference-final.log": "f874a12c4beeb52d41c589490477004196e9ff416c6ced3a22754e38f7abb8f1",
+    ".local/generic-model-4b-live/reapply-after-destroy.log": "d1d7fbc0e3c90baad26da4093fb5c0a7b2c85a487afc05ec2b1cd32f677f15f4",
+    ".local/generic-model-4b-live/resumed.log": "57648cc2a43ade896ea001c4ffed019007b4f9088b0fb260b61b638a84885e61",
+    ".local/generic-model-live/original-restored-apply.log": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a"
+  },
+  "startupRecovery": {
+    "initialKvCacheGiB": 4,
+    "requiredKvCacheGiB": 4.5,
+    "contextTokens": 32768,
+    "result": "confirmed process exit; state and model snapshot retained",
+    "correctedKvCacheGiB": 6,
+    "correctedApply": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "delete",
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_workspace.deployment",
+          "actions": [
+            "create"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "snapshotReceiptUnchanged": true,
+    "failedContainerId": "1f482f83cbb00ba9a9a8cc5039c90a42eff4e991894bc99ddab5793a8aecae9a",
+    "replacementContainerId": "f04fe95d12e4d136171b7de72f4cb5aee19df765ebb482a26271433fc74dd586",
+    "note": "Changing serving configuration intentionally replaced only the inference runtime among established resources."
+  },
+  "reapplyAfterDestroy": {
+    "result": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_managed_gateway.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "create"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "snapshotReceiptUnchanged": true
+  },
+  "testCorrections": [
+    "An intentional destroy must be checked through Docker and removed state bindings. The guarded refresh API correctly refuses a missing bound container instead of reporting it absent.",
+    "A retained-state live entry point permits qualification after a failed startup without discarding downloaded artifacts. Its initial plan requires an available gateway."
+  ],
+  "testRevision": "9865debb263a0f6c8b34aab16d3d36e83598933f",
+  "liveLifecycle": {
+    "agentReply": "FOUR",
+    "bindings": {
+      "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-7486c6d262517886-gateway-data/2026-09-14T18:40:02-07:00/ce28d4abe546c4e020fd95fc59af6c5a3ff02ea67e28e0e559c3afe7dc68045c/45c024609e537d675722a1f242b77c619dfc36fbcdf7c2d4af2f4a3132457df4",
+      "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/3e173d0eab09d1c5986ee3278a92e18584757cf4407282f08909cbb4b184d417/2026-09-14T18:40:02-07:00/ce28d4abe546c4e020fd95fc59af6c5a3ff02ea67e28e0e559c3afe7dc68045c",
+      "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-7486c6d262517886-inference-data/2026-09-14T18:40:02-07:00",
+      "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/c88234a4f0d00039ead323ae6fe5df1e48c222e862d64bd2108e03be739d1767/2026-09-14T18:40:02-07:00/ce28d4abe546c4e020fd95fc59af6c5a3ff02ea67e28e0e559c3afe7dc68045c/45c024609e537d675722a1f242b77c619dfc36fbcdf7c2d4af2f4a3132457df4/2ee194c9ea12092c0a9cdcc4a5759ca3cdb0c912677c0e553e28b9ab27289266",
+      "nemoclaw_provider.inference": "50396df8-9912-435c-a348-4e2a8cbaf02d",
+      "nemoclaw_route.primary": "a0ea6885-6329-4ffd-b0ff-1180625f0232/primary",
+      "nemoclaw_sandbox.agent": "655e5624-9684-48bf-84fa-051492b543d1",
+      "nemoclaw_workspace.deployment": "a0ea6885-6329-4ffd-b0ff-1180625f0232"
+    },
+    "containerId": "3e173d0eab09d1c5986ee3278a92e18584757cf4407282f08909cbb4b184d417",
+    "deployment": "b89a891a-5fb9-4314-8fba-448928c8312b",
+    "destroyedWithStorageRetained": true,
+    "explicitRecoveryPreservedIdentity": true,
+    "exportReapply": true,
+    "freshApply": false,
+    "image": "nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e",
+    "model": {
+      "repository": "Qwen/Qwen3-4B",
+      "revision": "1cfa9a7208912126459214e8b04321603b3df60c"
+    },
+    "noPreparation": true,
+    "passed": true,
+    "receiptUnchanged": true,
+    "recoveredReply": "FOUR",
+    "unchangedApply": true,
+    "watchdogStoppedWithoutRestart": true
+  },
+  "originalDeployment": {
+    "containerId": "1d6e7d6a18733a74735deba97de697c24cbcc8f3f67c72f7237041e703def3ca",
+    "snapshotReceiptUnchanged": true,
+    "preparationReceiptUnchanged": true,
+    "restoredReadiness": "passed",
+    "unchangedApply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    }
+  },
+  "retainedVolumesObserved": [
+    "nc-7486c6d262517886-inference-data",
+    "nc-7486c6d262517886-gateway-data"
+  ],
+  "completedAtUTC": "2026-09-15T02:15:20.756566+00:00"
+}
