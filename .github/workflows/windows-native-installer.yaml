@@ -974,7 +974,10 @@ jobs:
           $null = New-Item -ItemType Directory -Path "$install\bin"
           Copy-Item -LiteralPath "$output\target\aarch64-pc-windows-msvc\release\NemoClaw.exe" -Destination "$install\bin\NemoClaw.exe"
           $negativeOutput = & "$install\bin\NemoClaw.exe" --edge-offline-trust "$install\bin\NemoClaw.exe" 2>&1
-          if ($LASTEXITCODE -eq 0 -or ($negativeOutput | Out-String) -notmatch '(?i)0x800b0100') { throw 'The native Edge identity owner did not reject an unsigned executable with TRUST_E_NOSIGNATURE.' }
+          $negativeExitCode = $LASTEXITCODE
+          $negativeText = ($negativeOutput | Out-String).Trim()
+          [IO.File]::WriteAllText("$output\unsigned-denial.json", (@{schemaVersion=1;classification='native-edge-unsigned-denial';exitCode=$negativeExitCode;message=$negativeText}|ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+          if ($negativeExitCode -eq 0 -or $negativeText -notmatch '(?i)0x800b0100') { throw "The native Edge identity owner returned an unexpected unsigned-file result (exit=$negativeExitCode; message=$negativeText)." }
           $processIdentity = & "$install\bin\NemoClaw.exe" --edge-process-identity $PID | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or $processIdentity.pid -ne $PID -or [string]$processIdentity.creationFiletime -cnotmatch '^[0-9]{15,20}$') { throw 'The native process identity owner did not bind the live process generation.' }
           $env:NEMOCLAW_NATIVE_INSTALL_ROOT = $install
