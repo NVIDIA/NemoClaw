@@ -7,6 +7,53 @@
 const Module = require("node:module");
 const path = require("node:path");
 
+function installForwardAdapterReachabilityFixture(forwardCli, isReachable) {
+  const originalCreate = forwardCli.createCliOpenShellForwardAdapter;
+  if (typeof originalCreate !== "function") {
+    throw new Error("typed OpenShell forward adapter fixture could not find its factory");
+  }
+  forwardCli.createCliOpenShellForwardAdapter = (deps) =>
+    originalCreate({
+      ...deps,
+      inspect:
+        deps.inspect ??
+        (async (_forward, expectedPid) =>
+          isReachable() ? { state: "owned", pid: expectedPid ?? 42_101 } : { state: "unbound" }),
+      inspectLegacy:
+        deps.inspectLegacy ??
+        (async (_forward, expectedPid) =>
+          isReachable() ? { state: "owned", pid: expectedPid } : { state: "not_owned" }),
+      probePort: deps.probePort ?? (async () => ({ state: isReachable() ? "bound" : "unbound" })),
+      run:
+        deps.run ??
+        (async () => ({
+          status: 0,
+          stdout: "",
+          stderr: "No active forwards.\n",
+        })),
+    });
+}
+
+function installForwardRuntimeReachabilityFixture(forwardRuntime, forwardCli, isReachable) {
+  forwardRuntime.createOpenShellForwardAdapterForAuthority = (authority, options = {}) =>
+    forwardCli.createCliOpenShellForwardAdapter({
+      executable: options.executable ?? process.execPath,
+      environment: options.environment ?? process.env,
+      gatewayEndpoint: authority.gatewayEndpoint,
+      runtimeSelection: {
+        gatewayName: authority.gatewayName,
+        workspace: authority.workspace,
+        ...(authority.localTlsDir ? { localTlsDir: authority.localTlsDir } : {}),
+      },
+      inspect: async (_forward, expectedPid) =>
+        isReachable() ? { state: "owned", pid: expectedPid ?? 42_101 } : { state: "unbound" },
+      inspectLegacy: async (_forward, expectedPid) =>
+        isReachable() ? { state: "owned", pid: expectedPid } : { state: "not_owned" },
+      probePort: async () => ({ state: isReachable() ? "bound" : "unbound" }),
+      run: async () => ({ status: 0, stdout: "", stderr: "No active forwards.\n" }),
+    });
+}
+
 if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
   let detachedForwardReady = false;
   const childProcess = require("node:child_process");
@@ -35,22 +82,10 @@ if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
       return loaded;
     }
     if (
-      resolved.includes(
-        `${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`,
-      ) &&
-      typeof loaded?.probeLocalForwardListener === "function"
+      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}forward-cli.`) &&
+      typeof loaded?.createCliOpenShellForwardAdapter === "function"
     ) {
-      loaded.probeLocalForwardListener = () => {
-        const ready = detachedForwardReady;
-        detachedForwardReady = false;
-        return ready;
-      };
-    }
-    if (
-      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}forward-service.`) &&
-      typeof loaded?.isForwardServiceListenerOwner === "function"
-    ) {
-      loaded.isForwardServiceListenerOwner = () => true;
+      installForwardAdapterReachabilityFixture(loaded, () => detachedForwardReady);
     }
     return loaded;
   };
@@ -93,15 +128,16 @@ function registerSourceRequire() {
 }
 
 function installForwardServiceReachabilityFixture(initiallyReachable = false) {
-  const listener = require(
-    path.resolve(__dirname, "../../src/lib/adapters/openshell/local-forward-listener.ts"),
+  mockStandaloneGatewayTeardownAuthority();
+  const forwardCli = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-cli.ts"),
   );
-  const forwardService = require(
-    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-service.ts"),
+  const forwardRuntime = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-runtime.ts"),
   );
   let reachable = initiallyReachable;
-  listener.probeLocalForwardListener = () => reachable;
-  forwardService.isForwardServiceListenerOwner = () => reachable;
+  installForwardAdapterReachabilityFixture(forwardCli, () => reachable);
+  installForwardRuntimeReachabilityFixture(forwardRuntime, forwardCli, () => reachable);
   return {
     recordSpawn(args) {
       const argv = Array.isArray(args[1]) ? args[1] : [];
@@ -1189,7 +1225,7 @@ function mockStandaloneGatewayTeardownAuthority() {
   const authority = require(
     path.resolve(__dirname, "../../src/lib/onboard/gateway-teardown-authority.ts"),
   );
-  authority.resolveGatewayTeardownAuthority = ({ gatewayName, gatewayPort }) => ({
+  const standaloneOwner = ({ gatewayName, gatewayPort }) => ({
     gatewayName,
     gatewayPort,
     mode: "nemoclaw-managed",
@@ -1199,6 +1235,23 @@ function mockStandaloneGatewayTeardownAuthority() {
     supervisor: null,
     requiredCapabilities: [],
   });
+  authority.resolveGatewayTeardownAuthority = standaloneOwner;
+  authority.resolveGatewayForwardAuthority = standaloneOwner;
+  const gatewayHostRuntime = require(
+    path.resolve(__dirname, "../../src/lib/onboard/gateway-host-runtime.ts"),
+  );
+  if (gatewayHostRuntime.__nemoclawForwardAuthorityFixture !== true) {
+    const createGatewayHostRuntime = gatewayHostRuntime.createGatewayHostRuntime;
+    gatewayHostRuntime.createGatewayHostRuntime = (deps) => ({
+      ...createGatewayHostRuntime(deps),
+      getGatewayForwardRuntimeAuthority: () => ({
+        gatewayEndpoint: `https://127.0.0.1:${String(deps.gatewayPort())}`,
+      }),
+    });
+    Object.defineProperty(gatewayHostRuntime, "__nemoclawForwardAuthorityFixture", {
+      value: true,
+    });
+  }
 }
 
 function mockManagedStateVolumeOnboardLifecycle() {

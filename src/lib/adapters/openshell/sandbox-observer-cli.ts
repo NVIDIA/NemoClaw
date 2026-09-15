@@ -14,7 +14,7 @@ import {
   type OpenShellSandboxResult,
 } from "./sandbox-observer";
 import { observeOpenShellSandboxIdentity } from "./sandbox-presence";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 

@@ -17,8 +17,8 @@ const inferenceEngine = requireDist(
   "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
 ) as typeof import("../../onboard/experimental/hermes-portable-ollama-inference");
 const forwardRecovery = requireDist(
-  "../../src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.js",
-) as typeof import("./probe/hermes-portable-forward-recovery");
+  "../../src/lib/actions/sandbox/probe/hermes-portable-forward-adapter-recovery.js",
+) as typeof import("./probe/hermes-portable-forward-adapter-recovery");
 function harness(options: Parameters<typeof createConnectHarness>[0] = {}) {
   return createConnectHarness({
     agentName: "hermes",
@@ -153,14 +153,14 @@ describe("Hermes Portable interactive inference recovery", () => {
     });
     await expect(prepare()).rejects.toThrow("process.exit(1)");
     expect(h.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
-    expect(h.launchForwardServiceSpy).not.toHaveBeenCalled();
+    expect(h.forwardAdapterStartSpy).not.toHaveBeenCalled();
   });
 
   it("refuses handoff when the recovered inference route remains unhealthy (#11757)", async () => {
     const h = harness({ inferenceProbeResponses: ["BROKEN 503", "BROKEN 503"] });
     await expect(prepare()).rejects.toThrow("process.exit(1)");
     expect(h.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
-    expect(h.launchForwardServiceSpy).not.toHaveBeenCalled();
+    expect(h.forwardAdapterStartSpy).not.toHaveBeenCalled();
   });
 
   it("preserves the probe-only intent for the probe consumer (#11757)", async () => {
