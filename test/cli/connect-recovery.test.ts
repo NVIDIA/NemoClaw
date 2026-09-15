@@ -444,6 +444,12 @@ describe("CLI connect recovery process contracts", () => {
         "  echo '  Gateway: nemoclaw'",
         "  exit 0",
         "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         "  echo 'NAME           STATUS     AGE'",
         "  echo 'alpha          Ready      2m ago'",
@@ -487,6 +493,7 @@ describe("CLI connect recovery process contracts", () => {
     expect(result.code).toBe(0);
     const calls = fs.readFileSync(markerFile, "utf8");
     expect(calls).toContain("sandbox list");
+    expect(calls).toContain("inference get -g nemoclaw");
     expect(calls).toContain("sandbox get -g nemoclaw alpha");
     expect(calls).toContain("sandbox exec --name alpha --tty -- /bin/bash -i");
     const recoveredRegistry = JSON.parse(

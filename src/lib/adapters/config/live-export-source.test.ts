@@ -27,7 +27,6 @@ import { servingProfileProvenance } from "../../inference/serving/profile-proven
 import { applyVllmRuntimeContextWindow } from "../../inference/vllm-runtime-context";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evidence";
-import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
@@ -294,7 +293,7 @@ describe("live export snapshot reader", () => {
     {
       stage: "inference-route",
       fail: () =>
-        vi.mocked(getLiveGatewayInference).mockImplementationOnce(() => {
+        vi.mocked(captureSanitizedResolvedOpenshell).mockImplementationOnce(() => {
           throw new Error(readFailureCanary);
         }),
     },
@@ -324,9 +323,6 @@ describe("live export snapshot reader", () => {
 
   it("does not fall back to the selected gateway after an inference read failure", async () => {
     mockSupportedLiveSource();
-    const actual =
-      await vi.importActual<typeof import("../../inference/live")>("../../inference/live");
-    vi.mocked(getLiveGatewayInference).mockImplementationOnce(actual.getLiveGatewayInference);
     vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
       status: 1,
       output: "unreachable",
@@ -387,7 +383,10 @@ describe("live export snapshot reader", () => {
     });
     expect(result).not.toHaveProperty("registry.createdAt");
     expect(result).not.toHaveProperty("inference.credential");
-    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw"],
+      expect.objectContaining({ ignoreError: true }),
+    );
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
@@ -480,11 +479,9 @@ describe("live export snapshot reader", () => {
     });
 
     mockSupportedLiveSource();
-    vi.mocked(getLiveGatewayInference).mockReturnValue({
-      failure: null,
-      inference: { provider: "nvidia-prod", model: "model-b" },
-      output: "",
+    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
       status: 0,
+      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: model-b\n",
     });
     await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
       kind: "read-failed",
@@ -987,11 +984,9 @@ function mockManagedVllmSource(
     provider: "vllm-local",
     model,
   });
-  vi.mocked(getLiveGatewayInference).mockReturnValue({
-    failure: null,
-    inference: { provider: "vllm-local", model },
-    output: "",
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
+    output: `Gateway inference:\n  Provider: vllm-local\n  Model: ${model}\n`,
   });
   const liveSandbox = inventory();
   Object.assign(liveSandbox.sandbox.spec, { providers: ["vllm-local"] });

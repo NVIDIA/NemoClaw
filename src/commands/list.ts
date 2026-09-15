@@ -28,7 +28,7 @@ export default class ListCommand extends NemoClawCommand {
       return inventory;
     }
 
-    const liveInference = inventory.sandboxes.length > 0 ? deps.getLiveInference() : null;
+    const liveInference = inventory.sandboxes.length > 0 ? await deps.getLiveInference() : null;
     renderSandboxInventoryText(inventory, this.log.bind(this), liveInference);
   }
 }

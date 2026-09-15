@@ -200,6 +200,7 @@ describe("onboard helpers", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-resume-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "hermes-resume-sandbox-name-check.js");
+      const inferenceReadLogPath = path.join(tmpDir, "inference-get.log");
       const openshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -239,7 +240,14 @@ describe("onboard helpers", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, {
+        inferenceRoute: {
+          gatewayName: "nemoclaw",
+          provider: "hermes-provider",
+          model: "moonshotai/kimi-k2.6",
+          commandLogPath: inferenceReadLogPath,
+        },
+      });
       fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
       const script = String.raw`
@@ -497,6 +505,12 @@ const { onboard } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
+      const inferenceReads = fs.readFileSync(inferenceReadLogPath, "utf8").trim().split("\n");
+      assert.ok(inferenceReads.length > 0, "expected at least one inference route read");
+      assert.ok(
+        inferenceReads.every((command) => command === "inference get -g nemoclaw"),
+        `expected only scoped inference reads, received ${JSON.stringify(inferenceReads)}`,
+      );
       assert.doesNotMatch(
         `${result.stderr}\n${result.stdout}`,
         /Hermes Provider requires a sandbox name/,

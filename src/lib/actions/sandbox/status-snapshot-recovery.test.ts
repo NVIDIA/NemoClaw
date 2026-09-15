@@ -74,8 +74,10 @@ function snapshotDeps(recoveryResult: unknown) {
     getSandbox: () => sandbox,
     listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: sandbox.name }),
     reconcile: recoveredLookup,
-    captureOpenshellForStatusImpl: async () => {
-      throw new Error("live route lookup not needed");
+    inferenceRouteObserver: {
+      observeInferenceRoute: async () => {
+        throw new Error("live route lookup not needed");
+      },
     },
     probeProviderHealthImpl,
     probeSandboxInferenceGatewayHealthImpl,

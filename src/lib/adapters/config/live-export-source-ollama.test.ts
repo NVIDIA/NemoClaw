@@ -16,7 +16,7 @@ import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
-import { getLiveGatewayInference } from "../../inference/live";
+import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import {
   readFailureCanary,
   inventory,
@@ -68,11 +68,9 @@ function mockOllamaSource() {
     provider: "ollama-local",
     model,
   });
-  vi.mocked(getLiveGatewayInference).mockReturnValue({
-    failure: null,
-    inference: { provider: "ollama-local", model },
-    output: "",
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
+    output: `Gateway inference:\n  Provider: ollama-local\n  Model: ${model}\n`,
   });
   const liveSandbox = inventory();
   Object.assign(liveSandbox.sandbox.spec, { providers: ["ollama-local"] });
