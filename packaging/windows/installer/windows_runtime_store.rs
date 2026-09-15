@@ -156,7 +156,13 @@ impl WindowsStore {
         }
         std::fs::create_dir_all(&mount).map_err(|_| Error::Native("runtime-image-mount"))?;
         let image = image.to_str().ok_or(Error::Identity)?;
-        let mount = format!("{}\\", mount.to_str().ok_or(Error::Identity)?.trim_end_matches('\\'));
+        // DiskPart's folder-mount grammar takes the empty directory path itself;
+        // a trailing separator makes the quoted `assign mount=` operand invalid.
+        let mount = mount
+            .to_str()
+            .ok_or(Error::Identity)?
+            .trim_end_matches('\\')
+            .to_owned();
         Self::diskpart(
             runtime_id,
             &[
