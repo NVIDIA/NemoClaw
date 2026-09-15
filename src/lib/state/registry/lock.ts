@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../../core/errno";
+import { shellQuote } from "../../core/shell-quote";
 import { ensureConfigDir } from "../config-io";
 import { REGISTRY_FILE } from "./persistence";
 
@@ -237,7 +238,7 @@ function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acq
   throw new ProcessBoundLockContentionError(
     directory,
     retries,
-    lockHolderRemediation(paths, alive, directory),
+    lockHolderRemediation(paths, alive, readIdentity, directory),
   );
 }
 
@@ -253,14 +254,29 @@ function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acq
 function lockHolderRemediation(
   paths: Paths,
   alive: (pid: number) => boolean,
+  readIdentity: (pid: number) => string | null,
   directory: string,
 ): string {
-  const removal = `remove it with: rm -rf ${JSON.stringify(directory)}`;
+  // `shellQuote` rather than JSON: an operator copies this command into a
+  // shell, and a directory holding `$(...)` or a backtick would otherwise
+  // substitute instead of being treated as a path.
+  const removal = `remove it with: rm -rf ${shellQuote(directory)}`;
   const pid = ownerPid(paths.owner);
   if (pid === null) return `The lock records no owner; ${removal}`;
-  return alive(pid)
-    ? `Owner PID ${String(pid)} is still running; wait for it to finish, or stop it and ${removal}`
-    : `Owner PID ${String(pid)} is no longer running, so the lock is stale; ${removal}`;
+  const live = alive(pid);
+  // A dead owner is stale whatever its recorded identity says: `status` reports
+  // `recycled` for any owner that is not alive, which is not the same as the
+  // operating system having handed that PID to something else.
+  if (!live) return `Owner PID ${String(pid)} is no longer running, so the lock is stale; ${removal}`;
+  // Classify a live PID exactly as the acquisition loop does. A PID the
+  // operating system reused belongs to an unrelated process, so reporting it as
+  // the owner would send the operator to stop the wrong one.
+  const ownerStatus = status(pid, live, readProcessRecord(paths.processStart, pid), readIdentity);
+  if (ownerStatus === "recycled")
+    return `PID ${String(pid)} now belongs to an unrelated process, so the recorded owner is gone and the lock is stale; ${removal}`;
+  if (ownerStatus === "unverifiable")
+    return `PID ${String(pid)} exists but cannot be confirmed as the recorded owner; confirm it before stopping it, then ${removal}`;
+  return `Owner PID ${String(pid)} is still running; wait for it to finish, or stop it and ${removal}`;
 }
 
 function release(acquired: Acquired): void {
