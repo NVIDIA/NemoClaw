@@ -115,7 +115,12 @@ export function createDockerDriverGatewayStateOwnership(
 
   /** Supplement current runtime ownership only for pre-namespace gateway processes. */
   function isLegacyDockerDriverGatewayStateInUse(): boolean {
-    const scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
+    let scan: ProcessScanResult;
+    try {
+      scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
+    } catch {
+      return true;
+    }
     if (scan.timedOut || (scan.exitCode !== 0 && scan.exitCode !== 1)) return true;
     if (scan.exitCode === 1) return false;
     const lines = scan.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
