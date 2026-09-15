@@ -147,6 +147,10 @@ export type ConnectHarnessOptions = {
     containerName?: string | null;
   };
   dockerStartStatus?: number | null;
+  /** Exit status the mocked `openshell sandbox start` reports. */
+  sandboxLifecycleStartStatus?: number | null;
+  /** Phase the mocked `openshell sandbox get` reports. */
+  sandboxGetPhase?: string;
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
   sttyThrows?: boolean;
@@ -512,6 +516,18 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   })) as never);
   const captureOpenshellImplementation = (args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
+    if (argv[0] === "sandbox" && argv[1] === "start") {
+      return {
+        status:
+          options.sandboxLifecycleStartStatus === undefined
+            ? 0
+            : options.sandboxLifecycleStartStatus,
+        output: "",
+      };
+    }
+    if (argv[0] === "sandbox" && argv[1] === "get") {
+      return { status: 0, output: `Phase: ${options.sandboxGetPhase ?? "Ready"}\n` };
+    }
     if (argv[0] === "sandbox" && argv[1] === "list") {
       return {
         status: 0,
