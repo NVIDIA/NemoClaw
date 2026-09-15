@@ -51,6 +51,21 @@ describe("destroySandbox final gateway decision", () => {
     expect(warnOutput(harness)).not.toContain("gateway left running");
   });
 
+  it("skips final live-sandbox probes when gateway cleanup is disabled", async () => {
+    const harness = createDestroyHarness({ liveListOutput: TERMINATING_ALPHA_LIST });
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: false }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.finalGatewaySleepSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "Shared NemoClaw gateway preserved",
+    );
+  });
+
   it("reports the live sandbox that blocks --cleanup-gateway after the last registered destroy", async () => {
     const harness = createDestroyHarness({ liveListOutput: READY_BETA_LIST });
 

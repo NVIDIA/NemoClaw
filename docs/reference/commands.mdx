@@ -2078,7 +2078,7 @@ With the native Podman provider, NemoClaw does not probe Docker, so every listed
 OpenShell can keep listing the deleted sandbox while its runtime terminates, so `destroy` polls the list for up to 30 seconds in total until that row is gone.
 If the deleted sandbox is still listed after that wait, if a different live sandbox remains, or if the list command fails, `destroy` leaves the gateway running, names the live sandboxes or the failed command, and exits 0.
 When you passed `--cleanup-gateway`, the message states that the flag was not applied.
-After that message, confirm that `openshell sandbox list` reports no sandboxes.
+After that message, confirm that `openshell sandbox list -g <gateway-name>` reports no sandboxes.
 Then run `openshell gateway remove <gateway-name>` to remove the gateway.
 
 If the pre-delete workspace wipe exits nonzero, `destroy` continues, but the retained volume can still contain old files.

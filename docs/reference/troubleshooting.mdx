@@ -1435,16 +1435,16 @@ The message names those sandboxes or the failed command.
 First confirm that the gateway reports no sandboxes:
 
 ```bash
-openshell sandbox list -g nemoclaw
+openshell sandbox list -g <gateway-name>
 ```
 
 When the list is empty, remove the gateway:
 
 ```bash
-openshell gateway remove nemoclaw
+openshell gateway remove <gateway-name>
 ```
 
-Replace `nemoclaw` with the gateway name from the message when the sandbox used a custom gateway port.
+Use the gateway name from the `destroy` message in both commands.
 
 On Apple Silicon macOS with Homebrew, rerun the standard NemoClaw installer to restore the pinned formula and temporary trust contract:
 
