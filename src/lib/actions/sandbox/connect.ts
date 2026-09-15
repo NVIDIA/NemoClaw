@@ -2094,33 +2094,35 @@ async function runConnectEntryPreflight(
           })
         : !hermesPortable
           ? ({ kind: "not-installed" } as const)
-        : await measureAsync("lifecycle", async () =>
-            hermesPortableCommandAuthority
-              ? await recoverPortableDemoSandboxLifecycleForConnect(
-                  sandboxName,
-                  registered,
-                  gatewayName,
-                  hermesPortableCommandAuthority,
-                  probeTiming ? { onComplete: writeHermesPortableLifecycleRecoveryTiming } : undefined,
-                  probeTiming ? { onComplete: writeHermesPortableCurrentnessTiming } : undefined,
-                  probeTiming ? { onComplete: writeHermesPortableInspectionTiming } : undefined,
-                )
-              : probeTiming
+          : await measureAsync("lifecycle", async () =>
+              hermesPortableCommandAuthority
                 ? await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     registered,
                     gatewayName,
-                    undefined,
-                    { onComplete: writeHermesPortableLifecycleRecoveryTiming },
-                    { onComplete: writeHermesPortableCurrentnessTiming },
-                    { onComplete: writeHermesPortableInspectionTiming },
+                    hermesPortableCommandAuthority,
+                    probeTiming
+                      ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
+                      : undefined,
+                    probeTiming ? { onComplete: writeHermesPortableCurrentnessTiming } : undefined,
+                    probeTiming ? { onComplete: writeHermesPortableInspectionTiming } : undefined,
                   )
-                : await recoverPortableDemoSandboxLifecycleForConnect(
-                    sandboxName,
-                    registered,
-                    gatewayName,
-                  ),
-          );
+                : probeTiming
+                  ? await recoverPortableDemoSandboxLifecycleForConnect(
+                      sandboxName,
+                      registered,
+                      gatewayName,
+                      undefined,
+                      { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                      { onComplete: writeHermesPortableCurrentnessTiming },
+                      { onComplete: writeHermesPortableInspectionTiming },
+                    )
+                  : await recoverPortableDemoSandboxLifecycleForConnect(
+                      sandboxName,
+                      registered,
+                      gatewayName,
+                    ),
+            );
       probeTiming?.setLifecycleAction(
         initialRecovery.kind === "recovered"
           ? "recovered"
