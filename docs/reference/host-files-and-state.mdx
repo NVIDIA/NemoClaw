@@ -106,22 +106,21 @@ Run `$$nemoclaw onboard` to register a sandbox again.
 <AgentOnly variant="hermes">
 | `~/.nemoclaw/portable-inference/<sandbox-digest>/` | Current-user-owned, credential-free Portable Ollama provider and inference recovery state for one Hermes sandbox. Full uninstall removes it only after exclusive provider and inference cleanup succeeds. When a sibling registry row shares either the provider or inference runtime, uninstall preserves the directory as the sibling's recovery authority, including with `--destroy-user-data`. | No while the recorded provider or inference runtime exists, cleanup can be retried, or a sibling still owns the shared resource. |
 </AgentOnly>
-| `~/.nemoclaw/snapshots/` | Copies of host `~/.openclaw` state and configured external roots created by blueprint migration and rollback flows. NemoClaw excludes known authentication-state files and strips recognized credential values from copied JSON, YAML, and `.env` files. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
+<AgentOnly variant="openclaw">
+| `~/.nemoclaw/snapshots/` | Legacy copies of host `~/.openclaw` state and configured external roots. Current releases do not create or restore these snapshots. | Only after you no longer need the legacy copy. The host CLI does not expose the direct runner's retention actions. |
+</AgentOnly>
 | `~/.nemoclaw/rebuild-backups/` | Host-side snapshots written by `backup-all`, `snapshot create`, and rebuild flows. | Only after you no longer need rollback or restore points. |
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
 | `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
 | `~/.nemoclaw/blueprints/` | Cached blueprint inputs used by onboarding and sandbox recreation. | Avoid manual deletion unless you plan to rerun onboarding from fresh inputs. |
 | `~/.cache/huggingface/` | Shared Hugging Face cache used by managed vLLM and managed llama.cpp model acquisition. The llama.cpp path resolves the YAML-declared revision and GGUF file, then verifies its size, SHA-256 digest, and filesystem identity before launch. Other applications can use the same cache. | Only after stopping every process that uses the cache. Sandbox destroy and full uninstall without `--delete-models` preserve it. Full uninstall with `--delete-models` deletes its non-credential data after managed model runtimes stop and only when no sibling gateway remains. The `token` and `stored_tokens` authentication files remain. Affected applications must download and verify their cached files again. |
 
-## Migration Snapshot Retention
+<AgentOnly variant="openclaw">
 
-Before NemoClaw retains a migration snapshot, it recursively sanitizes the copied OpenClaw state and every configured external root.
-It preserves empty or comment-only YAML files and omits copied JSON, YAML, or `.env` files that it cannot sanitize.
-If NemoClaw cannot remove an unsafe copied artifact, snapshot creation fails and attempts to delete the incomplete snapshot directory.
-Sanitization requires `python3` on a POSIX host so every traversal and mutation can remain anchored to opened directory descriptors.
-It fails closed if a copied file or parent directory changes identity during sanitization.
+## Legacy Migration Snapshot Cleanup
 
-The direct blueprint runner accepts these action arguments for migration snapshots:
+Current releases leave existing migration snapshots under `~/.nemoclaw/snapshots/` unchanged.
+The direct blueprint runner retains these action arguments to inspect or remove the legacy copies:
 
 ```text
 snapshots list
@@ -133,10 +132,13 @@ These fragments are not standalone shell commands, and the host `nemoclaw` CLI d
 An integration that invokes the direct runner can use `snapshots list` first to inspect the available timestamped copies.
 `snapshots prune` keeps the requested number of newest snapshots; `--keep 0` removes all of them.
 `snapshots delete` accepts only one timestamped directory directly under `~/.nemoclaw/snapshots/`.
-Both deletion commands are irreversible: they do not modify a running sandbox, but they remove host state that could otherwise be used for rollback or restore.
+Both deletion commands are irreversible.
+They do not modify a running sandbox, but they remove the selected legacy copies.
 
-Snapshot sanitization and deletion require `python3` on a POSIX host.
-Listing works on native Windows, but migration snapshot creation and deletion do not; use WSL for those operations on Windows.
+Snapshot deletion requires `python3` on a POSIX host.
+Listing works on native Windows, but deletion does not; use WSL to delete legacy snapshots on Windows.
+
+</AgentOnly>
 
 ## Uninstall Behavior
 

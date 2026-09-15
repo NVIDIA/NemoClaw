@@ -6,11 +6,11 @@
 // provider names mirror the existing NemoClaw provider contract. This module
 // is compiled to generated .cjs/.d.cts files by build:cli before both the
 // plugin and root CLI are built.
-// consumers: The ESM plugin runner (nemoclaw/src/blueprint/runner.ts) and
-// migration snapshot (nemoclaw/src/blueprint/snapshot.ts) import the generated
-// .cjs directly; the root CLI re-exports the sandbox constants through
-// src/lib/name-validation.ts (mirroring src/lib/adapters/openshell/policy-boundary.ts). Keeping one
-// sandbox definition prevents the leading-char drift already observed between
+// consumers: The ESM plugin runner (nemoclaw/src/blueprint/runner.ts) imports
+// the generated .cjs directly; the root CLI re-exports the sandbox constants
+// through src/lib/name-validation.ts (mirroring
+// src/lib/adapters/openshell/policy-boundary.ts). Keeping one sandbox definition
+// prevents the leading-char drift already observed between
 // src/lib/name-validation.ts and the copies in mcp-bridge-validation.ts /
 // smoke-macos-install.sh.
 // sourceBoundary: A blueprint is untrusted input. These names flow into
@@ -18,7 +18,7 @@
 // shell scripts and Kubernetes pod names, so callers must validate at the
 // ingestion boundary and fail closed.
 // regressionTest: nemoclaw/src/shared/sandbox-name.test.ts plus the plugin
-// runner/snapshot tests and the root name-validation consumers.
+// runner tests and the root name-validation consumers.
 // removalCondition: remove only when no NemoClaw consumer validates a sandbox
 // or provider identifier, or both grammars are enforced by shared upstream
 // contracts.

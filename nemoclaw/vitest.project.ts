@@ -26,10 +26,6 @@ const canonicalPrivateNetworksBoundary = path.resolve(
   "src/shared/private-networks-boundary.cts",
 );
 const canonicalSandboxName = path.resolve(import.meta.dirname, "src/shared/sandbox-name.cts");
-const canonicalSnapshotSanitizerBoundary = path.resolve(
-  import.meta.dirname,
-  "src/shared/snapshot-sanitizer-boundary.cts",
-);
 
 type PluginVitestProjectOptions = {
   root: string;
@@ -87,10 +83,6 @@ const pluginVitestProjectOptions = {
       {
         find: /^.*sandbox-name\.cjs$/,
         replacement: canonicalSandboxName,
-      },
-      {
-        find: /^.*snapshot-sanitizer-boundary\.cjs$/,
-        replacement: canonicalSnapshotSanitizerBoundary,
       },
     ],
     env: {
