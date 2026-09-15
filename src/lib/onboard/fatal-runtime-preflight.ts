@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { warnLine } from "../cli/terminal-style";
 import { getBuildIdentity } from "../core/version";
 import { detectGpu, type DetectGpuDeps, type GpuDetection } from "../inference/nim";
 import { isWsl as detectWsl } from "../platform";
@@ -39,6 +38,7 @@ import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight
 import {
   printCdiSpecUnavailableError,
   printDockerNotReachableError,
+  printOnboardOsReleaseWarnings,
   printUnsupportedRuntimeError,
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
@@ -123,11 +123,6 @@ const JETSON_INAPPLICABLE_CDI_ADVISORY_IDS = new Set([
   "refresh_nvidia_cdi_spec",
   "install_nvidia_container_toolkit",
 ]);
-const ONBOARD_OS_RELEASE_WARNING_IDS = new Set([
-  "host.os.release_unqualified",
-  "host.os.release_inconclusive",
-]);
-
 export interface OnboardHostReadinessOptions {
   explicitlyOptedOutGpuPassthrough: boolean;
   /** Preserve provider-bound proof state across readiness collection phases. */
@@ -206,14 +201,6 @@ function printReadinessFailure(
     console.error(
       `  ✗ System readiness could not confirm required capabilities: ${capabilityIds.join(", ")}.`,
     );
-  }
-}
-
-function printOnboardOsReleaseWarnings(report: Pick<SystemReadinessReport, "findings">): void {
-  for (const finding of report.findings) {
-    if (finding.severity === "warning" && ONBOARD_OS_RELEASE_WARNING_IDS.has(finding.id)) {
-      console.error(warnLine(finding.summary));
-    }
   }
 }
 
