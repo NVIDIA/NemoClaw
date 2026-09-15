@@ -7,6 +7,9 @@ These records qualify specific behaviors, revisions, and environments of NemoCla
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
+The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as strict v0-export-to-v1 desired-state translation followed by a new v1 lifecycle.
+It is explicitly live-gated and is not qualification evidence until the pinned v0 target captures its export before cleanup and both lifecycle proofs are run, redacted, reviewed, and retained here.
+
 | Contract | Evidence |
 |---|---|
 | SDK and CLI plan/apply/export/destroy; ownership, identity, drift, partial creation, failed observations, interrupted destroy | Workspace behavioral tests and real OpenTofu protocol/lifecycle tests in [native platform qualification](rust-native-platforms.json) |
