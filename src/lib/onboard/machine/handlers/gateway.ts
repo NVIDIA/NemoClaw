@@ -45,7 +45,7 @@ export interface GatewayStateOptions<Gpu> {
      */
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
-    attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
+    attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): void | Promise<void>;
     assertExternalComponentFreshSandbox(requestedSandboxName: string | null): void;
     configureExternalComponentGateway(
       component: ExternalComponentGatewayConfiguration | null,
@@ -54,22 +54,25 @@ export interface GatewayStateOptions<Gpu> {
       | void
       | Promise<ExternalComponentGatewayPreparation | void>;
     refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
-    gatewayCliSupportsLifecycleCommands(): boolean;
+    gatewayCliSupportsLifecycleCommands(): boolean | Promise<boolean>;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
-    waitForGatewayHttpReady(): Promise<boolean>;
-    recoverGatewayRuntime(): Promise<boolean>;
+    waitForGatewayHttpReady(): boolean | Promise<boolean>;
+    recoverGatewayRuntime(): boolean | Promise<boolean>;
     getGatewayLocalEndpoint(): string;
     stopDashboardForward(): void;
     destroyGateway(
       clearRegistry?: () => void,
       isDockerDriverGatewayEnabledForDestroy?: () => boolean,
-    ): boolean;
+    ): boolean | Promise<boolean>;
     destroyGatewayForReuse(
-      destroyGateway: () => boolean,
+      destroyGateway: () => boolean | Promise<boolean>,
       successMessage: string,
       failureMessage: string,
-    ): GatewayReuseState;
-    getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
+    ): GatewayReuseState | Promise<GatewayReuseState>;
+    getGatewayClusterImageDrift():
+      | { currentVersion: string; expectedVersion: string }
+      | null
+      | Promise<{ currentVersion: string; expectedVersion: string } | null>;
     stopAllDashboardForwards(): void;
     reconcileGatewayGpuReuseForGpuIntent(options: {
       gatewayReuseState: GatewayReuseState;
@@ -80,20 +83,20 @@ export interface GatewayStateOptions<Gpu> {
       recreateSandbox: boolean;
       confirmedDockerDriverGateway: boolean;
       stopDashboardForwards: () => void;
-      retireLegacyGatewayForDockerDriverUpgrade: () => void;
-      destroyGatewayRuntimeForGpuReuse: () => boolean;
-    }): GatewayReuseState;
+      retireLegacyGatewayForDockerDriverUpgrade: () => void | Promise<void>;
+      destroyGatewayRuntimeForGpuReuse: () => boolean | Promise<boolean>;
+    }): GatewayReuseState | Promise<GatewayReuseState>;
     isLinuxDockerDriverGatewayEnabled(): boolean;
-    retireLegacyGatewayForDockerDriverUpgrade(): void;
-    destroyGatewayRuntimeForGpuReuse(): boolean;
+    retireLegacyGatewayForDockerDriverUpgrade(): void | Promise<void>;
+    destroyGatewayRuntimeForGpuReuse(): boolean | Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null, reason?: "resume" | "reuse"): void;
     recordStateSkipped(
       state: "gateway",
       metadata?: Record<string, unknown> | null,
     ): Promise<Session>;
     note(message: string): void;
-    startRecordedStep(stepName: string): Promise<void>;
-    startGateway(gpu: Gpu, options: { gpuPassthrough: boolean }): Promise<void>;
+    startRecordedStep(stepName: string): void | Promise<void>;
+    startGateway(gpu: Gpu, options: { gpuPassthrough: boolean }): void | Promise<void>;
     recordStepComplete(stepName: string): Promise<Session>;
     exitProcess(code: number): never;
   };
@@ -174,7 +177,7 @@ async function handleGatewayStatePhase<Gpu>({
   }
 
   let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(initialGatewayReuseState);
-  const supportsLifecycleCommands = deps.gatewayCliSupportsLifecycleCommands();
+  const supportsLifecycleCommands = await deps.gatewayCliSupportsLifecycleCommands();
 
   if (gatewayReuseState === "healthy" && supportsLifecycleCommands) {
     const containerState = deps.verifyGatewayContainerRunning(gatewayName);
@@ -182,7 +185,7 @@ async function handleGatewayStatePhase<Gpu>({
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
       deps.stopDashboardForward();
-      gatewayReuseState = deps.destroyGatewayForReuse(
+      gatewayReuseState = await deps.destroyGatewayForReuse(
         deps.destroyGateway,
         "  ✓ Stale gateway metadata cleaned up",
         "  ! Stale gateway metadata cleanup failed; leaving registry state intact.",
@@ -232,7 +235,7 @@ async function handleGatewayStatePhase<Gpu>({
         `  Gateway container is running but ${deps.getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
       );
       deps.stopDashboardForward();
-      gatewayReuseState = deps.destroyGatewayForReuse(
+      gatewayReuseState = await deps.destroyGatewayForReuse(
         deps.destroyGateway,
         "  ✓ Stale gateway cleaned up",
         "  ! Stale gateway cleanup failed; leaving registry state intact.",
@@ -242,13 +245,13 @@ async function handleGatewayStatePhase<Gpu>({
     }
 
     if (checkImageDrift) {
-      const imageDrift = deps.getGatewayClusterImageDrift();
+      const imageDrift = await deps.getGatewayClusterImageDrift();
       if (imageDrift) {
         console.log(
           `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,
         );
         deps.stopAllDashboardForwards();
-        gatewayReuseState = deps.destroyGatewayForReuse(
+        gatewayReuseState = await deps.destroyGatewayForReuse(
           deps.destroyGateway,
           "  ✓ Previous gateway cleaned up",
           "  ! Previous gateway cleanup failed; leaving registry state intact.",
@@ -257,7 +260,7 @@ async function handleGatewayStatePhase<Gpu>({
     }
   }
 
-  gatewayReuseState = deps.reconcileGatewayGpuReuseForGpuIntent({
+  gatewayReuseState = await deps.reconcileGatewayGpuReuseForGpuIntent({
     gatewayReuseState,
     gpuPassthrough,
     gatewayName,
@@ -308,7 +311,7 @@ async function handleGatewayStatePhase<Gpu>({
       gatewayReuseState !== "foreign-active"
     ) {
       deps.note("  Replacing legacy OpenShell gateway metadata.");
-      deps.retireLegacyGatewayForDockerDriverUpgrade();
+      await deps.retireLegacyGatewayForDockerDriverUpgrade();
       gatewayReuseState = "missing";
     } else if (gatewayReuseState === "foreign-active") {
       gatewayReuseState = "missing";
