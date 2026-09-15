@@ -340,6 +340,8 @@ describe("Hermes portable OpenShell executable authority", () => {
           ? assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, deps)
           : assertHermesPortableOpenShellExecutableFileAuthority(authority, childEnv, deps);
       expect(verify).toThrow("executable generation changed after reservation");
+      expect(verify).toThrow("/opt/nemoclaw/bin");
+      expect(verify).toThrow("mode 0775");
       expect(verify).toThrow("Remove group and other write permission");
     },
   );
