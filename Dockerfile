@@ -191,10 +191,6 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && chown -R root:root /out/wechat-npm-cache \
     && chmod -R a+rX,go-w /out/wechat-npm-cache
 
-# Fetch every locked messaging archive outside RUN instructions. BuildKit
-# verifies the committed SHA-256 source pins before the selected architecture
-# enters the cache stage; SHA-512 verification against package-lock.json and
-# every package-materialization command then execute with networking disabled.
 FROM scratch AS openclaw-managed-messaging-npm-common-archives-1
 
 ADD --chmod=0444 --checksum=sha256:9d6a926982795204bed8fb5d02537a08b74d0b8f85ec715808fe713e48d14a79 https://registry.npmjs.org/@azure/abort-controller/-/abort-controller-2.2.0.tgz /abort-controller-2.2.0.tgz
@@ -248,6 +244,7 @@ ADD --chmod=0444 --checksum=sha256:47a08ee5ddf87a96dd263aa942c5e04b2c5d26251e04a
 ADD --chmod=0444 --checksum=sha256:76b160f8251c630a116a2e0acf03557b0758975b2c0df800607248fc9aae9e20 https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz /cookie-0.7.2.tgz
 ADD --chmod=0444 --checksum=sha256:4d2bbaaf1c299e60ef0d7df952b52af95b20d56cbcbd4468d4210650083553d3 https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.2.2.tgz /cookie-signature-1.2.2.tgz
 ADD --chmod=0444 --checksum=sha256:74d7950698bdc74569a8e754b2d5dc055a43afdd0647c0171595f9b77e8c7151 https://registry.npmjs.org/@ubjs/core/-/core-0.31.0-3.tgz /core-0.31.0-3.tgz
+ADD --chmod=0444 --checksum=sha256:caf1d94fa748509b3fa6c91bf051547df62bcae204ec521d418759da1f573950 https://registry.npmjs.org/@emnapi/core/-/core-1.11.1.tgz /core-1.11.1.tgz
 ADD --chmod=0444 --checksum=sha256:f5931d5be3c05b61a77eaacad34ce63ac55f3778a19f18dd2895e5fa143e1350 https://registry.npmjs.org/@clack/core/-/core-1.4.3.tgz /core-1.4.3.tgz
 ADD --chmod=0444 --checksum=sha256:bf85fa99c2ee437ddeb8170239831ad3ed0a5e3ce4373cecbb75d0968ea94b46 https://registry.npmjs.org/@azure/core-auth/-/core-auth-1.11.0.tgz /core-auth-1.11.0.tgz
 ADD --chmod=0444 --checksum=sha256:b930d21bfea5de2d2fb4ea6cfd503d5efe39e9fe7237a27a91c1a4140a260da1 https://registry.npmjs.org/@azure/core-client/-/core-client-1.11.1.tgz /core-client-1.11.1.tgz
@@ -511,6 +508,7 @@ ADD --chmod=0444 --checksum=sha256:7521d8445e845475e888ccb7af473c4afb17aabafefe3
 ADD --chmod=0444 --checksum=sha256:b144af37b39a9517f7a89f1d867e9c2cf29f13f4147d3e80c499fe6ffab69461 https://registry.npmjs.org/router/-/router-2.2.0.tgz /router-2.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:d29ace7117aaa0d6b119027e9a157c238e6899bbb35d03f508ae8d4fa9ca8c9d https://registry.npmjs.org/run-applescript/-/run-applescript-7.1.0.tgz /run-applescript-7.1.0.tgz
 ADD --chmod=0444 --checksum=sha256:65b1049d7858c8d00adefe07a03671a218b439d9b7ee55a8a1af9fca1a19e759 https://registry.npmjs.org/@grammyjs/runner/-/runner-2.0.3.tgz /runner-2.0.3.tgz
+ADD --chmod=0444 --checksum=sha256:0acb45d7992e5fba729bb1d8f2586af7e522518aebd9b2859441b387ef890ad8 https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.1.tgz /runtime-1.11.1.tgz
 ADD --chmod=0444 --checksum=sha256:4d7f1bd502a1a64d47625cc738d13284865f0666d2ed01f244de0adf05b69aa5 https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.7.tgz /runtime-7.29.7.tgz
 ADD --chmod=0444 --checksum=sha256:e09206c60fccafb952c854af7629cbb031a98d6da2e143fb3aa3c8a48402aa22 https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz /safe-buffer-5.1.2.tgz
 ADD --chmod=0444 --checksum=sha256:5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8 https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz /safe-buffer-5.2.1.tgz
@@ -578,6 +576,7 @@ ADD --chmod=0444 --checksum=sha256:512bce48e5bb53d4351a415be21c6430e33103ecca831
 ADD --chmod=0444 --checksum=sha256:79a1de983c1b393180c47456d6b73caab278a00ea6e37d5c6675f2dcdec2a3e5 https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz /util-deprecate-1.0.2.tgz
 ADD --chmod=0444 --checksum=sha256:30e122d0715991b19b98043ea8eb275e9083315c8b9cb9e9ba66c249ef936c6b https://registry.npmjs.org/uuid/-/uuid-14.0.2.tgz /uuid-14.0.2.tgz
 ADD --chmod=0444 --checksum=sha256:7378860671377a35e7a443ecfdca0745cfd066f595c90d581b827defea246e71 https://registry.npmjs.org/vary/-/vary-1.1.2.tgz /vary-1.1.2.tgz
+ADD --chmod=0444 --checksum=sha256:bc2f73bba7ec3f0bf52da313ed1e32b73e0ba36a300c9226cdc1d21383abcba6 https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.2.tgz /wasi-threads-1.2.2.tgz
 ADD --chmod=0444 --checksum=sha256:85774fffee09f70bde084cebcebae20b3cf6f48239f61659e45aed9fd513463e https://registry.npmjs.org/web-push/-/web-push-3.6.7.tgz /web-push-3.6.7.tgz
 ADD --chmod=0444 --checksum=sha256:1ee138d3dc0263ead35c40604da75d7d56c4fa0ef32dc2e3a7fbac10480ebb54 https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz /web-streams-polyfill-3.3.3.tgz
 ADD --chmod=0444 --checksum=sha256:adf5677e04711c597200058971a299fc9fd4133891ee72ec02acf4932e659fdf https://registry.npmjs.org/web-tree-sitter/-/web-tree-sitter-0.26.13.tgz /web-tree-sitter-0.26.13.tgz
@@ -680,8 +679,6 @@ RUN --network=none set -eu; \
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} AS openclaw-managed-messaging-npm-cache
 
-# Group repository-owned files outside the final image so both Docker builders
-# can collapse related payloads without invalidating earlier final-image work.
 FROM scratch AS openclaw-dependency-payload
 
 COPY agents/openclaw/openclaw-runtime/package.json /usr/local/lib/nemoclaw/openclaw-runtime/package.json
@@ -1893,7 +1890,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
         plugin_archive="$(verify_openclaw_plugin_integrity "$plugin_spec")"; \
         plugin_source_root="$(dirname "$plugin_archive")"; \
         plugin_install_archive="$plugin_archive"; \
-        NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
+        NPM_CONFIG_OFFLINE=true NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
             openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_install_archive}"; \
         if [ -z "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi; \
     }; \

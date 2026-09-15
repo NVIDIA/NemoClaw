@@ -20,7 +20,7 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
   const command = dockerRunCommandBetween(
     dockerfile,
     "# Install non-messaging OpenClaw plugins",
-    "# Add messaging source after the non-messaging install",
+    "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-plugin-install-"));
   const log = path.join(tmp, "calls.log");

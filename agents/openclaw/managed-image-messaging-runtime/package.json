@@ -6,6 +6,8 @@
   "description": "Locked production dependency graph for the managed OpenClaw messaging capability union",
   "license": "Apache-2.0",
   "dependencies": {
+    "@emnapi/core": "1.11.1",
+    "@emnapi/runtime": "1.11.1",
     "@openclaw/discord": "2026.9.1",
     "@openclaw/googlechat": "2026.9.1",
     "@openclaw/msteams": "2026.9.1",

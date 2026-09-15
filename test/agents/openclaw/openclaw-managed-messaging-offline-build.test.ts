@@ -100,6 +100,26 @@ describe("OpenClaw managed messaging offline image build", () => {
       "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/file-type",
       "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/protobufjs",
     ]);
+    expect(runtimeManifest.dependencies).toMatchObject({
+      "@emnapi/core": "1.11.1",
+      "@emnapi/runtime": "1.11.1",
+    });
+    expect(runtimeLock.packages[""].dependencies).toMatchObject({
+      "@emnapi/core": "1.11.1",
+      "@emnapi/runtime": "1.11.1",
+    });
+    expect(runtimeLock.packages["node_modules/@emnapi/core"]).toMatchObject({
+      version: "1.11.1",
+      dependencies: {
+        "@emnapi/wasi-threads": "1.2.2",
+      },
+    });
+    expect(runtimeLock.packages["node_modules/@emnapi/runtime"]).toMatchObject({
+      version: "1.11.1",
+    });
+    expect(runtimeLock.packages["node_modules/@emnapi/wasi-threads"]).toMatchObject({
+      version: "1.2.2",
+    });
   });
 
   it("pins the complete lock graphs below the cold-build layer limit", () => {

@@ -608,9 +608,7 @@ describe("reviewed npm image remediation contract", () => {
       ),
     ).toHaveLength(2);
     expect(
-      rootDockerfile.match(
-        /^COPY scripts\/checks\/materialize-locked-npm-cache-seed[.]mts \/scripts\/checks\/materialize-locked-npm-cache-seed[.]mts$/gmu,
-      ),
+      rootDockerfile.match(/^COPY .*scripts\/checks\/materialize-locked-npm-cache-seed[.]mts/gmu),
     ).toHaveLength(2);
     expect(
       rootDockerfile.match(/node \/scripts\/lib\/seed-reviewed-npm-cache[.]mts/gmu),

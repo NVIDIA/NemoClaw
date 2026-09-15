@@ -544,7 +544,7 @@ function runOptionalOpenClawPluginBlock(
   const command = extractRunBlock(
     DOCKERFILE,
     "# Install non-messaging OpenClaw plugins that need to match the runtime.",
-    "# The reviewed cache stays root-owned and immutable to the sandbox user.",
+    "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
   const log = path.join(tmp, "calls.log");
@@ -1759,15 +1759,13 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         const installBlock = extractRunBlock(
           DOCKERFILE,
           "# Install non-messaging OpenClaw plugins that need to match the runtime.",
-          "# The reviewed cache stays root-owned and immutable to the sandbox user.",
+          "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
         );
         const installSource = dockerfile.slice(
           dockerfile.indexOf(
             "# Install non-messaging OpenClaw plugins that need to match the runtime.",
           ),
-          dockerfile.indexOf(
-            "# The reviewed cache stays root-owned and immutable to the sandbox user.",
-          ),
+          dockerfile.indexOf("USER root\nCOPY src/lib/messaging/ /src/lib/messaging/"),
         );
         const remediation = fs.readFileSync(
           path.join(REPO_ROOT, "scripts", "lib", "openclaw-npm-remediation.mts"),

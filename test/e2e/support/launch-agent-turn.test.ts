@@ -135,8 +135,8 @@ async function runLaunchSessionFixture(
   const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyPathUnreadableMarker = join(fixtureRoot, "pty-path-unreadable");
   const ptySocketReceiptPath = join(fixtureRoot, "pty-socket-receipt.json");
-  const invocationEnv = invocation?.env ?? {};
-  const runId = invocationEnv.NEMOCLAW_LAUNCH_RUN_ID ?? randomUUID().replaceAll("-", "");
+  const inputEnv = invocation?.env ?? {};
+  const runId = inputEnv.NEMOCLAW_LAUNCH_RUN_ID ?? randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
   mkdirSync(sessionRoot);
@@ -468,7 +468,7 @@ exec "$@"
       });
     const result = await launch({
       ...process.env,
-      ...invocationEnv,
+      ...inputEnv,
       HOME: fixtureRoot,
       NEMOCLAW_FIXTURE_BIN_ROOT: fixtureRoot,
       NEMOCLAW_FIXTURE_CANONICAL_RESTORED_MARKER: canonicalRestoredMarker,
@@ -485,16 +485,17 @@ exec "$@"
       NEMOCLAW_FIXTURE_RUN_ID: runId,
       NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
       NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
-      NEMOCLAW_LAUNCH_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_COMMAND ?? fakeLaunch,
-      NEMOCLAW_LAUNCH_ENTRYPOINT: invocationEnv.NEMOCLAW_LAUNCH_ENTRYPOINT ?? "",
-      NEMOCLAW_LAUNCH_EXIT_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
-      NEMOCLAW_LAUNCH_FIRST_INPUT: invocationEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
+      NEMOCLAW_LAUNCH_COMMAND: inputEnv.NEMOCLAW_LAUNCH_COMMAND ?? fakeLaunch,
+      NEMOCLAW_LAUNCH_ENTRYPOINT: inputEnv.NEMOCLAW_LAUNCH_ENTRYPOINT ?? "",
+      NEMOCLAW_LAUNCH_EXIT_COMMAND: inputEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
+      NEMOCLAW_LAUNCH_FIRST_INPUT: inputEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
+      NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER: inputEnv.NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER ?? "",
       NEMOCLAW_LAUNCH_HOST_TMP_ROOT: fixtureRoot,
       NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
       NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: ptyMonitorStarterScript,
       NEMOCLAW_LAUNCH_RUN_ID: runId,
       NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-      NEMOCLAW_LAUNCH_SANDBOX: invocationEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
+      NEMOCLAW_LAUNCH_SANDBOX: inputEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
       NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
         mode === "restored-canonical-timeout" || mode === "supervisor-timeout"
           ? "10"
@@ -502,13 +503,14 @@ exec "$@"
             ? "5"
             : mode.endsWith("-timeout")
               ? "2"
-              : (invocationEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
-      NEMOCLAW_LAUNCH_SECOND_INPUT: invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
+              : (inputEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
+      NEMOCLAW_LAUNCH_SECOND_INPUT: inputEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
+      NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER: inputEnv.NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER ?? "",
       NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
       NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
       NEMOCLAW_OPENSHELL_COMMAND: fakeOpenshell,
       PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
-      TERM: invocationEnv.TERM ?? "xterm-256color",
+      TERM: inputEnv.TERM ?? "xterm-256color",
     });
     const tuiProcessIds = existsSync(tuiPidsPath)
       ? readFileSync(tuiPidsPath, "utf8").trim().split("\n").filter(Boolean)
