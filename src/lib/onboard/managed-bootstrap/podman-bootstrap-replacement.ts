@@ -753,14 +753,20 @@ function inspectExactContainer(
           mountpoint: stateVolumeAuthority.mountpoint,
         })
       : null;
-  if (
-    actualRuntimeId !== runtimeId ||
-    name !== expected.name ||
-    actualImageContentId !== expected.imageContentId ||
-    (expected.running !== undefined && state.Running !== expected.running) ||
-    !containsExactEntries(labels, exactStringMap(expected.labels, "Expected Podman labels"))
-  ) {
-    return failure("Podman bootstrap container identity or state changed after it was pinned.");
+  const expectedLabels = exactStringMap(expected.labels, "Expected Podman labels");
+  const identityMismatches = [
+    ...(actualRuntimeId === runtimeId ? [] : ["runtime ID"]),
+    ...(name === expected.name ? [] : ["name"]),
+    ...(actualImageContentId === expected.imageContentId ? [] : ["image content ID"]),
+    ...(expected.running === undefined || state.Running === expected.running
+      ? []
+      : ["running state"]),
+    ...(containsExactEntries(labels, expectedLabels) ? [] : ["required labels"]),
+  ];
+  if (identityMismatches.length > 0) {
+    return failure(
+      `Podman bootstrap container identity or state changed after it was pinned (${identityMismatches.join(", ")}).`,
+    );
   }
   if (
     (expected.entrypointArgv && !sameArray(entrypointArgv, expected.entrypointArgv)) ||
