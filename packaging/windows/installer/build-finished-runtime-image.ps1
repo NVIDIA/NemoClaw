@@ -132,7 +132,10 @@ try {
         $directory = Join-Path $mount $_
         $acl = Get-Acl -LiteralPath $directory
         $rows = @($acl.Access | ForEach-Object {
-            $sid = $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+            $identity = $_.IdentityReference
+            $sid = if ($identity -is [Security.Principal.SecurityIdentifier]) { $identity.Value } else {
+                try { $identity.Translate([Security.Principal.SecurityIdentifier]).Value } catch { $identity.Value }
+            }
             $mask = [uint32]([int64]([int32]$_.FileSystemRights) -band 0xffffffffL)
             [pscustomobject]@{ sid=$sid; mask=$mask; inherited=$_.IsInherited;
                 accessControlType=[string]$_.AccessControlType }
