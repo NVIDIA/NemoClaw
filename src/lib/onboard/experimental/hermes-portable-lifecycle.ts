@@ -2293,6 +2293,7 @@ export async function prepareHermesPortableSandboxRemoval(
       const current = await inspect();
       if (!current.present) return;
       const removed = await createCliOpenShellSandboxLifecycle({
+        environment: commandEnv,
         capture: (args, options) => {
           const captured = current.capture(args, options.timeout);
           const stdout = String(captured.stdout ?? "");

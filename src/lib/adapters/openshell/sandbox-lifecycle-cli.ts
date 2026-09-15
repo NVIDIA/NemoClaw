@@ -103,7 +103,8 @@ function validDeleteRequest(request: DeleteOpenShellSandboxRequest): boolean {
 }
 
 function outputOf(result: CapturedOpenShellCommandResult): string {
-  return `${result.stderr ?? ""}\n${result.stdout ?? result.output ?? ""}`.trim();
+  const streams = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
+  return streams || result.output.trim();
 }
 
 function failedDelete(
@@ -234,12 +235,13 @@ export function createCliOpenShellSandboxLifecycleFromRunner(
             code: "ABORT_ERR",
           })
         : undefined;
+      const error = interruption ?? result.error;
       return {
         status: result.status ?? null,
         ...(stdout === undefined ? {} : { stdout }),
         ...(stderr === undefined ? {} : { stderr }),
         output: streamText(result.output) || `${stdout ?? ""}\n${stderr ?? ""}`.trim(),
-        ...(result.error || interruption ? { error: result.error ?? interruption } : {}),
+        ...(error ? { error } : {}),
       };
     },
   });

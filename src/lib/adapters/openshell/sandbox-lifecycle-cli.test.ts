@@ -128,6 +128,19 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     ).resolves.toMatchObject({ kind: "failed", ambiguous: false });
   });
 
+  it("uses aggregate runner output when captured streams are empty", async () => {
+    const run = vi.fn().mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+      output: "Error: delete failed",
+    });
+
+    await expect(
+      createCliOpenShellSandboxLifecycleFromRunner(run).deleteSandbox(request),
+    ).resolves.toMatchObject({ kind: "failed", ambiguous: false });
+  });
+
   it.each(["ENOENT", "EACCES"])("classifies pre-spawn %s as definite", async (code) => {
     const error = Object.assign(new Error("token=must-not-leak"), { code });
     const capture = vi.fn().mockRejectedValue(error);
@@ -183,6 +196,21 @@ describe("OpenShell sandbox lifecycle CLI", () => {
 
   it("keeps a signaled runner result ambiguous", async () => {
     const run = vi.fn().mockReturnValue({ status: 1, stdout: "", stderr: "", signal: "SIGTERM" });
+
+    await expect(
+      createCliOpenShellSandboxLifecycleFromRunner(run).deleteSandbox(request),
+    ).resolves.toMatchObject({ kind: "failed", ambiguous: true });
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a signaled runner result ambiguous when the runner also reports an error", async () => {
+    const run = vi.fn().mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "",
+      signal: "SIGTERM",
+      error: Object.assign(new Error("permission denied"), { code: "EACCES" }),
+    });
 
     await expect(
       createCliOpenShellSandboxLifecycleFromRunner(run).deleteSandbox(request),
