@@ -12,6 +12,18 @@ function cleanupClient(owner: string, calls: string[]) {
     calls.push(`${owner}:${options.artifactName}`);
   });
   return {
+    command: vi.fn(async (_command: string, _args: string[], options: ShellProbeRunOptions) => {
+      calls.push(`${owner}:${options.artifactName}`);
+      return {
+        command: [],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "",
+        artifacts: { stdout: "", stderr: "", result: "" },
+      };
+    }),
     cleanupSandbox,
     bestEffortCleanupSandbox: vi.fn(async (name: string, options: ShellProbeRunOptions = {}) => {
       try {
@@ -33,6 +45,7 @@ describe("MCP bridge owned-sandbox cleanup", () => {
     await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge");
     expect(calls).toEqual([
       "host:precleanup-initialize-gateway",
+      "host:precleanup-best-effort-destroy",
       "openshell:precleanup-delete-openshell-sandbox",
       "host:precleanup-destroy-sandbox",
     ]);
@@ -52,6 +65,7 @@ describe("MCP bridge owned-sandbox cleanup", () => {
     expect(result.failures).toEqual([]);
     expect(calls).toEqual([
       "host:precleanup-initialize-gateway",
+      "host:precleanup-best-effort-destroy",
       "openshell:precleanup-delete-openshell-sandbox",
       "host:precleanup-destroy-sandbox",
       "openshell:cleanup-delete-openshell-sandbox",
@@ -88,7 +102,7 @@ describe("MCP bridge owned-sandbox cleanup", () => {
     expect(calls.at(-1)).toBe("host:cleanup-destroy-sandbox");
   });
 
-  it("uses administrator deletion when safe gateway initialization refuses cleanup", async () => {
+  it("uses administrator deletion when initialized gateway cleanup refuses retained state", async () => {
     const calls: string[] = [];
     const host = cleanupClient("host", calls);
     const sandbox = cleanupClient("openshell", calls);
@@ -98,8 +112,29 @@ describe("MCP bridge owned-sandbox cleanup", () => {
     await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge");
 
     expect(calls).toEqual([
+      "host:precleanup-initialize-gateway",
       "openshell:precleanup-delete-openshell-sandbox",
       "host:precleanup-destroy-sandbox",
     ]);
+  });
+  it("stops precleanup after startup failure and retains strict teardown", async () => {
+    const calls: string[] = [];
+    const host = cleanupClient("host", calls);
+    const sandbox = cleanupClient("openshell", calls);
+    const cleanup = new CleanupRegistry();
+    host.command.mockRejectedValueOnce(new Error("gateway startup refused"));
+    await expect(
+      prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge"),
+    ).rejects.toThrow("gateway startup refused");
+    expect(sandbox.cleanupSandbox).not.toHaveBeenCalled();
+    sandbox.cleanupSandbox.mockRejectedValueOnce(new Error("Unknown gateway 'nemoclaw'"));
+    const result = await cleanup.runAll();
+    expect(result.failures).toEqual([
+      {
+        name: "delete owned OpenShell sandbox e2e-mcp-bridge",
+        message: "Unknown gateway 'nemoclaw'",
+      },
+    ]);
+    expect(host.cleanupSandbox).toHaveBeenCalledTimes(1);
   });
 });
