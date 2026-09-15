@@ -75,8 +75,8 @@ if [ "$package_mode" = "registry" ] && [ -n "${NODE_AUTH_TOKEN:-}" ]; then
   export NPM_CONFIG_USERCONFIG="$trusted_npmrc"
 fi
 
-npm ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+npm ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
 if [ "$plugin_install_mode" != "none" ]; then
   npm "${plugin_install_args[@]}" \
-    --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+    --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
 fi

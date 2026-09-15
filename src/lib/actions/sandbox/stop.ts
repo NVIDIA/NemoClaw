@@ -28,20 +28,23 @@ import {
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
 
-function teardownDashboardForwardBestEffort(
+async function teardownDashboardForwardBestEffort(
   sandboxName: string,
   teardown: typeof teardownSandboxDashboardForward,
   warn: (message: string) => void,
-): void {
+): Promise<boolean> {
   try {
-    if (teardown(sandboxName) === false) {
+    if ((await teardown(sandboxName)) === false) {
       warn(
         `  Warning: a ForwardTcp port for '${sandboxName}' did not release. Retry '${CLI_NAME} ${sandboxName} stop'.`,
       );
+      return false;
     }
+    return true;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     warn(`  Warning: could not release the dashboard port-forward: ${detail}`);
+    return false;
   }
 }
 
@@ -270,11 +273,10 @@ export async function stopSandbox(
   sandboxName: string,
   deps: SandboxStopDeps = {},
 ): Promise<SandboxLifecycleResult> {
-  const environment = deps.environment ?? process.env;
-  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(
+  return await (deps.withLifecycleLock ?? withSandboxLifecycleLock)(
     sandboxName,
     () => stopSandboxWithinLifecycleFence(sandboxName, deps),
-    hermesPortableLifecycleLockOptions(sandboxName, environment),
+    hermesPortableLifecycleLockOptions(sandboxName, deps.environment ?? process.env),
   );
 }
 
@@ -331,13 +333,11 @@ async function stopSandboxWithinLifecycleFence(
       deps.updateSandbox ?? registry.updateSandbox,
     );
   const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
-  if (!hermesPortableVerified) {
-    teardownDashboardForwardBestEffort(
-      sandboxName,
-      deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
-      warn,
-    );
-  }
+  const dashboardForwardReleased = await teardownDashboardForwardBestEffort(
+    sandboxName,
+    deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+    warn,
+  );
   if (!stopIntentRecorded) {
     return {
       exitCode: 1,
@@ -347,6 +347,14 @@ async function stopSandboxWithinLifecycleFence(
     };
   }
   if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
+  if (!dashboardForwardReleased) {
+    return {
+      exitCode: 1,
+      message:
+        `Sandbox '${sandboxName}' stopped, but release of its host forward ports could not be ` +
+        `proved. Recoverable registry state was preserved. Retry '${CLI_NAME} ${sandboxName} stop'.`,
+    };
+  }
   if (hermesPortableVerified) {
     log(
       outcome.state === "already-stopped"

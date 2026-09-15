@@ -124,7 +124,10 @@ type RestoreFixtureOptions = {
   buildIdentitySha?: string;
   consumerRunAttempt?: string;
   expectedPayloadSha256?: string;
+  consumerNodeVersion?: string;
   manifestCandidateSha?: string;
+  manifestNodeVersion?: string;
+  manifestNpmVersion?: string;
   manifestRunAttempt?: string;
   preexistingDist?:
     | "dangling-symlink"
@@ -394,8 +397,8 @@ async function runRestoreValidation(owner: ProcessOwner, options: RestoreFixture
         runAttempt: options.manifestRunAttempt ?? options.producerRunAttempt ?? "1",
       },
       toolchain: {
-        node: "v22.23.1",
-        npm: "10.9.2",
+        node: options.manifestNodeVersion ?? "v24.18.1",
+        npm: options.manifestNpmVersion ?? "12.0.2",
         runnerOs: "Linux",
         runnerArch: "X64",
       },
@@ -407,7 +410,7 @@ async function runRestoreValidation(owner: ProcessOwner, options: RestoreFixture
   const nodeWrapper = path.join(toolDirectory, "node");
   fs.writeFileSync(
     nodeWrapper,
-    `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo v22.23.1\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
+    `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo ${options.consumerNodeVersion ?? "v24.18.1"}\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     { mode: 0o755 },
   );
   const lockfileSha256 = sha256File(path.join(workspace, "package-lock.json"));
@@ -735,6 +738,25 @@ describe.concurrent("exact-commit CLI artifact restore", () => {
       context,
       { manifestCandidateSha: "e".repeat(40) },
       "exact-commit CLI artifact provenance mismatch",
+    );
+  });
+
+  it.for([
+    ["Node", { manifestNodeVersion: "v24.18.0" }],
+    ["npm", { manifestNpmVersion: "12.0.1" }],
+  ] as const)(
+    ([tool, _options]: readonly [string, RestoreFixtureOptions]) =>
+      `rejects a CLI artifact built with a different ${tool} version`,
+    async ([, options], context) => {
+      await expectRestoreFailure(context, options, "exact-commit CLI artifact provenance mismatch");
+    },
+  );
+
+  it("rejects restoration under a different Node version", async (context) => {
+    await expectRestoreFailure(
+      context,
+      { consumerNodeVersion: "v24.18.0" },
+      "consumer must restore the CLI under the pinned Node 24.18.1 toolchain",
     );
   });
 
