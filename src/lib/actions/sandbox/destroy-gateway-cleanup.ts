@@ -46,7 +46,7 @@ export type FinalDestroyGatewayCleanupVerdict =
   | { readonly status: "live-list-unavailable" }
   | { readonly status: "live-sandboxes"; readonly sandboxNames: readonly string[] };
 
-type FinalDestroyGatewayCleanupDeps = {
+export type FinalDestroyGatewayCleanupDeps = {
   captureOpenshell?: LiveSandboxListProbe;
   dockerCapture?: DockerCaptureProbe;
   listSandboxes?: SandboxListProvider;

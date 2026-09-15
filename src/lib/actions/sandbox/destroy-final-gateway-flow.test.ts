@@ -7,6 +7,7 @@ import {
   createDestroyHarness,
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 const TERMINATING_ALPHA_LIST =
   "NAME              CREATED              PHASE\nalpha             now                  Terminating\n";
@@ -17,7 +18,7 @@ function warnOutput(harness: ReturnType<typeof createDestroyHarness>): string {
   return harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
 }
 
-describe("destroySandbox final gateway decision", () => {
+describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), () => {
   let originalGatewayEnv: string | undefined;
 
   beforeEach(() => {

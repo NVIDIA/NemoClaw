@@ -51,7 +51,6 @@ export type DestroyHarness = {
   removeSandboxSpy: MockInstance;
   reconstructRetainedSandboxRecoverySpy: MockInstance;
   resolveRetainedSandboxRecoverySpy: MockInstance;
-  resolveFinalGatewayCleanupSpy: MockInstance;
   resolveGatewayRuntimeProviderIdSpy: MockInstance;
   retireRemovedImmutabilityStateRecordSpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
@@ -224,9 +223,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const destroyGateway = requireSource(
     "./destroy-gateway.js",
   ) as typeof import("../../src/lib/actions/sandbox/destroy-gateway");
-  const destroyGatewayCleanup = requireSource(
-    "./destroy-gateway-cleanup.js",
-  ) as typeof import("../../src/lib/actions/sandbox/destroy-gateway-cleanup");
   const destroyPresence = requireSource("./destroy-presence.js");
   const credentialStore = requireSource("../../credentials/store.js");
   const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
@@ -608,13 +604,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const cleanupGatewaySpy = vi
     .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
     .mockImplementation(() => undefined);
-  const resolveFinalGatewayCleanup = destroyGatewayCleanup.resolveFinalDestroyGatewayCleanup;
   const finalGatewaySleepSpy = vi.fn(async (_ms: number) => undefined);
-  const resolveFinalGatewayCleanupSpy = vi
-    .spyOn(destroyGatewayCleanup, "resolveFinalDestroyGatewayCleanup")
-    .mockImplementation((input, deps = {}) =>
-      resolveFinalGatewayCleanup(input, { ...deps, sleep: finalGatewaySleepSpy }),
-    );
   const assertDestroyIdentitySpy = vi.spyOn(
     destroyPresence,
     "assertUnambiguousDestroyContainerIdentity",
@@ -716,7 +706,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     compareAndSwapSessionSpy,
     dockerCaptureSpy,
     dockerRunSpy,
-    destroySandbox: requireSource(destroyModulePath).destroySandbox,
+    destroySandbox: (sandboxName, destroyOptions) =>
+      requireSource(destroyModulePath).destroySandbox(sandboxName, destroyOptions, {
+        finalGatewayCleanup: { sleep: finalGatewaySleepSpy },
+      }),
     errorSpy,
     events,
     executeSandboxDestroySpy,
@@ -742,7 +735,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     removeSandboxSpy,
     reconstructRetainedSandboxRecoverySpy,
     resolveRetainedSandboxRecoverySpy,
-    resolveFinalGatewayCleanupSpy,
     resolveGatewayRuntimeProviderIdSpy,
     retireRemovedImmutabilityStateRecordSpy,
     retirePortableLifecycleReceiptSpy,

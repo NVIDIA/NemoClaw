@@ -64,6 +64,7 @@ import {
   resolveGatewayCleanupRuntimeProviderId,
 } from "./destroy-gateway";
 import {
+  type FinalDestroyGatewayCleanupDeps,
   type FinalDestroyGatewayCleanupVerdict,
   resolveFinalDestroyGatewayCleanup,
 } from "./destroy-gateway-cleanup";
@@ -624,6 +625,9 @@ function requestSandboxDestroyExit(exitCode: number): never {
 export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
+  deps: {
+    finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
+  } = {},
 ): Promise<void> {
   try {
     return await withMcpLifecycleLock(sandboxName, () => {
@@ -636,6 +640,7 @@ export async function destroySandbox(
         sandboxName,
         options,
         removedImmutabilityMigration.stateRecord !== null,
+        deps,
       );
     });
   } catch (error) {
@@ -648,6 +653,9 @@ async function destroySandboxUnlocked(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
   retireRemovedImmutabilityState = false,
+  deps: {
+    finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
+  } = {},
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   const registeredSandbox = registry.getSandbox(sandboxName);
@@ -1242,7 +1250,10 @@ async function destroySandboxUnlocked(
         sandboxName,
         ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
       },
-      cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
+      {
+        ...deps.finalGatewayCleanup,
+        ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
+      },
     );
     if (
       finalGatewayCleanup.status === "cleanup" &&
