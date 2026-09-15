@@ -580,6 +580,7 @@
       "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
       "fast": [
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
+        "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -848,6 +849,7 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/process-recovery-managed-startup.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

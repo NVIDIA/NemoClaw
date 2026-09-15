@@ -667,7 +667,17 @@ function recoverRegisteredRuntimeProviderSandbox(
   entry: registry.SandboxEntry,
 ): { readonly exitCode: number; readonly message?: string } | null {
   const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
-  return provider?.recovery.supported === true ? provider.recovery.recover(entry) : null;
+  if (!provider) {
+    return entry.openshellDriver?.trim()
+      ? {
+          exitCode: 1,
+          message: "The registered runtime provider does not support sandbox process recovery.",
+        }
+      : null;
+  }
+  return provider.recovery.supported
+    ? provider.recovery.recover(entry)
+    : { exitCode: 1, message: provider.recovery.reason };
 }
 
 type ManagedGatewayProbeOptions = {
