@@ -392,50 +392,6 @@ export function catalogueExclusionReason(id: string): string | undefined {
 }
 
 export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
-  dockerOnlyTarget("managed-image-activation", {
-    displayName: "Managed images: activates every exact published agent image",
-    agentRuntime: "openclaw + hermes + langchain-deepagents-code",
-    environmentOrInferenceEndpoint: "Ubuntu Docker host; synthetic local inference",
-    profile: "standard",
-    testFile: "test/e2e/live/managed-image-activation-e2e.test.ts",
-    timeoutMinutes: 90,
-    installMode: "credential-free",
-    installNonInteractive: true,
-    restoreCli: true,
-    exposeCliBin: true,
-    runner: "ubuntu-24.04",
-    owningPaths: ["test/e2e/live/managed-image-activation-e2e-helpers.ts"],
-    environment: { ...nonInteractive, OPENSHELL_GATEWAY: "nemoclaw" },
-  }),
-  ...([1, 2] as const).map((pass) =>
-    dockerOnlyTarget(`managed-image-mcp-discovery-pass-${pass}`, {
-      targetId: "managed-image-mcp-discovery",
-      displayName: `Managed images: OpenClaw MCP discovery (fresh runner pass ${pass})`,
-      agentRuntime: "openclaw",
-      environmentOrInferenceEndpoint: "Ubuntu Docker host; synthetic local MCP and inference",
-      profile: "standard",
-      testFile: "test/e2e/live/mcp-bridge.test.ts",
-      timeoutMinutes: 60,
-      installMode: "credential-free",
-      installNonInteractive: true,
-      restoreCli: true,
-      exposeCliBin: true,
-      cloudflared: true,
-      runner: "ubuntu-24.04",
-      shard: `pass-${pass}`,
-      owningPaths: ["tools/e2e/assert-mcp-artifact-secrets-absent.mts"],
-      environment: {
-        ...nonInteractive,
-        NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1",
-        NEMOCLAW_MCP_BRIDGE_AGENT: "openclaw",
-        NEMOCLAW_MCP_BRIDGE_E2E_SCOPE: "managed-image-discovery",
-        NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
-        NEMOCLAW_SANDBOX_NAME: `e2e-managed-image-mcp-${pass}`,
-        OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
-          "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
-      },
-    }),
-  ),
   managedRuntimeTarget("agent-turn-latency", {
     displayName: "Performance: bounds hosted inference turns for OpenClaw and Hermes",
     agentRuntime: "openclaw + hermes",

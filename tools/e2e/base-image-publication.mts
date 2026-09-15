@@ -49,6 +49,11 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
   ["scripts/**", /^scripts\/.+$/u],
   [
+    "test/e2e/live/managed-image-activation-e2e*.ts",
+    /^test\/e2e\/live\/managed-image-activation-e2e[^/]*[.]ts$/u,
+  ],
+  ["test/e2e/live/mcp-bridge*.ts", /^test\/e2e\/live\/mcp-bridge[^/]*[.]ts$/u],
+  [
     "src/lib/actions/sandbox/mcp-bridge-*.ts",
     /^src\/lib\/actions\/sandbox\/mcp-bridge-[^/]*[.]ts$/u,
   ],

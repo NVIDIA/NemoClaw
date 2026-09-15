@@ -275,8 +275,7 @@ function validateWorkflow(payload: unknown): number {
   return id;
 }
 
-/** Select the newest exact-candidate producer run. Complete immutable artifacts,
- * rather than downstream runtime jobs, prove publication success. */
+/** Select one successful exact-candidate managed-image workflow run. */
 export function selectManagedImagePublicationRun(
   payload: unknown,
   expected: { readonly headSha: string; readonly prNumber: number; readonly workflowId: number },
@@ -294,7 +293,7 @@ export function selectManagedImagePublicationRun(
   if (response.workflow_runs.length === 0) {
     throw new Error("exact managed-image workflow run is missing or ambiguous");
   }
-  const producerRuns: ManagedImagePublicationRun[] = [];
+  const successfulRuns: ManagedImagePublicationRun[] = [];
   const runIds = new Set<number>();
   for (const rawRun of response.workflow_runs) {
     const run = record(rawRun, "managed-image workflow run");
@@ -329,17 +328,17 @@ export function selectManagedImagePublicationRun(
     ) {
       throw new Error("managed-image workflow run does not match the PR number");
     }
-    if (run.status === "in_progress" || run.status === "completed") {
-      producerRuns.push({ attempt, headSha: expected.headSha, id });
+    if (run.status === "completed" && run.conclusion === "success") {
+      successfulRuns.push({ attempt, headSha: expected.headSha, id });
     }
   }
-  if (producerRuns.length === 0) {
+  if (successfulRuns.length === 0) {
     throw new Error(
-      `managed-image producer run for candidate ${expected.headSha} is not available`,
+      `managed-image workflow for candidate ${expected.headSha} must complete successfully before live E2E`,
     );
   }
-  const selectedRun = producerRuns.sort((left, right) => right.id - left.id)[0];
-  if (!selectedRun) throw new Error("managed-image producer run is missing");
+  const selectedRun = successfulRuns.sort((left, right) => right.id - left.id)[0];
+  if (!selectedRun) throw new Error("successful managed-image workflow run is missing");
   return selectedRun;
 }
 

@@ -361,7 +361,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Install OpenShell CLI",
     "Install OpenShell CLI without workflow credentials",
     "Run catalogue E2E target",
-    "Scan managed-image MCP artifacts for fixture credentials",
     "Finalize runner comparison telemetry",
     "Write E2E evidence manifest",
     "Upload skill-agent artifacts",
@@ -700,20 +699,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must run the planned catalogue target with guarded secrets");
   }
 
-  const mcpSecretScan = requireStep(
-    errors,
-    workflowSteps,
-    "Scan managed-image MCP artifacts for fixture credentials",
-  );
-  if (
-    mcpSecretScan?.id !== "mcp_artifact_secret_scan" ||
-    mcpSecretScan?.if !== "${{ always() && inputs.target_id == 'managed-image-mcp-discovery' }}" ||
-    mcpSecretScan.run !==
-      'npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"'
-  ) {
-    errors.push("standard E2E profile must scan managed-image MCP artifacts before upload");
-  }
-
   const skillUpload = requireStep(errors, workflowSteps, "Upload skill-agent artifacts");
   if (
     skillUpload?.if !==
@@ -731,7 +716,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const upload = requireStep(errors, workflowSteps, "Upload E2E artifacts");
   if (
     upload?.if !==
-      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' && (inputs.target_id != 'managed-image-mcp-discovery' || steps.mcp_artifact_secret_scan.outcome == 'success') }}" ||
+      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' }}" ||
     upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference ||
     !isDeepStrictEqual(record(upload.with), {
       name: "${{ steps.execution_plan.outputs.upload_name }}",

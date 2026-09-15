@@ -396,7 +396,7 @@ describe("exact PR managed-image publication", () => {
     expect(download).not.toHaveBeenCalled();
   });
 
-  it("reuses complete publication receipts when downstream qualification fails", async () => {
+  it("rejects a failed exact-candidate Images run before artifact download", async () => {
     const download = vi.fn(downloadContract);
 
     await expect(
@@ -405,21 +405,8 @@ describe("exact PR managed-image publication", () => {
         candidateRequest({ imageChanged: true, run: workflowRun({ conclusion: "failure" }) }),
         download,
       ),
-    ).resolves.toBe("candidate-catalog");
-    expect(download).toHaveBeenCalledTimes(SHIPPED_MANAGED_IMAGE_AGENTS.length);
-  });
-
-  it("reuses complete publication receipts while downstream qualification is running", async () => {
-    await expect(
-      resolvePrManagedImageCatalog(
-        resolverInput(),
-        candidateRequest({
-          imageChanged: true,
-          run: workflowRun({ conclusion: null, status: "in_progress" }),
-        }),
-        downloadContract,
-      ),
-    ).resolves.toBe("candidate-catalog");
+    ).rejects.toThrow("must complete successfully before live E2E");
+    expect(download).not.toHaveBeenCalled();
   });
 
   it("resolves an earlier producer cohort after a failed-job rerun", async () => {
@@ -435,7 +422,7 @@ describe("exact PR managed-image publication", () => {
     );
   });
 
-  it("uses the newest Images producer run", async () => {
+  it("uses the newest successful Images run after an earlier failure", async () => {
     const laterRunId = RUN_ID + 10;
     const request = vi.fn(
       candidateRequest({
@@ -464,7 +451,7 @@ describe("exact PR managed-image publication", () => {
     );
   });
 
-  it("selects the newest exact-candidate Images producer run beyond the first API page", async () => {
+  it("selects a successful exact-candidate Images run beyond the first API page", async () => {
     const laterRunId = RUN_ID + 200;
     const failedRuns = Array.from({ length: 100 }, (_, index) =>
       workflowRunRecord({ conclusion: "failure", id: RUN_ID + index }),

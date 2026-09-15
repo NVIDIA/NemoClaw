@@ -247,11 +247,13 @@ describe("base-image publication evidence", () => {
       "agents/**",
       ".github/actions/ci-reviewed-npm-audit/**",
       "src/lib/messaging/**",
+      "test/e2e/live/managed-image-activation-e2e*.ts",
     ]);
     expect(expanded).toEqual([
       ":(glob).github/actions/ci-reviewed-npm-audit/**",
       ":(glob)agents/**",
       ":(glob)src/lib/messaging/**",
+      ":(glob)test/e2e/live/managed-image-activation-e2e*.ts",
       "Dockerfile",
     ]);
     expect(
