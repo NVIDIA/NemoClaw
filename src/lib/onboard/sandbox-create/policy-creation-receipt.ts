@@ -28,6 +28,7 @@ import type { SelectedDockerGpuRoute } from "../docker-gpu-route";
 import {
   isAdditiveOpenShellCdiPolicyEnrichment,
   isOpenShellGpuBaselineEnrichment,
+  usesExternalOpenShellCdiQualificationStack,
 } from "../sandbox-gpu-route-policy";
 import type { VerifiedSandboxPolicyBoundary, VerifiedSandboxPolicyRegistration } from "../types";
 
@@ -150,18 +151,6 @@ function basePolicyFromEffectivePolicy(
     ...policy,
     network_policies: withoutProviderComposedPolicies(networkPolicies as never),
   };
-}
-
-function usesExternalOpenShellCdiQualificationStack(): boolean {
-  const openshellBin = process.env.NEMOCLAW_OPENSHELL_BIN?.trim() ?? "";
-  const gatewayBin = process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim() ?? "";
-  const sandboxBin = process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim() ?? "";
-  return (
-    openshellBin.endsWith("/target/debug/openshell") &&
-    gatewayBin.endsWith("/target/debug/openshell-gateway") &&
-    sandboxBin.endsWith("/target/debug/openshell-sandbox") &&
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH === "0"
-  );
 }
 
 function waitForCreatedSandboxPolicyReadiness(

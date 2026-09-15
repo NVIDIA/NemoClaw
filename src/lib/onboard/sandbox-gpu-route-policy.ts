@@ -40,6 +40,21 @@ export type SandboxGpuRoutePolicies = {
   compatibilityPolicyPath: string | null;
 };
 
+/** Restrict the temporary #8910 CDI bridge to the explicitly selected development stack. */
+export function usesExternalOpenShellCdiQualificationStack(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const openshellBin = env.NEMOCLAW_OPENSHELL_BIN?.trim() ?? "";
+  const gatewayBin = env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim() ?? "";
+  const sandboxBin = env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim() ?? "";
+  return (
+    openshellBin.endsWith("/target/debug/openshell") &&
+    gatewayBin.endsWith("/target/debug/openshell-gateway") &&
+    sandboxBin.endsWith("/target/debug/openshell-sandbox") &&
+    env.NEMOCLAW_DOCKER_GPU_PATCH === "0"
+  );
+}
+
 function policyWithoutFilesystemPolicy(policy: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = Object.create(null);
   for (const key of Object.keys(policy)) {

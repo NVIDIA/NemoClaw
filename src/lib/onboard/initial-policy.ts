@@ -34,6 +34,7 @@ import {
 } from "./messaging-policy-presets";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
+import { usesExternalOpenShellCdiQualificationStack } from "./sandbox-gpu-route-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "./temp-files";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
@@ -91,6 +92,7 @@ type DirectGpuPolicyOptions = {
   procReadWrite?: boolean;
   sysfsReadOnlyPaths?: readonly string[];
   jetsonGpuDevicePaths?: readonly string[];
+  jetsonSysfsReadOnly?: boolean;
 };
 
 export { isStationGb300ProductName };
@@ -239,6 +241,16 @@ export function buildDirectGpuPolicyYaml(
   }
   const jetsonGpuDevicePaths = normalizeTegraGpuDevicePaths(options.jetsonGpuDevicePaths ?? []);
   if (jetsonGpuDevicePaths.length > 0) {
+    if (
+      options.jetsonSysfsReadOnly === true &&
+      !fsPolicy.read_only.includes(SYSFS_PATH) &&
+      !fsPolicy.read_write.includes(SYSFS_PATH)
+    ) {
+      // OpenShell's CDI enrichment does not currently include sysfs. CUDA on
+      // AGX Thor reads sysfs during cuInit(0), so the external #2846
+      // qualification stack needs this temporary read-only exception.
+      fsPolicy.read_only.push(SYSFS_PATH);
+    }
     if (
       !fsPolicy.read_only.includes(JETSON_GPU_LIBRARY_ROOT) &&
       !fsPolicy.read_write.includes(JETSON_GPU_LIBRARY_ROOT)
@@ -473,6 +485,17 @@ function resolveInitialSandboxCreatePolicy(
     basePolicy = content;
   };
   if (options.directGpu) {
+    const jetsonGpuDevicePaths =
+      (options.agentName ?? "openclaw") === "openclaw"
+        ? (options.jetsonGpuDevicePaths ?? detectTegraGpuDevicePaths())
+        : [];
+    const jetsonSysfsReadOnly =
+      jetsonGpuDevicePaths.length > 0 && usesExternalOpenShellCdiQualificationStack();
+    if (jetsonSysfsReadOnly) {
+      console.warn(
+        "  ⚠ Test-only: allowing read-only /sys for OpenShell CDI CUDA qualification on Jetson.",
+      );
+    }
     adoptPolicy(
       buildDirectGpuPolicyYaml(basePolicy, {
         procReadWrite: options.dockerGpuPatch === true,
@@ -481,10 +504,8 @@ function resolveInitialSandboxCreatePolicy(
           discoverHostStationGb300SysfsReadOnlyPaths({
             hasNvidiaGpu: options.hostGpuAvailable,
           }),
-        jetsonGpuDevicePaths:
-          (options.agentName ?? "openclaw") === "openclaw"
-            ? (options.jetsonGpuDevicePaths ?? detectTegraGpuDevicePaths())
-            : [],
+        jetsonGpuDevicePaths,
+        jetsonSysfsReadOnly,
       }),
       "nemoclaw-gpu-policy",
     );
