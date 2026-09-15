@@ -12,6 +12,10 @@ import path from "node:path";
 import { expect } from "vitest";
 
 import {
+  inspectCiNpmInstall,
+  prepareCiNpmInstall,
+} from "../../../scripts/checks/prepare-ci-npm-install.mts";
+import {
   assertValidatedRepair,
   attemptKey,
   candidateDigest,
@@ -112,24 +116,38 @@ liveTest(
   async ({ progress }) => {
     const artifactRoot = process.env.E2E_ARTIFACT_DIR;
     assert.ok(artifactRoot, "E2E_ARTIFACT_DIR is required");
+    const runnerTemp = process.env.RUNNER_TEMP;
+    assert.ok(runnerTemp, "RUNNER_TEMP is required");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-validation-e2e-"));
     try {
       const candidateDirectory = path.join(root, "workspace", "repo");
       const outputDirectory = path.join(artifactRoot, "repair-validation");
+      const sdkArtifactDirectory = path.join(runnerTemp, "openshell-sdk");
       fs.mkdirSync(candidateDirectory, { recursive: true });
       fs.writeFileSync(path.join(candidateDirectory, ".gitignore"), "node_modules/\n");
+      const packageManifest = JSON.parse(
+        fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+      ) as Record<string, unknown> & { scripts: Record<string, string> };
+      packageManifest.scripts = {
+        "check:diff": "node -e \"if(process.cwd()!=='/sandbox/repo')process.exit(91)\"",
+        "test:changed": "node -e \"if(process.cwd()!=='/sandbox/repo')process.exit(92)\"",
+      };
       fs.writeFileSync(
         path.join(candidateDirectory, "package.json"),
-        `${JSON.stringify({
-          name: "repair-validation-runtime-proof",
-          version: "1.0.0",
-          scripts: {
-            "check:diff": "node -e \"if(process.cwd()!=='/sandbox/repo')process.exit(91)\"",
-            "test:changed": "node -e \"if(process.cwd()!=='/sandbox/repo')process.exit(92)\"",
-          },
-        })}\n`,
+        `${JSON.stringify(packageManifest)}\n`,
       );
-      run("npm", ["install", "--package-lock-only", "--ignore-scripts"], candidateDirectory);
+      fs.copyFileSync(
+        path.join(process.cwd(), "package-lock.json"),
+        path.join(candidateDirectory, "package-lock.json"),
+      );
+      fs.mkdirSync(path.join(candidateDirectory, "nemoclaw"));
+      fs.copyFileSync(
+        path.join(process.cwd(), "nemoclaw", "package-lock.json"),
+        path.join(candidateDirectory, "nemoclaw", "package-lock.json"),
+      );
+      const reviewedDependency = inspectCiNpmInstall(candidateDirectory);
+      expect(reviewedDependency.required).toBe(true);
+      expect(fs.readdirSync(sdkArtifactDirectory)).toEqual([reviewedDependency.artifactName]);
       fs.writeFileSync(path.join(candidateDirectory, "fixture.txt"), "before\n");
       run("git", ["init", "--initial-branch=main"], candidateDirectory);
       run("git", ["config", "user.name", "Repair E2E"], candidateDirectory);
@@ -168,6 +186,7 @@ liveTest(
       });
 
       progress.phase("run the trusted validation plan in /sandbox/repo");
+      let preparedDependencies = false;
       await validateAndSealRepair({
         selection: selected,
         candidate,
@@ -185,12 +204,18 @@ liveTest(
                 PI_IMAGE,
                 SANDBOX_NAME: `advisor-validation-e2e-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
               },
-              sdkArtifactDirectory: path.join(root, "unused-sdk-artifact"),
+              sdkArtifactDirectory,
               trustedCheckout: process.cwd(),
             },
-            { prepareDependencies: async () => undefined },
+            {
+              prepareDependencies: async (request) => {
+                await prepareCiNpmInstall(request);
+                preparedDependencies = true;
+              },
+            },
           ),
       });
+      expect(preparedDependencies).toBe(true);
 
       progress.phase("verify the sealed validation receipt");
       const receipt = parseValidationReceipt(
