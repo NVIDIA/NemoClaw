@@ -119,6 +119,11 @@ fn native_cache_retains_only_dependencies_in_both_build_profiles() {
                 .is_some_and(|action| action.starts_with("Swatinem/rust-cache@"))
         })
         .expect("native builds must prune workspace artifacts before caching");
+    // This revision is permitted by the repository's selected-actions policy.
+    assert_eq!(
+        cache["uses"],
+        "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6"
+    );
     let inputs = &cache["with"];
     assert_eq!(inputs["cache-all-crates"], "false");
     assert_eq!(inputs["cache-workspace-crates"], "false");
