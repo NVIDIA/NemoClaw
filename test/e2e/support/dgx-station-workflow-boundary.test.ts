@@ -13,6 +13,18 @@ describe("Station workflow authorization and ownership", () => {
   });
 
   it.each([
+    ["jobs", " && inputs.jobs == ''"],
+    ["targets", " && inputs.targets == ''"],
+  ])("rejects a Station guard that permits another selection in %s", (_selector, guard) => {
+    const workflow = readWorkflow();
+    const job = (workflow.jobs as Record<string, { if: string }>)["dgx-station-express"];
+    job.if = job.if.replace(guard, "");
+    expect(validateDgxStationDispatchBoundary(workflow)).toContain(
+      "Station dispatch requires an explicit same-repository selection through the trusted main workflow after image publication",
+    );
+  });
+
+  it.each([
     ["if", "${{ github.event_name == 'pull_request' }}", "trusted main workflow"],
     ["needs", ["generate-matrix"], "managed-image publication"],
     ["runs-on", "self-hosted", "GitHub-hosted"],
