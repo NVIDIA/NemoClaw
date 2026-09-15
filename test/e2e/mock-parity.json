@@ -466,7 +466,8 @@
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
       ]
     },
     {
@@ -812,9 +813,13 @@
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/gateway-restart.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "test/agents/hermes/hermes-gateway-wrapper.test.ts",
+        "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
       ]
     },
     {
@@ -823,7 +828,8 @@
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/onboard/machine/handlers/finalization.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
       ]
     },
     {
