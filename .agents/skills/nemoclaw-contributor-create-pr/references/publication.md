@@ -138,26 +138,8 @@ Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omi
 
 Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
 Keep it draft while automated evaluation or a candidate-owned repair is pending.
-
-Before marking a PR ready, record its number, reviewed `headRefOid`, and expected draft state. Read the
-PR immediately before the write. Continue only when its identity and commit are unchanged, it is still
-draft, and the latest commit completed the shared follow-up cycle with no unresolved candidate-owned
-finding or failure.
-
-Use `gh pr ready <number> --repo NVIDIA/NemoClaw` or an equivalent configured GitHub method for one
-ready-state request. Treat the response as provisional because GitHub does not provide an
-expected-commit condition for this transition. Follow GitHub access guidance when the request returns
-an access error. After every other successful, failed, or inconclusive response, read the PR again.
-Continue only when the same PR and reviewed commit are open and no longer draft. This transition does
-not approve or merge the PR.
-
-If the same PR and commit remain draft, report the command result and stop without another request in
-this invocation. If the PR identity or commit changed, classify the result as unknown. Stop without
-another ready-state request, preserve the observed state, and restart complete follow-up for the
-latest PR commit before a later readiness action. Do not treat a different commit as evaluated based
-on evidence for the reviewed commit, even if the readback shows it is no longer draft. For any
-non-success result, report the recorded PR number, reviewed commit, expected draft state, command
-result, observed PR state, and each difference.
+Use `prepare_pr_for_human_review` only after the latest PR commit completes the shared follow-up cycle
+with no unresolved candidate-owned finding or failure.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 

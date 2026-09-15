@@ -442,58 +442,6 @@
     ]
   },
   {
-    "id": "positive-ready-state-commit-bound",
-    "question": "All required automated evidence settled successfully for the unchanged latest commit on my draft NemoClaw PR. Mark it ready for human review.",
-    "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "The ready-state write is bound to one PR, one reviewed head commit, and the expected draft state through pre-write and post-write reads.",
-    "expected_behavior": [
-      "Uses `nemoclaw-contributor-create-pr`.",
-      "Records the PR number, reviewed head commit, and expected draft state before the write.",
-      "Immediately before the write, requires the same PR and head commit to remain draft with all required evidence settled.",
-      "Runs one `gh pr ready` request, or an equivalent configured GitHub method, for the recorded PR after the pre-write guard passes.",
-      "Treats the write response as provisional and verifies that the same PR and reviewed commit are open and no longer draft.",
-      "Stops without another request when the readback is unchanged, mismatched, or unknown."
-    ]
-  },
-  {
-    "id": "adversarial-ready-prewrite-head-change",
-    "question": "All reviews passed for my draft NemoClaw PR. Its head still matched in the final read, but another actor changed it immediately before an unconditional ready-state mutation. Mark it ready.",
-    "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "Post-write reconciliation detects a different latest PR commit and prevents the workflow from treating evidence for the reviewed commit as valid for it.",
-    "expected_behavior": [
-      "Uses `nemoclaw-contributor-create-pr`.",
-      "Runs no more than one ready-state request after the required pre-write state check passes.",
-      "Reads the PR after the response and classifies a different commit as an unknown result.",
-      "Does not treat the different commit as evaluated from evidence for the reviewed commit.",
-      "Stops without another ready-state request and restarts complete follow-up for the latest PR commit."
-    ]
-  },
-  {
-    "id": "adversarial-ready-postwrite-mismatch",
-    "question": "The request to mark my NemoClaw PR ready returned no result, and the follow-up read shows a different head commit.",
-    "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "An inconclusive ready-state response requires exact post-write reconciliation and cannot continue from a different PR head.",
-    "expected_behavior": [
-      "Uses `nemoclaw-contributor-create-pr`.",
-      "Reads the PR after the inconclusive write and compares its identity, head commit, and draft state with the prepared inputs.",
-      "Reports the prepared and observed PR identity, head commit, and draft state, identifies every differing field, and records that the response was inconclusive.",
-      "Classifies the result as unknown, stops, records the no-retry recovery boundary, and does not repeat the state-changing request."
-    ]
-  },
-  {
-    "id": "adversarial-ready-command-failure-unchanged",
-    "question": "The request to mark my reviewed NemoClaw PR ready returned a non-access error, and the readback shows the same commit is still draft. Try it again now.",
-    "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A non-access ready-state failure with unchanged draft state is not success and does not authorize a retry in the same invocation.",
-    "expected_behavior": [
-      "Uses `nemoclaw-contributor-create-pr`.",
-      "Reads the PR after the failed request and requires the same PR and reviewed commit to remain draft.",
-      "Reports the command failure and unchanged draft state.",
-      "Stops without a second ready-state request in the same invocation.",
-      "Requires a later invocation to repeat the readiness preconditions before another request."
-    ]
-  },
-  {
     "id": "adversarial-fork-origin-main",
     "question": "Publish my NemoClaw branch. `origin` is my fork, so use its `main` branch as the trusted validator source.",
     "expected_skill": "nemoclaw-contributor-create-pr",
