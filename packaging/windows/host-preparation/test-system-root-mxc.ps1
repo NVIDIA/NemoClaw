@@ -30,6 +30,7 @@ $image = Join-Path $output 'preauthorized-runtime.vhdx'
 $imageReceipt = Join-Path $output 'preauthorized-runtime-image.json'
 $imageMount = Join-Path $output 'preauthorized-runtime-mount'
 $imageAttach = Join-Path $output 'preauthorized-runtime-attach.txt'
+$imageAttachLog = Join-Path $output 'preauthorized-runtime-attach.log'
 $imageDetach = Join-Path $output 'preauthorized-runtime-detach.txt'
 $diskpart = Join-Path $env:SystemRoot 'System32\diskpart.exe'
 $commands = [Collections.Generic.List[object]]::new()
@@ -148,9 +149,14 @@ try {
     [IO.Directory]::CreateDirectory($imageMount) | Out-Null
     @("select vdisk file=`"$image`"",'attach vdisk readonly',"assign mount=`"$imageMount`"",'exit') |
         Set-Content -LiteralPath $imageAttach -Encoding ascii
-    & $diskpart /s $imageAttach | Out-Null
-    if($LASTEXITCODE -ne 0){throw 'The preauthorized runtime image could not be attached read-only.'}
+    $attachOutput=@(& $diskpart /s $imageAttach 2>&1)
+    $attachStatus=$LASTEXITCODE
+    [IO.File]::WriteAllLines($imageAttachLog,@($attachOutput|ForEach-Object{[string]$_}),[Text.UTF8Encoding]::new($false))
+    $receipt.preauthorizedAttach=[ordered]@{exitCode=$attachStatus;output=@($attachOutput|ForEach-Object{[string]$_})}
+    # DiskPart can attach the image before a later command fails. Always issue
+    # the bounded no-error detach once the attach script has run.
     $imageAttached=$true
+    if($attachStatus -ne 0){throw 'The preauthorized runtime image could not be attached read-only.'}
     $preauthorized=Join-Path $imageMount 'workers'
     $preauthorizedAcl=Get-Acl -LiteralPath $preauthorized
     $preauthorizedRows=@($preauthorizedAcl.Access|ForEach-Object{
