@@ -10,6 +10,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
+import { sanitizeReadinessText } from "../../readiness/sanitize";
 import { containerPathsOverlap } from "../host-mount/path-overlap";
 import {
   PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
@@ -560,9 +561,18 @@ function captureWhileWatcherHeld(
   return result as ContainerEngineCommandResult;
 }
 
-function requireZero(result: ContainerEngineCommandResult, action: string): void {
+function requireZero(
+  result: ContainerEngineCommandResult,
+  action: string,
+  includeSanitizedStderr = false,
+): void {
   if (result.status === 0) return;
-  const processError = result.error?.message.trim().slice(0, 400);
+  const processError = sanitizeReadinessText(
+    ((includeSanitizedStderr ? result.stderr : "") || result.error?.message || "")
+      .replace(/\s+/gu, " ")
+      .trim(),
+    400,
+  );
   failure(
     `${action} failed with status ${String(result.status)}${processError ? `: ${processError}` : "."}`,
   );
@@ -1136,7 +1146,7 @@ export function stopExactPodmanBootstrapOriginal(
     ["container", "cleanup", journal.originalRuntimeId],
     STOP_TIMEOUT_MS,
   );
-  requireZero(cleanup, "Podman bootstrap original-container network cleanup");
+  requireZero(cleanup, "Podman bootstrap original-container network cleanup", true);
   inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
   inspectStableContainer(
     input,

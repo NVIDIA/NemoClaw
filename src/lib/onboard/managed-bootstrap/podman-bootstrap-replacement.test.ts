@@ -142,6 +142,7 @@ class PodmanHarness {
   public stateVolume: StateVolume | null = null;
   public extraStagingIds: string[] = [];
   public createResult: ContainerEngineCommandResult | null = null;
+  public cleanupResult: ContainerEngineCommandResult | null = null;
   public replacementStartsOnCreate = false;
   public failReplacementInspectOnce = false;
   public replacementEnvironment: readonly string[] = ENVIRONMENT;
@@ -230,7 +231,7 @@ class PodmanHarness {
       case "container:cleanup":
         expect(args[2]).toBe(this.original.id);
         expect(this.original.running).toBe(false);
-        return this.result(this.original.id);
+        return this.cleanupResult ?? this.result(this.original.id);
       case "container:start":
         expect(args[2]).toBe(this.original.id);
         this.original.running = true;
@@ -778,6 +779,31 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(capture).not.toHaveBeenCalledWith(["container", "stop", ORIGINAL_RUNTIME_ID], 60_000);
     expect(capture).toHaveBeenCalledWith(["container", "cleanup", ORIGINAL_RUNTIME_ID], 60_000);
     expect(watcher.assertStillStopped).toHaveBeenCalled();
+  });
+
+  it("reports bounded sanitized Podman stderr when original network cleanup fails", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+    const prepared = prepare(harness, store, watcher.lease);
+    harness.original.running = false;
+    harness.cleanupResult = {
+      status: 125,
+      stdout: "credential-in-stdout",
+      stderr: "Error: cleanup failed for TOKEN=not-for-diagnostics\nsecond line",
+    };
+
+    expect(() =>
+      stopExactPodmanBootstrapOriginal({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        prepared,
+        heldWorkload,
+      }),
+    ).toThrow(
+      "original-container network cleanup failed with status 125: Error: cleanup failed for TOKEN=<REDACTED> second line",
+    );
   });
 
   it.each([
