@@ -128,7 +128,13 @@ impl Engine {
         }
         let image = image.ok_or(ObservationError::Incomplete)?;
         if image.id.as_ref().is_none_or(String::is_empty)
-            || image.architecture.as_deref() != Some("arm64")
+            || image.architecture.as_deref()
+                != Some(
+                    spec.service
+                        .as_ref()
+                        .and_then(|s| s.recipe.as_ref())
+                        .map_or("arm64", |r| r.compatibility.architecture.as_str()),
+                )
             || image.os.as_deref() != Some("linux")
         {
             return Err(Error::Conflict(
@@ -141,6 +147,17 @@ impl Engine {
                 .as_ref()
                 .and_then(|config| config.labels.as_ref())
                 .ok_or(ObservationError::Incomplete)?;
+            if let Some(recipe) = &service.recipe
+                && recipe
+                    .compatibility
+                    .image_labels
+                    .iter()
+                    .any(|(key, value)| labels.get(key) != Some(value))
+            {
+                return Err(Error::Conflict(
+                    "runtime image lacks declared recipe capabilities",
+                ));
+            }
             if labels.get("org.nemoclaw.backend") != Some(&service.backend)
                 || (service.backend != crate::recipes::huggingface::BACKEND
                     && labels.get("org.nemoclaw.model") != Some(&service.model.revision))

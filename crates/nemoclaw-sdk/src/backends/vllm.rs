@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{Error, config::Serving};
-pub(crate) struct ModelSettings {
-    pub name: &'static str,
+pub(crate) struct ModelSettings<'a> {
+    pub name: &'a str,
     pub gpu_bytes: u64,
-    pub kv_cache_dtype: &'static str,
-    pub mamba_cache_dtype: &'static str,
-    pub reasoning_parser: &'static str,
-    pub tool_parser: &'static str,
-    pub compilation: &'static str,
+    pub kv_cache_dtype: &'a str,
+    pub mamba_cache_dtype: &'a str,
+    pub reasoning_parser: &'a str,
+    pub tool_parser: &'a str,
+    pub compilation: String,
 }
 pub fn arguments(
     v: &Serving,
     model_directory: &str,
     total: u64,
-    model: ModelSettings,
+    model: ModelSettings<'_>,
 ) -> Result<Vec<String>, Error> {
     if total == 0 || model.gpu_bytes > total {
         return Err(Error::Conflict("invalid total memory for inference budget"));
@@ -61,7 +61,7 @@ pub fn arguments(
             "--distributed-executor-backend",
             "mp",
             "--compilation-config",
-            model.compilation,
+            &model.compilation,
         ]
         .map(String::from),
     );

@@ -33,15 +33,18 @@ impl HostObserver for LocalHost {
         {
             let info = engine.info().await?;
             if info.os_type.as_deref() != Some("linux")
-                || !matches!(info.architecture.as_deref(), Some("arm64" | "aarch64"))
+                || !matches!(
+                    info.architecture.as_deref(),
+                    Some("arm64" | "aarch64" | "amd64" | "x86_64")
+                )
             {
-                return Err(Error::Conflict(
-                    "Spark requires the local Linux ARM64 engine",
-                ));
+                return Err(Error::Conflict("capacity requires a local Linux engine"));
             }
             let mut capacity = super::linux::memory()?;
             capacity.architecture = if std::env::consts::ARCH == "aarch64" {
                 "arm64"
+            } else if std::env::consts::ARCH == "x86_64" {
+                "amd64"
             } else {
                 std::env::consts::ARCH
             }

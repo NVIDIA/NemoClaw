@@ -49,7 +49,7 @@ pub fn gpu_bytes(service: &Service) -> Result<u64, Error> {
 
 pub(crate) fn vllm_settings(
     service: &Service,
-) -> Result<crate::backends::vllm::ModelSettings, Error> {
+) -> Result<crate::backends::vllm::ModelSettings<'_>, Error> {
     Ok(crate::backends::vllm::ModelSettings {
         name: MODEL_NAME,
         gpu_bytes: gpu_bytes(service)?,
@@ -57,7 +57,9 @@ pub(crate) fn vllm_settings(
         mamba_cache_dtype: "bfloat16",
         reasoning_parser: "qwen3",
         tool_parser: "qwen3_coder",
-        compilation: r#"{"mode":0,"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,4,8]}"#,
+        compilation:
+            r#"{"mode":0,"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,4,8]}"#
+                .into(),
     })
 }
 

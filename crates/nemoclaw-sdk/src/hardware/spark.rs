@@ -10,14 +10,36 @@ pub fn check_capacity(
     preparation_remaining: u64,
 ) -> Result<(), Error> {
     service.validate()?;
-    if c.architecture != "arm64"
-        || c.gpu != "NVIDIA GB10"
-        || c.driver_major < 580
-        || c.total < 118 * GIB
-    {
-        return Err(Error::Conflict(
-            "backend requires ARM64 GB10 Spark with at least 118 GiB RAM and NVIDIA driver 580 or newer",
-        ));
+    if let Some(recipe) = &service.recipe {
+        let required = &recipe.compatibility;
+        if c.architecture != required.architecture
+            || c.gpu != required.gpu
+            || (c.driver_major as u64) < required.min_driver_major
+            || c.total < required.min_host_memory_gi_b * GIB
+        {
+            return Err(Error::Conflict(
+                "execution host does not satisfy recipe compatibility requirements",
+            ));
+        }
+        if starting
+            && c.available
+                < recipe.resources.preparation_memory_gi_b * GIB
+                    + service.memory.host_reserve_gib as u64 * GIB
+        {
+            return Err(Error::Conflict(
+                "insufficient recipe preparation memory headroom",
+            ));
+        }
+    } else {
+        if c.architecture != "arm64"
+            || c.gpu != "NVIDIA GB10"
+            || c.driver_major < 580
+            || c.total < 118 * GIB
+        {
+            return Err(Error::Conflict(
+                "backend requires ARM64 GB10 Spark with at least 118 GiB RAM and NVIDIA driver 580 or newer",
+            ));
+        }
     }
     let disk = download_remaining
         .checked_add(preparation_remaining)
@@ -38,7 +60,15 @@ pub fn check_capacity(
             "requested GPU budget leaves less than declared host memory reserve",
         ));
     }
-    if starting && c.available < service.gpu_bytes()? + 20 * GIB {
+    if starting
+        && c.available
+            < service.gpu_bytes()?
+                + service
+                    .recipe
+                    .as_ref()
+                    .map_or(20, |r| r.resources.startup_headroom_gi_b)
+                    * GIB
+    {
         return Err(Error::Conflict(
             "insufficient startup memory headroom; service was not started",
         ));

@@ -11,6 +11,9 @@ use sha2::{Digest, Sha256};
 pub const BACKEND: &str = "vllm";
 pub const MANIFEST_FILE: &str = ".nemoclaw-manifest.json";
 pub fn directory(service: &Service) -> String {
+    if let Some(reuse) = service.recipe.as_ref().and_then(|r| r.reuse.as_ref()) {
+        return reuse.snapshot_directory.clone();
+    }
     let hash = Sha256::digest(format!(
         "{}\0{}",
         service.model.repository, service.model.revision
@@ -21,6 +24,9 @@ pub fn directory(service: &Service) -> String {
     )
 }
 pub(crate) fn gpu_bytes(service: &Service) -> u64 {
+    if let Some(recipe) = &service.recipe {
+        return recipe.resources.gpu_memory_bytes;
+    }
     (if service.memory.gpu_memory_gib == 0 {
         16
     } else {
@@ -42,12 +48,16 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
             "model requires a repository and immutable commit revision",
         ));
     }
+    if let Some(recipe) = &service.recipe {
+        recipe.validate(service)?;
+    }
     let v = &service.serving;
     if !(1024..=65535).contains(&v.port)
         || !(8192..=65536).contains(&v.context_tokens)
         || !(1..=2).contains(&v.max_sequences)
         || !(512..=2048).contains(&v.batch_tokens)
-        || v.speculative_tokens != 0
+        || (service.recipe.is_none() && v.speculative_tokens != 0)
+        || !(0..=3).contains(&v.speculative_tokens)
         || !(60..=3600).contains(&v.startup_timeout_seconds)
         || !matches!(
             v.tool_parser.as_str(),
@@ -60,6 +70,9 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
         ));
     }
     crate::hardware::Profile::SparkV1.validate_memory(&service.memory)?;
+    if service.recipe.is_some() {
+        return Ok(());
+    }
     if !(0..=96).contains(&service.memory.gpu_memory_gib)
         || gpu_bytes(service) < (service.memory.kv_cache_gib as u64 + 4) * GIB
     {
@@ -78,6 +91,9 @@ pub fn validate_manifest(service: &Service, manifest: &Manifest) -> Result<(), E
         return Err(Error::Conflict(
             "snapshot manifest conflicts with selected model",
         ));
+    }
+    if service.recipe.is_some() {
+        return Ok(());
     }
     let weights: u64 = manifest
         .files
@@ -103,6 +119,10 @@ pub fn decode_manifest(service: &Service, bytes: &[u8]) -> Result<Manifest, Erro
     Ok(manifest)
 }
 pub async fn resolve_manifest(service: &Service) -> Result<Manifest, Error> {
+    if let Some(manifest) = service.recipe.as_ref().and_then(|r| r.snapshot.as_ref()) {
+        validate_manifest(service, manifest)?;
+        return Ok(manifest.clone());
+    }
     let manifest = crate::snapshot::Client::new()?
         .resolve(&service.model.repository, &service.model.revision)
         .await?;

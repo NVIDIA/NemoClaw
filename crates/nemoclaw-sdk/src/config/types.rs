@@ -179,6 +179,8 @@ pub struct Overrides {
 #[serde(default, deny_unknown_fields)]
 pub struct Service {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<Box<crate::recipes::inline::InlineRecipe>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<ServicePlacement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication: Option<ServicePublication>,

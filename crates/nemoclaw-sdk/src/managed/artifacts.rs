@@ -102,6 +102,27 @@ impl Engine {
                 self.verify_artifact_file(&observed.container_id, &model, file)
                     .await?;
             }
+            if let Some(recipe) = &service.recipe {
+                let key = recipe.key(service);
+                let prepared = format!("/data/prepared/{key}");
+                let bytes = self
+                    .read_file(
+                        &observed.container_id,
+                        &format!("{prepared}/complete.json"),
+                        1 << 20,
+                    )
+                    .await?
+                    .ok_or(Error::State("recipe completion is unobservable"))?;
+                let receipt: crate::recipes::preparation::Completion =
+                    serde_json::from_slice(&bytes)
+                        .map_err(|_| Error::State("invalid recipe completion receipt"))?;
+                crate::recipes::preparation::validate_receipt(recipe, &key, &receipt)?;
+                for file in &receipt.files {
+                    self.verify_artifact_file(&observed.container_id, &prepared, file)
+                        .await?;
+                }
+                return Ok(());
+            }
             if generic {
                 return Ok(());
             }

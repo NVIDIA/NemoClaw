@@ -190,6 +190,9 @@ impl Agent {
 }
 impl Service {
     pub fn served_model(&self) -> &str {
+        if let Some(recipe) = &self.recipe {
+            return &recipe.serving.model_name;
+        }
         if self.backend == crate::recipes::huggingface::BACKEND {
             &self.model.repository
         } else {

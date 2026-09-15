@@ -53,7 +53,9 @@ impl Engine {
                     crate::recipes::qwen38::model_manifest()
                 };
                 let mut download = manifest.bytes()?;
-                let mut preparation = if generic {
+                let mut preparation = if let Some(recipe) = &service.recipe {
+                    recipe.resources.prepared_bytes
+                } else if generic {
                     0
                 } else {
                     crate::recipes::qwen38::PREPARED_BYTES
