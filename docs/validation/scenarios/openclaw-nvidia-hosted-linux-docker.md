@@ -41,7 +41,9 @@ It retains the v1 workspace, gateway storage, bundle, state, and redacted eviden
 Neither runner revokes the upstream API key.
 
 Copy the v1 fixture outside the checkout.
-Change only `metadata.uid`, the loopback gateway port, and `networkCIDR` to fresh owned values.
+Change `metadata.uid`, the loopback gateway port, and `networkCIDR` to fresh owned values.
+If the fixture's Fabric image is not present, build the OpenClaw image from the clean v1 checkout, replace only `spec.sandboxes[0].image.ref` with the printed immutable digest, and set `NEMOCLAW_LIVE_FABRIC_IMAGE` to that exact reference.
+The entrypoint rejects a tag, a different local repository, a mismatched acknowledgement, or an image that is absent from the owned Docker daemon.
 Create a private empty state directory containing `ownership.json` with this shape:
 
 ```json
@@ -117,6 +119,7 @@ export NEMOCLAW_LIVE_HOSTED_CONFIG=/absolute/path/to/live-v1.yaml
 export NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/owned-empty-state
 export NEMOCLAW_LIVE_V0_PROOF=/absolute/path/to/redacted-v0-proof.json
 export NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable-linux-bundle
+export NEMOCLAW_LIVE_FABRIC_IMAGE=nc-prototype-fabric@sha256:the-locally-built-digest
 
 cargo test -p nemoclaw-e2e --test hosted_parity \
   pinned_v0_and_v1_hosted_openclaw_lifecycles_produce_a_parity_verdict \

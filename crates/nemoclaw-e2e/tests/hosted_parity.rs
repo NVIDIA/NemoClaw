@@ -240,7 +240,33 @@ mod live {
         }
     }
 
-    fn validate_live_document(document: &Document) {
+    #[test]
+    fn live_input_accepts_an_explicit_immutable_local_fabric_image() {
+        let mut document = Document::parse(
+            include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice(),
+        )
+        .unwrap();
+        document.metadata.uid = "55cbf52e-d657-4fa5-bf52-8e201a4d57db".into();
+        let image = "nc-prototype-fabric@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        document.spec.sandboxes[0].image.ref_ = image.into();
+
+        assert!(std::panic::catch_unwind(|| validate_live_document(&document, None)).is_err());
+        validate_live_document(&document, Some(image));
+
+        for invalid in [
+            "nc-prototype-fabric:openclaw",
+            "other@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "nc-prototype-fabric@sha256:0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+        ] {
+            document.spec.sandboxes[0].image.ref_ = invalid.into();
+            assert!(
+                std::panic::catch_unwind(|| validate_live_document(&document, Some(invalid)))
+                    .is_err()
+            );
+        }
+    }
+
+    fn validate_live_document(document: &Document, image_override: Option<&str>) {
         let mut expected = Document::parse(
             include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice(),
         )
@@ -249,6 +275,19 @@ mod live {
         expected.metadata.uid.clone_from(&document.metadata.uid);
         expected.spec.gateway.endpoint = document.spec.gateway.endpoint.clone();
         expected.spec.gateway.network_cidr = document.spec.gateway.network_cidr.clone();
+        if let Some(image) = image_override {
+            let digest = image
+                .strip_prefix("nc-prototype-fabric@sha256:")
+                .expect("live Fabric image must use the owned local repository and a digest");
+            assert!(
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                "live Fabric image must use a lowercase SHA-256 digest"
+            );
+            expected.spec.sandboxes[0].image.ref_ = image.into();
+        }
         assert_eq!(
             document, &expected,
             "live input changed the parity contract"
@@ -331,7 +370,20 @@ mod live {
         let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
         let v0_proof_path = explicit("NEMOCLAW_LIVE_V0_PROOF");
         let document = Document::parse(fs::File::open(&config).unwrap()).unwrap();
-        validate_live_document(&document);
+        let image_override = std::env::var("NEMOCLAW_LIVE_FABRIC_IMAGE").ok();
+        validate_live_document(&document, image_override.as_deref());
+        let image = &document.spec.sandboxes[0].image.ref_;
+        assert_eq!(
+            text(Command::new("docker").args([
+                "image",
+                "inspect",
+                image,
+                "--format",
+                "{{index .RepoDigests 0}}"
+            ])),
+            *image,
+            "the exact live Fabric image must exist in the owned Docker daemon"
+        );
 
         let ownership: Value = serde_json::from_slice(
             &fs::read(directory.join("ownership.json"))
