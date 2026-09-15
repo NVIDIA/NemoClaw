@@ -245,7 +245,7 @@ export interface SandboxGpuCreateFlowInput {
   createArgv: string[];
   /** Exact schema-5 build context consumed by the OpenShell create child. */
   createWorkingDirectory?: string;
-  /** Host-side runtime environment used only by the selected lifecycle provider. */
+  /** Host-side environment for the selected lifecycle provider and for NemoClaw's own Docker commands. */
   hostEnv?: NodeJS.ProcessEnv;
   portableLifecycle?: boolean;
   hermesPortableLifecycle?: boolean;
