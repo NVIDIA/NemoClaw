@@ -21,8 +21,6 @@ import {
 } from "./onboard/config.js";
 import { getPluginConfig } from "./plugin-config.js";
 import { registerRuntimeContext } from "./runtime-context.js";
-import { safeResolvePath } from "./security/safe-resolve-path.js";
-import { isMemoryPath, scanForSecrets } from "./security/secret-scanner.js";
 
 type PluginScalar = string | number | boolean | null | undefined;
 type PluginValue = PluginScalar | PluginRecord | PluginValue[];
@@ -48,17 +46,6 @@ function readObjectProperty(value: unknown, key: string): ToolParams | undefined
   }
   const property = value[key];
   return isToolParams(property) ? property : undefined;
-}
-
-function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> | undefined {
-  if (!isToolParams(value)) {
-    return undefined;
-  }
-  const params = value["params"];
-  return {
-    toolName: readStringProperty(value, "toolName"),
-    params: isToolParams(params) ? params : undefined,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -150,21 +137,6 @@ export interface PluginService {
   stop?: (ctx: { config: OpenClawConfig; logger: PluginLogger }) => void | Promise<void>;
 }
 
-/** Event payload for before_tool_call hooks. */
-export interface BeforeToolCallEvent {
-  toolName: string;
-  params: ToolParams;
-  runId?: string;
-  toolCallId?: string;
-}
-
-/** Return value from a before_tool_call hook. */
-export interface BeforeToolCallResult {
-  params?: ToolParams;
-  block?: boolean;
-  blockReason?: string;
-}
-
 /** Return value from a before_prompt_build hook. */
 export interface BeforePromptBuildResult {
   systemPrompt?: string;
@@ -174,8 +146,8 @@ export interface BeforePromptBuildResult {
   appendSystemContext?: string;
 }
 
-/** Union of all hook result types. */
-export type HookResult = BeforeToolCallResult | BeforePromptBuildResult | undefined;
+/** Return value from a registered plugin hook. */
+export type HookResult = BeforePromptBuildResult | undefined;
 
 /**
  * The API object injected into the plugin's register function by the OpenClaw
@@ -191,7 +163,6 @@ export interface OpenClawPluginApi {
   registerCommand: (command: PluginCommandDefinition) => void;
   registerProvider: (provider: ProviderPlugin) => void;
   registerService: (service: PluginService) => void;
-  resolvePath: (input: string) => string;
   on: (
     hookName: string,
     handler: (...args: readonly PluginValue[]) => HookResult | Promise<HookResult>,
@@ -314,11 +285,8 @@ export { getPluginConfig };
 // Plugin entry point
 // ---------------------------------------------------------------------------
 
-/** Tool names that can write/modify files and should be scanned for secrets. */
-const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
-
 export default function register(api: OpenClawPluginApi): void {
-  // 1. Register /nemoclaw slash command (chat interface)
+  // Register /nemoclaw slash command (chat interface)
   api.registerCommand({
     name: "nemoclaw",
     description: "NemoClaw sandbox management (status, eject).",
@@ -326,12 +294,12 @@ export default function register(api: OpenClawPluginApi): void {
     handler: (ctx) => handleSlashCommand(ctx, api),
   });
 
-  // 2. Register nvidia-nim provider from the active OpenClaw config, falling
+  // Register nvidia-nim provider from the active OpenClaw config, falling
   // back to the onboard snapshot and then the NemoClaw default.
   const onboardCfg = loadOnboardConfig();
   const activeModel = readOpenClawPrimaryModel(api.logger) || (onboardCfg?.model ?? "");
 
-  // 4. Register runtime context injection (sandbox-awareness hook)
+  // Register runtime context injection (sandbox-awareness hook)
   const pluginConfig = getPluginConfig(api);
   try {
     registerRuntimeContext(api, pluginConfig);
@@ -347,60 +315,6 @@ export default function register(api: OpenClawPluginApi): void {
 
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_INFERENCE_API_KEY";
   api.registerProvider(registeredProviderForConfig(activeModel, providerCredentialEnv));
-
-  // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
-  // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
-  // (PluginHookBeforeToolCallEvent/Result in openclaw/src/plugins/types.ts).
-  // If the hook name or return shape changes in a future OpenClaw release,
-  // the try/catch ensures the plugin still loads — the scanner just becomes
-  // a no-op. Verify after OpenClaw upgrades that blocked writes still show
-  // the expected error message.
-  try {
-    api.on(
-      "before_tool_call",
-      (...args: readonly PluginValue[]): BeforeToolCallResult | undefined => {
-        const event = readBeforeToolCallEvent(args[0]);
-        if (!event?.toolName || !event.params) return undefined;
-
-        const toolName = event.toolName.toLowerCase();
-        if (!WRITE_TOOL_NAMES.has(toolName)) return undefined;
-
-        const rawPath = event.params["file_path"] ?? event.params["path"];
-        if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
-        // Resolve symlinks and traversal before checking — prevents bypasses like
-        // /sandbox/project/../../.openclaw/memory/secrets.md. The host's
-        // resolver may be missing or return undefined under embedded-fallback
-        // runtimes, so route through safeResolvePath which falls back to the
-        // raw path rather than crashing the hook. isMemoryPath knows how to
-        // classify both absolute resolved paths and canonical memory
-        // basenames written through a relative path.
-        const filePath = safeResolvePath(api, rawPath);
-        if (!isMemoryPath(filePath)) return undefined;
-
-        const content =
-          event.params["content"] ?? event.params["new_string"] ?? event.params["patch"];
-        if (typeof content !== "string" || content.length === 0) return undefined;
-
-        const matches = scanForSecrets(content);
-        if (matches.length === 0) return undefined;
-
-        const summary = matches.map((m) => `  - ${m.pattern} (${m.redacted})`).join("\n");
-        api.logger.warn(`[SECURITY] Blocked memory write to ${filePath} — secrets detected`);
-
-        return {
-          block: true,
-          blockReason:
-            `Memory write blocked: detected ${String(matches.length)} likely secret(s):\n${summary}\n\n` +
-            "Remove secrets before saving to persistent memory. " +
-            "Use environment variables or credential stores instead.",
-        };
-      },
-    );
-  } catch (err) {
-    api.logger.warn(
-      `[SECURITY] Could not register secret scanner hook: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
 
   const bannerLines = [
     "  NemoClaw registered",

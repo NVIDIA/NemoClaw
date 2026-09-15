@@ -84,9 +84,7 @@ describe("packed NemoClaw plugin metadata", () => {
     expect(() => pluginModule.default(api)).not.toThrow();
     expect(registrations.commands).toEqual([expect.objectContaining({ name: "nemoclaw" })]);
     expect(registrations.providers).toEqual([expect.objectContaining({ id: "inference" })]);
-    expect(registrations.hookNames).toEqual(
-      expect.arrayContaining(["before_prompt_build", "before_tool_call"]),
-    );
+    expect(registrations.hookNames).toEqual(["before_prompt_build"]);
 
     const pluginApi = packageJson.openclaw?.compat?.pluginApi;
     expect(pluginApi).toEqual(expect.stringMatching(/^>=\d{4}\.\d{1,2}\.\d{1,2}$/));
@@ -126,5 +124,11 @@ describe("packed NemoClaw plugin metadata", () => {
     expect(extensions.every((extension) => packedPaths.has(extension.replace(/^\.\//, "")))).toBe(
       true,
     );
+    expect(
+      [...packedPaths].filter(
+        (packedPath) =>
+          packedPath.includes("secret-scanner") || packedPath.includes("safe-resolve-path"),
+      ),
+    ).toEqual([]);
   });
 });

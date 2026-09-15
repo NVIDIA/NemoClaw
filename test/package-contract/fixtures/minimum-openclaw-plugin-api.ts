@@ -38,7 +38,6 @@ export function createMinimumOpenClawPluginApi(): {
       registerCommand: (command: unknown) => registrations.commands.push(command),
       registerProvider: (provider: unknown) => registrations.providers.push(provider),
       registerService: (service: unknown) => registrations.services.push(service),
-      resolvePath: (input: string) => input,
       on: (hookName: string) => registrations.hookNames.push(hookName),
     },
     registrations,

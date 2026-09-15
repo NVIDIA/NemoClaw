@@ -70,7 +70,6 @@ function createMockApi(): OpenClawPluginApi {
     registerCommand: vi.fn(),
     registerProvider: vi.fn(),
     registerService: vi.fn(),
-    resolvePath: vi.fn((p: string) => p),
     on: vi.fn(),
   };
 }
@@ -102,6 +101,13 @@ describe("plugin registration", () => {
         auth: [expect.objectContaining({ id: "bearer", type: "bearer" })],
       }),
     );
+  });
+
+  it("registers only the retained runtime-context hook", () => {
+    const api = createMockApi();
+    register(api);
+    expect(api.on).toHaveBeenCalledTimes(1);
+    expect(api.on).toHaveBeenCalledWith("before_prompt_build", expect.any(Function));
   });
 
   it("continues registration when the runtime context hook is unsupported", () => {
@@ -218,211 +224,6 @@ describe("plugin registration", () => {
     expect(stderr).toContain("Endpoint:  build.nvidia.com");
     expect(stderr).toContain("Provider:  NVIDIA Endpoints");
     expect(stderr).toContain("Model:     nvidia/nemotron-3-super-120b-a12b");
-  });
-});
-
-describe("before_tool_call secret scanner hook (#1233)", () => {
-  function getHookHandler(api: OpenClawPluginApi) {
-    register(api);
-    const onCalls = vi.mocked(api.on).mock.calls;
-    const hookCall = onCalls.find(([name]) => name === "before_tool_call");
-    expect(hookCall).toBeDefined();
-    return hookCall![1];
-  }
-
-  it("registers a before_tool_call hook", () => {
-    const api = createMockApi();
-    register(api);
-    expect(api.on).toHaveBeenCalledWith("before_tool_call", expect.any(Function));
-  });
-
-  it("blocks write to memory path containing NVIDIA API key", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    const result = handler({
-      toolName: "write",
-      params: {
-        file_path: "/sandbox/.openclaw/memory/project.md",
-        content: `api key: ${fakeKey}`,
-      },
-    });
-    expect(result).toMatchObject({ block: true });
-    expect((result as { blockReason: string }).blockReason).toContain("NVIDIA API key");
-  });
-
-  it("blocks write to an absolute named workspace containing an NVIDIA API key", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    const result = handler({
-      toolName: "write",
-      params: {
-        file_path: "/sandbox/.openclaw/workspace-main/memory/2026-05-29.md",
-        content: `api key: ${fakeKey}`,
-      },
-    });
-    expect(result).toMatchObject({ block: true });
-  });
-
-  it("blocks edit to memory path containing secrets", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const fakeToken = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn";
-    const result = handler({
-      toolName: "edit",
-      params: {
-        file_path: "/sandbox/.openclaw/memory/notes.md",
-        new_string: `token: ${fakeToken}`,
-      },
-    });
-    expect(result).toMatchObject({ block: true });
-  });
-
-  it("blocks apply_patch to memory path containing secrets", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const fakeKey = "sk-" + "abc123def456ghi789jkl012mno";
-    const result = handler({
-      toolName: "apply_patch",
-      params: {
-        file_path: "/sandbox/.openclaw/agents/config.json",
-        patch: fakeKey,
-      },
-    });
-    expect(result).toMatchObject({ block: true });
-  });
-
-  it("blocks notebook_edit to memory path containing secrets", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    const result = handler({
-      toolName: "notebook_edit",
-      params: {
-        file_path: "/sandbox/.openclaw/memory/notebook.ipynb",
-        content: `api_key: ${fakeKey}`,
-      },
-    });
-    expect(result).toMatchObject({ block: true });
-  });
-
-  it("allows write to memory path with clean content", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const result = handler({
-      toolName: "write",
-      params: {
-        file_path: "/sandbox/.openclaw/memory/project.md",
-        content: "# My Project\n\nThis is a regular memory note.",
-      },
-    });
-    expect(result).toBeUndefined();
-  });
-
-  it("allows write to non-memory path even with secrets", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    const result = handler({
-      toolName: "write",
-      params: {
-        file_path: "/sandbox/project/src/config.ts",
-        content: `const key = '${fakeKey}';`,
-      },
-    });
-    expect(result).toBeUndefined();
-  });
-
-  it("allows non-write tools regardless of content", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const result = handler({
-      toolName: "read",
-      params: {
-        file_path: "/sandbox/.openclaw/memory/project.md",
-      },
-    });
-    expect(result).toBeUndefined();
-  });
-
-  it("handles missing event gracefully", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    expect(handler(undefined)).toBeUndefined();
-    expect(handler({})).toBeUndefined();
-    expect(handler({ toolName: "write" })).toBeUndefined();
-  });
-
-  it("logs a warning when blocking", () => {
-    const api = createMockApi();
-    const handler = getHookHandler(api);
-    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    void handler({
-      toolName: "write",
-      params: {
-        file_path: "/sandbox/.openclaw/memory/creds.md",
-        content: fakeKey,
-      },
-    });
-    expect(api.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("[SECURITY] Blocked memory write"),
-    );
-  });
-
-  it("does not throw when the host resolver returns undefined", () => {
-    const api = createMockApi();
-    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
-      undefined as unknown as string,
-    );
-    const handler = getHookHandler(api);
-    expect(() =>
-      handler({
-        toolName: "write",
-        params: {
-          file_path: "IDENTITY.md",
-          content: "# IDENTITY.md - Who Am I?\nhello",
-        },
-      }),
-    ).not.toThrow();
-  });
-
-  it("blocks a relative workspace basename when the host resolver is unavailable", () => {
-    const api = createMockApi();
-    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
-      undefined as unknown as string,
-    );
-    const handler = getHookHandler(api);
-    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    const result = handler({
-      toolName: "write",
-      params: {
-        file_path: "IDENTITY.md",
-        content: `api key: ${fakeKey}`,
-      },
-    });
-    expect(result).toMatchObject({ block: true });
-  });
-
-  it.each([
-    "./memory/2026-05-29.md",
-    "foo/../memory/2026-05-29.md",
-    "workspace-main/memory/2026-05-29.md",
-  ])("blocks normalized relative memory path %s when the host resolver is unavailable", (path) => {
-    const api = createMockApi();
-    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
-      undefined as unknown as string,
-    );
-    const handler = getHookHandler(api);
-    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
-    const result = handler({
-      toolName: "write",
-      params: {
-        path,
-        content: `api key: ${fakeKey}`,
-      },
-    });
-    expect(result).toMatchObject({ block: true });
   });
 });
 

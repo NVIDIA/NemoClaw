@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Understand Gateway and Secret Controls"
 sidebar-title: "Gateway and Secrets"
-description: "Review runtime-specific gateway access and the shared secret-redaction and memory-scanning controls."
-description-agent: "Explains runtime-specific gateway access and shared secret-handling controls. Use when reviewing dashboard exposure, device pairing, secret redaction, or memory scanning."
+description: "Review runtime-specific gateway access, shared secret redaction, and persistent-memory guidance."
+description-agent: "Explains runtime-specific gateway access and shared secret-handling controls. Use when reviewing dashboard exposure, device pairing, secret redaction, or persistent memory."
 keywords: ["nemoclaw gateway security", "dashboard security", "secret redaction"]
 content:
   type: "concept"
 ---
 NemoClaw applies gateway access controls when the selected agent runtime exposes an in-sandbox gateway or dashboard.
-CLI secret redaction and runtime-specific memory guidance apply across guide variants.
+CLI secret redaction and runtime-specific persistent-memory guidance apply across guide variants.
 
 <AgentOnly variant="deepagents">
 LangChain Deep Agents Code has no in-sandbox agent gateway or dashboard, so device pairing, bind, and dashboard controls do not apply.
@@ -184,33 +184,34 @@ The CLI automatically redacts secret patterns (API keys, bearer tokens, provider
 
 <AgentOnly variant="openclaw">
 
-## Memory Secret Scanner
+## Persistent Memory Secrets
 
-The NemoClaw plugin blocks the agent from writing likely secrets (API keys, tokens, private keys) into persistent memory files.
-The scanner intercepts `Write`, `Edit`, and similar tool calls targeting memory and workspace paths before they reach disk.
+NemoClaw does not scan or block OpenClaw tool writes to persistent memory and workspace files.
+The former plugin hook provided only best-effort pattern matching and has been retired.
 
 | Aspect | Detail |
 |---|---|
-| Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
-| What it covers | Protects OpenClaw state, NemoClaw state, default and named workspaces, and canonical workspace files. It scans 14 high-confidence credential patterns. |
-| What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
-| Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
-| Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |
+| Default | Agent writes are not inspected by a NemoClaw memory-scanner hook. |
+| What remains | Inference credentials stay behind OpenShell routing. Host CLI redaction and backup sanitization still apply, but neither control prevents an agent from writing a secret into persistent state. |
+| What you can change | This is not a user-facing setting. |
+| Risk | A secret included in a conversation or tool result can be written into memory or workspace files that survive across sessions. Snapshot sanitization processes copied JSON, YAML, and `.env` files, not arbitrary workspace content. |
+| Recommendation | Keep provider credentials in OpenShell providers. Supply a host environment variable only during a documented credential registration or rotation flow. If a secret reaches persistent state, remove it and rotate the credential. |
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-## Memory Secret Scanner
+## Persistent Memory Secrets
 
-Hermes does not use the OpenClaw NemoClaw plugin memory scanner.
-Keep secrets in environment variables or OpenShell providers, and avoid writing raw credentials to Hermes state files or workspace content.
+NemoClaw does not scan or block Hermes memory writes.
+Keep provider credentials in OpenShell providers, and use host environment variables only as transient input to documented credential flows.
+Avoid writing raw credentials to Hermes state files or workspace content.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-## Memory Secret Scanner
+## Persistent Memory Secrets
 
-Deep Agents does not use the OpenClaw NemoClaw plugin memory scanner.
+NemoClaw does not scan or block Deep Agents memory writes.
 The managed `dcode` launchers reject credential-shaped environment values and upstream auth files before startup, but Deep Agents memory and skill files remain user-authored content.
 Keep secrets in OpenShell providers and avoid writing raw credentials to `/sandbox/.deepagents`, project `.deepagents/`, or skill files.
 

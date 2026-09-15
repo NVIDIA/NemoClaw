@@ -291,7 +291,7 @@ Review capability ownership, resource limits, runtime identity, and image harden
 
 ## Gateway Authentication Controls
 
-Review runtime-specific gateway access, dashboard exposure where applicable, secret redaction, and memory scanning in [Understand Gateway and Secret Controls](./security-controls/gateway-authentication-controls).
+Review runtime-specific gateway access, dashboard exposure where applicable, secret redaction, and persistent-memory handling in [Understand Gateway and Secret Controls](./security-controls/gateway-authentication-controls).
 
 ## Inference Controls
 
@@ -418,8 +418,7 @@ The following patterns weaken security without providing meaningful benefit.
 |-----------|--------|------------|
 | Bypassing managed gateway paths | Network policy and inference auth are not enforced when an agent runtime is launched outside the NemoClaw-managed gateway path. | Use NemoClaw-managed sandbox entrypoints for production workflows. |
 | Same-UID lifecycle control in the OpenShell-managed topology | The root controller authenticates the host action, verifies a stable process shape, pidfd-targets the observed child, and proves replacement health. It cannot establish malicious process provenance when the supervisor, gateway, and agent share the sandbox UID. Mutable config retains managed cold-start trust and time-of-check/time-of-use limits. | Use a direct root-entrypoint deployment when UID isolation and the transactional root restart seal are required. Do not treat the mutable config hash as a durable immutability anchor, and recreate a sandbox after suspected same-UID compromise. |
-| Direct filesystem writes bypass application-layer scanners | Application-layer scanners can intercept agent tool calls, not arbitrary raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. Application-layer scanning is defense-in-depth, not a filesystem-level control. |
-| Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
+| Persistent files are not scanned before writes | NemoClaw does not inspect or block agent writes to memory or workspace files. Snapshot sanitization processes copied JSON, YAML, and `.env` files, not arbitrary workspace content. | Keep provider credentials in OpenShell providers. If a secret reaches persistent state, remove it and rotate the credential. |
 
 ## Related Topics
 

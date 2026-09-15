@@ -5,6 +5,38 @@ function frozenPatterns(patterns: RegExp[]): readonly RegExp[] {
   return Object.freeze(patterns);
 }
 
+/** Provider token formats used by the live sandbox-state credential check. */
+export const HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS = [
+  {
+    prefixes: ["nvapi-"],
+    payloadCharacterClass: "A-Za-z0-9_-",
+    minimumPayloadLength: 20,
+  },
+  {
+    prefixes: ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"],
+    payloadCharacterClass: "A-Za-z0-9",
+    minimumPayloadLength: 36,
+  },
+  {
+    prefixes: ["github_pat_"],
+    payloadCharacterClass: "A-Za-z0-9_",
+    minimumPayloadLength: 30,
+  },
+  {
+    prefixes: ["npm_"],
+    payloadCharacterClass: "A-Za-z0-9",
+    minimumPayloadLength: 36,
+  },
+] as const;
+
+const HIGH_CONFIDENCE_PREFIXED_TOKEN_ALTERNATIVES = HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS.flatMap(
+  ({ prefixes, payloadCharacterClass, minimumPayloadLength }) =>
+    prefixes.map((prefix) => `${prefix}[${payloadCharacterClass}]{${minimumPayloadLength},}`),
+).join("|");
+
+/** POSIX ERE for standalone high-confidence provider tokens in sandbox shell scans. */
+export const HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE = `(^|[^[:alnum:]_])(${HIGH_CONFIDENCE_PREFIXED_TOKEN_ALTERNATIVES})([^[:alnum:]_]|$)`;
+
 /** Token-prefix patterns that match standalone secrets. */
 export const TOKEN_PREFIX_PATTERNS: readonly RegExp[] = frozenPatterns([
   /nvapi-[A-Za-z0-9_-]{10,}/g,

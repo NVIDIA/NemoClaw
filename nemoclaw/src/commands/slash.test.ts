@@ -52,7 +52,6 @@ function makeApi(): OpenClawPluginApi {
     registerCommand: vi.fn(),
     registerProvider: vi.fn(),
     registerService: vi.fn(),
-    resolvePath: vi.fn((p: string) => p),
     on: vi.fn(),
   };
 }

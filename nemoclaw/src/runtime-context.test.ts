@@ -58,7 +58,6 @@ function createMockApi(): MockOpenClawPluginApi {
     registerCommand: vi.fn(),
     registerProvider: vi.fn(),
     registerService: vi.fn(),
-    resolvePath: vi.fn((p: string) => p),
     on: vi.fn((name, handler) => {
       hooks.set(name, handler as (...args: readonly unknown[]) => unknown);
     }),
