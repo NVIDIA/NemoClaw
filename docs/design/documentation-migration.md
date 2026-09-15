@@ -30,7 +30,9 @@ These are proposed editorial dispositions; a held feature has no promised implem
 
 The branch already has useful [task guides](../README.md), [generated configuration reference](../reference/configuration.md), [examples](../../examples/), and [qualification evidence](../validation/README.md).
 Extend those owners and extract overloaded sections where needed.
-The branch has no Fern configuration, public docs publishing workflows, or general documentation link-checking job; its Rust CI does check generated schema/reference freshness.
+At the baseline revision, the branch had no Fern publishing or general link-checking job.
+The [documentation build](../AUTOMATION.md) now defines Cargo-generated Fern pages, source and route validation, isolated v1 previews, and guarded release publication.
+Hosted output verification, old-version preservation, and final URL cutover remain D01/D09 release gates.
 
 ## Changes That Determine the Migration
 
@@ -191,7 +193,8 @@ Follow [documentation contribution requirements](../CONTRIBUTING.md).
 Check local links and anchors, navigation ownership, generated reference freshness when applicable, and `git diff --check`.
 Run required workspace format, lint, and test checks; documentation-only changes need no new runtime tests or live resources.
 Record any checks that could not run and the reason in the handoff.
-The future site build must validate both source and rendered links; `npm run docs` from `main` is not a command available on this branch today.
+Run `python3 tools/docs/fern.py check` for source and rendered-route validation; see [documentation build prerequisites](../AUTOMATION.md#validate-locally).
+The v1 build uses Cargo for generation and schema freshness, with the pinned Fern CLI for rendering and publication.
 
 ### Executable Examples and Claims
 

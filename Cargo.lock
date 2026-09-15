@@ -1668,6 +1668,8 @@ dependencies = [
  "clap",
  "flate2",
  "nemoclaw-sdk",
+ "pulldown-cmark",
+ "pulldown-cmark-to-cmark",
  "reqwest",
  "serde",
  "serde-saphyr",
@@ -1677,6 +1679,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "url",
  "zip",
 ]
 

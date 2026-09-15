@@ -60,6 +60,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Qualify explicitly owned live resources | [Run live qualification](testing/live.md) |
 | Inspect retained results and their limits | [Validation evidence](validation/README.md) |
 | Write or reorganize documentation | [Contribute documentation](CONTRIBUTING.md) |
+| Validate, preview, or publish the v1 site | [Documentation build](AUTOMATION.md) |
 | Update the generated schema and field reference | [Schema maintenance](configuration-schema.md) |
 
 ## Understand the Design

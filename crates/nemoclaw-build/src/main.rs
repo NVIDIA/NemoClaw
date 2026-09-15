@@ -22,6 +22,15 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Render repository Markdown into Fern pages and check local links.
+    Docs {
+        /// Check generated output without changing it.
+        #[arg(long)]
+        check: bool,
+        /// Immutable source revision for repository links (defaults to HEAD).
+        #[arg(long)]
+        revision: Option<String>,
+    },
     /// Generate the configuration schema and reference, or check them for drift.
     Schema {
         #[arg(long)]
@@ -226,6 +235,9 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Action::Docs { check, revision } = cli.command {
+        return nemoclaw_build::docs::generate(Path::new("."), check, revision.as_deref());
+    }
     if let Action::Schema { check } = cli.command {
         return nemoclaw_build::schema::generate(Path::new("."), check).map_err(Into::into);
     }
@@ -250,8 +262,8 @@ async fn main() -> Result<()> {
         return Err("build requires the pinned Protocol Buffers compiler".into());
     }
     match cli.command {
-        Action::Schema { .. } => {
-            unreachable!("schema generation returned before build tool checks")
+        Action::Schema { .. } | Action::Docs { .. } => {
+            unreachable!("documentation generation returned before build tool checks")
         }
         Action::Bundle { platform } => {
             bundle(&pins, &platform::select(platform, bundle::platform)?).await

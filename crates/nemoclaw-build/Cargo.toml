@@ -18,9 +18,11 @@ zip.workspace = true
 flate2.workspace = true
 tar.workspace = true
 tempfile.workspace = true
+serde-saphyr.workspace = true
+pulldown-cmark.workspace = true
+pulldown-cmark-to-cmark.workspace = true
+url.workspace = true
 [build-dependencies]
 sha2.workspace = true
-[dev-dependencies]
-serde-saphyr.workspace = true
 [lints]
 workspace = true

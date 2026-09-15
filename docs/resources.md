@@ -12,7 +12,8 @@ Repository Markdown and the [generated configuration reference](reference/config
 Use [CLI reference](reference/cli.md) for accepted commands and [migration](migration.md) for earlier-product boundaries.
 
 A v1 starter prompt and docs-routing skill: **TBD**.
-Version-aware published Markdown, `llms.txt`, and docs search/MCP: **TBD**.
+The [documentation build](AUTOMATION.md) prepares v1 pages for Fern's browser and Markdown outputs.
+Verification of hosted Markdown, `llms.txt`, and docs search/MCP: **TBD**; see [hosted output checks](AUTOMATION.md#hosted-outputs-and-release-verification).
 Do not assume an existing public documentation endpoint describes this development branch.
 
 ## Contribute
