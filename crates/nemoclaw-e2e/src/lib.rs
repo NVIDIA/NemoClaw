@@ -5,4 +5,5 @@
 pub mod openshell;
 
 #[cfg(unix)]
+#[path = "../../test-support/docker.rs"]
 pub mod docker;

@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Shared by SDK unit tests and E2E fixtures through private source modules.
+// It has no SDK dependency, so test reuse does not create a crate dependency cycle.
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub struct Request {
     pub method: String,
