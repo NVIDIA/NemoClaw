@@ -111,6 +111,7 @@ export type SandboxLogsRuntimeDeps = {
   isDockerRuntimeDown?: typeof isDockerRuntimeDown;
   logs?: OpenShellSandboxLogs;
   printDockerRuntimeDownGuidance?: typeof printDockerRuntimeDownGuidance;
+  stderr?: Writable;
   stdout?: Writable;
   writeStderr?: (chunk: string) => boolean | void;
   writeStdout?: (chunk: string) => boolean | void;
@@ -152,13 +153,15 @@ async function streamSandboxFollowLogs(
   const target = selectedOpenShellGateway();
   const includeGateway = !options.since && shouldIncludeGatewayLogSource(sandboxName, deps);
   const outputStream = deps.stdout ?? process.stdout;
+  const diagnosticStream = deps.stderr ?? process.stderr;
   const writesThroughOutputStream = deps.writeStdout === undefined;
-  const writeStderr = deps.writeStderr ?? process.stderr.write.bind(process.stderr);
+  const writeStderr = deps.writeStderr ?? diagnosticStream.write.bind(diagnosticStream);
   const writeStdout = deps.writeStdout ?? outputStream.write.bind(outputStream);
   const sources: Array<{
     label: string;
     session: OpenShellSandboxLogFollowSession;
     done: boolean;
+    cleanupDiagnostic: () => void;
   }> = [];
   let exiting = false;
   let completedSources = 0;
@@ -177,6 +180,7 @@ async function streamSandboxFollowLogs(
       outputStream.off("error", outputErrorHandler);
       outputErrorHandler = null;
     }
+    for (const source of sources) source.cleanupDiagnostic();
     return exit(code);
   };
 
@@ -201,6 +205,7 @@ async function streamSandboxFollowLogs(
   ) => {
     if (source.done) return;
     source.done = true;
+    source.cleanupDiagnostic();
     completedSources += 1;
     if (status !== 0 && finalStatus === 0) {
       finalStatus = status;
@@ -255,19 +260,38 @@ async function streamSandboxFollowLogs(
       since: sourceKind === "openshell" ? options.since : null,
       timeoutMs: getLogsProbeTimeoutMs(),
     });
+    const diagnostic = session.diagnostic;
+    let waitingForDiagnosticDrain = false;
+    const resumeDiagnostic = () => {
+      waitingForDiagnosticDrain = false;
+      diagnostic?.resume();
+    };
+    let diagnosticClosed = false;
+    const cleanupDiagnostic = () => {
+      if (diagnosticClosed) return;
+      diagnosticClosed = true;
+      diagnosticStream.off("drain", resumeDiagnostic);
+      diagnostic?.close();
+    };
     const source = {
       label,
       session,
       done: false,
+      cleanupDiagnostic,
     };
     sources.push(source);
 
-    session.diagnostic?.onChunk((chunk) => {
-      writeStderr(chunk);
+    diagnostic?.onChunk((chunk) => {
+      if (writeStderr(chunk) === false && !waitingForDiagnosticDrain) {
+        waitingForDiagnosticDrain = true;
+        diagnostic.pause();
+        diagnosticStream.once("drain", resumeDiagnostic);
+      }
     });
-    session.diagnostic?.onError((error: NodeJS.ErrnoException) => {
+    diagnostic?.onError((error: NodeJS.ErrnoException) => {
       const suffix = typeof error.code === "string" ? ` (${error.code})` : "";
       console.error(`  ${label} diagnostic read failed${suffix}.`);
+      cleanupDiagnostic();
     });
 
     const stdout = tagged ? session.output : null;

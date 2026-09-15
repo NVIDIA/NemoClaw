@@ -471,7 +471,11 @@ function createCapturedOutput(written: string[]): PassThrough {
 }
 
 async function startFollowRun(
-  options: { output?: Writable; keepOpenshellRunning?: boolean } = {},
+  options: {
+    diagnosticOutput?: Writable;
+    output?: Writable;
+    keepOpenshellRunning?: boolean;
+  } = {},
 ): Promise<FollowRun> {
   const diagnostics: string[] = [];
   const written: string[] = [];
@@ -516,9 +520,13 @@ async function startFollowRun(
       logs,
       enableAuditLogs: async () => ({ ok: true, value: undefined }),
       stdout: output,
-      writeStderr: (chunk) => {
-        diagnostics.push(chunk);
-      },
+      ...(options.diagnosticOutput
+        ? { stderr: options.diagnosticOutput }
+        : {
+            writeStderr: (chunk: string) => {
+              diagnostics.push(chunk);
+            },
+          }),
     },
   );
 
@@ -715,6 +723,31 @@ describe("follow-mode log source attribution (#10340)", () => {
 
     await expect(run.exited).resolves.toBe(0);
     expect(run.diagnostics).toEqual(["safe OpenShell diagnostic\n"]);
+  });
+
+  it("pauses followed diagnostics until stderr drains and releases the listener", async () => {
+    const diagnosticOutput = new DeferredOutput();
+    const run = await startFollowRun({ diagnosticOutput, keepOpenshellRunning: true });
+    const openshell = run.openshell as StreamingChild;
+
+    openshell.stderr.write("diagnostic line\n");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(openshell.stderr.isPaused()).toBe(true);
+    expect(diagnosticOutput.listenerCount("drain")).toBe(1);
+
+    const drained = once(diagnosticOutput, "drain");
+    diagnosticOutput.release();
+    await drained;
+    expect(openshell.stderr.isPaused()).toBe(false);
+
+    openshell.child.emit("exit", 0, null);
+    run.gateway.stdout.end();
+    run.gateway.child.emit("exit", 0, null);
+    await expect(run.exited).resolves.toBe(0);
+
+    expect(diagnosticOutput.listenerCount("drain")).toBe(0);
+    expect(openshell.stderr.destroyed).toBe(true);
   });
 
   it("attributes every streamed banner line to a source", async () => {
