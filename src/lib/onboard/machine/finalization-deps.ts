@@ -359,11 +359,16 @@ export const finalizationHandlerDeps = {
   async checkAndRecoverSandboxProcesses(
     name: string,
     options: { quiet: boolean },
+    portableSupervisorEnvironment?: NodeJS.ProcessEnv,
   ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    const result = await processRecovery.checkAndRecoverSandboxProcesses(name, options);
+    const result = await processRecovery.checkAndRecoverSandboxProcesses(name, {
+      ...options,
+      ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
+    });
     return (
       result.checked === true &&
+      (result.wasRunning !== false || result.recovered === true) &&
       !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
     );
   },

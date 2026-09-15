@@ -21,7 +21,7 @@ type GatewaySupervisorRequest = (
   sandboxName: string,
   action: "restart" | "recover" | "probe",
   timeout?: number,
-) => SandboxCommandResult | null;
+) => SandboxCommandResult | null | Promise<SandboxCommandResult | null>;
 
 function isHermesAgent(agent: ReturnType<typeof agentRuntime.getSessionAgent>): boolean {
   return !!agent && agent.name === "hermes";
@@ -40,11 +40,11 @@ function printValidatorStderr(stderr: string): void {
  * child, so a raw-secret refusal can stop the listener without regex matching
  * or a second process racing the supervisor.
  */
-export function enforceHermesSecretBoundaryOnRunningGateway(
+export async function enforceHermesSecretBoundaryOnRunningGateway(
   sandboxName: string,
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
   requestGatewaySupervisorAction: GatewaySupervisorRequest,
-): HermesSecretBoundaryEnforcement | null {
+): Promise<HermesSecretBoundaryEnforcement | null> {
   const persistedAgent = registry.getSandbox(sandboxName)?.agent;
   if (persistedAgent !== "hermes") return null;
   if (!isHermesAgent(agent)) {
@@ -55,7 +55,7 @@ export function enforceHermesSecretBoundaryOnRunningGateway(
     console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
     return { refused: true, reason: "agent-missing", stderr: "" };
   }
-  const result = requestGatewaySupervisorAction(sandboxName, "recover");
+  const result = await requestGatewaySupervisorAction(sandboxName, "recover");
   if (!result) {
     console.error("");
     console.error(

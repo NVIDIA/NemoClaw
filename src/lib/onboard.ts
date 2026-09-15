@@ -3188,6 +3188,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         import("./verify-deployment").VerifyDeploymentResult
       >({
         branchState: agent ? "agent_setup" : "openclaw",
+        portableRuntimeContext:
+          agent?.name === "hermes" ? lockedRuntime.portableRuntimeContext : null,
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
@@ -3308,9 +3310,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         runtime: onboardRuntimeBoundary.getRuntime(),
         phases: finalFlowPhases,
         recordRepairEvent,
-        afterPoliciesReady: () => {
-          sandboxCancelRollback.disarm();
-        },
+        afterPoliciesReady: () => sandboxCancelRollback.disarm(),
         onContextUpdated: (context) => {
           liveFinalFlowContext = context;
         },
