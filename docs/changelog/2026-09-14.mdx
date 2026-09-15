@@ -3,6 +3,45 @@
  * SPDX-License-Identifier: Apache-2.0
  */}
 
+## v0.0.125
+
+NemoClaw v0.0.125 strengthens Hermes Portable recovery, OpenShell gateway authority, and onboarding finalization.
+It also improves sandbox transfers, native Podman and OpenClaw networking, and the release validation pipeline.
+
+- Hermes Portable interactive `connect` and `launch` can recover the exact stopped managed Ollama runtime after the recorded route becomes unavailable.
+  Forward recovery now allows 30 seconds for verification and 60 seconds for the complete transaction, while retaining the original structured failure when cleanup cannot be proved.
+  Related changes: [PR #11759](https://github.com/NVIDIA/NemoClaw/pull/11759) and [PR #11735](https://github.com/NVIDIA/NemoClaw/pull/11735).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Set Up Ollama](/user-guide/hermes/inference/local-inference/set-up-ollama), and the [Hermes CLI Commands Reference](/user-guide/hermes/reference/commands).
+- The Hermes `nemoclaw-acp` adapter can select and, when required, start only its exact recorded OpenShell gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
+  Conflicting or ambiguous gateway identities, authentication errors, schema failures, timeouts, and other observation failures stop recovery before gateway startup or ACP session creation.
+  Related changes: [PR #11691](https://github.com/NVIDIA/NemoClaw/pull/11691) and [PR #11681](https://github.com/NVIDIA/NemoClaw/pull/11681).
+  For more information, refer to the [Hermes CLI Commands Reference](/user-guide/hermes/reference/commands) and [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Onboarding preserves process-inspection and secret-boundary refusals as incomplete, resumable state instead of reporting a ready sandbox.
+  Experimental version 2 external-component activation evidence now accepts the same namespaced component IDs as registration while continuing to reject the reserved `openshell/` prefix and malformed evidence.
+  Related changes: [PR #11760](https://github.com/NVIDIA/NemoClaw/pull/11760) and [PR #11745](https://github.com/NVIDIA/NemoClaw/pull/11745).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and [Register an External Component During Onboarding](/user-guide/openclaw/deployment/register-external-component).
+- Legacy OpenShell upgrade recovery preserves the recorded gateway, sandbox identity, workspace, and digest-verified pre-upgrade policy when live provider inspection is unavailable.
+  Portable Hermes lifecycle and onboarding operations now await live policy reads and revalidate authority before startup, publication, restoration, or uninstall effects.
+  Related changes: [PR #11612](https://github.com/NVIDIA/NemoClaw/pull/11612) and [PR #11585](https://github.com/NVIDIA/NemoClaw/pull/11585).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Recover and Rebuild Sandboxes for Hermes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Sandbox upload and download commands now await typed OpenShell transfers on the sandbox's recorded gateway.
+  The lifecycle lock and owned staging remain active until transfer, verification, publication, and cleanup settle, while existing terminal output and exit behavior remain unchanged.
+  Related change: [PR #11496](https://github.com/NVIDIA/NemoClaw/pull/11496).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Managed OpenClaw now uses its native sandbox-local loopback endpoint by default and no longer depends on private-interface discovery, insecure private WebSockets, or a dedicated gateway dialback policy.
+  Native Podman onboarding accepts the standard rootless socket layout when a private current-user directory prevents access by other users, while unsafe reachable sockets remain blocked.
+  Related changes: [PR #11695](https://github.com/NVIDIA/NemoClaw/pull/11695) and [PR #11730](https://github.com/NVIDIA/NemoClaw/pull/11730).
+  For more information, refer to [Network Policies](/user-guide/openclaw/reference/network-policies), [System Readiness](/user-guide/openclaw/reference/system-readiness), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Protected managed-image qualification now retains bounded, redacted failure evidence and completes rollback in OpenShell-before-Docker order.
+  Lifecycle changes trigger the corresponding activation and publication gates, platform runs retain per-commit evidence, isolated jobs initialize their gateway before owned cleanup, transient tool downloads retry, and obsolete or overly broad E2E fixtures have been removed or narrowed.
+  Agent-alias and onboarding probes also run independent cases concurrently without reducing assertions.
+  Related changes: [PR #11713](https://github.com/NVIDIA/NemoClaw/pull/11713), [PR #11663](https://github.com/NVIDIA/NemoClaw/pull/11663), [PR #11607](https://github.com/NVIDIA/NemoClaw/pull/11607), [PR #11769](https://github.com/NVIDIA/NemoClaw/pull/11769), [PR #11742](https://github.com/NVIDIA/NemoClaw/pull/11742), [PR #11743](https://github.com/NVIDIA/NemoClaw/pull/11743), [PR #11588](https://github.com/NVIDIA/NemoClaw/pull/11588), [PR #11708](https://github.com/NVIDIA/NemoClaw/pull/11708), and [PR #11704](https://github.com/NVIDIA/NemoClaw/pull/11704).
+- PR Review Advisor accepts unresolved required E2E coverage when no runnable selector exists, requires a nonempty read of each declared evidence file, and records bounded tool-flow metadata for failed turns without exposing arguments, paths, or untrusted names.
+  Related changes: [PR #11773](https://github.com/NVIDIA/NemoClaw/pull/11773), [PR #11762](https://github.com/NVIDIA/NemoClaw/pull/11762), and [PR #11728](https://github.com/NVIDIA/NemoClaw/pull/11728).
+- Internal messaging declarations with no active consumer have been removed without changing channel manifests or runtime behavior.
+  The source scan configuration also recognizes the checksum-pinned Hermes documentation search key through one exact, read-only allowlist entry.
+  Related changes: [PR #11705](https://github.com/NVIDIA/NemoClaw/pull/11705) and [PR #11740](https://github.com/NVIDIA/NemoClaw/pull/11740).
+
 ## v0.0.124
 
 NemoClaw v0.0.124 updates the managed OpenShell runtime to 0.0.116 and improves upgrades, local inference, and sandbox recovery.

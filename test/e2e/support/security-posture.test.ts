@@ -9,11 +9,17 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeProviderPrivilegedSandboxCommandResult } from "../../../src/lib/onboard/runtime-provider/contract.ts";
+import {
+  MANAGED_IMAGE_REPOSITORIES,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+} from "../../../src/lib/onboard/managed-image/contract.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertSecurityPosture,
   OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+  parseCapabilitySurfaceReport,
+  parseExpectedOpenShellVersion,
   PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   type ProcessSecurityIdentity,
   parseSplitProcessSecurityReport,
@@ -30,6 +36,7 @@ const ZERO_CAPABILITIES = "0000000000000000";
 const SUPERVISOR_EXECUTABLE = "/opt/openshell/bin/openshell-sandbox";
 const SANDBOX_NAME = "secure-sandbox";
 const RESOURCE_HANDLE = "opaque-runtime-resource";
+const MANAGED_IMAGE_REVISION = "a".repeat(40);
 const CONTROLLED_PROC_HARNESS = String.raw`import contextlib
 import grp
 import json
@@ -279,9 +286,71 @@ function successfulProbe(stdout = ""): ShellProbeResult {
   };
 }
 
+function capabilitySurfaceProof(
+  surface: "connect" | "exec",
+  overrides: Partial<Record<"CapInh" | "CapPrm" | "CapEff" | "CapBnd" | "CapAmb", string>> = {},
+): string {
+  const capabilities = {
+    CapInh: ZERO_CAPABILITIES,
+    CapPrm: ZERO_CAPABILITIES,
+    CapEff: ZERO_CAPABILITIES,
+    CapBnd: ZERO_CAPABILITIES,
+    CapAmb: ZERO_CAPABILITIES,
+    ...overrides,
+  };
+  return `NEMOCLAW_SECURITY_CAPABILITY_SURFACE surface=${surface} uid=1000 gid=1000 ${Object.entries(
+    capabilities,
+  )
+    .map(([name, value]) => `${name}=${value}`)
+    .join(" ")}\n`;
+}
+
+function inlineManagedImageCatalogEnvironment(): NodeJS.ProcessEnv {
+  const catalog = Object.fromEntries(
+    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+      const image = MANAGED_IMAGE_REPOSITORIES[agent];
+      const digest = `sha256:${String(index + 1).repeat(64)}`;
+      return [
+        agent,
+        {
+          agent,
+          capabilityContractVersion: 1,
+          contractVersion: 1,
+          digest,
+          image,
+          platform: "linux/amd64",
+          reference: `${image}@${digest}`,
+          source: {
+            cohort: "ghrun-1-1",
+            release: "v0.0.124",
+            repository: "NVIDIA/NemoClaw",
+            revision: MANAGED_IMAGE_REVISION,
+          },
+          startupProfileContractVersion: 1,
+        },
+      ];
+    }),
+  );
+  return {
+    GITHUB_ACTIONS: "true",
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(catalog),
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+  };
+}
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("security posture fixture", () => {
+  it("accepts only the exact stable OpenShell version token", () => {
+    expect(parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116\n"))).toBe("0.0.116");
+    expect(() =>
+      parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116-rc.1\n")),
+    ).toThrow(/expected OpenShell 0\.0\.116/u);
+    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116+dev\n"))).toThrow(
+      /expected OpenShell 0\.0\.116/u,
+    );
+  });
+
   it("compiles the embedded split-process probe as Python", () => {
     const compiled = spawnSync(
       "python3",
@@ -535,6 +604,21 @@ describe("security posture fixture", () => {
     expect(validateSplitProcessSecurityReport(report)).toEqual(report);
     expect(parseSplitProcessSecurityReport(JSON.stringify(report))).toEqual(report);
   });
+
+  it.each(["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"] as const)(
+    "rejects a nonzero %s set from an exec child",
+    (field) => {
+      const reportField = `${field[0]!.toLowerCase()}${field.slice(1)}`;
+      expect(() =>
+        parseCapabilitySurfaceReport(
+          successfulProbe(capabilitySurfaceProof("exec", { [field]: "0000000000000001" })),
+          "exec",
+          1000,
+          1000,
+        ),
+      ).toThrow(new RegExp(`exec child ${reportField} expected 0`, "u"));
+    },
+  );
 
   it("accepts the exact OpenShell supervisor groups in either report order", () => {
     const report = validReport();
@@ -962,9 +1046,19 @@ describe("security posture fixture", () => {
       ]);
       const command = vi
         .fn<HostCliClient["command"]>()
-        .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"));
-      const execShell = vi.fn<SandboxClient["execShell"]>(async () => successfulProbe());
-      const host = { command } as unknown as HostCliClient;
+        .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+        .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"))
+        .mockResolvedValueOnce(successfulProbe(capabilitySurfaceProof("connect")));
+      const execShell = vi.fn<SandboxClient["execShell"]>(async (_name, script) =>
+        String(script).includes("surface=exec")
+          ? successfulProbe(capabilitySurfaceProof("exec"))
+          : successfulProbe(),
+      );
+      const host = {
+        command,
+        commandPath: "/tmp/nemoclaw",
+        openshellCommandPath: "/tmp/openshell",
+      } as unknown as HostCliClient;
       const sandbox = { execShell } as unknown as SandboxClient;
       const resolvePrivilegedTarget = vi.fn(() => ({
         providerId,
@@ -978,22 +1072,60 @@ describe("security posture fixture", () => {
       }));
 
       const summary = await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw", {
+        environment: inlineManagedImageCatalogEnvironment(),
         executePrivilegedCommand,
         resolvePrivilegedTarget,
       });
 
       expect(summary).toEqual({
+        capabilitySurfaces: {
+          connect: {
+            surface: "connect",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
+          entrypoint: {
+            surface: "entrypoint",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
+          exec: {
+            surface: "exec",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
+        },
         configureGuard: true,
         hostNonRoot: true,
         rcFilesMutable: true,
         runtimeProxyEnvLocked: true,
+        runtimeVersions: {
+          managedImageRevision: MANAGED_IMAGE_REVISION,
+          openshell: "0.0.116",
+        },
         splitProcess: {
           childSupervisor: directChildSupervisor,
           supervisor: report.supervisor,
         },
         startupLogClean: true,
       });
-      expect(command).toHaveBeenCalledTimes(1);
+      expect(command).toHaveBeenCalledTimes(3);
+      expect(command.mock.calls[2]?.[1]?.[3]).toMatch(/\nexit 0$/u);
       expect(resolvePrivilegedTarget).toHaveBeenCalledTimes(2);
       expect(executePrivilegedCommand).toHaveBeenCalledWith(
         SANDBOX_NAME,
@@ -1004,7 +1136,7 @@ describe("security posture fixture", () => {
           timeout: 30_000,
         },
       );
-      expect(execShell).toHaveBeenCalledTimes(4);
+      expect(execShell).toHaveBeenCalledTimes(5);
     },
   );
 
@@ -1013,7 +1145,8 @@ describe("security posture fixture", () => {
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
     const command = vi
       .fn<HostCliClient["command"]>()
-      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"));
+      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
     const resolvePrivilegedTarget = vi
       .fn()
@@ -1028,15 +1161,19 @@ describe("security posture fixture", () => {
 
     await expect(
       assertSecurityPosture(
-        { command } as unknown as HostCliClient,
+        { command, openshellCommandPath: "/tmp/openshell" } as unknown as HostCliClient,
         { execShell } as unknown as SandboxClient,
         SANDBOX_NAME,
         "openclaw",
-        { executePrivilegedCommand, resolvePrivilegedTarget },
+        {
+          environment: inlineManagedImageCatalogEnvironment(),
+          executePrivilegedCommand,
+          resolvePrivilegedTarget,
+        },
       ),
     ).rejects.toThrow(/runtime provider resource identity changed/u);
 
-    expect(command).toHaveBeenCalledTimes(1);
+    expect(command).toHaveBeenCalledTimes(2);
     expect(executePrivilegedCommand).toHaveBeenCalledOnce();
     expect(execShell).not.toHaveBeenCalled();
   });
@@ -1046,7 +1183,8 @@ describe("security posture fixture", () => {
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
     const command = vi
       .fn<HostCliClient["command"]>()
-      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"));
+      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
     const resolvePrivilegedTarget = vi.fn(() => ({
       providerId: "podman",
@@ -1061,15 +1199,19 @@ describe("security posture fixture", () => {
 
     await expect(
       assertSecurityPosture(
-        { command } as unknown as HostCliClient,
+        { command, openshellCommandPath: "/tmp/openshell" } as unknown as HostCliClient,
         { execShell } as unknown as SandboxClient,
         SANDBOX_NAME,
         "openclaw",
-        { executePrivilegedCommand, resolvePrivilegedTarget },
+        {
+          environment: inlineManagedImageCatalogEnvironment(),
+          executePrivilegedCommand,
+          resolvePrivilegedTarget,
+        },
       ),
     ).rejects.toThrow(/provider probe failed/u);
 
-    expect(command).toHaveBeenCalledTimes(1);
+    expect(command).toHaveBeenCalledTimes(2);
     expect(executePrivilegedCommand).toHaveBeenCalledOnce();
     expect(execShell).not.toHaveBeenCalled();
   });
