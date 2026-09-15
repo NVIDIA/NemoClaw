@@ -21,11 +21,9 @@ fn vendor_files(directory: &Path, root: &Path, files: &mut Vec<(String, PathBuf)
     Ok(())
 }
 pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
-    if bundle::platform()? != "linux_arm64" {
-        return Err("Spark runtime image requires the qualified Linux ARM64 build host".into());
-    }
     let version = nemoclaw_build::source_version(&sources()?);
     let recipe = nemoclaw_build::RuntimeArtifact::parse(&fs::read(manifest)?)?;
+    recipe.require_native_host(&bundle::platform()?)?;
     let inputs = manifest.parent().ok_or("artifact directory missing")?;
     let root = PathBuf::from(".build").join(&recipe.name);
     let root = root.as_path();
@@ -83,7 +81,7 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
             "buildx",
             "build",
             "--provenance=false",
-            "--platform=linux/arm64",
+            &format!("--platform={}", recipe.platform.replace('_', "/")),
             "--output",
         ])
         .arg(format!(
