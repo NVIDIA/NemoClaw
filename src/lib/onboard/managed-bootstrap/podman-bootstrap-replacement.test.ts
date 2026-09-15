@@ -227,6 +227,10 @@ class PodmanHarness {
         expect(args[2]).toBe(this.original.id);
         this.original.running = false;
         return this.result(this.original.id);
+      case "container:cleanup":
+        expect(args[2]).toBe(this.original.id);
+        expect(this.original.running).toBe(false);
+        return this.result(this.original.id);
       case "container:start":
         expect(args[2]).toBe(this.original.id);
         this.original.running = true;
@@ -747,6 +751,7 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.replacement?.running).toBe(false);
     expect(harness.calls).toContainEqual(["container", "stop", ORIGINAL_RUNTIME_ID]);
     expect(capture).toHaveBeenCalledWith(["container", "stop", ORIGINAL_RUNTIME_ID], 60_000);
+    expect(capture).toHaveBeenCalledWith(["container", "cleanup", ORIGINAL_RUNTIME_ID], 60_000);
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
   });
 
@@ -771,6 +776,7 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.replacement?.running).toBe(false);
     expect(harness.calls).not.toContainEqual(["container", "stop", ORIGINAL_RUNTIME_ID]);
     expect(capture).not.toHaveBeenCalledWith(["container", "stop", ORIGINAL_RUNTIME_ID], 60_000);
+    expect(capture).toHaveBeenCalledWith(["container", "cleanup", ORIGINAL_RUNTIME_ID], 60_000);
     expect(watcher.assertStillStopped).toHaveBeenCalled();
   });
 

@@ -1131,6 +1131,13 @@ export function stopExactPodmanBootstrapOriginal(
     requireZero(stop, "Podman bootstrap original-container stop");
   }
   inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
+  const cleanup = captureWhileWatcherHeld(
+    input,
+    ["container", "cleanup", journal.originalRuntimeId],
+    STOP_TIMEOUT_MS,
+  );
+  requireZero(cleanup, "Podman bootstrap original-container network cleanup");
+  inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
   inspectStableContainer(
     input,
     replacementExpectationFromJournal(
