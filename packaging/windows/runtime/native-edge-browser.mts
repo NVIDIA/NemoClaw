@@ -106,7 +106,7 @@ async function powershellMetadata(environment: NodeJS.ProcessEnv, file: string, 
   );
   const script =
     pid === undefined
-      ? "try{$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH -ErrorAction Stop;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName -ErrorAction Stop;$subject='';$thumbprint='';if($s.SignerCertificate){$subject=$s.SignerCertificate.Subject;$thumbprint=$s.SignerCertificate.Thumbprint};[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=$s.Status.ToString();signerSubject=$subject;signerThumbprint=$thumbprint}|ConvertTo-Json -Compress}catch{[ordered]@{probeError=$_.Exception.Message;probeType=$_.Exception.GetType().FullName}|ConvertTo-Json -Compress}"
+      ? "$ErrorActionPreference='Stop';$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=$s.Status.ToString();signerSubject=$s.SignerCertificate.Subject;signerThumbprint=$s.SignerCertificate.Thumbprint}|ConvertTo-Json -Compress"
       : "$p=Get-Process -Id ([int]$env:NEMOCLAW_EDGE_INSPECT_PID) -ErrorAction Stop;[ordered]@{pid=$p.Id;path=$p.Path;creationFiletime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress";
   let result;
   try {
@@ -117,6 +117,7 @@ async function powershellMetadata(environment: NodeJS.ProcessEnv, file: string, 
       {
         env: {
           ...environment,
+          POWERSHELL_TELEMETRY_OPTOUT: "1",
           PSModulePath: path.win32.join(
             systemRoot,
             "System32",
@@ -145,8 +146,14 @@ async function powershellMetadata(environment: NodeJS.ProcessEnv, file: string, 
       .filter(Boolean)
       .join(" | ")
       .slice(0, 4096);
+    const execution = [
+      error?.killed === true ? "killed=true" : "",
+      typeof error?.signal === "string" ? `signal=${error.signal.slice(0, 32)}` : "",
+    ]
+      .filter(Boolean)
+      .join(",");
     throw new Error(
-      `Microsoft Edge identity probe failed (${code})${detail ? `: ${detail}` : "."}`,
+      `Microsoft Edge identity probe failed (${code}${execution ? `;${execution}` : ""})${detail ? `: ${detail}` : "."}`,
     );
   }
   const value = JSON.parse(result.stdout.trim());
