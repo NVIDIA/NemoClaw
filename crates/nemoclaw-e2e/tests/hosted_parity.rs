@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 
 const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
 const V0_MANIFEST_SHA256: &str = "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
+const V0_CAPTURE_OVERLAY_SHA256: &str =
+    "71d23276a2472d50a8a6304e93d5e0330b1022052c839dfe53a55057089b9110";
 
 #[test]
 fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
@@ -85,7 +87,7 @@ fn hosted_openclaw_translation_rejects_unrepresented_v0_fields() {
 }
 
 mod live {
-    use super::{V0_MANIFEST_SHA256, V0_REVISION};
+    use super::{V0_CAPTURE_OVERLAY_SHA256, V0_MANIFEST_SHA256, V0_REVISION};
     use nemoclaw_e2e::v0_export::{V1RuntimeBindings, desired_state_from_v0_export};
     use nemoclaw_sdk::{
         CancellationToken, Deployment,
@@ -194,6 +196,10 @@ mod live {
         assert_eq!(proof["scenario"], SCENARIO);
         assert_eq!(proof["revision"], V0_REVISION);
         assert_eq!(proof["manifestSha256"], V0_MANIFEST_SHA256);
+        assert_eq!(
+            proof["validationOverlaySha256"], V0_CAPTURE_OVERLAY_SHA256,
+            "v0 proof must identify the reviewed validation overlay"
+        );
         assert_eq!(proof["target"], "ubuntu-repo-cloud-openclaw");
         assert_eq!(proof["platform"]["os"], "linux");
         assert!(
@@ -275,6 +281,7 @@ mod live {
             "scenario": SCENARIO,
             "revision": V0_REVISION,
             "manifestSha256": V0_MANIFEST_SHA256,
+            "validationOverlaySha256": V0_CAPTURE_OVERLAY_SHA256,
             "target": "ubuntu-repo-cloud-openclaw",
             "passed": true,
             "realAgentResponse": true,

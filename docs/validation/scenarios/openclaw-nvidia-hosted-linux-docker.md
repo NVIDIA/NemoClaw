@@ -20,7 +20,7 @@ The translator rejects unknown v0 export fields instead of silently dropping the
 
 | Property | Pinned v0 | Closest v1 |
 |---|---|---|
-| Host and target | Ubuntu, local | Linux, local Docker engine |
+| Host and target | Ubuntu, local | Same Linux host and local Docker engine |
 | Runtime | Running Docker daemon | Managed OpenShell gateway and Fabric/OpenClaw sandbox on Docker |
 | Inference | NVIDIA provider through `inference.local` | OpenAI-compatible route to `https://integrate.api.nvidia.com/v1` |
 | Model | v0 default `nvidia/nemotron-3-super-120b-a12b` | Explicit same model ID |
@@ -61,15 +61,99 @@ Create a private empty state directory containing `ownership.json` with this sha
 The v1 entrypoint rejects existing OpenTofu state, a dirty checkout, a relative path, a changed scenario field, or a missing ownership marker.
 On failure it retains established state and resources for diagnosis instead of destroying through an incomplete observation.
 
+## Prepare a Disposable Brev Host
+
+The current least-friction path uses one Ubuntu 24.04 ARM64 CPU VM for both revisions so the Linux release, kernel, architecture, and Docker daemon identity match.
+A GPU is not required because inference uses the hosted NVIDIA endpoint.
+Select an offering with at least 4 vCPUs, 16 GB of memory, and 100 GB of disk.
+The current Fabric image builder rejects non-ARM64 hosts, so an x86_64 VM cannot complete this scenario without a separately reviewed amd64 Fabric artifact.
+Review the current compute and disk price before creating it, and delete it as soon as the evidence is retrieved.
+
+Query current matching offers and review the selected type's hourly compute and disk prices:
+
+```sh
+brev search cpu --arch arm64 --min-vcpu 4 --min-ram 16 \
+  --min-disk 100 --sort price
+```
+
+After selecting one returned type, create one VM:
+
+```sh
+export REVIEWED_TYPE=the-type-returned-by-search
+brev create nemoclaw-11810-parity --mode vm --jupyter=false \
+  --min-disk 100 --type "$REVIEWED_TYPE"
+```
+
+Provision Docker, a native C toolchain, Node 22.19.0 or newer, Rust 1.98.1, and verified protoc 36.1 on the disposable host before cloning either revision.
+This repository does not prescribe a host tool-version manager.
+Run all scenario commands on the Brev host, not in its workload container, and verify the tools before supplying credentials:
+
+```sh
+brev shell nemoclaw-11810-parity --host
+uname -sm
+. /etc/os-release && printf '%s %s\n' "$ID" "$VERSION_ID"
+node --version
+npm --version
+rustc --version
+protoc --version
+docker version
+```
+
+Confirm that the release command prints `ubuntu 24.04` and that the architecture is `aarch64`.
+Do not place the NVIDIA credential in the startup script, Brev metadata, shell history, or repository.
+Prepare the v0 and v1 worktrees and all immutable images before exporting the credential into the final interactive shell.
+Run v0 setup from the pinned v0 worktree:
+
+```sh
+npm run dev:setup
+```
+
+Build the v1 Linux ARM64 bundle from the clean v1 worktree:
+
+```sh
+PROTOC="$(command -v protoc)" \
+  cargo run -p nemoclaw-build -- bundle --platform linux_arm64
+```
+
+Either build the Fabric/OpenClaw image on this ARM64 host with the [documented image-store, Python, uv, and Buildx prerequisites](../../inference.md#build-an-image-with-the-configuration-interface), or load a reviewed immutable ARM64 image archive prepared from the same v1 revision.
+Before supplying the credential, confirm that `docker image inspect` reports a nonempty repository digest for the exact image on the Brev Docker daemon.
+Record the archive hash before transfer when using an archive.
+
 ## Qualify the Pinned v0 Deployment
 
 Check out `f47724f29838fe08898993fad1c8c6b7fcb3e080` in the v0 worktree and confirm that it is clean.
 Follow that revision's `test/e2e/docs/README.md` safety and setup instructions.
-The v0 harness must invoke `nemoclaw config export` after the real-agent probe and before cleanup in the same target lifecycle.
-The current pinned canonical target cleans up without publishing that export, so running it unchanged is insufficient for this comparison.
-Do not claim a live verdict until a reviewed local harness hook or an upstream target change captures the export at this boundary.
+The checked-in validation overlay invokes `nemoclaw config export` after the real-agent probe and before cleanup in the same target lifecycle.
+The outer runner verifies the pinned revision, manifest hash, successful target result, and successful cleanup before it writes the final v0 proof.
+It removes the overlay from the v0 worktree when the command exits and records the overlay hash in the proof.
+The overlay changes only the validation harness; it does not change the pinned product source.
 
-With `NVIDIA_INFERENCE_API_KEY` supplied by the dedicated secret mechanism, the underlying Docker target remains:
+The overlay is derived from `test/e2e/live/registry-targets.test.ts` at the pinned v0 revision.
+NemoClaw v1 added the issue-specific capture on 2026-09-15.
+Review `tools/validation/openclaw-hosted-v0-capture.patch` before the live run.
+Its reviewed SHA-256 is `71d23276a2472d50a8a6304e93d5e0330b1022052c839dfe53a55057089b9110`.
+
+Prepare an existing empty absolute capture directory with mode `700` outside both worktrees:
+
+```sh
+install -d -m 700 /absolute/path/to/empty-owned-capture
+```
+
+From the v1 worktree, set the two paths and the issue-specific acknowledgement, then run the wrapper:
+
+```sh
+export NEMOCLAW_RUN_LIVE_HOSTED_PARITY=issue-11810
+export NEMOCLAW_V0_WORKTREE=/absolute/path/to/pinned-v0
+export NEMOCLAW_V0_CAPTURE_DIR=/absolute/path/to/empty-owned-capture
+
+tools/validation/openclaw-hosted-v0-capture.sh
+```
+
+Supply `NVIDIA_INFERENCE_API_KEY` only in the process environment.
+The wrapper produces `v0-export.yaml`, `v0-proof.json`, and redacted v0 artifacts under the capture directory.
+If the target or cleanup fails, it leaves diagnostic artifacts but does not write a passing proof.
+
+The wrapper executes this underlying Docker target with `NVIDIA_INFERENCE_API_KEY` supplied by the dedicated secret mechanism:
 
 ```sh
 NEMOCLAW_E2E_EXPECTED_SHA=f47724f29838fe08898993fad1c8c6b7fcb3e080 \
@@ -82,8 +166,7 @@ TARGET_ID=ubuntu-repo-cloud-openclaw \
     --silent=false --reporter=default
 ```
 
-Retain the target's redacted artifacts and their SHA-256 digests.
-Retain the secret-free YAML produced before cleanup by this command, where `<sandbox>` is the target-owned sandbox name:
+The validation overlay retains the target's redacted artifacts and the secret-free YAML produced before cleanup by this command, where `<sandbox>` is the target-owned sandbox name:
 
 ```sh
 nemoclaw config export <sandbox> \
@@ -100,6 +183,7 @@ It must contain no credential value or string beginning with `nvapi-` and must s
   "scenario": "openclaw-nvidia-hosted-linux-docker",
   "revision": "f47724f29838fe08898993fad1c8c6b7fcb3e080",
   "manifestSha256": "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b",
+  "validationOverlaySha256": "71d23276a2472d50a8a6304e93d5e0330b1022052c839dfe53a55057089b9110",
   "target": "ubuntu-repo-cloud-openclaw",
   "passed": true,
   "realAgentResponse": true,
@@ -169,3 +253,18 @@ If the v1 test fails after apply, keep the exact YAML, bundle, credential refere
 Inspect the failure and reapply the same desired state before attempting destroy.
 After observations are complete, preview and destroy only that owned state as described in the [destroy procedure](../../usage.md#destroy).
 Confirm the sandbox and managed gateway container are absent and that only the recorded workspace and gateway-storage bindings remain.
+
+Copy the capture directory and v1 state directory from the Brev host, then inspect the copies for credentials before sharing them:
+
+```sh
+brev copy --host nemoclaw-11810-parity:/absolute/path/to/capture ./v0-capture
+brev copy --host nemoclaw-11810-parity:/absolute/path/to/v1-state ./v1-state
+```
+
+Unset `NVIDIA_INFERENCE_API_KEY` in the remote shell and revoke the dedicated key through its issuer.
+If v0 cleanup failed, inspect its `cleanup.json` and remove only the target-owned resources before deleting the VM.
+After preserving the required evidence and resolving owned resources, delete the billable VM explicitly:
+
+```sh
+brev delete nemoclaw-11810-parity
+```
