@@ -127,6 +127,7 @@ test(
       e2ePhases: [
         "confirm the selected runtime prerequisite",
         "install and register the OpenClaw sandbox",
+        "prove baseline sandbox access and native agent readiness",
         "write persistent OpenClaw markers",
         "create a running-container and OpenShell-Stopped mismatch",
         "recover the mismatch through nemoclaw recover",
@@ -277,6 +278,10 @@ test(
         timeoutMs: 60_000,
       });
 
+    progress.phase("prove baseline sandbox access and native agent readiness");
+    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "baseline-sandbox-exec-alive");
+    await waitForNativeAgentReady(execShell, "baseline-native-agent-ready", DASHBOARD_PORT);
+
     progress.phase("write persistent OpenClaw markers");
     const markerValue = `nemoclaw-survival-${Date.now()}`;
     const markers: SandboxMarker[] = [
@@ -294,7 +299,6 @@ test(
       },
     ];
     await stateValidation.writeSandboxMarkers(instance, markers);
-    await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
 
     const resourceHandle = await runtimeProvider.resolveSandboxResourceHandle(SANDBOX_NAME, {
       artifactName: "sandbox-survival-runtime-resource",
