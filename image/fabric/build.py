@@ -86,7 +86,7 @@ def main():
         for name in ("hermes_adapter.py", "hermes.fabric-adapter.json", "interfaces.py"):
             shutil.copyfile(ROOT / "image/fabric" / name, BUILD / name)
     if harness == "openclaw":
-        for name in ("openclaw_adapter.py", "openclaw.fabric-adapter.json", "interfaces.py"):
+        for name in ("openclaw_adapter.py", "openclaw_features.py", "openclaw.fabric-adapter.json", "interfaces.py"):
             shutil.copyfile(ROOT / "image/fabric" / name, BUILD / name)
     if harness == "pi":
         shutil.copyfile(ROOT / "image/fabric/pi_host.py", BUILD / "pi_host.py")
@@ -109,6 +109,7 @@ def main():
         **({"openclaw_image": "ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101",
             "adapter": "NemoClaw adapter; not supplied by upstream Fabric",
             "interfaces_sha256": hashlib.sha256((ROOT / "image/fabric/interfaces.py").read_bytes()).hexdigest(),
+            "features_sha256": hashlib.sha256((ROOT / "image/fabric/openclaw_features.py").read_bytes()).hexdigest(),
             "adapter_sha256": hashlib.sha256((ROOT / "image/fabric/openclaw_adapter.py").read_bytes()).hexdigest()}
            if harness == "openclaw" else {}),
         **({"hermes_revision": HERMES_REVISION, "hermes_source_sha256": HERMES_HASH,
@@ -122,7 +123,7 @@ def main():
            if harness == "pi" else {}),
         "requirements_sha256": hashlib.sha256(lock.encode()).hexdigest(),
     }, indent=2) + "\n")
-    (BUILD / ".dockerignore").write_text("*\n!Dockerfile\n!pi-source/\n!pi-source/**\n!wheels/\n!wheels/**\n!requirements.txt\n!fabric.py\n!pi_host.py\n!provenance.json\n!hermes_adapter.py\n!hermes.fabric-adapter.json\n!openclaw_adapter.py\n!interfaces.py\n!openclaw.fabric-adapter.json\n!hermes-agent-" + HERMES_REVISION + "/\n!hermes-agent-" + HERMES_REVISION + "/**\n")
+    (BUILD / ".dockerignore").write_text("*\n!Dockerfile\n!pi-source/\n!pi-source/**\n!wheels/\n!wheels/**\n!requirements.txt\n!fabric.py\n!pi_host.py\n!provenance.json\n!hermes_adapter.py\n!hermes.fabric-adapter.json\n!openclaw_adapter.py\n!openclaw_features.py\n!interfaces.py\n!openclaw.fabric-adapter.json\n!hermes-agent-" + HERMES_REVISION + "/\n!hermes-agent-" + HERMES_REVISION + "/**\n")
     run("docker", "build", "-t", image_tag, str(BUILD))
     run("docker", "image", "inspect", image_tag, "--format", "{{index .RepoDigests 0}}")
 

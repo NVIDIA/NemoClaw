@@ -16,6 +16,7 @@ import urllib.request
 import subprocess
 from interfaces import dashboard, gateway_settings, token
 from fabric import openclaw_execution
+from openclaw_features import native_features, features_match
 
 
 from nemo_fabric_adapter_contract.models import AgentRunError, AgentRunResult, AgentRunStatus
@@ -74,6 +75,7 @@ def agent_entries(name, inference):
 def native_configuration(name, inference=None):
     execution = openclaw_execution(inference)
     config = {
+        **native_features(inference),
         'gateway': gateway_settings(inference),
         'models': {'mode': 'replace', 'providers': {'openshell': {
             'baseUrl': 'https://inference.local/v1', 'api': 'openai-completions',
@@ -141,6 +143,8 @@ def owned_configuration(name, inference=None):
 
 def configuration_matches(name, inference=None):
     actual = json.loads((ROOT / 'openclaw.json').read_text())
+    if not features_match(actual, inference):
+        return False
     expected = native_configuration(name, inference)['agents']['defaults']
     defaults = actual.get('agents', {}).get('defaults', {})
     if any(defaults.get(key) != expected.get(key) for key in ('timeoutSeconds', 'heartbeat')):

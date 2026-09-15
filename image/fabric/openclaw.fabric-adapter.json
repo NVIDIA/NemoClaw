@@ -152,6 +152,44 @@
                 "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
               }
             }
+          },
+          "observability": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "otlp"
+            ],
+            "properties": {
+              "otlp": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "enabled",
+                  "endpoint",
+                  "serviceName",
+                  "sampleRate"
+                ],
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  },
+                  "endpoint": {
+                    "const": "http://host.openshell.internal:4318"
+                  },
+                  "serviceName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"
+                  },
+                  "sampleRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              }
+            }
           }
         }
       }
