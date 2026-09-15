@@ -93,7 +93,7 @@ describe("OpenClaw bridge health hook", () => {
         {
           sandboxName: "alpha",
           log: (message) => logs.push(message),
-          executeSandboxCommand: (command) =>
+          executeSandboxCommand: async (command) =>
             command.includes("openclaw.json")
               ? {
                   status: 0,
@@ -101,8 +101,7 @@ describe("OpenClaw bridge health hook", () => {
                 }
               : {
                   status: 0,
-                  stdout:
-                    "[telegram] [default] runtime credential is ready (revision-scoped)",
+                  stdout: "[telegram] [default] runtime credential is ready (revision-scoped)",
                 },
         },
       ),
@@ -135,7 +134,7 @@ describe("OpenClaw bridge health hook", () => {
         {
           sandboxName: "alpha",
           log: (message) => logs.push(message),
-          executeSandboxCommand: (command) =>
+          executeSandboxCommand: async (command) =>
             command.includes("openclaw.json")
               ? {
                   status: 0,
@@ -164,5 +163,47 @@ describe("OpenClaw bridge health hook", () => {
 
     expect(logs.join("\n")).toContain("credential/startup warnings");
     expect(logs.join("\n")).toContain("identityless canonical placeholder");
+  });
+
+  it("classifies a non-placeholder runtime credential as a startup warning (#10847)", async () => {
+    const logs: string[] = [];
+    const registry = new MessagingHookRegistry([
+      createOpenClawBridgeHealthHookRegistration(
+        {
+          channelId: "telegram",
+          handlerId: "telegram.openclawBridgeHealth",
+        },
+        {
+          sandboxName: "alpha",
+          log: (message) => logs.push(message),
+          executeSandboxCommand: async (command) =>
+            command.includes("openclaw.json")
+              ? {
+                  status: 0,
+                  stdout: JSON.stringify({ channels: { telegram: { enabled: true } } }),
+                }
+              : {
+                  status: 0,
+                  stdout:
+                    "[telegram] [default] runtime credential available from a non-placeholder source",
+                },
+        },
+      ),
+    ]);
+
+    await expect(
+      runMessagingHook(
+        {
+          id: "telegram-openclaw-bridge-health",
+          phase: "health-check",
+          handler: "telegram.openclawBridgeHealth",
+        },
+        registry,
+        { channelId: "telegram" },
+      ),
+    ).resolves.toMatchObject({ outputs: {} });
+
+    expect(logs.join("\n")).toContain("credential/startup warnings");
+    expect(logs.join("\n")).toContain("non-placeholder source");
   });
 });

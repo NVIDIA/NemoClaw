@@ -131,6 +131,24 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     expect(result.stderr).not.toContain("runtime credential is ready (revision-scoped)");
   });
 
+  it("rejects a runtime credential outside the revision-scoped placeholder boundary (#10847)", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { enabled: true } } } },
+      }));
+      process.env.TELEGRAM_BOT_TOKEN = "123456:RAW_SECRET";
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("runtime credential available from a non-placeholder source");
+    expect(result.stderr).not.toContain("123456:RAW_SECRET");
+    expect(result.stderr).not.toContain("runtime credential is ready (revision-scoped)");
+  });
+
   it("does NOT emit the startup-grace breadcrumb after the bridge logs 'starting provider'", () => {
     const driver = `
       ${GATEWAY_TITLE_SETUP}
