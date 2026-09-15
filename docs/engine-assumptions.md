@@ -1,38 +1,69 @@
-# Execution-engine assumptions
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-This inventory describes the Rust implementation at `dfc5d40d8b`. It is a map for
-preparation, not a declaration of Podman or remote-engine support. “Client host”
-means the process running the SDK, CLI, provider or collector. “Engine host” means
-the daemon's execution and storage namespace. They currently must coincide for the
-managed Spark topology. A Unix socket can be forwarded, so its syntax alone does
-not prove locality.
+# Execution-Engine Assumptions
 
-| Boundary and owner | Current assumption | Observation host and implication |
-|---|---|---|
-| `docker/mod.rs`: `Engine::connect` | Explicit Unix socket, Bollard Docker API; no environment auto-discovery | Socket resolves on the client host. API objects belong to the selected daemon. HTTP/TLS/SSH engine transports are not implemented. |
-| `managed/backend.rs`; `deployment/runtime.rs` | Resource specs choose connections inside read, ensure, remove, preflight, readiness and export | Each caller can reconnect independently. Connection selection needs an injectable boundary shared by these operations. |
-| `provider/provider.rs`; `deployment/ollama.rs`; `ollama/backend.rs` | Ollama already receives an engine, selected separately from managed gateway resources | Provider and SDK must select the same daemon. Ollama's HTTP API is a separate connection. |
-| `config/mod.rs`, `config/validation.rs` | Managed gateway defaults to and validates `/var/run/docker.sock`; local Linux topology | YAML cannot select arbitrary managed-engine transports yet. Preserve schema and serialized identities in preparation. |
-| `managed/spec.rs`: gateway launch and config | Host networking, host volume mountpoint, fixed Docker socket bind, driver `docker`, mounted supervisor and SSH paths | Socket, supervisor, signing files and relay paths must exist in the gateway and sandbox daemon's shared host namespace. A remote daemon cannot use the client's paths. |
-| `managed/spec.rs`; `managed/mutation.rs`; `managed/observation.rs` | Docker bridge/IPAM, predictable bridge gateway, published inference port; exact launch configuration | Network identity and bind addresses belong to the engine host. A bridge IP is not a general cross-host inference address. |
-| `managed/observation.rs`; `managed/gateway_storage.rs` | `local` volumes under `/var/lib/docker/volumes/.../_data`; exact labels, creation time, network and image identity | Mountpoints are daemon-host paths. Podman storage paths differ. Never stat a remote mountpoint locally. |
-| `managed/storage.rs`; `managed/observation.rs`; `ollama/service.rs` | Durable bindings include daemon `/info` ID plus resource identity | Identical names and labels on another daemon must not authorize adoption or deletion. Qualify Podman's ID stability and rootless namespace behavior separately. |
-| `managed/mutation.rs`; `managed/artifacts.rs`; `docker/mod.rs` | Image digests/labels, pulls and archive reads/writes use the selected daemon | Image availability and receipts belong to that daemon. Registry downloads and model metadata are distinct network clients. Failed reads are not absence. |
-| `managed/capacity.rs`; `hardware/linux.rs`; `hardware/nvidia.rs` | Local `/proc/meminfo`, local `nvidia-smi`, compile-host architecture, local `statvfs` of daemon-reported Docker root | This mixes client-host and engine-host observations. Extract collection from typed capacity rules; reject unavailable remote observations. |
-| `nemoclaw-runtime/src/hardware.rs`; `supervisor.rs` | Container-side `/proc` and `nvidia-smi`, process groups, signals and watchdog | These execute beside inference. Their host/PID/cgroup visibility must be qualified for another engine; keep immediate checks resident and direct. |
-| `process.rs` | Local process groups and Linux `/proc/<pid>/stat` for child cleanup | These identify local CLI/provider helper processes, not remote runtime resources. Keep this separate from engine placement. |
-| `config/mod.rs`: `inference_endpoint`; `compile.rs`; `openshell/probes.rs` | Managed inference endpoint is derived from bridge and serving port; sandbox probes use `inference.local` | Resolve the upstream connection from the gateway/sandbox routing perspective. A CLI-side successful request does not prove sandbox reachability. Credentials remain references; active inference and agent probes remain direct. |
-| `openshell/transport.rs`; `state/`; `bundle/` | Gateway credentials, local state locks, bundle binaries and subprocesses | Credential lookup and state are client-side. OpenShell RPC observes the gateway's resources. Do not move local credentials into an engine collector. |
-| `nemoclaw-build`; `runtimes/*` | Local Docker/Buildx artifact builds and Docker-format image loading | Build-engine choice is separate from runtime placement. A local image digest does not mean another engine has that artifact. |
+This reference describes the checked-in engine boundaries.
+The [execution-target findings](design/execution-targets.md) retain the experiments that established them.
+Use [the SSH service guide](remote-service.md) for deployment instructions.
 
-Paths without a crate prefix refer to `crates/nemoclaw-sdk/src`. Provider paths
-refer to `crates/nemoclaw-provider/src`. Provider refresh and export retain their
-shared typed query path; connection injection must reach the underlying collector
-without introducing direct-refresh shortcuts.
+“Client host” means the host running the SDK, CLI, provider, or collector.
+“Engine host” means the daemon’s execution and storage namespace.
+A forwarded Unix socket does not establish that those hosts are the same.
 
-The native rootless Podman proof found that Podman 4.9.3 changes the Docker API
-`/info.ID` between requests to the same service. The existing Docker binding must
-not be reused for managed Podman resources. Qualify a persistent storage/account
-namespace identity before introducing that integration. OpenShell's native driver
-successfully separates the sandbox execution target from the existing Docker
-inference service; see the [live evidence](validation/rust-podman-rootless-linux-arm64.json).
+A distinct daemon ID does not establish a distinct physical GPU or memory pool.
+
+## Connections and Identity
+
+| Boundary and owner | Constraint |
+|---|---|
+| SDK `docker/mod.rs` and `docker/ssh.rs` | Explicit Unix sockets and SSH endpoints select Docker connections on Unix clients. HTTP/TLS engine URLs and environment-based discovery are unavailable. |
+| SDK `docker/` and `managed/backend.rs` | Connection resolution must select the same endpoint for read, ensure, remove, preflight, readiness, and export. |
+| Provider `provider.rs`; SDK `deployment/ollama.rs` and `ollama/backend.rs` | Ollama’s engine connection is separate from its HTTP model API. The SDK and provider must select the same daemon. |
+| SDK `config/` and `managed/spec.rs` | Managed gateways retain the local Docker topology. Managed inference can declare independent SSH placement and publication. |
+| SDK `managed/storage.rs`, `managed/observation.rs`, and `ollama/service.rs` | Durable bindings combine daemon identity with resource identity, ownership, and generation. Names and labels on another daemon cannot authorize adoption or deletion. |
+| SDK `openshell/transport.rs`, `state/`, and `bundle/` | Gateway credentials, deployment locks, state, and bundle subprocesses remain client-side. OpenShell RPC observes gateway-owned resources. |
+
+A changed bound endpoint is rejected; there is no target migration or lost-state adoption command.
+Unavailable or mismatched identity stops the operation.
+The rootless Podman experiment found that Podman 4.9.3 changes Docker-compatible `/info.ID` between requests.
+
+Managed Podman resources need a separately qualified persistent namespace identity.
+The [native Podman evidence](validation/rust-podman-rootless-linux-arm64.json) covers an external OpenShell gateway and rootless sandbox path.
+
+## Storage and Network Placement
+
+| Boundary and owner | Constraint |
+|---|---|
+| SDK `managed/spec.rs` gateway launch | Host networking, socket binds, supervisor paths, signing files, and relay paths must exist in the gateway and sandbox daemon’s shared host namespace. Remote inference does not move this gateway topology. |
+| SDK `managed/spec.rs`, `managed/mutation.rs`, and `managed/observation.rs` | Bridge identity and published bind addresses belong to the engine host. A local bridge address is not a general cross-host inference address. |
+| SDK `managed/gateway_storage.rs` and `managed/observation.rs` | Volume verification uses the selected daemon’s `DockerRootDir`, including non-default roots. It rejects paths outside that root and retains label, creation-time, network, and image checks. |
+| SDK `managed/artifacts.rs` and `docker/mod.rs` | Image pulls and archive transfers use the selected daemon. Model metadata and registry access are separate clients. Failed reads are not absence. |
+| SDK `config/`, `compile.rs`, and `openshell/probes.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Apply probes `inference.local` from the sandbox through OpenShell. A client-side request cannot prove sandbox reachability. |
+| Build crate and `runtimes/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
+
+The runtime retains model storage on destroy.
+Do not inspect a remote daemon’s mountpoint as if it were a client-host path.
+Refer to [lifecycle behavior](usage.md#destroy) for retained resources and deletion limits.
+
+## Host Observations and Supervision
+
+| Boundary and owner | Constraint |
+|---|---|
+| SDK `managed/capacity.rs` and `hardware/` | Capacity rules consume measurements associated with the selected daemon identity. Missing or mismatched observations fail. |
+| SDK `hardware/linux.rs` and `hardware/nvidia.rs` | Local collection reads local memory, GPU, architecture, and filesystem capacity. These measurements cannot stand in for a remote engine. |
+| SDK `hardware/ssh.rs` and `hardware/ssh_capacity.py` | Explicit managed SSH placement selects the fixed read-only host collector in both SDK and provider. Plain SSH engine connections default to unavailable capacity until an observer is supplied. |
+| Runtime `hardware.rs` and `supervisor.rs` | Container-side memory and GPU observations enforce immediate startup and watchdog limits. Another engine’s host, PID, and cgroup visibility requires qualification. |
+| SDK `process.rs` | Process groups and Linux process identity govern local helper cleanup, separately from remote runtime resources. |
+
+The SSH collector requires existing host trust, Python 3, Docker, and NVIDIA tooling.
+It rejects a Docker context that points at another host and installs no packages.
+Mutations, capacity preflight, local credential reads, and active probes remain direct.
+
+Refresh and export share typed observations from the owning APIs.
+
+The [two-daemon experiment](validation/rust-dual-daemon-linux-arm64.json) exercises routing and daemon isolation on one DGX Spark.
+It does not qualify a separate physical host, WAN behavior, rootful Podman, or other operating systems.
+
+Paths labeled SDK are relative to `crates/nemoclaw-sdk/src`.
+Provider and runtime paths are relative to their respective crate’s `src` directory.

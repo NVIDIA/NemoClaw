@@ -1,14 +1,21 @@
-# Desired-state Rust implementation
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-Decision: Accept. Requested by maintainer cvillela on 2026-09-14, who owns this
-experiment and its acceptance. Placement: independent orphan origin/v1 branch.
-The Go implementation remains origin/v1-poc. Reference revision:
-`b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`, including Fabric and native messaging.
+# Desired-state Rust Implementation
 
-The public nemoclaw-sdk owns desired-state behavior. The CLI consumes it; terminal
-formatting, argument parsing, and process exit codes belong to the CLI. OpenTofu
-continues to own graph execution and resource state. A Rust provider adapts its
-protocol to shared typed backend operations. No Rust/Go FFI is required.
+Decision: Accept.
+Requested by maintainer cvillela on 2026-09-14, who owns this experiment and its acceptance.
+Placement: independent orphan origin/v1 branch.
+
+The Go implementation remains origin/v1-poc.
+Reference revision: `b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`, including Fabric and native messaging.
+
+The public nemoclaw-sdk owns desired-state behavior.
+The CLI consumes it; terminal formatting, argument parsing, and process exit codes belong to the CLI.
+OpenTofu continues to own graph execution and resource state.
+
+A Rust provider adapts its protocol to shared typed backend operations.
+No Rust/Go FFI is required.
 
 Start with the contracts most likely to invalidate the port, in green commits:
 
@@ -20,38 +27,39 @@ Start with the contracts most likely to invalidate the port, in green commits:
    and read-only plan through a thin CLI.
 4. Apply, export, and destroy with deployment locking, retained intent, secret
    references, recovery, and the same ownership and generation checks.
-5. Backend integration, managed storage/process lifecycle, and Spark supervisor.
+5. Backend integration, managed storage/process lifecycle, and DGX Spark supervisor.
 6. Explicit live qualification and cross-platform bundle evidence.
 
-Each implementation commit records its red/green evidence. Add crates only when
-there is a consumer: SDK, CLI, provider, and a private unpublished e2e crate.
-The e2e crate consumes an explicit verified runtime bundle, not sibling Cargo
-binary discovery. Keep deterministic process tests separate from opt-in live
-resource creation. Exercise SDK apply -> CLI export -> SDK unchanged apply ->
-CLI destroy when those operations exist.
+Each implementation commit records its red/green evidence.
+Add crates only when there is a consumer: SDK, CLI, provider, and a private unpublished e2e crate.
+The e2e crate consumes an explicit verified runtime bundle, not sibling Cargo binary discovery.
 
-Compatibility includes resource addresses, durable IDs, ownership generations,
-configuration digests, secret references, artifact receipts, and persistent data.
-Verify compatibility with fixtures from the pinned Go reference; do not claim
-state migration or platform qualification from compiling successfully.
-Only confirmed absence may remove state. Authentication, transport, extension,
-query, and partial-result failures stop planning and preserve prior bindings.
-Refresh and export share typed observations. Mutations, conditional-write checks,
-active probes, and local credential/state reads remain direct. Choose collectors
-from implementation evidence; do not change observation behavior during a port.
+Keep deterministic process tests separate from opt-in live resource creation.
+Exercise SDK apply -> CLI export -> SDK unchanged apply -> CLI destroy when those operations exist.
 
-Storage survives destroy by default. Plan does not create runtime resources.
-Failed readiness must preserve established identities. The watchdog stays active
-after CLI exit and must not trigger an automatic restart loop. Retain upstream
-licenses and source notices when porting runtime artifacts. SDK errors and
-progress must not expose secret values.
+Compatibility includes resource addresses, durable IDs, ownership generations, configuration digests, secret references, artifact receipts, and persistent data.
+Verify compatibility with fixtures from the pinned Go reference; do not claim state migration or platform qualification from compiling successfully.
+Only confirmed absence may remove state.
 
-## OpenShell transport boundary
+Authentication, transport, extension, query, and partial-result failures stop planning and preserve prior bindings.
+Refresh and export share typed observations.
+Mutations, conditional-write checks, active probes, and local credential/state reads remain direct.
 
-The pinned high-level Rust SDK explicitly excludes mTLS. The Go reference accepts
-client certificate/key file references. Use the same pinned OpenShell generated
-Rust clients from openshell-core, with telemetry disabled, and a tonic channel
-that retains mTLS, bearer references, bounded calls, and no automatic mutation
-retry. This avoids silently dropping an existing authentication mode. Transport
-qualification must cover certificate validation independently of plaintext wire
-tests.
+Choose collectors from implementation evidence; do not change observation behavior during a port.
+
+Storage survives destroy by default.
+Plan does not create runtime resources.
+Failed readiness must preserve established identities.
+
+The watchdog stays active after CLI exit and must not trigger an automatic restart loop.
+Retain upstream licenses and source notices when porting runtime artifacts.
+SDK errors and progress must not expose secret values.
+
+## OpenShell Transport Boundary
+
+The pinned high-level Rust SDK explicitly excludes mTLS.
+The Go reference accepts client certificate/key file references.
+Use the same pinned OpenShell generated Rust clients from openshell-core, with telemetry disabled, and a tonic channel that retains mTLS, bearer references, bounded calls, and no automatic mutation retry.
+
+This avoids silently dropping an existing authentication mode.
+Transport qualification must cover certificate validation independently of plaintext wire tests.

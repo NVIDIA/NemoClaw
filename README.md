@@ -1,22 +1,25 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # NemoClaw
 
-Rust desired-state SDK, CLI, and OpenTofu provider on an independent branch.
-The implementation has reached the experimental scope of `v1-poc` at
-`b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`, including its documented limitations.
+NemoClaw’s experimental Rust SDK manages agent deployments from desired-state YAML.
+The CLI delegates `plan`, `apply`, `export`, and `destroy` to the SDK.
+OpenTofu owns graph execution and resource state.
 
-The SDK exposes `plan`, `apply`, `export`, and `destroy`; the CLI delegates the
-same four commands to it. Qualification covers real OpenTofu, five native bundle
-targets, managed OpenShell, Ollama, Spark model preparation and inference,
-watchdog recovery, and the retained native agent/Fabric interfaces.
-See the [parity evidence and limits](docs/validation/README.md) and
-[architecture findings](RFC-desired-state.md). Project adoption remains a separate
-decision; this branch is an experiment.
-See [build instructions](docs/build.md), [CLI and lifecycle usage](docs/usage.md),
-[SDK access](docs/sdk.md), [agent runtimes](docs/agents.md), and
-[test instructions](docs/testing.md).
+This independent `v1` branch follows the [accepted experiment](DESIGN.md).
+Project adoption remains a separate decision.
+[Validation evidence and limits](docs/validation/README.md) identify tested configurations and the pinned Go comparison.
 
-Run `cargo test --workspace`, `cargo fmt --check`, and
-`cargo clippy --workspace --all-targets -- -D warnings`.
+## Start Here
 
-The toolchain is pinned in rust-toolchain.toml. Changes follow red/green tests
-and small commits; commit bodies explain decisions and validation.
+- [Build a native bundle](docs/build.md).
+- [Configure and operate a deployment](docs/usage.md).
+- [Use the SDK](docs/sdk.md).
+- [Browse all documentation](docs/README.md).
+
+## Contribute
+
+Read [AGENTS.md](AGENTS.md) and [DESIGN.md](DESIGN.md) before implementation changes.
+Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/CONTRIBUTING.md) for documentation changes.
+[Run the workspace checks](docs/testing.md) before committing.

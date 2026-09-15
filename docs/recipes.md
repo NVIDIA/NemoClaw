@@ -1,55 +1,54 @@
-# Inline model recipes
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-An [ordinary vLLM service](../examples/vllm.yaml) needs a pinned image and model
-snapshot. Build its local image with `cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json`. Add
-`service.recipe` when the model needs preparation or serving features supplied
-by its runtime image. The CLI does not load recipe code. Recipe authors package
-their executables, patches, licenses and source notices in that image; the YAML
-declares their contract.
+# Inline Model Recipes
 
-See [the inline Qwen example](../examples/spark-inline.yaml). Build its local image
-with `cargo run -p nemoclaw-build -- runtime runtimes/qwen38/build.json`; the example pins the resulting
-OCI manifest. Reproduce the pins from the implementation revision recorded in
-[the validation evidence](validation/rust-inline-recipes-linux-arm64.json);
-building later source can produce a different digest. This experiment does not
-publish the image. Its model-specific
-adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside
-the generic execution path. All vLLM services use `backend: vllm`. Model-specific
-backend names and the built-in recipe registry have been removed.
+An [ordinary vLLM service](../examples/vllm.yaml) needs a pinned image and model snapshot.
+Use [the ordinary vLLM image build](build.md#build-a-runtime-image).
+Add `service.recipe` when the model needs preparation or serving features supplied by its runtime image.
+
+The CLI does not load recipe code.
+Recipe authors package their executables, patches, licenses and source notices in that image; the YAML declares their contract.
+
+See [the inline Qwen example](../examples/spark-inline.yaml).
+Use [the Qwen3.8 image build](build.md#build-a-runtime-image); the example pins an OCI manifest from the recorded experiment.
+Reproduce the pins from the implementation revision recorded in [the validation evidence](validation/rust-inline-recipes-linux-arm64.json); building later source can produce a different digest.
+
+This experiment does not publish the image.
+Its model-specific adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside the generic execution path.
+All vLLM services use `backend: vllm`.
+Model-specific backend names and the built-in recipe registry have been removed.
 
 ## Declaration
 
-The initial contract is inline, with `apiVersion:
-nemoclaw.nvidia.com/recipe/v1`. It contains:
+The initial contract is inline, with `apiVersion: nemoclaw.nvidia.com/recipe/v1`.
+It contains:
 
-- `compatibility`: target architecture, GPU name, minimum driver and host memory,
-  and required image labels. Images must declare `org.nemoclaw.recipe.protocol:
-  v1`. Other labels describe the features the recipe requires.
-- `preparation` and `verification`: absolute executable paths inside the image
-  and SHA-256 hashes. They are executable files, not shell command strings.
-- `resources`: maximum total prepared bytes, preparation memory in GiB, total
-  serving GPU budget in bytes, and startup memory headroom in GiB. The serving
-  GPU budget includes the recipe's model, caches and other GPU allocations.
-- `serving`: the served model name, parser names, cache dtypes, lazy-loading and
-  chunked-prefill settings, optional typed compilation settings, and `VLLM_`
-  environment values. `preparedEnvironment` maps environment names to paths
-  relative to the verified preparation directory; `.` selects that directory.
+- `compatibility`: target architecture, GPU name, minimum driver and host memory, and required image labels.
+  Images must declare `org.nemoclaw.recipe.protocol: v1`.
+  Other labels describe required features.
+- `preparation` and `verification`: absolute executable paths inside the image and SHA-256 hashes.
+  These are executable files, not shell command strings.
+- `resources`: maximum prepared bytes, preparation memory in GiB, serving GPU budget in bytes, and startup headroom in GiB.
+  The serving GPU budget includes the model, caches, and other GPU allocations.
+- `serving`: model name, parser names, cache dtypes, lazy loading, chunked prefill, optional typed compilation settings, and `VLLM_` environment values.
+  `preparedEnvironment` maps environment names to paths relative to the verified preparation directory; `.` selects that directory.
 - `licenses` and `sourceNotices`: paths to retained files inside the pinned image.
 
-Recipe memory requirements are checked against measurements from the execution
-host. The runtime rechecks preparation and startup headroom. The shared resident
-watchdog continues enforcing the service's memory protection policy after the
-CLI exits. Declaring a new hardware combination does not constitute live
-qualification; the current inline Qwen example targets the Spark.
+Recipe memory requirements are checked against measurements from the execution host.
+The runtime rechecks preparation and startup headroom.
+The shared resident watchdog continues enforcing the service's memory protection policy after the CLI exits.
 
-An optional `snapshot` carries the exact model file manifest, including sizes
-and hashes. Otherwise the shared downloader resolves the pinned repository and
-revision. An optional `reuse` names an existing snapshot directory relative to
-`/data` and a previous preparation key. It is an explicit cache import, not
-permission to accept old verification evidence. The inline Qwen example uses
-these fields to reuse its earlier snapshot and packed bytes.
+Declaring a new hardware combination does not constitute live qualification; the current inline Qwen example targets the DGX Spark.
 
-## Execution protocol
+An optional `snapshot` carries the exact model file manifest, including sizes and hashes.
+Otherwise the shared downloader resolves the pinned repository and revision.
+An optional `reuse` names an existing snapshot directory relative to `/data` and a previous preparation key.
+
+It is an explicit cache import, not permission to accept old verification evidence.
+The inline Qwen example uses these fields to reuse its earlier snapshot and packed bytes.
+
+## Execution Protocol
 
 Both executables receive one JSON request on stdin:
 
@@ -63,10 +62,11 @@ Both executables receive one JSON request on stdin:
 ```
 
 `previousDirectory` is a candidate from `reuse`, if declared; it may not exist.
-Preparation owns how to resume its unpublished output. It must leave previous
-published data intact. Preparation exits successfully after producing candidate
-files. Verification independently checks those candidates and returns JSON on
-stdout:
+Preparation owns how to resume its unpublished output.
+It must leave previous published data intact.
+
+Preparation exits successfully after producing candidate files.
+Verification independently checks those candidates and returns JSON on stdout:
 
 ```json
 {
@@ -80,44 +80,40 @@ stdout:
 }
 ```
 
-Names are relative to the staging directory. Duplicate names, traversal,
-symlinked output paths, incomplete hashes, and output beyond the declared byte
-budget fail verification. The runtime independently hashes the listed files,
-records their metadata, and publishes a completion receipt through a directory
-rename. It limits protocol output to 1 MiB and each tool invocation to eight
-hours. Tool logs belong on stderr. Cancellation terminates the owned process
-group and retains staged data.
+Names are relative to the staging directory.
+Duplicate names, traversal, symlinked output paths, incomplete hashes, and output beyond the declared byte budget fail verification.
+The runtime independently hashes the listed files, records their metadata, and publishes a completion receipt through a directory rename.
 
-The preparation key includes the pinned model identity and inline recipe
-contract. Unchanged apply checks the existing completion receipt and file
-metadata without invoking the tools. Changed or incomplete published data fails
-observation; it is not treated as absent or silently rebuilt.
+It limits protocol output to 1 MiB and each tool invocation to eight hours.
+Tool logs belong on stderr.
+Cancellation terminates the owned process group and retains staged data.
 
-## Plan, apply and retention
+The preparation key includes the pinned model identity and inline recipe contract.
+Unchanged apply checks the existing completion receipt and file metadata without invoking the tools.
+Changed or incomplete published data fails observation; it is not treated as absent or silently rebuilt.
+
+## Plan, Apply and Retention
 
 Plan validates declarations and observes hardware, state, and retained files.
-It never runs preparation or verification executables. Apply checks the pinned
-image capabilities and packaged files, downloads or reuses the snapshot, prepares
-and verifies data, then starts vLLM through the shared supervisor.
+It never runs preparation or verification executables.
+Apply checks the pinned image capabilities and packaged files, downloads or reuses the snapshot, prepares and verifies data, then starts vLLM through the shared supervisor.
 
-The Qwen adapter can hard-link earlier packed data into staging and verify it
-before accepting a new receipt. This avoids repacking while preserving the old
-published files. The model-specific orphan-recovery rule remains in that adapter,
-not the generic Rust preparation lifecycle.
+The Qwen adapter can hard-link earlier packed data into staging and verify it before accepting a new receipt.
+This avoids repacking while preserving the old published files.
+The model-specific orphan-recovery rule remains in that adapter, not the generic Rust preparation lifecycle.
 
-Changing to a recipe-capable image can replace the inference container. Existing
-ownership, generation and storage checks still apply; this does not authorize
-adopting another deployment's volume. Destroy retains model and prepared storage
-as before. Recipe execution adds no exception to the distinction between failed
-observation and confirmed resource absence.
+Changing to a recipe-capable image can replace the inference container.
+Existing ownership, generation and storage checks still apply; this does not authorize adopting another deployment's volume.
+Destroy retains model and prepared storage as before.
+
+Recipe execution adds no exception to the distinction between failed observation and confirmed resource absence.
 
 Old model-specific backend configurations and native-agent state are unsupported.
-The current container limits and live hardware qualification still target the
-Spark; removing model-specific code does not qualify another GPU.
+The current container limits and live hardware qualification still target DGX Spark.
+Removing model-specific code does not qualify another GPU.
 
-Recipe declarations are trusted deployment input, and the pinned runtime image
-must be reviewed with its tools and dependencies. The executable hash is an
-additional identity check, not a sandbox for recipe code. Recipe authors must
-version the contract when preparation semantics change, including changes to
-helper code used by their executable. The complete declaration participates in
-the preparation key, so even serving-only edits currently select a new receipt.
+Recipe declarations are trusted deployment input, and the pinned runtime image must be reviewed with its tools and dependencies.
+The executable hash is an additional identity check, not a sandbox for recipe code.
+Recipe authors must version the contract when preparation semantics change, including changes to helper code used by their executable.
+
+The complete declaration participates in the preparation key, so even serving-only edits currently select a new receipt.
