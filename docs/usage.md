@@ -41,6 +41,8 @@ Ordinary models can omit `service.recipe`.
 
 ## Configuration and Credentials
 
+Use the [YAML field reference](reference/configuration.md) to check field names, defaults, conditional requirements, and validation limits.
+
 Unknown fields, duplicate keys, inline secrets, and unsupported combinations are rejected.
 Images must use immutable SHA-256 references.
 Managed DGX Spark declares `inferenceProviders[].service` instead of `endpoint`, with a pinned model, backend, serving settings, and memory policy.

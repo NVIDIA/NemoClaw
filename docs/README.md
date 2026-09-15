@@ -12,6 +12,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 |---|---|
 | Build the CLI bundle and runtime images | [Build local artifacts](build.md) |
 | Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
+| Look up YAML fields, defaults, and constraints | [Configuration reference](reference/configuration.md) |
 | Choose an agent and access its native runtime | [Agent runtimes](agents.md) |
 | Choose a public model for managed vLLM | [Select a managed model](models.md) |
 | Package model-specific preparation | [Inline model recipes](recipes.md) |
@@ -27,6 +28,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Qualify explicitly owned live resources | [Run live qualification](testing/live.md) |
 | Inspect retained results and their limits | [Validation evidence](validation/README.md) |
 | Write or reorganize documentation | [Contribute documentation](CONTRIBUTING.md) |
+| Update the generated schema and field reference | [Schema maintenance](configuration-schema.md) |
 
 ## Understand the Design
 

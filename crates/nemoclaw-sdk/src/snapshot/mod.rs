@@ -18,16 +18,24 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+/// One immutable file in a model snapshot.
 pub struct File {
+    /// Relative file path. Traversal and reserved NemoClaw metadata names are rejected.
     pub name: String,
+    /// Expected file length in bytes; zero is rejected.
     pub size: u64,
+    /// Lowercase SHA-256 of the complete file.
     pub sha256: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+/// Pinned model snapshot inventory. The parser rejects duplicate files and file/directory conflicts.
 pub struct Manifest {
+    /// Repository identity, which must match service.model.repository when used in a recipe.
     pub repository: String,
+    /// Immutable commit, which must match service.model.revision when used in a recipe.
     pub revision: String,
+    /// Nonempty inventory of pinned model files.
     pub files: Vec<File>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

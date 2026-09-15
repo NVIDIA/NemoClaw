@@ -21,7 +21,7 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
-    /// Generate the configuration schema, or check checked-in output for drift.
+    /// Generate the configuration schema and reference, or check them for drift.
     Schema {
         #[arg(long)]
         check: bool,

@@ -38,6 +38,16 @@ fn schema_generation_is_repeatable_and_check_rejects_missing_or_stale_output() {
     assert!(generate(directory.path(), false).status.success());
     assert_eq!(fs::read(&path).unwrap(), first);
     assert!(generate(directory.path(), true).status.success());
+    let reference = directory.path().join("docs/reference/configuration.md");
+    let markdown =
+        fs::read_to_string(&reference).expect("generation includes the YAML field reference");
+    assert!(markdown.contains("## Gateway"));
+    assert!(markdown.contains("spec.inferenceProviders[].service.serving"));
+    fs::write(&reference, "stale reference\n").unwrap();
+    assert!(!generate(directory.path(), true).status.success());
+    assert_eq!(fs::read_to_string(&reference).unwrap(), "stale reference\n");
+    assert!(generate(directory.path(), false).status.success());
+    assert_eq!(fs::read_to_string(&reference).unwrap(), markdown);
     fs::write(&path, b"{}\n").unwrap();
     let stale = generate(directory.path(), true);
     assert!(!stale.status.success());

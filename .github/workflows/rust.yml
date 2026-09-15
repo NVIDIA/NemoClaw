@@ -74,7 +74,7 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo build --locked --workspace --all-targets
           cargo test --locked --workspace
-      - name: Check generated configuration schema
+      - name: Check generated configuration schema and reference
         run: |
           suffix=""
           if [ "$TEST_PLATFORM" = windows_amd64 ]; then suffix=.exe; fi

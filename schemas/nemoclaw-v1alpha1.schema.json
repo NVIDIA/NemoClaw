@@ -3,8 +3,10 @@
   "$defs": {
     "Agent": {
       "additionalProperties": false,
+      "description": "One Fabric harness and its inference route.",
       "properties": {
         "harness": {
+          "description": "Agent harness. Harnesses other than openclaw require external gateway and inference services.",
           "enum": [
             "deepagents",
             "hermes",
@@ -20,9 +22,11 @@
           "type": "string"
         },
         "inference": {
-          "$ref": "#/$defs/Inference"
+          "$ref": "#/$defs/Inference",
+          "description": "Primary inference route for this agent."
         },
         "name": {
+          "description": "Lowercase agent name.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         }
@@ -36,8 +40,10 @@
     },
     "Compatibility": {
       "additionalProperties": false,
+      "description": "Execution host requirements and labels that must be present on the pinned image.",
       "properties": {
         "architecture": {
+          "description": "Execution host CPU architecture.",
           "enum": [
             "arm64",
             "amd64"
@@ -45,6 +51,7 @@
           "type": "string"
         },
         "gpu": {
+          "description": "GPU name that must equal the observed device name.",
           "minLength": 1,
           "type": "string"
         },
@@ -54,6 +61,7 @@
             "minLength": 1,
             "type": "string"
           },
+          "description": "Required org.nemoclaw.* labels. org.nemoclaw.recipe.protocol must equal v1.",
           "properties": {
             "org.nemoclaw.recipe.protocol": {
               "const": "v1"
@@ -68,12 +76,14 @@
           "type": "object"
         },
         "minDriverMajor": {
+          "description": "Minimum NVIDIA driver major version.",
           "format": "uint64",
           "maximum": 10000,
           "minimum": 1,
           "type": "integer"
         },
         "minHostMemoryGiB": {
+          "description": "Minimum total host memory in GiB.",
           "format": "uint64",
           "maximum": 4096,
           "minimum": 1,
@@ -91,8 +101,10 @@
     },
     "Compilation": {
       "additionalProperties": false,
+      "description": "Typed vLLM compilation settings.",
       "properties": {
         "captureSizes": {
+          "description": "Nonempty list of CUDA graph capture sizes.",
           "items": {
             "maximum": 65536,
             "minimum": 1,
@@ -103,6 +115,7 @@
           "type": "array"
         },
         "cudagraphMode": {
+          "description": "CUDA graph execution mode.",
           "enum": [
             "NONE",
             "FULL_DECODE_ONLY"
@@ -110,6 +123,7 @@
           "type": "string"
         },
         "mode": {
+          "description": "Compilation mode understood by the pinned vLLM image.",
           "format": "uint8",
           "maximum": 3,
           "minimum": 0,
@@ -125,8 +139,10 @@
     },
     "Credential": {
       "additionalProperties": false,
+      "description": "A reference to a caller-provided environment variable; the configuration contains no credential value.",
       "properties": {
         "env": {
+          "description": "Uppercase environment variable name. For TLS fields, its value is a local certificate or key file path; otherwise it is a bearer/API credential.",
           "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
           "type": "string"
         }
@@ -138,16 +154,20 @@
     },
     "File": {
       "additionalProperties": false,
+      "description": "One immutable file in a model snapshot.",
       "properties": {
         "name": {
+          "description": "Relative file path. Traversal and reserved NemoClaw metadata names are rejected.",
           "minLength": 1,
           "type": "string"
         },
         "sha256": {
+          "description": "Lowercase SHA-256 of the complete file.",
           "pattern": "^[a-f0-9]{64}$",
           "type": "string"
         },
         "size": {
+          "description": "Expected file length in bytes; zero is rejected.",
           "format": "uint64",
           "minimum": 1,
           "type": "integer"
@@ -162,6 +182,7 @@
     },
     "Gateway": {
       "additionalProperties": false,
+      "description": "Choose a managed local Docker gateway or connect to an external gateway. Credentials and TLS require HTTPS.",
       "if": {
         "properties": {
           "endpoint": {
@@ -260,21 +281,27 @@
       ],
       "properties": {
         "credential": {
-          "$ref": "#/$defs/Credential"
+          "$ref": "#/$defs/Credential",
+          "description": "Optional bearer credential reference for an external HTTPS gateway."
         },
         "endpoint": {
+          "description": "Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports.",
           "type": "string",
-          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects http://127.0.0.1:17681."
+          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects http://127.0.0.1:17681.",
+          "x-nemoclaw-required": "When external"
         },
         "engine": {
+          "description": "Managed gateway Docker socket. Omit or leave empty for an external gateway.",
           "type": "string",
           "x-nemoclaw-default-rule": "Managed only: omitted or empty selects unix:///var/run/docker.sock."
         },
         "image": {
+          "description": "Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway.",
           "type": "string",
           "x-nemoclaw-default-rule": "Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792."
         },
         "management": {
+          "description": "Whether the SDK manages the gateway or connects to an existing one.",
           "enum": [
             "managed",
             "external"
@@ -282,11 +309,13 @@
           "type": "string"
         },
         "networkCIDR": {
+          "description": "Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway.",
           "type": "string",
           "x-nemoclaw-default-rule": "Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
         },
         "tls": {
-          "$ref": "#/$defs/TLS"
+          "$ref": "#/$defs/TLS",
+          "description": "Optional mutual TLS references for an external HTTPS gateway."
         }
       },
       "required": [
@@ -312,6 +341,7 @@
     },
     "Image": {
       "additionalProperties": false,
+      "description": "Sandbox image identity.",
       "properties": {
         "ref": {
           "anyOf": [
@@ -323,6 +353,7 @@
             }
           ],
           "default": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd",
+          "description": "Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects the default."
         }
@@ -331,8 +362,10 @@
     },
     "Inference": {
       "additionalProperties": false,
+      "description": "Agent inference routing.",
       "properties": {
         "routes": {
+          "description": "Exactly one route named primary.",
           "items": {
             "$ref": "#/$defs/Route"
           },
@@ -400,6 +433,7 @@
           }
         }
       ],
+      "description": "Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.",
       "else": {
         "properties": {
           "endpoint": {
@@ -417,19 +451,25 @@
       },
       "properties": {
         "credential": {
-          "$ref": "#/$defs/Credential"
+          "$ref": "#/$defs/Credential",
+          "description": "Optional API credential reference for an external HTTPS endpoint. Excluded by service and ollama."
         },
         "endpoint": {
-          "type": "string"
+          "description": "Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address.",
+          "type": "string",
+          "x-nemoclaw-required": "Without service"
         },
         "name": {
+          "description": "Provider name referenced by the primary route.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
         "ollama": {
-          "$ref": "#/$defs/ManagedOllama"
+          "$ref": "#/$defs/ManagedOllama",
+          "description": "Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint."
         },
         "provider": {
+          "description": "Wire protocol: Claude requires anthropic; every other harness requires openai.",
           "enum": [
             "openai",
             "anthropic"
@@ -437,7 +477,8 @@
           "type": "string"
         },
         "service": {
-          "$ref": "#/$defs/Service"
+          "$ref": "#/$defs/Service",
+          "description": "Manage vLLM from a pinned runtime image and model. Excludes ollama and credential; endpoint must be omitted or empty."
         }
       },
       "required": [
@@ -473,15 +514,19 @@
     },
     "InlineRecipe": {
       "additionalProperties": false,
+      "description": "Data-only contract for executables and capabilities packaged in a pinned runtime image.",
       "properties": {
         "apiVersion": {
           "const": "nemoclaw.nvidia.com/recipe/v1",
+          "description": "Inline recipe protocol version.",
           "type": "string"
         },
         "compatibility": {
-          "$ref": "#/$defs/Compatibility"
+          "$ref": "#/$defs/Compatibility",
+          "description": "Required execution host and image capabilities; declaring them does not establish live qualification."
         },
         "licenses": {
+          "description": "Nonempty list of absolute paths to retained license files inside the image.",
           "items": {
             "pattern": "^/",
             "type": "string"
@@ -490,21 +535,27 @@
           "type": "array"
         },
         "preparation": {
-          "$ref": "#/$defs/Tool"
+          "$ref": "#/$defs/Tool",
+          "description": "Executable that prepares candidate model data."
         },
         "resources": {
-          "$ref": "#/$defs/Resources"
+          "$ref": "#/$defs/Resources",
+          "description": "Preparation capacity, GPU budget, and startup headroom."
         },
         "reuse": {
-          "$ref": "#/$defs/Reuse"
+          "$ref": "#/$defs/Reuse",
+          "description": "Optional cache import. The new recipe must verify the imported data before accepting it."
         },
         "serving": {
-          "$ref": "#/$defs/Settings"
+          "$ref": "#/$defs/Settings",
+          "description": "Recipe-specific vLLM settings."
         },
         "snapshot": {
-          "$ref": "#/$defs/Manifest"
+          "$ref": "#/$defs/Manifest",
+          "description": "Optional pinned file manifest. When omitted, the SDK resolves the model inventory.\nWhen present, its repository and revision must match service.model."
         },
         "sourceNotices": {
+          "description": "Nonempty list of absolute paths to retained source notices inside the image.",
           "items": {
             "pattern": "^/",
             "type": "string"
@@ -513,7 +564,8 @@
           "type": "array"
         },
         "verification": {
-          "$ref": "#/$defs/Tool"
+          "$ref": "#/$defs/Tool",
+          "description": "Executable that independently verifies prepared data before publication."
         }
       },
       "required": [
@@ -530,16 +582,20 @@
     },
     "ManagedOllama": {
       "additionalProperties": false,
+      "description": "Managed Ollama uses a pinned image, an existing Docker network, and an explicit model:tag on the route.",
       "properties": {
         "engine": {
+          "description": "Local Unix Docker socket URL.",
           "pattern": "^unix:///",
           "type": "string"
         },
         "image": {
+          "description": "Immutable ollama/ollama image reference.",
           "pattern": "^ollama/ollama@sha256:[a-f0-9]{64}$",
           "type": "string"
         },
         "network": {
+          "description": "Name of the existing Docker network.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         }
@@ -553,8 +609,10 @@
     },
     "Manifest": {
       "additionalProperties": false,
+      "description": "Pinned model snapshot inventory. The parser rejects duplicate files and file/directory conflicts.",
       "properties": {
         "files": {
+          "description": "Nonempty inventory of pinned model files.",
           "items": {
             "$ref": "#/$defs/File"
           },
@@ -562,11 +620,13 @@
           "type": "array"
         },
         "repository": {
+          "description": "Repository identity, which must match service.model.repository when used in a recipe.",
           "maxLength": 200,
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$",
           "type": "string"
         },
         "revision": {
+          "description": "Immutable commit, which must match service.model.revision when used in a recipe.",
           "pattern": "^[a-f0-9]{40}$",
           "type": "string"
         }
@@ -580,6 +640,7 @@
     },
     "Memory": {
       "additionalProperties": false,
+      "description": "Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.",
       "properties": {
         "consecutiveSamples": {
           "anyOf": [
@@ -592,6 +653,7 @@
             }
           ],
           "default": 5,
+          "description": "Consecutive low-memory samples before the watchdog stops the owned process.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -607,11 +669,13 @@
             }
           ],
           "default": 12,
+          "description": "Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "gpuMemoryGiB": {
+          "description": "Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
           "format": "int64",
           "maximum": 96,
           "minimum": 0,
@@ -629,6 +693,7 @@
             }
           ],
           "default": 32,
+          "description": "Host memory reserve in GiB excluded from the serving budget.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -644,6 +709,7 @@
             }
           ],
           "default": 8,
+          "description": "KV cache allocation in GiB for ordinary vLLM. Recipe serving does not emit this explicit cache-allocation flag.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -659,6 +725,7 @@
             }
           ],
           "default": 8,
+          "description": "Available-memory threshold in GiB that contributes a low-memory sample.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -674,6 +741,7 @@
             }
           ],
           "default": 3,
+          "description": "Free-memory threshold in GiB, used when available memory is below freeGateGiB.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -683,12 +751,15 @@
     },
     "Metadata": {
       "additionalProperties": false,
+      "description": "Deployment identity persists across apply, export, recovery, and destroy.",
       "properties": {
         "name": {
+          "description": "Lowercase deployment name.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
         "uid": {
+          "description": "Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations.",
           "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
           "type": "string"
         }
@@ -701,13 +772,16 @@
     },
     "Model": {
       "additionalProperties": false,
+      "description": "Immutable model identity used for snapshot resolution and storage.",
       "properties": {
         "repository": {
+          "description": "Public Hugging Face owner/repository name.",
           "maxLength": 200,
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$",
           "type": "string"
         },
         "revision": {
+          "description": "Full lowercase 40-hex commit revision; branches and tags are rejected.",
           "pattern": "^[a-f0-9]{40}$",
           "type": "string"
         }
@@ -720,6 +794,7 @@
     },
     "Network": {
       "additionalProperties": false,
+      "description": "Sandbox inference network policy.",
       "properties": {
         "tier": {
           "anyOf": [
@@ -731,6 +806,7 @@
             }
           ],
           "default": "isolated",
+          "description": "Only isolated is accepted. Host enforcement and its limits are described in the usage guide.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects the default."
         }
@@ -739,13 +815,16 @@
     },
     "Overrides": {
       "additionalProperties": false,
+      "description": "Model overrides on the primary route.",
       "properties": {
         "model": {
+          "description": "Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$",
           "type": "string"
         },
         "piModel": {
           "additionalProperties": true,
+          "description": "Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object.",
           "type": "object"
         }
       },
@@ -756,26 +835,31 @@
     },
     "Resources": {
       "additionalProperties": false,
+      "description": "Resource declarations checked against host observations and produced data.",
       "properties": {
         "gpuMemoryBytes": {
+          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
           "type": "integer"
         },
         "preparationMemoryGiB": {
+          "description": "Preparation memory requirement in GiB, in addition to the service host reserve.",
           "format": "uint64",
           "maximum": 4096,
           "minimum": 1,
           "type": "integer"
         },
         "preparedBytes": {
+          "description": "Maximum total prepared-data bytes.",
           "format": "uint64",
           "maximum": 1099511627776,
           "minimum": 1,
           "type": "integer"
         },
         "startupHeadroomGiB": {
+          "description": "Additional available-memory headroom in GiB required at startup.",
           "format": "uint64",
           "maximum": 4096,
           "minimum": 0,
@@ -792,13 +876,15 @@
     },
     "Reuse": {
       "additionalProperties": false,
-      "description": "Explicit cache import, verified by the new recipe before it is accepted.",
+      "description": "Explicit cache import, verified by the new recipe before acceptance.",
       "properties": {
         "preparationKey": {
+          "description": "SHA-256 preparation key identifying previously prepared data.",
           "pattern": "^[a-f0-9]{64}$",
           "type": "string"
         },
         "snapshotDirectory": {
+          "description": "Existing snapshot directory relative to /data. Traversal, backslashes, and empty path components are rejected.",
           "minLength": 1,
           "type": "string"
         }
@@ -811,15 +897,19 @@
     },
     "Route": {
       "additionalProperties": false,
+      "description": "Primary inference route supplied through OpenShell.",
       "properties": {
         "name": {
           "const": "primary",
+          "description": "The primary route name.",
           "type": "string"
         },
         "overrides": {
-          "$ref": "#/$defs/Overrides"
+          "$ref": "#/$defs/Overrides",
+          "description": "Model selection and optional Pi model metadata."
         },
         "providerRef": {
+          "description": "Must equal the declared inference provider name.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         }
@@ -833,6 +923,7 @@
     },
     "Runtime": {
       "additionalProperties": false,
+      "description": "Sandbox runtime selected through OpenShell.",
       "properties": {
         "provider": {
           "anyOf": [
@@ -847,6 +938,7 @@
             }
           ],
           "default": "docker",
+          "description": "Docker or Podman driver. A managed service with Podman requires explicit service placement.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects the default."
         }
@@ -855,8 +947,10 @@
     },
     "Sandbox": {
       "additionalProperties": false,
+      "description": "The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.",
       "properties": {
         "agents": {
+          "description": "Exactly one agent.",
           "items": {
             "$ref": "#/$defs/Agent"
           },
@@ -865,17 +959,21 @@
           "type": "array"
         },
         "image": {
-          "$ref": "#/$defs/Image"
+          "$ref": "#/$defs/Image",
+          "description": "Sandbox agent image; omission selects the SDK default."
         },
         "name": {
+          "description": "Lowercase sandbox name.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
         "network": {
-          "$ref": "#/$defs/Network"
+          "$ref": "#/$defs/Network",
+          "description": "Sandbox network policy; omission selects isolated inference routing."
         },
         "runtime": {
-          "$ref": "#/$defs/Runtime"
+          "$ref": "#/$defs/Runtime",
+          "description": "Sandbox driver; omission selects Docker. A managed gateway requires Docker."
         }
       },
       "required": [
@@ -894,6 +992,7 @@
           "placement"
         ]
       },
+      "description": "Managed vLLM service. Explicit placement and publication must appear together.",
       "else": {
         "properties": {
           "serving": {
@@ -913,29 +1012,39 @@
       "properties": {
         "backend": {
           "const": "vllm",
+          "description": "Managed inference backend.",
           "type": "string"
         },
         "image": {
+          "description": "Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string"
         },
         "memory": {
-          "$ref": "#/$defs/Memory"
+          "$ref": "#/$defs/Memory",
+          "description": "GPU budget and resident watchdog thresholds. Omission selects the SDK defaults."
         },
         "model": {
-          "$ref": "#/$defs/Model"
+          "$ref": "#/$defs/Model",
+          "description": "Public Hugging Face repository and immutable commit."
         },
         "placement": {
-          "$ref": "#/$defs/ServicePlacement"
+          "$ref": "#/$defs/ServicePlacement",
+          "description": "SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication.",
+          "x-nemoclaw-required": "With external gateway or Podman; paired with publication"
         },
         "publication": {
-          "$ref": "#/$defs/ServicePublication"
+          "$ref": "#/$defs/ServicePublication",
+          "description": "Private inference address reachable by OpenShell. Required with placement.",
+          "x-nemoclaw-required": "With placement"
         },
         "recipe": {
-          "$ref": "#/$defs/InlineRecipe"
+          "$ref": "#/$defs/InlineRecipe",
+          "description": "Optional inline preparation and serving contract supplied by the pinned runtime image."
         },
         "serving": {
-          "$ref": "#/$defs/Serving"
+          "$ref": "#/$defs/Serving",
+          "description": "Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options."
         }
       },
       "required": [
@@ -958,12 +1067,15 @@
     },
     "ServicePlacement": {
       "additionalProperties": false,
+      "description": "Execution host and Docker network for a remote model service.",
       "properties": {
         "engine": {
+          "description": "SSH Docker endpoint, for example ssh://gpu-box.",
           "pattern": "^ssh://",
           "type": "string"
         },
         "networkCidr": {
+          "description": "Canonical private IPv4 /24 on the selected Docker engine.",
           "pattern": "/24$",
           "type": "string"
         }
@@ -976,11 +1088,14 @@
     },
     "ServicePublication": {
       "additionalProperties": false,
+      "description": "HTTP model publication must match the bind address, service port, and /v1 path.",
       "properties": {
         "bindAddress": {
+          "description": "Private host IPv4 address outside the service Docker subnet. Loopback is rejected.",
           "type": "string"
         },
         "endpoint": {
+          "description": "Private HTTP inference URL reachable by OpenShell.",
           "pattern": "^http://.+:[0-9]+/v1$",
           "type": "string"
         }
@@ -993,6 +1108,7 @@
     },
     "Serving": {
       "additionalProperties": false,
+      "description": "Limits apply with or without a recipe. Recipe serving settings replace the ordinary service parser settings.",
       "properties": {
         "batchTokens": {
           "anyOf": [
@@ -1005,6 +1121,7 @@
             }
           ],
           "default": 1024,
+          "description": "Maximum tokens in a scheduled batch.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -1020,6 +1137,7 @@
             }
           ],
           "default": 32768,
+          "description": "Maximum model context length in tokens.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -1035,6 +1153,7 @@
             }
           ],
           "default": 1,
+          "description": "Maximum concurrent sequences.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -1050,12 +1169,14 @@
             }
           ],
           "default": 18888,
+          "description": "Inference listening port. Explicit publication must use this port.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "reasoningParser": {
           "default": "",
+          "description": "Native vLLM reasoning parser used when no recipe is declared. Empty omits the parser flag.",
           "enum": [
             "",
             "qwen3",
@@ -1065,6 +1186,7 @@
         },
         "speculativeTokens": {
           "default": 0,
+          "description": "MTP speculative tokens. Must be zero without a recipe.",
           "format": "int64",
           "maximum": 3,
           "minimum": 0,
@@ -1081,12 +1203,14 @@
             }
           ],
           "default": 1800,
+          "description": "Seconds allowed for backend readiness before startup fails.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "toolParser": {
           "default": "",
+          "description": "Native vLLM tool-call parser used when no recipe is declared. Empty omits the parser flag.",
           "enum": [
             "",
             "hermes",
@@ -1101,13 +1225,16 @@
     },
     "Settings": {
       "additionalProperties": false,
+      "description": "Recipe settings select serving behavior without shell hooks or arbitrary argument lists.",
       "properties": {
         "chunkedPrefill": {
           "default": false,
+          "description": "Enable chunked prefill.",
           "type": "boolean"
         },
         "compilation": {
-          "$ref": "#/$defs/Compilation"
+          "$ref": "#/$defs/Compilation",
+          "description": "Optional typed compilation settings. Omission selects compilation mode 0 for recipe serving."
         },
         "environment": {
           "additionalProperties": {
@@ -1116,6 +1243,7 @@
             "type": "string"
           },
           "default": {},
+          "description": "Literal VLLM_* environment values for serving. Do not place credentials here.",
           "propertyNames": {
             "pattern": "^VLLM_[A-Z0-9_]*$"
           },
@@ -1131,11 +1259,13 @@
             }
           ],
           "default": "",
+          "description": "KV cache dtype understood by the pinned vLLM image. Empty omits the flag.",
           "maxLength": 256,
           "type": "string"
         },
         "lazyLoading": {
           "default": false,
+          "description": "Enable the lazy safetensors loading strategy.",
           "type": "boolean"
         },
         "mambaCacheDtype": {
@@ -1148,10 +1278,12 @@
             }
           ],
           "default": "",
+          "description": "Mamba SSM cache dtype understood by the pinned vLLM image. Empty omits the flag.",
           "maxLength": 256,
           "type": "string"
         },
         "modelName": {
+          "description": "Model identifier advertised by vLLM. The primary route model must match it.",
           "maxLength": 256,
           "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$",
           "type": "string"
@@ -1161,6 +1293,7 @@
             "type": "string"
           },
           "default": {},
+          "description": "VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment.",
           "propertyNames": {
             "pattern": "^VLLM_[A-Z0-9_]*$"
           },
@@ -1176,6 +1309,7 @@
             }
           ],
           "default": "",
+          "description": "Native vLLM reasoning parser supplied by the runtime image. Empty omits the flag.",
           "maxLength": 256,
           "type": "string"
         },
@@ -1189,6 +1323,7 @@
             }
           ],
           "default": "",
+          "description": "Native vLLM tool parser supplied by the runtime image. Empty omits the flag.",
           "maxLength": 256,
           "type": "string"
         }
@@ -1200,11 +1335,14 @@
     },
     "Spec": {
       "additionalProperties": false,
+      "description": "This experimental contract requires one inference provider and one sandbox.",
       "properties": {
         "gateway": {
-          "$ref": "#/$defs/Gateway"
+          "$ref": "#/$defs/Gateway",
+          "description": "OpenShell gateway connection or managed gateway settings."
         },
         "inferenceProviders": {
+          "description": "Exactly one external endpoint, managed Ollama server, or managed vLLM service.",
           "items": {
             "$ref": "#/$defs/InferenceProvider"
           },
@@ -1213,6 +1351,7 @@
           "type": "array"
         },
         "sandboxes": {
+          "description": "Exactly one sandbox with one agent and one primary inference route.",
           "items": {
             "$ref": "#/$defs/Sandbox"
           },
@@ -1230,15 +1369,19 @@
     },
     "TLS": {
       "additionalProperties": false,
+      "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
       "properties": {
         "ca": {
-          "$ref": "#/$defs/Credential"
+          "$ref": "#/$defs/Credential",
+          "description": "Environment variable whose value names the local CA certificate file."
         },
         "certificate": {
-          "$ref": "#/$defs/Credential"
+          "$ref": "#/$defs/Credential",
+          "description": "Environment variable whose value names the local client certificate file."
         },
         "key": {
-          "$ref": "#/$defs/Credential"
+          "$ref": "#/$defs/Credential",
+          "description": "Environment variable whose value names the local client private-key file."
         }
       },
       "required": [
@@ -1250,13 +1393,16 @@
     },
     "Tool": {
       "additionalProperties": false,
+      "description": "Executable identity inside the runtime image; this is not a shell command.",
       "properties": {
         "executable": {
+          "description": "Absolute path to the executable inside the image. Traversal and empty path components are rejected.",
           "maxLength": 4096,
           "pattern": "^/",
           "type": "string"
         },
         "sha256": {
+          "description": "Lowercase SHA-256 of the executable file.",
           "pattern": "^[a-f0-9]{64}$",
           "type": "string"
         }
@@ -1740,20 +1886,25 @@
       }
     }
   ],
+  "description": "Desired configuration for one deployment. Fields describe authored input before SDK normalization.",
   "properties": {
     "apiVersion": {
       "const": "nemoclaw.nvidia.com/v1alpha1",
+      "description": "Configuration API version understood by this SDK.",
       "type": "string"
     },
     "kind": {
       "const": "NemoClawConfig",
+      "description": "Configuration document kind.",
       "type": "string"
     },
     "metadata": {
-      "$ref": "#/$defs/Metadata"
+      "$ref": "#/$defs/Metadata",
+      "description": "Deployment name and durable ownership identity."
     },
     "spec": {
-      "$ref": "#/$defs/Spec"
+      "$ref": "#/$defs/Spec",
+      "description": "Gateway, inference provider, and sandbox configuration."
     }
   },
   "required": [

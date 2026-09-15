@@ -12,6 +12,9 @@ Use the [documentation index](README.md) to find the reader's task.
 Read the complete owning page and check its inbound links before editing.
 Keep each procedure or reference fact in one place and link to it elsewhere.
 
+The [YAML field reference](reference/configuration.md) is generated from Rust types and constraints.
+Follow [schema maintenance](configuration-schema.md) to update its sources and regenerate it.
+
 - Build, deployment, model, recipe, agent, SDK, and SSH instructions belong in their task guides.
 - Test commands belong in [testing.md](testing.md) and its fixture or live guides.
 - Architecture rationale belongs in [design/](design/architecture.md).
