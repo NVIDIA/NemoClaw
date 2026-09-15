@@ -4,19 +4,20 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets, nativeDistributionAsset } from "./native-assets.mts";
-import { execFile, spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import {
   watchNativeUiSandbox,
   attemptNativeUiCleanup,
   waitForNativeMxcCompletion,
+  observeNativeSandboxCreation,
+  confirmNativeUiRegistryEmpty,
 } from "./native-ui-lifecycle.mts";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import { readNativeServiceEnvironment } from "./native-options.mts";
 
@@ -57,7 +58,6 @@ import {
   allowlistedWindowsEnvironment,
   argumentValue,
   freePort,
-  jsonContainsExactValue,
   quoteYamlPath,
   removeDirectory,
   requiredDirectory,
@@ -77,7 +77,6 @@ const AGENT_CHOICE_PROOF = ["openclaw", "hermes", "langchain-deepagents-code", "
 
 const sleep = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-const execFileAsync = promisify(execFile);
 
 function fail(message: string): never {
   throw new Error(`NemoClaw native Windows launch failed: ${message}`);
@@ -1121,6 +1120,8 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     let gatewayLogPath = "",
       gatewayErrorPath = "";
     let cleanupPromise;
+    let creation: ReturnType<typeof observeNativeSandboxCreation> | undefined;
+    let creationAbsent = false;
     let monitor: Promise<void> | undefined;
     const monitoring = new AbortController();
     const evidenceRoot = selectedEvidenceRoot;
@@ -1160,6 +1161,11 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
           "MXC execution cleanup",
           async () => {
             if (create && gateway) {
+              if (creation?.wasRejected()) {
+                await confirmNativeUiRegistryEmpty(openshell, cliEnvironment);
+                creationAbsent = true;
+                return;
+              }
               const completion = await waitForNativeMxcCompletion(
                 openshell,
                 cliEnvironment,
@@ -1175,7 +1181,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         [
           "sandbox deletion",
           async () => {
-            if (create)
+            if (create && !creationAbsent)
               await run(
                 openshell,
                 ["sandbox", "delete", sandboxName],
@@ -1195,14 +1201,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
           "sandbox registry",
           async () => {
             if (!create) return;
-            const listed = await execFileAsync(openshell, ["sandbox", "list", "-o", "json"], {
-              env: cliEnvironment,
-              encoding: "utf8",
-              windowsHide: true,
-              timeout: 10_000,
-              maxBuffer: 1024 * 1024,
-            });
-            if (jsonContainsExactValue(JSON.parse(listed.stdout), sandboxName)) throw new Error();
+            await confirmNativeUiRegistryEmpty(openshell, cliEnvironment);
           },
         ],
         [
@@ -1528,7 +1527,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
-      create.once("error", () => {});
+      creation = observeNativeSandboxCreation(create);
       create.stdout.on("data", (chunk) => {
         diagnostics.capture("create.stdout", chunk);
       });
@@ -1540,6 +1539,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       await withTimeout(
         Promise.race([
           uiRelay.ready,
+          creation.failure,
           gatewayFailure,
           ...(brokerRelay ? [brokerRelay.failure] : []),
           ...(webSession

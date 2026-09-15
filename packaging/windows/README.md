@@ -34,6 +34,11 @@ uses `loopback_ports` for the contained mock model and UI listeners. This emits
 MXC 0.8 TCP rules for only those `127.0.0.1` ports, with other egress and host
 loopback ingress denied. Unknown or inconsistent probes stop qualification.
 Port rules cannot be combined with Personal or legacy host-loopback options.
+The driver accepts whole ports from 1 through 65535 through protobuf's numeric
+representation; fractions, zero, overflow and nonnumeric values are rejected.
+The UI reports failed creation before waiting for relay readiness. It skips
+sandbox teardown only after definitive rejection and a confirmed empty registry;
+transport failures still require ordinary cleanup and reconciliation.
 
 Configured terminal sessions give the dedicated gateway a real Windows console.
 The gateway verifies all three standard handles before opting into MXC console

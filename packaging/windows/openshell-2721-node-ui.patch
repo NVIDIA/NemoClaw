@@ -1,7 +1,8 @@
 diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver-mxc/src/driver.rs
+index d8e981a4..ffa694d8 100644
 --- a/crates/openshell-driver-mxc/src/driver.rs
 +++ b/crates/openshell-driver-mxc/src/driver.rs
-@@ -92,6 +92,16 @@ struct MxcSandboxConfig {
+@@ -92,6 +92,30 @@ struct MxcSandboxConfig {
      command: Vec<String>,
      #[serde(default)]
      cwd: String,
@@ -13,12 +14,26 @@ diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver
 +    host_console: bool,
 +    #[serde(default)]
 +    personal_network: bool,
-+    #[serde(default)]
++    #[serde(default, deserialize_with = "deserialize_loopback_ports")]
 +    loopback_ports: Vec<std::num::NonZeroU16>,
++}
++
++fn deserialize_loopback_ports<'de, D>(
++    deserializer: D,
++) -> Result<Vec<std::num::NonZeroU16>, D::Error>
++where
++    D: serde::Deserializer<'de>,
++{
++    // Protobuf Struct represents every number as f64. Parsing its lossless display
++    // accepts whole ports without truncating fractions or saturating out-of-range values.
++    Vec::<f64>::deserialize(deserializer)?
++        .into_iter()
++        .map(|port| port.to_string().parse().map_err(serde::de::Error::custom))
++        .collect()
  }
 
  // ── Registry entry ────────────────────────────────────────────────────────────
-@@ -214,6 +224,11 @@ fn sandbox_config(sandbox: &DriverSandbox) -> Result<MxcSandboxConfig, tonic::St
+@@ -214,6 +238,11 @@ fn sandbox_config(sandbox: &DriverSandbox) -> Result<MxcSandboxConfig, tonic::St
              "mxc driver_config.command must contain a non-empty executable",
          ));
      }
@@ -30,7 +45,7 @@ diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver
      Ok(config)
  }
 
-@@ -634,6 +649,11 @@ async fn run_lifecycle(
+@@ -634,6 +663,11 @@ async fn run_lifecycle(
          denied_paths: Vec::new(),
      };
      let command_line = encode_windows_command_line(&sandbox_config.command);
@@ -42,7 +57,7 @@ diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver
      let process = MxcProcess {
          command_line: command_line.clone(),
          cwd: sandbox_config.cwd,
-@@ -700,6 +720,11 @@ async fn run_lifecycle(
+@@ -700,6 +734,11 @@ async fn run_lifecycle(
              let process_container = MxcProcessContainer {
                  least_privilege: config.pc_least_privilege,
                  capabilities: config.pc_capabilities.clone(),
@@ -54,46 +69,82 @@ diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver
              };
              match invoker
                  .run_oneshot(&sandbox_id, filesystem, process_container, process, None)
-@@ -901,6 +926,45 @@ mod lifecycle_tests {
+@@ -901,6 +940,81 @@ mod lifecycle_tests {
      use openshell_core::proto::{FilesystemPolicy, SandboxPolicy};
      use std::time::Duration;
 
++    #[test]
++    fn loopback_ports_accept_whole_numbers_through_protobuf() {
++        for ports in [
++            serde_json::json!([1, 12345, 65535]),
++            serde_json::json!([1.0, 12345.0, 65535.0]),
++        ] {
++            let config =
++                loopback_config(serde_json::json!({"command": ["node"], "loopback_ports": ports}))
++                    .unwrap();
++            assert_eq!(
++                config
++                    .loopback_ports
++                    .iter()
++                    .map(|port| port.get())
++                    .collect::<Vec<_>>(),
++                [1, 12345, 65535]
++            );
++        }
++        for config in [
++            serde_json::json!({"command": ["node"]}),
++            serde_json::json!({"command": ["node"], "loopback_ports": []}),
++        ] {
++            assert!(loopback_config(config).unwrap().loopback_ports.is_empty());
++        }
++    }
++
++    fn loopback_config(config: serde_json::Value) -> Result<MxcSandboxConfig, tonic::Status> {
++        let mut sandbox = driver_sandbox("network-config");
++        sandbox
++            .spec
++            .as_mut()
++            .unwrap()
++            .template
++            .as_mut()
++            .unwrap()
++            .driver_config = Some(
++            openshell_core::proto_struct::json_object_to_struct(
++                config.as_object().unwrap().clone(),
++            )
++            .unwrap(),
++        );
++        sandbox_config(&sandbox)
++    }
++
 +    #[test]
 +    fn loopback_ports_reject_invalid_ports_and_conflicting_profiles() {
 +        for value in [
 +            serde_json::json!([0]),
 +            serde_json::json!([-1]),
 +            serde_json::json!([65536]),
++            serde_json::json!([1.5]),
++            serde_json::json!([65535.5]),
++            serde_json::json!([1e100]),
++            serde_json::json!(["12345"]),
++            serde_json::json!([true]),
 +            serde_json::json!([null]),
++            serde_json::json!(null),
++            serde_json::json!(12345),
 +        ] {
-+            assert!(
-+                serde_json::from_value::<MxcSandboxConfig>(
-+                    serde_json::json!({"command": ["node"], "loopback_ports": value})
-+                )
-+                .is_err()
++            assert_eq!(
++                loopback_config(serde_json::json!({"command": ["node"], "loopback_ports": value}))
++                    .unwrap_err()
++                    .code(),
++                tonic::Code::InvalidArgument
 +            );
 +        }
 +        for profile in ["host_loopback", "personal_network"] {
-+            let mut sandbox = driver_sandbox("invalid-network");
 +            let mut config = serde_json::json!({"command": ["node"], "loopback_ports": [12345]});
 +            config[profile] = true.into();
-+            sandbox
-+                .spec
-+                .as_mut()
-+                .unwrap()
-+                .template
-+                .as_mut()
-+                .unwrap()
-+                .driver_config = Some(
-+                openshell_core::proto_struct::json_object_to_struct(
-+                    config.as_object().unwrap().clone(),
-+                )
-+                .unwrap(),
-+            );
-+            assert_eq!(
-+                sandbox_config(&sandbox).unwrap_err().code(),
-+                tonic::Code::InvalidArgument
-+            );
++            let error = loopback_config(config).unwrap_err();
++            assert_eq!(error.code(), tonic::Code::InvalidArgument);
++            assert!(error.message().contains("cannot be combined"));
 +        }
 +    }
 +
@@ -101,6 +152,7 @@ diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver
          driver_sandbox_with_command(id, "", vec!["cmd".into(), "/c".into(), "exit 0".into()])
      }
 diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mxc/src/mxc.rs
+index 32d7006d..e1fd1b62 100644
 --- a/crates/openshell-driver-mxc/src/mxc.rs
 +++ b/crates/openshell-driver-mxc/src/mxc.rs
 @@ -10,6 +10,7 @@
@@ -393,6 +445,7 @@ diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mx
 
      #[test]
 diff --git a/crates/openshell-server/src/compute/mod.rs b/crates/openshell-server/src/compute/mod.rs
+index b85641c9..c0e75a83 100644
 --- a/crates/openshell-server/src/compute/mod.rs
 +++ b/crates/openshell-server/src/compute/mod.rs
 @@ -1409,7 +1409,7 @@ impl ComputeRuntime {
@@ -616,6 +669,7 @@ diff --git a/crates/openshell-server/src/compute/mod.rs b/crates/openshell-serve
      async fn backend_ready_without_supervisor_stays_provisioning() {
          let runtime = test_runtime(Arc::new(TestDriver::default())).await;
 diff --git a/crates/openshell-cli/src/run.rs b/crates/openshell-cli/src/run.rs
+index 0a0b21a7..d18a9146 100644
 --- a/crates/openshell-cli/src/run.rs
 +++ b/crates/openshell-cli/src/run.rs
 @@ -2107,6 +2107,17 @@ fn sandbox_to_json(sandbox: &Sandbox) -> serde_json::Value {
