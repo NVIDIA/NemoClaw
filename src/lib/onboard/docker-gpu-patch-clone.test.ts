@@ -10,6 +10,7 @@ import {
   getDockerGpuPatchNetworkMode,
 } from "./docker-gpu-patch";
 import { shouldOmitOpenShellOciImageUser } from "./docker-gpu-patch-clone";
+import { openshellMainProcessSpecEnvValue } from "./docker-startup-command-env";
 
 const NEMOCLAW_STARTUP_ARGV = ["env", "/usr/local/bin/nemoclaw-start"] as const;
 
@@ -32,6 +33,68 @@ function openShellOciWorkspaceInspect() {
 }
 
 describe("Docker GPU clone envelope", () => {
+  it("rewrites the exact OpenShell 0.0.116 main-process argv without adding the legacy command", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = [
+      ...inspect.Config!.Env!.filter((entry) => !entry.startsWith("OPENSHELL_SANDBOX_COMMAND=")),
+      `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(["env", "hold"], true)}`,
+    ];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      openshellSandboxCommand: ["env", "VALUE=a b", "/usr/local/bin/nemoclaw-start"],
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(
+          ["env", "VALUE=a b", "/usr/local/bin/nemoclaw-start"],
+          true,
+        )}`,
+      ]),
+    );
+    expect(args.some((arg) => arg.startsWith("OPENSHELL_SANDBOX_COMMAND="))).toBe(false);
+  });
+
+  it("drops legacy startup metadata when the inspected container has both transports", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = [
+      ...inspect.Config!.Env!.filter(
+        (entry) =>
+          !entry.startsWith("OPENSHELL_SANDBOX_COMMAND=") &&
+          !entry.startsWith("OPENSHELL_MAIN_PROCESS_SPEC="),
+      ),
+      "OPENSHELL_SANDBOX_COMMAND=env stale-command",
+      `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(["env", "hold"], true)}`,
+    ];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(
+          NEMOCLAW_STARTUP_ARGV,
+          true,
+        )}`,
+      ]),
+    );
+    expect(args.some((arg) => arg.startsWith("OPENSHELL_SANDBOX_COMMAND="))).toBe(false);
+  });
+
+  it("rejects a malformed OpenShell 0.0.116 main-process transport before recreation", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = ['OPENSHELL_MAIN_PROCESS_SPEC={"version":2}'];
+
+    expect(() =>
+      buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+        openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+      }),
+    ).toThrow(/does not match the 0\.0\.116 Docker contract/u);
+  });
+
   it("omits only OpenShell's OCI-user marker at the exact NemoClaw workspace boundary (#8662)", () => {
     const inspect = openShellOciWorkspaceInspect();
     const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
@@ -164,7 +227,15 @@ describe("Docker GPU clone envelope", () => {
   });
 
   it("builds clone args that preserve OpenShell labels, mounts, and runtime settings", () => {
-    const args = buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("gpus"));
+    const inspect = inspectFixture();
+    inspect.HostConfig!.Annotations = { "io.container.manager": "libpod" };
+    inspect.HostConfig!.Mounts!.push({
+      Type: "image",
+      Source: "ghcr.io/nvidia/openshell/sandbox:v0.0.106",
+      Target: "/opt/openshell/bin",
+      ReadOnly: true,
+    });
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
 
     expect(args).toEqual(
       expect.arrayContaining([
@@ -178,6 +249,8 @@ describe("Docker GPU clone envelope", () => {
         "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
         "--env",
         "OPENSHELL_TEST=1",
+        "--annotation",
+        "io.container.manager=libpod",
         "--label",
         "openshell.ai/managed-by=openshell",
         "--label",
@@ -186,6 +259,8 @@ describe("Docker GPU clone envelope", () => {
         "/host:/container:rw",
         "--mount",
         "type=tmpfs,dst=/tmp/nemoclaw-exact-main-driver-config,tmpfs-size=16777216,tmpfs-mode=1777",
+        "--mount",
+        "type=image,src=ghcr.io/nvidia/openshell/sandbox:v0.0.106,dst=/opt/openshell/bin",
         "--network",
         "openshell-docker",
         "--network-alias",
@@ -251,7 +326,7 @@ describe("Docker GPU clone envelope", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.Ulimits = [
       { Name: "core", Soft: 0, Hard: -1 },
-      { Name: "nofile", Soft: 1024, Hard: 1024 },
+      { Name: "RLIMIT_NOFILE", Soft: 1024, Hard: 1024 },
     ];
 
     const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
@@ -271,6 +346,7 @@ describe("Docker GPU clone envelope", () => {
         "nproc=512:512",
       ]),
     );
+    expect(args).not.toContain("RLIMIT_NOFILE=1024:1024");
     expect(args).not.toContain("nofile=1024:1024");
   });
 
@@ -297,19 +373,60 @@ describe("Docker GPU clone envelope", () => {
   });
 
   it("uses exact managed-bootstrap container, entrypoint, and command overrides", () => {
-    const args = buildDockerGpuCloneRunArgs(
-      inspectFixture(),
-      buildDockerGpuMode("startup-command"),
-      {
-        containerName: "openshell-alpha-bootstrap-stage",
-        containerEntrypoint: "/usr/local/bin/nemoclaw-managed-bootstrap",
-        containerCommand: ["--request", "/run/nemoclaw/bootstrap-request.json"],
+    const inspect = inspectFixture();
+    Object.assign(inspect.Config!, {
+      ExposedPorts: { "2222/tcp": {} },
+      Healthcheck: {
+        Test: ["CMD-SHELL", "test -S /run/openshell/ssh.sock"],
+        Interval: 10_000_000_000,
+        Timeout: 2_000_000_000,
+        StartPeriod: 5_000_000_000,
+        Retries: 10,
       },
-    );
+      StopTimeout: 45,
+    });
+    Object.assign(inspect.HostConfig!, {
+      Annotations: { "io.container.manager": "libpod" },
+      NetworkMode: "bridge",
+      OomScoreAdj: 0,
+      PortBindings: {
+        "2222/tcp": [{ HostIp: "0.0.0.0", HostPort: "33513" }],
+      },
+    });
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      containerName: "openshell-alpha-bootstrap-stage",
+      containerEntrypoint: "/usr/local/bin/nemoclaw-managed-bootstrap",
+      containerCommand: ["--request", "/run/nemoclaw/bootstrap-request.json"],
+      preserveManagedLaunchSpec: true,
+    });
 
     expect(args.slice(0, 2)).toEqual(["--name", "openshell-alpha-bootstrap-stage"]);
     expect(args).toEqual(
       expect.arrayContaining(["--entrypoint", "/usr/local/bin/nemoclaw-managed-bootstrap"]),
+    );
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--expose",
+        "2222/tcp",
+        "--publish",
+        "0.0.0.0:33513:2222/tcp",
+        "--health-cmd",
+        "test -S /run/openshell/ssh.sock",
+        "--health-interval",
+        "10000000000ns",
+        "--health-timeout",
+        "2000000000ns",
+        "--health-start-period",
+        "5000000000ns",
+        "--health-retries",
+        "10",
+        "--stop-timeout",
+        "45",
+        "--oom-score-adj",
+        "500",
+        "--network",
+        "openshell-docker",
+      ]),
     );
     expect(args.slice(args.indexOf("openshell/sandbox:abc"))).toEqual([
       "openshell/sandbox:abc",
@@ -318,18 +435,16 @@ describe("Docker GPU clone envelope", () => {
     ]);
   });
 
-  it.each([
-    "",
-    "-starts-with-dash",
-    "contains/slash",
-    "a".repeat(254),
-  ])("rejects invalid managed-bootstrap container name %j", (containerName) => {
-    expect(() =>
-      buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("startup-command"), {
-        containerName,
-      }),
-    ).toThrow("Docker clone container name is invalid.");
-  });
+  it.each(["", "-starts-with-dash", "contains/slash", "a".repeat(254)])(
+    "rejects invalid managed-bootstrap container name %j",
+    (containerName) => {
+      expect(() =>
+        buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("startup-command"), {
+          containerName,
+        }),
+      ).toThrow("Docker clone container name is invalid.");
+    },
+  );
 
   it("adds SYS_PTRACE to the GPU clone when the baseline container lacks it", () => {
     const inspect = inspectFixture();
@@ -396,21 +511,22 @@ describe("Docker GPU clone envelope", () => {
   it.each([
     { name: "missing", endpoint: null },
     { name: "unrewritable", endpoint: "http://gateway.example.test:8080/" },
-  ])("fails closed when host networking is requested with a $name OpenShell endpoint (#6110)", ({
-    endpoint,
-  }) => {
-    const inspect = inspectFixture();
-    inspect.Config!.Env = [
-      ...inspect.Config!.Env!.filter((entry) => !entry.startsWith("OPENSHELL_ENDPOINT=")),
-      ...(endpoint === null ? [] : [`OPENSHELL_ENDPOINT=${endpoint}`]),
-    ];
+  ])(
+    "fails closed when host networking is requested with a $name OpenShell endpoint (#6110)",
+    ({ endpoint }) => {
+      const inspect = inspectFixture();
+      inspect.Config!.Env = [
+        ...inspect.Config!.Env!.filter((entry) => !entry.startsWith("OPENSHELL_ENDPOINT=")),
+        ...(endpoint === null ? [] : [`OPENSHELL_ENDPOINT=${endpoint}`]),
+      ];
 
-    expect(() =>
-      buildDockerGpuCloneRunOptions(inspect, {
-        NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
-      }),
-    ).toThrow(/NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host requires .*OPENSHELL_ENDPOINT/i);
-  });
+      expect(() =>
+        buildDockerGpuCloneRunOptions(inspect, {
+          NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
+        }),
+      ).toThrow(/NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host requires .*OPENSHELL_ENDPOINT/i);
+    },
+  );
 
   it("reports the Docker GPU patch network mode", () => {
     expect(getDockerGpuPatchNetworkMode({})).toBe("preserve");

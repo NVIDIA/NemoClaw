@@ -81,7 +81,6 @@ describe("list shows live gateway inference", () => {
             model: "configured-model",
             provider: "configured-provider",
             gpuEnabled: true,
-            policies: ["pypi", "npm"],
           },
         },
         defaultSandbox: "test",
@@ -100,6 +99,15 @@ describe("list shows live gateway inference", () => {
         "  echo '  Version: 1'",
         "  exit 0",
         "fi",
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+        "  cat <<'YAML'",
+        "version: 1",
+        "network_policies:",
+        "  pypi: {}",
+        "  npm_yarn: {}",
+        "YAML",
+        "  exit 0",
+        "fi",
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -113,11 +121,11 @@ describe("list shows live gateway inference", () => {
     expect(r.code).toBe(0);
     // Live gateway values render on the default sandbox's main row.
     expect(r.out).toContain(
-      "agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  sandbox GPU  policies: pypi, npm",
+      "agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  sandbox GPU  policies: npm, pypi",
     );
     // The stale (stored) row must not appear.
     expect(r.out).not.toContain(
-      "agent: openclaw  model: configured-model  provider: configured-provider  sandbox GPU  policies: pypi, npm",
+      "agent: openclaw  model: configured-model  provider: configured-provider  sandbox GPU  policies: npm, pypi",
     );
     // Onboarded values appear in an explicit live-gateway drift annotation.
     expect(r.out).toContain(
@@ -140,7 +148,6 @@ describe("list shows live gateway inference", () => {
             model: "llama3.2:1b",
             provider: "ollama-local",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "test",
@@ -179,7 +186,6 @@ describe("list shows live gateway inference", () => {
       model: "configured-model",
       provider: "nvidia-prod",
       gpuEnabled: false,
-      policies: ["pypi"],
     });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -234,7 +240,6 @@ describe("list shows live gateway inference", () => {
               model: "nvidia/nemotron-3-super-120b-a12b",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               agentVersion: "2026.3.11",
             },
           },
@@ -309,7 +314,6 @@ describe("list shows live gateway inference", () => {
               model: "nvidia/nemotron-3-super-120b-a12b",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               agentVersion: "9999.12.31",
             },
           },
@@ -386,7 +390,6 @@ describe("list shows live gateway inference", () => {
               model: "nvidia/nemotron-3-super-120b-a12b",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               agentVersion: OPENCLAW_EXPECTED_VERSION,
               nemoclawVersion: "0.0.1",
             },
@@ -460,7 +463,6 @@ describe("list shows live gateway inference", () => {
               model: "nvidia/nemotron-3-super-120b-a12b",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               agentVersion: "2026.5.18",
             },
           },

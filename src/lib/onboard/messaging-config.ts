@@ -14,6 +14,8 @@ import {
   readMessagingPlanFromEnv,
 } from "./messaging-channel-setup";
 
+export { getMessagingChannelConfigFromPlan } from "../messaging/plan-validation";
+
 type StoredMessagingChannelConfigDeps = {
   readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
   getRegistryMessagingAuthority(sandboxName: string): RegistryMessagingAuthority;

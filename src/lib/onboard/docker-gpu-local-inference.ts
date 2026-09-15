@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { retryUntil } from "../core/retry";
+import { retryUntilAsync } from "../core/retry";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
 import { getLocalProviderLabel } from "../inference/local";
 import type { SandboxGpuProofResult } from "../state/registry";
@@ -125,7 +126,7 @@ export async function enforceDockerGpuPatchPreserveNetwork(
   provider: string | null | undefined,
   config: DockerGpuLocalInferenceConfig,
   options: DockerGpuLocalInferenceOptions & {
-    reverifyBridgeReachability?: () => void | Promise<void>;
+    reverifyBridgeReachability: () => void | Promise<void>;
   },
 ): Promise<boolean> {
   if (!isLocalInferenceProvider(provider)) return false;
@@ -137,21 +138,8 @@ export async function enforceDockerGpuPatchPreserveNetwork(
       "loopback is not reachable from the sandbox network namespace, so OpenClaw routes through " +
       "the OpenShell-managed inference path (host networking is not needed for GPU device access).",
   );
-  await (
-    options.reverifyBridgeReachability ??
-    (() => defaultReverifyBridgeReachability(options.gatewayPort))
-  )();
+  await options.reverifyBridgeReachability();
   return true;
-}
-
-/** Re-run the sandbox→gateway bridge reachability probe (with UFW auto-fix). */
-function defaultReverifyBridgeReachability(gatewayPort?: number): Promise<void> {
-  const { verifySandboxBridgeGatewayReachableOrExit } =
-    require("./gateway-sandbox-reachability") as typeof import("./gateway-sandbox-reachability");
-  return verifySandboxBridgeGatewayReachableOrExit(true, {
-    skip: false,
-    ...(gatewayPort === undefined ? {} : { port: gatewayPort }),
-  });
 }
 
 export type SandboxExecResult = {
@@ -161,8 +149,9 @@ export type SandboxExecResult = {
 } | null;
 
 export type DockerGpuSandboxInferenceVerifyDeps = {
-  execInSandbox?: (sandboxName: string, script: string) => SandboxExecResult;
-  sleep?: (milliseconds: number) => void;
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+  execInSandbox?: (sandboxName: string, script: string) => Promise<SandboxExecResult>;
+  sleep?: (milliseconds: number) => void | Promise<void>;
 };
 
 export type DockerGpuSandboxInferenceVerification =
@@ -205,14 +194,14 @@ type RuntimeProbeOutcome =
  * route resolves and responds; `000` means DNS failure or connection refused —
  * the reopened-#4509 symptom.
  */
-function probeSandboxRuntimeInference(
+async function probeSandboxRuntimeInference(
   sandboxName: string,
   endpoint: string,
   deps: {
     execInSandbox: NonNullable<DockerGpuSandboxInferenceVerifyDeps["execInSandbox"]>;
     sleep: NonNullable<DockerGpuSandboxInferenceVerifyDeps["sleep"]>;
   },
-): RuntimeProbeOutcome {
+): Promise<RuntimeProbeOutcome> {
   // Single-quote the endpoint (POSIX-escaping any embedded quotes) so it can
   // never break out of the curl argument. It is a constant today, but the
   // signature accepts any string — keep the shell construction injection-safe.
@@ -223,8 +212,8 @@ function probeSandboxRuntimeInference(
     `--connect-timeout ${DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS} ` +
     `--max-time ${DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS} ${safeEndpoint} 2>/dev/null || echo 000); ` +
     `echo "HTTP_$code"`;
-  const probe = (): RuntimeProbeOutcome => {
-    const result = deps.execInSandbox(sandboxName, script);
+  const probe = async (): Promise<RuntimeProbeOutcome> => {
+    const result = await deps.execInSandbox(sandboxName, script);
     if (result === null) {
       return {
         kind: "exec-failed",
@@ -264,13 +253,15 @@ function probeSandboxRuntimeInference(
     };
   };
 
-  return retryUntil(probe, {
+  return retryUntilAsync(probe, {
     accept: (result) => result.kind === "ok" || result.kind === "no-curl",
     retryDelaysMs: Array.from(
       { length: DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS - 1 },
       () => DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_MS,
     ),
-    sleep: deps.sleep,
+    sleep: async (milliseconds) => {
+      await deps.sleep(milliseconds);
+    },
   });
 }
 
@@ -288,14 +279,14 @@ function probeSandboxRuntimeInference(
  * sandbox image genuinely lacks `curl` — OpenClaw's HTTP client does not need
  * it, so a missing probe tool must not block an otherwise usable sandbox.
  */
-export function verifyDockerGpuSandboxLocalInference(
+export async function verifyDockerGpuSandboxLocalInference(
   config: DockerGpuLocalInferenceConfig,
   provider: string | null | undefined,
   options: DockerGpuLocalInferenceOptions & {
     sandboxName: string;
     deps?: DockerGpuSandboxInferenceVerifyDeps;
   },
-): DockerGpuSandboxInferenceVerification {
+): Promise<DockerGpuSandboxInferenceVerification> {
   if (options.selectedRoute !== "compatibility") {
     return { status: "skipped", reason: "not-docker-gpu-patch" };
   }
@@ -308,14 +299,19 @@ export function verifyDockerGpuSandboxLocalInference(
   }
 
   const deps = options.deps ?? {};
-  const execInSandbox = deps.execInSandbox ?? executeSandboxCommandForVerification;
+  const execInSandbox =
+    deps.execInSandbox ??
+    (async (sandboxName: string, script: string) => {
+      if (!deps.commandExecutor) return null;
+      return await executeSandboxCommandForVerification(sandboxName, script, deps.commandExecutor);
+    });
   const sleep =
     deps.sleep ??
     ((milliseconds: number) => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, milliseconds));
     });
 
-  const outcome = probeSandboxRuntimeInference(options.sandboxName, endpoint, {
+  const outcome = await probeSandboxRuntimeInference(options.sandboxName, endpoint, {
     execInSandbox,
     sleep,
   });
@@ -428,7 +424,7 @@ export async function verifyGpuSandboxAfterReady(
   options: GpuSandboxAfterReadyOptions,
 ): Promise<void> {
   await verifyGpuSandboxAccessAfterReady(config, options);
-  verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
+  await verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
 }
 
 export async function verifyGpuSandboxAccessAfterReady(
@@ -464,15 +460,15 @@ export async function verifyGpuSandboxAccessAfterReady(
   }
 }
 
-export function verifyGpuSandboxLocalInferenceAfterReady(
+export async function verifyGpuSandboxLocalInferenceAfterReady(
   config: DockerGpuLocalInferenceConfig,
   provider: string | null | undefined,
   options: Omit<GpuSandboxAfterReadyOptions, "verifyGpuOrExit" | "selectedMode"> & {
     beforeSuccess?: () => void;
   },
-): void {
+): Promise<void> {
   if (options.selectedRoute !== "compatibility") return;
-  const verification = verifyDockerGpuSandboxLocalInference(config, provider, {
+  const verification = await verifyDockerGpuSandboxLocalInference(config, provider, {
     sandboxName: options.sandboxName,
     dockerDriverGateway: options.dockerDriverGateway,
     selectedRoute: options.selectedRoute,
@@ -516,9 +512,11 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     "commitAfterReady" | "rollbackManagedStartupAfterCreateFailure"
   >,
   revalidateBeforeCommit?: () => void,
+  persistFinalHandoffCommitStarted?: (replacementRuntimeId: string | null) => void,
+  persistFinalHandoffAcknowledgement?: () => void,
 ): Promise<void> {
   try {
-    verifyGpuSandboxLocalInferenceAfterReady(config, provider, {
+    await verifyGpuSandboxLocalInferenceAfterReady(config, provider, {
       ...options,
       beforeSuccess: revalidateBeforeCommit,
     });
@@ -533,5 +531,8 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     }
     throw failure;
   }
-  await runtimePatch.commitAfterReady();
+  await runtimePatch.commitAfterReady({
+    beforeFinalHandoff: persistFinalHandoffCommitStarted,
+  });
+  persistFinalHandoffAcknowledgement?.();
 }

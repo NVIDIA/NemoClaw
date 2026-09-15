@@ -26,7 +26,7 @@ const SCRIPT_PATH = path.join(
   "scripts",
   "generate-openclaw-config.mts",
 );
-const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
+const SCRIPT_ARGS = [SCRIPT_PATH];
 
 /** Minimal env vars required for a valid config generation run. */
 const BASE_ENV = baseOpenClawGenerationEnv();
@@ -154,42 +154,6 @@ function runCapturingConsoleError<T>(fn: () => T): { result: T; stderr: string }
   }
 }
 
-function writeWeChatPluginMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(tmpDir, ".openclaw", "extensions", "openclaw-weixin");
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2));
-}
-
-function writeWeChatNpmPackageMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(
-    tmpDir,
-    ".openclaw",
-    "npm",
-    "node_modules",
-    "@tencent-weixin",
-    "openclaw-weixin",
-  );
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "package.json"), JSON.stringify(manifest, null, 2));
-}
-
-function writeWeChatNpmPluginMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(
-    tmpDir,
-    ".openclaw",
-    "npm",
-    "node_modules",
-    "@tencent-weixin",
-    "openclaw-weixin",
-  );
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2));
-}
-
-function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
-  return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
-}
-
 function writeRegistryManifest(
   blueprintDir: string,
   relativeManifestPath: string,
@@ -218,7 +182,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents).toBeDefined();
   });
 
-  it("runs as a node --experimental-strip-types executable", () => {
+  it("runs as a node executable", () => {
     const config = runConfigSubprocess();
     expect(config.gateway).toBeDefined();
     expect(config.models).toBeDefined();
@@ -435,9 +399,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = await buildMessagingConfig(channels);
     expect(config.channels.telegram.enabled).toBe(true);
     expect(config.plugins.entries.telegram).toEqual({ enabled: true });
-    expect(config.channels.telegram.accounts.default.botToken).toBe(
-      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-    );
+    expect(config.channels.telegram.accounts.default.botToken).toBeUndefined();
     expect(config.channels.whatsapp.enabled).toBe(true);
     expect(config.plugins.entries.whatsapp).toEqual({ enabled: true });
     expect(config.channels.whatsapp.accounts.default.enabled).toBe(true);
@@ -562,9 +524,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       proxyUrl: "http://10.200.0.1:3128",
       loopbackMode: "gateway-only",
     });
-    expect(config.channels.telegram.accounts.default.botToken).toBe(
-      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-    );
+    expect(config.channels.telegram.accounts.default.botToken).toBeUndefined();
     expect(config.channels.discord.accounts.default.token).toBeUndefined();
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
     expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
@@ -638,12 +598,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.slack.enabled).toBe(true);
     expect(config.plugins.entries.slack).toEqual({ enabled: true });
     const slack = config.channels.slack.accounts.default;
-    // Bolt validates ^xoxb-[A-Za-z0-9_-]+$ / ^xapp-…$ at App construction.
-    // OpenShell resolves these provider-shaped aliases at the egress boundary.
-    expect(slack.botToken).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
-    expect(slack.appToken).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
-    expect(slack.botToken).toMatch(/^xoxb-[A-Za-z0-9_-]+$/);
-    expect(slack.appToken).toMatch(/^xapp-[A-Za-z0-9_-]+$/);
+    expect(slack.botToken).toBeUndefined();
+    expect(slack.appToken).toBeUndefined();
   });
 
   it("marks Telegram and Discord channels enabled so OpenClaw loads the bridges (#4314, #4390)", async () => {
@@ -785,14 +741,14 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.heartbeat).toBeUndefined();
   });
 
-  it("propagates heartbeat cadence into agents.defaults.heartbeat.every", () => {
+  it("runs a configured heartbeat in an isolated session (#10262)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m" });
-    expect(config.agents.defaults.heartbeat).toEqual({ every: "30m" });
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "30m", isolatedSession: true });
   });
 
   it("disables heartbeat when set to 0m (#2880)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" });
-    expect(config.agents.defaults.heartbeat).toEqual({ every: "0m" });
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "0m", isolatedSession: true });
   });
 
   it("rejects malformed heartbeat values, preserves OpenClaw default, and warns on stderr", () => {

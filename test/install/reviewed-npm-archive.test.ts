@@ -19,11 +19,8 @@ import {
 const INTEGRITY = `sha512-${"a".repeat(88)}`;
 const PACKAGE_SPEC = "@example/reviewed@1.2.3";
 const TARBALL_URL = "https://registry.npmjs.org/@example/reviewed/-/reviewed-1.2.3.tgz";
-const WECHAT_LOCK = path.join(
-  import.meta.dirname,
-  "../..",
-  "agents/openclaw/wechat-runtime/package-lock.json",
-);
+const CACHE_PACKAGE_SPEC = "@example/cache-one@1.0.0";
+const CACHE_PACKAGE_TWO_SPEC = "cache-two@2.0.0";
 const roots: string[] = [];
 
 function request(): ReviewedNpmArchiveRequest {
@@ -43,12 +40,48 @@ function cacheRequest(): ReviewedNpmCacheRequest {
   roots.push(tempDirectory);
   const cacheDirectory = path.join(tempDirectory, "cache");
   fs.mkdirSync(cacheDirectory);
+  const lockfilePath = path.join(tempDirectory, "package-lock.json");
+  fs.writeFileSync(
+    lockfilePath,
+    `${JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        "": {},
+        "node_modules/@example/cache-one": {
+          integrity: INTEGRITY,
+          resolved: "https://registry.npmjs.org/@example/cache-one/-/cache-one-1.0.0.tgz",
+          version: "1.0.0",
+        },
+        "node_modules/cache-two": {
+          integrity: INTEGRITY,
+          resolved: "https://registry.npmjs.org/cache-two/-/cache-two-2.0.0.tgz",
+          version: "2.0.0",
+        },
+      },
+    })}\n`,
+  );
   return {
     cacheDirectory,
-    lockfilePath: WECHAT_LOCK,
+    lockfilePath,
     registryOrigin: "https://registry.npmjs.org/",
     tempDirectory,
   };
+}
+
+function writeSyntheticLock(
+  reviewed: ReviewedNpmCacheRequest,
+  filename: string,
+  packageRecord: Readonly<Record<string, unknown>>,
+): string {
+  const lockfilePath = path.join(reviewed.tempDirectory as string, filename);
+  fs.writeFileSync(
+    lockfilePath,
+    `${JSON.stringify({
+      lockfileVersion: 3,
+      packages: { "": {}, "node_modules/@example/reviewed": packageRecord },
+    })}\n`,
+  );
+  return lockfilePath;
 }
 
 function cachedArchiveRunner(
@@ -187,12 +220,11 @@ describe("reviewed npm archive", () => {
     const calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }> = [];
     const reviewed = cacheRequest();
     expect(verifyReviewedNpmCache(reviewed, cachedArchiveRunner(calls))).toEqual([
-      "@tencent-weixin/openclaw-weixin@2.4.3",
-      "qrcode-terminal@0.12.0",
-      "zod@4.4.3",
+      CACHE_PACKAGE_SPEC,
+      CACHE_PACKAGE_TWO_SPEC,
     ]);
 
-    expect(calls.filter(({ args }) => args[0] === "pack")).toHaveLength(3);
+    expect(calls.filter(({ args }) => args[0] === "pack")).toHaveLength(2);
     calls.forEach(({ request: archiveRequest }) => {
       expect(archiveRequest.env).toMatchObject({
         NPM_CONFIG_CACHE: reviewed.cacheDirectory,
@@ -239,29 +271,69 @@ describe("reviewed npm archive", () => {
 
   it("allows nested shrinkwrap metadata only for explicit cache-seed inspection", () => {
     const reviewed = cacheRequest();
-    const lock = JSON.parse(fs.readFileSync(WECHAT_LOCK, "utf-8"));
-    lock.packages["node_modules/@tencent-weixin/openclaw-weixin"].hasShrinkwrap = true;
-    const lockfilePath = path.join(reviewed.tempDirectory as string, "shrinkwrap-seed-lock.json");
-    fs.writeFileSync(lockfilePath, `${JSON.stringify(lock, null, 2)}\n`);
+    const lockfilePath = writeSyntheticLock(reviewed, "shrinkwrap-seed-lock.json", {
+      hasShrinkwrap: true,
+      integrity: INTEGRITY,
+      resolved: TARBALL_URL,
+      version: "1.2.3",
+    });
     const request = { lockfilePath, registryOrigin: "https://registry.npmjs.org/" };
 
     expect(() => verifyReviewedNpmLockPackages(request)).toThrow(
       "must not delegate to nested shrinkwrap",
     );
     expect(verifyReviewedNpmLockPackages({ ...request, allowNestedShrinkwrap: true })).toEqual([
-      "@tencent-weixin/openclaw-weixin@2.4.3",
-      "qrcode-terminal@0.12.0",
-      "zod@4.4.3",
+      PACKAGE_SPEC,
     ]);
+  });
+
+  it("validates but does not archive an approved package without integrity", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(
+      reviewed.tempDirectory as string,
+      "package-without-integrity-lock.json",
+    );
+    const packageWithoutIntegrity = {
+      label: "reviewed package without integrity",
+      packageSpec: "fixture-without-integrity@1.0.0",
+      tarballUrl:
+        "https://registry.npmjs.org/fixture-without-integrity/-/fixture-without-integrity-1.0.0.tgz",
+    };
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/fixture-without-integrity": {
+            resolved: packageWithoutIntegrity.tarballUrl,
+            version: "1.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+        reviewedPackagesWithoutIntegrity: [packageWithoutIntegrity],
+      }),
+    ).toEqual([PACKAGE_SPEC]);
   });
 
   it("rejects an off-origin locked archive before npm can read the cache", () => {
     const reviewed = cacheRequest();
-    const lock = JSON.parse(fs.readFileSync(WECHAT_LOCK, "utf-8"));
-    lock.packages["node_modules/qrcode-terminal"].resolved =
-      "https://registry.example.test/qrcode-terminal-0.12.0.tgz";
-    const lockfilePath = path.join(reviewed.tempDirectory as string, "off-origin-lock.json");
-    fs.writeFileSync(lockfilePath, `${JSON.stringify(lock, null, 2)}\n`);
+    const lockfilePath = writeSyntheticLock(reviewed, "off-origin-lock.json", {
+      integrity: INTEGRITY,
+      resolved: "https://registry.example.test/reviewed-1.2.3.tgz",
+      version: "1.2.3",
+    });
     let npmCalled = false;
 
     expect(() =>
@@ -276,12 +348,12 @@ describe("reviewed npm archive", () => {
   it.each([
     {
       expected: "downloaded tarball integrity mismatch",
-      mutation: { integrity: "sha512-drift", packageSpec: "qrcode-terminal@0.12.0" },
+      mutation: { integrity: "sha512-drift", packageSpec: CACHE_PACKAGE_TWO_SPEC },
       name: "packed SRI drift",
     },
     {
       expected: "reported unsafe archive filename",
-      mutation: { filename: "../../qrcode-terminal.tgz", packageSpec: "qrcode-terminal@0.12.0" },
+      mutation: { filename: "../../cache-two.tgz", packageSpec: CACHE_PACKAGE_TWO_SPEC },
       name: "an unsafe packed filename",
     },
   ])("rejects $name in the final cache", ({ expected, mutation }) => {

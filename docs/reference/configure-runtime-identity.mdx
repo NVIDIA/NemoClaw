@@ -35,7 +35,7 @@ Runtime identity profiles may use DNS-backed HTTPS only within a provider type's
 NemoClaw resolves every destination before import and rejects private or internal addresses.
 OpenShell performs connect-time server-side request forgery (SSRF) and L7 enforcement before it injects the provider credential.
 
-OpenShell 0.0.106 verifies the original hostname's certificate but does not pin the address that NemoClaw resolved during import.
+OpenShell 0.0.116 verifies the original hostname's certificate but does not pin the address that NemoClaw resolved during import.
 Only identity-platform-controlled DNS namespaces such as `okta.com`, `login.microsoftonline.com`, and `graph.microsoft.com` belong in this trust table.
 An attacker-controlled or customer-controlled suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
 </Warning>
@@ -47,9 +47,10 @@ Both run the real blueprint runner against a real OpenShell gateway and sandbox.
 
 The scenarios enable provider-derived policy and restore its prior setting.
 They exchange a refresh token through a public HTTPS OAuth endpoint and prove that the sandbox sees only opaque placeholders.
-They prove that a child launched after rotation receives a different revision-scoped placeholder and that the protected resource receives both bearers.
-They also check secret-free plan, status, state, logs, request ledgers, and ownership-aware rollback.
-`TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the exact Microsoft Graph `GET /v1.0/me` credential-delivery rule.
+They prove that the existing placeholder resolves to the refreshed bearer after credential rotation.
+They prove that OpenShell rejects unreviewed credential delivery before the bearer reaches the protected resource.
+They also check that `apply` output contains no OAuth secret material and that the runner refuses unsafe rollback without removing the reused sandbox or provider.
+`TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the Microsoft Graph `GET /v1.0/me` credential-delivery rule.
 It proves that a `GET /v1.0/users` request is rejected before its bearer reaches the fixture.
 The deterministic fixture proves the complete Entra-shaped runtime path without storing a third-party tenant credential in pull-request CI; tenant acceptance remains a maintainer-run check against Microsoft Entra and Graph.
 
@@ -73,7 +74,7 @@ This check prevents an attachment whose provider-derived network policy and cred
 
 Copy `nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml` into your blueprint as `provider-profiles/acme-okta-runtime.yaml`.
 You may choose another tenant-specific filename.
-Set `profile_path` to that exact relative path.
+Set `profile_path` to that relative path.
 
 Set `token_url` to the tenant's authorization-server token endpoint.
 Replace `api.example.okta.com` with the approved upstream API host.
@@ -144,7 +145,7 @@ OpenShell retains the refresh material in the gateway credential store until rol
 
 Copy `nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml` into your blueprint as `provider-profiles/acme-entra-runtime.yaml`.
 Replace `organizations` in `token_url` with the Directory (tenant) ID for the application registration.
-The built-in policy accepts only the exact `login.microsoftonline.com` token issuer and `graph.microsoft.com` resource host.
+The built-in policy accepts only the `login.microsoftonline.com` token issuer and `graph.microsoft.com` resource host.
 It does not admit national-cloud endpoints or tenant-controlled custom domains.
 Bearer delivery is restricted to exactly `GET /v1.0/me`.
 
@@ -186,7 +187,7 @@ A maintainer-run tenant acceptance must establish all of the following criteria:
 - A newly launched sandbox child sees an `openshell:resolve:env:...` placeholder instead of the access token.
 - The protected-resource request below returns the signed-in delegated user.
 - OpenShell rejects a request to another Graph path before bearer delivery.
-- Credential rotation gives a new child a new revision-scoped placeholder, and `GET /v1.0/me` succeeds with the rotated credential.
+- Credential refresh gives a new child the same stable handle, and `GET /v1.0/me` succeeds with the refreshed credential. The handle changes only after an authorization-binding epoch change.
 - Rollback removes the owned attachment and provider while preserving any reused sandbox.
 
 Do not save the Graph response, refresh token, access token, or client secret in a terminal transcript or CI artifact.
@@ -205,7 +206,7 @@ During plan, the runner reports only the provider type, provider name, and crede
 It does not report secret material.
 
 During apply, the runner inspects the target sandbox before identity mutation.
-It requires either the exact sandbox name in the `Ready` phase or an explicit sandbox-not-found result.
+It requires either the sandbox name in the `Ready` phase or an explicit sandbox-not-found result.
 If sandbox creation races with another creator, the runner repeats the same inspection.
 It inspects the sandbox again after inference routing and immediately before identity attachment.
 If the sandbox changed, the runner compensates without attachment.
@@ -222,7 +223,7 @@ The runner validates an existing provider's non-secret binding to report a preci
 It never reuses that provider because OpenShell does not expose a secret-safe snapshot that rollback could restore.
 
 Only an absent provider proceeds to profile import.
-When the profile is already registered, the runner first requires an exact export match.
+When the profile is already registered, the runner first requires an export match.
 It then creates the provider, configures gateway-managed OAuth refresh, and performs the initial token rotation.
 
 Before attachment, the runner creates or reuses the configured inference provider.
@@ -245,8 +246,8 @@ Other runner subprocesses receive the allowlisted environment without identity m
 
 Each sandbox child launch receives an opaque provider-specific placeholder such as `OKTA_ACCESS_TOKEN` or `ENTRA_ACCESS_TOKEN`.
 The OpenShell L7 proxy substitutes the corresponding access token only for admitted HTTPS requests.
-After rotation, launch a new child process to receive the new revision-scoped placeholder.
-An earlier child process does not adopt the rotation.
+After token refresh, launch a new child process and confirm that it receives the same stable handle while resolution uses the refreshed token.
+An earlier child keeps that handle as well; a different handle is expected only after an authorization-binding epoch change.
 
 ## Inspect Runtime Identity State
 

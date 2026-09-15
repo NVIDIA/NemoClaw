@@ -8,6 +8,7 @@ export interface OpenRegularFile {
   readBytes(maxBytes: number): Buffer;
   readUtf8(maxBytes?: number): string;
   replaceUtf8(contents: string, mode: number): void;
+  stat(): fs.Stats;
 }
 
 export function openRegularFileNoFollow(
@@ -118,5 +119,6 @@ export function openRegularFileNoFollow(
       fs.fchmodSync(descriptor, mode);
       assertPathIdentity();
     },
+    stat: assertPathIdentity,
   };
 }

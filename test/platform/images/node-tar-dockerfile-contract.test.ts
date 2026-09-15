@@ -62,7 +62,7 @@ const dockerfiles = [
     patchCount: 1,
   },
 ] as const;
-const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
+const patchCommand = "node /scripts/patch-bundled-npm-tar.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const hermesFinalArchivePath = "/tmp/nemoclaw-bundled-npm-tar.tgz";
 const hermesFinalPatchArguments = [
@@ -368,7 +368,7 @@ describe("node-tar image remediation contract", () => {
         "RUN apt-get update && apt-get install -y --no-install-recommends",
         patchInputReady,
       );
-      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u4", aptInstall);
+      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u5", aptInstall);
       const aptInstallCleanup = source.indexOf("&& rm -rf /var/lib/apt/lists/*", curlPackage);
       expect(
         aptInstall > patchCopy &&
@@ -482,7 +482,7 @@ describe("reviewed npm image remediation contract", () => {
       );
       const upgradeRun = requireSingleReviewedDockerfileRunCommand(
         source,
-        "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+        "node /scripts/upgrade-bundled-npm.mts",
         npmRootArguments,
       ).commandStart;
 

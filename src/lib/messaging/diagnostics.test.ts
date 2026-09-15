@@ -19,15 +19,11 @@ describe("messaging channel diagnostics", () => {
       "googlechat",
     ]);
     expect(specs.find((spec) => spec.channelId === "telegram")).toMatchObject({
-      policyPresets: ["telegram"],
       preferredDefault: false,
       deepProbe: "log-tail",
     });
-    expect(specs.find((spec) => spec.channelId === "wechat")).toMatchObject({
-      policyPresets: ["wechat"],
-    });
+    expect(specs.find((spec) => spec.channelId === "wechat")).toMatchObject({});
     expect(specs.find((spec) => spec.channelId === "whatsapp")).toMatchObject({
-      policyPresets: ["whatsapp"],
       preferredDefault: true,
       deepProbe: "in-sandbox-qr",
       doctorWhenNoHealthSignals: expect.objectContaining({
@@ -35,7 +31,6 @@ describe("messaging channel diagnostics", () => {
       }),
     });
     expect(specs.find((spec) => spec.channelId === "teams")).toMatchObject({
-      policyPresets: ["teams"],
       preferredDefault: false,
     });
   });

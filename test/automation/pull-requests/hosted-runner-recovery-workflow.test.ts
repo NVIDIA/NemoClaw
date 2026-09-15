@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
+import {
+  readYaml,
+  type WorkflowJob,
+  type WorkflowStep,
+} from "../../helpers/e2e-workflow-contract.ts";
 
 const WORKFLOW_PATH = ".github/workflows/hosted-runner-recovery.yaml";
-const PLATFORM_WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
+
 const TRUSTED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TRUSTED_SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 
@@ -24,17 +28,8 @@ type RecoveryWorkflow = {
   };
 };
 
-type SourceWorkflowIdentity = {
-  name: string;
-  "run-name"?: string;
-};
-
 function workflow(): RecoveryWorkflow {
   return readYaml<RecoveryWorkflow>(WORKFLOW_PATH);
-}
-
-function sourceWorkflow(path: string): SourceWorkflowIdentity {
-  return readYaml<SourceWorkflowIdentity>(path);
 }
 
 function step(job: WorkflowJob, name: string): WorkflowStep {
@@ -56,7 +51,7 @@ function collectStrings(value: unknown): string[] {
 describe("hosted-runner recovery workflow boundary", () => {
   it("subscribes only to completed platform-evidence runs (#7140)", () => {
     const value = workflow();
-    expect(value.name).toBe("Automation / Platform CI Runner");
+    expect(value.name).toBe("Automation / Recover Platform CI Runner");
     expect(value.on).toEqual({
       workflow_run: {
         workflows: ["CI / Platform Compatibility"],
@@ -73,18 +68,16 @@ describe("hosted-runner recovery workflow boundary", () => {
     expect(Object.keys(value.jobs)).toEqual(["recover"]);
   });
 
-  it.each(
-    [
-        "github.run_attempt == 1",
-        "github.repository == 'NVIDIA/NemoClaw'",
-        "github.event.workflow_run.run_attempt == 1",
-        "github.event.workflow_run.status == 'completed'",
-        "github.event.workflow_run.conclusion == 'failure'",
-        "github.event.workflow_run.head_branch == 'main'",
-        "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
-        "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
-      ],
-  )(
+  it.each([
+    "github.run_attempt == 1",
+    "github.repository == 'NVIDIA/NemoClaw'",
+    "github.event.workflow_run.run_attempt == 1",
+    "github.event.workflow_run.status == 'completed'",
+    "github.event.workflow_run.conclusion == 'failure'",
+    "github.event.workflow_run.head_branch == 'main'",
+    "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
+    "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
+  ])(
     "fails closed on controller, source, repository, branch, event, and path [%s] (#7140)",
     (fragment) => {
       const guard = workflow().jobs.recover.if ?? "";
@@ -113,7 +106,6 @@ describe("hosted-runner recovery workflow boundary", () => {
     });
     const setupNode = step(job, "Setup Node.js");
     expect(setupNode.uses).toBe(TRUSTED_SETUP_NODE);
-    expect(setupNode.with).toEqual({ "node-version": "22" });
     expect(
       job.steps?.filter((candidate) => candidate.uses?.startsWith("actions/checkout@")),
     ).toHaveLength(1);
@@ -130,9 +122,7 @@ describe("hosted-runner recovery workflow boundary", () => {
       GITHUB_TOKEN: "${{ github.token }}",
       SOURCE_RUN_ID: "${{ github.event.workflow_run.id }}",
     });
-    expect(evaluate.run).toBe(
-      "node --experimental-strip-types --no-warnings tools/e2e/hosted-runner-recovery.mts",
-    );
+    expect(evaluate.run).toBe("node --no-warnings tools/e2e/hosted-runner-recovery.mts");
   });
 
   it("writes only a static policy sentence to the job summary (#7140)", () => {

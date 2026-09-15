@@ -30,7 +30,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
+import { pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 const REDACTED = "<REDACTED>";
 const EXPLICIT_REDACTED = "[REDACTED]";
@@ -39,7 +42,7 @@ const EXPLICIT_REDACTED = "[REDACTED]";
 // embedded in a longer credential value remains eligible for canonical
 // redaction instead of becoming a bypass.
 const SAFE_EXPLICIT_REDACTION_PATTERN = /(^|[\s=:,'"(]|\[|\{)\[REDACTED\](?=$|[\s,;:.'")\]}])/g;
-const MANAGED_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127}|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127})`;
+const MANAGED_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]{0,127}|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]{0,127})`;
 const SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
   `(["'])${MANAGED_CREDENTIAL_REFERENCE_SOURCE}\\1`,
   "g",
@@ -49,7 +52,7 @@ const SAFE_STANDALONE_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
   "g",
 );
 const SAFE_ENV_ASSIGNMENT_PATTERN =
-  /^[ \t]*(?:export[ \t]+)?([A-Z][A-Z0-9_]{0,127})[ \t]*=[ \t]*(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]{1,20}_)?\1|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?\1)[ \t]*$/gm;
+  /^[ \t]*(?:export[ \t]+)?([A-Z][A-Z0-9_]{0,127})[ \t]*=[ \t]*(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?\1|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?\1)[ \t]*$/gm;
 
 // Fixture-local mirror of src/lib/security/secret-patterns.ts. The
 // fixture layer deliberately does not import from src/lib/security/ so it
@@ -272,12 +275,16 @@ export function buildChildEnv(
       continue;
     }
     if (FIXTURE_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
-      out[key] = value;
+      if (!SECRET_ENV_KEY_SHAPE.test(key)) out[key] = value;
       continue;
     }
   }
   for (const key of opts.additionalAllowedEnv ?? []) {
-    if (isValidSecretEnvKey(key)) {
+    // Keep the validation at the dynamic property-read boundary. Besides
+    // rejecting accidental secret passthrough, the explicit name filter makes
+    // it impossible for an ambient secret-bearing process.env property to
+    // reach the child through this non-secret channel.
+    if (SECRET_ENV_KEY_SHAPE.test(key)) {
       throw new Error(
         `additionalAllowedEnv entry '${key}' looks secret-bearing; use secretEnv ` +
           `so secret passthrough remains explicit.`,
@@ -297,6 +304,14 @@ export function buildChildEnv(
     }
     if (base[key] !== undefined) {
       out[key] = base[key];
+    }
+  }
+  for (const key of Object.keys(opts.fixtureOverlay)) {
+    if (SECRET_ENV_KEY_SHAPE.test(key)) {
+      throw new Error(
+        `fixtureOverlay entry '${key}' looks secret-bearing; use secretEnv so secret ` +
+          `passthrough remains explicit.`,
+      );
     }
   }
   Object.assign(out, opts.fixtureOverlay);
@@ -352,4 +367,17 @@ export function fixtureEnvAllowlistSnapshot(): {
     keys: [...FIXTURE_ENV_ALLOWLIST].sort(),
     prefixes: [...FIXTURE_ENV_PREFIXES],
   };
+}
+
+// Shell checks use the same redaction boundary for bounded diagnostic excerpts.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const output = Buffer.from(
+    redactString(stripVTControlCharacters(readFileSync(0, "utf8")), [
+      process.env.COMPATIBLE_API_KEY ?? "",
+    ]),
+  );
+  const limit = 16 * 1024;
+  if (output.length > limit) console.log("[truncated; last 16 KiB of redacted output]");
+  process.stdout.write(output.subarray(-limit));
+  if (output.length > 0) console.log();
 }

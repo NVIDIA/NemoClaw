@@ -10,8 +10,11 @@ import {
   type HermesCronRestorePlan,
   validateHermesCronRestoreBackup,
 } from "../../state/rebuild/hermes-cron-restore-backup";
-import type { RebuildManifest } from "../../state/sandbox";
-import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
+import {
+  readRebuildMcpHandoff,
+  readRebuildPolicyHandoff,
+  type RebuildManifest,
+} from "../../state/sandbox";
 import {
   preflightRebuildCredentials,
   type RebuildBail,
@@ -42,7 +45,7 @@ import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   acquireRebuildOnboardLock,
   assertRebuildEntryUnchanged,
-  blockRebuildOnPendingBaselineTransition,
+  blockRebuildOnRetainedSandboxRecovery,
   checkRebuildGatewaySchemaPreflight,
   expectedRebuildEntryAfterVersionCheck,
   getRebuildSandboxEntryOrBail,
@@ -50,7 +53,10 @@ import {
   type RebuildRoutePreflightReceipt,
   runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
-import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
+import {
+  pinRebuildTargetGatewayForReadiness,
+  prepareRebuildTargetPreflights,
+} from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
   type RebuildSandboxExecutionOptions,
@@ -137,26 +143,7 @@ export async function runRebuildPreflightPhase(
   } = createRebuildCommandContext(options, opts);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
-  if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return null;
-  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
-  // #6376: refuse a stuck MCP destroy transaction up front — before backup,
-  // image prep, or the old-sandbox delete. The only MCP marker check used to
-  // live inside the destroy phase, which runs AFTER the backup phase, so a
-  // stuck sandbox paid destructive/backup cost before the guard fired. Moving
-  // it here fails closed before any destructive work; the guard's message is
-  // phase-aware (prepared -> non-destructive `mcp remove --force`; pending ->
-  // finish the destroy).
-  try {
-    assertMcpDestroyNotPending(sandboxEntry);
-  } catch (error) {
-    printRebuildPreflightFailure(
-      "a pending MCP destroy transaction blocks rebuild.",
-      "Resolve the pending MCP state before retrying rebuild.",
-      error instanceof Error ? error.message : String(error),
-      bail,
-    );
-    return null;
-  }
+  if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
@@ -203,10 +190,17 @@ export async function runRebuildPreflightPhase(
     return null;
   }
   const agentName = getRebuildAgentDisplayName(sandboxName);
+  const mcpRuntimeSelection = recoveryManifest
+    ? (readRebuildMcpHandoff(recoveryManifest)?.runtimeSelection ?? undefined)
+    : undefined;
+  if (mcpRuntimeSelection) {
+    pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
+  }
+  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const versionCheck = await runRebuildGatewayIntentPreflight({
     checkGatewaySchema: () =>
       isDcodeRebuildAgent(rebuildAgent) ||
-      checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail),
+      checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail, mcpRuntimeSelection),
     confirmIntent: () =>
       confirmRebuildIntent(
         sandboxName,
@@ -231,8 +225,13 @@ export async function runRebuildPreflightPhase(
     log,
     bail,
     deps: {
-      checkGatewaySchema: (name, scopedBail) =>
-        checkRebuildGatewaySchemaPreflight(name, expectedSandboxEntry, scopedBail),
+      checkGatewaySchema: (name, scopedBail, runtimeSelection) =>
+        checkRebuildGatewaySchemaPreflight(
+          name,
+          expectedSandboxEntry,
+          scopedBail,
+          runtimeSelection,
+        ),
       preflightCredentials: (_name, entry, scopedLog, scopedBail) =>
         preflightRebuildCredentials(entry, scopedLog, scopedBail),
       // Non-DCode rebuilds stay on the existing typed base-image preflight.
@@ -262,6 +261,7 @@ export async function runRebuildPreflightPhase(
         requestedDcodeAutoApprovalMode,
         requestedObservabilityEnabled,
         allowLegacyManagedImageRecovery,
+        mcpRuntimeSelection,
         // A validated prepared backup is the only path allowed to reconstruct
         // a missing gateway provider and route during recreate. The exact
         // endpoint, credential, image, and registry checks still run before
@@ -274,7 +274,16 @@ export async function runRebuildPreflightPhase(
       baseImagePreflight = preparedTarget.baseImagePreflight;
       preparedImage = preparedTarget.preparedImage;
 
-      const liveState = await resolveRebuildLiveState(sandboxName, expectedSandboxEntry, log, bail);
+      const liveState = await resolveRebuildLiveState(
+        sandboxName,
+        expectedSandboxEntry,
+        log,
+        bail,
+        {
+          authoritativeRecoveryPolicyAvailable:
+            recoveryManifest !== null && readRebuildPolicyHandoff(recoveryManifest) !== null,
+        },
+      );
       if (!liveState) return null;
       if (isDcodeRebuildAgent(rebuildAgent)) {
         const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
@@ -288,6 +297,7 @@ export async function runRebuildPreflightPhase(
           {
             resolutionHint: preparedTarget.recreateOptions.baseImageResolutionHint,
           },
+          preparedTarget.recreateOptions.runtimeSelection,
         );
         if (!imageReady) return null;
         if (!preparedTarget.recreateOptions.managedWorkloadRebuild) {
@@ -296,19 +306,19 @@ export async function runRebuildPreflightPhase(
         }
       }
       // Keep credential-reuse validation after DCode's live-route/image proofs,
-      // but before shields, backup, or any destructive rebuild work begins.
+      // but before backup or any destructive rebuild work begins.
       const { resumeConfig } = preparedTarget.targetConfig;
       const hostCredentialAvailable = Boolean(
         resumeConfig.credentialEnv && hydrateCredentialEnv(resumeConfig.credentialEnv),
       );
       if (
-        !checkRebuildGatewayCredentialReuseOrBail(
+        !(await checkRebuildGatewayCredentialReuseOrBail(
           sandboxName,
           resumeConfig,
           hostCredentialAvailable,
           log,
           bail,
-        )
+        ))
       ) {
         return null;
       }

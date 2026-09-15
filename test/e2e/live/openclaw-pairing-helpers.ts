@@ -9,7 +9,6 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   type FakeDockerApi,
   runDiscordGatewayClient,
@@ -151,7 +150,6 @@ export async function startFakeDiscordGateway(
     imageScript: "fake-discord-gateway.cjs",
     containerPrefix: "nemoclaw-fake-discord-pairing",
     portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-    portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
     expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
     env,
@@ -166,13 +164,13 @@ export async function startFakeSlackApi(
   botToken: string,
   appToken: string,
   redactions: string[],
+  transport: "rest" | "websocket",
 ): Promise<FakeDockerApi> {
   return startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-    kind: "slack",
+    kind: transport === "rest" ? "slack-rest" : "slack-websocket",
     imageScript: "fake-slack-api.cjs",
-    containerPrefix: "nemoclaw-fake-slack-pairing",
+    containerPrefix: `nemoclaw-fake-slack-pairing-${transport}`,
     portEnv: "FAKE_SLACK_API_PORT",
-    portFileEnv: "FAKE_SLACK_API_PORT_FILE",
     captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
     expectedEnv: {
       FAKE_SLACK_API_EXPECTED_BOT_TOKEN: botToken,
@@ -182,67 +180,6 @@ export async function startFakeSlackApi(
     env,
     redactionValues: redactions,
   });
-}
-
-export async function applyFakePolicy(options: {
-  host: HostCliClient;
-  sandboxName: string;
-  api: FakeDockerApi;
-  protocol: "rest" | "websocket";
-  rewrite: "request-body-credential-rewrite" | "websocket-credential-rewrite";
-  providerName: string;
-  env: NodeJS.ProcessEnv;
-  redactions: string[];
-  artifactName: string;
-}): Promise<void> {
-  const policyHost = "host.openshell.internal";
-  const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
-  const args = [
-    "policy",
-    "update",
-    options.sandboxName,
-    "--add-endpoint",
-    `${policyHost}:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-  ];
-  for (const method of methods)
-    args.push("--add-allow", `${policyHost}:${options.api.port}:${method}:/**`);
-  args.push("--binary", "/usr/local/bin/node", "--binary", "/usr/bin/node", "--wait");
-  const result = await options.host.command("openshell", args, {
-    artifactName: options.artifactName,
-    env: options.env,
-    redactionValues: options.redactions,
-    timeoutMs: 120_000,
-  });
-  expectExitZero(result, options.artifactName);
-
-  const binding = await options.host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${options.protocol}-policy`,
-      options.host.openshellCommandPath,
-      options.sandboxName,
-      options.providerName,
-      policyHost,
-      String(options.api.port),
-      options.protocol,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
-    ],
-    {
-      artifactName: `${options.artifactName}-credential-binding`,
-      cwd: REPO_ROOT,
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(binding, `${options.artifactName} credential binding`);
 }
 
 export async function assertOpenClawStateRoot(
@@ -450,7 +387,15 @@ function receiveSlackSocketEvent() {
   const appToken = parseManagedCredentialReference("SLACK_APP_TOKEN");
   return new Promise((resolve, reject) => {
     const socket = proxy ? net.createConnection({ host: proxy.host, port: proxy.port }) : net.createConnection({ host, port });
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error("timed out waiting for fake Slack Socket Mode event")); }, 30000);
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new Error("timed out waiting for fake Slack Socket Mode event")), 30000);
     let handshake = Buffer.alloc(0);
     let framed = Buffer.alloc(0);
     let upgraded = false;
@@ -474,9 +419,7 @@ function receiveSlackSocketEvent() {
         if (end === -1) return;
         const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] || "";
         if (!statusLine.includes("101")) {
-          clearTimeout(timer);
-          socket.destroy();
-          reject(new Error("fake Slack websocket upgrade failed: " + statusLine));
+          fail(new Error("fake Slack websocket upgrade failed: " + statusLine));
           return;
         }
         upgraded = true;
@@ -489,9 +432,14 @@ function receiveSlackSocketEvent() {
         const frame = decodeServerFrame(framed);
         if (!frame) break;
         framed = framed.slice(frame.totalLength);
+        if (frame.opcode === 8) {
+          fail(new Error("fake Slack websocket closed before the Socket Mode event"));
+          return;
+        }
         if (frame.opcode !== 1) continue;
         const envelope = JSON.parse(frame.payload.toString("utf8"));
         socket.write(encodeClientText(JSON.stringify({ envelope_id: envelope.envelope_id })));
+        settled = true;
         clearTimeout(timer);
         socket.end();
         socket.destroy();
@@ -499,7 +447,8 @@ function receiveSlackSocketEvent() {
         return;
       }
     });
-    socket.on("error", (error) => { clearTimeout(timer); reject(error); });
+    socket.on("error", fail);
+    socket.on("close", () => fail(new Error("fake Slack websocket closed before the Socket Mode event")));
   });
 }
 function postPairingReply(text, channel) {
@@ -595,11 +544,7 @@ export async function issuePairingRequest(options: {
   const script = options.channel === "slack" ? SLACK_PAIRING_SCRIPT : DISCORD_PAIRING_SCRIPT;
   const args =
     options.channel === "slack"
-      ? [
-          options.fakeSlackPort ?? "",
-          options.fakeSlackWebSocketPort ?? "",
-          PAIRING_USER.slack,
-        ]
+      ? [options.fakeSlackPort ?? "", options.fakeSlackWebSocketPort ?? "", PAIRING_USER.slack]
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
   return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,

@@ -15,7 +15,7 @@ export default class PolicyExcludeCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Exclude an entry from the agent baseline policy";
   static description =
-    "Persistently exclude an exact baseline network policy entry from a sandbox. The removed egress and its support impact are previewed before mutation, and the exclusion is replayed across rebuild.";
+    "Remove an exact baseline network policy entry from the current OpenShell policy. The removed egress and its support impact are previewed before mutation.";
   static usage = ["<name> <key> [--force] [--yes|-y] [--dry-run]"];
   static examples = [
     "<%= config.bin %> sandbox policy exclude alpha nous_research --force",

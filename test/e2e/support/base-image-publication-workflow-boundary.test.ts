@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
 import {
   type OperationsWorkflow,
@@ -30,6 +29,7 @@ type MutableJob = Record<string, unknown> & {
   outputs?: Record<string, unknown>;
   permissions?: Record<string, unknown>;
   steps?: MutableStep[];
+  with?: Record<string, unknown>;
 };
 
 type MutableWorkflow = {
@@ -68,10 +68,12 @@ function gateStep(value: MutableWorkflow, name: string): MutableStep {
 }
 
 function runClassifier(environment: {
+  baseSha?: string;
   checkoutSha: string;
   eventName: string;
   ref: string;
   repository: string;
+  workflowSha?: string;
 }): { output: string; status: number | null } {
   const source = required(
     gateSteps(workflow())[0]?.run,
@@ -83,11 +85,13 @@ function runClassifier(environment: {
     const result = spawnSync("/bin/bash", ["-c", source], {
       encoding: "utf8",
       env: {
+        BASE_SHA: environment.baseSha ?? "b".repeat(40),
         CHECKOUT_SHA: environment.checkoutSha,
         EVENT_NAME: environment.eventName,
         GITHUB_OUTPUT: outputPath,
         REF: environment.ref,
         REPOSITORY: environment.repository,
+        WORKFLOW_SHA: environment.workflowSha ?? "c".repeat(40),
       },
     });
     return {
@@ -100,6 +104,47 @@ function runClassifier(environment: {
 }
 
 describe("base-image publication workflow boundary (#7372)", () => {
+  it.each([
+    ["main push", "push", "", "3000"],
+    ["manual main", "workflow_dispatch", "", "3000"],
+    ["manual PR", "workflow_dispatch", "a".repeat(40), "300"],
+  ])("gives %s its publication wait budget", (_case, eventName, checkoutSha, waitSeconds) => {
+    const classification = runClassifier({
+      checkoutSha,
+      eventName,
+      ref: checkoutSha ? "refs/heads/candidate" : "refs/heads/main",
+      repository: "NVIDIA/NemoClaw",
+    });
+    expect(classification.status).toBe(0);
+    const mode = Object.fromEntries(
+      classification.output
+        .trim()
+        .split("\n")
+        .map((line) => line.split("=")),
+    );
+    const source = required(
+      gateStep(workflow(), "Select base and optional managed-image publication").run,
+      "publication selection fixture is missing its script",
+    );
+    const result = spawnSync("/bin/bash", ["-c", `node() { printf '%s\\n' "$@"; }\n${source}`], {
+      encoding: "utf8",
+      env: {
+        EXPECTED_SHA: mode.expected_sha,
+        PUBLICATION_HISTORY_ALLOW_NON_HEAD: mode.allow_non_head,
+        SELECT_NEAREST_SUCCESSFUL_PUBLICATION: mode.select_nearest_successful,
+      },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "--no-warnings",
+      "tools/e2e/base-image-publication.mts",
+      "--wait-seconds",
+      waitSeconds,
+      "--poll-seconds",
+      "30",
+    ]);
+  });
+
   it("keeps Launchable off the base-image publication critical path", () => {
     const value = workflow();
 
@@ -107,14 +152,15 @@ describe("base-image publication workflow boundary (#7372)", () => {
   });
 
   it.each([
-    ["push to main", "push", "", "refs/heads/main", "1", "0"],
-    ["manual main", "workflow_dispatch", "", "refs/heads/main", "1", "0"],
+    ["push to main", "push", "", "refs/heads/main", "0", "c".repeat(40), "0"],
+    ["manual main", "workflow_dispatch", "", "refs/heads/main", "0", "c".repeat(40), "1"],
     [
       "controller-selected PR",
       "workflow_dispatch",
       "a".repeat(40),
       "refs/heads/candidate",
-      "0",
+      "1",
+      "b".repeat(40),
       "1",
     ],
     [
@@ -122,12 +168,13 @@ describe("base-image publication workflow boundary (#7372)", () => {
       "workflow_dispatch",
       "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e",
       "refs/heads/candidate",
-      "0",
+      "1",
+      "b".repeat(40),
       "1",
     ],
   ])(
     "classifies %s without executing untrusted code (#7372)",
-    (_case, eventName, checkoutSha, ref, required, reuse) => {
+    (_case, eventName, checkoutSha, ref, allowNonHead, expectedSha, selectNearest) => {
       expect(
         runClassifier({
           checkoutSha,
@@ -135,7 +182,10 @@ describe("base-image publication workflow boundary (#7372)", () => {
           ref,
           repository: "NVIDIA/NemoClaw",
         }),
-      ).toEqual({ output: `required=${required}\nreuse=${reuse}\n`, status: 0 });
+      ).toEqual({
+        output: `allow_non_head=${allowNonHead}\nexpected_sha=${expectedSha}\nselect_nearest_successful=${selectNearest}\n`,
+        status: 0,
+      });
     },
   );
 
@@ -179,7 +229,10 @@ describe("base-image publication workflow boundary (#7372)", () => {
     [
       "classifier outcome",
       (value) => {
-        gateSteps(value)[0].run = gateSteps(value)[0].run!.replace("required=1", "required=0");
+        gateSteps(value)[0].run = gateSteps(value)[0].run!.replace(
+          "select_nearest_successful=0",
+          "select_nearest_successful=1",
+        );
       },
     ],
     ["checkout condition", (value) => (gateSteps(value)[1].if = "${{ always() }}")],
@@ -192,60 +245,35 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["checkout credentials", (value) => (gateSteps(value)[1].with!["persist-credentials"] = true)],
     ["Node condition", (value) => (gateSteps(value)[2].if = "${{ always() }}")],
     ["Node pin", (value) => (gateSteps(value)[2].uses = "actions/setup-node@v6")],
-    ["Node version", (value) => (gateSteps(value)[2].with!["node-version"] = 20)],
+    ["Node dependency cache", (value) => (gateSteps(value)[2].with!.cache = "npm")],
+    ["verifier condition", (value) => (gateSteps(value)[3].if = "${{ always() }}")],
     [
-      "pairing condition",
+      "base publication selection condition",
       (value) =>
-        (gateStep(
-          value,
-          "Resolve Deep Agents Code base publication for the exact PR managed image",
-        ).if = "${{ always() }}"),
+        (gateStep(value, "Select base and optional managed-image publication").if = "${{ false }}"),
     ],
     [
-      "pairing catalog",
+      "base contract download condition",
       (value) =>
-        (gateStep(
-          value,
-          "Resolve Deep Agents Code base publication for the exact PR managed image",
-        ).env!["MANAGED_IMAGE_CATALOG"] = "${{ inputs.catalog }}"),
+        (gateStep(value, "Download immutable Deep Agents Code base contract").if = "${{ false }}"),
     ],
     [
-      "pairing verifier",
-      (value) =>
-        (gateStep(
-          value,
-          "Resolve Deep Agents Code base publication for the exact PR managed image",
-        ).run = "node unreviewed.mts"),
+      "base contract validation condition",
+      (value) => (gateStep(value, "Validate immutable Deep Agents Code base").if = "${{ false }}"),
     ],
-    [
-      "verifier condition",
-      (value) =>
-        (gateStep(value, "Verify applicable base-image publication").if = "${{ always() }}"),
-    ],
-    [
-      "verifier token",
-      (value) =>
-        (gateStep(value, "Verify applicable base-image publication").env!.GITHUB_TOKEN =
-          "${{ secrets.TOKEN }}"),
-    ],
+    ["verifier token", (value) => (gateSteps(value)[3].env!.GITHUB_TOKEN = "${{ secrets.TOKEN }}")],
     [
       "verifier SHA",
-      (value) =>
-        (gateStep(value, "Verify applicable base-image publication").env!.EXPECTED_SHA =
-          "${{ inputs.checkout_sha }}"),
+      (value) => (gateSteps(value)[3].env!.EXPECTED_SHA = "${{ inputs.checkout_sha }}"),
     ],
     [
       "managed-image publication requirement",
-      (value) =>
-        (gateStep(value, "Verify applicable base-image publication").env![
-          "REQUIRE_MANAGED_IMAGE_PUBLICATION"
-        ] = "0"),
+      (value) => (gateSteps(value)[3].env!.REQUIRE_MANAGED_IMAGE_PUBLICATION = "0"),
     ],
     [
       "verifier command",
       (value) => {
-        gateStep(value, "Verify applicable base-image publication").run =
-          "node tools/e2e/base-image-publication.mts";
+        gateSteps(value)[3].run = "node tools/e2e/base-image-publication.mts";
       },
     ],
     [
@@ -268,15 +296,21 @@ describe("base-image publication workflow boundary (#7372)", () => {
           "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
-    ["publication matrix dependency", (value) => delete value.jobs["base-image-publication"].needs],
-    [
-      "matrix publication dependency",
-      (value) => (value.jobs["generate-matrix"].needs = "base-image-publication"),
-    ],
+    ["matrix publication dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
       "live managed-image revision",
       (value) => (value.jobs.live.env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
+      "catalogue managed-image revision",
+      (value) =>
+        (value.jobs["catalogue-nvidia-inference"].with!.managed_image_revision =
+          "${{ inputs.checkout_sha }}"),
+    ],
+    [
+      "catalogue publication dependency",
+      (value) => (value.jobs["catalogue-nvidia-inference"].needs = ["generate-matrix"]),
     ],
     [
       "cloud-onboard publication dependency",

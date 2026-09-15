@@ -15,6 +15,7 @@ import { ProviderClient, trustedProviderEndpoint } from "../fixtures/clients/pro
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   buildHostedInferenceModelsProbe,
+  hostedInferenceCredentialReferencePattern,
   requireHostedInferenceConfig,
   stagePortableHostedInferenceDescriptor,
 } from "../fixtures/hosted-inference.ts";
@@ -187,6 +188,63 @@ printf 'modelFn=%s\n' "$(nemoclaw_e2e_hosted_inference_model)"
 }
 
 describe("hosted inference E2E config", () => {
+  it.each(["E2E_ACCESS_TOKEN", "ENTRA_ACCESS_TOKEN"])(
+    "accepts OpenShell references bound to %s",
+    (credentialKey) => {
+      const pattern = hostedInferenceCredentialReferencePattern(credentialKey);
+      const stableRevision = `s${"a".repeat(64)}`;
+
+      expect(`openshell:resolve:env:${credentialKey}`).toMatch(pattern);
+      expect(`openshell:resolve:env:v42_${credentialKey}`).toMatch(pattern);
+      expect(`openshell:resolve:env:${stableRevision}_${credentialKey}`).toMatch(pattern);
+      expect(`openshell:resolve:env:v123456789012345678901_${credentialKey}`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:s${"a".repeat(63)}_${credentialKey}`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:s${"a".repeat(65)}_${credentialKey}`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:s${"A".repeat(64)}_${credentialKey}`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:${stableRevision}_OTHER_ACCESS_TOKEN`).not.toMatch(pattern);
+      expect(`openshell:resolve:env:${stableRevision}_${credentialKey}suffix`).not.toMatch(pattern);
+      expect("e2e-runtime-identity-access-token-v2").not.toMatch(pattern);
+    },
+  );
+
+  it("rejects an invalid credential environment name", () => {
+    expect(() => hostedInferenceCredentialReferencePattern("E2E-ACCESS-TOKEN")).toThrow(
+      /invalid hosted inference credential environment name/u,
+    );
+  });
+
+  it("uses the public NVIDIA route for preinstalled Launchable onboarding", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "nvapi-launchable-test" }),
+      {
+        NEMOCLAW_MODEL: "nvidia/launchable-model",
+        NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      },
+      { provider: "build" },
+    );
+
+    expect(cfg.provider).toBe("build");
+    expect(cfg.providerName).toBe("nvidia-prod");
+    expect(cfg.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(cfg.endpointUrl).toBe("https://integrate.api.nvidia.com/v1");
+    expect(cfg.model).toBe("nvidia/launchable-model");
+    expect(cfg.env).toEqual({
+      NEMOCLAW_PROVIDER: "build",
+      NEMOCLAW_MODEL: "nvidia/launchable-model",
+      NVIDIA_INFERENCE_API_KEY: "nvapi-launchable-test",
+    });
+  });
+
+  it("rejects an Inference Hub credential for the public NVIDIA route", () => {
+    expect(() =>
+      requireHostedInferenceConfig(
+        secrets({ NVIDIA_INFERENCE_API_KEY: "sk-inference-hub-test" }),
+        {},
+        { provider: "build" },
+      ),
+    ).toThrow("Invalid NVIDIA API key. Must start with nvapi-");
+  });
+
   it("uses NVIDIA_INFERENCE_API_KEY as the hosted compatible endpoint source secret", () => {
     const cfg = requireHostedInferenceConfig(
       secrets({ NVIDIA_INFERENCE_API_KEY: "repo-hosted-key" }),
@@ -415,6 +473,8 @@ printf '{"data":[]}'
       HOME: "/tmp/home",
       PATH: "/usr/bin",
       BUILDX_BUILDER: "external-builder",
+      CONTAINERS_CONF: "/tmp/native-podman-containers.conf",
+      CONTAINERS_STORAGE_CONF: "/tmp/native-podman-storage.conf",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
@@ -423,6 +483,8 @@ printf '{"data":[]}'
 
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
     expect(env.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
+    expect(env.CONTAINERS_CONF).toBe("/tmp/native-podman-containers.conf");
+    expect(env.CONTAINERS_STORAGE_CONF).toBe("/tmp/native-podman-storage.conf");
     expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
     expect(env).not.toHaveProperty("BUILDX_BUILDER");
@@ -598,6 +660,10 @@ printf '{"data":[]}'
       requestCanaryMarker: "EXPECTED_REQUEST_CANARY",
       requireAuth: true,
       responseText: "RESP_OK",
+      toolCallOnCanary: {
+        name: "sessions_spawn",
+        arguments: '{"task":"Reply with PONG"}',
+      },
     });
 
     try {
@@ -630,7 +696,21 @@ printf '{"data":[]}'
       });
       expect(chat.status).toBe(200);
       expect(await chat.json()).toMatchObject({
-        choices: [{ message: { content: "CHAT_OK" } }],
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              tool_calls: [
+                {
+                  function: {
+                    name: "sessions_spawn",
+                    arguments: '{"task":"Reply with PONG"}',
+                  },
+                },
+              ],
+            },
+          },
+        ],
       });
 
       const responses = await fetch(`${fake.baseUrl}/responses`, {

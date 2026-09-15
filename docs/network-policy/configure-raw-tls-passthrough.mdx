@@ -27,7 +27,7 @@ For example, the WhatsApp HTTP/1.1 Noise-over-WebSocket handshake cannot use the
 
 ## Create a Passthrough Preset
 
-Set `access: full` and `tls: skip` for the exact endpoint:
+Set `access: full` and `tls: skip` for the endpoint:
 
 ```yaml
 preset:
@@ -77,7 +77,7 @@ This configuration does not unblock endpoints that require both raw passthrough 
 </Warning>
 
 The declared host, port, and `binaries` scope remain in effect.
-Use `tls: skip` only for the exact hosts that require raw passthrough.
+Use `tls: skip` only for the hosts that require raw passthrough.
 Do not use a broad wildcard.
 
 ## Related Topics

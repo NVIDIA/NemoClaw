@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-find-review-pr
-description: Find open PRs with the security label and Urgent or High Project Priority. Link each PR to its issue. Identify competing or superseded PRs and report review candidates. Use when looking for the next PR to review. Trigger keywords - find pr, find review, next pr, pr to review, duplicate pr, security pr.
+description: "Find high-priority open NemoClaw security PRs to review, including competing or superseded candidates."
 user_invocable: true
 ---
 
@@ -41,8 +41,8 @@ If no PRs remain, report that result and stop.
 
 For each PR, search its body for issue references. Match these patterns without case sensitivity:
 
-- `Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`
-- `Related Issue` / `Linked Issue` section containing `#NNN`
+- `Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`, `Refs #NNN`, `Relates to #NNN`, or `Part of #NNN`
+- `Related issues` / `Linked issues` section containing `#NNN`
 - Issue number in the PR title, such as a `(#NNN)` suffix
 - Branch name containing an issue number, such as `fix/something-NNN`
 

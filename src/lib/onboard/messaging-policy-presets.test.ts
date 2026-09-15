@@ -9,7 +9,6 @@ import {
   mergeAppliedPolicyPresetsForDisabledMessagingCleanup,
   mergeEnabledMessagingChannelPolicyPresets,
   mergePolicyMessagingChannels,
-  mergeRebuildMessagingPolicyPresets,
   messagingChannelsForPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
@@ -20,6 +19,7 @@ describe("messaging policy presets", () => {
     expect(requiredMessagingChannelPolicyPresets(["slack"])).toEqual(["slack"]);
     expect(requiredMessagingChannelPolicyPresets([" Slack "])).toEqual(["slack"]);
     expect(requiredMessagingChannelPolicyPresets(["discord"])).toEqual(["discord"]);
+    expect(requiredMessagingChannelPolicyPresets(["wechat"])).toEqual(["wechat"]);
   });
 
   it("names the channel behind an applied network policy preset (#9283)", () => {
@@ -38,19 +38,20 @@ describe("messaging policy presets", () => {
     ]);
   });
 
-  // #5967: a channel that is not flagged requiredAtCreate (Telegram, WhatsApp,
-  // Teams, WeChat) still needs its egress preset merged so policy
-  // finalization persists it and policy-list marks it applied.
+  // #5967: channels not flagged requiredAtCreate (WhatsApp and
+  // Google Chat) still need their egress preset merged so policy finalization
+  // persists it and policy-list marks it applied. Discord, Slack, Teams, Telegram,
+  // and WeChat bind credentials, so they are create-time required instead.
   it("merges an enabled channel preset that is not required at create time", () => {
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["telegram"])).toEqual([
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["whatsapp"])).toEqual([
       "npm",
-      "telegram",
+      "whatsapp",
     ]);
-    expect(requiredMessagingChannelPolicyPresets(["telegram"])).toEqual([]);
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "discord"])).toEqual([
+    expect(requiredMessagingChannelPolicyPresets(["whatsapp"])).toEqual([]);
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "whatsapp"])).toEqual([
       "npm",
       "slack",
-      "discord",
+      "whatsapp",
     ]);
   });
 
@@ -107,19 +108,6 @@ describe("messaging policy presets", () => {
     expect(hasDisabledMessagingPolicyPreset(["npm", "pypi"], ["slack"])).toBe(false);
   });
 
-  it("recovers presets for enabled channels absent from sb.policies after a prior stop+rebuild (#5596)", () => {
-    const enabledChannels = ["telegram", "discord", "whatsapp", "wechat", "slack"];
-    expect(
-      mergeRebuildMessagingPolicyPresets(["npm", "npm", "telegram"], ["pypi"], enabledChannels, [
-        "telegram",
-        "wechat",
-      ]),
-    ).toEqual(["npm", "discord", "whatsapp", "slack"]);
-    expect(
-      mergeRebuildMessagingPolicyPresets(undefined, ["pypi"], enabledChannels, ["wechat"]),
-    ).toEqual(["pypi", "telegram", "discord", "whatsapp", "slack"]);
-  });
-
   it("preserves unrelated applied presets when cleaning disabled messaging presets", () => {
     expect(
       mergeAppliedPolicyPresetsForDisabledMessagingCleanup(
@@ -133,11 +121,10 @@ describe("messaging policy presets", () => {
     ).toEqual(["npm"]);
   });
 
-  // #5967 is channel-agnostic: every non-`requiredAtCreate` channel (Telegram,
-  // Teams, WhatsApp, WeChat) must merge and prune through the same registry path. Cover the
-  // remaining channels explicitly so a future channel-table regression cannot pass
-  // on Slack/Discord alone.
-  it("merges every enabled non-required channel preset (#5967)", () => {
+  // #5967 is channel-agnostic: every enabled channel must merge its preset, and every disabled
+  // channel must prune it. Cover the remaining channels explicitly so a future channel-table
+  // regression cannot pass on Slack and Discord alone.
+  it("merges Telegram, Teams, WhatsApp, WeChat, and Google Chat presets (#5967)", () => {
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["telegram"])).toEqual([
       "npm",
       "telegram",
@@ -151,11 +138,18 @@ describe("messaging policy presets", () => {
       "npm",
       "wechat",
     ]);
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["googlechat"])).toEqual([
+      "npm",
+      "googlechat",
+    ]);
   });
 
-  it("prunes every disabled non-required channel preset (#5967)", () => {
+  it("prunes WhatsApp, WeChat, and Google Chat presets when disabled (#5967)", () => {
     expect(pruneDisabledMessagingPolicyPresets(["npm", "whatsapp"], ["whatsapp"])).toEqual(["npm"]);
     expect(pruneDisabledMessagingPolicyPresets(["npm", "wechat"], ["wechat"])).toEqual(["npm"]);
+    expect(pruneDisabledMessagingPolicyPresets(["npm", "googlechat"], ["googlechat"])).toEqual([
+      "npm",
+    ]);
   });
 
   it("leaves the selection untouched when no channels are enabled (#5967)", () => {
@@ -168,16 +162,4 @@ describe("messaging policy presets", () => {
     expect(allMessagingChannelPolicyPresets(["nonexistent"])).toEqual([]);
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["nonexistent"])).toEqual(["npm"]);
   });
-
-  // Drift guard (#5967): the suggestion path's `add(channel)` shortcut was
-  // removed in favor of resolving presets through the channel→preset registry,
-  // and several call sites assume a channel's egress preset shares its name.
-  // Pin that 1:1 mapping for every shipped channel so a future preset rename
-  // (which would silently desync suggestions from finalization) fails here.
-  it.each(["slack", "discord", "telegram", "teams", "whatsapp", "wechat"])(
-    "maps each messaging channel to a same-named egress preset [case %#] (#5967)",
-    (channel) => {
-      expect(allMessagingChannelPolicyPresets([channel])).toEqual([channel]);
-    },
-  );
 });

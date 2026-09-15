@@ -73,7 +73,6 @@ export class OnboardRuntimeBoundary {
       sandboxName?: string | null;
       provider?: string | null;
       model?: string | null;
-      policyPresets?: string[] | null;
     } = {},
   ): Promise<void> {
     const runtime = this.getRuntime();

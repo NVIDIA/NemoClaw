@@ -11,11 +11,11 @@ afterEach(() => {
 });
 
 describe("rebuild restore target forwarding", () => {
-  it("forwards the recreated target identity and explicit custom-image capability", () => {
+  it("forwards the recreated target identity and explicit custom-image capability", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const restoreRecreatedSandboxState = vi
       .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
-      .mockReturnValue({
+      .mockResolvedValue({
         success: true,
         restoredDirs: [],
         restoredFiles: [],
@@ -23,13 +23,11 @@ describe("rebuild restore target forwarding", () => {
         failedFiles: [],
       });
 
-    runRebuildRestorePhase({
+    await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "langchain-deepagents-code",
       targetImageIsCustom: true,
       backupManifest: { agentType: "openclaw", backupPath: "/tmp/rebuild-backup" } as never,
-      policyPresets: [],
-      customPolicies: [],
       reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });

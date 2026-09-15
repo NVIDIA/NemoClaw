@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Regression for #5967: `nemoclaw <sandbox> policy-list` must render `● discord`
-// (and any enabled messaging channel preset) once it is recorded in the registry
-// and active on the gateway. This is the reporter's observation step — the
+// (and any enabled messaging channel preset) once it is active in OpenShell.
+// This is the reporter's observation step — the
 // rendered marker the operator actually reads — complementing the merge/persist
 // tests that cover the upstream state policy-list consumes.
 
@@ -47,7 +47,7 @@ describe("listSandboxPolicies rendering (#5967)", () => {
       },
       { name: "npm", description: "npm and Yarn registry access", file: "npm.yaml" },
     ]);
-    mocked.listCustomPresets.mockReturnValue([]);
+    mocked.listCustomPresets.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -61,13 +61,13 @@ describe("listSandboxPolicies rendering (#5967)", () => {
   const lineFor = (preset: string) =>
     lines.find((line) => new RegExp(`[●○] ${preset}\\b`).test(line)) ?? "";
 
-  it("marks an enabled Discord preset applied (●) when it is in both registry and gateway", () => {
+  it("marks an enabled Discord preset applied (●) when it is in both registry and gateway", async () => {
     // The #5967 fix persists `discord` to registry.policies AND applies it to the
     // gateway, so policy-list must render it as applied.
-    mocked.getAppliedPresets.mockReturnValue(["discord", "npm"]);
-    mocked.getGatewayPresets.mockReturnValue(["discord", "npm"]);
+    mocked.getAppliedPresets.mockResolvedValue(["discord", "npm"]);
+    mocked.getGatewayPresets.mockResolvedValue(["discord", "npm"]);
 
-    listSandboxPolicies("nemoclaw-5967");
+    await listSandboxPolicies("nemoclaw-5967");
 
     expect(lineFor("discord")).toContain("● discord");
     expect(lineFor("npm")).toContain("● npm");
@@ -76,25 +76,25 @@ describe("listSandboxPolicies rendering (#5967)", () => {
     expect(lineFor("slack")).not.toContain("● slack");
   });
 
-  it("renders the pre-fix regression (○ discord) when Discord is dropped from registry and gateway", () => {
+  it("renders the pre-fix regression (○ discord) when Discord is dropped from registry and gateway", async () => {
     // Before the fix the explicit-selection path dropped discord from both the
     // persisted registry list and the reconciled gateway set.
-    mocked.getAppliedPresets.mockReturnValue(["npm", "pypi"]);
-    mocked.getGatewayPresets.mockReturnValue(["npm", "pypi"]);
+    mocked.getAppliedPresets.mockResolvedValue(["npm", "pypi"]);
+    mocked.getGatewayPresets.mockResolvedValue(["npm", "pypi"]);
 
-    listSandboxPolicies("nemoclaw-5967");
+    await listSandboxPolicies("nemoclaw-5967");
 
     expect(lineFor("discord")).toContain("○ discord");
     expect(lineFor("discord")).not.toContain("● discord");
   });
 
-  it("flags a registry/gateway mismatch when Discord is recorded but not active on the gateway", () => {
-    mocked.getAppliedPresets.mockReturnValue(["discord", "npm"]);
-    mocked.getGatewayPresets.mockReturnValue(["npm"]);
+  it("does not invent local ownership when the two live policy views disagree", async () => {
+    mocked.getAppliedPresets.mockResolvedValue(["discord", "npm"]);
+    mocked.getGatewayPresets.mockResolvedValue(["npm"]);
 
-    listSandboxPolicies("nemoclaw-5967");
+    await listSandboxPolicies("nemoclaw-5967");
 
     expect(lineFor("discord")).toContain("○ discord");
-    expect(lineFor("discord")).toContain("recorded locally, not active on gateway");
+    expect(lineFor("discord")).not.toContain("recorded locally");
   });
 });

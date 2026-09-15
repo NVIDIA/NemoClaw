@@ -7,6 +7,7 @@ export default async function read_github_pages(input: {
   path: string;
   pageSize?: Integer;
   pageLimit?: Integer;
+  arrayField?: string;
 }): Promise<{ items: Open<{}>[]; pagesRead: Integer; truncated: boolean }> {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(input.repository))
     throw new Error("repository must be owner/name");
@@ -31,6 +32,8 @@ export default async function read_github_pages(input: {
   const queryText = input.path.split("?", 2)[1] ?? "";
   if (queryText.split("&").some((entry) => /^(?:page|per_page)=/iu.test(entry)))
     throw new Error("path must not provide page or per_page parameters");
+  if (input.arrayField !== undefined && !/^[A-Za-z][A-Za-z0-9_]{0,99}$/u.test(input.arrayField))
+    throw new Error("arrayField must be a bounded JSON field name");
   const pageSize = input.pageSize ?? 100;
   const pageLimit = input.pageLimit ?? 10;
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
@@ -51,7 +54,12 @@ export default async function read_github_pages(input: {
     const separatorLength = result.stdout.slice(boundary).startsWith("\r\n\r\n") ? 4 : 2;
     const headers = result.stdout.slice(0, boundary);
     const body = result.stdout.slice(boundary + separatorLength);
-    const value = JSON.parse(body || "null");
+    const payload = JSON.parse(body || "null");
+    const value = input.arrayField
+      ? payload && typeof payload === "object" && !Array.isArray(payload)
+        ? payload[input.arrayField]
+        : null
+      : payload;
     if (
       !Array.isArray(value) ||
       value.some((item) => item === null || typeof item !== "object" || Array.isArray(item))

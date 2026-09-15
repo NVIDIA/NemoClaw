@@ -55,7 +55,7 @@ When a replacement PR carries material code, tests, or documentation from anothe
 
 - Confirm that the source PR already contains that contributor's `Signed-off-by:` declaration.
   Never add or copy a DCO declaration on another contributor's behalf.
-- Use the exact author name and email from the source commit.
+- Use the author name and email from the source commit.
   Never guess or substitute an attribution identity.
 
 If the source commit has no usable author identity, leave the winner unset and ask the contributor to provide machine-readable attribution.

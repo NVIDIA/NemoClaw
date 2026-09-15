@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 export function makeActiveTeamsMessagingPlan() {
   return {
     schemaVersion: 1,
@@ -82,7 +86,17 @@ export function makeActiveTeamsMessagingPlan() {
   };
 }
 
+const preparedRecoveryTempDirs: string[] = [];
+
+export function cleanupPreparedRecoveryManifests(): void {
+  for (const directory of preparedRecoveryTempDirs.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 export function makePreparedRecoveryManifest() {
+  const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-recovery-"));
+  preparedRecoveryTempDirs.push(backupPath);
   return {
     version: 1,
     sandboxName: "alpha",
@@ -94,9 +108,7 @@ export function makePreparedRecoveryManifest() {
     backedUpDirs: ["workspace"],
     stateFiles: [],
     dir: "/sandbox/.openclaw",
-    backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T06-50-42-044Z",
+    backupPath,
     blueprintDigest: null,
-    policyPresets: ["npm"],
-    customPolicies: [],
   };
 }

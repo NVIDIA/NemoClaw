@@ -433,7 +433,7 @@ describe("MessagingSetupApplier", () => {
       return { status: 0 };
     };
 
-    const result = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+    const result = await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: {
         TELEGRAM_BOT_TOKEN: "123456:telegram-token",
         SLACK_BOT_TOKEN: "xoxb-slack-token",
@@ -443,8 +443,10 @@ describe("MessagingSetupApplier", () => {
     });
 
     expect(calls.map((call) => call.args)).toEqual([
-      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
       ["provider", "get", "demo-telegram-bridge"],
+      ["provider", "get", "demo-slack-bridge"],
+      ["provider", "get", "demo-slack-app"],
+      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
       [
         "provider",
         "create",
@@ -456,10 +458,8 @@ describe("MessagingSetupApplier", () => {
         "TELEGRAM_BOT_TOKEN",
       ],
       ["provider", "get", "demo-telegram-bridge"],
-      ["provider", "get", "demo-slack-bridge"],
       ["provider", "update", "demo-slack-bridge", "--credential", "SLACK_BOT_TOKEN"],
       ["provider", "get", "demo-slack-bridge"],
-      ["provider", "get", "demo-slack-app"],
       [
         "provider",
         "create",
@@ -472,7 +472,7 @@ describe("MessagingSetupApplier", () => {
       ],
       ["provider", "get", "demo-slack-app"],
     ]);
-    expect(calls[2]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
+    expect(calls[4]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
     expect(result.upserted.map((entry) => `${entry.action}:${entry.providerName}`)).toEqual([
       "create:demo-telegram-bridge",
       "update:demo-slack-bridge",
@@ -503,17 +503,17 @@ describe("MessagingSetupApplier", () => {
           ? {
               status: 0,
               stdout:
-              "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
-          }
-        : { status: 0 };
+                "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+            }
+          : { status: 0 };
     };
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell,
       }),
-    ).toThrow(/does not match the required endpointless credential binding/);
+    ).rejects.toThrow(/does not match the required endpointless credential binding/);
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
@@ -523,7 +523,7 @@ describe("MessagingSetupApplier", () => {
     ]);
     const calls: string[] = [];
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: {},
         runOpenshell: (args) => {
@@ -551,7 +551,7 @@ describe("MessagingSetupApplier", () => {
           }
         },
       }),
-    ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
+    ).rejects.toThrow("does not match the checked-in credential boundary");
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
@@ -576,7 +576,7 @@ describe("MessagingSetupApplier", () => {
 
     let message = "";
     try {
-      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+      await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "tokensecretvalue" },
         runOpenshell,
       });
@@ -584,7 +584,7 @@ describe("MessagingSetupApplier", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect(message).toContain("TELEGRAM_BOT_TOKEN=toke");
+    expect(message).toContain("TELEGRAM_BOT_TOKEN=<REDACTED>");
     expect(message).not.toContain("tokensecretvalue");
   });
 
@@ -593,7 +593,7 @@ describe("MessagingSetupApplier", () => {
       "telegram",
     ]);
     const calls: string[] = [];
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell: (args) => {
@@ -603,7 +603,7 @@ describe("MessagingSetupApplier", () => {
             : { status: 1, stderr: "gateway unavailable" };
         },
       }),
-    ).toThrow("Could not inspect messaging provider 'demo-telegram-bridge'.");
+    ).rejects.toThrow("Could not inspect messaging provider 'demo-telegram-bridge'");
     expect(calls.some((command) => command.startsWith("provider create"))).toBe(false);
   });
 
@@ -612,7 +612,7 @@ describe("MessagingSetupApplier", () => {
       "telegram",
     ]);
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell: (args) => {
@@ -626,7 +626,7 @@ describe("MessagingSetupApplier", () => {
           }
         },
       }),
-    ).toThrow("Failed to create messaging provider 'demo-telegram-bridge'");
+    ).rejects.toThrow("Failed to create messaging provider 'demo-telegram-bridge'");
   });
 
   it("rejects a provider mutation whose exact postcondition is absent (#9875)", async () => {
@@ -635,7 +635,7 @@ describe("MessagingSetupApplier", () => {
     ]);
     let lookups = 0;
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell: (args) => {
@@ -656,7 +656,9 @@ describe("MessagingSetupApplier", () => {
           }
         },
       }),
-    ).toThrow("OpenShell did not confirm messaging provider 'demo-telegram-bridge' after create.");
+    ).rejects.toThrow(
+      "OpenShell did not confirm messaging provider 'demo-telegram-bridge' after create.",
+    );
   });
 
   it("does not mutate after a not-found message with an unavailable status (#9875)", async () => {
@@ -665,7 +667,7 @@ describe("MessagingSetupApplier", () => {
     ]);
     const calls: string[] = [];
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell: (args) => {
@@ -678,7 +680,7 @@ describe("MessagingSetupApplier", () => {
               };
         },
       }),
-    ).toThrow(/Could not inspect messaging provider/u);
+    ).rejects.toThrow(/Could not inspect messaging provider/u);
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
@@ -729,11 +731,13 @@ describe("MessagingSetupApplier", () => {
     expect(calls[1]?.input).toBeTruthy();
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.agents.list).toEqual(["default"]);
+    // No botToken: OpenClaw resolves the default account from the injected
+    // environment, so the config carries no credential placeholder.
     expect(openclawConfig.channels.telegram.accounts.default).toMatchObject({
-      botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
       enabled: true,
       groupPolicy: "open",
     });
+    expect(openclawConfig.channels.telegram.accounts.default.botToken).toBeUndefined();
     expect(openclawConfig.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
     expect(result.appliedTargets).toEqual(["/sandbox/.openclaw/openclaw.json"]);
     expect(result.appliedHooks).toEqual([]);
@@ -780,6 +784,87 @@ describe("MessagingSetupApplier", () => {
     });
   });
 
+  it("drops a stale credential env line the plan no longer renders", async () => {
+    const plan = await buildOnboardPlan(
+      {
+        DISCORD_BOT_TOKEN: "discord-token",
+        DISCORD_SERVER_ID: "guild-1",
+        DISCORD_USER_ID: "discord-user-1",
+      },
+      ["discord"],
+      "hermes",
+    );
+    // What a pre-0.0.106 install left behind. Hermes loads .env with
+    // override=True, so carrying this line forward would shadow the
+    // revision-scoped placeholder OpenShell injects.
+    const files: Record<string, string> = {
+      "/sandbox/.hermes/.env": [
+        "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+        "NEMOCLAW_DISCORD_GUILD_IDS=stale-guild",
+        "OPERATOR_OWNED=keep-me",
+        "",
+      ].join("\n"),
+    };
+    // Branchless on purpose: the growth guardrail rejects new if statements in
+    // changed test files, and this mirrors the reader/writer shape already used
+    // above.
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      const reading = args.includes("cat") && options?.input === undefined;
+      const written = options?.input;
+      Object.assign(files, written === undefined ? {} : { [target]: written });
+      return reading
+        ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
+        : { status: written === undefined ? 1 : 0 };
+    };
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const renderedEnv = files["/sandbox/.hermes/.env"] ?? "";
+    expect(renderedEnv).not.toContain("DISCORD_BOT_TOKEN=");
+    expect(renderedEnv).not.toContain("SLACK_BOT_TOKEN=");
+    expect(renderedEnv).not.toContain("SLACK_APP_TOKEN=");
+    // Non-credential lines the plan still renders are updated in place, and
+    // keys the plan does not own are left alone.
+    expect(renderedEnv).toContain("NEMOCLAW_DISCORD_GUILD_IDS=guild-1");
+    expect(renderedEnv).toContain("OPERATOR_OWNED=keep-me");
+  });
+
+  it("drops a stale credential env line when the plan renders nothing into the file", async () => {
+    // Telegram's only remaining Hermes env line is the allowlist, so without
+    // allowed IDs the whole env render collapses and the target never appears
+    // in the render plan. The file on disk still has to be cleaned.
+    const plan = await buildOnboardPlan(
+      { TELEGRAM_BOT_TOKEN: "telegram-token" },
+      ["telegram"],
+      "hermes",
+    );
+    const files: Record<string, string> = {
+      "/sandbox/.hermes/.env": [
+        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        "OPERATOR_OWNED=keep-me",
+        "",
+      ].join("\n"),
+    };
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      const reading = args.includes("cat") && options?.input === undefined;
+      const written = options?.input;
+      Object.assign(files, written === undefined ? {} : { [target]: written });
+      return reading
+        ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
+        : { status: written === undefined ? 1 : 0 };
+    };
+
+    expect(plan.agentRender.some((render) => render.target === "~/.hermes/.env")).toBe(false);
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const renderedEnv = files["/sandbox/.hermes/.env"] ?? "";
+    expect(renderedEnv).not.toContain("TELEGRAM_BOT_TOKEN=");
+    expect(renderedEnv).toContain("OPERATOR_OWNED=keep-me");
+  });
+
   it("renders every built-in Hermes credential and allowlist through the sandbox applier", async () => {
     const plan = await buildOnboardPlan(ALL_CHANNEL_ENV, ALL_CHANNELS, "hermes");
     const files: Record<string, string> = {};
@@ -794,7 +879,7 @@ describe("MessagingSetupApplier", () => {
         : { status: written === undefined ? 1 : 0 };
     };
 
-    const credentialResult = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+    const credentialResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: ALL_CHANNEL_ENV,
       runOpenshell: (args) => {
         switch (args[1]) {
@@ -853,22 +938,22 @@ describe("MessagingSetupApplier", () => {
     const renderedEnv = files["/sandbox/.hermes/.env"] ?? "";
     expect(renderedEnv.split("\n")).toEqual(
       expect.arrayContaining([
-        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USERS=1001,1002",
-        "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
         "NEMOCLAW_DISCORD_GUILD_IDS=guild-1",
         "DISCORD_ALLOWED_USERS=discord-user-1",
-        "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
         "WEIXIN_ALLOWED_USERS=wechat-user-1,wechat-user-2",
-        "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-        "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
         "SLACK_ALLOWED_USERS=U100,U200",
         "SLACK_ALLOWED_CHANNELS=C100,C200",
         "WHATSAPP_ALLOWED_USERS=+15550000001,+15550000002",
-        "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
         "TEAMS_ALLOWED_USERS=00000000-0000-0000-0000-000000000001",
       ]),
     );
+    // Discord renders no token line: OpenShell injects DISCORD_BOT_TOKEN as a
+    // revision-scoped placeholder and the policy binding rejects the canonical
+    // form, so Hermes must read the injected value instead.
+    expect(renderedEnv).not.toContain("DISCORD_BOT_TOKEN=");
+    expect(renderedEnv).not.toContain("WEIXIN_TOKEN=");
+    expect(renderedEnv).not.toContain("TEAMS_CLIENT_SECRET=");
     expect(renderedEnv).not.toContain("telegram-token");
     expect(renderedEnv).not.toContain("discord-token");
     expect(renderedEnv).not.toContain("wechat-token");
@@ -938,7 +1023,7 @@ describe("MessagingSetupApplier", () => {
 
     const providerCalls: string[][] = [];
     const providers = new Map<string, string>();
-    const credentialResult = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+    const credentialResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: {
         TELEGRAM_BOT_TOKEN: "123456:telegram-token",
         SLACK_BOT_TOKEN: "xoxb-slack-token",
@@ -1008,10 +1093,12 @@ describe("MessagingSetupApplier", () => {
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.channels.telegram).toBeUndefined();
     expect(openclawConfig.channels.slack.accounts.default).toMatchObject({
-      botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-      appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
       enabled: true,
     });
+    // No rendered tokens: OpenClaw resolves the default account from the
+    // injected SLACK_BOT_TOKEN and SLACK_APP_TOKEN environment values.
+    expect(openclawConfig.channels.slack.accounts.default.botToken).toBeUndefined();
+    expect(openclawConfig.channels.slack.accounts.default.appToken).toBeUndefined();
   });
 
   it("removes hook-created WeChat config when the channel is disabled", async () => {

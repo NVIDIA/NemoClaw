@@ -18,7 +18,7 @@ Use when the isolated local path does not settle the issue and a Brev run is app
 
 ## Step 7: Reuse or Create a Brev Instance
 
-Reuse a matching `verify-stale-*` instance only when it has no active verification sentinel or registered NemoClaw sandbox. A credential-bearing run must create a dedicated instance instead of reusing one. Before remote execution or a cost-bearing action, present the exact instance, type, hourly price, 60-minute execution budget, 120-second cleanup grace, third-party-software acceptance, credential plan, and cleanup action. For a credential-bearing run, the plan must approve instance deletion and immediate credential rotation if deletion cannot be confirmed. Wait for explicit maintainer approval.
+Reuse a matching `verify-stale-*` instance only when it has no active verification sentinel or registered NemoClaw sandbox. A credential-bearing run must create a dedicated instance instead of reusing one. Before remote execution or a cost-bearing action, present the instance, type, hourly price, 60-minute execution budget, 120-second cleanup grace, third-party-software acceptance, credential plan, and cleanup action. For a credential-bearing run, the plan must approve instance deletion and immediate credential rotation if deletion cannot be confirmed. Wait for explicit maintainer approval.
 
 ```bash
 # Brev authentication, Git, and a local SHA-256 tool were verified by Step 6.8.
@@ -112,7 +112,7 @@ fi
 # STOP. Present the plan and wait for explicit approval here. For a new instance,
 # preview the selected type and price with the matching `brev search` result or
 # `brev create "${CREATE_ARGS[@]}" --dry-run`. Approval includes creation and
-# deletion of this exact instance name. For reused and retained instances, the
+# deletion of this instance name. For reused and retained instances, the
 # cleanup plan resets NemoClaw state and removes copied credentials, reproducer
 # scripts, and verification logs. Approval does not permit retaining a new instance.
 
@@ -308,7 +308,7 @@ REMOTE_STATE_CREATED=1
 echo ">>> Brev instance: $INSTANCE_NAME (created_by_run=$PROVISIONED_NEW; approved cleanup: reset verification state, remove credentials/scripts/logs, and brev delete $INSTANCE_NAME when created by this run)"
 ```
 
-Do not set `KEEP_INSTANCE=1` unless the maintainer separately approves the retention cost, names the cleanup owner, and accepts an exact deletion deadline. Before reuse or retention, remove `~/.verify-stale-evidence` and confirm the verification sentinel is absent.
+Do not set `KEEP_INSTANCE=1` unless the maintainer separately approves the retention cost, names the cleanup owner, and accepts a deletion deadline. Before reuse or retention, remove `~/.verify-stale-evidence` and confirm the verification sentinel is absent.
 
 Wall-clock execution budget per verification: **60 minutes** default, measured from the approved create/reuse action. `run_bounded` caps every post-approval local Brev CLI process; phase-specific remote `timeout` calls use the smaller remaining budget. Cleanup gets a separate bounded grace period of up to 120 seconds because deletion still depends on the Brev control plane. The approval plan must disclose that grace and that billing can continue until deletion is acknowledged. Do not start a phase whose required sample plan cannot fit. Bugs that need more than an hour fall out of v1 scope; an expired budget is an infrastructure failure (Step 11), and the cleanup trap still runs.
 
@@ -323,11 +323,11 @@ The previous design used a 25-minute default and a 60-minute extension for time-
 Two-pass design.
 
 - **Reported-release pass (8a–8c):** install the reported release, run the reproducer, and confirm that it exposes the reported symptom.
-- **Newest-release pass (8d):** install `$LATEST` as an exact release tag and run the validated reproducer.
+- **Newest-release pass (8d):** install `$LATEST` as a release tag and run the validated reproducer.
 
 Without the reported-release result, a newest-release result without the symptom is inconclusive. The reproducer might never have exposed the reported symptom.
 
-Prepare each installer from the exact release tag before its install pass. The fixed repository URL
+Prepare each installer from the release tag before its install pass. The fixed repository URL
 is the only accepted source. NemoClaw has both annotated and lightweight historical release tags, so
 this workflow verifies the fetched tag ref and its complete reachable object graph. It then derives
 the archive checksum locally before the archive crosses the Brev trust boundary.
@@ -350,7 +350,7 @@ prepare_release_installer() {
   local archive expected_sha256 tag_type tag_name tagged_commit
 
   [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-    echo "ERROR: release tag must be an exact vX.Y.Z value"
+    echo "ERROR: release tag must be a vX.Y.Z value"
     return 1
   }
   case "$pass_label" in
@@ -367,7 +367,7 @@ prepare_release_installer() {
   if ! git --git-dir="$INSTALLER_GIT_DIR" fetch --no-tags \
     "$NEMOCLAW_RELEASE_REPOSITORY" \
     "refs/tags/${release_tag}:refs/tags/${release_tag}"; then
-    echo "ERROR: could not fetch exact release tag $release_tag"
+    echo "ERROR: could not fetch release tag $release_tag"
     return 1
   fi
 
@@ -452,7 +452,7 @@ A checksum mismatch, fetch failure, object failure, unsupported ref type or tag-
 missing verifier or `tar`, extraction failure, or installer-shape failure is an infrastructure
 failure. Stop the workflow. Never execute a file that did not complete this verification.
 Each install sets `NEMOCLAW_REPO_ROOT` to the verified extracted source tree and sets
-`NEMOCLAW_INSTALL_REF` to the exact release tag. The installer builds from that tree and performs
+`NEMOCLAW_INSTALL_REF` to the release tag. The installer builds from that tree and performs
 no later repository lookup. Run the installer from that directory as well so historical installers
 that detect a source checkout from the current working directory use the same verified tree.
 
@@ -619,7 +619,7 @@ if [ "${BUG_PROVIDER:-ollama}" = "ollama" ]; then
   VERIFY_MODEL=${VERIFY_MODEL:-nemotron-3-nano:4b}
 fi
 [ -n "$VERIFY_MODEL" ] || {
-  echo "ERROR: no exact model was supplied for provider ${BUG_PROVIDER:-ollama}; select verify-inconclusive"
+  echo "ERROR: no model was supplied for provider ${BUG_PROVIDER:-ollama}; select verify-inconclusive"
   exit 1
 }
 printf '%s' "$VERIFY_MODEL" | grep -Eq '^[A-Za-z0-9._:/-]+$' || {
@@ -718,7 +718,7 @@ BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
 run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -c 'sleep 30 && curl -fsS http://127.0.0.1:8000/v1/models'" || exit 1
 ```
 
-Bootstrap once before Step 8b's reported-release run and reuse the dependency for Step 8d's newest-release run. Record the exact dependency and model versions. If the dependency itself is implicated, reproduce the reported version. When the issue reports no dependency version, select `verify-inconclusive` or obtain maintainer direction. A dependency version selected at run time is acceptable only when the reviewed bug path is independent of its version, and the plan must state that condition. Do not reset Ollama or vLLM state between release installs because model downloads are expensive and unrelated to the NemoClaw install.
+Bootstrap once before Step 8b's reported-release run and reuse the dependency for Step 8d's newest-release run. Record the dependency and model versions. If the dependency itself is implicated, reproduce the reported version. When the issue reports no dependency version, select `verify-inconclusive` or obtain maintainer direction. A dependency version selected at run time is acceptable only when the reviewed bug path is independent of its version, and the plan must state that condition. Do not reset Ollama or vLLM state between release installs because model downloads are expensive and unrelated to the NemoClaw install.
 
 **If bootstrap fails** because a model download or service start does not complete, this is an infrastructure failure. Stop and follow Step 11. Do not substitute another dependency.
 

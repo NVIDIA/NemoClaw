@@ -48,6 +48,7 @@ describe("OpenClaw sandbox base image validation", () => {
     expect(probe).toContain(`cmp -s - "$security_inventory"`);
     expect(probe).toContain('"perl-base=5.44.0-1nemoclaw1"');
     expect(probe).toContain('"perl=5.44.0-1nemoclaw1"');
+    expect(probe).toContain('"libevent-core-2.1-7t64=2.1.13-stable-1"');
     expect(options).toEqual({ ignoreError: true, timeout: 20_000 });
   });
 

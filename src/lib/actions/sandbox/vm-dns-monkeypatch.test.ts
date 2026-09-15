@@ -183,6 +183,37 @@ describe("OpenShell VM DNS monkeypatch", () => {
     ).toContain('echo "nameserver ${GVPROXY_GATEWAY_IP}" > /etc/resolv.conf');
   });
 
+  it("uses the sandbox gateway port when resolving VM state", () => {
+    const homeDir = makeTempDir();
+    const stateDir = path.join(
+      homeDir,
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway-9123",
+    );
+    const rootfs = sandboxRootfs(stateDir);
+    writeRootfsFiles(rootfs, "nameserver 8.8.8.8\n");
+
+    const result = applyOpenShellVmDnsMonkeypatch(
+      "demo",
+      { gatewayPort: 9123, openshellDriver: "vm" },
+      {
+        capture: () => ({ status: 0, output: "Id: abc\n" }),
+        env: {},
+        homeDir,
+        platform: "darwin",
+      },
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      changed: true,
+      ok: true,
+      rootfs: fs.realpathSync.native(rootfs),
+    });
+  });
+
   it("stops VM DNS mutation when authority changes between file writes (#9833)", () => {
     const stateDir = makeTempDir();
     const rootfs = sandboxRootfs(stateDir);
@@ -190,11 +221,11 @@ describe("OpenShell VM DNS monkeypatch", () => {
     const initPath = path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh");
     writeRootfsFiles(rootfs, "nameserver 8.8.8.8\n");
     const originalInit = fs.readFileSync(initPath, "utf-8");
-    const revalidatePolicyAuthority = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("policy authority changed");
+        throw new Error("sandbox identity changed");
       });
 
     expect(() =>
@@ -204,15 +235,15 @@ describe("OpenShell VM DNS monkeypatch", () => {
         {
           capture: () => ({ status: 0, output: "Id: abc\n" }),
           platform: "darwin",
-          revalidatePolicyAuthority,
+          revalidateSandboxIdentity,
           stateDir,
         },
       ),
-    ).toThrow("policy authority changed");
+    ).toThrow("sandbox identity changed");
 
     expect(fs.readFileSync(resolverPath, "utf-8")).toBe("nameserver 192.168.127.1\n");
     expect(fs.readFileSync(initPath, "utf-8")).toBe(originalInit);
-    expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
+    expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(2);
   });
 
   it("is idempotent when resolver and init script are already patched", () => {

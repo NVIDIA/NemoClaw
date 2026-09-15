@@ -14,6 +14,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-teams-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -22,6 +24,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-teams-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -83,4 +87,6 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }
+      - { path: /usr/bin/python3.13 }
+      - { path: /opt/hermes/.venv/bin/python3 }
       - { path: /opt/hermes/.venv/bin/python }

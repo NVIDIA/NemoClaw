@@ -4,6 +4,8 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import type { SandboxEntry } from "../../state/registry";
+import { SANDBOX_PROVIDER_SUFFIXES } from "../../onboard/sandbox-provider-cleanup";
 import { assertUnambiguousDestroyContainerIdentity, cleanupSandboxServices } from "./destroy";
 
 const SANDBOX = "mybox";
@@ -11,7 +13,38 @@ const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
 const googlechatPidDir = `${mainPidDir}-googlechat`;
 
 describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
-  it("fails closed before later cleanup when the Google Chat tunnel cannot stop", () => {
+  it("deletes every messaging and search registration through the selected gateway", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+
+    await cleanupSandboxServices(
+      SANDBOX,
+      { stopHostServices: false },
+      {
+        getSandbox: () => null,
+        listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+        withOllamaModelOwnershipLock: (operation) => operation(),
+        loadPersistedOllamaHost: () => "127.0.0.1",
+        loadPendingOllamaModelCleanup: () => [],
+        rmSync: vi.fn(),
+        runOpenshell,
+        stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+        googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+      },
+    );
+
+    expect(runOpenshell.mock.calls).toEqual(
+      SANDBOX_PROVIDER_SUFFIXES.map((suffix) => [
+        ["provider", "delete", `${SANDBOX}-${suffix}`],
+        expect.objectContaining({
+          ignoreError: true,
+          suppressOutput: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      ]),
+    );
+  });
+
+  it("fails closed before later cleanup when the Google Chat tunnel cannot stop", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const rmSync = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
@@ -22,7 +55,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
       throw new Error("cloudflared refused to stop");
     });
 
-    expect(() =>
+    await expect(
       cleanupSandboxServices(
         SANDBOX,
         { stopHostServices: true },
@@ -35,7 +68,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
           googlechatWebhookTunnelPidDir,
         },
       ),
-    ).toThrow(/public Google Chat webhook endpoint may still be running/);
+    ).rejects.toThrow(/public Google Chat webhook endpoint may still be running/);
 
     expect(googlechatWebhookTunnelPidDir).toHaveBeenCalledWith(mainPidDir);
     // Preserve both PID directories and refuse every later side effect so a
@@ -49,12 +82,12 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     warn.mockRestore();
   });
 
-  it("removes the Google Chat PID directory after a successful tunnel stop", () => {
+  it("removes the Google Chat PID directory after a successful tunnel stop", async () => {
     const rmSync = vi.fn();
     const stopGooglechatWebhookTunnel = vi.fn(() => googlechatPidDir);
     const googlechatWebhookTunnelPidDir = vi.fn(() => googlechatPidDir);
 
-    cleanupSandboxServices(
+    await cleanupSandboxServices(
       SANDBOX,
       { stopHostServices: true },
       {
@@ -68,6 +101,41 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     );
 
     expect(rmSync).toHaveBeenCalledWith(googlechatPidDir, { recursive: true, force: true });
+  });
+});
+
+describe("cleanupSandboxServices Ollama ownership", () => {
+  it("keeps a model shared through a compatible endpoint at the same local daemon", async () => {
+    const own = {
+      name: SANDBOX,
+      provider: "ollama-local",
+      model: "llama3",
+    } as SandboxEntry;
+    const peer = {
+      name: "peer",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+      model: "llama3:latest",
+    } as SandboxEntry;
+    const unloadOllamaModels = vi.fn();
+
+    await cleanupSandboxServices(
+      SANDBOX,
+      { stopHostServices: false },
+      {
+        getSandbox: () => own,
+        listSandboxes: () => ({ sandboxes: [own, peer], defaultSandbox: null }),
+        loadPersistedOllamaHost: () => "127.0.0.1",
+        unloadOllamaModels,
+        withOllamaModelOwnershipLock: (operation) => operation(),
+        rmSync: vi.fn(),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+        googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+      },
+    );
+
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 });
 
@@ -110,17 +178,63 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
         redact: String,
         classify: classify as never,
       }),
-    ).toEqual({ identity });
+    ).toEqual({ identities: [identity] });
   });
 
   it("does not probe or block a non-Docker runtime provider", () => {
     const classify = vi.fn();
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
-      providerId: "podman",
+      providerId: "unregistered-provider",
       redact: String,
       classify: classify as never,
     });
-    expect(proceed).toEqual({ identity: undefined });
+    expect(proceed).toEqual({});
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it("uses provider-owned identity before registry finalization", () => {
+    const classify = vi.fn();
+    const providerIdentity = {
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: "a".repeat(64),
+      ownershipSha256: "b".repeat(64),
+    };
+    const captureProviderIdentityByName = vi.fn(() => providerIdentity);
+
+    expect(
+      assertUnambiguousDestroyContainerIdentity("destroytest", {
+        providerId: "podman",
+        redact: String,
+        captureProviderIdentityByName,
+        classify: classify as never,
+      }),
+    ).toEqual({ identity: undefined, providerIdentity });
+    expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it("uses a provider-owned destroy identity without the Docker classifier", () => {
+    const classify = vi.fn();
+    const providerIdentity = {
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: "a".repeat(64),
+      ownershipSha256: "b".repeat(64),
+    };
+    const captureProviderIdentity = vi.fn(() => providerIdentity);
+    const sandbox = { name: "destroytest", agent: "openclaw" as const, openshellDriver: "podman" };
+
+    expect(
+      assertUnambiguousDestroyContainerIdentity("destroytest", {
+        providerId: "podman",
+        redact: String,
+        sandbox,
+        captureProviderIdentity,
+        classify: classify as never,
+      }),
+    ).toEqual({ identity: undefined, providerIdentity });
+    expect(captureProviderIdentity).toHaveBeenCalledWith(sandbox, "destroytest");
     expect(classify).not.toHaveBeenCalled();
   });
 

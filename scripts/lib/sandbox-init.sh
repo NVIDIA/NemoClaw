@@ -42,7 +42,6 @@ source "${_SANDBOX_INIT_DIR}/sandbox-rlimits.sh"
 # /tmp/nemoclaw-plugin-refresh.log sandbox 600   sandbox  sandbox   no (OpenClaw refresh output)
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
-# /tmp/.config/                sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.gnupg/                 sandbox    700   sandbox  sandbox   no (key data)
 #
 # * In non-root mode the sandbox user owns and opens auto-pair.log. In root
@@ -185,93 +184,15 @@ validate_tmp_permissions() {
   return $failed
 }
 
-# ── Config file permission helpers ────────────────────────────────
-# After drop_capabilities() strips CAP_DAC_OVERRIDE, root can no longer write
-# files it does not own. These helpers temporarily make config files root-owned
-# and 644 for writing, then re-lock to 444 afterward.
-#
-# CAP_FOWNER is retained (by design in PR #917), so root can still chmod
-# files it doesn't own. The helpers include symlink guards to prevent
-# symlink-following attacks on the config path.
-#
-# Usage:
-#   relax_config_for_write /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-#   # ... perform writes ...
-#   lock_config_after_write /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-#
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2653
-
-relax_config_for_write() {
-  local f
-  for f in "$@"; do
-    if [ -L "$f" ]; then
-      printf '[SECURITY] Refusing to relax permissions — %s is a symlink\n' "$f" >&2
-      return 1
-    fi
-    [ -f "$f" ] || continue
-    if [ "$(id -u)" -eq 0 ] && ! chown root:root "$f"; then
-      printf '[SECURITY] Failed to take ownership of %s for write\n' "$f" >&2
-      return 1
-    fi
-    if ! chmod 644 "$f"; then
-      printf '[SECURITY] Failed to relax permissions on %s\n' "$f" >&2
-      return 1
-    fi
-  done
-}
-
-lock_config_after_write() {
-  local f
-  for f in "$@"; do
-    if [ -L "$f" ]; then
-      printf '[SECURITY] Refusing to lock permissions — %s is a symlink\n' "$f" >&2
-      return 1
-    fi
-    [ -f "$f" ] || continue
-    if ! chmod 444 "$f"; then
-      printf '[SECURITY] Failed to lock permissions on %s\n' "$f" >&2
-      return 1
-    fi
-  done
-}
-
 # ── Capability dropping ──────────────────────────────────────────
-# CIS Docker Benchmark 5.3: containers should not run with default caps.
-# OpenShell manages the container runtime so we cannot pass --cap-drop=ALL
-# to docker run. Instead, drop dangerous capabilities from the bounding set
-# at startup using capsh. The bounding set limits what caps any child process
-# (gateway, sandbox, agent) can ever acquire.
+# OpenShell-managed entrypoints do not call this section. Direct-root
+# entrypoints can still need capsh. Their retained bounding caps
+# (chown, fowner, setuid, setgid, kill) support initialization and supervised
+# shutdown; init_step_down_prefixes can remove them when changing user.
+# NEMOCLAW_REQUIRE_CAP_DROP=1 retains fail-closed verification for unavailable
+# drops. The default preserves the legacy warn-and-continue behavior.
 #
-# Dropped (issue #3280): cap_sys_admin, cap_sys_ptrace plus the historical
-# set (cap_net_raw, cap_dac_override, cap_sys_chroot, cap_fsetid,
-# cap_setfcap, cap_mknod, cap_audit_write, cap_net_bind_service).
-# Dashboard listens on a high port (default 18789, validated >=1024 in
-# nemoclaw-start.sh), so cap_net_bind_service is unconditionally unused.
-#
-# Kept (each load-bearing — do not drop without an entrypoint refactor):
-#   cap_chown, cap_fowner — needed to chown/chmod files we did not create
-#     after dropping cap_dac_override (see #2659).
-#   cap_setuid, cap_setgid — required by setpriv to step down from root into
-#     the sandbox/gateway UIDs during entrypoint privilege separation.
-#   cap_kill — sandbox user signals gateway-user processes via the UID
-#     separation enforced by the entrypoint (see test 13 in
-#     e2e-gateway-isolation.sh).
-# When the runtime cannot drop the bounding set (no CAP_SETPCAP, or capsh
-# missing), the default is to warn and continue. Set NEMOCLAW_REQUIRE_CAP_DROP=1
-# to make that case fail-closed instead — see enforce_cap_drop_if_required.
-#
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/797
-#      https://github.com/NVIDIA/NemoClaw/issues/3280
-#      https://github.com/NVIDIA/OpenShell/issues/1452 (connect-shell scope)
-#
-# Usage:
-#   drop_capabilities /usr/local/bin/nemoclaw-start "$@"
-#
-# Single source of truth for the dangerous capabilities the entrypoint drops
-# and (in strict mode) verifies are gone. "bit:name" pairs; bit numbers per
-# /usr/include/linux/capability.h. Both the capsh --drop list and
-# dangerous_caps_in_capbnd() derive from this array, so the drop-set and the
-# strict-mode verify-set cannot drift apart (issue #3280).
+# Single drop/verification list, with bit numbers from linux/capability.h.
 DANGEROUS_CAPS=(
   "21:cap_sys_admin"
   "19:cap_sys_ptrace"
@@ -294,33 +215,57 @@ dangerous_caps_drop_list() {
   printf '%s' "$out"
 }
 
-# The first argument is the absolute path to the entrypoint script to
-# re-exec via capsh. Remaining arguments are forwarded.
+# Use built-ins so verification observes the calling shell rather than an
+# exec'd reader whose capability state can differ. An explicit file argument
+# permits deterministic direct-root fixtures.
+read_capability_bounding_set() {
+  local key value rest seen=0 cap_bnd_hex=""
+  while IFS=$' \t' read -r key value rest; do
+    [ "$key" = CapBnd: ] || continue
+    [ "$seen" -eq 0 ] || return 1
+    seen=1
+    cap_bnd_hex="$value"
+    [ -z "$rest" ] || return 1
+  done <"$1" || return 1
+  [ "$seen" -eq 1 ] && [ -n "$cap_bnd_hex" ] || return 1
+  printf '%s\n' "$cap_bnd_hex"
+}
+
+# The first argument is the absolute entrypoint path; remaining args are forwarded.
 drop_capabilities() {
   local entrypoint="$1"
   shift
 
-  if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; then
-    # capsh --drop requires CAP_SETPCAP in the bounding set. OpenShell's
-    # sandbox runtime may strip it, so check before attempting the drop.
-    if capsh --has-p=cap_setpcap 2>/dev/null; then
-      export NEMOCLAW_CAPS_DROPPED=1
-      exec capsh \
-        --drop="$(dangerous_caps_drop_list)" \
-        -- -c "exec $entrypoint \"\$@\"" -- "$@"
+  local cap_bnd_hex present reason=""
+  if ! cap_bnd_hex="$(read_capability_bounding_set /proc/self/status 2>/dev/null)"; then
+    reason="could not read bounding set from /proc/self/status"
+  else
+    if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+      reason="could not parse bounding set (CapBnd=${cap_bnd_hex})"
+    elif [ -n "$present" ]; then
+      reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
     fi
-    # CAP_SETPCAP missing (or the exec above failed): the drop could not run.
-    # Surface the residual bounding-set caps in the log.
-    report_residual_capabilities || true
-  elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
-    echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
   fi
 
-  # Opt-in fail-closed gate (issue #3280). Deliberately runs on EVERY path,
-  # including when NEMOCLAW_CAPS_DROPPED is already set: it verifies the actual
-  # bounding set rather than trusting that sentinel, so an inherited marker
-  # cannot mask a drop that never happened.
-  enforce_cap_drop_if_required
+  # Keep one capsh attempt for legacy entrypoints even when /proc is unreadable.
+  # The sentinel prevents re-execution loops; it never proves a successful drop.
+  if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] \
+    && command -v capsh >/dev/null 2>&1 \
+    && capsh --has-p=cap_setpcap 2>/dev/null; then
+    export NEMOCLAW_CAPS_DROPPED=1
+    # capsh expands the positional parameters in its child shell.
+    # shellcheck disable=SC2016
+    exec capsh \
+      --drop="$(dangerous_caps_drop_list)" \
+      -- -c 'exec "$0" "$@"' "$entrypoint" "$@"
+  fi
+
+  [ -z "$reason" ] && return 0
+  if [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ]; then
+    echo "[SECURITY] Refusing to start sandbox: ${reason}" >&2
+    exit 1
+  fi
+  echo "[SECURITY WARNING] Cannot drop bounding-set capabilities with capsh: ${reason}" >&2
 }
 
 # Pure decode: given a CapBnd hex string, echo the comma-separated list of the
@@ -350,83 +295,6 @@ dangerous_caps_in_capbnd() {
   printf '%s' "$present"
 }
 
-# Opt-in fail-closed enforcement (issue #3280). When NEMOCLAW_REQUIRE_CAP_DROP=1
-# the sandbox refuses to start unless the bounding set is provably free of the
-# dangerous capabilities. It verifies by reading the ACTUAL CapBnd — NOT by
-# trusting the NEMOCLAW_CAPS_DROPPED sentinel, which an inherited environment
-# could forge to bypass the gate.
-#
-# DEFAULT (unset) IS WARN-AND-CONTINUE — no host loses the ability to boot. This
-# is the lesson of #4266/#4341: a default-fail-closed drop broke EVERY host that
-# does not grant CAP_SETPCAP (GitHub runners, Brev shadecloud, Colossus Ubuntu
-# 24.04, Docker Desktop, WSL) and was reverted within hours. Inverting the
-# default to opt-in keeps that regression off by default.
-#
-# Scope: the AGENT process tree only. A `nemoclaw connect` shell is spawned by
-# the container runtime outside that tree and inherits the container's OCI
-# bounding set; tightening that requires cap_drop at sandbox create, tracked
-# upstream in NVIDIA/OpenShell#1452.
-#
-# Test seam: NEMOCLAW_PROC_STATUS overrides the status source so unit tests can
-# feed a known CapBnd fixture without a real /proc.
-enforce_cap_drop_if_required() {
-  [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ] || return 0
-
-  local status_path="${NEMOCLAW_PROC_STATUS:-/proc/self/status}"
-  local cap_bnd_hex present reason=""
-  cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' "$status_path" 2>/dev/null || true)
-  if [ -z "$cap_bnd_hex" ]; then
-    # Cannot verify → in strict mode, refuse rather than assume safety.
-    reason="could not read bounding set from ${status_path} — cannot verify drop"
-  elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
-    # Non-empty but unparseable CapBnd is equally unverifiable → refuse.
-    reason="could not parse bounding set (CapBnd=${cap_bnd_hex}) — cannot verify drop"
-  elif [ -n "$present" ]; then
-    reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
-  fi
-  [ -n "$reason" ] || return 0
-
-  cat >&2 <<'EOF'
-
-┌─ [SECURITY] Refusing to start sandbox: bounding-set capability drop failed ──
-│
-│ NEMOCLAW_REQUIRE_CAP_DROP=1 is set, so NemoClaw refuses to start a sandbox
-│ that still holds dangerous bounding-set capabilities. The runtime could not
-│ drop them (capsh or CAP_SETPCAP unavailable on this host), so they remain.
-│
-│ To run anyway with the weaker (warn-only) posture, unset the variable:
-│   unset NEMOCLAW_REQUIRE_CAP_DROP
-│
-│ Tracking: https://github.com/NVIDIA/NemoClaw/issues/3280
-└──────────────────────────────────────────────────────────────────────────────
-EOF
-  echo "[SECURITY] ${reason}" >&2
-  exit 1
-}
-
-# Emit a loud diagnostic when capsh-based dropping is unavailable so that
-# residual dangerous bounding-set caps surface in logs instead of being
-# silently inherited from the container runtime. Called from the
-# CAP_SETPCAP-missing fallback path of drop_capabilities() (issue #3280).
-report_residual_capabilities() {
-  echo "[SECURITY] CAP_SETPCAP not available — cannot drop bounding-set caps via capsh" >&2
-
-  local status_path="${NEMOCLAW_PROC_STATUS:-/proc/self/status}"
-  local cap_bnd_hex present
-  if ! cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' "$status_path" 2>/dev/null) \
-    || [ -z "$cap_bnd_hex" ]; then
-    echo "[SECURITY] Could not read ${status_path} — residual caps unknown" >&2
-    return 0
-  fi
-  echo "[SECURITY] Residual CapBnd=${cap_bnd_hex}" >&2
-
-  if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
-    echo "[SECURITY] Could not parse CapBnd=${cap_bnd_hex} — residual caps unknown" >&2
-  elif [ -n "$present" ]; then
-    echo "[SECURITY] Dangerous caps remain in bounding set: ${present}" >&2
-  fi
-}
-
 # ── Privilege step-down (issue #3280 follow-up) ──────────────────
 # Uses `setpriv` for every root-to-user transition. When CAP_SETPCAP is
 # available, setpriv also strips the load-bearing caps (cap_setuid,
@@ -446,7 +314,7 @@ report_residual_capabilities() {
 # If CAP_SETPCAP is unavailable, setpriv still changes identity and initializes
 # supplementary groups, but cannot remove the remaining load-bearing caps from
 # the bounding set. That case is logged consistently with
-# report_residual_capabilities. If setpriv itself is unavailable, the prefix
+# drop_capabilities. If setpriv itself is unavailable, the prefix
 # invokes a fail-closed helper instead of risking execution as root.
 # File-scope array declarations: bash 3.2 (macOS) does not accept `declare -g`,
 # but plain assignment at file scope is global by default. Inside
@@ -508,14 +376,15 @@ init_step_down_prefixes() {
   # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
   STEP_DOWN_PREFIX_GATEWAY=("${gateway_prefix[@]}")
 }
-init_step_down_prefixes
+if [ "$(id -u)" -eq 0 ]; then
+  init_step_down_prefixes
+fi
 
 # ── Config integrity check ──────────────────────────────────────
 # The config hash was pinned at build time. If it doesn't match,
 # someone (or something) has tampered with the config.
 #
 # Usage:
-#   verify_config_integrity_if_locked /sandbox/.openclaw               # OpenClaw
 #   verify_config_integrity /sandbox/.hermes /etc/nemoclaw/hermes.config-hash # Hermes
 #
 # The config_dir must contain a .config-hash file with sha256sum output unless
@@ -550,103 +419,6 @@ verify_config_integrity() {
     echo "[SECURITY] Config integrity check FAILED in ${config_dir} — config may have been tampered with" >&2
     return 1
   fi
-}
-
-# OpenClaw is mutable by default in PR #2227: openclaw.json and .config-hash
-# are sandbox-owned until `shields up` locks them. A sandbox-writable hash is
-# not a trust anchor, so fail-closed integrity enforcement would only create a
-# self-DoS after legitimate runtime config writes. Enforce the strict verifier
-# only once the hash is root-owned and has no write bits, which is the state
-# applied by shields-up. Explicit hash files remain strict.
-verify_config_integrity_if_locked() {
-  local config_dir="$1"
-  local hash_file="${2:-${config_dir}/.config-hash}"
-
-  if [ "${2:-}" != "" ]; then
-    verify_config_integrity "$config_dir" "$hash_file"
-    return $?
-  fi
-
-  if [ ! -f "$hash_file" ]; then
-    local config_uid config_mode
-    config_uid="$(stat -c '%u' "$config_dir" 2>/dev/null || stat -f '%u' "$config_dir" 2>/dev/null || echo unknown)"
-    config_mode="$(stat -c '%a' "$config_dir" 2>/dev/null || stat -f '%Lp' "$config_dir" 2>/dev/null || echo unknown)"
-    if [ "$config_uid" = "0" ] && [ "$config_mode" != "unknown" ] && (((8#$config_mode & 0022) == 0)); then
-      echo "[SECURITY] Locked config is missing hash file (${hash_file}) — refusing to start" >&2
-      return 1
-    fi
-    echo "[config] Config integrity check skipped for mutable default (${hash_file} missing)" >&2
-    return 0
-  fi
-  if [ -L "$hash_file" ]; then
-    echo "[SECURITY] Config hash file is a symlink (${hash_file}) — refusing to trust it" >&2
-    return 1
-  fi
-
-  local hash_uid hash_mode
-  hash_uid="$(stat -c '%u' "$hash_file" 2>/dev/null || stat -f '%u' "$hash_file" 2>/dev/null || echo unknown)"
-  hash_mode="$(stat -c '%a' "$hash_file" 2>/dev/null || stat -f '%Lp' "$hash_file" 2>/dev/null || echo unknown)"
-  if [ "$hash_uid" = "0" ] && [ "$hash_mode" != "unknown" ] && (((8#$hash_mode & 0222) == 0)); then
-    verify_config_integrity "$config_dir" "$hash_file"
-    return $?
-  fi
-
-  echo "[config] Config integrity check skipped for mutable default (${hash_file} is not locked)" >&2
-  return 0
-}
-
-# ── RC file locking ──────────────────────────────────────────────
-# Lock .bashrc and .profile to 444 after startup has written dynamic shell
-# state to /tmp/nemoclaw-proxy-env.sh. This prevents the sandbox user from
-# injecting code that runs on every `nemoclaw connect`.
-#
-# SECURITY: This fixes the Hermes vulnerability where .bashrc/.profile
-# were never locked (unlike OpenClaw which had this via #2125).
-#
-# Usage:
-#   lock_rc_files /sandbox   # locks /sandbox/.bashrc and /sandbox/.profile
-lock_rc_files() {
-  local home_dir="$1"
-
-  for rc_file in "${home_dir}/.bashrc" "${home_dir}/.profile"; do
-    if [ -L "$rc_file" ]; then
-      echo "[SECURITY] Refusing to lock symlinked rc file: ${rc_file}" >&2
-      continue
-    fi
-    if [ -f "$rc_file" ]; then
-      if ! python3 - "$rc_file" "$(id -u)" <<'PY' 2>/dev/null; then
-import errno
-import os
-import stat
-import sys
-
-path, uid_text = sys.argv[1:3]
-uid = int(uid_text)
-flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-try:
-    fd = os.open(path, flags)
-except OSError as exc:
-    if exc.errno == errno.ELOOP:
-        print(f"[SECURITY] Refusing to lock symlinked rc file: {path}", file=sys.stderr)
-    else:
-        print(f"[SECURITY] Could not open rc file for locking: {path}: {exc}", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode):
-        print(f"[SECURITY] Refusing to lock non-regular rc file: {path}", file=sys.stderr)
-        sys.exit(1)
-    if uid == 0:
-        os.fchown(fd, 0, 0)
-    os.fchmod(fd, 0o444)
-finally:
-    os.close(fd)
-PY
-        echo "[SECURITY] Could not lock ${rc_file} to 444 — continuing (best-effort, Landlock may enforce)" >&2
-      fi
-    fi
-  done
 }
 
 # ── Cleanup / signal forwarding ──────────────────────────────────
@@ -716,56 +488,13 @@ validate_config_symlinks() {
   done
 }
 
-# Lock a config directory and its symlinks with the immutable flag so
-# they cannot be swapped at runtime even if DAC or Landlock are bypassed.
-# chattr requires cap_linux_immutable which the entrypoint has as root;
-# the sandbox user cannot remove the flag.
-#
-# Usage:
-#   harden_config_symlinks /sandbox/.openclaw
-#   harden_config_symlinks /sandbox/.hermes
-harden_config_symlinks() {
-  local config_dir="$1"
-  local label="${2:-$(basename "$config_dir")}"
-  local entry hardened failed
-  hardened=0
-  failed=0
-
-  if ! command -v chattr >/dev/null 2>&1; then
-    echo "[SECURITY] chattr not available — relying on DAC + Landlock for ${label} hardening" >&2
-    return 0
-  fi
-
-  if chattr +i "$config_dir" 2>/dev/null; then
-    hardened=$((hardened + 1))
-  else
-    failed=$((failed + 1))
-  fi
-
-  for entry in "${config_dir}"/*; do
-    [ -L "$entry" ] || continue
-    if chattr +i "$entry" 2>/dev/null; then
-      hardened=$((hardened + 1))
-    else
-      failed=$((failed + 1))
-    fi
-  done
-
-  if [ "$failed" -gt 0 ]; then
-    echo "[SECURITY] Immutable hardening applied to $hardened path(s); $failed path(s) could not be hardened — continuing with DAC + Landlock" >&2
-  elif [ "$hardened" -gt 0 ]; then
-    echo "[SECURITY] Immutable hardening applied to ${label} and validated symlinks" >&2
-  fi
-}
-
 # ── Messaging channels ──────────────────────────────────────────
 # Channel entries are baked into the config at image build time via manifest
 # render hooks. Placeholder tokens flow through to the L7 proxy for rewriting
 # at egress. Real tokens are never visible inside the sandbox.
 #
-# This function just logs which channels are active. Runtime patching
-# of config files is not possible — Landlock enforces read-only at
-# the kernel level.
+# This function just logs which channels are active. Managed runtime config
+# changes use the agent-aware host transaction paths.
 configure_messaging_channels() {
   local channels
   channels="$(read_messaging_plan_channels || true)"
@@ -782,7 +511,7 @@ EOF
 }
 
 read_messaging_plan_channels() {
-  python3 - <<'PY'
+  python3 -I - <<'PY'
 import base64
 import json
 import os

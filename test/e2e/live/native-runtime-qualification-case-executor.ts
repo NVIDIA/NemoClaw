@@ -878,7 +878,15 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       },
     });
     expect(bundle.identity.id).toBe("podman");
-    expect(bundle.workload.profile.support).toBeNull();
+    expect(bundle.workload.profile).toMatchObject({
+      support: {
+        exactDigestReferences: true,
+        platforms: ["linux/amd64", "linux/arm64"],
+      },
+      hostArchitectures: ["amd64", "arm64"],
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: false,
+    });
     const hostInspection = bundle.preflightDoctor.inspectHost();
     if (hostInspection.status !== "ok") {
       throw new Error(`Podman host qualification failed: ${bounded(hostInspection.detail)}`);
@@ -1010,7 +1018,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     const lifecycle = bundle.lifecycle;
     const input = lifecycleInput(row.case.agent, sandboxName);
     let beforeStopCalled = false;
-    const firstStop = lifecycle.stop(input, {
+    const firstStop = await lifecycle.stop(input, {
       beforeStop: () => {
         beforeStopCalled = true;
       },
@@ -1020,7 +1028,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     }
     expect(firstStop.state).toBe("stopped");
     expect(beforeStopCalled).toBe(true);
-    expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
+    expect(await lifecycle.start(input)).toEqual({ exitCode: 0 });
     operationDetails.set("sandbox.stop-start", {
       containerId: agentId,
       executionPath: "runtime-provider-bundle",
@@ -1028,7 +1036,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     });
 
     snapshot = path.join(os.tmpdir(), `nemoclaw-q-${caseSuffix}.tar`);
-    const snapshotStop = lifecycle.stop(input, { beforeStop: () => undefined });
+    const snapshotStop = await lifecycle.stop(input, { beforeStop: () => undefined });
     if (snapshotStop.exitCode !== 0) {
       throw new Error(
         `Snapshot sandbox stop failed: ${bounded(snapshotStop.message ?? "unknown")}`,
@@ -1042,7 +1050,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     );
     const snapshotBytes = fs.readFileSync(snapshot);
     const snapshotSha256 = sha256(snapshotBytes);
-    expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
+    expect(await lifecycle.start(input)).toEqual({ exitCode: 0 });
     capture(
       lifecycleEngine,
       ["exec", agentId, "/bin/sh", "-c", "printf '%s\\n' drifted >/qualification/state"],
@@ -1132,7 +1140,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       ]);
       if (duplicate.status === 0) throw new Error("Podman allowed unsafe managed-name reuse");
       capture(lifecycleEngine, ["kill", "--signal", "KILL", agentId], "sandbox crash injection");
-      expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
+      expect(await lifecycle.start(input)).toEqual({ exitCode: 0 });
       expect(
         capture(
           lifecycleEngine,

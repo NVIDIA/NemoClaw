@@ -37,14 +37,14 @@ describe("connect route containment", () => {
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
 
-  it("stops before the initial endpoint probe or repair mutation when routes conflict (#6315)", () => {
+  it("stops before the initial endpoint probe or repair mutation when routes conflict (#6315)", async () => {
     const conflict = new Error("shared gateway route conflict");
     const assertRouteCompatible = vi.fn(() => {
       throw conflict;
     });
-    const probe = vi.fn(() => ({ healthy: false, broken: true, detail: "BROKEN 503" }));
+    const probe = vi.fn(async () => ({ healthy: false, broken: true, detail: "BROKEN 503" }));
     const applyVmDnsMonkeypatch = vi.fn(() => ({ ok: false }));
-    const reapplyVmInferenceRoute = vi.fn(() => null);
+    const reapplyVmInferenceRoute = vi.fn(async () => null);
     const repairLegacyDnsProxy = vi.fn(() => ({ exitCode: 0 }));
     const deps: SandboxInferenceRouteRepairDeps = {
       probe,
@@ -60,10 +60,9 @@ describe("connect route containment", () => {
       provider: "nvidia-prod",
       openshellDriver: "vm",
       gpuEnabled: false,
-      policies: [],
     };
 
-    expect(() => repairSandboxInferenceRouteWithDeps("vm-box", sandbox, {}, deps)).toThrow(
+    await expect(repairSandboxInferenceRouteWithDeps("vm-box", sandbox, {}, deps)).rejects.toBe(
       conflict,
     );
 
@@ -141,53 +140,56 @@ describe("connect route containment", () => {
         preferredInferenceApi: "openai-responses",
       },
     ],
-  ] as const)("refuses a different complete custom %s before route reads, mutation, or target probes (#6315)", async (_difference, peerRoute) => {
-    const target = {
-      name: "target",
-      agent: "openclaw",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      provider: "compatible-endpoint",
-      model: "target/model",
-      endpointUrl: "https://target.example.test/v1",
-      preferredInferenceApi: "openai-completions",
-    } as const;
-    const harness = createConnectHarness({
-      inferenceGetOutput:
-        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: target/model\n",
-      registryEntry: target,
-      registryEntries: [
-        target,
-        {
-          name: "peer",
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          provider: "compatible-endpoint",
-          model: "peer/model",
-          ...peerRoute,
-        },
-      ],
-    });
+  ] as const)(
+    "refuses a different complete custom %s before route reads, mutation, or target probes (#6315)",
+    async (_difference, peerRoute) => {
+      const target = {
+        name: "target",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        provider: "compatible-endpoint",
+        model: "target/model",
+        endpointUrl: "https://target.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+      } as const;
+      const harness = createConnectHarness({
+        inferenceGetOutput:
+          "Gateway inference:\n  Provider: compatible-endpoint\n  Model: target/model\n",
+        registryEntry: target,
+        registryEntries: [
+          target,
+          {
+            name: "peer",
+            agent: "openclaw",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+            provider: "compatible-endpoint",
+            model: "peer/model",
+            ...peerRoute,
+          },
+        ],
+      });
 
-    await expect(harness.connectSandbox("target", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+      await expect(harness.connectSandbox("target", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
 
-    expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
-      ["inference", "get", "-g", "nemoclaw"],
-      expect.any(Object),
-    );
-    const targetProbeCalls = harness.captureOpenshellSpy.mock.calls.filter(
-      ([args]) => Array.isArray(args) && args.join(" ").includes("inference.local/v1/models"),
-    );
-    expect(targetProbeCalls).toHaveLength(0);
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Cannot set compatible-endpoint / target/model"),
-    );
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
+      expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
+        ["inference", "get", "-g", "nemoclaw"],
+        expect.any(Object),
+      );
+      const targetProbeCalls = harness.captureOpenshellSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args.join(" ").includes("inference.local/v1/models"),
+      );
+      expect(targetProbeCalls).toHaveLength(0);
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Cannot set compatible-endpoint / target/model"),
+      );
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    },
+  );
 
   it("rechecks peers after waiting for the shared gateway route lock", async () => {
     let releaseLock!: () => void;
@@ -405,7 +407,7 @@ describe("connect route containment", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
+    const routeProbeCalls = harness.sandboxRunBufferedSpy.mock.calls.filter((call) =>
       JSON.stringify(call[0]).includes("inference.local/v1/models"),
     );
     expect(routeProbeCalls).toHaveLength(1);

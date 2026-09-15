@@ -56,7 +56,7 @@ Reasoning trace:
 ### Suggested action
 
 1. Confirm that PR #B contains the contributor's `Signed-off-by:` declaration. Do not add or copy that declaration on the contributor's behalf. If it is absent, leave the winner unset and ask the contributor.
-2. Read the exact author name and email from the source commit. Never guess or substitute it. If no usable identity exists, leave the winner unset and ask the contributor.
+2. Read the author name and email from the source commit. Never guess or substitute it. If no usable identity exists, leave the winner unset and ask the contributor.
 3. Transfer the test from PR #B before merge. Prefer `git cherry-pick -S -x <source-sha>` so the source contributor remains the Git author.
 4. If the work must be combined or reconstructed, add a `Co-authored-by: Name <email>` trailer using the verified source-commit identity.
 5. Add `Supersedes #B` to PR #A's body and identify the transferred test.

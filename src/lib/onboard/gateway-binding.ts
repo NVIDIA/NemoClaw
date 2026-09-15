@@ -19,29 +19,35 @@
  * ports never collide.
  */
 
-import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import type { GatewayReuseState } from "../state/gateway";
+import {
+  BASE_GATEWAY_COMPAT_CONTAINER_NAME,
+  BASE_GATEWAY_NAME,
+  isDefaultGatewayPort,
+  resolveGatewayCompatContainerName,
+  resolveGatewayName,
+} from "./gateway-binding/identity";
+import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
 
-/** Gateway registration name used for the default gateway port. */
-export const BASE_GATEWAY_NAME = "nemoclaw";
-/** Docker-driver gateway state directory leaf name for the default port. */
-export const BASE_GATEWAY_STATE_DIR_NAME = "openshell-docker-gateway";
-/** Docker-driver gateway compatibility container name for the default port. */
-export const BASE_GATEWAY_COMPAT_CONTAINER_NAME = "nemoclaw-openshell-gateway";
+export {
+  BASE_GATEWAY_COMPAT_CONTAINER_NAME,
+  BASE_GATEWAY_NAME,
+  isDefaultGatewayPort,
+  resolveGatewayCompatContainerName,
+  resolveGatewayName,
+};
 
-export function isDefaultGatewayPort(port: number): boolean {
-  return port === DEFAULT_GATEWAY_PORT;
-}
-
-/**
- * Resolve the OpenShell gateway registration name for a gateway port. The
- * default port keeps the bare `nemoclaw` name for backward compatibility; any
- * other port gets a `nemoclaw-<port>` name so its lifecycle commands
- * (add/select/remove/start/destroy) never target another sandbox's gateway.
- */
-export function resolveGatewayName(port: number): string {
-  return isDefaultGatewayPort(port) ? BASE_GATEWAY_NAME : `${BASE_GATEWAY_NAME}-${port}`;
-}
+export {
+  assertManagedGatewayStateDirectoryParentTrusted,
+  BASE_GATEWAY_STATE_DIR_NAME,
+  ensureManagedGatewayStateRoot,
+  isManagedGatewayStateRootReservation,
+  managedGatewayStateRootOwnershipFailure,
+  MANAGED_GATEWAY_STATE_ROOT_MARKER,
+  resolveGatewayStateDirForPort,
+  resolveGatewayStateDirName,
+  UnsafeGatewayStateDirectoryError,
+} from "./gateway/state-dir";
 
 /** Resolve the gateway port encoded by a canonical NemoClaw gateway name. */
 export function resolveGatewayPortFromName(gatewayName: string): number | null {
@@ -157,29 +163,11 @@ export function resolveCoreOnboardGatewayBinding(options: {
 }
 
 /**
- * Resolve the Docker-driver gateway state directory leaf name for a gateway
- * port. The state dir holds the gateway pid file and runtime marker, so a
- * per-port leaf keeps each sandbox's marker isolated — a second onboard cannot
- * overwrite the first sandbox's marker or clobber its pid file.
- */
-export function resolveGatewayStateDirName(port: number): string {
-  return isDefaultGatewayPort(port)
-    ? BASE_GATEWAY_STATE_DIR_NAME
-    : `${BASE_GATEWAY_STATE_DIR_NAME}-${port}`;
-}
-
-/**
  * Resolve the Docker-driver gateway compatibility container name for a gateway
  * port. A per-port container name prevents the second onboard's
  * `docker run --name ...` (and the pre-launch `docker rm`) from tearing down
  * the first sandbox's compat gateway container.
  */
-export function resolveGatewayCompatContainerName(port: number): string {
-  return isDefaultGatewayPort(port)
-    ? BASE_GATEWAY_COMPAT_CONTAINER_NAME
-    : `${BASE_GATEWAY_COMPAT_CONTAINER_NAME}-${port}`;
-}
-
 /** Gateway state classifiers from `state/gateway`, each bound to a gateway name. */
 export interface GatewayNameBoundClassifiers {
   hasStaleGateway(gwInfoOutput?: string): boolean;

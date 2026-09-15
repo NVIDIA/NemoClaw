@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Security / Native Runtime Evidence
+name: Security / Authenticate Native Runtime Qualification Evidence
 
 on:
   workflow_dispatch:
@@ -50,7 +50,7 @@ concurrency:
 
 jobs:
   collect-protected-evidence:
-    name: Authentication
+    name: Authenticate native runtime qualification evidence
     if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -62,7 +62,7 @@ jobs:
           path: trusted
           persist-credentials: false
           sparse-checkout: |
-            scripts/scorecard/read-artifact-zip.mts
+            scripts/lib/read-artifact-zip.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-collector.mts
@@ -89,7 +89,7 @@ jobs:
           EVIDENCE_ARTIFACT_NAME: ${{ inputs.evidence_artifact_name }}
           QUALIFICATION_AUTHORITY_PATH: ${{ runner.temp }}/native-runtime-qualification-authority.json
         run: >-
-          node --experimental-strip-types --no-warnings
+          node --no-warnings
           tools/e2e/native-runtime-qualification-collector.mts
 
       - name: Preserve authenticated authority receipt

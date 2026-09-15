@@ -44,7 +44,6 @@ type RecoveredSandboxMetadata = Partial<
     | "model"
     | "provider"
     | "gpuEnabled"
-    | "policies"
     | "nimContainer"
     | "agent"
     | "observabilityEnabled"
@@ -52,9 +51,7 @@ type RecoveredSandboxMetadata = Partial<
     | "credentialEnv"
     | "preferredInferenceApi"
   >
-> & {
-  policyPresets?: string[] | null;
-};
+>;
 
 /**
  * Build a minimal-safe registry entry for a recovered sandbox from whatever
@@ -70,11 +67,6 @@ function buildRecoveredSandboxEntry(
     model: metadata.model || null,
     provider: metadata.provider || null,
     gpuEnabled: metadata.gpuEnabled === true,
-    policies: Array.isArray(metadata.policies)
-      ? metadata.policies
-      : Array.isArray(metadata.policyPresets)
-        ? metadata.policyPresets
-        : [],
     nimContainer: metadata.nimContainer || null,
     endpointUrl: metadata.endpointUrl ?? null,
     credentialEnv: metadata.credentialEnv ?? null,
@@ -228,7 +220,6 @@ function seedRecoveryMetadata(
       model: session.model || null,
       provider: session.provider || null,
       nimContainer: session.nimContainer || null,
-      policyPresets: session.policyPresets || null,
       agent: session.agent || null,
       endpointUrl: session.endpointUrl ?? null,
       credentialEnv: session.credentialEnv ?? null,
@@ -261,7 +252,7 @@ function seedRecoveryMetadata(
  * only when OpenShell is connected to a NemoClaw-managed gateway (the bare
  * `nemoclaw` or a per-port `nemoclaw-<port>`), never a foreign gateway.
  */
-function canInspectLiveGatewayReadOnly(): boolean {
+async function canInspectLiveGatewayReadOnly(): Promise<boolean> {
   // #5714: unseeded `nemoclaw list` recovery must never mutate gateway state
   // (no select/start). Require `healthy_named` — the active gateway IS the
   // NemoClaw gateway this process resolves/targets. We deliberately do NOT
@@ -273,7 +264,7 @@ function canInspectLiveGatewayReadOnly(): boolean {
   // and never advertises a sandbox the next command cannot act on. Probes are
   // non-fatal so a hung gateway falls back to the empty registry instead of
   // exiting the process.
-  const lifecycle = getNamedGatewayLifecycleState(undefined, { ignoreProbeErrors: true });
+  const lifecycle = await getNamedGatewayLifecycleState();
   return lifecycle.state === "healthy_named";
 }
 
@@ -318,7 +309,7 @@ async function recoverRegistryFromLiveGateway(
     return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
   }
   const canInspectLiveGateway = readOnly
-    ? canInspectLiveGatewayReadOnly()
+    ? await canInspectLiveGatewayReadOnly()
     : await canInspectLiveGatewayViaRecovery();
   if (!canInspectLiveGateway) {
     return { recoveredFromGateway: 0, ephemeralSandboxes: [] };

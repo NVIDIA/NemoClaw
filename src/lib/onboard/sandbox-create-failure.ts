@@ -8,6 +8,7 @@ import path from "node:path";
 import { GATEWAY_PORT } from "../core/ports";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
+import { resolveGatewayLogPathForPort } from "./gateway/state-dir";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
@@ -28,7 +29,9 @@ export type SandboxCreateFailureDiagnostics = {
 
 export type SandboxCreateFailureDiagnosticOptions = {
   homeDir?: string;
+  gatewayPort?: number;
   gatewayLogPath?: string | null;
+  gatewayStateDir?: string;
   backupPath?: string | null;
   now?: Date;
 };
@@ -45,16 +48,17 @@ function timestampForPath(now: Date): string {
   return now.toISOString().replace(/[:.]/g, "-");
 }
 
-function gatewayLogCandidates(homeDir: string): string[] {
+function gatewayLogCandidates(
+  homeDir: string,
+  gatewayPort: number,
+  gatewayStateDir?: string,
+): string[] {
   return [
-    path.join(
-      homeDir,
-      ".local",
-      "state",
-      "nemoclaw",
-      "openshell-docker-gateway",
-      "openshell-gateway.log",
-    ),
+    resolveGatewayLogPathForPort({
+      configured: gatewayStateDir,
+      home: homeDir,
+      port: gatewayPort,
+    }),
     path.join(homeDir, ".local", "state", "openshell", "openshell-gateway.log"),
   ];
 }
@@ -172,7 +176,11 @@ export function collectSandboxCreateFailureDiagnostics(
 
   const gatewayLogPath =
     options.gatewayLogPath ??
-    gatewayLogCandidates(homeDir).find((candidate) => fs.existsSync(candidate)) ??
+    gatewayLogCandidates(
+      homeDir,
+      options.gatewayPort ?? GATEWAY_PORT,
+      options.gatewayStateDir ?? process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    ).find((candidate) => fs.existsSync(candidate)) ??
     null;
   const rawLines = gatewayLogPath ? readLogLines(gatewayLogPath) : null;
   const block = rawLines ? findLatestSandboxBlock(rawLines, sandboxName) : [];

@@ -30,7 +30,14 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
 // fixture-only names this suite mutates directly.
 import { KNOWN_CREDENTIAL_ENV_KEYS } from "../../src/lib/credentials/store.js";
 
-const TEST_FIXTURE_ENV_KEYS = ["TEST_API_KEY", "OTHER_KEY", "EMPTY_VALUE", "ZETA", "ALPHA"];
+const TEST_FIXTURE_ENV_KEYS = [
+  "TEST_API_KEY",
+  "OTHER_KEY",
+  "EMPTY_VALUE",
+  "ZETA",
+  "ALPHA",
+  "ALLOWED_CHAT_IDS",
+];
 const TRACKED_ENV_KEYS = [...KNOWN_CREDENTIAL_ENV_KEYS, ...TEST_FIXTURE_ENV_KEYS];
 
 function clearTrackedEnv() {
@@ -73,13 +80,6 @@ afterEach(() => {
 });
 
 describe("messaging legacy bridge credentials", () => {
-  it("keeps the legacy ALLOWED_CHAT_IDS entry for the deploy-time bridge", () => {
-    // The Telegram bridge runtime injected by deploy.ts still expects the
-    // legacy env name. Channel config values are persisted separately from
-    // provider credentials, but this credential key stays for deploy.ts.
-    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("ALLOWED_CHAT_IDS");
-  });
-
   it("registers WECHAT_BOT_TOKEN alongside the other channel bot tokens", () => {
     // The WeChat host-QR onboarding writes the captured token via
     // saveCredential("WECHAT_BOT_TOKEN", ...). If this key is missing from
@@ -277,6 +277,24 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     // The file MUST still exist after staging — it is removed only after a
     // successful gateway write so an interrupted onboard can be retried.
     expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
+  it("does not stage or retain the retired deploy credential (#10572)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, JSON.stringify({ ALLOWED_CHAT_IDS: "111,222" }), {
+      mode: 0o600,
+    });
+
+    const credentials = await importCredentialsModule(home);
+
+    expect(credentials.stageLegacyCredentialsToEnv()).toEqual([]);
+    expect(process.env.ALLOWED_CHAT_IDS).toBeUndefined();
+    expect(fs.existsSync(legacyFile)).toBe(true);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
   });
 
   it("ignores keys outside the credential allowlist (PATH, NODE_OPTIONS, etc.)", async () => {

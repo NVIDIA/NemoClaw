@@ -15,7 +15,7 @@ Do not add shared multi-agent manifests in v1. OpenClaw and Hermes have differen
 Manifests follow `schema.json`:
 
 - `id`: stable registry id.
-- `agent`: exact agent id, for example `openclaw` or `hermes`.
+- `agent`: agent ID, for example `openclaw` or `hermes`.
 - `description`: human-readable reason for the setup.
 - `match`: model/provider route predicates.
 - `effects`: declarative, agent-scoped effects.

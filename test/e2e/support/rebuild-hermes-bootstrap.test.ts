@@ -467,6 +467,9 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(liveSource).not.toContain('"--cleanup-gateway"');
     expect(liveSource).not.toMatch(/host\.command\(\s*["']openshell["']/u);
     expect(liveSource).not.toMatch(/^\s*['"`]openshell\s/mu);
+    expect(liveSource.indexOf("const sessionSummary = seedRegistryAndSession(")).toBeLessThan(
+      liveSource.indexOf("await cronRestore.seed();"),
+    );
   });
 
   it("retains the eight-phase rebuild contract with truthful bootstrap coverage (#7144)", () => {

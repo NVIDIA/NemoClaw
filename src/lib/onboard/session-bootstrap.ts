@@ -3,10 +3,14 @@
 
 import path from "node:path";
 
+import { normalizeProcessExitCode } from "../core/process-exit";
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
-import { redact, redactFull, redactSensitiveText } from "../security/redact";
+export {
+  redactOnboardDiagnosticText,
+  redactOnboardCommandDiagnosticText,
+} from "./diagnostics/redaction";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   deriveCheckpointFromSession,
@@ -27,6 +31,7 @@ import {
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
+import { assertNoIncompleteExternalComponentActivation } from "./external-component/onboarding";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
 import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
@@ -58,6 +63,14 @@ export {
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
 };
+
+/** Expected onboarding refusal when selected restore authority changes. */
+export class OnboardRestoreSnapshotDriftError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OnboardRestoreSnapshotDriftError";
+  }
+}
 
 export function resolveOnboardResumeIntent(options: {
   readonly explicitResume: boolean;
@@ -199,8 +212,8 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
     const resolvedOptions = options ?? ({} as TOptions);
     const originalProcessExit = process.exit;
     let deferredExit: OnboardDeferredExitError | null = null;
-    process.exit = ((code?: number): never => {
-      throw new OnboardDeferredExitError(code ?? 0);
+    process.exit = ((code?: number | string | null): never => {
+      throw new OnboardDeferredExitError(normalizeProcessExitCode(code));
     }) as typeof process.exit;
     try {
       await run(resolvedOptions);
@@ -214,14 +227,6 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
     if (resolvedOptions.deferProcessExit === true) throw deferredExit;
     originalProcessExit(deferredExit.code);
   };
-}
-
-export function redactOnboardDiagnosticText(message: string): string {
-  return redactSensitiveText(message) ?? "";
-}
-
-export function redactOnboardCommandDiagnosticText(message: string): string {
-  return redactSensitiveText(redact(redactFull(message))) ?? "";
 }
 
 export function createPortableOnboardEnvironmentScope(
@@ -321,6 +326,7 @@ export function createPortableOnboardEnvironmentScope(
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
   fresh: boolean;
+  recreateSandboxRequested?: boolean;
   requestedFromDockerfile: string | null;
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
@@ -330,6 +336,7 @@ export interface OnboardSessionBootstrapInput {
   envAgent?: string | null;
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
+  apfInterceptorRequested?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   servingProfileProvenance?: ServingProfileProvenance | null;
@@ -445,6 +452,23 @@ function reportLegacyResumeCheckpoint(deps: OnboardSessionBootstrapDeps): never 
   deps.exitProcess(1);
 }
 
+function reportUnsupportedApfLifecycle(
+  reason: "resume" | "recreate" | "portable",
+  deps: OnboardSessionBootstrapDeps,
+): never {
+  deps.error(
+    reason === "resume"
+      ? "  APF interceptor selection cannot resume an onboarding session."
+      : reason === "recreate"
+        ? "  APF interceptor selection cannot recreate a sandbox."
+        : "  APF interceptor selection cannot use the Portable experimental profile.",
+  );
+  deps.error(
+    `  Start a new sandbox with a new name: ${deps.cliName()} onboard --fresh --apf-interceptor --name <sandbox>`,
+  );
+  deps.exitProcess(1);
+}
+
 function guardResumeCheckpoint(deps: OnboardSessionBootstrapDeps): void {
   const result = deps.resolveResumeCheckpoint();
   if (result?.status === "unsupported_future") {
@@ -547,6 +571,10 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  assertNoIncompleteExternalComponentActivation(session);
+  if (input.apfInterceptorRequested === true || session?.apfInterceptorRequested === true) {
+    reportUnsupportedApfLifecycle("resume", deps);
+  }
   deps.requireHostMountRuntimeSupport(
     input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
     input.checkpointProfile,
@@ -597,6 +625,13 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
+  if (input.apfInterceptorRequested === true && input.recreateSandboxRequested === true) {
+    reportUnsupportedApfLifecycle("recreate", deps);
+  }
+  if (input.apfInterceptorRequested === true && input.checkpointProfile === "portable") {
+    reportUnsupportedApfLifecycle("portable", deps);
+  }
+  assertNoIncompleteExternalComponentActivation(deps.loadSession());
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();
@@ -609,6 +644,7 @@ function prepareFreshSession(
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.requestedObservabilityEnabled === true,
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
+    apfInterceptorRequested: input.apfInterceptorRequested === true,
     stationExpressIntent: input.stationExpressIntent ?? null,
     servingProfileProvenance: input.servingProfileProvenance ?? null,
     vllmGpuDevice: parseVllmGpuDevice(process.env[NEMOCLAW_VLLM_GPU_DEVICE_ENV]),

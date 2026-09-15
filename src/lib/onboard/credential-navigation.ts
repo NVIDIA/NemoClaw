@@ -69,7 +69,7 @@ export async function replaceNamedCredential({
   validator = null,
   allowEmpty = false,
   exitOnboardFromPrompt,
-  revalidatePolicyRequirements,
+  revalidateSandboxIdentity,
 }: {
   envName: string;
   label: string;
@@ -77,7 +77,7 @@ export async function replaceNamedCredential({
   validator?: ((value: string) => string | null) | null;
   allowEmpty?: boolean;
   exitOnboardFromPrompt: () => never;
-  revalidatePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
 }): Promise<string | BackToSelection> {
   if (helpUrl) {
     console.log("");
@@ -98,7 +98,7 @@ export async function replaceNamedCredential({
       console.error(validationError);
       continue;
     }
-    revalidatePolicyRequirements?.(`save ${label}`);
+    revalidateSandboxIdentity?.(`save ${label}`);
     credentials.saveCredential(envName, key);
     process.env[envName] = key;
     console.log("");
@@ -115,7 +115,7 @@ export async function ensureNamedCredential({
   validator = null,
   allowEmpty = false,
   exitOnboardFromPrompt,
-  revalidatePolicyRequirements,
+  revalidateSandboxIdentity,
 }: {
   envName: string | null;
   label: string;
@@ -123,7 +123,7 @@ export async function ensureNamedCredential({
   validator?: ((value: string) => string | null) | null;
   allowEmpty?: boolean;
   exitOnboardFromPrompt: () => never;
-  revalidatePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
 }): Promise<string | BackToSelection> {
   if (!envName) {
     console.error(`  Missing credential target for ${label}.`);
@@ -145,7 +145,7 @@ export async function ensureNamedCredential({
     validator,
     allowEmpty,
     exitOnboardFromPrompt,
-    revalidatePolicyRequirements,
+    revalidateSandboxIdentity,
   });
 }
 
@@ -156,7 +156,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     label: string,
     helpUrl?: string | null,
     validator?: ((value: string) => string | null) | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ) => Promise<string | BackToSelection>;
   ensureNamedCredential: (
     envName: string | null,
@@ -164,7 +164,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     helpUrl?: string | null,
     validator?: ((value: string) => string | null) | null,
     allowEmpty?: boolean,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ) => Promise<string | BackToSelection>;
   shouldReturnToProviderSelection: (result: unknown) => boolean;
   returningToProviderSelection: (result: unknown) => result is BackNavigationResult;
@@ -176,7 +176,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
       label,
       helpUrl = null,
       validator = null,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     ) =>
       replaceNamedCredential({
         envName,
@@ -184,7 +184,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
         helpUrl,
         validator,
         exitOnboardFromPrompt,
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
     ensureNamedCredential: (
       envName,
@@ -192,7 +192,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
       helpUrl = null,
       validator = null,
       allowEmpty = false,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     ) =>
       ensureNamedCredential({
         envName,
@@ -201,7 +201,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
         validator,
         allowEmpty,
         exitOnboardFromPrompt,
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
     shouldReturnToProviderSelection: (result) =>
       shouldReturnToProviderSelection(result, exitOnboardFromPrompt),

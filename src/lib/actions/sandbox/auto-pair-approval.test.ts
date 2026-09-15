@@ -23,27 +23,35 @@ describe("auto-pair approval pass behaviour (#4616)", () => {
   pyIt25s("approves only one exact local clone pairing transition on a shared gateway", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
-    const script = buildAutoPairApprovalScript(
-      Buffer.from(policy as string, "utf-8").toString("base64"),
-      {
-        emitSummary: true,
-        emitReceipt: true,
-        localDeviceOnly: true,
-        budget: { maxApprovals: 1 },
+    const testPolicy = `${policy}
+class _NemoClawTestTime:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+approval_time = _NemoClawTestTime()
+`;
+    const policyB64 = Buffer.from(testPolicy, "utf-8").toString("base64");
+    const script = buildAutoPairApprovalScript(policyB64, {
+      emitSummary: true,
+      emitReceipt: true,
+      localDeviceOnly: true,
+      budget: { maxApprovals: 1 },
+    });
+    const timeoutScript = buildAutoPairApprovalScript(policyB64, {
+      emitSummary: true,
+      emitReceipt: true,
+      localDeviceOnly: true,
+      budget: {
+        maxApprovals: 1,
+        approveTimeoutS: 0.25,
       },
-    );
-    const timeoutScript = buildAutoPairApprovalScript(
-      Buffer.from(policy as string, "utf-8").toString("base64"),
-      {
-        emitSummary: true,
-        emitReceipt: true,
-        localDeviceOnly: true,
-        // Keep production's 10s cap unchanged. This executable fixture only
-        // needs enough time to publish its synchronous canonical state before
-        // proving the generated TimeoutExpired branch.
-        budget: { maxApprovals: 1, approveTimeoutS: 0.25 },
-      },
-    );
+    });
     const tmpDir = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restored-clone-pair-")),
     );
@@ -286,7 +294,7 @@ process.exit(2);
       );
       const devicesRaceBackup = path.join(stateDir, "devices-before-race");
       const transientRaceMarker = path.join(tmpDir, "transient-devices-race.marker");
-      const transientRacePolicy = `${policy}
+      const transientRacePolicy = `${testPolicy}
 import os as _nemoclaw_test_os
 _nemoclaw_test_original_open = _nemoclaw_test_os.open
 _nemoclaw_test_raced = False
@@ -341,7 +349,7 @@ _nemoclaw_test_os.open = _nemoclaw_test_race_open
       );
       const stateRaceBackup = path.join(tmpDir, "clone-state-before-child");
       const childRaceMarker = path.join(tmpDir, "child-entry-state-race.marker");
-      const childEntryRacePolicy = `${policy}
+      const childEntryRacePolicy = `${testPolicy}
 import os as _nemoclaw_test_os
 import subprocess as _nemoclaw_test_subprocess
 _nemoclaw_test_original_run = _nemoclaw_test_subprocess.run

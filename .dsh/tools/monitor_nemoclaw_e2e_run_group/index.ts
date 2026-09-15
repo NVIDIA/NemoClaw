@@ -44,9 +44,9 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
   const workflow = input.workflow ?? "e2e.yaml";
   const branch = input.branch ?? "main";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
-  if (!/^[A-Za-z0-9_.\/-]+\.ya?ml$/.test(workflow))
+  if (!/^[A-Za-z0-9_./-]+\.ya?ml$/.test(workflow))
     throw new Error("workflow must be a YAML workflow path or filename");
-  if (!/^[A-Za-z0-9_.\/-]+$/.test(branch)) throw new Error("branch is invalid");
+  if (!/^[A-Za-z0-9_./-]+$/.test(branch)) throw new Error("branch is invalid");
   if (!/^[0-9a-f]{40}$/.test(input.candidateSha))
     throw new Error("candidateSha must be a full lowercase commit SHA");
   const runIds = [...new Set(input.runIds)];
@@ -59,7 +59,6 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
   const timeoutMs = Math.max(0, Math.min(1800000, input.timeoutMs ?? 600000));
   const intervalMs = Math.max(5000, Math.min(120000, input.intervalMs ?? 30000));
   const runLimit = Math.max(runIds.length, Math.min(100, input.runLimit ?? 100));
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const cut = (value, size) => (typeof value === "string" ? value.slice(0, size) : null);
   const runGh = async (args) => {
     const result = await tools.run_github_cli({
@@ -73,9 +72,10 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
       throw new Error("GitHub E2E run monitoring returned an invalid bounded response");
     }
   };
-  const sleep = () => new Promise((resolve) => setTimeout(resolve, intervalMs));
   const deadline = Date.now() + timeoutMs;
-  let polls = 0;
+  let polls = 0,
+    currentInterval = intervalMs,
+    lastFingerprint = null;
   let selected = [];
   let reason = null;
   while (true) {
@@ -107,7 +107,21 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
       reason = selected.some((run) => run.missing) ? "run-not-in-bounded-list" : "timeout";
       break;
     }
-    await sleep();
+    const fingerprint = JSON.stringify(
+      selected.map((run) => [
+        run.databaseId,
+        Boolean(run.missing),
+        run.headSha ?? null,
+        run.status ?? null,
+        run.conclusion ?? null,
+      ]),
+    );
+    if (lastFingerprint === null || fingerprint !== lastFingerprint) currentInterval = intervalMs;
+    else currentInterval = Math.min(Math.max(60000, intervalMs), currentInterval * 2);
+    lastFingerprint = fingerprint;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(currentInterval, remainingMs)));
   }
   const jobSummaries = [];
   if (input.includeJobs !== false) {

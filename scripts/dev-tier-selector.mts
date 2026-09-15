@@ -8,7 +8,7 @@
 // without a real NemoClaw installation.
 //
 // Usage:
-//   node --experimental-strip-types scripts/dev-tier-selector.mts
+//   node scripts/dev-tier-selector.mts
 //
 // This script is intentionally not part of the vitest suite. For automated coverage
 // of this flow see test/runtime/policy/policy-tiers-onboard.test.ts.

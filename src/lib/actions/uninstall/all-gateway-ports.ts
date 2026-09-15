@@ -79,6 +79,7 @@ export function uninstallChildArgs(options: UninstallRunOptions): string[] {
 export function uninstallChildEnv(env: NodeJS.ProcessEnv, port: number): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = { ...env, NEMOCLAW_GATEWAY_PORT: String(port) };
   delete next[ALL_GATEWAY_PORTS_ENV];
+  if (port !== GATEWAY_PORT) delete next.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
   return next;
 }
 

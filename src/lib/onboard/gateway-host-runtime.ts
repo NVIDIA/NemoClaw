@@ -15,9 +15,13 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { waitForPort } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
-import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
+import {
+  hasOpenShellGatewayUserService,
+  startOpenShellGatewayUserService,
+} from "./docker-driver-gateway-service";
 import { isDefaultGatewayPort } from "./gateway-binding";
 import {
   isDockerDriverGatewayHttpReady,
@@ -46,16 +50,33 @@ import type { PortProbeResult } from "./preflight";
 /** `systemctl is-active` is a local query; anything slower than this is wedged. */
 const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
 
+function restartTrustedPackagedGateway(owner: GatewayOwner): void {
+  const result = startOpenShellGatewayUserService();
+  if (!result.attempted || !result.started) {
+    const detail = result.reason ? `: ${result.reason}` : "";
+    throw new Error(`OpenShell packaged gateway restart after install failed${detail}`);
+  }
+  // Type=simple can be active before binding. The caller still validates
+  // gateway ownership and protocol readiness after the port becomes reachable.
+  if (!waitForPort(owner.gatewayPort, 30)) {
+    throw new Error("OpenShell packaged gateway did not bind its port after install.");
+  }
+}
+
 export interface GatewayHostRuntimeDeps {
   applyOverlayfsAutoFix(clusterImage: string): string | null;
   checkGatewayPortAvailable(): Promise<PortProbeResult>;
   hasOpenShellGatewayUserService?: typeof hasOpenShellGatewayUserService;
+  /** Restart the trusted packaged service after its binaries are replaced in place. */
+  restartPackagedGatewayAfterTrustedInstall?(owner: GatewayOwner): void;
   /**
    * Read lazily: the onboarding entrypoint rebinds its gateway port at runtime
    * when an authoritative gateway is selected, so a captured value goes stale.
    */
   gatewayPort(): number;
   gatewayName(): string;
+  /** Optional narrow resolver for callers that already own the gateway network boundary. */
+  getGatewayStartNetworkEnv?(gatewayPort: number): Record<string, string>;
   /**
    * Unfiltered listener enumeration. An externally supervised gateway is an
    * ordinary systemd-run executable with no Docker-driver env markers, so the
@@ -110,6 +131,11 @@ export interface GatewayHostRuntime {
     persistOwner?: (owner: GatewayOwner) => void,
   ): GatewayOwner;
   bindGatewayOwner(owner: GatewayOwner): void;
+  /** Exact endpoint and optional client TLS bundle for a direct host forward. */
+  getGatewayForwardRuntimeAuthority(): {
+    readonly gatewayEndpoint: string;
+    readonly localTlsDir?: string;
+  };
   /** Local endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
   getGatewayOwner(): GatewayOwner;
@@ -192,21 +218,29 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       );
     }
     const resolved = resolveCurrentGatewayOwner(boundOwner.gatewayName, boundOwner.gatewayPort);
-    if (sameGatewayOwner(boundOwner, resolved)) return boundOwner;
-    const expectedPackagedOwner = { ...boundOwner, source: "packaged-service" as const };
-    if (
-      boundOwner.mode !== "nemoclaw-managed" ||
-      boundOwner.source !== "standalone" ||
-      !sameGatewayOwner(expectedPackagedOwner, resolved)
-    ) {
-      throw new Error(
-        "Gateway lifecycle authority changed during this run " +
-          `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
-          "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
-      );
+    if (!sameGatewayOwner(boundOwner, resolved)) {
+      const expectedPackagedOwner = { ...boundOwner, source: "packaged-service" as const };
+      if (
+        boundOwner.mode !== "nemoclaw-managed" ||
+        boundOwner.source !== "standalone" ||
+        !sameGatewayOwner(expectedPackagedOwner, resolved)
+      ) {
+        throw new Error(
+          "Gateway lifecycle authority changed during this run " +
+            `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
+            "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
+        );
+      }
+      persistOwner?.(resolved);
+      boundOwner = resolved;
     }
-    persistOwner?.(resolved);
-    boundOwner = resolved;
+
+    // Replacing a packaged binary does not replace the already-running process.
+    // Restart only the owner that was independently resolved as NemoClaw's
+    // trusted packaged service; standalone and declared supervisors stay untouched.
+    if (boundOwner.mode === "nemoclaw-managed" && boundOwner.source === "packaged-service") {
+      (deps.restartPackagedGatewayAfterTrustedInstall ?? restartTrustedPackagedGateway)(boundOwner);
+    }
     return boundOwner;
   }
 
@@ -532,12 +566,27 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     boundOwner = owner;
   }
 
-  function getGatewayLocalEndpoint(): string {
-    const owner = getGatewayOwner();
+  function gatewayEndpointForOwner(owner: GatewayOwner): string {
     if (isExternallySupervised(owner) && owner.endpoint) return owner.endpoint;
     const { getGatewayHttpsEndpoint } =
       require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
-    return getGatewayHttpsEndpoint(deps.gatewayPort());
+    return new URL(getGatewayHttpsEndpoint(owner.gatewayPort)).origin;
+  }
+
+  function getGatewayForwardRuntimeAuthority(): {
+    readonly gatewayEndpoint: string;
+    readonly localTlsDir?: string;
+  } {
+    const owner = getGatewayOwner();
+    const localTlsDir = getExternalGatewayClientEnv(owner)?.OPENSHELL_LOCAL_TLS_DIR;
+    return {
+      gatewayEndpoint: gatewayEndpointForOwner(owner),
+      ...(localTlsDir ? { localTlsDir } : {}),
+    };
+  }
+
+  function getGatewayLocalEndpoint(): string {
+    return gatewayEndpointForOwner(getGatewayOwner());
   }
 
   function getGatewayStartEnv(): Record<string, string> {
@@ -545,9 +594,12 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     // reads NEMOCLAW_GATEWAY_BIND_ADDRESS at load, and callers that reload
     // onboarding with a different environment drop it from the require cache.
     // A hoisted binding would pin this module to the stale first instance.
-    const { getGatewayStartNetworkEnv } =
-      require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
-    const gatewayEnv = getGatewayStartNetworkEnv(deps.gatewayPort());
+    const gatewayPort = deps.gatewayPort();
+    const gatewayEnv = deps.getGatewayStartNetworkEnv
+      ? deps.getGatewayStartNetworkEnv(gatewayPort)
+      : (
+          require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env")
+        ).getGatewayStartNetworkEnv(gatewayPort);
     const openshellVersion = deps.getInstalledOpenshellVersion();
     if (openshellVersion) {
       const stableGatewayImage = `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`;
@@ -566,6 +618,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     assertGatewayStartAllowed,
     attachGateway,
     bindGatewayOwner,
+    getGatewayForwardRuntimeAuthority,
     getGatewayLocalEndpoint,
     getGatewayOwner,
     getGatewayStartEnv,

@@ -11,6 +11,8 @@ import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./adapter";
 // but bind sandbox identity to the same labels and default-workspace name that
 // the pinned OpenShell release emits.
 export const PODMAN_MANAGED_LABEL = "openshell.managed";
+export const PODMAN_OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
+export const PODMAN_OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const PODMAN_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 export const PODMAN_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const PODMAN_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
@@ -252,8 +254,10 @@ function parseObservation(
   if (state.Running !== true || state.Paused === true || state.Restarting === true) {
     throw new Error("Podman held workload must be stably running before bootstrap preparation.");
   }
-  const configuredUser = String(config.User ?? "");
-  if (configuredUser !== "" && configuredUser !== "0" && configuredUser !== "root") {
+  const configuredUser = String(config.User ?? "")
+    .trim()
+    .toLowerCase();
+  if (!["", "0", "0:0", "root", "root:root"].includes(configuredUser)) {
     throw new Error("Podman held workload does not use the image-owned root supervisor boundary.");
   }
   const supervisorArgv = Object.freeze([

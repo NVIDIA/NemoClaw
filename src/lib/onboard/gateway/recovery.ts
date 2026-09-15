@@ -41,7 +41,14 @@ export interface GatewayRecoveryOrchestrationDeps {
   shouldPatchCoredns: typeof import("../../platform").shouldPatchCoredns;
   sleepSeconds: typeof import("../../core/wait").sleepSeconds;
   startDockerDriverGateway(options?: { exitOnFailure?: boolean }): Promise<void>;
-  startGatewayWithOptions(gpu: OnboardGpu, options: { exitOnFailure: false }): Promise<void>;
+  startGatewayWithOptions(
+    gpu: OnboardGpu,
+    options: {
+      exitOnFailure: false;
+      output?: StartGatewayForRecoveryOptions["output"];
+      runtimeSelection?: StartGatewayForRecoveryOptions["runtimeSelection"];
+    },
+  ): Promise<void>;
 }
 
 export interface GatewayRecoveryOrchestration {

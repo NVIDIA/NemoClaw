@@ -4,7 +4,7 @@
 import { expect } from "vitest";
 
 import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
-import type { RebuildFlowHarness } from "./rebuild-flow-dcode-harness";
+import type { RebuildFlowHarness } from "./rebuild-flow-generic-harness";
 
 export function makeDcodeSandboxEntry(): Record<string, unknown> {
   return {
@@ -41,7 +41,6 @@ export function configureDcodeSession(harness: RebuildFlowHarness): void {
 }
 
 export function expectNoDcodeMutation(harness: RebuildFlowHarness): void {
-  expect(harness.openShieldsSpy).not.toHaveBeenCalled();
   expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   expectNoSandboxDelete(harness.runOpenshellSpy);
   expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();

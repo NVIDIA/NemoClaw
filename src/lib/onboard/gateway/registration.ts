@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Buffer } from "node:buffer";
+
+import {
+  type OpenShellRuntimeSelection,
+  withSelectedOpenShellCommandOptions,
+} from "../../adapters/openshell/command-argv";
+import { removeGatewayRegistrationWithPolicy } from "../gateway-teardown-authority";
+
 type RunResult = ReturnType<typeof import("../../runner").run>;
 
 export interface GatewayRegistrationDeps {
@@ -14,32 +22,72 @@ export interface GatewayRegistrationDeps {
   runCaptureOpenshell(args: string[], options?: { ignoreError?: boolean }): string;
   runOpenshell(
     args: string[],
-    options?: { ignoreError?: boolean; suppressOutput?: boolean },
+    options?: {
+      env?: Record<string, string>;
+      ignoreError?: boolean;
+      replaceEnv?: boolean;
+      stdio?: ["ignore", "pipe", "pipe"];
+      suppressOutput?: boolean;
+    },
   ): RunResult;
-  runQuietOpenshell(args: string[]): { status: number | null };
+  runQuietOpenshell(args: string[]): {
+    status: number | null;
+    stdout?: string | Buffer;
+    stderr?: string | Buffer;
+  };
 }
 
 export interface GatewayRegistration {
   attachGatewayMetadataIfNeeded(options?: { forceRefresh?: boolean }): boolean;
-  registerDockerDriverGatewayEndpoint(): boolean;
+  registerDockerDriverGatewayEndpoint(runtimeSelection?: OpenShellRuntimeSelection): boolean;
 }
 
 export function createGatewayRegistration(deps: GatewayRegistrationDeps): GatewayRegistration {
-  function registerDockerDriverGatewayEndpoint(): boolean {
-    const selectExisting = deps.runQuietOpenshell(["gateway", "select", deps.gatewayName()]);
+  function registerDockerDriverGatewayEndpoint(
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ): boolean {
+    if (runtimeSelection && runtimeSelection.gatewayName !== deps.gatewayName()) {
+      throw new Error(
+        `Gateway registration target '${deps.gatewayName()}' does not match runtime selection '${runtimeSelection.gatewayName}'`,
+      );
+    }
+    const runtimeOptions = withSelectedOpenShellCommandOptions({}, runtimeSelection);
+    const runCaptureOpenshell: GatewayRegistrationDeps["runCaptureOpenshell"] = (
+      args,
+      options = {},
+    ) => deps.runCaptureOpenshell(args, { ...options, ...runtimeOptions });
+    const runOpenshell: GatewayRegistrationDeps["runOpenshell"] = (args, options = {}) =>
+      deps.runOpenshell(args, { ...options, ...runtimeOptions });
+    const runQuietOpenshell = (args: string[]) =>
+      runtimeSelection
+        ? runOpenshell(args, {
+            ignoreError: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            suppressOutput: true,
+          })
+        : deps.runQuietOpenshell(args);
+    const removeRegistration = (): boolean => {
+      if (!runtimeSelection) return deps.removeDockerDriverGatewayRegistration();
+      return removeGatewayRegistrationWithPolicy({
+        allowLegacyDestroy: true,
+        gatewayLabel: deps.gatewayName(),
+        run: runQuietOpenshell,
+      }).ok;
+    };
+    const selectExisting = runQuietOpenshell(["gateway", "select", deps.gatewayName()]);
     if (selectExisting.status === 0) {
-      const status = deps.runCaptureOpenshell(["status"], { ignoreError: true });
-      const namedInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
+      const status = runCaptureOpenshell(["status"], { ignoreError: true });
+      const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
         ignoreError: true,
       });
-      const currentInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+      const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
       if (deps.isGatewayHealthy(status, namedInfo, currentInfo)) {
         process.env.OPENSHELL_GATEWAY = deps.gatewayName();
         return true;
       }
     }
 
-    let addResult = deps.runOpenshell(
+    let addResult = runOpenshell(
       [
         "gateway",
         "add",
@@ -51,8 +99,8 @@ export function createGatewayRegistration(deps: GatewayRegistrationDeps): Gatewa
       { ignoreError: true, suppressOutput: true },
     );
     if (addResult.status !== 0) {
-      deps.removeDockerDriverGatewayRegistration();
-      addResult = deps.runOpenshell(
+      if (!removeRegistration()) return false;
+      addResult = runOpenshell(
         [
           "gateway",
           "add",
@@ -64,7 +112,7 @@ export function createGatewayRegistration(deps: GatewayRegistrationDeps): Gatewa
         { ignoreError: true, suppressOutput: true },
       );
     }
-    const selectResult = deps.runOpenshell(["gateway", "select", deps.gatewayName()], {
+    const selectResult = runOpenshell(["gateway", "select", deps.gatewayName()], {
       ignoreError: true,
       suppressOutput: true,
     });
@@ -72,11 +120,11 @@ export function createGatewayRegistration(deps: GatewayRegistrationDeps): Gatewa
       (addResult.status === 0 && selectResult.status === 0) ||
       (selectResult.status === 0 &&
         deps.isGatewayHealthy(
-          deps.runCaptureOpenshell(["status"], { ignoreError: true }),
-          deps.runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
+          runCaptureOpenshell(["status"], { ignoreError: true }),
+          runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
             ignoreError: true,
           }),
-          deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
+          runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
         ));
     if (ok) {
       process.env.OPENSHELL_GATEWAY = deps.gatewayName();

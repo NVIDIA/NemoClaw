@@ -77,6 +77,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
   it("adds the installed NemoClaw plugin to the default OpenClaw allowlist (#8975)", () => {
     const config = buildConfig({ ...BASE_ENV });
     expect(config.plugins.allow).toEqual(["nemoclaw"]);
+    expect(config.tools.alsoAllow).toEqual(["bundle-mcp"]);
   });
 
   it("allows the enabled diagnostics plugin (#8975)", () => {
@@ -119,9 +120,10 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
     });
-    ["diagnostics-otel", "brave", "tavily"].forEach((pluginId) => {
+    ["diagnostics-otel", "brave"].forEach((pluginId) => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
     });
+    expect(config.plugins.entries.tavily).toBeUndefined();
     expect(config.tools.web.search).toEqual({ enabled: false });
   });
 
@@ -147,13 +149,9 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
 
     expect(added.channels.telegram).toMatchObject({
       enabled: true,
-      accounts: {
-        default: {
-          botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-          enabled: true,
-        },
-      },
+      accounts: { default: { enabled: true } },
     });
+    expect(JSON.stringify(added.channels.telegram)).not.toContain("botToken");
     expect(added.plugins.entries.telegram).toEqual({ enabled: true });
     expect(added.plugins.allow).toContain("telegram");
     expect(addedPlan.credentialBindings).toContainEqual(

@@ -34,7 +34,7 @@ const MANAGED_BOOTSTRAP_BUILDER_IMAGE =
 const DISCOVERY_RUNTIME_ROOT = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const DISCOVERY_RUNTIME_PATH = `${DISCOVERY_RUNTIME_ROOT}/mcp-tool-discovery.mjs`;
 const DISCOVERY_EXPECTED_CONTRACT =
-  '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}';
+  '{"protocol":2,"ok":false,"count":0,"tools":[],"truncated":false,"detail":"tool discovery received invalid runtime arguments","failedStage":"preflight","failureClass":"precondition"}';
 const REVIEWED_DISCOVERY_RUNTIME_ROOT = path.join(
   import.meta.dirname,
   "..",
@@ -51,7 +51,7 @@ const REVIEWED_DISCOVERY_RUNTIME_FILES = [
 ] as const;
 const MANAGED_STARTUP_RUNTIME_PATH = "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
 
-function expectManagedRuntimeDiagnostic(dockerfile: string): void {
+export function expectManagedToolDiscoveryRuntimeImageContract(dockerfile: string): void {
   const instructions = dockerfileInstructions(dockerfile).filter(
     (instruction) =>
       instruction.keyword === "RUN" &&
@@ -104,7 +104,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     `test ! -L ${MANAGED_STARTUP_RUNTIME_PATH} || managed_runtime_assertion_failed non-symlink ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chown root:root ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed owner-root-root ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chmod 0444 ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed mode-0444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
-    `test \"$(stat -c '%u:%g:%a' ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null)\" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
+    `test "$(stat -c '%u:%g:%a' ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null)" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
   ]) {
     expect(logicalInstruction.split(assertion)).toHaveLength(2);
   }
@@ -207,7 +207,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       [
         "-c",
         [
-          `stat() { printf '%s' \"$NEMOCLAW_TEST_STAT_OUTPUT\"; }`,
+          `stat() { printf '%s' "$NEMOCLAW_TEST_STAT_OUTPUT"; }`,
           functionSource,
           'managed_runtime_assertion_failed "$NEMOCLAW_TEST_INVARIANT" "$NEMOCLAW_TEST_ARTIFACT"',
         ].join("\n"),
@@ -259,10 +259,15 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     const permissionReplay = runPermissionReplay();
     expect(permissionReplay.status, permissionReplay.stderr).toBe(0);
     expect(permissionReplay.stderr).toBe("");
-    expect(JSON.parse(permissionReplay.stdout)).toMatchObject({
-      protocol: 1,
+    expect(JSON.parse(permissionReplay.stdout)).toEqual({
+      protocol: 2,
       ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
       detail: "tool discovery received invalid runtime arguments",
+      failedStage: "preflight",
+      failureClass: "precondition",
     });
     const expectedUid = process.getuid?.() ?? 0;
     const expectedGid = process.getgid?.() ?? 0;
@@ -333,7 +338,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       expect(contractFailure.status).toBe(1);
       expect(contractFailure.stdout).toBe("");
       expect(contractFailure.stderr).toBe(
-        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"wrong?<REDACTED>?continued?[31m"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"count":"<missing>","tools":"<missing>","truncated":"<missing>","detail":"wrong?<REDACTED>?continued?[31m","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
       );
       expect(contractFailure.stderr).not.toContain(credential);
       expect(contractFailure.stderr).not.toContain("\u001b");
@@ -354,7 +359,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       expect(contractFailure.status).toBe(1);
       expect(contractFailure.stdout).toBe("");
       expect(contractFailure.stderr).toBe(
-        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"${sanitized}"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"count":"<missing>","tools":"<missing>","truncated":"<missing>","detail":"${sanitized}","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
       );
       expect(contractFailure.stderr).not.toContain(credential);
     }
@@ -379,7 +384,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     expect(privateKeyFailure.status).toBe(1);
     expect(privateKeyFailure.stdout).toBe("");
     expect(privateKeyFailure.stderr).toBe(
-      `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"wrong?<REDACTED>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+      `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"count":"<missing>","tools":"<missing>","truncated":"<missing>","detail":"wrong?<REDACTED>","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
     );
     expect(privateKeyFailure.stderr).not.toContain("private-material");
 
@@ -403,17 +408,35 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
 
     const success = runDiscoveryChecks({
       discoveryOutput: JSON.stringify({
-        protocol: 1,
+        protocol: 2,
         ok: false,
         detail: "tool discovery received invalid runtime arguments",
         count: 0,
         tools: [],
         truncated: false,
+        failedStage: "preflight",
+        failureClass: "precondition",
       }),
     });
     expect(success.status, success.stderr).toBe(0);
     expect(success.stdout).toBe("discovery-ok\n");
     expect(success.stderr).toBe("");
+
+    for (const rejectedContract of [
+      { ...JSON.parse(DISCOVERY_EXPECTED_CONTRACT), count: 1 },
+      { ...JSON.parse(DISCOVERY_EXPECTED_CONTRACT), tools: ["unexpected"] },
+      { ...JSON.parse(DISCOVERY_EXPECTED_CONTRACT), truncated: true },
+      { ...JSON.parse(DISCOVERY_EXPECTED_CONTRACT), extra: "unexpected" },
+    ]) {
+      const contractFailure = runDiscoveryChecks({
+        discoveryOutput: JSON.stringify(rejectedContract),
+      });
+      expect(contractFailure.status).toBe(1);
+      expect(contractFailure.stdout).toBe("");
+      expect(contractFailure.stderr).toContain(
+        "ERROR: managed image assertion failed: mcp-tool-discovery-json-contract",
+      );
+    }
 
     const missing = runDiagnostic(missingPath, "regular-file", "unused");
     expect(missing.status).toBe(1);
@@ -492,5 +515,4 @@ export function expectManagedBootstrapNativeImageContract(dockerfile: string): v
   ).toHaveLength(1);
   expect(dockerfile).toContain("test ! -L /usr/local/bin/nemoclaw-managed-bootstrap");
   expect(dockerfile).toContain("test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh");
-  expectManagedRuntimeDiagnostic(dockerfile);
 }

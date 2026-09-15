@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
 import type { Buffer } from "node:buffer";
+import type { SpawnSyncReturns } from "node:child_process";
 
-type CommandResult = Pick<SpawnSyncReturns<Buffer>, "status">;
+import { removeGatewayRegistrationWithPolicy } from "../gateway-teardown-authority";
+
+type CommandResult = Pick<SpawnSyncReturns<Buffer>, "status"> & {
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
+};
 type CommandOptions = {
   ignoreError?: boolean;
   stdio?: ["ignore", "pipe", "pipe"];
@@ -13,7 +18,6 @@ type CommandOptions = {
 
 export interface GatewayProcessLifecycleDeps {
   gatewayName(): string;
-  dashboardPort(): number;
   runOpenshell(args: string[], options?: CommandOptions): CommandResult;
   runCaptureOpenshell(args: string[], options?: { ignoreError?: boolean }): string;
   dockerInspect(
@@ -59,12 +63,18 @@ export function createGatewayProcessLifecycle(deps: GatewayProcessLifecycleDeps)
   }
 
   function removeDockerDriverGatewayRegistration(): boolean {
-    const removeResult = runQuietOpenshell(["gateway", "remove", deps.gatewayName()]);
-    if (removeResult.status === 0) return true;
-
-    // OpenShell builds before NVIDIA/OpenShell#1221 used `gateway destroy` for metadata cleanup.
-    const destroyResult = runQuietOpenshell(["gateway", "destroy", "-g", deps.gatewayName()]);
-    return destroyResult.status === 0;
+    return removeGatewayRegistrationWithPolicy({
+      allowLegacyDestroy: true,
+      gatewayLabel: deps.gatewayName(),
+      run: (args) => {
+        const result = runQuietOpenshell(args);
+        return {
+          status: result.status,
+          stdout: result.stdout?.toString(),
+          stderr: result.stderr?.toString(),
+        };
+      },
+    }).ok;
   }
 
   function terminateDockerDriverGatewayProcess(pid: number): boolean {
@@ -119,9 +129,6 @@ export function createGatewayProcessLifecycle(deps: GatewayProcessLifecycleDeps)
   }
 
   function retireLegacyGatewayForDockerDriverUpgrade(): void {
-    deps.runOpenshell(["forward", "stop", String(deps.dashboardPort())], {
-      ignoreError: true,
-    });
     stopDockerDriverGatewayProcess();
     const stoppedLegacyContainer = stopLegacyGatewayClusterContainer();
     removeDockerDriverGatewayRegistration();

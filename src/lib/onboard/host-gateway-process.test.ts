@@ -13,8 +13,11 @@ import {
   type HostGatewayProcessDeps,
   isHostPortFree,
   type RunResult,
+  resolveOwnedHostGatewayRuntimeProviderId,
+  scopedHostGatewayProcessAbsenceFailure,
   stopHostGatewayProcesses,
 } from "./host-gateway-process";
+import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "./docker-driver-gateway-runtime-marker";
 
 const PGREP_KEY = `pgrep -f ${HOST_GATEWAY_PGREP_PATTERN}`;
 
@@ -77,6 +80,50 @@ function otherUserUid(): number {
 }
 
 describe("host gateway cleanup boundaries", () => {
+  it("recovers the provider from an owned gateway runtime marker", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-marker-"));
+    try {
+      writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+        pid: 4242,
+        desiredEnv: {},
+        endpoint: "https://127.0.0.1:9123",
+        runtimeProviderId: "podman",
+      });
+
+      expect(
+        resolveOwnedHostGatewayRuntimeProviderId({
+          gatewayName: "nemoclaw-9123",
+          gatewayPort: 9123,
+          stateDir,
+        }),
+      ).toBe("podman");
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a provider marker outside the selected gateway identity", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-marker-"));
+    try {
+      writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+        pid: 4242,
+        desiredEnv: {},
+        endpoint: "https://127.0.0.1:8080",
+        runtimeProviderId: "podman",
+      });
+
+      expect(
+        resolveOwnedHostGatewayRuntimeProviderId({
+          gatewayName: "nemoclaw-9123",
+          gatewayPort: 9123,
+          stateDir,
+        }),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     ["free", 0, true],
     ["occupied", 1, false],
@@ -92,6 +139,59 @@ describe("host gateway cleanup boundaries", () => {
       ["-e", expect.stringContaining("server.listen(8080, '127.0.0.1'")],
       { stdio: "ignore", timeout: 2_000 },
     );
+  });
+
+  it("proves a recorded gateway is stopped only after a complete orphan scan", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-gateway-proof-"));
+    try {
+      fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), "4242\n", { mode: 0o600 });
+      const { run } = makeRun(
+        new Map([
+          ["ps -p 4242 -o stat=", notFound()],
+          [PGREP_KEY, notFound()],
+        ]),
+      );
+
+      expect(
+        scopedHostGatewayProcessAbsenceFailure(
+          { commandExists: () => true, env: {}, isPortFree: () => true, kill: vi.fn(), run },
+          {
+            openShellGatewayName: "nemoclaw-9123",
+            openShellGatewayPort: 9123,
+            stateDir,
+          },
+        ),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a discovered live process that claims the selected gateway", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-gateway-proof-"));
+    try {
+      const { run } = makeRun(
+        new Map([
+          [PGREP_KEY, ok("4343\n")],
+          ["ps -p 4343 -o stat=", ok("S\n")],
+          ["ps -p 4343 -o uid=", notFound()],
+          ["ps -p 4343 -o args=", ok("openshell-gateway[nemoclaw=nemoclaw-9123;port=9123]\n")],
+        ]),
+      );
+
+      expect(
+        scopedHostGatewayProcessAbsenceFailure(
+          { commandExists: () => true, env: {}, isPortFree: () => true, kill: vi.fn(), run },
+          {
+            openShellGatewayName: "nemoclaw-9123",
+            openShellGatewayPort: 9123,
+            stateDir,
+          },
+        ),
+      ).toContain("live gateway process 4343");
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
   });
 
   it("clears the exact gateway PID file and runtime marker", () => {

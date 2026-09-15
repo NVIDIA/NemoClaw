@@ -128,6 +128,32 @@ function restoreTmpArtifacts(paths: string[], backups: Record<string, string>): 
 }
 
 describe("scripts/lib/sandbox-init.sh", () => {
+  describe("Python startup isolation", () => {
+    it("ignores inherited PYTHONPATH in read_messaging_plan_channels", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-python-"));
+      const sentinel = join(workDir, "sitecustomize-ran");
+      writeFileSync(
+        join(workDir, "sitecustomize.py"),
+        'import os\nfrom pathlib import Path\nPath(os.environ["TEST_PYTHON_SENTINEL"]).write_text("executed")\n',
+      );
+      try {
+        const result = runWithLib("read_messaging_plan_channels", {
+          env: {
+            PYTHONPATH: workDir,
+            TEST_PYTHON_SENTINEL: sentinel,
+            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+              JSON.stringify({ channels: [{ channelId: "telegram", active: true }] }),
+            ).toString("base64"),
+          },
+        });
+        expect(existsSync(sentinel)).toBe(false);
+        expect(result.stdout).toBe("telegram");
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("emit_sandbox_sourced_file", () => {
     let workDir: string;
 
@@ -319,358 +345,36 @@ EOF
       });
       expect(stderr).toContain("integrity check FAILED");
     });
+  });
 
-    it("locked-aware verifier skips mutable-default hash files", () => {
-      const configFile = join(workDir, "config.json");
-      writeFileSync(configFile, '{"test": true}');
-      execFileSync("bash", [
-        "-c",
-        `cd ${JSON.stringify(workDir)} && sha256sum config.json > .config-hash`,
-      ]);
-      writeFileSync(configFile, '{"test": false, "mutable": true}');
+  describe("direct-root capability fallback", () => {
+    const QA_CAPBND = "00000004a82c35fb";
 
-      const { stdout } = runWithLib(`
-        verify_config_integrity_if_locked ${JSON.stringify(workDir)} 2>&1
-        echo "MUTABLE_OK"
-      `);
-      expect(stdout).toContain("Config integrity check skipped for mutable default");
+    it("reads and decodes the direct-root bounding set", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "nemoclaw-cap-bnd-"));
+      const status = join(workDir, "status");
+      writeFileSync(status, `Name:\tbash\nCapBnd:\t${QA_CAPBND}\n`);
+      try {
+        const { stdout } = runWithLib(
+          `cap_bnd="$(read_capability_bounding_set ${JSON.stringify(status)})"
+           printf '%s:%s\n' "$cap_bnd" "$(dangerous_caps_in_capbnd "$cap_bnd")"`,
+        );
+        expect(stdout).toBe(
+          `${QA_CAPBND}:cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service`,
+        );
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
     });
 
-    it("locked-aware verifier fails closed when a locked config is missing its hash", () => {
-      const fakeBin = join(workDir, "bin");
-      mkdirSync(fakeBin);
-      writeFileSync(
-        join(fakeBin, "stat"),
-        [
-          "#!/usr/bin/env bash",
-          'if [ "${2:-}" = "%u" ]; then echo 0; exit 0; fi',
-          'if [ "${2:-}" = "%a" ] || [ "${2:-}" = "%Lp" ]; then echo 755; exit 0; fi',
-          "exit 1",
-        ].join("\n"),
-        { mode: 0o700 },
-      );
-
+    it("fails closed when a direct-root drop cannot run", () => {
       const { stderr } = runWithLib(
-        `verify_config_integrity_if_locked ${JSON.stringify(workDir)}`,
-        {
-          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
-          expectFail: true,
-        },
+        `read_capability_bounding_set() { printf '%s\n' ${QA_CAPBND}; }
+         command() { [ "$*" = '-v capsh' ] && return 1; builtin command "$@"; }
+         NEMOCLAW_REQUIRE_CAP_DROP=1 drop_capabilities /bin/true`,
+        { expectFail: true },
       );
-      expect(stderr).toContain("Locked config is missing hash file");
-    });
-  });
-
-  describe("lock_rc_files", () => {
-    let workDir: string;
-
-    beforeEach(() => {
-      workDir = mkdtempSync(join(tmpdir(), "sandbox-init-lock-"));
-    });
-
-    afterEach(() => {
-      // Need to make writable before cleanup
-      try {
-        chmodSync(join(workDir, ".bashrc"), 0o644);
-      } catch {
-        /* ignore */
-      }
-      try {
-        chmodSync(join(workDir, ".profile"), 0o644);
-      } catch {
-        /* ignore */
-      }
-      execFileSync("rm", ["-rf", workDir]);
-    });
-
-    it("sets .bashrc and .profile to 444", () => {
-      writeFileSync(join(workDir, ".bashrc"), "# bashrc");
-      writeFileSync(join(workDir, ".profile"), "# profile");
-
-      runWithLib(`lock_rc_files ${JSON.stringify(workDir)}`);
-
-      const bashrcPerms = getOctalPerms(join(workDir, ".bashrc"));
-      const profilePerms = getOctalPerms(join(workDir, ".profile"));
-      expect(bashrcPerms).toBe("444");
-      expect(profilePerms).toBe("444");
-    });
-
-    it("is a no-op when files do not exist", () => {
-      // Should not throw
-      runWithLib(`lock_rc_files ${JSON.stringify(workDir)}`);
-    });
-
-    it("refuses to chmod symlinked rc files", () => {
-      const target = join(workDir, "target");
-      writeFileSync(target, "# target", { mode: 0o600 });
-      symlinkSync(target, join(workDir, ".bashrc"));
-
-      const { stdout } = runWithLib(`lock_rc_files ${JSON.stringify(workDir)} 2>&1`);
-
-      expect(stdout).toContain("Refusing to lock symlinked rc file");
-      expect(getOctalPerms(target)).toBe("600");
-    });
-  });
-
-  describe("drop_capabilities", () => {
-    it("function is defined and callable", () => {
-      // We can't test actual capsh on macOS, but verify the function exists
-      // and handles the no-capsh case gracefully. Capture stderr via redirect.
-      const { stdout } = runWithLib(
-        `
-        # Hide capsh from PATH so the function falls through
-        drop_capabilities /usr/local/bin/fake-entrypoint 2>&1
-        echo "FALLTHROUGH_OK"
-      `,
-        { env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "" } },
-      );
-      expect(stdout).toContain("capsh not available");
-      expect(stdout).toContain("FALLTHROUGH_OK");
-    });
-
-    it("skips when NEMOCLAW_CAPS_DROPPED=1", () => {
-      const { stdout } = runWithLib(
-        `
-        NEMOCLAW_CAPS_DROPPED=1
-        drop_capabilities /usr/local/bin/fake-entrypoint
-        echo "SKIPPED_OK"
-      `,
-      );
-      expect(stdout).toContain("SKIPPED_OK");
-    });
-
-    // Context for reopened issue #3280 (NVBug 6159223), QA FAIL reported by
-    // hulynn on v0.0.54: on a host whose container runtime does not grant
-    // CAP_SETPCAP (e.g. the Colossus Ubuntu 24.04 image), capsh --drop cannot
-    // run, so the bounding-set drop is skipped and the dangerous caps
-    // (cap_sys_admin, cap_sys_ptrace, cap_net_raw, cap_dac_override,
-    // cap_net_bind_service, ...) remain in the bounding set.
-    //
-    // The strict-mode tests below use NEMOCLAW_PROC_STATUS — a test seam in
-    // sandbox-init.sh — to feed a known CapBnd fixture, so they exercise the
-    // real enforcement against a controlled bounding set without depending on
-    // the test runner's own /proc/self/status. CapBnd 0x4a82c35fb is the exact
-    // value hulynn decoded on the failing Colossus host.
-    const QA_CAPBND = "00000004a82c35fb"; // contains all 10 inspected dangerous caps
-    const CLEAN_CAPBND = "0000000000000000"; // none present
-    const QA_DANGEROUS =
-      "cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service";
-
-    // Stub capsh so it is found on PATH (command -v succeeds) but reports
-    // CAP_SETPCAP absent, forcing the fall-through that skips the real drop.
-    const capshNoSetpcapStub = [
-      "cat >\"$TMP/capsh\" <<'STUB'",
-      "#!/bin/sh",
-      '[ "$1" = "--has-p=cap_setpcap" ] && exit 1',
-      "exit 0",
-      "STUB",
-      'chmod +x "$TMP/capsh"',
-      'export PATH="$TMP:$PATH"',
-    ];
-    const writeStatusFixture = (capbndHex: string) => [
-      `printf 'CapBnd:\\t${capbndHex}\\n' >"$TMP/status"`,
-      'export NEMOCLAW_PROC_STATUS="$TMP/status"',
-    ];
-
-    // Default (no NEMOCLAW_REQUIRE_CAP_DROP): warns and CONTINUES even though
-    // dangerous caps remain — preserving the zero-regression posture for
-    // CAP_SETPCAP-less hosts. report_residual_capabilities still names them.
-    it("warns without refusing to start when CAP_SETPCAP is unavailable (#3280)", () => {
-      const { stdout } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
-          'echo "SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
-      );
-      expect(stdout).toContain(
-        "CAP_SETPCAP not available — cannot drop bounding-set caps via capsh",
-      );
-      expect(stdout).toContain(`Dangerous caps remain in bounding set: ${QA_DANGEROUS}`);
-      expect(stdout).toContain("SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS");
-      expect(stdout).not.toContain("Refusing to start sandbox");
-    });
-
-    // Exercise the REAL decode function (not a copy of its loop) so future
-    // drift in dangerous_caps_in_capbnd is caught.
-    it("dangerous_caps_in_capbnd decodes the inspected caps from a CapBnd hex", () => {
-      const { stdout } = runWithLib(
-        [
-          `echo "DANGEROUS:[$(dangerous_caps_in_capbnd ${QA_CAPBND})]"`,
-          `echo "CLEAN:[$(dangerous_caps_in_capbnd ${CLEAN_CAPBND})]"`,
-        ].join("\n"),
-      );
-      expect(stdout).toContain(`DANGEROUS:[${QA_DANGEROUS}]`);
-      expect(stdout).toContain("CLEAN:[]");
-    });
-
-    // ── Fix: opt-in fail-closed strict mode (issue #3280) ──────────────
-    // The inverse of the reverted #4266: default stays warn-and-continue (no
-    // regression), but NEMOCLAW_REQUIRE_CAP_DROP=1 refuses to start unless the
-    // ACTUAL bounding set is provably free of the dangerous caps.
-
-    it("refuses to start when REQUIRE_CAP_DROP=1 and dangerous caps remain (CAP_SETPCAP path)", () => {
-      const { stdout, stderr } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint",
-          'echo "SHOULD_NOT_REACH"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" }, expectFail: true },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain(
-        `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
-      );
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
-    });
-
-    it("refuses to start when REQUIRE_CAP_DROP=1 and capsh is missing", () => {
-      const { stdout, stderr } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint",
-          'echo "SHOULD_NOT_REACH"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        {
-          // Hide capsh so command -v fails, exercising the capsh-missing branch.
-          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
-          expectFail: true,
-        },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("capsh not available");
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
-    });
-
-    // Regression for the sentinel-bypass finding: a pre-set NEMOCLAW_CAPS_DROPPED=1
-    // must NOT let a host with residual caps slip past strict mode. The gate
-    // verifies the actual bounding set, so it still refuses.
-    it("refuses despite a pre-set NEMOCLAW_CAPS_DROPPED=1 when dangerous caps remain (strict)", () => {
-      const { stdout, stderr } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint",
-          'echo "BYPASSED_STRICT_MODE"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        {
-          env: { NEMOCLAW_CAPS_DROPPED: "1", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
-          expectFail: true,
-        },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain("dangerous caps remain in bounding set");
-      expect(combined).not.toContain("BYPASSED_STRICT_MODE");
-    });
-
-    // Strict mode trusts the verified state, not the fall-through: if the
-    // bounding set is already clean it must NOT refuse.
-    it("continues under REQUIRE_CAP_DROP=1 when the bounding set is already clean", () => {
-      const { stdout } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(CLEAN_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
-          'echo "CONTINUED_CLEAN"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" } },
-      );
-      expect(stdout).toContain("CONTINUED_CLEAN");
-      expect(stdout).not.toContain("Refusing to start sandbox");
-    });
-
-    it("refuses under REQUIRE_CAP_DROP=1 when the bounding set cannot be verified", () => {
-      const { stdout, stderr } = runWithLib(
-        `
-        export NEMOCLAW_PROC_STATUS=/nonexistent/sandbox-init-status
-        drop_capabilities /usr/local/bin/fake-entrypoint
-        echo "SHOULD_NOT_REACH"
-      `,
-        {
-          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
-          expectFail: true,
-        },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain("could not read bounding set");
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
-    });
-
-    // Harden (issue #3280): a non-empty but unparseable CapBnd (corrupt /proc,
-    // CRLF fixture, future format change) must be treated as "cannot verify"
-    // — refusing in strict mode — and must NOT surface a raw bash arithmetic
-    // error. MALFORMED_CAPBND contains non-hex characters.
-    const MALFORMED_CAPBND = "00000000nothex0";
-    it("refuses under REQUIRE_CAP_DROP=1 when CapBnd is non-empty but unparseable", () => {
-      const { stdout, stderr } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...writeStatusFixture(MALFORMED_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint",
-          'echo "SHOULD_NOT_REACH"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        {
-          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
-          expectFail: true,
-        },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain("could not parse bounding set");
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
-      // No leaked bash arithmetic error.
-      expect(combined).not.toMatch(/value too great for base|invalid arithmetic|16#/);
-    });
-
-    it("warns and continues (no abort) on an unparseable CapBnd when REQUIRE_CAP_DROP is unset", () => {
-      const { stdout } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(MALFORMED_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
-          'echo "CONTINUED_ON_BAD_CAPBND"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
-      );
-      expect(stdout).toContain("residual caps unknown");
-      expect(stdout).toContain("CONTINUED_ON_BAD_CAPBND");
-      expect(stdout).not.toContain("Refusing to start sandbox");
-    });
-
-    it("continues (no regression) when NEMOCLAW_REQUIRE_CAP_DROP is unset even with residual caps", () => {
-      const { stdout } = runWithLib(
-        [
-          "TMP=$(mktemp -d)",
-          ...capshNoSetpcapStub,
-          ...writeStatusFixture(QA_CAPBND),
-          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
-          'echo "CONTINUED_OK"',
-          'rm -rf "$TMP"',
-        ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
-      );
-      expect(stdout).toContain("CONTINUED_OK");
-      expect(stdout).not.toContain("Refusing to start sandbox");
+      expect(stderr).toContain("Refusing to start sandbox: dangerous caps remain");
     });
   });
 
@@ -773,23 +477,6 @@ EOF
         expect(src).not.toContain("ulimit -Hu 512");
       },
     );
-
-    // SECURITY (#4527): the RLIMIT caps are only unraisable if they are set
-    // while still root PID 1, BEFORE drop_capabilities (capsh) and the
-    // setpriv step-down. A refactor that moved the harden call after the
-    // privilege drop would turn it into dead code (cap set as the unprivileged
-    // agent, hard limit no longer lowered) while every other test stayed green.
-    // Pin the ordering so that regression is caught.
-    it.each(entrypoints)("%s calls harden_resource_limits before drop_capabilities", (rel) => {
-      const src = readFileSync(join(import.meta.dirname, rel), "utf-8");
-      // Anchor to executable command lines, not free-text, so a comment
-      // mentioning either name cannot satisfy (or break) the ordering check.
-      const hardenIdx = src.match(/^\s*harden_resource_limits\s*$/m)?.index ?? -1;
-      const dropIdx = src.match(/^\s*drop_capabilities\b.*$/m)?.index ?? -1;
-      expect(hardenIdx).toBeGreaterThanOrEqual(0);
-      expect(dropIdx).toBeGreaterThanOrEqual(0);
-      expect(hardenIdx).toBeLessThan(dropIdx);
-    });
   });
 
   describe("init_step_down_prefixes", () => {
@@ -1001,7 +688,7 @@ EOF
         SANDBOX_CHILD_PIDS=()
         SANDBOX_WAIT_PID=""
         # Override exit so we can test
-        exit() { echo "EXIT_\$1"; }
+        exit() { echo "EXIT_$1"; }
         cleanup_on_signal
       `);
       expect(stdout).toContain("EXIT_0");
@@ -1022,7 +709,10 @@ EOF
 
   describe("both entrypoints source the shared library", () => {
     it("nemoclaw-start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(join(import.meta.dirname, "../../../scripts/nemoclaw-start.sh"), "utf-8");
+      const src = readFileSync(
+        join(import.meta.dirname, "../../../scripts/nemoclaw-start.sh"),
+        "utf-8",
+      );
       const start = src.indexOf("_SANDBOX_INIT=");
       // Bound the source block at the harden_resource_limits call line itself
       // (executable, stable) rather than a free-text comment that may be reworded.

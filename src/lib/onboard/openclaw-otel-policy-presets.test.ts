@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./messaging-policy-presets", () => ({
   mergeEnabledMessagingChannelPolicyPresets: (presets: string[]) => presets,
   requiredMessagingChannelPolicyPresets: () => [],
+  pruneInactiveHermesMessagingPolicyPresets: (presets: string[]) => presets,
   pruneDisabledMessagingPolicyPresets: (presets: string[]) => presets,
   mergeAppliedPolicyPresetsForDisabledMessagingCleanup: (presets: string[]) => presets,
   hasDisabledMessagingPolicyPreset: () => false,
@@ -22,7 +23,6 @@ import {
   OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
   requiredOpenclawOtelPolicyPresets,
 } from "./openclaw-otel-policy-presets";
-import { mergeRequiredSetupPolicyPresets } from "./policy-selection";
 
 describe("openclaw-otel-policy-presets", () => {
   const originalOtel = process.env.NEMOCLAW_OPENCLAW_OTEL;
@@ -67,19 +67,6 @@ describe("openclaw-otel-policy-presets", () => {
         knownPresetNames: known,
       }),
     ).toEqual(["npm", OPENCLAW_OTEL_LOCAL_POLICY_PRESET]);
-  });
-
-  it("mergeRequiredSetupPolicyPresets includes OTEL for OpenClaw sandboxes", () => {
-    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
-    delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
-    const known = new Set(["npm", OPENCLAW_OTEL_LOCAL_POLICY_PRESET]);
-
-    expect(
-      mergeRequiredSetupPolicyPresets(["npm"], {
-        agent: "openclaw",
-        knownPresetNames: known,
-      }),
-    ).toContain(OPENCLAW_OTEL_LOCAL_POLICY_PRESET);
   });
 
   it("treats common false env values as disabled", () => {

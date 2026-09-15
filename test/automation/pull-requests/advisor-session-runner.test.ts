@@ -50,14 +50,19 @@ const sdk = vi.hoisted(() => {
     omitContextTool: false,
     activeToolCalls: [] as string[][],
     contextContents: [] as string[],
+    readContents: [] as string[],
+    readErrors: [] as string[],
     customTools: [] as MockTool[],
     emitAnalysisError: false,
     emitCommitProse: false,
     emitRepairProse: false,
+    failOptionalRead: false,
+    omitRequiredRead: false,
     omitAnalysis: false,
     omitAnalysisPrompts: 0,
     prompts: [] as string[],
-    retryResponses: [] as Array<"exhausted" | "success">,
+    retryCancelled: false,
+    retryResponses: [] as Array<"budget-exceeded" | "exhausted" | "success">,
     terminalResponses: [] as TerminalResponse[],
   };
 
@@ -65,13 +70,18 @@ const sdk = vi.hoisted(() => {
     state.omitContextTool = false;
     state.activeToolCalls = [];
     state.contextContents = [];
+    state.readContents = [];
+    state.readErrors = [];
     state.customTools = [];
     state.emitAnalysisError = false;
     state.emitCommitProse = false;
     state.emitRepairProse = false;
+    state.failOptionalRead = false;
+    state.omitRequiredRead = false;
     state.omitAnalysis = false;
     state.omitAnalysisPrompts = 0;
     state.prompts = [];
+    state.retryCancelled = false;
     state.retryResponses = [];
     state.terminalResponses = [];
   };
@@ -94,15 +104,17 @@ const sdk = vi.hoisted(() => {
   const executeReadTool = async (tool: MockTool, target: string, emit: Listener): Promise<void> => {
     emit({ type: "tool_execution_start", toolName: tool.name });
     try {
-      await tool.execute(
+      const result = await tool.execute(
         `${tool.name}-call`,
         { path: target } as never,
         undefined,
         undefined,
         undefined as never,
       );
+      state.readContents.push(result.content[0]?.text ?? "");
       emit({ type: "tool_execution_end", toolName: tool.name, isError: false });
-    } catch {
+    } catch (error: unknown) {
+      state.readErrors.push(error instanceof Error ? error.message : String(error));
       emit({ type: "tool_execution_end", toolName: tool.name, isError: true });
     }
   };
@@ -161,10 +173,13 @@ const sdk = vi.hoisted(() => {
           : Promise.resolve());
         const requiredReadPath = /^- (.+)$/mu.exec(prompt.split("Required files:\n")[1] ?? "")?.[1];
         const readTool = state.customTools.find(
-          (tool) => requiredReadPath && activeToolNames.includes(tool.name) && tool.name === "read",
+          (tool) => activeToolNames.includes(tool.name) && tool.name === "read",
         );
-        await (readTool && requiredReadPath
+        await (readTool && requiredReadPath && !state.omitRequiredRead
           ? executeReadTool(readTool, requiredReadPath, emit)
+          : Promise.resolve());
+        await (readTool && state.failOptionalRead
+          ? executeReadTool(readTool, "missing-optional-evidence", emit)
           : Promise.resolve());
         const repairTools = state.customTools.filter(
           (tool) => isRepairPrompt && activeToolNames.includes(tool.name) && tool !== terminalTool,
@@ -173,7 +188,10 @@ const sdk = vi.hoisted(() => {
         Array.from({ length: terminalTool ? terminalPlan.failureCount : 0 }).forEach(() =>
           failTerminalTool(terminalTool as MockTool, emit),
         );
-        const retryError = "429 status code (no body)";
+        const retryError =
+          retryResponse === "budget-exceeded"
+            ? '429: {"message":"Budget has been exceeded!","code":"budget_exceeded"}'
+            : "429 status code (no body)";
         const retryAttemptEvents = [
           {
             type: "message_update",
@@ -203,12 +221,24 @@ const sdk = vi.hoisted(() => {
             { type: "auto_retry_end", success: false, attempt: 1, finalError: retryError },
           ],
         };
-        retryPlans[retryResponse ?? "none"].forEach(emit);
+        await (retryResponse === "budget-exceeded"
+          ? (async () => {
+              retryAttemptEvents.forEach(emit);
+              await Promise.resolve();
+              emit({
+                type: "auto_retry_end",
+                success: false,
+                attempt: 1,
+                finalError: state.retryCancelled ? "Retry cancelled" : retryError,
+              });
+            })()
+          : Promise.resolve(retryPlans[retryResponse ?? "none"].forEach(emit)));
         const omitThisAnalysis = state.omitAnalysis || state.omitAnalysisPrompts > 0;
         state.omitAnalysisPrompts = Math.max(0, state.omitAnalysisPrompts - 1);
         const shouldEmitText =
           !omitThisAnalysis &&
           retryResponse !== "exhausted" &&
+          retryResponse !== "budget-exceeded" &&
           !prompt.startsWith("Prepare ") &&
           (!prompt.includes("Emit no prose before or after") ||
             (state.emitCommitProse && !isRepairPrompt) ||
@@ -233,6 +263,9 @@ const sdk = vi.hoisted(() => {
           });
         emit({ type: "agent_end" });
       },
+      abortRetry: vi.fn(() => {
+        state.retryCancelled = true;
+      }),
       abort: vi.fn(async () => {}),
       exportToHtml: vi.fn(async (outputPath: string) => outputPath),
       dispose: vi.fn(),
@@ -265,6 +298,7 @@ import {
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   type AdvisorPromptTurn,
   advisorRetrySettings,
+  isAdvisorBudgetExceededError,
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
 } from "../../../tools/advisors/session.mts";
@@ -304,6 +338,13 @@ function analysisTurn(name: string): AdvisorPromptTurn {
   };
 }
 
+function evidenceAnalysisTurn(name: string, evidencePath: string): AdvisorPromptTurn {
+  return {
+    ...analysisTurn(name),
+    requiredReadOneOfPaths: [evidencePath],
+  };
+}
+
 function submitTurn(name: string): AdvisorPromptTurn {
   return {
     ...turn(name, '{"submit":true}'),
@@ -326,7 +367,12 @@ function commitTurn(name: string): AdvisorPromptTurn {
   };
 }
 
-async function run(promptTurns: AdvisorPromptTurn[], prepare?: (directory: string) => void) {
+async function run(
+  promptTurns: AdvisorPromptTurn[],
+  prepare?: (directory: string) => void,
+  additionalReadRoots: string[] = [],
+  logProgress: (message: string) => void = () => {},
+) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
   prepare?.(dir);
@@ -334,6 +380,7 @@ async function run(promptTurns: AdvisorPromptTurn[], prepare?: (directory: strin
   return runReadOnlyAdvisor({
     cwd: dir,
     promptTurns,
+    additionalReadRoots,
     systemPrompt: "system",
     configDir: path.join(dir, "config"),
     htmlExportPath: path.join(dir, "session.html"),
@@ -342,7 +389,7 @@ async function run(promptTurns: AdvisorPromptTurn[], prepare?: (directory: strin
     maxCaptureBytes: 64 * 1024,
     credentialEnv: "TEST_ADVISOR_KEY",
     logPrefix: "test-advisor",
-    logProgress: () => {},
+    logProgress,
     customTools: [
       customTool("turn_action"),
       customTool("draft_action"),
@@ -360,16 +407,30 @@ afterEach(() => {
 });
 
 describe("advisor session runner", () => {
-  it("uses one bounded provider-aware retry layer for transient failures", () => {
-    expect(advisorRetrySettings("azure/openai/gpt-5.6-terra")).toEqual({
+  it("distinguishes terminal budget exhaustion from transient rate limiting", () => {
+    expect(isAdvisorBudgetExceededError('{"code":"budget_exceeded"}')).toBe(true);
+    expect(isAdvisorBudgetExceededError("Budget has been exceeded! Try later")).toBe(true);
+    expect(isAdvisorBudgetExceededError("429 status code (no body)")).toBe(false);
+    expect(isAdvisorBudgetExceededError("provider overloaded")).toBe(false);
+  });
+
+  it("uses one bounded, specialist-spread retry layer for transient failures", () => {
+    const behavior = advisorRetrySettings("azure/openai/gpt-5.6-terra", "pr-review-behavior");
+    const dependencyUse = advisorRetrySettings(
+      "openai/openai/gpt-5.6-terra",
+      "pr-review-dependency-use",
+    );
+
+    expect(behavior).toEqual({
       enabled: true,
-      maxRetries: 4,
-      baseDelayMs: 6_000,
+      maxRetries: 5,
+      baseDelayMs: 13_909,
       provider: {
         maxRetries: 0,
         maxRetryDelayMs: 60_000,
       },
     });
+    expect(dependencyUse.baseDelayMs).toBe(14_827);
   });
 
   it("configures Pi's proxy transport before an OpenShell SDK session", async () => {
@@ -383,6 +444,46 @@ describe("advisor session runner", () => {
     expect(transport.configure.mock.invocationCallOrder[0]).toBeLessThan(
       sdk.createAgentSession.mock.invocationCallOrder[0] as number,
     );
+  });
+
+  it("shows and reads required specialist evidence before analysis (#10791)", async () => {
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-evidence-"));
+    tempDirs.push(evidenceDir);
+    const evidenceFile = path.join(evidenceDir, "specialist.diff");
+    fs.writeFileSync(evidenceFile, "diff evidence");
+    const evidencePath = fs.realpathSync(evidenceFile);
+    const result = await run([evidenceAnalysisTurn("review-evidence", evidencePath)], undefined, [
+      evidenceDir,
+    ]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.prompts[0]).toContain(
+      `Required files:\n- ${evidencePath}\nRead at least one exact path above with \`read\` before writing analysis.`,
+    );
+    expect(sdk.state.readContents).toEqual(["diff evidence"]);
+    expect(result.raw.indexOf("tool_end read ok")).toBeLessThan(
+      result.raw.indexOf("analysis for Review review-evidence"),
+    );
+  });
+
+  it("rejects specialist analysis that omits required evidence (#10791)", async () => {
+    const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-evidence-"));
+    tempDirs.push(evidenceDir);
+    const evidenceFile = path.join(evidenceDir, "specialist.diff");
+    fs.writeFileSync(evidenceFile, "diff evidence");
+    const evidencePath = fs.realpathSync(evidenceFile);
+    sdk.state.omitRequiredRead = true;
+
+    const result = await run([evidenceAnalysisTurn("review-evidence", evidencePath)], undefined, [
+      evidenceDir,
+    ]);
+
+    expect(result.fatalError).toBe("review-evidence omitted specialist evidence read");
+    expect(result.turnErrors.join("; ")).toContain(
+      "review-evidence omitted specialist evidence read",
+    );
+    expect(sdk.state.readContents).toEqual([]);
   });
 
   it("leaves the global transport unchanged for hosted advisor inference", async () => {
@@ -410,6 +511,17 @@ describe("advisor session runner", () => {
 
     expect(result.fatalError).toBe("429 status code (no body)");
     expect(result.turnErrors).toEqual(["only-analysis: 429 status code (no body)"]);
+    expect(result.raw).toContain("retry_end success=false attempts=1");
+  });
+
+  it("cancels terminal provider budget retries without hiding the cause", async () => {
+    sdk.state.retryResponses = ["budget-exceeded"];
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toContain("Budget has been exceeded");
+    expect(result.turnErrors).toHaveLength(1);
+    expect(result.turnErrors[0]).toContain("budget_exceeded");
+    expect(result.raw).toContain("retry_cancel terminal=budget_exceeded");
     expect(result.raw).toContain("retry_end success=false attempts=1");
   });
 
@@ -524,79 +636,6 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts).toHaveLength(1);
   });
 
-  it("deduplicates relative aliases before required-read preparation (#9963)", async () => {
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [
-        {
-          ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["required.txt", "./required.txt"],
-        },
-      ],
-      (directory) => fs.writeFileSync(path.join(directory, "required.txt"), "required\n", "utf8"),
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
-  });
-
-  it("prepares every distinct required read before submission (#9963)", async () => {
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [
-        {
-          ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["first.txt", "second.txt"],
-        },
-      ],
-      (directory) => {
-        fs.writeFileSync(path.join(directory, "first.txt"), "first\n", "utf8");
-        fs.writeFileSync(path.join(directory, "second.txt"), "second\n", "utf8");
-      },
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(sdk.state.prompts).toHaveLength(3);
-    expect(sdk.state.prompts[0]).toMatch(/first\.txt/u);
-    expect(sdk.state.prompts[1]).toMatch(/second\.txt/u);
-    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
-  });
-
-  it("accepts an empty required file at EOF (#9963)", async () => {
-    const requiredReadTurn: AdvisorPromptTurn = {
-      name: "read-empty",
-      prompt: "Analyze the required file.",
-      requiredReadPaths: ["empty.txt"],
-      requireAssistantText: true,
-    };
-    const result = await run([requiredReadTurn], (directory) =>
-      fs.writeFileSync(path.join(directory, "empty.txt"), "", "utf8"),
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("required_read_preparation_end read-empty ok");
-  });
-
-  it("rejects a required read outside the workspace (#9963)", async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-required-read-outside-"));
-    tempDirs.push(outside);
-    const outsideFile = path.join(outside, "outside.txt");
-    fs.writeFileSync(outsideFile, "outside\n", "utf8");
-
-    await expect(
-      run([
-        {
-          name: "read-outside",
-          prompt: "Analyze the required file.",
-          requiredReadPaths: [outsideFile],
-        },
-      ]),
-    ).rejects.toThrow("outside the workspace");
-  });
-
   it("allows one failed initial submit followed by one repair success", async () => {
     sdk.state.terminalResponses = ["fail-once", "success"];
     const result = await run([submitTurn("prepare-and-submit")]);
@@ -608,10 +647,16 @@ describe("advisor session runner", () => {
 
   it("rejects multiple submit attempts during terminal-submit repair", async () => {
     sdk.state.terminalResponses = ["fail-once", "fail-then-success"];
-    const result = await run([submitTurn("prepare-and-submit")]);
+    const progress: string[] = [];
+    const result = await run([submitTurn("prepare-and-submit")], undefined, [], (message) =>
+      progress.push(message),
+    );
 
     expect(result.fatalError).toContain("terminal-submit repair must make exactly 1");
     expect(sdk.state.prompts).toHaveLength(2);
+    expect(progress.join("\n")).toContain(
+      '"repairAttempts":{"assistantText":false,"atomicTerminal":false,"terminalSubmit":true}',
+    );
   });
 
   it("rejects prose during preparatory terminal-submit repair", async () => {
@@ -632,6 +677,60 @@ describe("advisor session runner", () => {
     expect(result.fatalError).toBeUndefined();
     expect(result.raw).toContain("terminal_submit_repair_start");
     expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("accepts tool-disabled analysis repair after a successful terminal submit", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.terminalResponses = ["success"];
+    const result = await run([
+      {
+        ...submitTurn("prepare-and-submit"),
+        requireAssistantText: true,
+        assistantTextRepairPrompt: "Return the required analysis.",
+      },
+    ]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("assistant_text_repair_start prepare-and-submit");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.activeToolCalls).toContainEqual([]);
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("logs tool-flow diagnostics when an optional read blocks prose repair", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.failOptionalRead = true;
+    const progress: string[] = [];
+
+    const result = await run([analysisTurn("investigate")], undefined, [], (message) =>
+      progress.push(message),
+    );
+
+    expect(result.fatalError).toBe("investigate omitted required analysis");
+    expect(progress).toContainEqual(
+      expect.stringContaining(
+        'Advisor SDK turn failure diagnostics: {"textEvents":0,"readEvents":0,"toolStarts":2,"toolEnds":2,"toolFailures":1,"failedToolNames":["read"]',
+      ),
+    );
+    expect(progress.join("\n")).not.toContain("missing-optional-evidence");
+  });
+
+  it("retains diagnostics when analysis repair also omits prose", async () => {
+    sdk.state.omitAnalysisPrompts = 2;
+    const progress: string[] = [];
+
+    const result = await run([analysisTurn("investigate")], undefined, [], (message) =>
+      progress.push(message),
+    );
+
+    expect(result.fatalError).toBe("investigate assistant-text repair omitted required analysis");
+    expect(sdk.state.prompts).toHaveLength(2);
+    expect(progress).toContainEqual(
+      expect.stringContaining(
+        'Advisor SDK turn failure diagnostics: {"textEvents":0,"readEvents":0,"toolStarts":1,"toolEnds":1,"toolFailures":0,"failedToolNames":[],"unmatchedToolEndNames":[],"unsettledToolNames":[],"missingRequiredToolNames":[],"repairAttempts":{"assistantText":true,"atomicTerminal":false,"terminalSubmit":false}}',
+      ),
+    );
   });
 
   it("repairs omitted required recording tools before submit (#9963)", async () => {
@@ -683,7 +782,13 @@ describe("advisor session runner", () => {
 
   it("fails closed after one unsuccessful atomic-terminal repair (#6446)", async () => {
     sdk.state.terminalResponses = ["omit", "omit"];
-    const result = await run([analysisTurn("only-analysis"), commitTurn("only-commit")]);
+    const progress: string[] = [];
+    const result = await run(
+      [analysisTurn("only-analysis"), commitTurn("only-commit")],
+      undefined,
+      [],
+      (message) => progress.push(message),
+    );
 
     expect(result.fatalError).toContain(
       "only-commit atomic-terminal repair must commit turn_action successfully once",
@@ -694,6 +799,9 @@ describe("advisor session runner", () => {
       ),
     ]);
     expect(sdk.state.prompts).toHaveLength(3);
+    expect(progress.join("\n")).toContain(
+      '"repairAttempts":{"assistantText":false,"atomicTerminal":true,"terminalSubmit":false}',
+    );
   });
 
   it("rejects prose during the tool-only atomic-terminal repair (#6446)", async () => {

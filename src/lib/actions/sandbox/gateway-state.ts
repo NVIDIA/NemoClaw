@@ -5,22 +5,26 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { OpenShellGatewayObservation } from "../../adapters/openshell/gateway-observer";
+
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
-import { gatewayStartGuidance } from "../../gateway-start-guidance";
+export { getNamedGatewayLifecycleState };
+export { getKnownSandboxTargetGatewayName } from "./gateway-target";
+import {
+  formatOpenShellPolicyRecoveryAction,
+  gatewayStartGuidance,
+} from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
-import {
-  withMcpLifecycleLock,
-  withMcpLifecycleLockSync,
-} from "../../state/mcp-lifecycle-lock-acquisition";
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
+  getKnownSandboxTarget,
   getKnownSandboxTargetGatewayName,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -49,17 +53,20 @@ import {
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import {
+  createCliOpenShellSandboxPolicyReader,
+  redactOpenShellSandboxPolicyDocumentForDisplay,
+  type OpenShellSandboxPolicyReader,
+} from "../../adapters/openshell/sandbox-policy-cli";
+import {
   captureOpenshell,
   captureOpenshellForStatus,
+  captureResolvedOpenshell,
   getOpenshellBinary,
   getStatusProbeTimeoutMs,
-  isCommandTimeout,
-  runOpenshell,
-} from "../../adapters/openshell/runtime";
-import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-} from "../../adapters/openshell/timeouts";
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { D, G, R } from "../../cli/terminal-style";
 import {
   type DockerDriverRecoveryResult,
@@ -69,13 +76,26 @@ import {
   assertHermesPortableAgentLifecycleAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
+  defaultPortableDemoStateDir,
+  hermesPortableLifecycleLockOptions,
   inspectPortableAgentReceiptDisposition,
+  qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
+  requalifyPortableAgentSandboxAuthority,
   recoverPortableAgentSandboxLifecycle,
   requireHermesPortableActiveLifecycleAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
+import type {
+  HermesPortableContainerInspectionRecoveryTiming,
+  HermesPortableCurrentnessTiming,
+  HermesPortableLifecycleRecoveryTiming,
+} from "../../onboard/experimental/hermes-portable-lifecycle";
 import type { PortableDemoLifecycleRecoveryResult } from "../../onboard/experimental/portable-demo-lifecycle";
-import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
+import {
+  compareAndSetLegacySandboxLifecycleGeneration,
+  usesLegacyRuntimeLifecycleCompatibility,
+} from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
@@ -89,6 +109,8 @@ export type SandboxGatewayState = {
   recoveryVia?: string | null;
   observationErrorKind?: OpenShellSandboxErrorKind;
   transportReason?: OpenShellSandboxTransportReason;
+  /** Policy observation failed after sandbox presence and phase were confirmed. */
+  policyObservationError?: OpenShellSandboxError;
   gatewayRecoveryFailed?: boolean;
   /**
    * True when active Docker-driver sandbox recovery (#4423 part 2)
@@ -106,6 +128,8 @@ export type SandboxGatewayState = {
   recoverySandboxVia?: string | null;
 };
 
+export { usesLegacyRuntimeLifecycleCompatibility };
+
 export type {
   HermesPortableActiveLifecycleAuthority,
   HermesPortableAgentLifecycleAuthority,
@@ -114,13 +138,59 @@ export type {
 export {
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
+  defaultPortableDemoStateDir,
+  hermesPortableLifecycleLockOptions,
   inspectPortableAgentReceiptDisposition,
+  qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
+  requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };
-export const withSandboxLifecycleLock = withMcpLifecycleLock;
-export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
-export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
+export {
+  withConnectSandboxLifecycleLock,
+  withSandboxLifecycleLock,
+  withSandboxLifecycleLockSync,
+} from "./lifecycle/lock";
+
+/** Capture one accepted-readiness observation through retained Hermes command authority. */
+export function captureHermesPortableAcceptedReadinessObservation(
+  authority: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
+  args: string[],
+  options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
+) {
+  authority.assertCurrent();
+  try {
+    return captureResolvedOpenshell(args, {
+      ...options,
+      env: authority.env,
+      openshellBinary: authority.executablePath,
+      replaceEnv: true,
+    });
+  } finally {
+    authority.assertCurrent();
+  }
+}
+
+/** Capture one recovery-only gateway command under receipt-owned authority. */
+export function captureHermesPortableInferenceRecoveryGateway(
+  sandboxName: string,
+  args: string[],
+  options: { readonly env?: NodeJS.ProcessEnv; readonly timeout: number },
+) {
+  if (options.env && Object.keys(options.env).length > 0) {
+    throw new Error("Hermes Portable inference recovery rejected command environment drift.");
+  }
+  const command = buildHermesPortableCommandAuthority(sandboxName);
+  return captureResolvedOpenshell(args, {
+    env: command.env,
+    openshellBinary: command.executablePath,
+    replaceEnv: true,
+    ignoreError: true,
+    includeStreams: true,
+    timeout: options.timeout,
+  });
+}
 
 type SandboxGatewayStateLookup = (
   sandboxName: string,
@@ -151,55 +221,90 @@ export function captureSandboxOwnershipPhases(
   });
   return { output: result.output, status: result.status };
 }
-
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
-export function recoverPortableDemoSandboxLifecycleForConnect(
+export async function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry | null,
   gatewayName: string,
-): PortableDemoLifecycleRecoveryResult {
-  return recoverPortableAgentSandboxLifecycle(
-    sandboxName,
-    {
-      agent: sandbox?.agent,
-      gatewayName,
-      lifecycleGeneration: sandbox?.lifecycleGeneration,
-      openshellDriver: sandbox?.openshellDriver,
-      provider: sandbox?.provider,
-    },
-    {
-      ...(sandbox
-        ? {
-            backfillRegistryGeneration: (generation: string) =>
-              compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
-          }
-        : {}),
-      openshellBinary: getOpenshellBinary(),
-      captureOpenshell: (args, timeoutMs) => {
-        const result = captureOpenshell([...args], {
-          ignoreError: true,
-          includeStreams: true,
-          timeout: timeoutMs,
-        });
-        return {
-          status: result.status,
-          stdout: result.stdout ?? result.output,
-          stderr: result.stderr,
-          error: result.error,
-        };
+  commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
+  lifecycleTiming?: HermesPortableLifecycleRecoveryTiming,
+  currentnessTiming?: HermesPortableCurrentnessTiming,
+  inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming,
+): Promise<PortableDemoLifecycleRecoveryResult> {
+  const capture = (args: readonly string[], timeoutMs: number) => {
+    commandAuthority?.assertTransactionCurrent();
+    try {
+      const result = commandAuthority
+        ? captureResolvedOpenshell([...args], {
+            env: commandAuthority.env,
+            openshellBinary: commandAuthority.executablePath,
+            replaceEnv: true,
+            ignoreError: true,
+            includeStreams: true,
+            timeout: timeoutMs,
+          })
+        : captureOpenshell([...args], {
+            ignoreError: true,
+            includeStreams: true,
+            timeout: timeoutMs,
+          });
+      return {
+        status: result.status,
+        stdout: result.stdout ?? result.output,
+        stderr: result.stderr,
+        error: result.error,
+      };
+    } finally {
+      commandAuthority?.assertTransactionCurrent();
+    }
+  };
+  commandAuthority?.assertCurrent();
+  try {
+    return await recoverPortableAgentSandboxLifecycle(
+      sandboxName,
+      {
+        agent: sandbox?.agent,
+        gatewayName,
+        lifecycleGeneration: sandbox?.lifecycleGeneration,
+        openshellDriver: sandbox?.openshellDriver,
+        provider: sandbox?.provider,
       },
-      readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
-    },
-  );
+      {
+        ...(sandbox
+          ? {
+              backfillRegistryGeneration: (generation: string) =>
+                compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
+            }
+          : {}),
+        openshellBinary: commandAuthority?.executablePath ?? getOpenshellBinary(),
+        ...(commandAuthority
+          ? {
+              env: commandAuthority.env,
+              assertOpenShellExecutableAuthority: () => {
+                commandAuthority.assertCurrent();
+                return commandAuthority.executablePath;
+              },
+            }
+          : {}),
+        captureOpenshell: capture,
+        readRegistry: getKnownSandboxTarget,
+        ...(lifecycleTiming ? { recoveryTiming: lifecycleTiming } : {}),
+        ...(currentnessTiming ? { currentnessTiming } : {}),
+        ...(inspectionTiming ? { inspectionTiming } : {}),
+      },
+    );
+  } finally {
+    commandAuthority?.assertCurrent();
+  }
 }
 
 /** Requalify Hermes receipt authority without starting or mutating its sandbox. */
-export function assertHermesPortableLifecycleForConnect(
+export async function assertHermesPortableLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry,
   gatewayName: string,
-): void {
-  assertHermesPortableAgentLifecycleAuthority(
+): Promise<void> {
+  await assertHermesPortableAgentLifecycleAuthority(
     sandboxName,
     {
       agent: sandbox.agent,
@@ -208,7 +313,7 @@ export function assertHermesPortableLifecycleForConnect(
       openshellDriver: sandbox.openshellDriver,
       provider: sandbox.provider,
     },
-    { readRegistry: (name: string) => (name === sandboxName ? sandbox : null) },
+    { readRegistry: getKnownSandboxTarget },
   );
 }
 
@@ -232,11 +337,42 @@ function formatGatewaySchemaMismatchOutput(
   return formatOpenShellStateRpcIssue(issue, { action, command }).join("\n");
 }
 
-export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutput: string): string {
+export function mergeLivePolicyIntoSandboxOutput(
+  output: string,
+  policyDocument: string,
+  appliedRevision: number | null = null,
+): string {
+  const sections = sandboxPolicyOutputSections(output);
+  if (!sections) return output;
+
+  const { before, suffix } = sections;
+  const cleanPolicyDocument = stripOpenShellCliAnsi(policyDocument);
+  const delimIdx = cleanPolicyDocument.search(/^---\s*$/m);
+  const yamlPart =
+    delimIdx !== -1
+      ? cleanPolicyDocument.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
+      : cleanPolicyDocument;
+  const trimmedYaml = yamlPart.trim();
+  const looksLikeError = /^(error|failed|invalid|warning|status)\b/i.test(trimmedYaml);
+  if (!trimmedYaml || looksLikeError || !/^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
+    return output;
+  }
+
+  const indented = trimmedYaml
+    .split("\n")
+    .map((line: string) => (line ? `  ${line}` : line))
+    .join("\n");
+  const revision = appliedRevision === null ? "" : `\n  Applied revision: ${appliedRevision}`;
+  return `${before}${revision}\n\n${indented}${suffix}\n`;
+}
+
+function sandboxPolicyOutputSections(
+  output: string,
+): { readonly before: string; readonly suffix: string } | null {
   const rawLines = String(output).split("\n");
   const cleanLines = stripOpenShellCliAnsi(String(output)).split("\n");
   const policyLineIdx = cleanLines.findIndex((line: string) => line.trim() === "Policy:");
-  if (policyLineIdx === -1) return output;
+  if (policyLineIdx === -1) return null;
 
   const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
   const suffixLineIdx = cleanLines.findIndex(
@@ -250,30 +386,82 @@ export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutpu
     suffixLineIdx === -1
       ? ""
       : `\n${rawLines.slice(suffixLineIdx).join("\n").replace(/\n+$/u, "")}`;
-  const cleanLivePolicy = stripOpenShellCliAnsi(String(livePolicyOutput));
-  const delimIdx = cleanLivePolicy.search(/^---\s*$/m);
-  const metadataPart = delimIdx !== -1 ? cleanLivePolicy.slice(0, delimIdx) : "";
-  const yamlPart =
-    delimIdx !== -1
-      ? cleanLivePolicy.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
-      : cleanLivePolicy;
-  const trimmedYaml = yamlPart.trim();
-  const looksLikeError = /^(error|failed|invalid|warning|status)\b/i.test(trimmedYaml);
-  if (!trimmedYaml || looksLikeError || !/^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
-    return output;
+  return { before, suffix };
+}
+
+function markLivePolicyObservationFailed(
+  output: string,
+  sandboxName: string,
+  error: OpenShellSandboxError,
+  gatewayName?: string,
+): string {
+  const sections = sandboxPolicyOutputSections(output);
+  const before = sections?.before ?? `${String(output).replace(/\n+$/u, "")}\n\nPolicy:`;
+  return [
+    before,
+    "",
+    "  Live effective policy was not observed.",
+    `  Warning: ${error.message}`,
+    `  ${policyObservationRecoveryAction(error, sandboxName, gatewayName)}${sections?.suffix ?? ""}`,
+    "",
+  ].join("\n");
+}
+
+export function policyObservationRecoveryAction(
+  error: OpenShellSandboxError,
+  sandboxName: string,
+  gatewayName?: string,
+  retryAction: "status" | "launch" = "status",
+): string {
+  return formatOpenShellPolicyRecoveryAction(
+    error,
+    `${CLI_NAME} ${sandboxName} ${retryAction}`,
+    gatewayName,
+    gatewayStartGuidance(gatewayName),
+  );
+}
+
+function policyObservationFailureState(
+  output: string,
+  phase: string | null,
+  sandboxName: string,
+  error: OpenShellSandboxError,
+  gatewayName?: string,
+): SandboxGatewayState {
+  return {
+    state: "present",
+    output: markLivePolicyObservationFailed(output, sandboxName, error, gatewayName),
+    phase,
+    policyObservationError: error,
+  };
+}
+
+function policyObservationSuccessState(
+  output: string,
+  phase: string | null,
+  sandboxName: string,
+  policyDocument: string,
+  appliedRevision: number | null,
+  gatewayName?: string,
+): SandboxGatewayState {
+  const displayPolicy = redactOpenShellSandboxPolicyDocumentForDisplay(policyDocument);
+  if (displayPolicy === null) {
+    return policyObservationFailureState(
+      output,
+      phase,
+      sandboxName,
+      {
+        kind: "schema",
+        message: "OpenShell returned an invalid sandbox policy document.",
+      },
+      gatewayName,
+    );
   }
-
-  const activeMatch = metadataPart.match(/^Active:\s*(\d+)\s*$/m);
-  const rewrittenYaml =
-    activeMatch && /^version:\s*\d+/m.test(trimmedYaml)
-      ? trimmedYaml.replace(/^version:\s*\d+/m, `version: ${activeMatch[1]}`)
-      : trimmedYaml;
-
-  const indented = rewrittenYaml
-    .split("\n")
-    .map((line: string) => (line ? `  ${line}` : line))
-    .join("\n");
-  return `${before}\n\n${indented}${suffix}\n`;
+  return {
+    state: "present",
+    output: mergeLivePolicyIntoSandboxOutput(output, displayPolicy, appliedRevision),
+    phase,
+  };
 }
 
 /** Query sandbox presence and return its output with the live enforced policy. */
@@ -317,6 +505,12 @@ export async function getSandboxGatewayState(
     capture: captureOpenshell,
     defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   }),
+  readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"] = createCliOpenShellSandboxPolicyReader(
+    {
+      capture: captureOpenshell,
+      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    },
+  ).readSandboxPolicy,
 ): Promise<SandboxGatewayState> {
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
@@ -344,19 +538,30 @@ export async function getSandboxGatewayState(
   // Preserve the current CLI-formatted status display without putting it in
   // the transport-neutral observation contract. Presence and phase decisions
   // do not parse this text.
-  let output = observed.displayOutput;
   if (lookup.value.state === "present") {
-    const livePolicy = captureOpenshell(
-      gatewayScopedArgs(["policy", "get", "--full", sandboxName], gatewayName),
-      {
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      },
-    );
-    if (livePolicy.status === 0 && livePolicy.output.trim()) {
-      output = mergeLivePolicyIntoSandboxOutput(output, livePolicy.output);
+    const livePolicy = await readPolicy({
+      target: sandboxObservationTarget(gatewayName),
+      sandboxName,
+      scope: "effective",
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    if (!livePolicy.ok) {
+      return policyObservationFailureState(
+        observed.displayOutput,
+        lookup.value.sandbox.phase,
+        sandboxName,
+        livePolicy.error,
+        gatewayName,
+      );
     }
-    return { state: "present", output, phase: lookup.value.sandbox.phase };
+    return policyObservationSuccessState(
+      observed.displayOutput,
+      lookup.value.sandbox.phase,
+      sandboxName,
+      livePolicy.value.document,
+      livePolicy.value.appliedRevision,
+      gatewayName,
+    );
   }
   return { state: "unknown_error", output: "OpenShell returned an unknown sandbox state." };
 }
@@ -368,6 +573,12 @@ export async function getSandboxGatewayStateForStatus(
     capture: captureOpenshellForStatus,
     defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   }),
+  readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"] = createCliOpenShellSandboxPolicyReader(
+    {
+      capture: captureOpenshellForStatus,
+      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    },
+  ).readSandboxPolicy,
 ): Promise<SandboxGatewayState> {
   const timeoutMs = getStatusProbeTimeoutMs();
   const endpointOverride = gatewayEndpointOverrideState();
@@ -403,19 +614,30 @@ export async function getSandboxGatewayStateForStatus(
   // Preserve the current CLI-formatted status display without putting it in
   // the transport-neutral observation contract. Presence and phase decisions
   // do not parse this text.
-  let output = observed.displayOutput;
   if (lookup.value.state === "present") {
-    const livePolicy = await captureOpenshellForStatus(
-      gatewayScopedArgs(["policy", "get", "--full", sandboxName], gatewayName),
-      {
-        ignoreError: true,
-        timeout: timeoutMs,
-      },
-    );
-    if (!isCommandTimeout(livePolicy) && livePolicy.status === 0 && livePolicy.output.trim()) {
-      output = mergeLivePolicyIntoSandboxOutput(output, livePolicy.output);
+    const livePolicy = await readPolicy({
+      target: sandboxObservationTarget(gatewayName),
+      sandboxName,
+      scope: "effective",
+      timeoutMs,
+    });
+    if (!livePolicy.ok) {
+      return policyObservationFailureState(
+        observed.displayOutput,
+        lookup.value.sandbox.phase,
+        sandboxName,
+        livePolicy.error,
+        gatewayName,
+      );
     }
-    return { state: "present", output, phase: lookup.value.sandbox.phase };
+    return policyObservationSuccessState(
+      observed.displayOutput,
+      lookup.value.sandbox.phase,
+      sandboxName,
+      livePolicy.value.document,
+      livePolicy.value.appliedRevision,
+      gatewayName,
+    );
   }
   return { state: "unknown_error", output: "OpenShell returned an unknown sandbox state." };
 }
@@ -441,7 +663,10 @@ export async function reconcileMissingAgainstNamedGateway(
     // Ambient selection is irrelevant and must not trigger a sibling retry.
     return tryRecoverDockerDriverSandbox(sandboxName, missingLookup, pinnedGatewayName);
   }
-  const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+  const lifecycle = await getNamedGatewayLifecycleState(targetGatewayName);
+  if (lifecycle.recoveryBlocked) {
+    return missingLookup;
+  }
   if (lifecycle.state === "connected_other") {
     runOpenshell(["gateway", "select", targetGatewayName], {
       ignoreError: true,
@@ -455,7 +680,7 @@ export async function reconcileMissingAgainstNamedGateway(
       return retry;
     }
     if (retry.state === "missing") {
-      const after = getNamedGatewayLifecycleState(targetGatewayName);
+      const after = await getNamedGatewayLifecycleState(targetGatewayName);
       if (after.state === "healthy_named") {
         // Even with the right gateway selected, the sandbox is
         // still missing. Try Docker-side recovery before declaring
@@ -467,23 +692,23 @@ export async function reconcileMissingAgainstNamedGateway(
       // caller emits restart guidance, rather than `wrong_gateway_active`
       // pointing at the now-irrelevant pre-select active gateway.
       if (after.state === "missing_named") {
-        return { state: "gateway_missing_after_restart", output: after.status };
+        return { state: "gateway_missing_after_restart", output: after.diagnostic };
       }
       if (after.state === "named_unreachable" || after.state === "named_unhealthy") {
-        return { state: "gateway_unreachable_after_restart", output: after.status };
+        return { state: "gateway_unreachable_after_restart", output: after.diagnostic };
       }
     }
     return {
       state: "wrong_gateway_active",
       activeGateway: lifecycle.activeGateway,
-      output: lifecycle.status,
+      output: lifecycle.diagnostic,
     };
   }
   if (lifecycle.state === "missing_named") {
-    return { state: "gateway_missing_after_restart", output: lifecycle.status };
+    return { state: "gateway_missing_after_restart", output: lifecycle.diagnostic };
   }
   if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
-    return { state: "gateway_unreachable_after_restart", output: lifecycle.status };
+    return { state: "gateway_unreachable_after_restart", output: lifecycle.diagnostic };
   }
   if (lifecycle.state === "healthy_named") {
     // The gateway is healthy and we already see `missing`. This is
@@ -555,12 +780,17 @@ export function printWrongGatewayActiveGuidance(
 
 /** Print troubleshooting hints based on gateway lifecycle state in the output. */
 export function printGatewayLifecycleHint(
-  output = "",
+  output: string | OpenShellGatewayObservation = "",
   sandboxName = "",
   writer: (message: string) => void = console.error,
 ): void {
-  const cleanOutput = stripOpenShellCliAnsi(output);
+  const observation = typeof output === "string" ? null : output;
+  const cleanOutput = typeof output === "string" ? stripOpenShellCliAnsi(output) : "";
   const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
+  if (observation?.error) {
+    writer(observation.error.message);
+    return;
+  }
   // The gateway-side gRPC reply `sandbox has no spec` is returned when the
   // active OpenShell gateway does not know about the sandbox — which on a
   // multi-instance host typically means a sibling NemoClaw gateway (the one
@@ -580,7 +810,7 @@ export function printGatewayLifecycleHint(
     );
     return;
   }
-  if (/No gateway configured/i.test(cleanOutput)) {
+  if (observation?.state === "missing_named" || /No gateway configured/i.test(cleanOutput)) {
     writer(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
     );
@@ -591,8 +821,10 @@ export function printGatewayLifecycleHint(
     return;
   }
   if (
-    /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
-    gatewayNamePattern(targetGatewayName).test(cleanOutput)
+    observation?.state === "named_unreachable" ||
+    observation?.state === "named_unhealthy" ||
+    (/Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
+      gatewayNamePattern(targetGatewayName).test(cleanOutput))
   ) {
     writer(
       "  The target OpenShell gateway exists in metadata, but its API is refusing connections after restart.",
@@ -691,12 +923,12 @@ export async function getReconciledSandboxGatewayState(
     // below is the per-subprocess authority for the status RPC.
     const selection = selectSandboxOwningGateway(sandboxName);
     if (selection.outcome !== "selected") {
-      const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+      const lifecycle = await getNamedGatewayLifecycleState(targetGatewayName);
       return {
         state: "wrong_gateway_active",
         activeGateway: lifecycle.activeGateway,
         output:
-          lifecycle.status ||
+          lifecycle.diagnostic ||
           `Failed to select owning gateway '${targetGatewayName}' for sandbox '${sandboxName}'.`,
       };
     }
@@ -710,6 +942,7 @@ export async function getReconciledSandboxGatewayState(
     return lookup;
   }
   if (lookup.state === "missing") {
+    if (gatewayRecovery === "observe") return lookup;
     return reconcileMissingAgainstNamedGateway(sandboxName, lookup, targetGatewayName);
   }
 
@@ -734,30 +967,31 @@ export async function getReconciledSandboxGatewayState(
       }
       return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
     }
-    const latestLifecycle = getNamedGatewayLifecycleState(recoveryGatewayName);
-    const latestStatus = stripOpenShellCliAnsi(latestLifecycle.status || "");
-    if (/No gateway configured/i.test(latestStatus)) {
+    const latestLifecycle = await getNamedGatewayLifecycleState(recoveryGatewayName);
+    if (latestLifecycle.state === "missing_named") {
       return {
         state: "gateway_missing_after_restart",
-        output: latestLifecycle.status || lookup.output,
+        output: latestLifecycle.diagnostic || lookup.output,
       };
     }
     if (
-      /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      gatewayNamePattern(recoveryGatewayName).test(latestStatus)
+      latestLifecycle.state === "named_unreachable" ||
+      latestLifecycle.state === "named_unhealthy"
     ) {
       return {
         state: "gateway_unreachable_after_restart",
-        output: latestLifecycle.status || lookup.output,
+        output: latestLifecycle.diagnostic || lookup.output,
       };
     }
     if (
       recovery.after?.state === "named_unreachable" ||
-      recovery.before?.state === "named_unreachable"
+      recovery.before?.state === "named_unreachable" ||
+      recovery.after?.state === "named_unhealthy" ||
+      recovery.before?.state === "named_unhealthy"
     ) {
       return {
         state: "gateway_unreachable_after_restart",
-        output: recovery.after?.status || recovery.before?.status || lookup.output,
+        output: recovery.after?.diagnostic || recovery.before?.diagnostic || lookup.output,
       };
     }
     return { ...lookup, gatewayRecoveryFailed: true };
@@ -776,14 +1010,14 @@ const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
  * `docker start` can restore the same container with its workspace state and
  * managed configuration preserved (#8967). A nonzero or missing `docker start`
  * status continues to the readiness wait, which surfaces the existing
- * stopped-container guidance. The function leaves an unresolved, running, or
- * paused container unchanged. A paused container keeps its `docker unpause`
- * guidance. A caller that reaches this function after container startup makes
- * no change.
+ * stopped-container guidance. The function returns true only when Docker
+ * starts the stopped container. It leaves an unresolved, running, or paused
+ * container unchanged. A paused container keeps its `docker unpause` guidance.
+ * A caller that reaches this function after container startup makes no change.
  */
-export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): void {
+export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): boolean {
   const runtime = getSandboxDockerRuntime(sandboxName);
-  if (!runtime.containerName || runtime.running || runtime.paused) return;
+  if (!runtime.containerName || runtime.running || runtime.paused) return false;
   console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
   const result = dockerStart(runtime.containerName, {
     ignoreError: true,
@@ -791,10 +1025,12 @@ export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string
   });
   if (result.status === 0) {
     console.error(`  ${G}✓${R} Started container '${runtime.containerName}'.`);
+    return true;
   } else {
     console.error(
       `  Docker could not start container '${runtime.containerName}' (exit ${result.status ?? "unknown"}); continuing with readiness checks.`,
     );
+    return false;
   }
 }
 
@@ -818,15 +1054,24 @@ export async function ensureLiveSandboxOrExit(
   });
   if (lookup.state === "present") {
     const phase = lookup.phase ?? null;
+    // A policy read can fail because the Docker-backed gateway is unavailable.
+    // Preserve the more specific host-runtime diagnosis even for probe-only
+    // callers that otherwise allow a non-ready sandbox phase (#4428).
+    if (
+      phase &&
+      phase !== "Ready" &&
+      phase !== "Running" &&
+      !isTerminalSandboxPhase(phase) &&
+      isDockerRuntimeDown(sandboxName)
+    ) {
+      printDockerRuntimeDownGuidance(sandboxName);
+      exit(1);
+    }
+    if (lookup.policyObservationError) {
+      console.error(lookup.output);
+      exit(1);
+    }
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
-      // Don't steer toward rebuild when the host Docker daemon is down: the
-      // sandbox is fine and recreating it cannot succeed until Docker is back
-      // (#4428). Terminal phases (Failed/Error/...) are settled failures and
-      // keep the rebuild guidance so a genuine failure is never masked.
-      if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
-        printDockerRuntimeDownGuidance(sandboxName);
-        exit(1);
-      }
       const dockerRuntime = getSandboxDockerRuntime(sandboxName);
       if (dockerRuntime.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
         console.error(`  Sandbox '${sandboxName}' is stopped.`);
@@ -874,12 +1119,12 @@ export async function ensureLiveSandboxOrExit(
   }
   if (lookup.state === "missing") {
     const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
-    const guard = getNamedGatewayLifecycleState(targetGatewayName);
+    const guard = await getNamedGatewayLifecycleState(targetGatewayName);
     if (guard.state !== "healthy_named") {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.error);
       } else {
-        printGatewayLifecycleHint(guard.status || "", sandboxName, console.error);
+        printGatewayLifecycleHint(guard, sandboxName, console.error);
       }
       exit(1);
     }

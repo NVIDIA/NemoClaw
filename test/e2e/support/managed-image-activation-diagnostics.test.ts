@@ -4,11 +4,22 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  managedOpenClawSubagentCommand,
+  preclean,
   summarizeOnboardFailureStartupSignals,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
 describe("managed image activation failure diagnostics", () => {
-  it("emits only fixed startup signals from arbitrary container output (#8543)", () => {
+  it("drives the managed OpenClaw caller through sessions_spawn", () => {
+    expect(managedOpenClawSubagentCommand("subagent-proof")).toEqual(
+      expect.arrayContaining([
+        "subagent-proof",
+        expect.stringContaining("use sessions_spawn once"),
+      ]),
+    );
+  });
+
+  it("emits only the fixed setup signal from arbitrary container output (#8543)", () => {
     const secret = "untrusted-prompt-and-credential";
     const summary = summarizeOnboardFailureStartupSignals(
       [
@@ -19,22 +30,9 @@ describe("managed image activation failure diagnostics", () => {
     );
 
     expect(summary.setupStarted).toBe(true);
-    expect(summary.foreignPidOneBoundary).toBe(true);
+    expect(summary).toEqual({ setupStarted: true });
     expect(Object.values(summary).every((value) => typeof value === "boolean")).toBe(true);
     expect(JSON.stringify(summary)).not.toContain(secret);
-  });
-
-  it("reports which Hermes startup refusal ended the container (#8543)", () => {
-    const summary = summarizeOnboardFailureStartupSignals(
-      [
-        "Setting up NemoClaw (Hermes)...",
-        "[SECURITY] Refusing Hermes startup because /run/nemoclaw must be root-owned with mode 0755",
-      ].join("\n"),
-    );
-
-    expect(summary.hermesRuntimeDirRefused).toBe(true);
-    expect(summary.hermesApiPortRejected).toBe(false);
-    expect(summary.hermesRuntimeMarkerRefused).toBe(false);
   });
 
   it("captures bounded pairing stages only for OpenClaw onboarding failures (#9844)", async () => {
@@ -61,5 +59,48 @@ describe("managed image activation failure diagnostics", () => {
         redactionValues: ["nemoclaw-managed-activation-e2e-key"],
       }),
     );
+  });
+  it("initializes cleanup then removes gateway state before cold onboarding", async () => {
+    const calls: string[] = [];
+    const host = {
+      command: vi.fn(async () => {
+        calls.push("start");
+        return { exitCode: 0 };
+      }),
+      bestEffortCleanupSandbox: vi.fn(async () => {
+        calls.push("destroy");
+      }),
+      cleanupGatewayRegistration: vi.fn(async () => {
+        calls.push("remove-registration");
+      }),
+    };
+    const lifecycle = {
+      stopGatewayRuntime: vi.fn(async () => {
+        calls.push("stop");
+      }),
+    };
+    const sandbox = {
+      cleanupSandbox: vi.fn(async () => {
+        calls.push("delete");
+      }),
+    };
+    await preclean(host as never, lifecycle as never, sandbox as never, "mi-act-openclaw", {
+      HOME: "/job/home",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    });
+    expect(calls).toEqual(["start", "destroy", "delete", "stop", "remove-registration"]);
+    expect(host.command).toHaveBeenCalledWith(
+      process.execPath,
+      expect.arrayContaining(["nemoclaw"]),
+      expect.objectContaining({ env: { HOME: "/job/home", OPENSHELL_GATEWAY: "nemoclaw" } }),
+    );
+    host.command.mockRejectedValueOnce(new Error("startup failed"));
+    calls.length = 0;
+    await expect(
+      preclean(host as never, lifecycle as never, sandbox as never, "mi-act-openclaw", {
+        OPENSHELL_GATEWAY: "nemoclaw",
+      }),
+    ).rejects.toThrow("startup failed");
+    expect(calls).toEqual([]);
   });
 });

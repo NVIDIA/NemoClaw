@@ -15,10 +15,30 @@ export const PROBE_TIMING_STAGES = [
   "publication",
 ] as const;
 
+export const PROBE_READINESS_OBSERVATION_STAGES = [
+  "sandbox-identity",
+  "policy-get",
+  "inference-get",
+  "gateway-health",
+  "forward-health",
+  "inference-route",
+] as const;
+
 export type ProbeTimingStage = (typeof PROBE_TIMING_STAGES)[number];
+export type ProbeReadinessObservationStage = (typeof PROBE_READINESS_OBSERVATION_STAGES)[number];
 export type ProbeTimingResult = "ready" | "failed";
 export type ProbeLifecycleAction = "skipped" | "reused" | "recovered" | "failed";
 export type ProbeForwardAction = "skipped" | "verified" | "restored" | "failed";
+export type ProbeReadinessDecisionCategory =
+  | "accepted"
+  | "missing"
+  | "unsafe"
+  | "malformed"
+  | "expired"
+  | "identity"
+  | "config"
+  | "health"
+  | "session";
 
 export type ProbeTimingRecorder = {
   measure<T>(stage: ProbeTimingStage, operation: () => T): T;
@@ -26,6 +46,9 @@ export type ProbeTimingRecorder = {
   setLifecycleAction(action: ProbeLifecycleAction): void;
   setForwardAction(action: ProbeForwardAction): void;
   markFailureStage(stage: ProbeTimingStage): void;
+  recordReadinessObservation(stage: ProbeReadinessObservationStage, elapsedMs: number): void;
+  recordReadinessObservationFailure(stage: ProbeReadinessObservationStage): void;
+  recordReadinessDecision(category: ProbeReadinessDecisionCategory): void;
   finish(result: ProbeTimingResult, failedStage?: ProbeTimingStage): void;
   finishOnExit(result: ProbeTimingResult, failedStage?: ProbeTimingStage): void;
   activeStage(): ProbeTimingStage | null;
@@ -51,10 +74,16 @@ export function createProbeTimingRecorder(deps: ProbeTimingDeps = {}): ProbeTimi
   const write = deps.write ?? ((line: string) => console.log(line));
   const writeOnExit = deps.write ?? ((line: string) => writeSync(1, `${line}\n`));
   const durations = new Map<ProbeTimingStage, number>();
+  const readinessObservationDurations = new Map<ProbeReadinessObservationStage, number>();
+  const readinessObservationAttempts = new Map<ProbeReadinessObservationStage, number>();
   const active: ProbeTimingStage[] = [];
   let lifecycleAction: ProbeLifecycleAction = "skipped";
   let forwardAction: ProbeForwardAction = "skipped";
   let recordedFailureStage: ProbeTimingStage | null = null;
+  let firstReadinessObservationFailure: ProbeReadinessObservationStage | null = null;
+  let firstReadinessDecision: ProbeReadinessDecisionCategory | null = null;
+  let firstReadinessFallbackDecision: Exclude<ProbeReadinessDecisionCategory, "accepted"> | null =
+    null;
   let finished = false;
 
   const safeNow = (): number | null => {
@@ -112,12 +141,16 @@ export function createProbeTimingRecorder(deps: ProbeTimingDeps = {}): ProbeTimi
       const stageFields = PROBE_TIMING_STAGES.map(
         (stage) => `${stage}=${String(durations.get(stage) ?? 0)}ms`,
       );
+      const readinessObservationFields = PROBE_READINESS_OBSERVATION_STAGES.map(
+        (stage) =>
+          `readiness.${stage}=${String(Math.max(0, Math.round(readinessObservationDurations.get(stage) ?? 0)))}ms readiness.${stage}.attempts=${String(readinessObservationAttempts.get(stage) ?? 0)}`,
+      );
       const failure =
         result === "failed"
           ? ` failedStage=${failedStage ?? recordedFailureStage ?? active[active.length - 1] ?? "unknown"}`
           : "";
       writeLine(
-        `  Probe timing: ${stageFields.join(" ")} total=${String(totalMs)}ms lifecycleAction=${lifecycleAction} forwardAction=${forwardAction} result=${result}${failure}`,
+        `  Probe timing: ${stageFields.join(" ")} ${readinessObservationFields.join(" ")} readiness.firstFailedObservation=${firstReadinessObservationFailure ?? "none"} readiness.firstDecision=${firstReadinessDecision ?? "none"} readiness.firstFallbackDecision=${firstReadinessFallbackDecision ?? "none"} total=${String(totalMs)}ms lifecycleAction=${lifecycleAction} forwardAction=${forwardAction} result=${result}${failure}`,
       );
     } catch {
       // Timing output must never change the probe's status or error message.
@@ -137,6 +170,23 @@ export function createProbeTimingRecorder(deps: ProbeTimingDeps = {}): ProbeTimi
     },
     markFailureStage(stage: ProbeTimingStage): void {
       recordedFailureStage ??= stage;
+    },
+    recordReadinessObservation(stage: ProbeReadinessObservationStage, elapsedMs: number): void {
+      if (!Number.isFinite(elapsedMs)) return;
+      readinessObservationAttempts.set(stage, (readinessObservationAttempts.get(stage) ?? 0) + 1);
+      readinessObservationDurations.set(
+        stage,
+        (readinessObservationDurations.get(stage) ?? 0) + Math.max(0, elapsedMs),
+      );
+    },
+    recordReadinessObservationFailure(stage: ProbeReadinessObservationStage): void {
+      firstReadinessObservationFailure ??= stage;
+    },
+    recordReadinessDecision(category: ProbeReadinessDecisionCategory): void {
+      firstReadinessDecision ??= category;
+      if (category !== "accepted") {
+        firstReadinessFallbackDecision ??= category;
+      }
     },
     finish,
     finishOnExit(result: ProbeTimingResult, failedStage?: ProbeTimingStage): void {

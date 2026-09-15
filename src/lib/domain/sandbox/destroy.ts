@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseLiveSandboxEntries } from "../../runtime-recovery";
+import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { resolveSandboxContainerOwner } from "./container-owner";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -97,6 +98,10 @@ export function shouldStopHostServicesAfterDestroy(input: {
   );
 }
 
+export function isDestroyNonInteractiveEnv(): boolean {
+  return isNonInteractiveEnv();
+}
+
 export function shouldCleanupGatewayAfterDestroy(input: {
   deleteSucceededOrAlreadyGone: boolean;
   removedRegistryEntry: boolean;
@@ -172,10 +177,10 @@ export function getLiveSandboxNames(liveList: LiveSandboxListSnapshot): string[]
   return parseLiveSandboxEntries(liveList.output).map((entry) => entry.name);
 }
 
-export function hasNoLiveSandboxes({
-  liveList,
-  dockerContainersBySandboxName,
-}: LiveSandboxProbeSnapshot): boolean {
+export function hasNoLiveSandboxesWithResourceObservation(
+  liveList: LiveSandboxListSnapshot,
+  hasRunningResource: (sandboxName: string, knownSandboxNames: readonly string[]) => boolean,
+): boolean {
   // Fail closed: if OpenShell cannot report authoritative sandbox state,
   // preserve the shared gateway so a sandbox never loses its listener.
   if (liveList.status !== 0) {
@@ -185,10 +190,19 @@ export function hasNoLiveSandboxes({
   const sandboxNames = entries.map((entry) => entry.name);
   return entries.every((entry) => {
     if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
-    return !hasRunningDockerSandboxContainer(
-      entry.name,
-      dockerContainersBySandboxName.get(entry.name),
-      sandboxNames,
-    );
+    return !hasRunningResource(entry.name, sandboxNames);
   });
+}
+
+export function hasNoLiveSandboxes({
+  liveList,
+  dockerContainersBySandboxName,
+}: LiveSandboxProbeSnapshot): boolean {
+  return hasNoLiveSandboxesWithResourceObservation(liveList, (sandboxName, sandboxNames) =>
+    hasRunningDockerSandboxContainer(
+      sandboxName,
+      dockerContainersBySandboxName.get(sandboxName),
+      sandboxNames,
+    ),
+  );
 }

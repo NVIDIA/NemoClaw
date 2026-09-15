@@ -2,27 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { ChildProcess, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertAgentExecutionSucceeded,
-  buildLlamaCppCompatibilityTargetEnv,
   cleanupGpu,
   env,
   hasExactReadyPhase,
   ollamaCleanupScript,
   openClawModelConfigProjectionScript,
-  shouldBootstrapLlamaCppGenericGpuTarget,
+  REPO_ROOT,
+  startAttachedOllama,
+  waitForAttachedOllama,
 } from "../live/gpu-e2e-helpers.ts";
+import * as observedChild from "../fixtures/observed-child-process.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import {
   PROTECTED_OLLAMA_CURL_MAX_SECONDS,
   PROTECTED_OLLAMA_READY_ATTEMPTS,
@@ -162,6 +165,94 @@ const invalidExecutionProofs: Array<{
 ];
 
 describe("GPU E2E helpers", () => {
+  it.each([
+    { name: "waits through refused connections and curl timeouts", codes: [7, 28, 0], attempts: 3 },
+    { name: "stops after 20 curl timeouts", codes: [28], attempts: 20, reason: "exhausted" },
+    { name: "rejects an HTTP failure immediately", codes: [22], attempts: 1, reason: "terminal" },
+    {
+      name: "rejects a terminated probe immediately",
+      codes: [null],
+      attempts: 1,
+      reason: "terminal",
+    },
+  ])("$name during attached Ollama readiness", async ({ codes, attempts, reason }) => {
+    vi.useFakeTimers();
+    let index = 0;
+    const run = vi.fn(async () => ({
+      command: ["curl"],
+      exitCode: codes[Math.min(index++, codes.length - 1)],
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "",
+      artifacts: { stdout: "", stderr: "", result: "" },
+    }));
+    try {
+      const ready = waitForAttachedOllama(new HostCliClient({ run }), {}, "cleanup-ready");
+      const artifactName = `cleanup-ready-attempt-${String(attempts).padStart(2, "0")}`;
+      const checked = reason
+        ? expect(ready).rejects.toMatchObject({
+            reason,
+            lastAttempt: { attempt: attempts, artifactName },
+          })
+        : expect(ready).resolves.toMatchObject({
+            attempt: attempts,
+            artifactName,
+            value: { exitCode: 0 },
+          });
+      await Promise.all([checked, vi.runAllTimersAsync()]);
+      expect(run).toHaveBeenCalledTimes(attempts);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("owns the attached Ollama daemon with the supplied listener and cleanup (#11435)", async () => {
+    const progress = startTestProgress(
+      "attached Ollama helper",
+      ["start the attached daemon", "close the owned daemon"],
+      {
+        logLine: () => undefined,
+      },
+    );
+    const child = new ChildProcess();
+    const spawn = vi.spyOn(observedChild, "spawnObservedChild").mockReturnValue(child);
+    const kill = vi.spyOn(child, "kill").mockReturnValue(true);
+    const environment = { OLLAMA_HOST: "127.0.0.1:11444", OLLAMA_MODELS: "/tmp/owned-models" };
+    try {
+      const owner = startAttachedOllama(progress, environment);
+      expect(spawn).toHaveBeenCalledExactlyOnceWith(
+        "ollama",
+        ["serve"],
+        expect.objectContaining({
+          progress,
+          spawn: { cwd: REPO_ROOT, env: environment, stdio: "ignore" },
+        }),
+      );
+      expect(owner.child).toBe(child);
+      let closed = false;
+      void owner.closed.then(() => {
+        closed = true;
+      });
+      let terminated = false;
+      const termination = owner.terminate().then(() => {
+        terminated = true;
+      });
+      expect(kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+      await Promise.resolve();
+      expect([closed, terminated]).toEqual([false, false]);
+      child.emit("close", null, "SIGTERM");
+      await termination;
+      await owner.closed;
+      expect(closed).toBe(true);
+      await owner.terminate();
+      expect(kill).toHaveBeenCalledTimes(1);
+    } finally {
+      child.emit("close", null, "SIGTERM");
+      progress.stop();
+    }
+  });
+
   it("stops the Ollama system service before cleanup completes", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-cleanup-"));
     const listenerPort = await unusedLoopbackPort();
@@ -549,45 +640,6 @@ describe("GPU E2E helpers", () => {
     await expect(cleanupGpu(host, sandbox)).rejects.toThrow(/still listens/u);
   });
 
-  it("bootstraps the new llama.cpp target through the trusted pre-merge GPU lane", () => {
-    expect(
-      shouldBootstrapLlamaCppGenericGpuTarget({
-        NEMOCLAW_RUN_LIVE_E2E: "1",
-        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-      }),
-    ).toBe(true);
-  });
-
-  it("keeps the Ollama GPU lane independent once the dedicated llama.cpp lane exists", () => {
-    expect(
-      shouldBootstrapLlamaCppGenericGpuTarget({
-        E2E_LLAMA_CPP_DEDICATED_LANE: "1",
-        NEMOCLAW_RUN_LIVE_E2E: "1",
-        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-      }),
-    ).toBe(false);
-  });
-
-  it("does not bootstrap the llama.cpp target outside exact-head live E2E", () => {
-    expect(shouldBootstrapLlamaCppGenericGpuTarget({ NEMOCLAW_RUN_LIVE_E2E: "1" })).toBe(false);
-  });
-
-  it("keeps live collection enabled in the sanitized compatibility child", () => {
-    const childEnv = buildLlamaCppCompatibilityTargetEnv({
-      NEMOCLAW_E2E_CORRELATION_ID: "11111111-1111-4111-8111-111111111111",
-      NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-      NEMOCLAW_E2E_SHARD: "default",
-      NEMOCLAW_RUN_LIVE_E2E: "1",
-      UNRELATED_PARENT_VALUE: "must-not-leak",
-    });
-
-    expect(childEnv.NEMOCLAW_E2E_CORRELATION_ID).toBe("11111111-1111-4111-8111-111111111111");
-    expect(childEnv.NEMOCLAW_E2E_EXPECTED_SHA).toBe("a".repeat(40));
-    expect(childEnv.NEMOCLAW_E2E_SHARD).toBe("default");
-    expect(childEnv.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
-    expect(childEnv.UNRELATED_PARENT_VALUE).toBeUndefined();
-  });
-
   it("forwards the workflow-owned Ollama model pull timeout", () => {
     expect(env({}, { NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400" }).NEMOCLAW_OLLAMA_PULL_TIMEOUT).toBe(
       "2400",
@@ -629,7 +681,7 @@ describe("GPU E2E helpers", () => {
     expect(hasExactReadyPhase(output)).toBe(false);
   });
 
-  it("accepts successful execution proof when the model suppresses visible text", () => {
+  it("accepts recovery proof from successful execution metadata (#10973)", () => {
     expect(() =>
       assertAgentExecutionSucceeded(agentOutput(), "inference", GPU_MODEL),
     ).not.toThrow();

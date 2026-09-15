@@ -70,7 +70,10 @@ function watcherLease(): PodmanGatewayWatcherLease {
       pid: 42,
       processStartIdentity: "pid-start-1",
     },
+    assertStillHeld: vi.fn(),
     assertStillStopped: vi.fn(),
+    resumeForObservationAndProve: vi.fn(),
+    requiesceAndProve: vi.fn(),
     resumeAndProve: vi.fn(),
   };
 }
@@ -116,17 +119,24 @@ function preparedReplacement(
 }
 
 interface HarnessOptions {
+  readonly bootstrapLog?: string;
+  readonly bootstrapStartLog?: string;
   readonly completionAgent?: ManagedStartupAgent;
+  readonly completionMissingAfterSuccessfulCopyCount?: number;
   readonly completionMode?: number;
   readonly completionUnavailableCount?: number;
   readonly inspectImage?: string;
   readonly inspectName?: string;
   readonly inspectRuntimeId?: string;
+  readonly inspectExitCode?: number;
+  readonly inspectError?: string;
+  readonly inspectStatus?: string;
   readonly inspectStateVolumeMountpoint?: string;
   readonly inspectStateVolumeMode?: string;
   readonly inspectStateVolumeName?: string;
   readonly journal?: PodmanBootstrapJournal | null;
   readonly startsRunning?: boolean;
+  readonly startsRunningAfterStart?: boolean;
 }
 
 function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
@@ -159,12 +169,21 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
               Type: "volume",
             },
           ],
-          State: { Dead: false, Paused: false, Restarting: false, Running: running },
+          State: {
+            Dead: false,
+            Error: options.inspectError ?? "",
+            ExitCode: options.inspectExitCode ?? 0,
+            OOMKilled: false,
+            Paused: false,
+            Restarting: false,
+            Running: running,
+            Status: options.inspectStatus ?? (running ? "running" : "created"),
+          },
         },
       ]),
     });
   const start = (): ContainerEngineCommandResult => {
-    running = true;
+    running = options.startsRunningAfterStart ?? true;
     return result({ stdout: RUNTIME_ID });
   };
   const stageEnvelope = (archive: Buffer | undefined): ContainerEngineCommandResult => {
@@ -189,20 +208,44 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   };
   const copyCompletion = (destination: string): ContainerEngineCommandResult => {
     completionAttempts += 1;
-    return completionAttempts <= (options.completionUnavailableCount ?? 0)
-      ? result({ status: 1, stderr: "completion not found" })
-      : publishCompletion(destination);
+    const unavailable = options.completionUnavailableCount ?? 0;
+    const deferredResults = [
+      [unavailable, () => result({ status: 1, stderr: "completion not found" })],
+      [unavailable + (options.completionMissingAfterSuccessfulCopyCount ?? 0), () => result()],
+    ] as const;
+    return (
+      deferredResults.find(([throughAttempt]) => completionAttempts <= throughAttempt)?.[1]() ??
+      publishCompletion(destination)
+    );
   };
   const copy = (args: readonly string[], input?: Buffer): ContainerEngineCommandResult => {
     const source = args[2] as string;
     const destination = args[3] as string;
-    return source.startsWith(`${RUNTIME_ID}:`) ? copyCompletion(destination) : stageEnvelope(input);
+    const publishStartLog = (): ContainerEngineCommandResult =>
+      options.bootstrapStartLog === undefined
+        ? result({ status: 1, stderr: "start log unavailable" })
+        : (() => {
+            fs.writeFileSync(destination, options.bootstrapStartLog, {
+              flag: "wx",
+              mode: 0o600,
+            });
+            return result();
+          })();
+    const copiedSource = new Map<string, () => ContainerEngineCommandResult>([
+      [
+        `${RUNTIME_ID}:/run/nemoclaw/managed-bootstrap-completion.json`,
+        () => copyCompletion(destination),
+      ],
+      [`${RUNTIME_ID}:/tmp/nemoclaw-start.log`, publishStartLog],
+    ]).get(source);
+    return copiedSource?.() ?? stageEnvelope(input);
   };
   const handlers: Readonly<
     Record<string, (args: readonly string[], input?: Buffer) => ContainerEngineCommandResult>
   > = {
     "container cp": copy,
     "container inspect": inspect,
+    "container logs": () => result({ stderr: options.bootstrapLog ?? "" }),
     "container start": start,
   };
   const capture = vi.fn(
@@ -253,73 +296,76 @@ function startInput(agent: ManagedStartupAgent, fake: ReturnType<typeof harness>
 }
 
 describe("Podman image-owned bootstrap transaction", () => {
-  it.each(
-    MANAGED_STARTUP_AGENTS.filter((agent) => agent !== "pi"),
-  )("stages, starts, and authenticates one protected %s completion without exec", (agent) => {
-    const fake = harness(agent);
-    const transaction = startPodmanBootstrapImageTransaction(startInput(agent, fake), {
-      now: () => new Date("2026-08-01T12:00:00.000Z"),
-    });
-    const completion = awaitPodmanBootstrapImageTransaction(
-      {
-        engine: fake.engine,
-        journalStore: fake.journalStore,
-        prepared: fake.prepared,
-        watcherLease: fake.watcher,
-        transaction,
-        timeoutSecs: 30,
-      },
-      { now: () => new Date("2026-08-01T12:00:01.000Z") },
-    );
+  it.each(MANAGED_STARTUP_AGENTS.filter((agent) => agent !== "pi"))(
+    "stages, starts, and authenticates one protected %s completion without exec",
+    (agent) => {
+      const fake = harness(agent);
+      const transaction = startPodmanBootstrapImageTransaction(startInput(agent, fake), {
+        now: () => new Date("2026-08-01T12:00:00.000Z"),
+      });
+      const completion = awaitPodmanBootstrapImageTransaction(
+        {
+          engine: fake.engine,
+          journalStore: fake.journalStore,
+          prepared: fake.prepared,
+          watcherLease: fake.watcher,
+          transaction,
+          timeoutSecs: 30,
+        },
+        { now: () => new Date("2026-08-01T12:00:01.000Z") },
+      );
 
-    expect(parseManagedBootstrapEnvelope(fake.stagedEnvelope())).toEqual({
-      schemaVersion: 1,
-      bootstrapIdentity: BOOTSTRAP_IDENTITY,
-      rootApplyRequest: fake.request,
-    });
-    expect(transaction).toMatchObject({
-      agent,
-      bootstrapIdentity: BOOTSTRAP_IDENTITY,
-      engineAuthorityId: AUTHORITY_ID,
-      originalRuntimeId: ORIGINAL_RUNTIME_ID,
-      replacementRuntimeId: RUNTIME_ID,
-      replacementImageContentId: IMAGE_ID,
-      replacementSpecFingerprint: SPEC_FINGERPRINT,
-      replacementStagingName: STAGING_NAME,
-      replacementStateVolumeMountpoint: STATE_VOLUME_MOUNTPOINT,
-      replacementStateVolumeName: STATE_VOLUME_NAME,
-      watcherLeaseId: LEASE_ID,
-    });
-    expect(completion).toMatchObject({
-      agent,
-      bootstrapIdentity: BOOTSTRAP_IDENTITY,
-      engineAuthorityId: AUTHORITY_ID,
-      originalRuntimeId: ORIGINAL_RUNTIME_ID,
-      profileFingerprint: fake.request.profileFingerprint,
-      replacementRuntimeId: RUNTIME_ID,
-      replacementImageContentId: IMAGE_ID,
-      replacementSpecFingerprint: SPEC_FINGERPRINT,
-      replacementStagingName: STAGING_NAME,
-      replacementStateVolumeMountpoint: STATE_VOLUME_MOUNTPOINT,
-      replacementStateVolumeName: STATE_VOLUME_NAME,
-      transactionPending: true,
-      watcherLeaseId: LEASE_ID,
-    });
-    expect(fake.commands).toContainEqual(["container", "start", RUNTIME_ID]);
-    expect(fake.commands).toContainEqual(["container", "cp", "-", `${RUNTIME_ID}:/`]);
-    expect(
-      fake.commandInputs.some((input) => input?.subarray(257, 263).toString("ascii") === "ustar\0"),
-    ).toBe(true);
-    expect(fake.commands).toContainEqual([
-      "container",
-      "cp",
-      `${RUNTIME_ID}:/run/nemoclaw/managed-bootstrap-completion.json`,
-      expect.any(String),
-    ]);
-    expect(fake.commands.every((command) => !command.includes("exec"))).toBe(true);
-    expect(fake.commands.every((command) => !command.includes("--user"))).toBe(true);
-    expect(fake.watcher.assertStillStopped).toHaveBeenCalled();
-  });
+      expect(parseManagedBootstrapEnvelope(fake.stagedEnvelope())).toEqual({
+        schemaVersion: 1,
+        bootstrapIdentity: BOOTSTRAP_IDENTITY,
+        rootApplyRequest: fake.request,
+      });
+      expect(transaction).toMatchObject({
+        agent,
+        bootstrapIdentity: BOOTSTRAP_IDENTITY,
+        engineAuthorityId: AUTHORITY_ID,
+        originalRuntimeId: ORIGINAL_RUNTIME_ID,
+        replacementRuntimeId: RUNTIME_ID,
+        replacementImageContentId: IMAGE_ID,
+        replacementSpecFingerprint: SPEC_FINGERPRINT,
+        replacementStagingName: STAGING_NAME,
+        replacementStateVolumeMountpoint: STATE_VOLUME_MOUNTPOINT,
+        replacementStateVolumeName: STATE_VOLUME_NAME,
+        watcherLeaseId: LEASE_ID,
+      });
+      expect(completion).toMatchObject({
+        agent,
+        bootstrapIdentity: BOOTSTRAP_IDENTITY,
+        engineAuthorityId: AUTHORITY_ID,
+        originalRuntimeId: ORIGINAL_RUNTIME_ID,
+        profileFingerprint: fake.request.profileFingerprint,
+        replacementRuntimeId: RUNTIME_ID,
+        replacementImageContentId: IMAGE_ID,
+        replacementSpecFingerprint: SPEC_FINGERPRINT,
+        replacementStagingName: STAGING_NAME,
+        replacementStateVolumeMountpoint: STATE_VOLUME_MOUNTPOINT,
+        replacementStateVolumeName: STATE_VOLUME_NAME,
+        transactionPending: true,
+        watcherLeaseId: LEASE_ID,
+      });
+      expect(fake.commands).toContainEqual(["container", "start", RUNTIME_ID]);
+      expect(fake.commands).toContainEqual(["container", "cp", "-", `${RUNTIME_ID}:/`]);
+      expect(
+        fake.commandInputs.some(
+          (input) => input?.subarray(257, 263).toString("ascii") === "ustar\0",
+        ),
+      ).toBe(true);
+      expect(fake.commands).toContainEqual([
+        "container",
+        "cp",
+        `${RUNTIME_ID}:/run/nemoclaw/managed-bootstrap-completion.json`,
+        expect.any(String),
+      ]);
+      expect(fake.commands.every((command) => !command.includes("exec"))).toBe(true);
+      expect(fake.commands.every((command) => !command.includes("--user"))).toBe(true);
+      expect(fake.watcher.assertStillHeld).toHaveBeenCalled();
+    },
+  );
 
   it("retries an unpublished completion while retaining the stopped watcher lease", () => {
     const fake = harness("openclaw", { completionUnavailableCount: 1 });
@@ -344,6 +390,36 @@ describe("Podman image-owned bootstrap transaction", () => {
     );
 
     expect(completion.agent).toBe("openclaw");
+    expect(fake.completionAttempts()).toBe(2);
+  });
+
+  it("retries when Podman reports copy success before publishing the destination", () => {
+    const fake = harness("langchain-deepagents-code", {
+      completionMissingAfterSuccessfulCopyCount: 1,
+    });
+    const transaction = startPodmanBootstrapImageTransaction(
+      startInput("langchain-deepagents-code", fake),
+    );
+    let milliseconds = 0;
+    const completion = awaitPodmanBootstrapImageTransaction(
+      {
+        engine: fake.engine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
+        watcherLease: fake.watcher,
+        transaction,
+        timeoutSecs: 1,
+      },
+      {
+        now: () => new Date(milliseconds),
+        pollIntervalMs: 25,
+        sleep: (duration) => {
+          milliseconds += duration;
+        },
+      },
+    );
+
+    expect(completion.agent).toBe("langchain-deepagents-code");
     expect(fake.completionAttempts()).toBe(2);
   });
 
@@ -409,6 +485,124 @@ describe("Podman image-owned bootstrap transaction", () => {
       "not stably stopped",
     );
     expect(fake.commands.some((command) => command[1] === "cp")).toBe(false);
+  });
+
+  it("reports the bounded Podman exit state when a replacement does not stay running", () => {
+    const fake = harness("hermes", {
+      bootstrapLog: "[SECURITY] Managed bootstrap trampoline: agent identity mismatch",
+      inspectError: "bootstrap rejected",
+      inspectExitCode: 126,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 126; oom false; error bootstrap rejected; bootstrap [SECURITY] Managed bootstrap trampoline: agent identity mismatch)",
+    );
+    expect(fake.commands).toContainEqual(["container", "logs", "--tail", "80", RUNTIME_ID]);
+  });
+
+  it("reports the bounded managed startup application failure", () => {
+    const fake = harness("hermes", {
+      bootstrapLog:
+        "Managed startup image application failed: required root-owned directory is missing: /var/lib/nemoclaw/runtime-state-mutation",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false; bootstrap Managed startup image application failed: required root-owned directory is missing: /var/lib/nemoclaw/runtime-state-mutation)",
+    );
+  });
+
+  it("reports the bounded managed startup shared-state failure", () => {
+    const fake = harness("hermes", {
+      bootstrapLog:
+        "Managed startup shared-state transaction failed: managed output directory crosses a nested filesystem mount: /sandbox/.hermes",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false; bootstrap Managed startup shared-state transaction failed: managed output directory crosses a nested filesystem mount: /sandbox/.hermes)",
+    );
+  });
+
+  it("truncates an allowlisted managed startup failure instead of dropping it", () => {
+    const detail = "x".repeat(600);
+    const fake = harness("hermes", {
+      bootstrapLog: `Managed startup image application failed: ${detail}`,
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      `bootstrap ${`Managed startup image application failed: ${detail}`.slice(0, 400)}`,
+    );
+  });
+
+  it("reports a bounded Hermes startup refusal after managed profile application", () => {
+    const fake = harness("hermes", {
+      bootstrapLog:
+        "[SECURITY] Refusing Hermes startup because /sandbox/.hermes is not a safe directory",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "bootstrap [SECURITY] Refusing Hermes startup because /sandbox/.hermes is not a safe directory",
+    );
+  });
+
+  it("reports the bounded Hermes runtime-state startup refusal", () => {
+    const fake = harness("hermes", {
+      bootstrapLog:
+        "runtime-state-mutation-startup-gate: held\n[SECURITY] Runtime state mutation startup gate failed.",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false; bootstrap [SECURITY] Runtime state mutation startup gate failed.)",
+    );
+  });
+
+  it("reports a bounded startup refusal from the protected temp-file copy fallback", () => {
+    const fake = harness("hermes", {
+      bootstrapLog: "",
+      bootstrapStartLog: "[SECURITY] Required entrypoint env-wrapper normalizer is missing.\n",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false; bootstrap [SECURITY] Required entrypoint env-wrapper normalizer is missing.)",
+    );
+    expect(fake.commands).toContainEqual([
+      "container",
+      "cp",
+      `${RUNTIME_ID}:/tmp/nemoclaw-start.log`,
+      expect.any(String),
+    ]);
+  });
+
+  it("does not surface non-bootstrap container output in a replacement failure", () => {
+    const fake = harness("hermes", {
+      bootstrapLog: "secret-looking application output",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false)",
+    );
   });
 
   it("rejects runtime and image drift before request staging", () => {
@@ -514,7 +708,7 @@ describe("Podman image-owned bootstrap transaction", () => {
         transaction,
         timeoutSecs: 1,
       }),
-    ).toThrow("exact stopped OpenShell watcher lease");
+    ).toThrow("exact OpenShell watcher transaction lease");
   });
 
   it("times out deterministically when the protected completion never appears", () => {
@@ -544,13 +738,13 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(fake.completionAttempts()).toBe(3);
   });
 
-  it("refuses to bootstrap a release candidate on Podman (#7927)", () => {
+  it("does not duplicate managed-agent support policy inside the Podman transaction", () => {
     const fake = harness("pi");
 
-    expect(() =>
+    expect(
       startPodmanBootstrapImageTransaction(startInput("pi", fake), {
         now: () => new Date("2026-08-01T12:00:00.000Z"),
       }),
-    ).toThrow("agent 'pi' is not supported on Podman; onboard it through the Docker compute runtime");
+    ).toMatchObject({ agent: "pi" });
   });
 });

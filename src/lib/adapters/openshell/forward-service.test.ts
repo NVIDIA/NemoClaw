@@ -1,0 +1,1264 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { type ChildProcess, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
+import { createOpenShellOperationDeadline } from "./operation-deadline";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { type AddressInfo, createServer } from "node:net";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  buildForwardServiceArgs,
+  createForwardServiceTarget,
+  ForwardServiceStartupCleanupError,
+  isForwardServiceListenerOwner,
+  isTrustedTaskkillExecutable,
+  launchForwardService,
+  terminateForwardServiceProcessTree,
+  type ForwardServiceLaunchOptions,
+  type ForwardServiceOwnership,
+  type ForwardServiceTarget,
+} from "./forward-service";
+import { probeLocalForwardListener } from "./local-forward-listener";
+
+const target: ForwardServiceTarget = {
+  executable: "/usr/local/bin/openshell",
+  gatewayEndpoint: "https://127.0.0.1:8080",
+  gatewayName: "nemoclaw",
+  workspace: "default",
+  sandboxName: "demo",
+  localHost: "127.0.0.1",
+  localPort: 18_789,
+  targetHost: "127.0.0.1",
+  targetPort: 18_789,
+};
+
+const ownerTarget: ForwardServiceTarget = { ...target, executable: process.execPath };
+const detachedChildPid = process.pid + 1;
+const temporaryDirectories: string[] = [];
+const startedProcessGroups: number[] = [];
+const processSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+function createLinuxOwnerFixture(actualExecutable?: string) {
+  const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-owner-"));
+  temporaryDirectories.push(root);
+  const procRoot = path.join(root, "proc");
+  const binRoot = path.join(root, "bin");
+  mkdirSync(path.join(procRoot, "net"), { recursive: true });
+  mkdirSync(path.join(procRoot, "4321", "fd"), { recursive: true });
+  mkdirSync(path.join(procRoot, "9876", "fd"), { recursive: true });
+  mkdirSync(binRoot);
+  const executable = path.join(binRoot, "openshell");
+  const runtime = actualExecutable ? path.join(binRoot, actualExecutable) : executable;
+  writeFileSync(executable, "");
+  writeFileSync(runtime, "");
+  writeFileSync(
+    path.join(procRoot, "net", "tcp"),
+    "  0: 0100007F:4965 00000000:0000 0A 00000000:00000000 00:00000000 00000000  998 0 12345 1\n",
+  );
+  writeFileSync(
+    path.join(procRoot, "net", "tcp6"),
+    "  1: 00000000000000000000000001000000:4965 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  998 0 67890 1\n",
+  );
+  symlinkSync("socket:[12345]", path.join(procRoot, "4321", "fd", "7"));
+  symlinkSync("socket:[67890]", path.join(procRoot, "9876", "fd", "8"));
+  symlinkSync(runtime, path.join(procRoot, "4321", "exe"));
+  return { procRoot, target: { ...target, executable } };
+}
+
+function darwinOwnerProbe(
+  commandLine: string,
+  finalListener = "4321\n",
+  executable = process.execPath,
+) {
+  return vi
+    .fn()
+    .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
+    .mockReturnValueOnce({ status: 0, stdout: `${executable}\n/mach_kernel\n` })
+    .mockReturnValueOnce({ status: 0, stdout: commandLine })
+    .mockReturnValueOnce({ status: 0, stdout: finalListener });
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const processGroup of startedProcessGroups.splice(0)) {
+    try {
+      process.kill(-processGroup, "SIGKILL");
+    } catch {
+      // Best effort only — the owned process group may already be gone.
+    }
+  }
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForExit(pid: number): Promise<boolean> {
+  for (let attempt = 0; attempt < 200 && isRunning(pid); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !isRunning(pid);
+}
+
+async function availableLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+  return address.port;
+}
+
+describe("retained forward process ownership", () => {
+  it("retains ownership across asynchronous startup and cleanup (#11649)", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: detachedChildPid,
+      exitCode: null,
+      signalCode: null,
+      unref() {},
+    });
+    const terminate = vi.fn();
+    let ownership: ForwardServiceOwnership | undefined;
+    await launchForwardService(target, {
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+      spawnDetached: () => child,
+      terminateProcessTree: terminate,
+      retainOwnership: (value) => {
+        ownership = value;
+      },
+    });
+    await Promise.resolve();
+
+    await Promise.all([ownership!.terminate(), ownership!.terminate()]);
+    expect(terminate).toHaveBeenCalledOnce();
+  });
+
+  it.each(["exit", "error", "pid-changed", "exit-code", "signal-code"] as const)(
+    "rejects termination after %s invalidates the original child (#11649)",
+    async (change) => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: detachedChildPid,
+        exitCode: null as number | null,
+        signalCode: null as NodeJS.Signals | null,
+        unref() {},
+      });
+      const terminate = vi.fn();
+      let ownership: ForwardServiceOwnership | undefined;
+      await launchForwardService(target, {
+        isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+        spawnDetached: () => child,
+        terminateProcessTree: terminate,
+        retainOwnership: (value) => {
+          ownership = value;
+        },
+      });
+      const mutations = {
+        exit: () => child.emit("exit"),
+        error: () => child.emit("error"),
+        "pid-changed": () => {
+          child.pid += 1;
+        },
+        "exit-code": () => {
+          child.exitCode = 0;
+        },
+        "signal-code": () => {
+          child.signalCode = "SIGTERM";
+        },
+      };
+      mutations[change]();
+      await expect(ownership!.terminate()).rejects.toThrow(
+        "child lifetime can no longer be proved",
+      );
+      expect(terminate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["exit", "authority"] as const)(
+    "checks %s changes while cleanup waits for exit callbacks (#11649)",
+    async (change) => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: detachedChildPid,
+        exitCode: null,
+        signalCode: null,
+        unref() {},
+      });
+      const terminate = vi.fn();
+      let ownership: ForwardServiceOwnership | undefined;
+      await launchForwardService(target, {
+        isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+        spawnDetached: () => child,
+        terminateProcessTree: terminate,
+        retainOwnership: (value) => {
+          ownership = value;
+        },
+      });
+      const assertCurrent = vi.fn();
+      const cleanup = ownership!.terminate(assertCurrent);
+      expect(terminate).not.toHaveBeenCalled();
+      const invalidate = {
+        exit: () => child.emit("exit", 0, null),
+        authority: () =>
+          assertCurrent.mockImplementation(() => {
+            throw new Error("rollback authority changed");
+          }),
+      };
+      invalidate[change]();
+      await expect(cleanup).rejects.toThrow(
+        change === "exit" ? "child lifetime can no longer be proved" : "rollback authority changed",
+      );
+      expect(terminate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retires a retained real listener and makes repeated cleanup harmless (#11649)", async () => {
+    const port = await availableLoopbackPort();
+    let child: ChildProcess | undefined;
+    let closed: Promise<unknown[]> | undefined;
+    let ownership: ForwardServiceOwnership | undefined;
+    try {
+      await launchForwardService(
+        { ...target, executable: process.execPath, localPort: port, targetPort: port },
+        {
+          spawnDetached: () => {
+            child = spawn(
+              process.execPath,
+              ["-e", `require("node:net").createServer().listen(${port}, "127.0.0.1")`],
+              { detached: true, stdio: "ignore" },
+            );
+            closed = once(child, "close");
+            return child;
+          },
+          retainOwnership: (value) => {
+            ownership = value;
+          },
+        },
+      );
+      expect(probeLocalForwardListener(port, 100)).toBe(true);
+      await ownership!.terminate();
+      await ownership!.terminate();
+      await closed;
+      expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+      expect(probeLocalForwardListener(port, 100)).toBe(false);
+    } finally {
+      child?.exitCode === null &&
+        child.signalCode === null &&
+        terminateForwardServiceProcessTree(child);
+      await closed;
+    }
+  }, 10_000);
+});
+
+describe("forward startup allowance", () => {
+  it.each([0, 100])(
+    "rejects an exhausted %i ms allowance before probing or spawning (#11652)",
+    async (timeoutMs) => {
+      const isReachable = vi.fn(() => false);
+      const spawnDetached = vi.fn(() => ({ pid: detachedChildPid, unref: vi.fn() }));
+      await expect(
+        launchForwardService(target, {
+          timeoutMs,
+          now: vi.fn().mockReturnValueOnce(0).mockReturnValue(100),
+          isReachable,
+          spawnDetached,
+          terminateProcessTree: vi.fn(),
+        }),
+      ).rejects.toThrow("did not bind");
+      expect(isReachable).not.toHaveBeenCalled();
+      expect(spawnDetached).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not spawn after the initial probe exhausts the allowance (#11652)", async () => {
+    let elapsed = 0;
+    const isReachable = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        elapsed = 100;
+        return false;
+      })
+      .mockReturnValue(false);
+    const spawnDetached = vi.fn(() => ({ pid: detachedChildPid, unref: vi.fn() }));
+    await expect(
+      launchForwardService(target, {
+        timeoutMs: 100,
+        now: () => elapsed,
+        isReachable,
+        spawnDetached,
+        terminateProcessTree: vi.fn(),
+      }),
+    ).rejects.toThrow("did not bind");
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(isReachable).toHaveBeenCalledExactlyOnceWith(target.localPort, 100);
+  });
+
+  it("cleans up the child when a startup probe throws at the deadline (#11652)", async () => {
+    const child = { pid: detachedChildPid, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+    const isReachable = vi
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockImplementationOnce(() => {
+        throw new Error("startup allowance exhausted");
+      })
+      .mockReturnValue(false);
+    await expect(
+      launchForwardService(target, {
+        isReachable,
+        spawnDetached: () => child,
+        terminateProcessTree,
+      }),
+    ).rejects.toThrow("startup allowance exhausted");
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("rejects readiness that finishes after the startup allowance (#11652)", async () => {
+    let elapsed = 0;
+    const child = { pid: detachedChildPid, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+    await expect(
+      launchForwardService(target, {
+        timeoutMs: 100,
+        now: () => elapsed,
+        isReachable: vi
+          .fn()
+          .mockReturnValueOnce(false)
+          .mockReturnValueOnce(true)
+          .mockReturnValue(false),
+        verifyReady: () => {
+          elapsed = 100;
+        },
+        spawnDetached: () => child,
+        terminateProcessTree,
+      }),
+    ).rejects.toThrow("did not bind");
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("shares the allowance between the initial port probe and startup polling (#11652)", async () => {
+    let elapsed = 0;
+    const allowances: number[] = [];
+    const terminateProcessTree = vi.fn();
+    const startupProbe = (_port: number, allowance?: number) => {
+      allowances.push(allowance!);
+      elapsed += Math.min(60, allowance!);
+      return false;
+    };
+    await expect(
+      launchForwardService(target, {
+        timeoutMs: 100,
+        now: () => elapsed,
+        isReachable: vi
+          .fn()
+          .mockImplementationOnce(startupProbe)
+          .mockImplementationOnce(startupProbe)
+          .mockReturnValue(false),
+        sleep: (milliseconds) => {
+          elapsed += milliseconds;
+        },
+        spawnDetached: () => ({ pid: detachedChildPid, unref() {} }),
+        terminateProcessTree,
+      }),
+    ).rejects.toThrow("did not bind");
+    expect(allowances).toEqual([100, 40]);
+    expect(elapsed).toBe(100);
+  });
+
+  it("uses monotonic time when the wall clock moves backwards (#11652)", async () => {
+    let elapsed = 0;
+    let wall = 10_000;
+    const wallClock = vi.spyOn(Date, "now").mockImplementation(() => wall);
+    try {
+      await expect(
+        launchForwardService(target, {
+          timeoutMs: 100,
+          now: () => elapsed,
+          isReachable: () => false,
+          spawnDetached: () => ({ pid: detachedChildPid, unref() {} }),
+          terminateProcessTree: () => undefined,
+          sleep: (milliseconds) => {
+            wall += milliseconds - (elapsed === 0 ? 1_000 : 0);
+            elapsed += milliseconds;
+          },
+        }),
+      ).rejects.toThrow("did not bind");
+      expect(elapsed).toBe(100);
+    } finally {
+      wallClock.mockRestore();
+    }
+  });
+});
+
+describe("OpenShell forward service", () => {
+  it("builds the direct ForwardTcp command with explicit gateway authority", () => {
+    expect(buildForwardServiceArgs(target)).toEqual([
+      "--gateway",
+      "nemoclaw",
+      "--gateway-endpoint",
+      "https://127.0.0.1:8080",
+      "--workspace",
+      "default",
+      "forward",
+      "service",
+      "demo",
+      "--target-port",
+      "18789",
+      "--target-host",
+      "127.0.0.1",
+      "--local",
+      "127.0.0.1:18789",
+    ]);
+  });
+
+  it("builds the direct ForwardTcp command for a selected non-default workspace", () => {
+    expect(buildForwardServiceArgs({ ...target, workspace: "review-workspace" })).toContain(
+      "review-workspace",
+    );
+  });
+
+  it("derives and validates the endpoint for a managed non-default gateway", () => {
+    const selected = createForwardServiceTarget(
+      {
+        executable: target.executable,
+        gatewayName: "nemoclaw-19080",
+        workspace: target.workspace,
+        sandboxName: target.sandboxName,
+        localHost: target.localHost,
+      },
+      target.localPort,
+    );
+
+    expect(selected.gatewayEndpoint).toBe("https://127.0.0.1:19080");
+    expect(buildForwardServiceArgs(selected)).toContain("https://127.0.0.1:19080");
+    expect(() =>
+      buildForwardServiceArgs({
+        ...selected,
+        gatewayEndpoint: "https://attacker.invalid:19080",
+      }),
+    ).toThrow(/bare loopback origin matching its gateway port/u);
+  });
+
+  it.each(["http://127.0.0.1:19080", "https://[::1]:19080"])(
+    "accepts the authority-bound local gateway endpoint %s",
+    (gatewayEndpoint) => {
+      const selected = createForwardServiceTarget(
+        {
+          executable: target.executable,
+          gatewayEndpoint,
+          gatewayName: "nemoclaw-19080",
+          workspace: target.workspace,
+          sandboxName: target.sandboxName,
+          localHost: target.localHost,
+        },
+        target.localPort,
+      );
+
+      expect(buildForwardServiceArgs(selected)).toContain(gatewayEndpoint);
+    },
+  );
+
+  it("normalizes the managed HTTPS default port to a bare origin", () => {
+    expect(
+      createForwardServiceTarget(
+        {
+          executable: target.executable,
+          gatewayName: "nemoclaw-443",
+          workspace: target.workspace,
+          sandboxName: target.sandboxName,
+          localHost: target.localHost,
+        },
+        target.localPort,
+      ).gatewayEndpoint,
+    ).toBe("https://127.0.0.1");
+  });
+
+  it.each([
+    "http://localhost:19080",
+    "http://127.0.0.1:19081",
+    "http://127.0.0.1:19080/path",
+    "http://user@127.0.0.1:19080",
+  ])("rejects an endpoint outside the exact local gateway authority: %s", (gatewayEndpoint) => {
+    expect(() =>
+      createForwardServiceTarget(
+        {
+          executable: target.executable,
+          gatewayEndpoint,
+          gatewayName: "nemoclaw-19080",
+          workspace: target.workspace,
+          sandboxName: target.sandboxName,
+          localHost: target.localHost,
+        },
+        target.localPort,
+      ),
+    ).toThrow(/bare loopback origin matching its gateway port/u);
+  });
+
+  it("shares the remaining allowance across ownership subprocesses (#11652)", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const response = darwinOwnerProbe(`${expected}\n`);
+    let elapsed = 0;
+    const allowances: number[] = [];
+    const probe = (executable: string, args: readonly string[], timeoutMs = 5_000) => {
+      allowances.push(timeoutMs);
+      elapsed += Math.min(60, timeoutMs);
+      return response(executable, args);
+    };
+    const deadline = createOpenShellOperationDeadline(100, () => elapsed);
+    const remainingMs = (maximumMs: number) => deadline.remaining(maximumMs, "ownership");
+    expect(() =>
+      isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe, remainingMs }),
+    ).toThrow("operation allowance exhausted");
+    expect(allowances).toEqual([100, 40]);
+    expect(elapsed).toBe(100);
+  });
+
+  it("proves the exact direct ForwardTcp listener before reuse", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const probe = darwinOwnerProbe(`${expected}\n`);
+
+    expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(4);
+    expect(probe).toHaveBeenNthCalledWith(2, "codesign", ["-h", "4321"]);
+  });
+
+  it("rejects a listener whose process does not match the direct ForwardTcp target", () => {
+    const probe = darwinOwnerProbe("/usr/bin/node foreign-listener.js\n");
+
+    expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(false);
+  });
+
+  it("rejects a foreign Darwin executable even when it maps the trusted binary", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const responses = new Map([
+      [JSON.stringify(["lsof", "-ti4TCP:18789", "-sTCP:LISTEN"]), { status: 0, stdout: "4321\n" }],
+      [
+        JSON.stringify(["lsof", "-a", "-p", "4321", "-d", "txt", "-Fn"]),
+        {
+          status: 0,
+          stdout: `p4321\nftxt\nn/usr/bin/python3\nn${ownerTarget.executable}\n`,
+        },
+      ],
+      [
+        JSON.stringify(["codesign", "-h", "4321"]),
+        { status: 0, stdout: "/usr/bin/python3\n/mach_kernel\n" },
+      ],
+      [
+        JSON.stringify(["ps", "-ww", "-p", "4321", "-o", "args="]),
+        { status: 0, stdout: `${expected}\n` },
+      ],
+    ]);
+    const probe = vi.fn(
+      (executable: string, args: readonly string[]) =>
+        responses.get(JSON.stringify([executable, ...args])) ?? { status: null, stdout: "" },
+    );
+
+    expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(false);
+    expect(probe).not.toHaveBeenCalledWith("lsof", ["-a", "-p", "4321", "-d", "txt", "-Fn"]);
+  });
+
+  it("rejects an otherwise exact listener without managed gateway endpoint authority", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const commandLine = expected.replace(" --gateway-endpoint https://127.0.0.1:8080", "");
+    const probe = darwinOwnerProbe(`${commandLine}\n`);
+
+    expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(false);
+  });
+
+  it("rejects an otherwise exact listener with a different gateway endpoint", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const commandLine = expected.replace("https://127.0.0.1:8080", "https://127.0.0.1:8081");
+    const probe = darwinOwnerProbe(`${commandLine}\n`);
+
+    expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(false);
+  });
+
+  it("rejects ambiguous or changing listener ownership", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const probe = darwinOwnerProbe(`${expected}\n`, "9876\n");
+
+    expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(false);
+  });
+
+  it("rejects ownership when a host probe times out", () => {
+    const lsofTimeout = vi.fn(() => ({ status: null, stdout: "" }));
+    expect(
+      isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe: lsofTimeout }),
+    ).toBe(false);
+
+    const psTimeout = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
+      .mockReturnValueOnce({ status: 0, stdout: `${process.execPath}\n/mach_kernel\n` })
+      .mockReturnValueOnce({ status: null, stdout: "" });
+    expect(
+      isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe: psTimeout }),
+    ).toBe(false);
+  });
+
+  it("proves Linux IPv4 ownership while ignoring an IPv6-only listener", () => {
+    const fixture = createLinuxOwnerFixture();
+    const expected = [fixture.target.executable, ...buildForwardServiceArgs(fixture.target)].join(
+      " ",
+    );
+    const responses = {
+      lsof: { status: null, stdout: "" },
+      ps: { status: 0, stdout: `${expected}\n` },
+    };
+    const probe = vi.fn(
+      (executable: string) => responses[executable as keyof typeof responses] ?? responses.lsof,
+    );
+
+    expect(
+      isForwardServiceListenerOwner(fixture.target, {
+        platform: "linux",
+        probe,
+        procRoot: fixture.procRoot,
+      }),
+    ).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(probe).toHaveBeenCalledWith("lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]);
+    expect(probe).toHaveBeenCalledWith("ps", ["-ww", "-p", "4321", "-o", "args="]);
+  });
+
+  it("rejects spoofed arguments when the Linux executable is different", () => {
+    const fixture = createLinuxOwnerFixture("python3");
+    const expected = [fixture.target.executable, ...buildForwardServiceArgs(fixture.target)].join(
+      " ",
+    );
+    const responses = {
+      lsof: { status: null, stdout: "" },
+      ps: { status: 0, stdout: `${expected}\n` },
+    };
+    const probe = vi.fn(
+      (executable: string) => responses[executable as keyof typeof responses] ?? responses.lsof,
+    );
+
+    expect(
+      isForwardServiceListenerOwner(fixture.target, {
+        platform: "linux",
+        probe,
+        procRoot: fixture.procRoot,
+      }),
+    ).toBe(false);
+    expect(probe).toHaveBeenCalledOnce();
+  });
+
+  it("denies Linux ownership when the /proc work limit is reached", () => {
+    const fixture = createLinuxOwnerFixture();
+    const probe = vi.fn(() => ({ status: null, stdout: "" }));
+
+    expect(
+      isForwardServiceListenerOwner(fixture.target, {
+        platform: "linux",
+        probe,
+        procRoot: fixture.procRoot,
+        procWorkLimit: 1,
+      }),
+    ).toBe(false);
+    expect(probe).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { wait: "default", sleep: undefined },
+    { wait: "synchronous hook", sleep: () => undefined },
+    { wait: "settled hook", sleep: async () => undefined },
+  ])("returns a missing executable error with $wait (#11648)", async ({ sleep }) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-spawn-"));
+    temporaryDirectories.push(root);
+    const terminateProcessTree = vi.fn();
+
+    await expect(
+      launchForwardService(
+        { ...target, executable: path.join(root, "missing") },
+        {
+          isReachable: () => false,
+          terminateProcessTree,
+          timeoutMs: 1_000,
+          sleep,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    expect(terminateProcessTree).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "returns permission-denied spawn failures to the caller (#11648)",
+    async () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-spawn-"));
+      temporaryDirectories.push(root);
+      const executable = path.join(root, "openshell");
+      writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o600 });
+      const terminateProcessTree = vi.fn();
+
+      await expect(
+        launchForwardService(
+          { ...target, executable },
+          {
+            isReachable: () => false,
+            terminateProcessTree,
+            timeoutMs: 1_000,
+          },
+        ),
+      ).rejects.toMatchObject({ code: "EACCES" });
+
+      expect(terminateProcessTree).not.toHaveBeenCalled();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "reports a real child exit before the bind timeout (#11648)",
+    async () => {
+      await expect(
+        launchForwardService(ownerTarget, {
+          isReachable: () => false,
+          spawnDetached: () =>
+            spawn(process.execPath, ["-e", "process.exit(23)"], {
+              detached: true,
+              stdio: "ignore",
+            }),
+          timeoutMs: 2_000,
+        }),
+      ).rejects.toThrow(/exited before binding .*status 23/u);
+    },
+  );
+
+  it.each([
+    {
+      mode: "throw",
+      fail: (error: Error): never => {
+        throw error;
+      },
+    },
+    { mode: "reject", fail: (error: Error) => Promise.reject(error) },
+  ])(
+    "cleans up the started child when polling sleep fails with $mode (#11648)",
+    async ({ fail }) => {
+      const child = { pid: 12345, unref: vi.fn() };
+      const terminateProcessTree = vi.fn();
+      const error = new Error("polling failed");
+      await expect(
+        launchForwardService(target, {
+          spawnDetached: () => child,
+          isReachable: () => false,
+          terminateProcessTree,
+          sleep: () => fail(error),
+        }),
+      ).rejects.toBe(error);
+      expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+      expect(child.unref).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves a child error when polling and cleanup also fail (#11648)", async () => {
+    const child = Object.assign(new EventEmitter(), { pid: 12345, unref: vi.fn() });
+    const childError = Object.assign(new Error("spawn failed"), { code: "EACCES" });
+    const cleanupError = new Error("cleanup failed");
+    const terminateProcessTree = vi.fn(() => {
+      throw cleanupError;
+    });
+    await expect(
+      launchForwardService(target, {
+        spawnDetached: () => child,
+        isReachable: () => false,
+        terminateProcessTree,
+        sleep: () => {
+          child.emit("error", childError);
+          throw new Error("polling failed");
+        },
+      }),
+    ).rejects.toMatchObject({ errors: [childError, cleanupError] });
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("detaches the OpenShell child and waits for its local port", async () => {
+    const unref = vi.fn();
+    const verifyReady = vi.fn(() => expect(unref).not.toHaveBeenCalled());
+    const spawnDetached = vi.fn(() => ({ unref }));
+    const terminateProcessTree = vi.fn();
+    let probes = 0;
+
+    await launchForwardService(target, {
+      isReachable: () => ++probes >= 3,
+      sleep: () => {},
+      spawnDetached,
+      terminateProcessTree,
+      verifyReady,
+      timeoutMs: 1_000,
+    });
+
+    expect(spawnDetached).toHaveBeenCalledWith(
+      target.executable,
+      buildForwardServiceArgs(target),
+      expect.any(Object),
+    );
+    expect(unref).toHaveBeenCalledOnce();
+    expect(verifyReady).toHaveBeenCalledOnce();
+    expect(terminateProcessTree).not.toHaveBeenCalled();
+  });
+
+  it("uses the selected OpenShell configuration without exposing credentials (#11084)", async () => {
+    const spawnDetached = vi.fn<NonNullable<ForwardServiceLaunchOptions["spawnDetached"]>>(() => ({
+      unref: vi.fn(),
+    }));
+
+    await launchForwardService(target, {
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
+      sleep: () => {},
+      sourceEnvironment: {
+        HOME: "/tmp/isolated-home",
+        NVIDIA_INFERENCE_API_KEY: "secret-value",
+        OPENSHELL_GATEWAY: "nemoclaw",
+        OPENSHELL_GATEWAY_ENDPOINT: "https://hostile.invalid",
+        OPENSHELL_GATEWAY_INSECURE: "true",
+        OPENSHELL_LOCAL_TLS_DIR: "/tmp/selected-openshell-tls",
+        OPENSHELL_TOKEN: "hostile-token",
+        OPENSHELL_WORKSPACE: "default",
+        PATH: "/usr/bin",
+        XDG_CONFIG_HOME: "/tmp/selected-openshell-config",
+      },
+      spawnDetached,
+    });
+
+    expect(spawnDetached).toHaveBeenCalledWith(target.executable, buildForwardServiceArgs(target), {
+      HOME: "/tmp/isolated-home",
+      OPENSHELL_GATEWAY: "nemoclaw",
+      OPENSHELL_LOCAL_TLS_DIR: "/tmp/selected-openshell-tls",
+      OPENSHELL_WORKSPACE: "default",
+      PATH: "/usr/bin",
+      XDG_CONFIG_HOME: "/tmp/selected-openshell-config",
+    });
+  });
+
+  it("rejects explicit OpenShell selectors that disagree with the forward target", async () => {
+    const spawnDetached = vi.fn();
+
+    await expect(
+      launchForwardService(target, {
+        isReachable: () => false,
+        sourceEnvironment: {
+          OPENSHELL_GATEWAY: "nemoclaw-19080",
+          OPENSHELL_WORKSPACE: "default",
+        },
+        spawnDetached,
+      }),
+    ).rejects.toThrow(/OPENSHELL_GATEWAY disagrees with its target/u);
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it("does not inherit ambient OpenShell selectors in a default forward child", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/tmp/hostile-tls");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    const spawnDetached = vi.fn<NonNullable<ForwardServiceLaunchOptions["spawnDetached"]>>(() => ({
+      unref: vi.fn(),
+    }));
+
+    await launchForwardService(target, {
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
+      sleep: () => {},
+      spawnDetached,
+    });
+
+    const childEnvironment = spawnDetached.mock.calls[0]?.[2];
+    expect(childEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY");
+    expect(childEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(childEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
+    expect(childEnvironment).not.toHaveProperty("OPENSHELL_LOCAL_TLS_DIR");
+    expect(childEnvironment).not.toHaveProperty("OPENSHELL_TOKEN");
+    expect(childEnvironment).not.toHaveProperty("OPENSHELL_WORKSPACE");
+  });
+
+  it("refuses an occupied port without launching or adopting its listener", async () => {
+    const spawnDetached = vi.fn();
+
+    await expect(
+      launchForwardService(target, { isReachable: () => true, spawnDetached }),
+    ).rejects.toThrow(/already occupied/u);
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it("does not adopt a foreign listener that wins the bind race after launch", async () => {
+    const child = { pid: detachedChildPid, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+    const verifyReady = vi.fn(() => {
+      throw new Error("Forward ownership changed");
+    });
+    const isReachable = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+
+    await expect(
+      launchForwardService(target, {
+        isReachable,
+        spawnDetached: () => child,
+        terminateProcessTree,
+        verifyReady,
+      }),
+    ).rejects.toThrow(ForwardServiceStartupCleanupError);
+    expect(verifyReady).toHaveBeenCalledOnce();
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      cleanup: "terminated",
+      terminate: () => {},
+      remains: false,
+      expected: /Forward ownership changed/u,
+    },
+    {
+      cleanup: "termination-failed",
+      terminate: () => {
+        throw new Error("Child remained alive");
+      },
+      remains: false,
+      expected: ForwardServiceStartupCleanupError,
+    },
+    {
+      cleanup: "listener-remained",
+      terminate: () => {},
+      remains: true,
+      expected: ForwardServiceStartupCleanupError,
+    },
+  ])(
+    "rejects failed startup verification with cleanup $cleanup",
+    async ({ terminate, remains, expected }) => {
+      const child = { pid: detachedChildPid, unref: vi.fn() };
+      const verificationError = new Error("Forward ownership changed");
+      const terminateProcessTree = vi.fn(terminate);
+      const launch = async () =>
+        await launchForwardService(target, {
+          isReachable: vi
+            .fn()
+            .mockReturnValueOnce(false)
+            .mockReturnValueOnce(true)
+            .mockReturnValue(remains),
+          spawnDetached: () => child,
+          terminateProcessTree,
+          verifyReady: () => {
+            throw verificationError;
+          },
+        });
+
+      await expect(launch()).rejects.toThrow(expected);
+      expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+      expect(child.unref).not.toHaveBeenCalled();
+    },
+  );
+
+  it("terminates a detached service that does not bind before the deadline", async () => {
+    let startupElapsed = 0;
+    const child = { pid: detachedChildPid, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+
+    await expect(
+      launchForwardService(target, {
+        isReachable: () => false,
+        now: () => startupElapsed,
+        spawnDetached: () => {
+          startupElapsed = 100;
+          return child;
+        },
+        terminateProcessTree,
+        timeoutMs: 100,
+      }),
+    ).rejects.toThrow(/did not bind/u);
+    expect(terminateProcessTree).toHaveBeenCalledWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when timeout cleanup cannot be proved", async () => {
+    let startupElapsed = 0;
+    const cleanupError = new Error("tree remained live");
+
+    await expect(
+      launchForwardService(target, {
+        isReachable: () => false,
+        now: () => startupElapsed,
+        spawnDetached: () => {
+          startupElapsed = 100;
+          return { pid: detachedChildPid, unref: vi.fn() };
+        },
+        terminateProcessTree: () => {
+          throw cleanupError;
+        },
+        timeoutMs: 100,
+      }),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        errors: [
+          expect.objectContaining({ message: expect.stringMatching(/did not bind/u) }),
+          cleanupError,
+        ],
+        name: ForwardServiceStartupCleanupError.name,
+      }),
+    );
+  });
+
+  it("targets the exact detached process group on POSIX", () => {
+    const signalProcess = vi.fn();
+
+    terminateForwardServiceProcessTree(
+      { pid: detachedChildPid, unref: vi.fn() },
+      {
+        platform: "linux",
+        processGroupHasRunnableMember: () => false,
+        signalProcess,
+      },
+    );
+
+    expect(signalProcess).toHaveBeenCalledWith(-detachedChildPid, "SIGKILL");
+  });
+
+  it("fails closed when POSIX process-group settlement is not proved", async () => {
+    let startupElapsed = 0;
+    const signalProcess = vi.fn();
+    const now = vi.fn().mockReturnValueOnce(0).mockReturnValue(5_000);
+
+    await expect(
+      launchForwardService(target, {
+        isReachable: () => false,
+        now: () => startupElapsed,
+        spawnDetached: () => {
+          startupElapsed = 100;
+          return { pid: detachedChildPid, unref: vi.fn() };
+        },
+        terminateProcessTree: (child) =>
+          terminateForwardServiceProcessTree(child, {
+            now,
+            platform: "linux",
+            processGroupHasRunnableMember: () => true,
+            signalProcess,
+            sleep: () => {},
+          }),
+        timeoutMs: 100,
+      }),
+    ).rejects.toThrow(expect.objectContaining({ name: ForwardServiceStartupCleanupError.name }));
+    expect(signalProcess).toHaveBeenCalledWith(-detachedChildPid, "SIGKILL");
+  });
+
+  it("resolves Windows taskkill from SystemRoot while PATH is poisoned", () => {
+    const signalProcess = vi.fn();
+    const taskkill = vi.fn(() => ({ status: 0 }));
+    const trustedTaskkill = "C:\\Windows\\System32\\taskkill.exe";
+
+    terminateForwardServiceProcessTree(
+      { pid: detachedChildPid, unref: vi.fn() },
+      {
+        environment: {
+          PATH: "C:\\attacker-controlled",
+          SystemRoot: "C:\\Windows",
+        },
+        isTrustedTaskkillExecutable: (executable) => executable === trustedTaskkill,
+        platform: "win32",
+        signalProcess,
+        taskkill,
+      },
+    );
+
+    expect(taskkill).toHaveBeenCalledWith(trustedTaskkill, [
+      "/PID",
+      String(detachedChildPid),
+      "/T",
+      "/F",
+    ]);
+    expect(signalProcess).not.toHaveBeenCalled();
+  });
+
+  it("qualifies the real taskkill file and rejects a symlink with the default verifier", () => {
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "nemoclaw-taskkill-trust-")));
+    temporaryDirectories.push(root);
+    const executable = path.join(root, "taskkill.exe");
+    const symlink = path.join(root, "taskkill-link.exe");
+    writeFileSync(executable, "fixture");
+    symlinkSync(executable, symlink);
+
+    expect(isTrustedTaskkillExecutable(executable)).toBe(true);
+    expect(isTrustedTaskkillExecutable(symlink)).toBe(false);
+    expect(isTrustedTaskkillExecutable(path.join(root, "missing.exe"))).toBe(false);
+  });
+
+  it("fails closed when the trusted Windows taskkill executable is unavailable", () => {
+    const taskkill = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      terminateForwardServiceProcessTree(
+        { pid: detachedChildPid, unref: vi.fn() },
+        {
+          environment: {
+            PATH: "C:\\attacker-controlled",
+            SystemRoot: "C:\\Windows",
+          },
+          isTrustedTaskkillExecutable: () => false,
+          platform: "win32",
+          taskkill,
+        },
+      ),
+    ).toThrow(/Trusted Windows taskkill executable is unavailable/u);
+    expect(taskkill).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "Windows", "\\\\attacker\\share", "C:\\Windows\\..\\poison"])(
+    "fails closed for an invalid Windows SystemRoot: %s",
+    (systemRoot) => {
+      const taskkill = vi.fn(() => ({ status: 0 }));
+
+      expect(() =>
+        terminateForwardServiceProcessTree(
+          { pid: detachedChildPid, unref: vi.fn() },
+          {
+            environment: {
+              PATH: "C:\\attacker-controlled",
+              SystemRoot: systemRoot,
+            },
+            isTrustedTaskkillExecutable: () => true,
+            platform: "win32",
+            taskkill,
+          },
+        ),
+      ).toThrow(/Trusted Windows SystemRoot is unavailable/u);
+      expect(taskkill).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails closed when Windows process-tree termination is not proved", () => {
+    const noSuchProcess = Object.assign(new Error("not found"), { code: "ESRCH" });
+
+    expect(() =>
+      terminateForwardServiceProcessTree(
+        { pid: detachedChildPid, unref: vi.fn() },
+        {
+          environment: { SystemRoot: "C:\\Windows" },
+          isTrustedTaskkillExecutable: () => true,
+          platform: "win32",
+          signalProcess: () => {
+            throw noSuchProcess;
+          },
+          taskkill: () => ({ status: 1 }),
+        },
+      ),
+    ).toThrow(/process-tree termination failed/u);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "kills a delayed listener and its detached process group before reporting timeout",
+    async () => {
+      const port = await availableLoopbackPort();
+      const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-timeout-"));
+      temporaryDirectories.push(root);
+      const markerPath = path.join(root, "pids.json");
+      const releasePath = path.join(root, "release");
+      const bindDelayMs = 2_500;
+      const descendantScript = `
+const fs = require("node:fs");
+const net = require("node:net");
+const server = net.createServer(() => {});
+const releasePoll = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(releasePath)})) return;
+  clearInterval(releasePoll);
+  setTimeout(() => server.listen(${String(port)}, "127.0.0.1"), ${String(bindDelayMs)});
+}, 10);
+setInterval(() => {}, 1000);
+`;
+      const leaderScript = `
+const fs = require("node:fs");
+const { spawn } = require("node:child_process");
+const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(descendantScript)}], {
+  stdio: "ignore",
+});
+fs.writeFileSync(
+  ${JSON.stringify(markerPath)},
+  JSON.stringify({ leader: process.pid, descendant: descendant.pid }),
+);
+setInterval(() => {}, 1000);
+`;
+      let spawned: ChildProcess | undefined;
+      let spawnedClose: Promise<unknown[]> | undefined;
+      const unref = vi.fn();
+      const runtimeTarget = {
+        ...target,
+        executable: process.execPath,
+        localPort: port,
+        targetPort: port,
+      };
+
+      let launchError: unknown;
+      try {
+        await launchForwardService(runtimeTarget, {
+          sleep: (milliseconds) => {
+            writeFileSync(releasePath, "ready");
+            Atomics.wait(processSleepBuffer, 0, 0, milliseconds);
+          },
+          spawnDetached: () => {
+            spawned = spawn(process.execPath, ["-e", leaderScript], {
+              detached: true,
+              stdio: "ignore",
+            });
+            expect(spawned.pid).toBeTypeOf("number");
+            const processGroup = spawned.pid!;
+            startedProcessGroups.push(processGroup);
+            spawnedClose = once(spawned, "close");
+            const markerDeadline = Date.now() + 5_000;
+            while (!existsSync(markerPath) && Date.now() < markerDeadline) {
+              Atomics.wait(processSleepBuffer, 0, 0, 25);
+            }
+            expect(existsSync(markerPath)).toBe(true);
+            return { pid: processGroup, unref };
+          },
+          timeoutMs: 1_000,
+        });
+      } catch (error) {
+        launchError = error;
+      }
+
+      expect(launchError).toEqual(
+        expect.objectContaining({ message: expect.stringMatching(/did not bind/u) }),
+      );
+      expect(existsSync(markerPath)).toBe(true);
+      expect(existsSync(releasePath)).toBe(true);
+      const pids = JSON.parse(readFileSync(markerPath, "utf8")) as {
+        descendant: number;
+        leader: number;
+      };
+      await spawnedClose;
+      expect(spawned?.signalCode).toBe("SIGKILL");
+      expect(await waitForExit(pids.leader)).toBe(true);
+      expect(await waitForExit(pids.descendant)).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, bindDelayMs));
+      expect(probeLocalForwardListener(port, 100)).toBe(false);
+      expect(unref).not.toHaveBeenCalled();
+    },
+    15_000,
+  );
+});

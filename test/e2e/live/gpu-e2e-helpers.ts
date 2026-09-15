@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -10,47 +11,53 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+import { pollUntil } from "../fixtures/polling.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 export { REPO_ROOT };
+
+/** The export fixture owns only this attached daemon; onboarding owns the auth proxy. */
+export function startAttachedOllama(progress: TestProgress, environment: NodeJS.ProcessEnv) {
+  const child = spawnObservedChild("ollama", ["serve"], {
+    activityLabel: "attached Ollama daemon",
+    progress,
+    spawn: { cwd: REPO_ROOT, env: environment, stdio: "ignore" },
+  });
+  return ownChildProcess(child);
+}
+
+export function waitForAttachedOllama(
+  host: HostCliClient,
+  environment: NodeJS.ProcessEnv,
+  artifactPrefix = "export-daemon-ready",
+) {
+  // Connection refusal and curl timeouts are transient while this fixture's child starts.
+  return pollUntil({
+    artifactPrefix,
+    attempts: 20,
+    delayMs: 500,
+    probe: (_attempt, artifactName) =>
+      host.command(
+        "curl",
+        ["-q", "--noproxy", "*", "-fsS", "--max-time", "2", "http://127.0.0.1:11439/api/tags"],
+        { artifactName, env: environment, timeoutMs: 5000 },
+      ),
+    accept: (result) => result.exitCode === 0,
+    terminal: (result) =>
+      result.exitCode !== 0 && result.exitCode !== 7 && result.exitCode !== 28
+        ? "The attached daemon readiness read failed."
+        : undefined,
+  });
+}
 
 export const CLI = CLI_ENTRYPOINT;
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-ollama";
 const DEFAULT_GPU_E2E_MODEL = "qwen3.5:9b";
 validateSandboxName(SANDBOX_NAME);
 export const PROXY_PORT = tcpPort(process.env.NEMOCLAW_OLLAMA_PROXY_PORT, "11435");
-
-export function shouldBootstrapLlamaCppGenericGpuTarget(
-  environment: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return (
-    environment.NEMOCLAW_RUN_LIVE_E2E === "1" &&
-    /^[a-f0-9]{40}$/u.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "") &&
-    environment.E2E_LLAMA_CPP_DEDICATED_LANE !== "1"
-  );
-}
-
-export function buildLlamaCppCompatibilityTargetEnv(
-  base: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  const forwarded = [
-    "NEMOCLAW_E2E_CORRELATION_ID",
-    "NEMOCLAW_E2E_EXPECTED_SHA",
-    "NEMOCLAW_E2E_SHARD",
-  ].reduce<NodeJS.ProcessEnv>(
-    (selected, key) => ({
-      ...selected,
-      ...(base[key] === undefined ? {} : { [key]: base[key] }),
-    }),
-    {},
-  );
-  return {
-    ...buildAvailabilityProbeEnv(base),
-    ...forwarded,
-    NEMOCLAW_RUN_LIVE_E2E: "1",
-  };
-}
 
 function tcpPort(value: string | undefined, fallback: string): string {
   const raw = value ?? fallback;

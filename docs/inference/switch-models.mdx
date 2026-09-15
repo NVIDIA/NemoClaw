@@ -29,18 +29,16 @@ Use the provider ID in the output with the new model ID.
 Runtime model changes update the OpenShell route and synchronize the selected running agent configuration.
 Pass `--sandbox <name>` when you do not want to use the default sandbox.
 
-Open the sandbox for managed configuration changes, switch the model, and restore shields.
+Switch the model with one host command.
 
 ```bash
-$$nemoclaw <name> shields down
 $$nemoclaw inference set --provider <provider> --model <new-model> --sandbox <name>
-$$nemoclaw <name> shields up
 ```
 
 For a compatible endpoint, omit `--endpoint-url` when the durable registry entry already contains the endpoint and API-family metadata.
 NemoClaw reuses the recorded route and does not repoint the gateway.
 You can also re-supply the same endpoint URL when the registry records that onboarding established it.
-NemoClaw requires an exact canonical match and does not extend that trust to a different URL or an endpoint recorded by `inference set`.
+NemoClaw requires a canonical match and does not extend that trust to a different URL or an endpoint recorded by `inference set`.
 If the route metadata is incomplete, NemoClaw stops and tells you to re-run onboarding.
 
 </AgentOnly>

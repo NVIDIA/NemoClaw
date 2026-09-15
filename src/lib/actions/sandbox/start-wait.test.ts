@@ -3,9 +3,32 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
+import {
+  createConnectHarness,
+  requireDist,
+} from "../../../../test/support/connect-flow-test-harness";
 
 describe("sandbox start readiness", () => {
+  it("prints typed unhealthy-gateway guidance during connect readiness", async () => {
+    const harness = createConnectHarness({ listOutputs: ["alpha Unknown"] });
+    vi.spyOn(
+      requireDist("../../src/lib/gateway-runtime-action.js"),
+      "getNamedGatewayLifecycleState",
+    ).mockResolvedValue({
+      state: "named_unhealthy",
+      activeGateway: "nemoclaw",
+      recoveryBlocked: false,
+      unavailable: true,
+      diagnostic: "Gateway is not connected.",
+    });
+    await expect(harness.waitForSandboxReadyOrExit("alpha")).rejects.toThrow(
+      'process.exit unexpectedly called with "1"',
+    );
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Gateway is not connected.");
+    expect(output).toContain("API is refusing connections after restart");
+  });
+
   it("waits through the stopped sandbox Error phase after start (#9753)", async () => {
     const harness = createConnectHarness({
       listOutputs: ["alpha Error", "alpha Provisioning", "alpha Ready"],
@@ -40,16 +63,28 @@ describe("sandbox start readiness", () => {
     expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(3);
   });
 
+  it("waits through the next OpenShell health reconciliation after a slow restart (#9485)", async () => {
+    const harness = createConnectHarness({
+      listOutputs: [...Array.from({ length: 11 }, () => "alpha Error"), "alpha Ready"],
+    });
+
+    await expect(
+      harness.waitForSandboxReadyOrExit("alpha", { allowInitialErrorAfterStart: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(12);
+  });
+
   it("fails after the stopped sandbox Error phase remains terminal (#9753)", async () => {
     const harness = createConnectHarness({
-      listOutputs: Array.from({ length: 11 }, () => "alpha Error"),
+      listOutputs: Array.from({ length: 21 }, () => "alpha Error"),
     });
 
     await expect(
       harness.waitForSandboxReadyOrExit("alpha", { allowInitialErrorAfterStart: true }),
     ).rejects.toThrow('process.exit unexpectedly called with "1"');
 
-    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(11);
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(21);
   });
 
   it.each(["Failed", "CrashLoopBackOff"])(

@@ -13,6 +13,36 @@ import {
 } from "../../src/lib/onboard/sandbox-create-failure.js";
 
 describe("sandbox create failure diagnostics", () => {
+  it.each([
+    ["default port", 8080, undefined, "openshell-docker-gateway"],
+    ["non-default port", 9123, undefined, "openshell-docker-gateway-9123"],
+    ["configured state", 9123, "configured-gateway", "configured-gateway"],
+  ] as const)(
+    "reads the selected %s gateway log before the legacy fallback (#10544)",
+    (_scenario, gatewayPort, configuredDirName, expectedDirName) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-selected-log-"));
+      const homeDir = path.join(tmp, "home");
+      const gatewayStateDir = configuredDirName
+        ? path.join(tmp, configuredDirName)
+        : path.join(homeDir, ".local", "state", "nemoclaw", expectedDirName);
+      const gatewayLogPath = path.join(gatewayStateDir, "openshell-gateway.log");
+      fs.mkdirSync(gatewayStateDir, { recursive: true });
+      fs.writeFileSync(gatewayLogPath, "selected gateway exited before sandbox creation\n");
+
+      const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
+        gatewayPort,
+        gatewayStateDir: configuredDirName ? gatewayStateDir : undefined,
+        homeDir,
+        now: new Date("2026-05-12T20:35:00.000Z"),
+      });
+
+      expect(diagnostics?.gatewayLogPath).toBe(gatewayLogPath);
+      expect(diagnostics?.summaryLines).toContain(
+        "selected gateway exited before sandbox creation",
+      );
+    },
+  );
+
   it("preserves gateway failure lines and VM console output before cleanup", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-"));
     const homeDir = path.join(tmp, "home");

@@ -70,7 +70,10 @@ function scriptKindFor(filePath: string): ts.ScriptKind {
   return ts.ScriptKind.TS;
 }
 
-function bindSourceFile(file: string, source: string): {
+function bindSourceFile(
+  file: string,
+  source: string,
+): {
   readonly checker: ts.TypeChecker;
   readonly sourceFile: ts.SourceFile;
 } {
@@ -101,10 +104,7 @@ function bindSourceFile(file: string, source: string): {
   return { checker: program.getTypeChecker(), sourceFile };
 }
 
-function collectVitestBindings(
-  sourceFile: ts.SourceFile,
-  checker: ts.TypeChecker,
-): VitestBindings {
+function collectVitestBindings(sourceFile: ts.SourceFile, checker: ts.TypeChecker): VitestBindings {
   const registrations = new Map<ts.Symbol, string>();
   const namespaces = new Set<ts.Symbol>();
 
@@ -269,6 +269,10 @@ function importedSuiteModules(modules: ReadonlySet<string>): ReadonlySet<string>
   for (const importer of modules) {
     if (!TEST_FILE_PATTERN.test(path.basename(importer))) continue;
     const source = readFileSync(importer, "utf8");
+    const importsSuite = ts
+      .preProcessFile(source, true, true)
+      .importedFiles.some(({ fileName }) => fileName.includes("-suite"));
+    if (!importsSuite) continue;
     const sourceFile = ts.createSourceFile(
       importer,
       source,

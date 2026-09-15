@@ -86,7 +86,7 @@ A successful run has this version 1 envelope:
 }
 ```
 
-`response` contains the exact final assistant text on success and is `null` on failure.
+`response` contains the final assistant text on success and is `null` on failure.
 `response_bytes` is its UTF-8 byte length on success and is `0` on failure.
 The process exit code matches `data.exit_code`.
 The terminal statuses are `success`, `agent_failure`, `process_failure`, `timeout`, `turn_limit`, `cancelled`, and `output_limit`.
@@ -111,7 +111,7 @@ Callers must reject empty, malformed, additional, or unsupported-version stdout.
 ## Call a Read-Only MCP Tool
 
 Use `dcode tools call-read-only` when automation must invoke one managed MCP tool without model participation.
-The command accepts one exact tool name, requires `--json`, and reads one JSON object from standard input.
+The command accepts one tool name, requires `--json`, and reads one JSON object from standard input.
 
 ```bash
 printf '%s\n' '{"worker":"worker-17","nonce":"request-42"}' | \
@@ -122,7 +122,7 @@ The command reads standard input to end-of-file and requires one UTF-8 JSON obje
 It rejects terminal input, empty input, duplicate object keys, non-object JSON, non-finite constants, malformed UTF-8, and additional JSON values.
 
 The command loads only MCP servers registered through NemoClaw.
-The exact tool name must contain 1 to 128 ASCII letters, digits, underscores, or hyphens, and its first character must be alphanumeric.
+The tool name must contain 1 to 128 ASCII letters, digits, underscores, or hyphens, and its first character must be alphanumeric.
 It must resolve once, identify an MCP tool, and pass the managed coherent read-only annotation check.
 A prompt, agent, or model does not select the tool, modify its arguments, or participate in the call.
 Unavailable, ambiguous, non-MCP, and mutating tools fail before invocation.
@@ -146,7 +146,7 @@ A successful call has this shape:
 ```
 
 `content` preserves the successful MCP `ToolMessage` content.
-`structured_content` appears only when the server returns one mapping under that exact artifact field.
+`structured_content` appears only when the server returns an artifact that contains only a `structured_content` mapping.
 A tool-reported failure, unsupported result type, malformed artifact, non-finite value, cyclic value, non-string object key, or another container at depth 64 fails closed.
 A primitive value at depth 64 is accepted.
 There is no separate string-length or item-count limit.
@@ -181,9 +181,13 @@ The managed launchers disable the following mutable or unsupported behavior:
 - Deep Agents Code package update checks and the LangGraph server version check
 - CLI and TUI update or install commands
 - Nested remote sandbox providers and remote asynchronous subagents
-- Deep Agents Model Context Protocol (MCP) commands, project MCP auto-loading, startup commands, and executable hooks
-- ACP mode, interpreter tool calling, and shell allowlist overrides
+- Deep Agents Model Context Protocol (MCP) commands and project MCP auto-loading
+- ACP mode
 - Native LangSmith tracing and ambient OpenTelemetry exporter configuration
+
+Interactive sessions retain Deep Agents Code's native local behavior for shell allowlists, startup commands, interpreter and programmatic-tool settings, and user hooks.
+These processes run as the sandbox user inside OpenShell and receive the supported secret-free runtime environment.
+NemoClaw snapshots and restores `hooks.json` plus the supported interpreter and startup-mode keys in `config.toml` during a managed rebuild.
 
 The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
@@ -192,11 +196,11 @@ For headless runs, `--max-retries` remains available after Deep Agents Code vali
 The managed boundary discards every other model parameter, including credentials, endpoints, and provider settings.
 Project and user-defined subagents remain available, but they inherit the managed chat model instead of accepting their own model override.
 
-MCP servers registered through `nemo-deepagents <sandbox-name> mcp add` remain available through NemoClaw's dedicated `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and OpenShell egress policy.
+MCP servers registered through `nemo-deepagents <sandbox-name> mcp add` remain available through the agent-native `/sandbox/.deepagents/.mcp.json` configuration and OpenShell egress policy.
 Project and user MCP files are never auto-loaded.
 Sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`.
-Remove, rebuild, and destroy can still scrub exact registry-owned legacy entries without claiming unrelated user content.
-Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders.
+Remove, rebuild, and destroy can still scrub registry-owned legacy entries without claiming unrelated user content.
+Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with OpenShell credential placeholders.
 It then gives Deep Agents Code a process-local, integrity-bound snapshot for server starts and restarts.
 It prefers a sealed in-memory file when available.
 The OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
@@ -204,19 +208,16 @@ Stdio commands, extra headers, raw credentials, and unrelated top-level configur
 For authenticated MCP setup and credential rotation, refer to [Add an MCP Server](../mcp-servers/add-an-mcp-server) and [Manage MCP Servers](../mcp-servers/manage-mcp-servers).
 This isolated-mode guarantee applies to the managed launchers, not arbitrary Python commands in the sandbox.
 
-### Protect the Managed Login Profile
+<a id="protect-the-managed-login-profile"></a>
 
-Managed Deep Agents Code images reserve `/sandbox/.bash_profile` as the first Bash login profile for OpenShell command sessions.
-The file is `root:root` mode `0444`, and `/sandbox` is `root:sandbox` mode `1775`.
-The sticky directory keeps normal workspace writes available while preventing the `sandbox` user from deleting or replacing the root-owned profile.
+### Edit Personal Shell Files
 
-At each container start, the root entrypoint restores and verifies the profile before it changes to the `sandbox` user.
-If a sandbox-user start cannot verify the profile, it stops and tells you to rebuild the sandbox.
+You can edit personal shell files under `/sandbox`, including `.bashrc`, `.profile`, and `.bash_profile`.
+Ordinary login and interactive shells use your personal files.
 
-For NemoClaw-managed route and terminal probes, the profile clears `BASH_ENV` and `ENV` and skips `/tmp/nemoclaw-proxy-env.sh`.
-This prevents sandbox startup code from running before the managed probe.
-Ordinary login commands continue to load the credential-free runtime environment, and interactive `.bashrc` behavior does not change.
-Do not edit or replace `/sandbox/.bash_profile`.
+Managed probes use `/etc/profile.d/nemoclaw-dcode.sh`, owned by `root:root` with mode `0444`.
+The hook clears `BASH_ENV` and `ENV` and selects an image-owned home before Bash reads personal files.
+The managed launcher restores `HOME=/sandbox` and reads proxy settings from image-owned files.
 
 Existing Deep Agents Code sandboxes retain their previous image until you rebuild them.
 After you update NemoClaw, finish active tasks and follow [Recover and Rebuild Sandboxes](recover-and-rebuild-sandboxes) to replace each image.
@@ -224,7 +225,8 @@ After you update NemoClaw, finish active tasks and follow [Recover and Rebuild S
 ## Choose an Approval Boundary
 
 Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts by default.
-Thread-wide auto-approval is unavailable unless you enable the managed thread opt-in capability, and shell allowlist auto-approval remains disabled.
+Automatic and unrestricted approval modes remain unavailable unless you enable the managed thread opt-in capability.
+Interactive shell allowlists use Deep Agents Code's native approval behavior.
 
 Headless `dcode -n` is an explicit automation boundary.
 The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP configuration, nested remote sandboxes, remote asynchronous subagents, and alternate model routes.
@@ -240,12 +242,13 @@ Enable the capability for a named sandbox through a transactional rebuild becaus
 nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes
 ```
 
-The `thread-opt-in` setting grants permission to activate auto-approval, but it does not activate auto-approval by itself.
-For each thread, select **Auto-approve for this thread** in the approval menu or start that `dcode` process with `dcode -y`.
-The TUI shows the upstream active-state indicator and a warning while the current thread can run tool calls, including shell commands, without further confirmation.
+The `thread-opt-in` setting grants permission to use Deep Agents Code's native approval modes, but it does not activate one by itself.
+Use `dcode -y` or **Enable Auto for this thread** for classifier-backed Auto mode.
+Use the native `--yolo` or `/yolo` path for unrestricted approval after its warning and acknowledgement.
+The TUI shows the upstream active-state indicator for the selected mode.
 
-NemoClaw resets the active state when you start a new `dcode` process, run `/clear` or `/force-clear`, switch or resume a different thread, or switch agents.
-You must opt in again after each reset.
+Deep Agents Code preserves its native approval state across `/clear`, `/force-clear`, thread resume or switch, and agent switch operations.
+A new process starts from the native `[startup].mode` setting; NemoClaw forces Manual when the sandbox capability is `disabled`.
 The host-side status command reports the configured capability, not whether one live TUI thread currently has auto-approval active:
 
 ```bash

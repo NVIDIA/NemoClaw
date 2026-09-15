@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SpawnSyncReturns, spawnSync } from "node:child_process";
+import { spawn, type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { expect } from "vitest";
@@ -117,5 +117,30 @@ export function runWrapper(
   return spawnSync("bash", [wrapperPath, ...args], {
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env },
     encoding: "utf8",
+  });
+}
+
+export async function runWrapperAsync(
+  wrapperPath: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const child = spawn("bash", [wrapperPath, ...args], {
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+  return await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (status) => {
+      resolve({
+        status,
+        stdout: Buffer.concat(stdout).toString(),
+        stderr: Buffer.concat(stderr).toString(),
+      });
+    });
   });
 }

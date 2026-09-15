@@ -13,15 +13,18 @@ export interface PreflightGatewaySequenceDeps {
   externallySupervised: boolean;
   supportsLifecycleCommands: boolean;
   isDockerDriverGatewayEnabled: boolean;
+  /** Provider readiness already owns reuse, listener, and runtime absence decisions. */
+  managedGatewayObservationAuthoritative?: boolean;
   gatewayName: string;
   cliDisplayName: string;
-  dashboardPort: number;
+  dashboardPort?: number;
   verifyGatewayContainerRunning(name: string): GatewayContainerState;
   recoverGatewayRuntime(): Promise<boolean>;
   waitForGatewayHttpReady(): Promise<boolean>;
   getGatewayLocalEndpoint(): string;
   stopDashboardForward(): void;
   stopAllDashboardForwards(): void;
+  runOpenshell?(args: string[], options: { ignoreError: true }): unknown;
   getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
   exitProcess(code: number): never;
   destroyGateway(): boolean;
@@ -30,7 +33,6 @@ export interface PreflightGatewaySequenceDeps {
     successMessage: string,
     failureMessage: string,
   ): GatewayReuseState;
-  runOpenshell(args: string[], options: { ignoreError: true }): unknown;
   dockerInspect(
     args: string[],
     opts: { ignoreError: true; suppressOutput: true },
@@ -62,6 +64,7 @@ export interface PreflightGatewaySequenceDeps {
 export async function runPreflightGatewaySequence(
   deps: PreflightGatewaySequenceDeps,
 ): Promise<GatewayReuseState> {
+  if (deps.managedGatewayObservationAuthoritative) return deps.gatewayReuseState;
   let gatewayReuseState = await reconcilePreflightGatewayReuseState({
     gatewayReuseState: deps.gatewayReuseState,
     supportsLifecycleCommands: deps.supportsLifecycleCommands,
@@ -84,10 +87,9 @@ export async function runPreflightGatewaySequence(
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,
     externallySupervised: deps.externallySupervised,
     cliDisplayName: deps.cliDisplayName,
-    dashboardPort: deps.dashboardPort,
     log: deps.log,
     warn: deps.warn,
-    runOpenshell: deps.runOpenshell,
+    stopAllDashboardForwards: deps.stopAllDashboardForwards,
     destroyGateway: deps.destroyGateway,
     destroyGatewayForReuse: deps.destroyGatewayForReuse,
   });

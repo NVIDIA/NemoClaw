@@ -18,6 +18,7 @@ import {
 } from "../../adapters/openshell/timeouts";
 import { GATEWAY_PORT } from "../../core/ports";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { isGatewayHealthy } from "../../state/gateway";
 import * as registry from "../../state/registry";
 
@@ -47,7 +48,10 @@ export function probeGatewayMetadataHealth(gatewayName: string): boolean {
 }
 
 export function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
-  return driver === "docker" || driver === "vm";
+  if (driver === "vm") return true;
+  if (!driver) return false;
+  const provider = resolveRegisteredRuntimeProvider(driver);
+  return provider?.gateway.launcher === "nemoclaw";
 }
 
 /**

@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseEnv } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
@@ -32,7 +33,13 @@ import {
   withLegacyMessagingPlanEnvDirect,
 } from "../messaging-plan-test-helper";
 
-const SCRIPT_PATH = path.join(import.meta.dirname, "../..", "agents", "hermes", "generate-config.ts");
+const SCRIPT_PATH = path.join(
+  import.meta.dirname,
+  "../..",
+  "agents",
+  "hermes",
+  "generate-config.ts",
+);
 const SCRIPT_DIR = path.dirname(SCRIPT_PATH);
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "../..", "agents", "hermes", "config");
 
@@ -174,16 +181,12 @@ function runConfigScriptRaw(
 ) {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
   const env = buildHermesTestEnv(envOverrides);
-  return spawnSync(
-    process.execPath,
-    ["--experimental-strip-types", opts.scriptPath || SCRIPT_PATH],
-    {
-      encoding: "utf-8",
-      cwd: opts.cwd,
-      env,
-      timeout: 10_000,
-    },
-  );
+  return spawnSync(process.execPath, [opts.scriptPath || SCRIPT_PATH], {
+    encoding: "utf-8",
+    cwd: opts.cwd,
+    env,
+    timeout: 10_000,
+  });
 }
 
 function expectGenerationError(
@@ -245,6 +248,10 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
   fs.copyFileSync(
     path.join(import.meta.dirname, "../..", "src", "lib", "hermes-managed-route.ts"),
     path.join(fixtureRoot, "src", "lib", "hermes-managed-route.ts"),
+  );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
+    path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
   );
   return fixtureScriptPath;
 }
@@ -350,7 +357,10 @@ describe("agents/hermes/generate-config.ts", () => {
       expect(config.tts).toEqual({ provider: "fixture-audio", use_gateway: true });
       expect(envFile).toContain("FIXTURE_AUDIO_GATEWAY_URL=https://matrix.example.test/audio\n");
       expect(config.platforms.telegram).toBeUndefined();
-      expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
+      // build-env.ts derives this line from the plan's credential bindings at
+      // image-build time, independently of the manifest render. Cleanup only
+      // removes keys the plan owns.
+      expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN");
     },
     testTimeout(15_000),
   );
@@ -466,14 +476,16 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("API_SERVER_KEY=");
   });
 
-  it("configures Hermes' native Tavily backend with an egress-resolved credential", () => {
+  it("omits the Tavily credential from the generated dotenv when web search is enabled", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+      TAVILY_API_KEY: "build-only-test-credential",
     });
 
     expect(config.web).toEqual({ backend: "tavily" });
-    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(parseEnv(envFile).TAVILY_API_KEY).toBeUndefined();
+    expect(envFile).not.toContain("build-only-test-credential");
     expect(findRawSecretEnvEntries(envFile)).toEqual([]);
   });
 
@@ -744,9 +756,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
   });
 
-  it.each(
-    ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"],
-  )(
+  it.each(["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"])(
     "preserves Hermes remote platform toolsets while keeping CLI defaults unpinned [%s]",
     async (platform) => {
       const { config } = await runConfigScriptWithMessaging({
@@ -824,7 +834,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.web).toEqual({ backend: "tavily" });
     expect(config.tts).toEqual({ provider: "openai", use_gateway: true });
     expect(config.stt).toEqual({ provider: "openai", use_gateway: true });
-    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(envFile).not.toContain("TAVILY_API_KEY=");
     expect(envFile).not.toContain("FIRECRAWL_GATEWAY_URL=");
     expect(envFile).toContain(
       "OPENAI_AUDIO_GATEWAY_URL=http://host.openshell.internal:11436/openai-audio\n",
@@ -895,7 +905,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.platforms.discord).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.discord);
     expect(JSON.stringify(config)).not.toContain("DISCORD_BOT_TOKEN");
-    expect(envFile).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n");
+    expect(envFile).not.toContain("DISCORD_BOT_TOKEN=");
     expect(envFile).not.toContain("DISCORD_PROXY=");
     expect(envFile).not.toContain("NEMOCLAW_DISCORD_FACADE_URL");
     expect(envFile).toContain("NEMOCLAW_DISCORD_GUILD_IDS=1491590992753590594\n");
@@ -997,12 +1007,10 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expectRemotePlatformToolsets(config.platform_toolsets.telegram);
     expectRemotePlatformToolsets(config.platform_toolsets.slack);
-    expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
+    expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
     expect(envFile).toContain("TELEGRAM_ALLOWED_USERS=123456789\n");
-    expect(envFile).toContain("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n");
-    expect(envFile).toContain("SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n");
-    expect(envFile).not.toContain("SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n");
-    expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
+    expect(envFile).not.toContain("SLACK_BOT_TOKEN=");
+    expect(envFile).not.toContain("SLACK_APP_TOKEN=");
     expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
     expect(envFile).toContain("SLACK_ALLOWED_CHANNELS=C012AB3CD,C987ZY6XW\n");
   });
@@ -1078,11 +1086,10 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.platforms.weixin).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.weixin);
 
-    // The bot token placeholder references the OpenShell credential slot
-    // (WECHAT_BOT_TOKEN), NOT a fresh WEIXIN_TOKEN slot — that's the L7
-    // resolution contract shared with OpenClaw's bridge.
-    expect(envFile).toContain("WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN\n");
-    expect(envFile).not.toContain("WEIXIN_TOKEN=openshell:resolve:env:WEIXIN_TOKEN\n");
+    // Startup copies OpenShell's revision-scoped WECHAT_BOT_TOKEN placeholder
+    // to Hermes' WEIXIN_TOKEN name. Persisting the canonical placeholder here
+    // would shadow the runtime value and fail credential resolution.
+    expect(envFile).not.toContain("WEIXIN_TOKEN=");
 
     expect(envFile).toContain("WEIXIN_ACCOUNT_ID=test_account_42\n");
     expect(envFile).toContain("WEIXIN_BASE_URL=https://ilinkai.wechat.com\n");
@@ -1187,7 +1194,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.telegram);
-    expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
+    expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
   });
 
   it("ignores the OpenClaw Kimi model-specific setup for Hermes output", () => {

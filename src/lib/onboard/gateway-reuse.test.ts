@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import * as gatewayEnv from "./docker-driver-gateway-env";
 import {
   classifyDockerDriverNetworkInspection,
   createDockerDriverGatewayReuseApplication,
@@ -77,6 +78,10 @@ describe("Docker-driver network inspection", () => {
 });
 
 describe("gateway reuse snapshot", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("bounds OpenShell gateway inspection probes (#6752)", () => {
     const runCaptureOpenshell = vi.fn(() => "");
     const helpers = createGatewayReuseHelpers({
@@ -101,6 +106,48 @@ describe("gateway reuse snapshot", () => {
       ignoreError: true,
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     });
+  });
+
+  it("replaces ambient OpenShell selectors for a frozen reuse target (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "1");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
+    const helpers = createGatewayReuseHelpers({
+      gatewayName: "nemoclaw",
+      runCaptureOpenshell,
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      cliDisplayName: () => "NemoClaw",
+    });
+
+    helpers.getGatewayReuseSnapshot({
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/recorded/tls",
+    });
+
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    const statusOptions = runCaptureOpenshell.mock.calls[0]?.[1] as
+      | { env?: Record<string, string>; replaceEnv?: boolean }
+      | undefined;
+    const namedInfoOptions = runCaptureOpenshell.mock.calls[1]?.[1] as typeof statusOptions;
+    const activeInfoOptions = runCaptureOpenshell.mock.calls[2]?.[1] as typeof statusOptions;
+    expect(statusOptions).toMatchObject({
+      env: expect.objectContaining({
+        OPENSHELL_GATEWAY: "nemoclaw",
+        OPENSHELL_WORKSPACE: "default",
+        OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+      }),
+      replaceEnv: true,
+    });
+    expect(namedInfoOptions?.env).toBe(statusOptions?.env);
+    expect(activeInfoOptions?.env).toBe(statusOptions?.env);
+    expect(statusOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(statusOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
+    expect(statusOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
   });
 
   it("classifies status stderr connection refusals as stale when gateway info is unavailable (#7087)", () => {
@@ -196,6 +243,22 @@ function createDockerDriverReuseApplication(
 }
 
 describe("Docker-driver gateway reuse application", () => {
+  it("preserves provider-owned readiness without inspecting Docker", async () => {
+    vi.spyOn(gatewayEnv, "configuredRuntimeProviderOwnsHostReadiness").mockReturnValue(true);
+    const resolveOpenShellGatewayBinary = vi.fn(() => "/opt/openshell-gateway");
+    const inspectDockerDriverNetwork = vi.fn(() => ({ kind: "inconclusive" as const }));
+    const application = createDockerDriverReuseApplication({
+      resolveOpenShellGatewayBinary,
+      inspectDockerDriverNetwork,
+    });
+
+    await expect(application.refreshDockerDriverGatewayReuseState("healthy")).resolves.toBe(
+      "healthy",
+    );
+    expect(resolveOpenShellGatewayBinary).not.toHaveBeenCalled();
+    expect(inspectDockerDriverNetwork).not.toHaveBeenCalled();
+  });
+
   it("keeps reuse state unchanged when Docker-driver inspection does not apply (#7695)", async () => {
     const isDockerDriverGatewayEnabled = vi.fn(() => false);
     const checkGatewayPortAvailable = vi.fn(async () => ({ ok: true }));

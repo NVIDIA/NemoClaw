@@ -27,20 +27,28 @@ function extensionDir(install: OpenClawImagePluginInstall): string | null {
   return install.installPath.startsWith(prefix) ? install.installPath.slice(prefix.length) : null;
 }
 
-function runRestoreScenario(options: {
+async function runRestoreScenario(options: {
   backupConfig: Record<string, unknown>;
   backupExtensionDirs: string[];
+  discoverFreshPluginInstalls?: boolean;
   freshConfig: Record<string, unknown>;
   freshPluginInstalls: OpenClawImagePluginInstall[];
   previousPluginInstalls?: OpenClawImagePluginInstall[];
-}): {
+  runtimeSelection?: {
+    gatewayName: string;
+    localTlsDir?: string;
+    workspace: string;
+  };
+}): Promise<{
   cleanupCommand: string | undefined;
   freshMarkers: Record<string, string>;
-  restore: ReturnType<typeof restoreRecreatedSandboxState>;
+  openshellInvocations: Array<{ args: string[]; env: Record<string, string> }>;
+  restore: Awaited<ReturnType<typeof restoreRecreatedSandboxState>>;
   restoredConfig: Record<string, any>;
+  sshInvocations: Array<{ cmd: string; env: Record<string, string> }>;
   staleUserExtensionExists: boolean;
   userExtensionMarker: string;
-} {
+}> {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recreated-restore-"));
   const previousOpenshellBin = process.env.NEMOCLAW_OPENSHELL_BIN;
   const previousPath = process.env.PATH;
@@ -50,6 +58,7 @@ function runRestoreScenario(options: {
     const extensionsDir = path.join(openclawDir, "extensions");
     const backupPath = path.join(fixture, "backup");
     const backupExtensionsDir = path.join(backupPath, "extensions");
+    const openshellLog = path.join(fixture, "openshell-log.jsonl");
     const sshLog = path.join(fixture, "ssh-log.jsonl");
     const freshExtensionDirs = [
       "nemoclaw",
@@ -101,7 +110,10 @@ function runRestoreScenario(options: {
     writeExecutable(
       openshell,
       `#!/usr/bin/env node
+const fs = require("node:fs");
 const args = process.argv.slice(2);
+const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.startsWith("OPENSHELL_")));
+fs.appendFileSync(${JSON.stringify(openshellLog)}, JSON.stringify({ args, env }) + "\\n");
 if (args[0] === "sandbox" && args[1] === "ssh-config") {
   process.stdout.write("Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n");
 }
@@ -117,7 +129,8 @@ const { spawnSync } = require("node:child_process");
 const cmd = process.argv[process.argv.length - 1] || "";
 const openclawDir = ${JSON.stringify(openclawDir)};
 const extensionsDir = ${JSON.stringify(extensionsDir)};
-fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd }) + "\\n");
+const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.startsWith("OPENSHELL_")));
+fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd, env }) + "\\n");
 function readStdin() {
   const chunks = [];
   for (;;) {
@@ -133,6 +146,10 @@ if (cmd.includes("${OPENCLAW_DIR}/extensions") && cmd.includes("-exec rm -rf")) 
   for (const entry of fs.readdirSync(extensionsDir)) {
     if (!preserved.has(entry)) fs.rmSync(path.join(extensionsDir, entry), { recursive: true, force: true });
   }
+  process.exit(0);
+}
+if (cmd.includes("installed_plugin_index")) {
+  process.stdout.write(JSON.stringify({ version: 1, installRecords: {}, loadPaths: [] }));
   process.exit(0);
 }
 if (cmd.includes("tar --no-same-owner -xf -")) {
@@ -157,15 +174,24 @@ process.exit(1);
 
     process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
     process.env.PATH = `${binDir}:${previousPath ?? ""}`;
-    const restore = restoreRecreatedSandboxState("alpha", backupPath, {
+    const restore = await restoreRecreatedSandboxState("alpha", backupPath, {
       targetAgentType: "openclaw",
-      freshOpenClawImagePluginInstalls: options.freshPluginInstalls,
+      ...(options.discoverFreshPluginInstalls
+        ? {}
+        : { freshOpenClawImagePluginInstalls: options.freshPluginInstalls }),
+      ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
     });
-    const loggedCommands = fs
+    const sshInvocations = fs
       .readFileSync(sshLog, "utf8")
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line).cmd as string);
+      .map((line) => JSON.parse(line) as { cmd: string; env: Record<string, string> });
+    const loggedCommands = sshInvocations.map(({ cmd }) => cmd);
+    const openshellInvocations = fs
+      .readFileSync(openshellLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { args: string[]; env: Record<string, string> });
 
     return {
       cleanupCommand: loggedCommands.find((command) => command.includes("-exec rm -rf")),
@@ -175,8 +201,10 @@ process.exit(1);
           fs.readFileSync(path.join(extensionsDir, name, "marker.txt"), "utf8"),
         ]),
       ),
+      openshellInvocations,
       restore,
       restoredConfig: JSON.parse(fs.readFileSync(path.join(openclawDir, "openclaw.json"), "utf8")),
+      sshInvocations,
       staleUserExtensionExists: fs.existsSync(path.join(extensionsDir, "stale-user-extension")),
       userExtensionMarker: fs.readFileSync(
         path.join(extensionsDir, "user-extension", "marker.txt"),
@@ -189,7 +217,7 @@ process.exit(1);
   }
 }
 
-function expectSuccessfulRestore(result: ReturnType<typeof runRestoreScenario>): void {
+function expectSuccessfulRestore(result: Awaited<ReturnType<typeof runRestoreScenario>>): void {
   expect(result.restore).toEqual({
     success: true,
     restoredDirs: ["extensions"],
@@ -201,49 +229,98 @@ function expectSuccessfulRestore(result: ReturnType<typeof runRestoreScenario>):
   expect(result.userExtensionMarker).toBe("restored\n");
 }
 
-describe("recreated OpenClaw state restore", () => {
+describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
+  it("pins plugin discovery and restore SSH to the frozen OpenShell target (#10514)", async () => {
+    const previousEnv = {
+      OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY,
+      OPENSHELL_GATEWAY_ENDPOINT: process.env.OPENSHELL_GATEWAY_ENDPOINT,
+      OPENSHELL_GATEWAY_INSECURE: process.env.OPENSHELL_GATEWAY_INSECURE,
+      OPENSHELL_LOCAL_TLS_DIR: process.env.OPENSHELL_LOCAL_TLS_DIR,
+      OPENSHELL_TOKEN: process.env.OPENSHELL_TOKEN,
+      OPENSHELL_WORKSPACE: process.env.OPENSHELL_WORKSPACE,
+    };
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.example.invalid";
+    process.env.OPENSHELL_GATEWAY_INSECURE = "1";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    try {
+      const result = await runRestoreScenario({
+        backupConfig: { plugins: { entries: {} } },
+        backupExtensionDirs: [],
+        discoverFreshPluginInstalls: true,
+        freshConfig: { plugins: { entries: {} } },
+        freshPluginInstalls: [],
+        previousPluginInstalls: [],
+        runtimeSelection: {
+          gatewayName: "nemoclaw-9090",
+          localTlsDir: "/authority/tls",
+          workspace: "default",
+        },
+      });
+
+      expectSuccessfulRestore(result);
+      expect(result.openshellInvocations.length).toBeGreaterThan(0);
+      expect(result.sshInvocations.length).toBeGreaterThan(1);
+      const invocationEnvironments = [...result.openshellInvocations, ...result.sshInvocations].map(
+        ({ env }) => env,
+      );
+      expect(invocationEnvironments).toEqual(
+        new Array(invocationEnvironments.length).fill({
+          OPENSHELL_GATEWAY: "nemoclaw-9090",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+          OPENSHELL_WORKSPACE: "default",
+        }),
+      );
+    } finally {
+      restoreEnvBulk(previousEnv);
+    }
+  });
+
   it.each([
     { provenance: "missing legacy", previousPluginInstalls: undefined },
     { provenance: "known-empty", previousPluginInstalls: [] },
-  ])("restores config and extensions with $provenance previous provenance", ({
-    previousPluginInstalls,
-  }) => {
-    const weather = imageInstall("weather", "weather");
-    const result = runRestoreScenario({
-      previousPluginInstalls,
-      freshPluginInstalls: [weather],
-      backupExtensionDirs: ["weather"],
-      backupConfig: {
-        gateway: { auth: { token: "stale-token" } },
-        mcpServers: { filesystem: { command: "npx" } },
-        plugins: { entries: { "user-plugin": { enabled: true } } },
-      },
-      freshConfig: {
-        gateway: { auth: { token: "fresh-token" } },
-        plugins: {
-          entries: { weather: { enabled: true, config: { revision: "fresh" } } },
-          load: { paths: weather.loadPaths },
+  ])(
+    "restores config and extensions with $provenance previous provenance",
+    async ({ previousPluginInstalls }) => {
+      const weather = imageInstall("weather", "weather");
+      const result = await runRestoreScenario({
+        previousPluginInstalls,
+        freshPluginInstalls: [weather],
+        backupExtensionDirs: ["weather"],
+        backupConfig: {
+          gateway: { auth: { token: "stale-token" } },
+          mcpServers: { filesystem: { command: "npx" } },
+          plugins: { entries: { "user-plugin": { enabled: true } } },
         },
-      },
-    });
+        freshConfig: {
+          gateway: { auth: { token: "fresh-token" } },
+          plugins: {
+            entries: { weather: { enabled: true, config: { revision: "fresh" } } },
+            load: { paths: weather.loadPaths },
+          },
+        },
+      });
 
-    expectSuccessfulRestore(result);
-    expect(result.freshMarkers).toEqual({
-      nemoclaw: "fresh-nemoclaw\n",
-      weather: "fresh-weather\n",
-    });
-    expect(result.restoredConfig.gateway.auth.token).toBe("fresh-token");
-    expect(result.restoredConfig.mcpServers.filesystem.command).toBe("npx");
-    expect(result.restoredConfig.plugins.entries).toEqual({
-      "user-plugin": { enabled: true },
-      weather: { enabled: true, config: { revision: "fresh" } },
-    });
-    expect(result.cleanupCommand).toContain("! -name 'nemoclaw'");
-    expect(result.cleanupCommand).toContain("! -name 'weather'");
-  });
+      expectSuccessfulRestore(result);
+      expect(result.freshMarkers).toEqual({
+        nemoclaw: "fresh-nemoclaw\n",
+        weather: "fresh-weather\n",
+      });
+      expect(result.restoredConfig.gateway.auth.token).toBe("fresh-token");
+      expect(result.restoredConfig.mcpServers.filesystem.command).toBe("npx");
+      expect(result.restoredConfig.plugins.entries).toEqual({
+        "user-plugin": { enabled: true },
+        weather: { enabled: true, config: { revision: "fresh" } },
+      });
+      expect(result.cleanupCommand).toContain("! -name 'nemoclaw'");
+      expect(result.cleanupCommand).toContain("! -name 'weather'");
+    },
+  );
 
-  it("uses fresh primary-model routing during an ordinary sandbox re-create (#7011)", () => {
-    const result = runRestoreScenario({
+  it("uses fresh primary-model routing during an ordinary sandbox re-create (#7011)", async () => {
+    const result = await runRestoreScenario({
       previousPluginInstalls: [],
       freshPluginInstalls: [],
       backupExtensionDirs: [],
@@ -271,11 +348,11 @@ describe("recreated OpenClaw state restore", () => {
     });
   });
 
-  it("reconciles populated previous and fresh image-plugin provenance during config restore", () => {
+  it("reconciles populated previous and fresh image-plugin provenance during config restore", async () => {
     const previousWeather = imageInstall("weather", "weather-v1");
     const freshWeather = imageInstall("weather", "weather-v2");
     const userPluginPath = `${OPENCLAW_DIR}/extensions/user-plugin`;
-    const result = runRestoreScenario({
+    const result = await runRestoreScenario({
       previousPluginInstalls: [previousWeather],
       freshPluginInstalls: [freshWeather],
       backupExtensionDirs: ["weather-v1"],

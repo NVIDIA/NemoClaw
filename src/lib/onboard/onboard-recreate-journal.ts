@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { decisionSelected } from "../state/onboard-checkpoint-decision";
-import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { checkpointGatewayAuthority } from "./gateway-authority-checkpoint";
+import { sameGatewayOwner } from "./gateway-ownership";
 import { resolveGatewayTeardownAuthority } from "./gateway-teardown-authority";
 import {
   observeSandboxOnGateway,
@@ -15,11 +15,10 @@ import {
 import {
   abandonSandboxRecreateTransaction,
   advanceSandboxRecreateTransaction,
-  beginSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
   createSandboxRecreateRuntime,
   fingerprintSandboxRecreateValue,
-  planSandboxRecreateRecovery,
+  ownSandboxRecreateTransaction,
   type SandboxRecreateRuntime,
   sandboxRecreatePhaseReached,
 } from "./sandbox-recreate-transaction";
@@ -36,7 +35,6 @@ export interface OnboardRecreateTargetIntent {
   readonly toolDisclosure: string;
   readonly dcodeAutoApprovalMode: string | null;
   readonly observabilityEnabled: boolean;
-  readonly policyTier: string | null;
 }
 
 export function fingerprintOnboardRecreateTargetIntent(
@@ -74,57 +72,58 @@ export type OwnedSandboxRecreateRuntime = SandboxRecreateRuntime & {
   abandon(): void;
 };
 
+/** Capture gateway lifecycle authority and return its delete-edge revalidator. */
+export function createOnboardRecreateGatewayAuthorityRevalidator(target: SandboxRecreateTarget): {
+  authority: ReturnType<typeof resolveGatewayTeardownAuthority>;
+  revalidate: () => void;
+} {
+  const authority = resolveGatewayTeardownAuthority(target);
+  return {
+    authority,
+    revalidate: () => {
+      const currentAuthority = resolveGatewayTeardownAuthority(target);
+      if (!sameGatewayOwner(authority, currentAuthority)) {
+        throw new Error(
+          `Cannot delete sandbox '${target.sandboxName}': its gateway lifecycle authority changed.`,
+        );
+      }
+    },
+  };
+}
+
 export function openOnboardRecreateJournal(
   input: OpenOnboardRecreateJournalInput,
 ): OwnedSandboxRecreateRuntime {
   const { target, agentName, note } = input;
   const targetIntentFingerprint = fingerprintOnboardRecreateTargetIntent(input.intent);
   const observe = input.observe ?? observeSandboxOnGateway;
-  const authority = resolveGatewayTeardownAuthority({
+  const gatewayAuthority = createOnboardRecreateGatewayAuthorityRevalidator(target);
+  const { authority } = gatewayAuthority;
+  const owned = ownSandboxRecreateTransaction({
+    sessionStore: {
+      loadSession: onboardSession.loadSession,
+      updateSession: onboardSession.updateSession,
+      compareAndSwapSession: onboardSession.compareAndSwapSession,
+    },
+    sandboxName: target.sandboxName,
     gatewayName: target.gatewayName,
     gatewayPort: target.gatewayPort,
-  });
-  const sourceEntry = registry.getSandbox(target.sandboxName);
-  if (!sourceEntry) {
-    throw new Error(
-      `Cannot start sandbox '${target.sandboxName}' recreate transaction without its source registry row.`,
-    );
-  }
-  const observation = observe(target);
-  const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;
-  if (active) {
-    const recovery = planSandboxRecreateRecovery(active, observation, sourceEntry);
-    if (recovery.action === "reject") {
-      throw new Error(
-        `Cannot resume sandbox '${target.sandboxName}' replacement: ${recovery.reason}.`,
-      );
-    }
-  }
-
-  const session = onboardSession.updateSession((current) => {
-    const checkpoint = current.checkpoint ?? deriveCheckpointFromSession(current);
-    current.checkpoint = {
+    targetIntentFingerprint,
+    requireSourceEntry: true,
+    readRegistryEntry: () => registry.getSandbox(target.sandboxName),
+    observe: () => observe(target),
+    decorateCheckpoint: (current, checkpoint, now) => ({
       ...checkpoint,
       machineState: current.machine.state,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
       sandboxIdentity: decisionSelected({ name: target.sandboxName, agent: agentName }),
       gatewayAuthority: decisionSelected(checkpointGatewayAuthority(authority)),
-    };
-    beginSandboxRecreateTransaction(current, {
-      sandboxName: target.sandboxName,
-      gatewayName: target.gatewayName,
-      gatewayPort: target.gatewayPort,
-      sourceEntry,
-      observation,
-      targetIntentFingerprint,
-    });
-    return current;
+    }),
   });
-
-  const transaction = session.checkpoint?.sandboxRecreate;
-  if (!transaction) {
-    throw new Error(
-      `Sandbox '${target.sandboxName}' replacement journal could not be recorded before deletion.`,
+  const { transaction, registryEntry: sourceEntry } = owned;
+  if (owned.replacedTransactionId) {
+    note(
+      `  Replaced void journal ${owned.replacedTransactionId} with ${transaction.id} for '${target.sandboxName}'; its source sandbox is registered and live.`,
     );
   }
   note(
@@ -132,9 +131,11 @@ export function openOnboardRecreateJournal(
   );
 
   const runtime = createSandboxRecreateRuntime(
-    // The journal just committed is authoritative for this run; do not re-read
-    // it through a store that may not yet observe the write.
-    { loadSession: () => session, updateSession: onboardSession.updateSession },
+    {
+      loadSession: onboardSession.loadSession,
+      updateSession: onboardSession.updateSession,
+      compareAndSwapSession: onboardSession.compareAndSwapSession,
+    },
     {
       id: transaction.id,
       targetGeneration: transaction.targetGeneration,
@@ -145,6 +146,8 @@ export function openOnboardRecreateJournal(
     sourceEntry,
     (sandboxName, gatewayName) => observe({ ...target, sandboxName, gatewayName }),
     note,
+    () => registry.getSandbox(target.sandboxName),
+    gatewayAuthority.revalidate,
   );
 
   return {

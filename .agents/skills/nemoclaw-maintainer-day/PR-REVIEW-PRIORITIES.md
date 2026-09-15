@@ -24,6 +24,9 @@ current diff and repository evidence while evaluating these gates and expectatio
 
 ## Manual review inputs
 
+Before manual review, complete shared [PR follow-up](../_shared/pr-follow-up.md) successfully for one
+unchanged latest PR commit. A first-time fork check-approval review is the only exception.
+
 The PR Review Advisor provides review input. It does not authorize a merge.
 Read its comment and verify each claim against code, tests, and workflow evidence.
 Apply a confirmed problem to the related gate. Ask the user about ambiguous or design-changing advice.

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   context,
   createPhases,
@@ -10,8 +10,24 @@ import {
 } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
 import type { VerifyDeploymentResult } from "../../verify-deployment";
+import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
 import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
+
+const refusedRecovery = {
+  checked: true,
+  wasRunning: true,
+  recovered: false,
+  forwardRecovered: false,
+  secretBoundaryRefused: true,
+  secretBoundaryReason: "unexpected-marker",
+};
+const uncheckedRecovery = {
+  checked: false,
+  wasRunning: null,
+  recovered: false,
+  forwardRecovered: false,
+};
 
 function deploymentResult(healthy: boolean): VerifyDeploymentResult {
   return {
@@ -32,57 +48,61 @@ function deploymentResult(healthy: boolean): VerifyDeploymentResult {
 }
 
 describe("final onboard flow runtime boundary", () => {
+  afterEach(() => vi.restoreAllMocks());
   it.each([
     { label: "fresh", resume: false },
     { label: "resumed", resume: true },
-  ])("uses the strict final runner for $label OpenClaw sessions at the branch state", async ({
-    resume,
-  }) => {
-    const order: string[] = [];
-    const harness = createRuntimeHarness(sessionAt("openclaw"));
-    const recorders = harness.boundary.recorders();
-    const phases = createPhases("openclaw", order, {
-      loadSession: harness.getSession,
-      recordStepSkipped: recorders.recordStepSkipped,
-      recordStateSkipped: recorders.recordStateSkipped,
-      startRecordedStep: recorders.startRecordedStep,
-      recordStepComplete: recorders.recordStepComplete,
-    });
-    await runFinalOnboardFlowSlice({
-      context: context({ resume, session: harness.getSession() }),
-      runtime: harness.boundary.getRuntime(),
-      phases,
-      recordRepairEvent: recorders.recordRepairEvent,
-      afterPoliciesReady: () => {
-        order.push("disarm");
-      },
-    });
+  ])(
+    "uses the strict final runner for $label OpenClaw sessions at the branch state",
+    async ({ resume }) => {
+      const order: string[] = [];
+      const harness = createRuntimeHarness(sessionAt("openclaw"));
+      const recorders = harness.boundary.recorders();
+      const phases = createPhases("openclaw", order, {
+        loadSession: harness.getSession,
+        recordStepSkipped: recorders.recordStepSkipped,
+        recordStateSkipped: recorders.recordStateSkipped,
+        startRecordedStep: recorders.startRecordedStep,
+        recordStepComplete: recorders.recordStepComplete,
+      });
+      await runFinalOnboardFlowSlice({
+        context: context({ resume, session: harness.getSession() }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: recorders.recordRepairEvent,
+        afterPoliciesReady: () => {
+          order.push("disarm");
+        },
+      });
 
-    expect(order).toEqual([
-      "openclaw",
-      "policies",
-      "disarm",
-      "set-default",
-      "agent-forward",
-      "verify",
-    ]);
-    expect(harness.getSession()).toMatchObject({
-      status: "complete",
-      sandboxName: "my-sandbox",
-      provider: "nim",
-      model: "nvidia/test",
-      machine: { state: "complete" },
-    });
-    expect(
-      harness.events.filter((event) => event.type === "state.entered").map((event) => event.state),
-    ).toEqual(["policies", "finalizing", "post_verify", "complete"]);
-    expect(
-      harness.events
-        .filter((event) => event.type === "state.skipped")
-        .map((event) => `${event.type}:${event.state}`),
-    ).toEqual(["state.skipped:agent_setup"]);
-    expect(harness.events.some((event) => event.type.startsWith("state.repair."))).toBe(false);
-  });
+      expect(order).toEqual([
+        "openclaw",
+        "agent-forward",
+        "policies",
+        "disarm",
+        "set-default",
+        "verify",
+      ]);
+      expect(harness.getSession()).toMatchObject({
+        status: "complete",
+        sandboxName: "my-sandbox",
+        provider: "nim",
+        model: "nvidia/test",
+        machine: { state: "complete" },
+      });
+      expect(
+        harness.events
+          .filter((event) => event.type === "state.entered")
+          .map((event) => event.state),
+      ).toEqual(["policies", "finalizing", "post_verify", "complete"]);
+      expect(
+        harness.events
+          .filter((event) => event.type === "state.skipped")
+          .map((event) => `${event.type}:${event.state}`),
+      ).toEqual(["state.skipped:agent_setup"]);
+      expect(harness.events.some((event) => event.type.startsWith("state.repair."))).toBe(false);
+    },
+  );
 
   it.each([
     { initialState: "policies" as const, branchState: "openclaw" as const, resume: true },
@@ -90,86 +110,86 @@ describe("final onboard flow runtime boundary", () => {
     { initialState: "post_verify" as const, branchState: "openclaw" as const, resume: true },
     { initialState: "finalizing" as const, branchState: "openclaw" as const, resume: false },
     { initialState: "post_verify" as const, branchState: "agent_setup" as const, resume: true },
-  ])("repairs prerequisites before strict $initialState entry for $branchState", async ({
-    initialState,
-    branchState,
-    resume,
-  }) => {
-    const order: string[] = [];
-    const harness = createRuntimeHarness(sessionAt(initialState));
-    const recorders = harness.boundary.recorders();
-    const phases = createPhases(branchState, order, {
-      loadSession: harness.getSession,
-      recordStepSkipped: recorders.recordStepSkipped,
-      recordStateSkipped: recorders.recordStateSkipped,
-      startRecordedStep: recorders.startRecordedStep,
-      recordStepComplete: recorders.recordStepComplete,
-    });
-    const recordRepairEvent = vi.fn(recorders.recordRepairEvent);
+  ])(
+    "repairs prerequisites before strict $initialState entry for $branchState",
+    async ({ initialState, branchState, resume }) => {
+      const order: string[] = [];
+      const harness = createRuntimeHarness(sessionAt(initialState));
+      const recorders = harness.boundary.recorders();
+      const phases = createPhases(branchState, order, {
+        loadSession: harness.getSession,
+        recordStepSkipped: recorders.recordStepSkipped,
+        recordStateSkipped: recorders.recordStateSkipped,
+        startRecordedStep: recorders.startRecordedStep,
+        recordStepComplete: recorders.recordStepComplete,
+      });
+      const recordRepairEvent = vi.fn(recorders.recordRepairEvent);
 
-    await runFinalOnboardFlowSlice({
-      context: context({
-        agent: branchState === "agent_setup" ? { name: "hermes" } : null,
-        resume,
-        session: harness.getSession(),
-      }),
-      runtime: harness.boundary.getRuntime(),
-      phases,
-      recordRepairEvent,
-      afterPoliciesReady: () => {
-        order.push("disarm");
-      },
-    });
+      await runFinalOnboardFlowSlice({
+        context: context({
+          agent: branchState === "agent_setup" ? { name: "hermes" } : null,
+          resume,
+          session: harness.getSession(),
+        }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent,
+        afterPoliciesReady: () => {
+          order.push("disarm");
+        },
+      });
 
-    expect(order).toEqual([
-      ...(branchState === "openclaw" ? ["openclaw"] : ["agent-setup", "agent-forward"]),
-      "policies",
-      "disarm",
-      "set-default",
-      "agent-forward",
-      "verify",
-    ]);
-    expect(harness.getSession()).toMatchObject({
-      status: "complete",
-      sandboxName: "my-sandbox",
-      provider: "nim",
-      model: "nvidia/test",
-      machine: { state: "complete" },
-    });
+      expect(order).toEqual([
+        ...(branchState === "openclaw"
+          ? ["openclaw", "agent-forward"]
+          : ["agent-setup", "agent-forward"]),
+        "policies",
+        "disarm",
+        "set-default",
+        "verify",
+      ]);
+      expect(harness.getSession()).toMatchObject({
+        status: "complete",
+        sandboxName: "my-sandbox",
+        provider: "nim",
+        model: "nvidia/test",
+        machine: { state: "complete" },
+      });
 
-    const prerequisiteStates = [branchState, "policies", "finalizing"].slice(
-      0,
-      [branchState, "policies", "finalizing", "post_verify"].indexOf(initialState),
-    );
-    expect(recordRepairEvent.mock.calls).toEqual(
-      prerequisiteStates.flatMap((state) => [
-        [
-          "state.repair.started",
-          {
-            state,
-            metadata: { repair: "final-flow-prerequisite", entryState: initialState },
-          },
-        ],
-        [
-          "state.repair.completed",
-          {
-            state,
-            metadata: { repair: "final-flow-prerequisite", entryState: initialState },
-          },
-        ],
-      ]),
-    );
-    expect(harness.events.some((event) => event.type === "state.result.invalidated")).toBe(false);
-    expect(
-      harness.events.filter((event) => event.type === "state.exited").map((event) => event.state),
-    ).toEqual(
-      {
-        policies: ["policies", "finalizing"],
-        finalizing: ["finalizing"],
-        post_verify: [],
-      }[initialState],
-    );
-  });
+      const prerequisiteStates = [branchState, "policies", "finalizing"].slice(
+        0,
+        [branchState, "policies", "finalizing", "post_verify"].indexOf(initialState),
+      );
+      expect(recordRepairEvent.mock.calls).toEqual(
+        prerequisiteStates.flatMap((state) => [
+          [
+            "state.repair.started",
+            {
+              state,
+              metadata: { repair: "final-flow-prerequisite", entryState: initialState },
+            },
+          ],
+          [
+            "state.repair.completed",
+            {
+              state,
+              metadata: { repair: "final-flow-prerequisite", entryState: initialState },
+            },
+          ],
+        ]),
+      );
+      expect(harness.events.some((event) => event.type === "state.result.invalidated")).toBe(false);
+      expect(
+        harness.events.filter((event) => event.type === "state.exited").map((event) => event.state),
+      ).toEqual(
+        {
+          finalizing: ["finalizing"],
+          policies: ["policies", "finalizing"],
+          post_verify: [],
+        }[initialState],
+      );
+    },
+  );
 
   it.each([
     { state: "sandbox" as const, branchState: "openclaw" as const },
@@ -177,76 +197,76 @@ describe("final onboard flow runtime boundary", () => {
     { state: "failed" as const, branchState: "openclaw" as const },
     { state: "agent_setup" as const, branchState: "openclaw" as const },
     { state: "openclaw" as const, branchState: "agent_setup" as const },
-  ])("rejects $state before effects for a $branchState final flow", async ({
-    state,
-    branchState,
-  }) => {
-    const order: string[] = [];
-    const harness = createRuntimeHarness(sessionAt(state));
-    const recordRepairEvent = vi.fn(harness.boundary.recordRepairEvent.bind(harness.boundary));
+  ])(
+    "rejects $state before effects for a $branchState final flow",
+    async ({ state, branchState }) => {
+      const order: string[] = [];
+      const harness = createRuntimeHarness(sessionAt(state));
+      const recordRepairEvent = vi.fn(harness.boundary.recordRepairEvent.bind(harness.boundary));
 
-    await expect(
-      runFinalOnboardFlowSlice({
-        context: context({ session: harness.getSession() }),
-        runtime: harness.boundary.getRuntime(),
-        phases: createPhases(branchState, order),
-        recordRepairEvent,
-      }),
-    ).rejects.toBeInstanceOf(UnexpectedOnboardFlowSliceStateError);
+      await expect(
+        runFinalOnboardFlowSlice({
+          context: context({ session: harness.getSession() }),
+          runtime: harness.boundary.getRuntime(),
+          phases: createPhases(branchState, order),
+          recordRepairEvent,
+        }),
+      ).rejects.toBeInstanceOf(UnexpectedOnboardFlowSliceStateError);
 
-    expect(order).toEqual([]);
-    expect(recordRepairEvent).not.toHaveBeenCalled();
-  });
+      expect(order).toEqual([]);
+      expect(recordRepairEvent).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { label: "fresh", resume: false },
     { label: "resumed", resume: true },
-  ])("uses the strict final runner for $label agent sessions at the branch state", async ({
-    resume,
-  }) => {
-    const order: string[] = [];
-    const harness = createRuntimeHarness(sessionAt("agent_setup"));
-    const recorders = harness.boundary.recorders();
-    const phases = createPhases("agent_setup", order, {
-      loadSession: harness.getSession,
-      recordStepSkipped: recorders.recordStepSkipped,
-      recordStateSkipped: recorders.recordStateSkipped,
-      startRecordedStep: recorders.startRecordedStep,
-      recordStepComplete: recorders.recordStepComplete,
-    });
-    await runFinalOnboardFlowSlice({
-      context: context({ agent: { name: "hermes" }, resume, session: harness.getSession() }),
-      runtime: harness.boundary.getRuntime(),
-      phases,
-      recordRepairEvent: recorders.recordRepairEvent,
-      afterPoliciesReady: () => {
-        order.push("disarm");
-      },
-    });
+  ])(
+    "uses the strict final runner for $label agent sessions at the branch state",
+    async ({ resume }) => {
+      const order: string[] = [];
+      const harness = createRuntimeHarness(sessionAt("agent_setup"));
+      const recorders = harness.boundary.recorders();
+      const phases = createPhases("agent_setup", order, {
+        loadSession: harness.getSession,
+        recordStepSkipped: recorders.recordStepSkipped,
+        recordStateSkipped: recorders.recordStateSkipped,
+        startRecordedStep: recorders.startRecordedStep,
+        recordStepComplete: recorders.recordStepComplete,
+      });
+      await runFinalOnboardFlowSlice({
+        context: context({ agent: { name: "hermes" }, resume, session: harness.getSession() }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: recorders.recordRepairEvent,
+        afterPoliciesReady: () => {
+          order.push("disarm");
+        },
+      });
 
-    expect(order).toEqual([
-      "agent-setup",
-      "agent-forward",
-      "policies",
-      "disarm",
-      "set-default",
-      "agent-forward",
-      "verify",
-    ]);
-    expect(harness.getSession()).toMatchObject({
-      status: "complete",
-      sandboxName: "my-sandbox",
-      provider: "nim",
-      model: "nvidia/test",
-      machine: { state: "complete" },
-    });
-    expect(
-      harness.events
-        .filter((event) => event.type === "state.skipped")
-        .map((event) => `${event.type}:${event.state}`),
-    ).toEqual(["state.skipped:openclaw"]);
-    expect(harness.events.some((event) => event.type.startsWith("state.repair."))).toBe(false);
-  });
+      expect(order).toEqual([
+        "agent-setup",
+        "agent-forward",
+        "policies",
+        "disarm",
+        "set-default",
+        "verify",
+      ]);
+      expect(harness.getSession()).toMatchObject({
+        status: "complete",
+        sandboxName: "my-sandbox",
+        provider: "nim",
+        model: "nvidia/test",
+        machine: { state: "complete" },
+      });
+      expect(
+        harness.events
+          .filter((event) => event.type === "state.skipped")
+          .map((event) => `${event.type}:${event.state}`),
+      ).toEqual(["state.skipped:openclaw"]);
+      expect(harness.events.some((event) => event.type.startsWith("state.repair."))).toBe(false);
+    },
+  );
 
   it("enters post verification with the updated live final context", async () => {
     const order: string[] = [];
@@ -300,10 +320,10 @@ describe("final onboard flow runtime boundary", () => {
 
     expect(order).toEqual([
       "openclaw",
+      "agent-forward",
       "policies",
       "disarm",
       "set-default",
-      "agent-forward",
       "verify:slack,discord",
     ]);
   });
@@ -332,7 +352,7 @@ describe("final onboard flow runtime boundary", () => {
       }),
     ).rejects.toThrow("recording failed");
 
-    expect(order).toEqual(["openclaw", "policies"]);
+    expect(order).toEqual(["openclaw", "agent-forward", "policies"]);
   });
 
   it("keeps rollback armed when a policies prerequisite repair fails", async () => {
@@ -362,7 +382,7 @@ describe("final onboard flow runtime boundary", () => {
       }),
     ).rejects.toThrow("policy repair failed");
 
-    expect(order).toEqual(["openclaw", "policies"]);
+    expect(order).toEqual(["openclaw", "agent-forward", "policies"]);
     expect(afterPoliciesReady).not.toHaveBeenCalled();
     expect(recordRepairEvent).toHaveBeenLastCalledWith("state.repair.failed", {
       state: "policies",
@@ -403,10 +423,10 @@ describe("final onboard flow runtime boundary", () => {
 
     expect(order).toEqual([
       "openclaw",
+      "agent-forward",
       "policies",
       "disarm",
       "set-default",
-      "agent-forward",
       "verify",
     ]);
     expect(printDashboard).not.toHaveBeenCalled();
@@ -459,5 +479,97 @@ describe("final onboard flow runtime boundary", () => {
       resumable: false,
       machine: { state: "complete" },
     });
+  });
+
+  it.each([
+    ["finalizing", "refused", refusedRecovery],
+    ["post_verify", "refused", refusedRecovery],
+    ["finalizing", "unchecked", uncheckedRecovery],
+    ["post_verify", "unchecked", uncheckedRecovery],
+  ] as const)(
+    "retains the %s session after %s recovery and completes only after repair (#11758)",
+    async (initialState, _outcome, recoveryResult) => {
+      const harness = createRuntimeHarness(sessionAt(initialState));
+      const recorders = harness.boundary.recorders();
+      const recovery = vi.fn().mockResolvedValue(recoveryResult);
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: recovery,
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      });
+      const dashboard = vi.fn();
+      const reportReadiness = vi.fn();
+      const phases = createPhases("agent_setup", [], {
+        loadSession: harness.getSession,
+        recordStepSkipped: recorders.recordStepSkipped,
+        recordStateSkipped: recorders.recordStateSkipped,
+        startRecordedStep: recorders.startRecordedStep,
+        recordStepComplete: recorders.recordStepComplete,
+        finalizationDeps: {
+          checkAndRecoverSandboxProcesses: finalizationHandlerDeps.checkAndRecoverSandboxProcesses,
+          printDashboard: dashboard,
+          reportDeploymentReadiness: reportReadiness,
+          readRegistryAgent: () => "hermes",
+        },
+      });
+      const first = await runFinalOnboardFlowSlice({
+        context: context({ agent: { name: "hermes" }, session: harness.getSession() }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: recorders.recordRepairEvent,
+      });
+      expect(first.session).toMatchObject({ status: "in_progress", resumable: true });
+      expect(first.session?.machine.state).not.toBe("complete");
+      expect(reportReadiness).toHaveBeenCalledWith(false);
+      expect(dashboard).not.toHaveBeenCalled();
+      recovery.mockResolvedValue({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      });
+      const resumed = await runFinalOnboardFlowSlice({
+        context: context({
+          agent: { name: "hermes" },
+          resume: true,
+          session: harness.getSession(),
+        }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: recorders.recordRepairEvent,
+      });
+      expect(resumed.session).toMatchObject({
+        status: "complete",
+        resumable: false,
+        machine: { state: "complete" },
+      });
+      expect(reportReadiness).toHaveBeenLastCalledWith(true);
+      expect(dashboard).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    {
+      label: "session mutation",
+      updates: { model: "replacement" },
+      metadata: { state: "finalizing" },
+    },
+    { label: "wrong phase", updates: {}, metadata: { state: "policies" } },
+  ])("rejects a prerequisite pause with $label (#11758)", async ({ updates, metadata }) => {
+    const harness = createRuntimeHarness(sessionAt("post_verify"));
+    const phases = createPhases("agent_setup");
+    vi.spyOn(phases[2], "run").mockResolvedValue({
+      context: context(),
+      result: { type: "pause", updates, metadata },
+    });
+    await expect(
+      runFinalOnboardFlowSlice({
+        context: context({ agent: { name: "hermes" }, session: harness.getSession() }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: harness.boundary.recorders().recordRepairEvent,
+      }),
+    ).rejects.toThrow("Invalid final onboarding prerequisite repair result");
+    expect(harness.getSession().machine.state).toBe("post_verify");
+    expect(harness.getSession().model).not.toBe("replacement");
   });
 });

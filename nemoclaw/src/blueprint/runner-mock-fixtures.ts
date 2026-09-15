@@ -89,6 +89,9 @@ export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: I
       store.set(destination, entry);
       store.delete(source);
     }),
+    unlinkSync: spy((target: string) => {
+      if (!store.delete(target)) return missingEntry(target);
+    }),
     readdirSync: (p: string) => {
       const prefix = p.endsWith("/") ? p : `${p}/`;
       const entries = new Set(

@@ -15,7 +15,7 @@ const { patchSource, buildShortCircuit, isPatchError, isOpenClawGooglechatFile }
 
 const FILE = "/x/node_modules/@openclaw/googlechat/dist/auth.js";
 const CALL_MARKER = "nemoclaw: googlechat outbound bearer via gateway-minted credential";
-const CANONICAL = "openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN";
+const REVISION_SCOPED = "openshell:resolve:env:v7_GOOGLE_CHAT_ACCESS_TOKEN";
 // A representative slice of the plugin's token producer.
 const PLUGIN_SRC =
   "async function getGoogleChatAccessToken(account) {\n" +
@@ -101,9 +101,16 @@ describe("googlechat outbound-auth patch", () => {
       return new Function(`${patched}\n return getGoogleChatAccessToken;`)() as () => string;
     }
 
-    it("returns the revision-less canonical placeholder when a stamped placeholder is set", () => {
-      vi.stubEnv(ENV, "openshell:resolve:env:v7_GOOGLE_CHAT_ACCESS_TOKEN");
-      expect(buildProducer()()).toBe(CANONICAL);
+    // Verbatim, not the revision-less alias: an identity-bound credential
+    // rejects placeholders without a revision.
+    it("returns the injected revision-scoped placeholder verbatim", () => {
+      vi.stubEnv(ENV, REVISION_SCOPED);
+      expect(buildProducer()()).toBe(REVISION_SCOPED);
+    });
+
+    it("returns a canonical placeholder verbatim on an OpenShell that issues one", () => {
+      vi.stubEnv(ENV, "openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN");
+      expect(buildProducer()()).toBe("openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN");
     });
 
     it("returns a raw (non-placeholder) env value as-is for manual deployments", () => {
@@ -118,9 +125,10 @@ describe("googlechat outbound-auth patch", () => {
     });
   });
 
-  it("buildShortCircuit emits the canonical placeholder and the fail-closed throw", () => {
+  it("buildShortCircuit returns the env value and keeps the fail-closed throw", () => {
     const src = buildShortCircuit();
-    expect(src).toContain(`"${CANONICAL}"`);
+    expect(src).toContain("return __nemoGcRaw;");
+    expect(src).not.toContain('"openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN"');
     expect(src).toContain("throw new Error");
     expect(src).toContain(CALL_MARKER);
   });

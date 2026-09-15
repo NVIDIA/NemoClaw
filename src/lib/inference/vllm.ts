@@ -25,9 +25,8 @@ import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
 import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/vllm-port";
-import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
-import { redact, redactFull, runCapture } from "../runner";
+import { redact, redactFull, runCapture, shellQuote } from "../runner";
 import { isSafeModelId } from "../validation";
 import {
   acquireHuggingFaceModel,
@@ -69,6 +68,7 @@ import {
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   vllmModelForOrchestration,
+  vllmModelMatchesAlias,
   vllmModelUsesOrchestration,
   vllmPlatformSpecificity,
   type VllmModelDef,
@@ -1242,7 +1242,7 @@ function startContainer(
   // avoids deleting an unrelated same-name container if the name changes hands.
   const replacement = vllmContainerReplacementTarget(
     profile.containerName,
-    model.managedBearerAuth ? dockerEnv : undefined,
+    model.managedBearerAuth || expectedReplacementContainerId !== undefined ? dockerEnv : undefined,
     expectedReplacementContainerId,
   );
   if (!replacement.ok) return replacement;
@@ -1847,7 +1847,12 @@ interface ServingPortProbe {
 }
 
 type VllmInstallSelectionEnv =
-  | { readonly ok: true; readonly env: NodeJS.ProcessEnv; readonly explicitModel: string }
+  | {
+      readonly ok: true;
+      readonly env: NodeJS.ProcessEnv;
+      readonly explicitModel: string;
+      readonly resumedPresetModel: string;
+    }
   | { readonly ok: false };
 
 function resolveVllmInstallSelectionEnv(
@@ -1863,11 +1868,20 @@ function resolveVllmInstallSelectionEnv(
   ) {
     return { ok: false };
   }
-  const selectionEnv = resumedModel ? { ...env, NEMOCLAW_VLLM_MODEL: resumedModel } : env;
+  // A serving preset already names the model to install, so the preset stays
+  // authoritative and the resumed checkpoint is only verified against it.
+  // Feeding that checkpoint back through NEMOCLAW_VLLM_MODEL made NemoClaw's
+  // own record look like a competing operator override, and resuming a
+  // preset-driven install was refused as a preset/model conflict even though
+  // the operator had set neither variable (#11148).
+  const presetSelected = String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim().length > 0;
+  const selectionEnv =
+    resumedModel && !presetSelected ? { ...env, NEMOCLAW_VLLM_MODEL: resumedModel } : env;
   return {
     ok: true,
     env: selectionEnv,
     explicitModel: String(selectionEnv.NEMOCLAW_VLLM_MODEL ?? "").trim(),
+    resumedPresetModel: presetSelected ? resumedModel : "",
   };
 }
 
@@ -1876,6 +1890,7 @@ type VllmInstallRequestEnv =
       readonly ok: true;
       readonly env: NodeJS.ProcessEnv;
       readonly explicitModel: string;
+      readonly resumedPresetModel: string;
       readonly requestedGpuDevice: string | null;
       readonly configuredPeer: string;
       readonly configuredManagedClusterPeers: string;
@@ -1932,6 +1947,46 @@ function applyRequestedVllmGpuDevice(
   requestedGpuDevice: string | null,
 ): VllmProfile {
   return requestedGpuDevice ? selectVllmGpuDevice(profile, requestedGpuDevice) : profile;
+}
+
+/**
+ * Container id of this install's own managed container when that container is
+ * what holds the serving port.
+ *
+ * Lifecycle recovery admits only a completed authenticated install: it needs
+ * the runtime receipt written after startup and the auth label that a profile
+ * adds only for managed bearer auth. An install interrupted before either
+ * exists leaves a running managed container that recovery can never claim, so
+ * ownership labels decide instead.
+ *
+ * Ownership alone is not enough. A managed container published on a different
+ * host port is not the process holding this port, and removing it would free
+ * nothing while destroying an unrelated runtime, so one published binding must
+ * cover the probed loopback address and match the port that failed. Every other
+ * state — a foreign or unlabeled holder, an ambiguous inspection, a distributed
+ * head or worker, a container that is not running, and an unreadable or
+ * address-mismatched binding — remains a conflict.
+ */
+function adoptableServingPortHolder(
+  containerName: string,
+  servingPort: number,
+  dockerEnv: Record<string, string>,
+): string | undefined {
+  const ownership = inspectVllmContainerOwnershipInDockerEnv(containerName, dockerEnv);
+  if (ownership.kind !== "managed" || !ownership.running) return undefined;
+  // The managed container always publishes the fixed container port 8000.
+  const published = dockerCapture(["port", containerName, "8000"], {
+    env: dockerEnv,
+    ignoreError: true,
+    timeout: 10_000,
+  })
+    ?.split(/\r?\n/u)
+    .some((binding) => {
+      const endpoint = binding.trim().match(/^(127[.]0[.]0[.]1|0[.]0[.]0[.]0):(\d+)$/u);
+      return endpoint !== null && Number(endpoint[2]) === servingPort;
+    });
+  if (!published) return undefined;
+  return ownership.containerId;
 }
 
 /**
@@ -2010,6 +2065,7 @@ async function runVllmInstall(
   const {
     env: selectionEnv,
     explicitModel,
+    resumedPresetModel,
     requestedGpuDevice,
     configuredPeer,
     configuredManagedClusterPeers,
@@ -2048,6 +2104,9 @@ async function runVllmInstall(
         promptFn: opts.promptFn,
         beforeInstall: opts.beforeInstall,
         checkpointInstallIntent: opts.checkpointInstallIntent,
+        // This branch returns before the host-local revalidation below, so the
+        // resumed checkpoint has to travel with it (#11148).
+        resumedPresetModel,
       },
       {
         prerequisites: dockerPrereqsOk,
@@ -2151,6 +2210,18 @@ async function runVllmInstall(
     });
   }
   if (!resolved) return { ok: false };
+  // The preset chose the model above; this is the receipt check that the
+  // interrupted run had committed to the same one. It covers every branch that
+  // produced `resolved` — preset selection, a fixed catalog profile, and the
+  // Station pair — because each of them is reachable on resume (#11148).
+  if (resumedPresetModel && !vllmModelMatchesAlias(resolved.model, resumedPresetModel)) {
+    console.error(
+      `  vLLM install failed: the resumed model '${resumedPresetModel}' does not match ` +
+        `'${resolved.model.envValue}', which ${NEMOCLAW_SERVING_PRESET_ENV} selects. ` +
+        `Re-run onboarding with --fresh to discard the interrupted session.`,
+    );
+    return { ok: false };
+  }
   if (
     !hostLocalSelection &&
     resolved.source === "picker" &&
@@ -2284,6 +2355,7 @@ async function runVllmInstall(
   // Port 25000 is not checked here: it belongs to the managed-cluster
   // rendezvous contract and this single-node path never binds it.
   let recoveredHostLocalContainerId: string | undefined;
+  let recoveredHostLocalDockerEnv: Record<string, string> | undefined;
   const servingPort = await opts.checkServingPort?.(VLLM_PORT);
   if (servingPort && !servingPort.ok) {
     // An interrupted host-local install can leave its authenticated managed
@@ -2292,14 +2364,24 @@ async function runVllmInstall(
     // credential fingerprint. The replacement guard below then removes the
     // inspected container ID immediately before the new launch.
     try {
+      const hostLocalDockerEnv = buildLocalManagedVllmDockerEnv();
       const recovered = recoverHostLocalManagedVllmEndpoint();
       if (recovered?.baseUrl === `http://127.0.0.1:${String(VLLM_PORT)}`) {
         recoveredHostLocalContainerId = recovered.containerId;
         // Continue through the ordinary managed-container replacement path.
       } else {
-        printServingPortConflict(servingPort);
-        return { ok: false };
+        const adopted = adoptableServingPortHolder(
+          runtimeProfile.containerName,
+          VLLM_PORT,
+          hostLocalDockerEnv,
+        );
+        if (adopted === undefined) {
+          printServingPortConflict(servingPort);
+          return { ok: false };
+        }
+        recoveredHostLocalContainerId = adopted;
       }
+      recoveredHostLocalDockerEnv = hostLocalDockerEnv;
     } catch (error) {
       console.error(
         `  vLLM install failed: managed host-local vLLM recovery could not verify the container: ${(error as Error).message}`,
@@ -2342,9 +2424,8 @@ async function runVllmInstall(
   let hostLocalApiKey: string | null = null;
   let localDockerEnv = dualStationPlan
     ? buildLocalDualStationDockerEnv()
-    : model.managedBearerAuth
-      ? buildLocalManagedVllmDockerEnv()
-      : buildVllmDockerEnv();
+    : (recoveredHostLocalDockerEnv ??
+      (model.managedBearerAuth ? buildLocalManagedVllmDockerEnv() : buildVllmDockerEnv()));
   let gpuMemoryWarningShown = false;
   const reportGpuMemoryWarning = (result: GpuMemoryPreflightResult): void => {
     if (!result.ok || !result.warning || gpuMemoryWarningShown) return;
@@ -2395,7 +2476,9 @@ async function runVllmInstall(
   } else {
     const replacement = vllmContainerReplacementTarget(
       runtimeProfile.containerName,
-      model.managedBearerAuth ? localDockerEnv : undefined,
+      model.managedBearerAuth || recoveredHostLocalContainerId !== undefined
+        ? localDockerEnv
+        : undefined,
       recoveredHostLocalContainerId,
     );
     if (!replacement.ok) {

@@ -21,7 +21,7 @@ In that final shape, `src/lib/onboard.ts` should be a thin entrypoint. State han
 
 `flow-handoff.ts` validates required data and constructs context at the initial-to-core and core-to-final boundaries. The entrypoint supplies process-bound dependencies and reserved-name output.
 
-The strict runner owns exact `init`, `preflight`, `provider_selection`, `inference`, and `sandbox` entry. If the durable state is later than a slice entry, earlier phases run as evented prerequisite repairs. A repair must return a legal, update-free transition chain and must not change the durable entry state.
+The strict runner owns `init`, `preflight`, `provider_selection`, `inference`, and `sandbox` entry. If the durable state is later than a slice entry, earlier phases run as evented prerequisite repairs. A repair must return a legal, update-free transition chain and must not change the durable entry state.
 
 ## State ownership
 
@@ -40,6 +40,12 @@ Machine states are coarse user-visible onboarding phases, not every subprocess o
 - `complete` or `failed`
 
 A state handler may perform many smaller operations, but it should expose only stable, redacted state transitions and context updates to the FSM.
+
+The gateway handler awaits authenticated component connection configuration. That configuration
+inspects the selected Docker network and provisions a compatible bridge only after confirming absence.
+It then writes the gateway configuration with the selected socket and inspected address. Component preparation must acknowledge before gateway startup or state advancement.
+Network preparation errors leave gateway startup and sandbox creation unattempted; ordinary and
+v1 onboarding retain their existing sequence. See [external-component preparation](../external-component/README.md#preparation).
 
 ## Session steps versus machine state
 

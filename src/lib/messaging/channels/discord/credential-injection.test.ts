@@ -22,7 +22,11 @@ describe("Discord placeholder routing", () => {
     );
   });
 
-  it("omits the OpenClaw token field while preserving the Hermes placeholder", () => {
+  // Neither agent may persist the canonical placeholder: both Discord policies
+  // bind the credential, and OpenShell rejects the canonical form for a bound
+  // credential. Each agent reads DISCORD_BOT_TOKEN from the environment, which
+  // OpenShell fills with the revision-scoped placeholder at sandbox boot.
+  it("omits the canonical token placeholder from both agent renders", () => {
     const openClawRender = discordManifest.render.find(
       (render) => render.id === "discord-openclaw-channel",
     );
@@ -31,7 +35,7 @@ describe("Discord placeholder routing", () => {
     );
 
     expect(JSON.stringify(openClawRender)).not.toContain("credential.discordBotToken.placeholder");
-    expect(JSON.stringify(hermesRender)).toContain("credential.discordBotToken.placeholder");
+    expect(JSON.stringify(hermesRender)).not.toContain("credential.discordBotToken.placeholder");
   });
 
   it("binds every OpenClaw Discord credential endpoint to the sandbox provider", () => {

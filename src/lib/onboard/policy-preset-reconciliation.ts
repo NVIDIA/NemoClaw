@@ -2,18 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
-import { filterSetupPolicyPresetNamesForAgent } from "./agent-policy-presets";
+import {
+  filterSetupPolicyPresetNamesForAgent,
+  setupPolicyPresetAppliesToAgent,
+} from "./agent-policy-presets";
 import { mergeRequiredHermesToolGatewayPolicyPresets } from "./hermes-managed-tools";
 import {
   mergeEnabledMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
   mergeRequiredObservabilityPolicyPresets,
 } from "./observability-policy-presets";
 import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
-import { classifyPresetProvenance } from "../policy/preset-provenance";
+import { getTier } from "../policy/tiers";
 import {
   ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,
@@ -48,6 +52,22 @@ export function mergeRequiredSetupPolicyPresets(
         customOwnsObservability: options.customOwnsObservability,
       }),
   );
+  // A tier's own messaging presets (e.g. Open's slack/discord/telegram/wechat/
+  // whatsapp/teams) are tier egress defaults, not per-channel opt-ins, so they
+  // must survive a merge just because no channel is enabled -- matching the
+  // agent-conditional exemption `createUnavailablePolicyPresetPruner` already
+  // applies for OpenClaw. Only Hermes, whose recovery records the full enabled
+  // channel set, prunes down to that set here; OpenClaw relies solely on
+  // `disabledChannels` (applied downstream) to retire a channel's preset. (#11058)
+  const isHermesAgent =
+    typeof options.agent === "string" && options.agent.trim().toLowerCase() === "hermes";
+  const activeAgentPresets = isHermesAgent
+    ? pruneInactiveMessagingPolicyPresets(
+        agentFilteredPresets,
+        options.enabledChannels,
+        options.customPresetNames,
+      )
+    : agentFilteredPresets;
   const effectiveHermesToolGateways = (options.hermesToolGateways ?? []).filter(
     (name) =>
       !isStaleBuiltinWebSearchPolicyPreset(name, {
@@ -59,7 +79,7 @@ export function mergeRequiredSetupPolicyPresets(
     mergeRequiredOpenclawOtelPolicyPresets(
       mergeEnabledMessagingChannelPolicyPresets(
         mergeRequiredHermesToolGatewayPolicyPresets(
-          agentFilteredPresets,
+          activeAgentPresets,
           effectiveHermesToolGateways,
           options.knownPresetNames,
         ),
@@ -86,18 +106,6 @@ export function mergeRequiredSetupPolicyPresets(
   );
 }
 
-export function isStaleBuiltinBravePolicyPreset(
-  name: string,
-  options: {
-    webSearchConfig?: WebSearchConfig | null;
-    customPresetNames?: ReadonlySet<string> | null;
-    tierName?: string | null;
-    agentName?: string | null;
-  } = {},
-): boolean {
-  return isStaleBuiltinWebSearchPolicyPreset(name, options);
-}
-
 export function isStaleBuiltinWebSearchPolicyPreset(
   name: string,
   options: {
@@ -112,16 +120,13 @@ export function isStaleBuiltinWebSearchPolicyPreset(
   // host access on the Balanced/Open tiers) AND the built-in web-search provider
   // preset. When the preset is a default of the applied tier it is a tier egress
   // default, not a stale web-search leftover — keep it regardless of the web-search
-  // provider choice. Reuse the single provenance classifier so pruning and the
-  // policy-list display agree on WHY a preset is present, and so the exemption is
-  // scoped exactly to the applied tier (Restricted lists no such default → still
-  // pruned). classifyPresetProvenance's getTier() returns null for an unknown /
-  // non-canonical tier, so this fails safe (unknown → not "tier" → not exempt). (#6844)
+  // provider choice. A tier supplied by the active selection flow can exempt
+  // its own default, but no tier is read from durable sandbox state.
   if (
-    classifyPresetProvenance(name, {
-      tierName: options.tierName,
-      agentName: options.agentName,
-    }).source === "tier"
+    setupPolicyPresetAppliesToAgent(name, options.agentName) &&
+    getTier(options.tierName ?? "")?.presets.some(
+      (preset) => preset.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    )
   ) {
     return false;
   }
@@ -137,6 +142,7 @@ export function isStaleBuiltinWebSearchPolicyPreset(
 
 export function createUnavailablePolicyPresetPruner(options: {
   disabledChannels?: string[] | null;
+  enabledChannels?: string[] | null;
   agent?: string | null;
   observabilityEnabled?: boolean | null;
   webSearchConfig?: WebSearchConfig | null;
@@ -151,8 +157,19 @@ export function createUnavailablePolicyPresetPruner(options: {
 ) => string[] {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.
-  return (presetNames, pruning = {}) =>
-    pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels).filter(
+  return (presetNames, pruning = {}) => {
+    // OpenClaw keeps an already-applied channel preset until disabledChannels
+    // explicitly retires it. Hermes recovery records the full enabled set, so
+    // it can also prune repository defaults that are absent from that set.
+    const enabledChannelPruned =
+      options.agent?.trim().toLowerCase() === "hermes"
+        ? pruneInactiveMessagingPolicyPresets(
+            pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels),
+            options.enabledChannels,
+            options.customPresetNames,
+          )
+        : pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels);
+    return enabledChannelPruned.filter(
       (name) =>
         (pruning.preserveExplicitWebSearch ||
           !isStaleBuiltinWebSearchPolicyPreset(name, {
@@ -163,4 +180,5 @@ export function createUnavailablePolicyPresetPruner(options: {
           })) &&
         !isInactiveObservabilityPolicyPreset(name, options),
     );
+  };
 }

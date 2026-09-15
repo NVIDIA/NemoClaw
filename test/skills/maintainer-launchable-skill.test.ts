@@ -31,13 +31,13 @@ describe("staging Launchable maintainer guidance", () => {
       "Require a short-lived inference API key scoped only to the required validation",
     );
     expect(launchable).toContain(
-      "require a maintainer-approved waiver tied to the exact candidate commit SHA and selected automated Launchable run ID",
+      "require a maintainer-approved waiver tied to the candidate commit SHA and selected automated Launchable run ID",
     );
     expect(launchable).toContain(
       "rotate or revoke the inference API key in the issuing NVIDIA service after the run",
     );
     expect(launchable).toContain(
-      "record its approver, exact candidate commit SHA, selected automated Launchable run ID, and the accepted period of later API-key access",
+      "record its approver, candidate commit SHA, selected automated Launchable run ID, and the accepted period of later API-key access",
     );
     expect(launchable).toContain(
       "obtain explicit maintainer approval immediately before starting the credential-bearing process",

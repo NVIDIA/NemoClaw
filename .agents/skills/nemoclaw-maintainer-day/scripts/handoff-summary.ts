@@ -5,7 +5,7 @@
  * Generate exact-range QA context for a release brief.
  *
  * Usage:
- *   node --experimental-strip-types --no-warnings handoff-summary.ts \
+ *   node --no-warnings handoff-summary.ts \
  *     --plan PATH --output PATH
  */
 
@@ -272,10 +272,7 @@ function readPlan(planPath: string): HandoffInput {
   if (typeof value.originMainHeadline !== "string" || !value.originMainHeadline) {
     throw new Error("release plan headline must be a nonempty string");
   }
-  if (
-    value.candidateSelection !== "current-main" &&
-    value.candidateSelection !== "historical"
-  ) {
+  if (value.candidateSelection !== "current-main" && value.candidateSelection !== "historical") {
     throw new Error("release plan candidate selection is invalid");
   }
   if (

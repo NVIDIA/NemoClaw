@@ -101,6 +101,7 @@ export function validateE2eExecutionRows(
         row.agentRuntime,
         row.observableOutcome,
         row.environmentOrInferenceEndpoint,
+        row.variant,
       ].join("\u0000");
       const previous = coverageEvidence.get(evidenceKey);
       if (previous) {

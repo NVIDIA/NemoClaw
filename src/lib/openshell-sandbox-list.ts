@@ -56,12 +56,42 @@ export async function captureSandboxListWithGatewayRecovery(
   const target = options.gatewayName
     ? namedOpenShellGateway(options.gatewayName)
     : selectedOpenShellGateway();
+  let targetRecoveryAttempted = false;
+  // Installer retirement can remove the named gateway. Recover it before inventory
+  // so a missing-gateway command error cannot bypass bounded recovery.
+  if (options.gatewayName) {
+    const targetRecovery = await recoverNamedGatewayRuntime(recoveryOptions);
+    targetRecoveryAttempted = targetRecovery.attempted === true;
+    if (!targetRecovery.recovered) {
+      return {
+        result: {
+          ok: false,
+          error: {
+            kind: "transport",
+            reason: "unreachable",
+            message: "OpenShell could not reach the selected gateway.",
+          },
+        },
+        recoveryAttempted: targetRecoveryAttempted,
+        recoverySucceeded: false,
+      };
+    }
+  }
+
   const initial = await observer.listSandboxes({ target });
   if (!isRecoverableObservedSandboxListGatewayFailure(initial)) {
     return {
       result: initial,
-      recoveryAttempted: false,
-      recoverySucceeded: false,
+      recoveryAttempted: targetRecoveryAttempted,
+      recoverySucceeded: targetRecoveryAttempted,
+    };
+  }
+
+  if (options.gatewayName && targetRecoveryAttempted) {
+    return {
+      result: initial,
+      recoveryAttempted: true,
+      recoverySucceeded: true,
     };
   }
 
@@ -147,6 +177,14 @@ export function printSandboxListFailureWithRecoveryContext(
   recoveryResult: SandboxListRecoveryResult,
 ): void {
   console.error("  Failed to query running sandboxes from OpenShell.");
+  if (!recoveryResult.result.ok) {
+    const error = recoveryResult.result.error;
+    const reason = "reason" in error ? error.reason : "none";
+    console.error(
+      `  OpenShell sandbox inventory error: kind=${error.kind}; reason=${reason}; gateway recovery attempted=${recoveryResult.recoveryAttempted ? "yes" : "no"}.`,
+    );
+    console.error(`  ${error.message}`);
+  }
   if (recoveryResult.recoveryAttempted) {
     if (recoveryResult.recoverySucceeded) {
       console.error(

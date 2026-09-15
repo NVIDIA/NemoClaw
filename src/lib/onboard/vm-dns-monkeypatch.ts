@@ -9,13 +9,13 @@ import {
 type OnboardVmDnsMonkeypatchDeps = {
   apply?: typeof applyOpenShellVmDnsMonkeypatch;
   log?: (message: string) => void;
-  revalidatePolicyAuthority?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
   warn?: (message: string) => void;
 };
 
 export function applyOnboardVmDnsMonkeypatch(
   sandboxName: string,
-  runtime: { openshellDriver?: string | null },
+  runtime: { gatewayPort?: number | null; openshellDriver?: string | null },
   deps: OnboardVmDnsMonkeypatchDeps = {},
 ): void {
   const apply = deps.apply ?? applyOpenShellVmDnsMonkeypatch;
@@ -24,14 +24,15 @@ export function applyOnboardVmDnsMonkeypatch(
   const vmDnsPatch: VmDnsMonkeypatchResult = apply(
     sandboxName,
     {
+      gatewayPort: runtime.gatewayPort,
       openshellDriver: runtime.openshellDriver,
     },
     {
-      revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
+      revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
     },
   );
   if (vmDnsPatch.ok) {
-    deps.revalidatePolicyAuthority?.(
+    deps.revalidateSandboxIdentity?.(
       `report VM DNS monkeypatch result for sandbox '${sandboxName}'`,
     );
   }

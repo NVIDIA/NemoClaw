@@ -52,7 +52,6 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "GITHUB_TOKEN",
   "HF_TOKEN",
   "HUGGING_FACE_HUB_TOKEN",
-  "ALLOWED_CHAT_IDS",
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
 

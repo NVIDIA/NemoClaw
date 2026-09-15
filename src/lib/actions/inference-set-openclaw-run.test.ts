@@ -7,21 +7,28 @@ import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, OPENCLAW_TARGET } from "./inference-set.test-support";
 
 describe("runInferenceSet OpenClaw routing", () => {
-  it("completes a same-API switch and pairing when audit persistence fails (#9527)", async () => {
+  it("completes a same-API switch and pairing when audit persistence initially fails (#9527)", async () => {
     const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
+      agents: {
+        defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } },
+      },
       models: {
         providers: {
           inference: {
             api: "openai-completions",
-            models: [{ id: "moonshotai/kimi-k2.6", name: "inference/moonshotai/kimi-k2.6" }],
+            models: [
+              {
+                id: "moonshotai/kimi-k2.6",
+                name: "inference/moonshotai/kimi-k2.6",
+              },
+            ],
           },
         },
       },
     };
     const deps = createDeps({ config, session: baseSession() });
     deps.calls.appendAuditEntry.mockImplementationOnce(() => {
-      throw new Error("audit storage unavailable");
+      throw new Error("audit storage unavailable: credential=do-not-report");
     });
 
     const result = await runInferenceSet(
@@ -48,7 +55,9 @@ describe("runInferenceSet OpenClaw routing", () => {
       { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 },
     );
     expect(config.agents).toEqual({
-      defaults: { model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" } },
+      defaults: {
+        model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" },
+      },
     });
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET, config);
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET);
@@ -77,22 +86,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       endpointUrl: "https://inference.local/v1",
     });
-    expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "inference_set",
-        sandbox: "alpha",
-        reason:
-          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence pending)",
-      }),
-    );
-    expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "inference_set",
-        sandbox: "alpha",
-        reason:
-          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence completed)",
-      }),
-    );
     expect(result).toMatchObject({
       sandboxName: "alpha",
       provider: "nvidia-prod",
@@ -109,6 +102,23 @@ describe("runInferenceSet OpenClaw routing", () => {
       openclawVersion: "",
       stateDirectory: "/sandbox/.openclaw",
     });
+    expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "inference_set",
+        sandbox: "alpha",
+        reason:
+          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence pending)",
+      }),
+    );
+    expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "inference_set",
+        sandbox: "alpha",
+        reason:
+          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence completed)",
+      }),
+    );
+    expect(JSON.stringify(deps.calls.appendAuditEntry.mock.calls)).not.toContain("do-not-report");
     expect(deps.calls.log).toHaveBeenCalledWith(
       "  Warning: could not record the post-commit inference audit entry for 'alpha'.",
     );
@@ -118,7 +128,9 @@ describe("runInferenceSet OpenClaw routing", () => {
     const config: ConfigObject = {
       agents: {
         defaults: {
-          model: { primary: "inference/anthropic.claude-3-5-sonnet-20240620-v1:0" },
+          model: {
+            primary: "inference/anthropic.claude-3-5-sonnet-20240620-v1:0",
+          },
         },
       },
       models: {
@@ -165,7 +177,9 @@ describe("runInferenceSet OpenClaw routing", () => {
 
     expect(config.agents).toEqual({
       defaults: {
-        model: { primary: "inference/anthropic.claude-sonnet-4-6-20260101-v1:0" },
+        model: {
+          primary: "inference/anthropic.claude-sonnet-4-6-20260101-v1:0",
+        },
       },
     });
     expect(config.models).toMatchObject({
@@ -190,7 +204,9 @@ describe("runInferenceSet OpenClaw routing", () => {
 
   it("replaces a prior runtime provider marker when switching back to NVIDIA Build", async () => {
     const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/openai/gpt-5.4-mini" } } },
+      agents: {
+        defaults: { model: { primary: "inference/openai/gpt-5.4-mini" } },
+      },
       models: {
         providers: {
           inference: {
@@ -199,7 +215,12 @@ describe("runInferenceSet OpenClaw routing", () => {
             headers: {
               "X-NemoClaw-Upstream-Provider": "compatible-endpoint",
             },
-            models: [{ id: "openai/gpt-5.4-mini", name: "inference/openai/gpt-5.4-mini" }],
+            models: [
+              {
+                id: "openai/gpt-5.4-mini",
+                name: "inference/openai/gpt-5.4-mini",
+              },
+            ],
           },
         },
       },

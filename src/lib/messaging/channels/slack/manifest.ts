@@ -3,33 +3,6 @@
 
 import type { ChannelManifest } from "../../manifest";
 
-// Compatibility boundary: Hermes' Slack adapter requires Bolt-shaped xoxb-/xapp-
-// placeholders in .env, while older OpenShell persisted bindings may still pass
-// generic openshell:resolve:env:SLACK_* runtime env values into startup. The
-// manifest owns these aliases, the reduced runtime plan carries them to the
-// Hermes entrypoint, and runtime-config-guard only applies them for active,
-// non-disabled Slack channels. The no-runtime-plan fallback is intentionally
-// limited to runtime-config-guard.py's LEGACY_PROVIDER_PLACEHOLDER_KEYS; new
-// channels must ship runtime-plan metadata instead of extending ambient fallback
-// behavior. Remove this normalization once all persisted Hermes legacy bindings
-// render manifest placeholders directly.
-const slackRuntimeEnvAliases = [
-  {
-    envKey: "SLACK_BOT_TOKEN",
-    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-    value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-    message:
-      "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
-  },
-  {
-    envKey: "SLACK_APP_TOKEN",
-    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
-    value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-    message:
-      "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
-  },
-] as const;
-
 export const slackManifest = {
   schemaVersion: 1,
   id: "slack",
@@ -120,8 +93,11 @@ export const slackManifest = {
           enabled: true,
           accounts: {
             default: {
-              botToken: "{{credential.slackBotToken.placeholder}}",
-              appToken: "{{credential.slackAppToken.placeholder}}",
+              // No botToken/appToken here: OpenShell 0.0.106 injects both as
+              // revision-scoped placeholders and rejects the provider-shaped
+              // alias once the policy binds them. OpenClaw resolves the
+              // default account from process.env.SLACK_BOT_TOKEN and
+              // SLACK_APP_TOKEN when the config omits them.
               enabled: true,
               healthMonitor: {
                 enabled: false,
@@ -153,8 +129,6 @@ export const slackManifest = {
       agent: "hermes",
       target: "~/.hermes/.env",
       lines: [
-        "SLACK_BOT_TOKEN={{credential.slackBotToken.placeholder}}",
-        "SLACK_APP_TOKEN={{credential.slackAppToken.placeholder}}",
         "SLACK_ALLOWED_USERS={{allowedIds.slack.csv}}",
         "SLACK_ALLOWED_CHANNELS={{slackConfig.allowedChannels.csv}}",
       ],
@@ -182,7 +156,6 @@ export const slackManifest = {
         configKeys: ["slack"],
         logPatterns: ["slack"],
       },
-      envAliases: slackRuntimeEnvAliases,
       nodePreloads: [
         {
           module: "slack-channel-guard",
@@ -202,9 +175,7 @@ export const slackManifest = {
         },
       ],
     },
-    hermes: {
-      envAliases: slackRuntimeEnvAliases,
-    },
+    hermes: {},
   },
   agentPackages: [
     {

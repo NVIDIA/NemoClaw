@@ -14,16 +14,7 @@ vi.mock("../../src/lib/runner", async (importOriginal) => ({
   runCapture: policySideEffects.runCapture,
 }));
 
-import {
-  applyPermissivePolicy,
-  applyPreset,
-  applyPresetContent,
-  applyPresets,
-  buildPolicyGetCommand,
-  buildPolicyGetFullCommand,
-  buildPolicySetCommand,
-  removePreset,
-} from "../../src/lib/policy";
+import { applyPreset, applyPresetContent, applyPresets, removePreset } from "../../src/lib/policy";
 
 type OnboardReadinessInternals = {
   hasStaleGateway: (output: string | null | undefined) => boolean;
@@ -142,63 +133,43 @@ describe("sandbox readiness parsing", () => {
 // Regression tests: WSL truncates hyphenated sandbox names during shell
 // argument parsing (e.g. "my-assistant" → "m").
 describe("WSL sandbox name handling", () => {
-  it("buildPolicySetCommand preserves hyphenated sandbox name as a separate argv element", () => {
-    const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-    expect(cmd).toContain("my-assistant");
-    // The sandbox name must be a discrete argv element, not concatenated into a shell string
-    expect(cmd[cmd.length - 1]).toBe("my-assistant");
-  });
-
-  it("buildPolicyGetCommand preserves hyphenated sandbox name", () => {
-    const cmd = buildPolicyGetCommand("my-assistant");
-    expect(cmd).toContain("my-assistant");
-  });
-
-  it("buildPolicyGetFullCommand preserves hyphenated sandbox name", () => {
-    const cmd = buildPolicyGetFullCommand("my-assistant");
-    expect(cmd).toContain("my-assistant");
-    expect(cmd).toContain("--full");
-  });
-
-  it("buildPolicySetCommand preserves multi-hyphen names", () => {
-    const cmd = buildPolicySetCommand("/tmp/p.yaml", "my-dev-assistant-v2");
-    expect(cmd).toContain("my-dev-assistant-v2");
-  });
-
-  it("buildPolicySetCommand preserves single-char name", () => {
-    // If WSL truncates "my-assistant" to "m", the single-char name should
-    // still be passed through unchanged as an argv element
-    const cmd = buildPolicySetCommand("/tmp/p.yaml", "m");
-    expect(cmd).toContain("m");
-  });
-
-  it("applyPreset rejects truncated/invalid sandbox name", () => {
+  it("applyPreset rejects truncated/invalid sandbox name", async () => {
     // Empty name
-    expect(() => applyPreset("", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    await expect((async () => await applyPreset("", "npm"))()).rejects.toThrow(
+      /Invalid or truncated sandbox name/,
+    );
     // Name with uppercase (not valid per RFC 1123)
-    expect(() => applyPreset("My-Assistant", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    await expect((async () => await applyPreset("My-Assistant", "npm"))()).rejects.toThrow(
+      /Invalid or truncated sandbox name/,
+    );
     // Name starting with hyphen
-    expect(() => applyPreset("-broken", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    await expect((async () => await applyPreset("-broken", "npm"))()).rejects.toThrow(
+      /Invalid or truncated sandbox name/,
+    );
   });
 
-  it("accepts an exact 19-character sandbox name before a no-op policy batch (#8497)", () => {
-    expect(applyPresets("a".repeat(19), [])).toBe(true);
+  it("accepts an exact 19-character sandbox name before a no-op policy batch (#8497)", async () => {
+    expect(await applyPresets("a".repeat(19), [])).toBe(true);
     expect(policySideEffects.runCapture).not.toHaveBeenCalled();
     expect(policySideEffects.run).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["removePreset", (name: string) => removePreset(name, "npm")],
-    ["applyPresetContent", (name: string) => applyPresetContent(name, "npm", "")],
-    ["applyPresets", (name: string) => applyPresets(name, ["npm"])],
-    ["applyPermissivePolicy", (name: string) => applyPermissivePolicy(name)],
-  ])("%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)", (_entrypoint, invoke) => {
-    ["a".repeat(20), "legacy--box"].forEach((name) => {
-      expect(() => invoke(name)).toThrow(/Allowed format: 1-19 characters/);
-    });
-    expect(policySideEffects.runCapture).not.toHaveBeenCalled();
-    expect(policySideEffects.run).not.toHaveBeenCalled();
-  });
+    ["removePreset", async (name: string) => await removePreset(name, "npm")],
+    ["applyPresetContent", async (name: string) => await applyPresetContent(name, "npm", "")],
+    ["applyPresets", async (name: string) => await applyPresets(name, ["npm"])],
+  ])(
+    "%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)",
+    async (_entrypoint, invoke) => {
+      await Promise.all(
+        ["a".repeat(20), "legacy--box"].map(async (name) => {
+          await expect(invoke(name)).rejects.toThrow(/Allowed format: 1-19 characters/);
+        }),
+      );
+      expect(policySideEffects.runCapture).not.toHaveBeenCalled();
+      expect(policySideEffects.run).not.toHaveBeenCalled();
+    },
+  );
 
   it("readiness check uses exact match preventing truncated name false-positive", () => {
     // If "my-assistant" was truncated to "m", the readiness check should

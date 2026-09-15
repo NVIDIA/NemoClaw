@@ -87,6 +87,24 @@ describe("full E2E sandbox inference probe", () => {
     expect(response.reasoningContent).toBe("42");
   });
 
+  it("rejects an answer-bearing inference choice that also contains tool calls", () => {
+    expect(() =>
+      parseFullE2eInferenceResponse(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                content: "42",
+                tool_calls: [{ function: { name: "calculator", arguments: "{}" } }],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toThrow("must not contain tool-call structure");
+  });
+
   it("retries only a successful semantic mismatch with a larger reply budget", async () => {
     const requests: FullE2eInferenceAttemptInput[] = [];
     const probe = await runFullE2eInferenceProbe(

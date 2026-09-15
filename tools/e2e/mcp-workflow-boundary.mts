@@ -24,6 +24,13 @@ const DEV_ARTIFACT_JOB = "openshell-dev-artifact";
 const CREDENTIAL_WINDOW_JOB = "openshell-credential-generation-window";
 const MCP_AGENT_SHARDS = ["openclaw", "hermes", "deepagents"] as const;
 const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
+const MATRIX_RUNTIME_PROVIDER_EXPRESSION = "${{ matrix.runtime_provider }}";
+const DOCKER_EXACT_MAIN_PROOF_EXPRESSION =
+  "${{ matrix.runtime_provider == 'docker' && '1' || '0' }}";
+const MANAGED_IMAGE_REVISION_EXPRESSION =
+  "${{ needs.base-image-publication.outputs.managed_image_revision }}";
+const MANAGED_IMAGE_RECEIPT_EXPRESSION =
+  "${{ needs.base-image-publication.outputs.managed_image_receipt }}";
 const TERMINAL_JOBS = [
   "release-qualification",
   "relevant-e2e",
@@ -41,10 +48,12 @@ const DEV_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME = "Checkout trusted OpenShell dev tooling";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
+const DEV_ARTIFACT_COPY_HELPER = ".github/scripts/copy-openshell-dev-asset.sh";
 const DEV_ARTIFACT_TRUSTED_PATHS =
   "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
-const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
+const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `${DEV_ARTIFACT_COPY_HELPER}\n.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
 const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
+const DEV_ARTIFACT_TRUSTED_COPY_HELPER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_COPY_HELPER}`;
 const DEV_ARTIFACT_TRUSTED_INSTALLER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/scripts/install-openshell.sh`;
 const DEV_ARTIFACT_SOURCE_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
 const DEV_ARTIFACT_MANIFEST_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}";
@@ -59,7 +68,7 @@ const DEV_ARTIFACT_INSTALL_ASSETS = [
   "openshell-checksums-sha256.txt",
   "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
   "openshell-gateway-checksums-sha256.txt",
-  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
   "openshell-sandbox-checksums-sha256.txt",
 ] as const;
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
@@ -67,16 +76,16 @@ const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
 const CREDENTIAL_WINDOW_ID = "openshell-credential-generation-window";
 const CREDENTIAL_WINDOW_FILE = `test/e2e/live/${CREDENTIAL_WINDOW_ID}.test.ts`;
-const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-generation-window";
+const CREDENTIAL_WINDOW_ARTIFACT_DIR = `e2e-artifacts/live/openshell-credential-generation-window/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`;
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01";
+  "c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
 const STABLE_MCP_INSTALL_CONTENT_SHA256 =
-  "ea6b6f327b759097f0018478f2eef7bbd11eba3a88a3fbb631431f5a48c2611c";
+  "3cfce1666262924082f93257212eadc6f133c60eb705263c715aa9f79c293943";
 const CREDENTIAL_WINDOW_INSTALL_CONTENT_SHA256 =
-  "c2b5483a704eb73784dfc1c466cd13f584c0a91c7696d9723c2b7a9783a0e060";
+  "8fb967344552c39a0c01b2901b6ec7bfa527f248e7d3aaf3edf63fbcc1c376c0";
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -97,6 +106,11 @@ const FORBIDDEN_INFERENCE_SECRETS =
   /ANTHROPIC_API_KEY|AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|COMPATIBLE_(?:ANTHROPIC_)?API_KEY|GITHUB_TOKEN|GH_TOKEN|NVIDIA_(?:INFERENCE_)?API_KEY|OPENAI_API_KEY/;
 
 type UnknownRecord = Record<string, unknown>;
+
+function nodeSetupSecurityBoundary(step: UnknownRecord): UnknownRecord {
+  const { "node-version": _nodeVersion, ...inputs } = asRecord(step.with);
+  return { ...step, with: inputs };
+}
 
 function asRecord(value: unknown): UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -169,6 +183,18 @@ function validateJobIdentity(
   );
   requireEqual(
     errors,
+    env.E2E_MANAGED_IMAGE_REVISION,
+    MANAGED_IMAGE_REVISION_EXPRESSION,
+    `${jobName} must receive the selected managed-image cohort revision`,
+  );
+  requireEqual(
+    errors,
+    env.E2E_MANAGED_IMAGE_COHORT_RECEIPT,
+    MANAGED_IMAGE_RECEIPT_EXPRESSION,
+    `${jobName} must receive the complete selected managed-image cohort receipt`,
+  );
+  requireEqual(
+    errors,
     job["timeout-minutes"],
     90,
     `${jobName} must bound each shard to 90 minutes`,
@@ -178,7 +204,9 @@ function validateJobIdentity(
     errors,
     JSON.stringify(jobNeeds(job)),
     JSON.stringify(
-      jobName === "mcp-bridge-dev" ? ["generate-matrix", DEV_ARTIFACT_JOB] : ["generate-matrix"],
+      jobName === "mcp-bridge-dev"
+        ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB]
+        : ["base-image-publication", "generate-matrix"],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
   );
@@ -222,8 +250,8 @@ function validateJobIdentity(
     requireEqual(
       errors,
       env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF,
-      "1",
-      "mcp-bridge must enable the exact stable release proof",
+      DOCKER_EXACT_MAIN_PROOF_EXPRESSION,
+      "mcp-bridge must enable the exact stable release proof only for its Docker rows",
     );
     requireEqual(
       errors,
@@ -241,9 +269,12 @@ function validateJobIdentity(
       "mcp-bridge must use the trusted execution plan",
     );
   } else {
-    if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
-      errors.push("mcp-bridge-dev must remain default-enabled");
-    }
+    requireEqual(
+      errors,
+      env.E2E_DEFAULT_ENABLED,
+      "0",
+      "mcp-bridge-dev must remain explicit-only after the stable 0.0.116 cutover",
+    );
     requireEqual(
       errors,
       env.NEMOCLAW_OPENSHELL_CHANNEL,
@@ -322,7 +353,8 @@ function validateJobSecurity(
   const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
   if (
     jobName === "mcp-bridge-dev" &&
-    (contentSha256(trustedNodeSetup) !== MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
+    (contentSha256(nodeSetupSecurityBoundary(trustedNodeSetup)) !==
+      MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
       trustedNodeSetupIndex !== checkoutIndex - 1)
   ) {
     errors.push(
@@ -523,11 +555,8 @@ function validateJobExecution(
     for (const token of [
       ...DEV_ARTIFACT_INSTALL_ASSETS,
       'cat >"$shim_dir/gh"',
-      'source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"',
-      '! -L "$source_asset"',
-      '"$destination" = /*',
-      '! -L "$destination"',
-      'cp -- "$source_asset" "$destination/$asset"',
+      `bash "${DEV_ARTIFACT_TRUSTED_COPY_HELPER}"`,
+      '"$OPENSHELL_DEV_ASSET_DIR" "$asset" "$destination"',
       'cat >"$shim_dir/curl"',
       "Network fallback is disabled for retained OpenShell assets.",
       'PATH="$shim_dir:$PATH"',
@@ -573,7 +602,11 @@ function validateJobExecution(
     }
     if (
       installIndex < 0 ||
-      contentSha256(steps.slice(0, installIndex + 1)) !== MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
+      contentSha256(
+        steps
+          .slice(0, installIndex + 1)
+          .map((step) => (step === trustedNodeSetup ? nodeSetupSecurityBoundary(step) : step)),
+      ) !== MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
     ) {
       errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
     }
@@ -668,7 +701,7 @@ function validateJobExecution(
   );
   for (const required of [
     "tools/e2e/assert-mcp-artifact-secrets-absent.mts",
-    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
   ]) {
     requireContains(errors, scan.run, required, `${jobName} artifact secret scan is incomplete`);
   }
@@ -688,13 +721,13 @@ function validateJobExecution(
   requireEqual(
     errors,
     uploadOptions.path,
-    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}/`,
     `${jobName} artifact upload must use exactly the scanned directory`,
   );
   requireEqual(
     errors,
     uploadOptions.name,
-    `e2e-${jobName}-${MATRIX_AGENT_EXPRESSION}`,
+    `e2e-${jobName}-${MATRIX_AGENT_EXPRESSION}-${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
     `${jobName} artifact upload must use its isolated artifact name`,
   );
   if (Object.keys(uploadOptions).sort().join(",") !== "name,path") {
@@ -775,8 +808,8 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
   if (!/^actions\/setup-node@[a-f0-9]{40}$/u.test(asString(setup.uses))) {
     errors.push(`${DEV_ARTIFACT_JOB} must use a SHA-pinned Node setup`);
   }
-  if (!hasExactEntries(asRecord(setup.with), { "node-version": 22 })) {
-    errors.push(`${DEV_ARTIFACT_JOB} must use only the reviewed Node version`);
+  if (Object.keys(asRecord(setup.with)).some((key) => key !== "node-version")) {
+    errors.push(`${DEV_ARTIFACT_JOB} must not enable additional Node setup inputs`);
   }
   const resolve = namedStep(job, "Resolve immutable OpenShell dev artifact");
   requireEqual(
@@ -841,8 +874,8 @@ function validateCredentialWindowJob(
   requireEqual(
     errors,
     JSON.stringify(jobNeeds(job)),
-    JSON.stringify(["generate-matrix"]),
-    `${CREDENTIAL_WINDOW_JOB} must depend only on matrix generation so it can run in parallel`,
+    JSON.stringify(["base-image-publication", "generate-matrix"]),
+    `${CREDENTIAL_WINDOW_JOB} must depend on publication and matrix generation`,
   );
   requireEqual(
     errors,
@@ -865,18 +898,25 @@ function validateCredentialWindowJob(
 
   const env = asRecord(job.env);
   const expectedEnv = {
+    E2E_MANAGED_IMAGE_REVISION: MANAGED_IMAGE_REVISION_EXPRESSION,
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT: MANAGED_IMAGE_RECEIPT_EXPRESSION,
+    E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON:
+      "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
     E2E_JOB: "1",
+    E2E_GATEWAY_RUNTIMES: "docker,podman",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
     E2E_OBSERVABLE_OUTCOME:
-      "Credential expiry rotation detach and rebuild preserve the intended access window",
+      "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
-      "Ubuntu Docker host; local compatible inference and MCP endpoint",
+      "Ubuntu managed runtime host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_GATEWAY_RUNTIME: MATRIX_RUNTIME_PROVIDER_EXPRESSION,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
   };
   if (!hasExactEntries(env, expectedEnv)) {
@@ -1006,7 +1046,7 @@ function validateCredentialWindowJob(
   const uploadOptions = asRecord(upload.with);
   if (
     !hasExactEntries(uploadOptions, {
-      name: `e2e-${CREDENTIAL_WINDOW_JOB}`,
+      name: `e2e-${CREDENTIAL_WINDOW_JOB}-${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
       path: `${CREDENTIAL_WINDOW_ARTIFACT_DIR}/`,
     })
   ) {

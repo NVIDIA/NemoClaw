@@ -25,13 +25,16 @@ import {
 import type { MessagingAgentId } from "./messaging/manifest";
 import { resolveGatewayName } from "./onboard/gateway-binding";
 import { classifyHermesPortableRegistry } from "./onboard/experimental/hermes-portable-onboarding";
-import { inspectPortableAgentReceiptAuthority } from "./onboard/experimental/hermes-portable-receipt";
+import { inspectPortableAgentReceiptAuthorityForClassification } from "./onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "./onboard/experimental/portable-runtime-receipt-readiness";
+import * as policy from "./policy";
 import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
 import { getHermesPortableHostAuthorityEntryCount } from "./state/portable-uninstall-retirement";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
+
+const INVENTORY_POLICY_PROBE_TIMEOUT_MS = 2_000;
 
 function captureOpenshell(
   rootDir: string,
@@ -220,10 +223,10 @@ function readGatewayLog(rootDir: string, sandboxName: string): string | null {
   }
 }
 
-function probeGatewayHealth(): GatewayHealth {
+async function probeGatewayHealth(): Promise<GatewayHealth> {
   try {
     const expectedGateway = resolveGatewayName(GATEWAY_PORT);
-    const lifecycle = getNamedGatewayLifecycleState(expectedGateway);
+    const lifecycle = await getNamedGatewayLifecycleState(expectedGateway);
     if (lifecycle.state === "healthy_named") {
       return { healthy: true, state: lifecycle.state };
     }
@@ -236,7 +239,7 @@ function probeGatewayHealth(): GatewayHealth {
     return {
       healthy: false,
       state: lifecycle.state,
-      reason: reasonByState[lifecycle.state],
+      reason: lifecycle.error?.message ?? reasonByState[lifecycle.state],
     };
   } catch {
     // A transient probe failure must not mask a real gateway problem, but
@@ -272,13 +275,23 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
 
   return {
     listSandboxes: () => registry.listSandboxes(),
+    getPolicyPresets: async (sandboxName) => {
+      try {
+        return await policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
+      } catch {
+        return [];
+      }
+    },
     getLiveInference: () =>
       getLiveGatewayInference(
         (args, opts) =>
           captureOpenshell(rootDir, args, {
             timeout: opts?.timeout,
           }),
-        { timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+        {
+          gatewayName: resolveGatewayName(GATEWAY_PORT),
+          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        },
       ).inference,
     showServiceStatus,
     getServiceStatuses,
@@ -302,7 +315,7 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     findMessagingOverlaps,
     readGatewayLog: (sandboxName) => readGatewayLog(rootDir, sandboxName),
     getHermesPortablePhase: (sandboxName) => {
-      const authority = inspectPortableAgentReceiptAuthority(
+      const authority = inspectPortableAgentReceiptAuthorityForClassification(
         sandboxName,
         defaultPortableDemoStateDir(process.env),
       );

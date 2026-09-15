@@ -7,6 +7,18 @@
 
 Use these instructions only after hardware detection confirms DGX Station.
 
+Before offering Station Express choices, inspect the Station software qualification.
+If the hardware qualification passes but the software qualification is unqualified:
+
+- Explain that the release profile blocks Station Express onboarding and direct-GPU policy creation.
+- Offer `--force-station-install` only as the documented explicit validation-only recovery for genuine Station GB300 hardware with unrecognized release metadata.
+- Explain that validation-only handling preserves the factory stack, does not run onboarding or select a model, and exits with instructions to install a supported DGX Station software profile.
+- Do not add `--station-deepseek`, ask an Express model question, select a provider, or continue to the Station Express choices below.
+
+After validation-only handling, stop. The operator must install a supported software profile before rerunning the ordinary installer without `--force-station-install`.
+
+For a software-qualified Station, continue with the Station Express instructions below and let the installer make the final runtime and preparation decisions.
+
 Use the selected maintained release's official installer as the authority for Station qualification, host preparation, model selection, consent, and reboot or login resume.
 Do not run the Station preparation helper separately or reproduce Express by pre-setting provider and model environment variables.
 
@@ -39,7 +51,7 @@ Choices:
 If a Station Express model is selected:
 
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
-- For automatic pair selection, run the ordinary installer without `--station-deepseek`. Do not supply a peer unless the user already selected an exact, pretrusted peer; an explicit peer must qualify or setup stops rather than falling back.
+- For automatic pair selection, run the ordinary installer without `--station-deepseek`. Do not supply a peer unless the user already selected a pretrusted peer; an explicit peer must qualify or setup stops rather than falling back.
 - For DeepSeek, pass `--station-deepseek` and no other model-selection override.
 - Do not set `NEMOCLAW_PROVIDER`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MODEL`, `NEMOCLAW_NON_INTERACTIVE`, `NEMOCLAW_YES`, `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE`, or `NEMOCLAW_NO_EXPRESS`.
 - Leave `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_POLICY_TIER`, web-search settings, and messaging settings unset so the installer applies its Express defaults.

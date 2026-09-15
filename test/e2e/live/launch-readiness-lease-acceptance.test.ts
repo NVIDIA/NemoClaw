@@ -4,14 +4,17 @@
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/index.ts";
-import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
+import {
+  OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
+  runOpenClawLaunchReadinessLeaseTurns,
+} from "./launch-agent-turn.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_ACCEPTANCE_SANDBOX?.trim() ?? "";
 
 test.runIf(process.platform === "linux" && SANDBOX_NAME.length > 0)(
   "launch readiness locked-image acceptance",
   {
-    timeout: 15 * 60_000,
+    timeout: OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "verify the existing locked-image sandbox",

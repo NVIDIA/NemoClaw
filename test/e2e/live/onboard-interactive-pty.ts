@@ -31,6 +31,7 @@ export interface InteractiveCommandRule {
 export interface InteractiveCommandResult {
   readonly exitCode: number;
   readonly output: string;
+  readonly visibleOutput: string;
   readonly firedTriggers: readonly string[];
   readonly timedOut: boolean;
 }
@@ -92,6 +93,38 @@ output = bytearray()
 os.set_blocking(fd, False)
 deadline = time.monotonic() + timeout_s
 fired = [False] * len(rules)
+
+def strip_terminal_sequences(text):
+    visible = []
+    index = 0
+    while index < len(text):
+        if ord(text[index]) != 27:
+            visible.append(text[index])
+            index += 1
+            continue
+        index += 1
+        if index >= len(text):
+            break
+        if text[index] == "[":
+            index += 1
+            while index < len(text) and not ("@" <= text[index] <= "~"):
+                index += 1
+            index += 1
+            continue
+        if text[index] == "]":
+            index += 1
+            while index < len(text):
+                if ord(text[index]) == 7:
+                    index += 1
+                    break
+                if ord(text[index]) == 27 and index + 1 < len(text) and ord(text[index + 1]) == 92:
+                    index += 2
+                    break
+                index += 1
+            continue
+        index += 1
+    return "".join(visible)
+
 exit_code = None
 while time.monotonic() < deadline:
     ready, _, _ = select.select([fd], [], [], 0.2)
@@ -112,10 +145,11 @@ while time.monotonic() < deadline:
         sys.stdout.buffer.write(chunk)
         sys.stdout.flush()
     text = output.decode("utf-8", errors="ignore")
+    visible_text = strip_terminal_sequences(text)
     for i, rule in enumerate(rules):
         if fired[i]:
             continue
-        if rule["trigger"] in text:
+        if rule["trigger"] in text or rule["trigger"] in visible_text:
             os.write(fd, rule["response"].encode())
             sys.stderr.write("FIRED\\t" + rule["trigger"] + "\\n")
             fired[i] = True
@@ -133,6 +167,47 @@ if exit_code is None:
     sys.exit(124)
 sys.exit(exit_code)
 `;
+
+export function stripInteractiveTerminalSequences(value: string): string {
+  let visible = "";
+  let index = 0;
+  while (index < value.length) {
+    if (value.charCodeAt(index) !== 27) {
+      visible += value[index];
+      index += 1;
+      continue;
+    }
+    index += 1;
+    if (index >= value.length) break;
+    if (value[index] === "[") {
+      index += 1;
+      while (index < value.length && !(value[index]! >= "@" && value[index]! <= "~")) index += 1;
+      index += 1;
+      continue;
+    }
+    if (value[index] === "]") {
+      index += 1;
+      while (index < value.length) {
+        if (value.charCodeAt(index) === 7) {
+          index += 1;
+          break;
+        }
+        if (
+          value.charCodeAt(index) === 27 &&
+          index + 1 < value.length &&
+          value.charCodeAt(index + 1) === 92
+        ) {
+          index += 2;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    index += 1;
+  }
+  return visible;
+}
 
 function resolvePython(): string {
   return process.env.NEMOCLAW_E2E_PYTHON3_BIN || "python3";
@@ -235,6 +310,7 @@ export function driveInteractiveCommand(
       resolve({
         exitCode: timedOut ? 124 : (code ?? 1),
         output,
+        visibleOutput: stripInteractiveTerminalSequences(output),
         firedTriggers,
         timedOut,
       });

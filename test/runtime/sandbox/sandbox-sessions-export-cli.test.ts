@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "../../helpers/launch-readiness-fixture";
 import { runWithEnv, writeSandboxRegistry } from "../../cli/helpers";
 
 function buildStubOpenshell(
@@ -25,6 +26,8 @@ function buildStubOpenshell(
       '  "sandbox list"*) printf "alpha Ready\\n"; exit 0 ;;',
       '  "sandbox get alpha"*) printf "Name: alpha\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
       '  "gateway info -g nemoclaw"*) printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "policy get"*)',
+      `    printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
       '  *"openclaw sessions list"*)',
       `    printf '%s\\n' ${JSON.stringify(sessionListJson)}`,
       `    if [ -n ${JSON.stringify(sessionListStderr)} ]; then printf '%s\\n' ${JSON.stringify(sessionListStderr)} >&2; fi`,
@@ -118,7 +121,7 @@ describe("sandbox sessions export CLI", () => {
       expect(tarLine).toContain("./sid-b.jsonl");
       expect(tarLine).not.toContain("trajectory.jsonl");
       expect(tarLine).toContain("chmod 600");
-      expect(downloadLine).toContain("alpha");
+      expect(downloadLine).toContain("sandbox download -g nemoclaw alpha");
       // #7367: the download lands in a fresh staging dir next to the
       // destination and is renamed into place only after verification, so the
       // download target is a staging path — but the bundle ends up at `out`.
@@ -170,6 +173,7 @@ describe("sandbox sessions export CLI", () => {
       expect(calls.some((line) => line.includes("-- rm -f"))).toBe(false);
       const downloadLines = calls.filter((line) => line.startsWith("sandbox download"));
       expect(downloadLines).toHaveLength(2);
+      expect(downloadLines.every((line) => line.includes("-g nemoclaw alpha"))).toBe(true);
       expect(downloadLines[0]).toContain("/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl");
       // #7367: each file downloads into a fresh staging dir under outDir and is
       // renamed to its final path only after verification, so every download
@@ -364,9 +368,8 @@ describe("sandbox sessions export CLI", () => {
       expect(hermesExportLine).toMatch(
         /umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && hermes sessions export \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl && chmod 600/,
       );
-      expect(downloadLine).toContain("alpha");
       expect(downloadLine).toMatch(
-        /sandbox download alpha \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl/,
+        /sandbox download -g nemoclaw alpha \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl/,
       );
       const escapedHome = home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       expect(downloadLine).toMatch(

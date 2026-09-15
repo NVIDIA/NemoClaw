@@ -79,6 +79,14 @@ export const telegramManifest = {
   policyPresets: [
     {
       name: "telegram",
+      // requiredAtCreate - the preset carries this channel's credential_binding:
+      // - The provider profile is endpointless, so the binding is the only thing
+      //   that makes TELEGRAM_BOT_TOKEN injectable.
+      // - The sandbox reads the provider environment once, at boot; the agent
+      //   inherits that read for the life of the container.
+      // - A preset applied after boot never reaches the agent, and no restart
+      //   recovers it.
+      requiredAtCreate: true,
       policyKeys: ["telegram_bot"],
       agentPolicyKeys: {
         hermes: ["telegram"],
@@ -97,7 +105,15 @@ export const telegramManifest = {
           enabled: true,
           accounts: {
             default: {
-              botToken: "{{credential.telegramBotToken.placeholder}}",
+              // No botToken here:
+              // - OpenShell injects TELEGRAM_BOT_TOKEN as a revision-scoped
+              //   placeholder and refuses the canonical form once the policy
+              //   binds the credential.
+              // - OpenClaw resolves the default account from
+              //   process.env.TELEGRAM_BOT_TOKEN, so the env value is enough.
+              // - The bot token travels in the request path
+              //   (/bot<TOKEN>/method); OpenShell rewrites URL path
+              //   placeholders, so no rewrite flag is needed on the endpoint.
               enabled: true,
               healthMonitor: {
                 enabled: false,
@@ -139,10 +155,9 @@ export const telegramManifest = {
       kind: "env-lines",
       agent: "hermes",
       target: "~/.hermes/.env",
-      lines: [
-        "TELEGRAM_BOT_TOKEN={{credential.telegramBotToken.placeholder}}",
-        "TELEGRAM_ALLOWED_USERS={{allowedIds.telegram.csv}}",
-      ],
+      // TELEGRAM_BOT_TOKEN is deliberately absent: OpenShell injects it into the
+      // sandbox environment, and Hermes reads it with getenv under the same name.
+      lines: ["TELEGRAM_ALLOWED_USERS={{allowedIds.telegram.csv}}"],
     },
     {
       id: "telegram-hermes-config",

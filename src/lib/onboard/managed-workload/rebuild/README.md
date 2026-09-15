@@ -10,11 +10,11 @@ transaction boundary; it does not activate buildless rebuilds.
 
 ## Publication and cleanup ownership
 
-- A failed compare-and-swap is rollback-safe only when the exact old durable
-  authority is positively observed or the CAS reports that it did not write.
+- A failed compare-and-swap permits rollback only when NemoClaw observes the exact old durable
+  authority or the CAS reports that it did not write.
 - An indeterminate publication leaves the staged runtime intact and returns an
-  exact `reconcile-publication` task for `durable-managed-workload-recovery`.
-- A failed post-commit retirement returns an exact `retire-previous` task for
+  `reconcile-publication` task for `durable-managed-workload-recovery`.
+- A failed post-commit retirement returns a `retire-previous` task for
   the same owner. The result object is only a handoff; the
   [durable recovery work tracked by epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744)
   must persist and reconcile it before this transaction can be wired into a

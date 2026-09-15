@@ -23,8 +23,8 @@ function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, {
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -182,7 +182,7 @@ function lsofPortStub(ports: string[], portPids: Map<string, RunResult>) {
 describe("runtime adapter uninstall cleanup", () => {
   it.each(RUNTIME_ADAPTERS)(
     "stops $label from its persisted PID before state removal$issueSuffix",
-    ({ cmdline, label, persistedPid, pidFile: pidFilename }) => {
+    async ({ cmdline, label, persistedPid, pidFile: pidFilename }) => {
       const logs: string[] = [];
       const killed: number[] = [];
       const exited = new Set<number>();
@@ -197,7 +197,7 @@ describe("runtime adapter uninstall cleanup", () => {
       }
 
       try {
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => true,
@@ -241,7 +241,7 @@ describe("runtime adapter uninstall cleanup", () => {
     },
   );
 
-  it("stops the uninstall plan before State cleanup when Bedrock TERM and KILL do not exit (#9552)", () => {
+  it("stops the uninstall plan before State cleanup when Bedrock TERM and KILL do not exit (#9552)", async () => {
     const tmpHome = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-uninstall-bedrock-exhaustion-"),
     );
@@ -251,7 +251,7 @@ describe("runtime adapter uninstall cleanup", () => {
     writeBedrockEvidence(tmpHome, 45_552, BEDROCK_RUNTIME_ADAPTER_CMDLINE);
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -307,12 +307,12 @@ describe("runtime adapter uninstall cleanup", () => {
 
   it.each(RUNTIME_ADAPTERS.filter(({ pidFile }) => pidFile !== "bedrock-runtime-adapter.pid"))(
     "stops an owned $label orphan on its configured port$issueSuffix",
-    ({ cmdline, customPort, defaultPort, envPort, label, orphanPid }) => {
+    async ({ cmdline, customPort, defaultPort, envPort, label, orphanPid }) => {
       const logs: string[] = [];
       const killed: number[] = [];
       const exited = new Set<number>();
       const lsofPorts: string[] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -351,7 +351,7 @@ describe("runtime adapter uninstall cleanup", () => {
 
   it.each(RUNTIME_ADAPTERS)(
     "does not signal an unrelated process on the $label port$issueSuffix",
-    ({ defaultPort, foreignPid, label }) => {
+    async ({ defaultPort, foreignPid, label }) => {
       const logs: string[] = [];
       const killed: number[] = [];
       const lsofPorts: string[] = [];
@@ -359,7 +359,7 @@ describe("runtime adapter uninstall cleanup", () => {
         exited: new Set(),
         cmdline: "/usr/sbin/nginx -g daemon off;\n",
       });
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -393,7 +393,7 @@ describe("runtime adapter uninstall cleanup", () => {
     },
   );
 
-  it("fails closed on incomplete Bedrock PID evidence before process or port discovery (#9552)", () => {
+  it("fails closed on incomplete Bedrock PID evidence before process or port discovery (#9552)", async () => {
     const foreignPid = 99995;
     const killed: number[] = [];
     const lsofPorts: string[] = [];
@@ -408,7 +408,7 @@ describe("runtime adapter uninstall cleanup", () => {
     });
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,

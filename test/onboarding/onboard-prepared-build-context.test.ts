@@ -36,7 +36,7 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(preparedBuildCtx, { recursive: true });
-  writeOkOpenshell(fakeBin, { readySandboxGet: true });
+  writeOkOpenshell(fakeBin);
   fs.writeFileSync(
     path.join(preparedBuildCtx, "Dockerfile"),
     ["FROM scratch", `ARG NEMOCLAW_BUILD_ID=${buildId}`, 'CMD ["/bin/true"]', ""].join("\n"),
@@ -68,6 +68,9 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
     path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
   );
   const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
+  const sandboxCommandCliPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+  );
   const onboardScriptMocksPath = JSON.stringify(
     path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
   );
@@ -78,10 +81,13 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 const scenario = ${JSON.stringify(scenario)};
 const buildCtx = ${JSON.stringify(preparedBuildCtx)};
 const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName });
+createdSandbox.installRuntimeObservation();
 const commands = [];
 const registerCalls = [];
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -106,7 +112,6 @@ let cleanupCalls = 0;
 let patchCalls = 0;
 let patchSleepUsesSeconds = null;
 let stageCalls = 0;
-let sandboxCreated = false;
 
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = (options) => {
   patchSleepUsesSeconds = options.deps.sleep === wait.sleepSeconds;
@@ -150,11 +155,10 @@ const normalize = (command) =>
 runner.run = (command) => {
   const normalized = normalize(command);
   commands.push(normalized);
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
-  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
-    ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = []) => {
   commands.push(normalize([file, ...args]));
@@ -162,14 +166,13 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName });
-  if (createdIdentity !== null) return createdIdentity;
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   if (
-    normalized.includes(
-      "sandbox exec --name " +
-        sandboxName +
-        " --gateway nemoclaw -- /usr/local/bin/dcode identity",
-    )
+    normalized ===
+    "openshell sandbox exec --name " +
+      sandboxName +
+      " -g nemoclaw -- /usr/local/bin/dcode identity"
   ) {
     return [
       "Route:    inference",
@@ -178,11 +181,29 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("sandbox get")) {
-    return sandboxCreated ? sandboxName + "\nId: fixture-created-sandbox\n" : "";
-  }
-  if (normalized.includes("sandbox list")) return sandboxName + " Ready";
   return "";
+};
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell",
+        "sandbox",
+        "exec",
+        "--name",
+        request.sandboxName,
+        ...gatewayArgs,
+        "--",
+        ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
 };
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
@@ -190,6 +211,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -197,7 +219,6 @@ childProcess.spawn = (...args) => {
   child.pid = 6195;
   commands.push(normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]));
   process.nextTick(() => {
-    sandboxCreated = true;
     child.stdout.emit("data", Buffer.from("Created sandbox: " + sandboxName + "\n"));
     child.emit("close", 0);
   });
@@ -224,24 +245,29 @@ const { createSandbox } = require(${onboardPath});
   let errorMessage = null;
   try {
     await createSandbox(
-      null,
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia-prod",
-      null,
-      sandboxName,
-      null,
-      null,
-      scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
-      agent,
-      null,
-      null,
-      null,
-      [],
-      null,
-      { sessionId: createFixture.sessionId },
-      null,
-      null,
-      preparedBuildContext,
+      ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+        [
+          null,
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvidia-prod",
+          null,
+          sandboxName,
+          null,
+          null,
+          scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
+          agent,
+          null,
+          null,
+          null,
+          [],
+          null,
+          null,
+          null,
+          null,
+          preparedBuildContext,
+        ],
+        createFixture,
+      ),
     );
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : String(error);
@@ -275,7 +301,6 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
   });

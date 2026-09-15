@@ -40,7 +40,13 @@ describe("onboarding policy application", () => {
         }
       },
     );
-    syncPresetSelection.mockImplementation(() => events.push("policies synchronized"));
+    let finishSync!: () => void;
+    syncPresetSelection.mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        finishSync = resolve;
+      });
+      events.push("policies synchronized");
+    });
     seedInitialPolicyContext.mockImplementation(() => events.push("policy context seeded"));
     const application = createOnboardPolicyApplication({
       localInferenceProviders: [],
@@ -56,17 +62,21 @@ describe("onboarding policy application", () => {
       sandboxCancelRollback: { markCancelled: vi.fn() },
       useColor: false,
       withSandboxMutationLock,
-      waitForSandboxReady: vi.fn(() => true),
-      waitForSandboxControlPlaneReady: vi.fn(() => true),
-      setPolicyTier: vi.fn(),
-      getRecordedPolicyTier: vi.fn(() => null),
+      waitForSandboxReady: vi.fn(async () => ({
+        ready: true as const,
+        reason: "ready" as const,
+        error: null,
+      })),
+      waitForSandboxControlPlaneReady: vi.fn(async () => true),
       parsePolicyPresetEnv: vi.fn(() => []),
       env: {},
     });
 
-    await expect(
-      application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
-    ).resolves.toEqual(["npm"]);
+    const pending = application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] });
+    await vi.waitFor(() => expect(syncPresetSelection).toHaveBeenCalled());
+    expect(events).toEqual(["lock entered"]);
+    finishSync();
+    await expect(pending).resolves.toEqual(["npm"]);
     expect(withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
     expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["npm"]);
@@ -80,12 +90,12 @@ describe("onboarding policy application", () => {
 
   describe("non-interactive selection with a previously-applied channel preset", () => {
     function createApplication(env: Record<string, string>) {
-      vi.mocked(policies.listSetupPolicyPresets).mockReturnValue([
+      vi.mocked(policies.listSetupPolicyPresets).mockResolvedValue([
         { name: "npm" },
         { name: "pypi" },
         { name: "discord" },
-      ] as ReturnType<typeof policies.listSetupPolicyPresets>);
-      vi.mocked(policies.getAppliedPresets).mockReturnValue(["npm", "pypi", "discord"]);
+      ] as Awaited<ReturnType<typeof policies.listSetupPolicyPresets>>);
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue(["npm", "pypi", "discord"]);
       syncPresetSelection.mockImplementation(() => undefined);
       seedInitialPolicyContext.mockImplementation(() => undefined);
       return createOnboardPolicyApplication({
@@ -102,12 +112,17 @@ describe("onboarding policy application", () => {
         sandboxCancelRollback: { markCancelled: vi.fn() },
         useColor: false,
         withSandboxMutationLock: async (_sandboxName, action) => await action(),
-        waitForSandboxReady: vi.fn(() => true),
-        waitForSandboxControlPlaneReady: vi.fn(() => true),
-        setPolicyTier: vi.fn(),
-        getRecordedPolicyTier: vi.fn(() => "balanced"),
+        waitForSandboxReady: vi.fn(async () => ({
+          ready: true as const,
+          reason: "ready" as const,
+          error: null,
+        })),
+        waitForSandboxControlPlaneReady: vi.fn(async () => true),
         parsePolicyPresetEnv: vi.fn((value: string) =>
-          value.split(",").map((name) => name.trim()).filter(Boolean),
+          value
+            .split(",")
+            .map((name) => name.trim())
+            .filter(Boolean),
         ),
         env,
       });
@@ -186,6 +201,24 @@ describe("onboarding policy application", () => {
         ["npm", "pypi", "discord"],
         ["npm", "pypi"],
       );
+    });
+
+    it("adds an enabled channel preset when policy selection is skipped (#10153)", async () => {
+      const application = createApplication({ NEMOCLAW_POLICY_MODE: "skip" });
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: null,
+          enabledChannels: ["discord"],
+          disabledChannels: [],
+          agent: "hermes",
+          webSearchSupported: false,
+          hermesToolGateways: [],
+        }),
+      ).resolves.toEqual(["discord"]);
+
+      expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["discord"]);
     });
   });
 });

@@ -354,7 +354,7 @@ Latency and resource-growth reports (#2598, #2600, and #2733) cannot use the sta
 
 ## Step 8f: Rebuild-Cycle Verification (when `BUG_CLASS=rebuild-cycle`)
 
-Lifecycle bugs only manifest across the operation named by the issue. `restart`, `rebuild`, `recreate`, and `destroy` are different contracts. Do not normalize them all to destroy plus onboard. Run the same approved lifecycle harness on the reported release and the newest exact release tag.
+Lifecycle bugs only manifest across the operation named by the issue. `restart`, `rebuild`, `recreate`, and `destroy` are different contracts. Do not normalize them all to destroy plus onboard. Run the same approved lifecycle harness on the reported release and the newest release tag.
 
 Before each onboard, lifecycle operation, and capture, call `remaining_seconds` and use its result as that remote command's `timeout`. Do not begin a boundary sequence unless all required pre/post observations can fit within the remaining verification budget.
 
@@ -370,7 +370,7 @@ Before each onboard, lifecycle operation, and capture, call `remaining_seconds` 
      "$EVIDENCE_DIR/pre-rebuild.log" >"$EVIDENCE_DIR/pre-rebuild.redacted.log"
    ```
 
-2. **Trigger the reported boundary.** Use the exact supported command that the issue names:
+2. **Trigger the reported boundary.** Use the supported command that the issue names:
    - Restart: `nemoclaw <name> stop`, then `nemoclaw <name> start`, unless the issue names a service-level restart.
    - Rebuild: `nemoclaw <name> rebuild --yes`.
    - Recreate through onboarding: use the issue's reviewed `nemoclaw onboard --fresh --name <name> --recreate-sandbox` flow.
@@ -396,6 +396,6 @@ Before each onboard, lifecycle operation, and capture, call `remaining_seconds` 
    - Both releases lose or change the artifact in the reported way → `still-reproduces`.
    - The newest release produces a third outcome or uses a different lifecycle command → `verify-inconclusive`.
 
-The harness still uses Step 9's scoring framework, but the evidence is the pre/post state comparison for the exact lifecycle boundary.
+The harness still uses Step 9's scoring framework, but the evidence is the pre/post state comparison for the lifecycle boundary.
 
 ---

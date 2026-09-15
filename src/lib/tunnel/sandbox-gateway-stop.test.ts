@@ -91,6 +91,7 @@ describe("stopSandboxChannels", () => {
     expect(args).toEqual(
       expect.arrayContaining(["kubectl", "exec", "-n", "openshell", "-c", "agent"]),
     );
+    expect(args.slice(-3, -1)).toEqual(["sh", "-c"]);
     const script = String(args.at(-1));
     expect(script).toContain("ps -eo uid=,pid=,args=");
     expect(script).toContain("stat -Lc '%u'");

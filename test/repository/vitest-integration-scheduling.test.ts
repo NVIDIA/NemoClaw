@@ -9,14 +9,14 @@ import {
 } from "../helpers/integration-project-scheduling";
 
 describe("CLI coverage shard scheduling", () => {
-  it("uses two workers for a validated CI shard (#6237)", () => {
+  it("uses one worker for a validated CI shard (#6237)", () => {
     expect(
       resolveCliCoverageShardScheduling({
         isCi: true,
         cliShard: "2",
         cliShardCount: "12",
       }),
-    ).toEqual({ maxWorkers: 2 });
+    ).toEqual({ maxWorkers: 1 });
   });
 
   it.each([
@@ -27,9 +27,7 @@ describe("CLI coverage shard scheduling", () => {
     ["invalid shard count", true, "1", "0"],
     ["out-of-range shard", true, "13", "12"],
   ])("does not constrain $0", (_name, isCi, cliShard, cliShardCount) => {
-    expect(
-      resolveCliCoverageShardScheduling({ isCi, cliShard, cliShardCount }),
-    ).toEqual({});
+    expect(resolveCliCoverageShardScheduling({ isCi, cliShard, cliShardCount })).toEqual({});
   });
 });
 
@@ -48,11 +46,27 @@ describe("integration project scheduling", () => {
     });
   });
 
+  it.each([1, 2])("limits the local full suite to %i available worker(s) (#6245)", (workers) => {
+    expect(
+      resolveIntegrationProjectScheduling({
+        isCi: false,
+        npmLifecycleEvent: "test",
+        argv: [],
+        availableParallelism: workers,
+      }),
+    ).toEqual({
+      fileParallelism: true,
+      maxWorkers: workers,
+      sequence: { groupOrder: 1 },
+    });
+  });
+
   it.each([
     [["--maxWorkers=1"], 1, 8],
     [["--maxWorkers", "2"], 2, 8],
     [["--maxWorkers=10%"], 2, 20],
     [["--maxWorkers=8"], 4, 8],
+    [["--maxWorkers=4"], 2, 2],
   ])("honors the explicit local worker cap in %j (#6245)", (argv, maxWorkers, workers) => {
     expect(
       resolveIntegrationProjectScheduling({
@@ -68,18 +82,18 @@ describe("integration project scheduling", () => {
     });
   });
 
-  it.each([
-    "--maxWorkers=invalid",
-    "--maxWorkers",
-  ])("rejects the invalid local worker cap %s (#6245)", (argument) => {
-    expect(() =>
-      resolveIntegrationProjectScheduling({
-        isCi: false,
-        npmLifecycleEvent: "test",
-        argv: [argument],
-      }),
-    ).toThrow(/--maxWorkers/);
-  });
+  it.each(["--maxWorkers=invalid", "--maxWorkers"])(
+    "rejects the invalid local worker cap %s (#6245)",
+    (argument) => {
+      expect(() =>
+        resolveIntegrationProjectScheduling({
+          isCi: false,
+          npmLifecycleEvent: "test",
+          argv: [argument],
+        }),
+      ).toThrow(/--maxWorkers/);
+    },
+  );
 
   it.each([
     ["CI full suite", { isCi: true, npmLifecycleEvent: "test", argv: [] }],
@@ -99,6 +113,9 @@ describe("integration project scheduling", () => {
     ],
     ["direct Vitest", { isCi: false, npmLifecycleEvent: undefined, argv: [] }],
   ])("keeps $0 serialized (#6245)", (_name, context) => {
-    expect(resolveIntegrationProjectScheduling(context)).toEqual({ fileParallelism: false });
+    expect(resolveIntegrationProjectScheduling(context)).toEqual({
+      fileParallelism: false,
+      sequence: { groupOrder: 1 },
+    });
   });
 });

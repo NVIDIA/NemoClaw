@@ -13,7 +13,7 @@ const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 export const PODMAN_WATCHER_LEASE_SCHEMA_VERSION = 2;
 
 export type PodmanGatewayWatcherOwnerKind = "managed-service" | "standalone";
-export type PodmanGatewayWatcherLeasePhase = "acquiring" | "stopped";
+export type PodmanGatewayWatcherLeasePhase = "acquiring" | "stopped" | "observing";
 
 /**
  * Immutable, non-secret evidence identifying one target-bound host gateway
@@ -85,13 +85,21 @@ export interface PodmanManagedGatewayWatcherControllerDeps {
 
 export interface PodmanGatewayWatcherLease {
   readonly record: PodmanGatewayWatcherLeaseRecord;
+  /** Prove the transaction still owns either exact stopped or exact observed authority. */
+  readonly assertStillHeld: () => void;
   readonly assertStillStopped: () => void;
+  /** Resume the exact owner while retaining durable transaction authority. */
+  readonly resumeForObservationAndProve: () => void;
+  /** Stop the exact observed owner again before a terminal runtime mutation. */
+  readonly requiesceAndProve: () => void;
   readonly resumeAndProve: () => void;
 }
 
 export interface PodmanManagedGatewayWatcherController {
   /** Recover a crash-left lease before another Podman transaction may start. */
   readonly recoverUnfinishedLease: () => void;
+  /** Reclaim the exact stopped lease referenced by an unfinished bootstrap journal. */
+  readonly reclaimStoppedLease: (expectedLeaseId: string) => PodmanGatewayWatcherLease;
   /** Durably acquire exclusive authority and prove the exact owner is stopped. */
   readonly quiesceAndProve: () => PodmanGatewayWatcherLease;
 }
@@ -202,7 +210,7 @@ function normalizeRecord(value: PodmanGatewayWatcherLeaseRecord): PodmanGatewayW
     typeof value !== "object" ||
     value.schemaVersion !== PODMAN_WATCHER_LEASE_SCHEMA_VERSION ||
     !SAFE_LEASE_ID.test(value.leaseId) ||
-    (value.phase !== "acquiring" && value.phase !== "stopped")
+    (value.phase !== "acquiring" && value.phase !== "stopped" && value.phase !== "observing")
   ) {
     throw new PodmanGatewayWatcherLeaseError(
       "Durable Podman OpenShell watcher lease is invalid.",
@@ -282,19 +290,31 @@ function assertStopped(
   receipt: Readonly<PodmanGatewayWatcherSnapshot>,
   deps: PodmanManagedGatewayWatcherControllerDeps,
 ): void {
-  if (deps.isProcessInstanceAlive(receipt)) {
-    throw new PodmanGatewayWatcherLeaseError(
-      "The captured OpenShell watcher process instance is still alive.",
-      true,
-    );
-  }
   if (!deps.isOwnerStopped(receipt)) {
     throw new PodmanGatewayWatcherLeaseError(
       "The captured OpenShell watcher lifecycle owner is not proven stopped.",
       true,
     );
   }
-  if (readTargetWatchers(receipt, deps).length !== 0) {
+  const watchers = readTargetWatchers(receipt, deps);
+  if (watchers.length === 0) {
+    if (deps.isProcessInstanceAlive(receipt)) {
+      throw new PodmanGatewayWatcherLeaseError(
+        "The captured OpenShell watcher process instance is still alive.",
+        true,
+      );
+    }
+    return;
+  }
+  const retained = watchers[0] as Readonly<PodmanGatewayWatcherSnapshot> | undefined;
+  if (
+    receipt.ownerKind !== "standalone" ||
+    watchers.length !== 1 ||
+    !retained ||
+    !sameProcessInstance(receipt, retained) ||
+    !deps.isProcessInstanceAlive(retained) ||
+    deps.isHealthy(retained)
+  ) {
     throw new PodmanGatewayWatcherLeaseError(
       "A target-bound OpenShell watcher appeared while the durable stop lease was held.",
       true,
@@ -351,7 +371,7 @@ function exactHealthyReplacement(
   receipt: Readonly<PodmanGatewayWatcherSnapshot>,
   deps: PodmanManagedGatewayWatcherControllerDeps,
 ): Readonly<PodmanGatewayWatcherSnapshot> | null {
-  if (deps.isProcessInstanceAlive(receipt) || deps.isOwnerStopped(receipt)) return null;
+  if (deps.isOwnerStopped(receipt)) return null;
   const watchers = readTargetWatchers(receipt, deps);
   if (watchers.length === 0) return null;
   if (watchers.length !== 1) {
@@ -374,7 +394,7 @@ function exactHealthyReplacement(
 function resumeAndProve(
   receipt: Readonly<PodmanGatewayWatcherSnapshot>,
   deps: PodmanManagedGatewayWatcherControllerDeps,
-): void {
+): Readonly<PodmanGatewayWatcherSnapshot> {
   const existing = readTargetWatchers(receipt, deps);
   if (existing.length > 1) {
     throw new PodmanGatewayWatcherLeaseError(
@@ -384,20 +404,25 @@ function resumeAndProve(
   }
   if (existing.length === 1) {
     const current = existing[0] as Readonly<PodmanGatewayWatcherSnapshot>;
+    if (!sameLaunchOwner(receipt, current) || !deps.isProcessInstanceAlive(current)) {
+      throw new PodmanGatewayWatcherLeaseError(
+        "A target-bound OpenShell watcher exists without exact healthy owner proof.",
+        true,
+      );
+    }
+    if (!deps.isOwnerStopped(receipt) && deps.isHealthy(current)) return current;
     if (
-      !sameLaunchOwner(receipt, current) ||
-      deps.isOwnerStopped(receipt) ||
-      !deps.isProcessInstanceAlive(current) ||
-      !deps.isHealthy(current)
+      receipt.ownerKind !== "standalone" ||
+      !sameProcessInstance(receipt, current) ||
+      !deps.isOwnerStopped(receipt)
     ) {
       throw new PodmanGatewayWatcherLeaseError(
         "A target-bound OpenShell watcher exists without exact healthy owner proof.",
         true,
       );
     }
-    return;
   }
-  if (!deps.isOwnerStopped(receipt)) {
+  if (existing.length === 0 && !deps.isOwnerStopped(receipt)) {
     throw new PodmanGatewayWatcherLeaseError(
       "The captured owner is neither stopped nor serving an exact healthy watcher.",
       true,
@@ -425,6 +450,7 @@ function resumeAndProve(
       true,
     );
   }
+  return resumed;
 }
 
 function readLease(deps: PodmanManagedGatewayWatcherControllerDeps) {
@@ -442,6 +468,164 @@ function sameLease(
     left.holder.processStartIdentity === right.holder.processStartIdentity &&
     sameProcessInstance(left, right)
   );
+}
+
+function createHeldLease(
+  stopped: PodmanGatewayWatcherLeaseRecord,
+  deps: PodmanManagedGatewayWatcherControllerDeps,
+): PodmanGatewayWatcherLease {
+  let current = stopped;
+  let released = false;
+  return Object.freeze({
+    get record() {
+      return current;
+    },
+    assertStillHeld: () => {
+      if (released) {
+        throw new PodmanGatewayWatcherLeaseError("Podman watcher lease was already released.");
+      }
+      const durable = readLease(deps);
+      if (!durable || !sameLease(current, durable)) {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease changed while transaction authority was held.",
+          true,
+        );
+      }
+      if (durable.phase === "stopped") {
+        assertStopped(durable, deps);
+      } else if (durable.phase === "observing") {
+        requireExclusiveCurrent(durable, deps);
+      } else {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease has no usable transaction authority.",
+          true,
+        );
+      }
+      current = durable;
+    },
+    assertStillStopped: () => {
+      if (released) {
+        throw new PodmanGatewayWatcherLeaseError("Podman watcher lease was already released.");
+      }
+      const durable = readLease(deps);
+      if (!durable || !sameLease(current, durable) || durable.phase !== "stopped") {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease changed while it was held.",
+          true,
+        );
+      }
+      assertStopped(current, deps);
+    },
+    resumeForObservationAndProve: () => {
+      if (released) {
+        throw new PodmanGatewayWatcherLeaseError("Podman watcher lease was already released.");
+      }
+      const durable = readLease(deps);
+      if (!durable || !sameLease(current, durable) || durable.phase !== "stopped") {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease changed before observation.",
+          true,
+        );
+      }
+      const observing = Object.freeze({ ...current, phase: "observing" as const });
+      deps.store.advance(current.leaseId, observing);
+      const resumed = resumeAndProve(observing, deps);
+      const observed = Object.freeze({
+        ...observing,
+        ...resumed,
+        schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+        holder: observing.holder,
+        leaseId: observing.leaseId,
+        phase: "observing" as const,
+      });
+      deps.store.advance(current.leaseId, observed);
+      current = observed;
+    },
+    requiesceAndProve: () => {
+      if (released) {
+        throw new PodmanGatewayWatcherLeaseError("Podman watcher lease was already released.");
+      }
+      const durable = readLease(deps);
+      if (!durable || !sameLease(current, durable)) {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease changed before terminal quiescence.",
+          true,
+        );
+      }
+      if (durable.phase === "stopped") {
+        assertStopped(durable, deps);
+        current = durable;
+        return;
+      }
+      if (durable.phase !== "observing") {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease is not available for terminal quiescence.",
+          true,
+        );
+      }
+      current = stopObservedOwnerAndProve(durable, deps);
+    },
+    resumeAndProve: () => {
+      if (released) return;
+      const durable = readLease(deps);
+      if (!durable || !sameLease(current, durable) || durable.phase !== "stopped") {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease changed before release.",
+          true,
+        );
+      }
+      resumeAndProve(current, deps);
+      deps.store.clear(current.leaseId);
+      released = true;
+    },
+  });
+}
+
+function stopObservedOwnerAndProve(
+  observing: PodmanGatewayWatcherLeaseRecord,
+  deps: PodmanManagedGatewayWatcherControllerDeps,
+): PodmanGatewayWatcherLeaseRecord {
+  const watchers = readTargetWatchers(observing, deps);
+  let stoppedSnapshot: Readonly<PodmanGatewayWatcherSnapshot> = observing;
+  if (watchers.length === 0) {
+    if (!deps.isOwnerStopped(observing)) {
+      throw new PodmanGatewayWatcherLeaseError(
+        "The observed Podman watcher disappeared without a stopped lifecycle owner.",
+        true,
+      );
+    }
+  } else {
+    if (watchers.length !== 1) {
+      throw new PodmanGatewayWatcherLeaseError(
+        "Multiple target-bound OpenShell watchers appeared before terminal quiescence.",
+        true,
+      );
+    }
+    const observed = watchers[0] as Readonly<PodmanGatewayWatcherSnapshot>;
+    if (
+      !sameLaunchOwner(observing, observed) ||
+      !deps.isProcessInstanceAlive(observed) ||
+      !deps.isHealthy(observed)
+    ) {
+      throw new PodmanGatewayWatcherLeaseError(
+        "The observed OpenShell watcher no longer has exact healthy owner proof.",
+        true,
+      );
+    }
+    deps.stopExactOwner(observed);
+    assertStopped(observed, deps);
+    stoppedSnapshot = observed;
+  }
+  const stopped = Object.freeze({
+    ...observing,
+    ...stoppedSnapshot,
+    schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+    holder: observing.holder,
+    leaseId: observing.leaseId,
+    phase: "stopped" as const,
+  });
+  deps.store.advance(observing.leaseId, stopped);
+  return stopped;
 }
 
 /**
@@ -470,6 +654,37 @@ export function createPodmanManagedGatewayWatcherController(
 
   return Object.freeze({
     recoverUnfinishedLease,
+    reclaimStoppedLease: (expectedLeaseId: string) => {
+      if (!SAFE_LEASE_ID.test(expectedLeaseId)) {
+        throw new PodmanGatewayWatcherLeaseError("Podman watcher lease identity is invalid.");
+      }
+      const record = readLease(deps);
+      if (
+        !record ||
+        record.leaseId !== expectedLeaseId ||
+        (record.phase !== "stopped" && record.phase !== "observing")
+      ) {
+        throw new PodmanGatewayWatcherLeaseError(
+          "The exact stopped Podman watcher lease referenced by bootstrap recovery is absent.",
+          true,
+        );
+      }
+      if (deps.isLeaseHolderAlive(record.holder)) {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease is still owned by a live transaction process.",
+          true,
+        );
+      }
+      const quiesced =
+        record.phase === "observing" ? stopObservedOwnerAndProve(record, deps) : record;
+      assertStopped(quiesced, deps);
+      const reclaimed = Object.freeze({
+        ...quiesced,
+        holder: normalizeHolder(deps.captureLeaseHolder()),
+      });
+      deps.store.advance(expectedLeaseId, reclaimed);
+      return createHeldLease(reclaimed, deps);
+    },
     quiesceAndProve: () => {
       recoverUnfinishedLease();
 
@@ -531,36 +746,7 @@ export function createPodmanManagedGatewayWatcherController(
         );
       }
 
-      let released = false;
-      return Object.freeze({
-        record: stopped,
-        assertStillStopped: () => {
-          if (released) {
-            throw new PodmanGatewayWatcherLeaseError("Podman watcher lease was already released.");
-          }
-          const durable = readLease(deps);
-          if (!durable || !sameLease(stopped, durable) || durable.phase !== "stopped") {
-            throw new PodmanGatewayWatcherLeaseError(
-              "Durable Podman watcher lease changed while it was held.",
-              true,
-            );
-          }
-          assertStopped(stopped, deps);
-        },
-        resumeAndProve: () => {
-          if (released) return;
-          const durable = readLease(deps);
-          if (!durable || !sameLease(stopped, durable)) {
-            throw new PodmanGatewayWatcherLeaseError(
-              "Durable Podman watcher lease changed before release.",
-              true,
-            );
-          }
-          resumeAndProve(stopped, deps);
-          deps.store.clear(leaseId);
-          released = true;
-        },
-      });
+      return createHeldLease(stopped, deps);
     },
   });
 }

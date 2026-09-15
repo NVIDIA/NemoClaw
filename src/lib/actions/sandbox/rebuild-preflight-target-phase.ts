@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from "node:crypto";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
@@ -36,6 +37,7 @@ import {
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
   pinRebuildAgentBaseImageForRecreate,
+  replaceOpenShellRuntimeSelectionEnv,
   type RebuildAgentBaseImagePreflight,
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
@@ -49,6 +51,7 @@ import {
 } from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
+  hasValidDeferredN1xManagedVllmReplacementAuthority,
   hydrateMessagingConfigForRebuild,
   preflightAuthoritativeOnboardRuntime,
   preflightRebuildTargetRuntime,
@@ -56,7 +59,7 @@ import {
   prepareRebuildTargetConfig,
   type RebuildTargetConfig,
   stageRebuildHermesDashboardConfig,
-  stageRecordedManagedVllmIntent,
+  stageRecordedDeferredN1xIntent,
 } from "./rebuild-target-preflight";
 
 /** Upper bound on how long a minted provider-recovery receipt stays valid. */
@@ -98,9 +101,16 @@ export function pinRebuildTargetGatewayForReadiness(
   sandboxName: string,
   sandboxEntry: RebuildSandboxEntry,
   log: RebuildLog,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): string {
   const gatewayName = getPersistedSandboxTargetGatewayName(sandboxEntry);
-  process.env.OPENSHELL_GATEWAY = gatewayName;
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    throw new Error(
+      `OpenShell runtime selection '${runtimeSelection.gatewayName}' does not match recorded gateway '${gatewayName}'.`,
+    );
+  }
+  if (runtimeSelection) replaceOpenShellRuntimeSelectionEnv(process.env, runtimeSelection);
+  else process.env.OPENSHELL_GATEWAY = gatewayName;
   log(`Pinned rebuild readiness probes for '${sandboxName}' to target gateway '${gatewayName}'`);
   return gatewayName;
 }
@@ -154,6 +164,7 @@ export async function prepareRebuildTargetPreflights(args: {
   requestedObservabilityEnabled?: boolean;
   allowLegacyManagedImageRecovery?: boolean;
   preparedBackupRecovery?: boolean;
+  mcpRuntimeSelection?: OpenShellRuntimeSelection;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
@@ -167,11 +178,13 @@ export async function prepareRebuildTargetPreflights(args: {
     requestedObservabilityEnabled,
     allowLegacyManagedImageRecovery,
     preparedBackupRecovery,
+    mcpRuntimeSelection: frozenMcpRuntimeSelection,
     log,
     bail,
   } = args;
+  const mcpRuntimeSelection = frozenMcpRuntimeSelection;
   hydrateMessagingConfigForRebuild(sandboxName, log);
-  pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log);
+  pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
 
   const targetConfig = prepareRebuildTargetConfig(
     sandboxName,
@@ -198,6 +211,10 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
+  if (registry.hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
+    recreateOptions.allowLegacyDgxStationQualification = true;
+  }
+  if (mcpRuntimeSelection) recreateOptions.runtimeSelection = mcpRuntimeSelection;
   let managedWorkloadRebuildCatalog: Awaited<
     ReturnType<typeof prepareManagedWorkloadRebuildHandoff>
   > = null;
@@ -234,7 +251,12 @@ export async function prepareRebuildTargetPreflights(args: {
   recreateOptions.observabilityEnabled =
     requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
   recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
-  stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, resumeConfig);
+  stageRecordedDeferredN1xIntent(recreateOptions, sandboxEntry, resumeConfig);
+  if (
+    !hasValidDeferredN1xManagedVllmReplacementAuthority(recreateOptions, sandboxEntry, resumeConfig)
+  ) {
+    return bail("Deferred N1x managed-vLLM replacement authority is invalid.");
+  }
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,
@@ -297,10 +319,13 @@ export async function prepareRebuildTargetPreflights(args: {
         },
         resumeConfig.registryInferenceRoute,
       ),
-    recoverGateway: () => ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail),
+    recoverGateway: () =>
+      ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail, mcpRuntimeSelection),
   });
   if (!gatewayRecovered) return null;
-  if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)) return null;
+  if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail, mcpRuntimeSelection)) {
+    return null;
+  }
 
   const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
   const rebuildsManagedWorkload = recreateOptions.managedWorkloadRebuild !== undefined;

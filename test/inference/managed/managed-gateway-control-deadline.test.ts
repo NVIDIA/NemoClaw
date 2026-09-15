@@ -7,6 +7,55 @@ import { describe, expect, it } from "vitest";
 
 const HELPER = path.join(import.meta.dirname, "../../..", "scripts", "managed-gateway-control.py");
 
+const OPENCLAW_PREFLIGHT_SETTLE_HARNESS = String.raw`
+import importlib.util
+import json
+import subprocess
+import sys
+
+spec = importlib.util.spec_from_file_location("managed_control_preflight", sys.argv[1])
+control = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = control
+spec.loader.exec_module(control)
+
+clock = [0.0]
+sleeps = []
+control.time.monotonic = lambda: clock[0]
+control.time.sleep = lambda seconds: (sleeps.append(seconds), clock.__setitem__(0, clock[0] + seconds))
+control._validate_trusted_regular = lambda _path: None
+control._system_path = lambda path: path
+refusal = subprocess.CompletedProcess([], 1, b'{"type":"issue","code":"config-not-mutable"}\n{"type":"result","status":"failed"}\n')
+startup_refusal = subprocess.CompletedProcess([], 1, b'{"type":"issue","code":"startup-not-ready"}\n')
+responses = [startup_refusal] + [refusal] * 26 + [subprocess.CompletedProcess([], 0, b'{"type":"result","status":"ok"}\n')]
+calls = []
+control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), responses.pop(0))[1]
+control._openclaw_preflight(10.0)
+settled = {"calls": len(calls), "elapsed": round(clock[0], 1)}
+
+clock[0] = 0.0
+sleeps.clear()
+calls.clear()
+responses = [startup_refusal, refusal, subprocess.CompletedProcess([], 0, b'{"type":"result","status":"ok"}\n')]
+control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), responses.pop(0))[1]
+# _control("probe") invokes OpenClaw preflight without a recovery deadline.
+control._openclaw_preflight()
+probe_settled = {"calls": len(calls), "elapsed": round(clock[0], 1)}
+
+clock[0] = 0.0
+sleeps.clear()
+calls.clear()
+control.OPENCLAW_PREFLIGHT_SETTLE_SECONDS = 0.2
+control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), refusal)[1]
+try:
+    control._openclaw_preflight()
+except control.ControlError as error:
+    persistent = {"code": error.code, "calls": len(calls), "sleeps": list(sleeps)}
+else:
+    persistent = {"code": "accepted", "calls": len(calls), "sleeps": list(sleeps)}
+
+print(json.dumps({"persistent": persistent, "probeSettled": probe_settled, "settled": settled}))
+`;
+
 const CONTROL_DEADLINE_HARNESS = String.raw`
 import importlib.util
 import json
@@ -177,7 +226,7 @@ def expire_runtime_validation(_script, _environment):
     preflight_clock[0] = 1.0
 
 
-control._validate_runtime_environment = expire_runtime_validation
+control._validate_managed_gateway_environment = expire_runtime_validation
 control._verify_locked_hermes_hash = lambda: hash_checks.append("called")
 preflight_after_validation = error_code(
     lambda: control._hermes_preflight(EnvironmentReader(), supervisor, 1.0)
@@ -332,9 +381,10 @@ def advance(duration, timeout=None):
 
 
 class ScriptedSocket:
-    def __init__(self, chunks, request_delay):
+    def __init__(self, chunks, request_delay, close_error=False):
         self.chunks = list(chunks)
         self.request_delay = request_delay
+        self.close_error = close_error
         self.timeout = None
         self.closed = False
 
@@ -357,6 +407,8 @@ class ScriptedSocket:
 
     def close(self):
         self.closed = True
+        if self.close_error:
+            raise OSError("transport already closed")
 
 
 class ScriptedConnection(real_connection):
@@ -365,6 +417,7 @@ class ScriptedConnection(real_connection):
         self.sock = ScriptedSocket(
             active["chunks"],
             active["request_delay"],
+            active.get("close_error", False),
         )
 
 
@@ -392,6 +445,12 @@ results = {
         "connect_delay": 0.0,
         "request_delay": 0.0,
         "chunks": [(0.0, complete)],
+    }),
+    "healthy_close_race": check({
+        "connect_delay": 0.0,
+        "request_delay": 0.0,
+        "chunks": [(0.0, complete)],
+        "close_error": True,
     }),
     "unauthorized": check({
         "connect_delay": 0.0,
@@ -441,6 +500,24 @@ function runHarness(source: string): unknown {
 }
 
 describe("managed gateway recovery deadline", () => {
+  it("settles the startup registry refresh for recovery and probe preflight (#10681)", () => {
+    expect(runHarness(OPENCLAW_PREFLIGHT_SETTLE_HARNESS)).toEqual({
+      persistent: {
+        calls: 2,
+        code: "GATEWAY_UNSAFE_CONFIG_PATH",
+        sleeps: [0.2],
+      },
+      probeSettled: {
+        calls: 3,
+        elapsed: 0.4,
+      },
+      settled: {
+        calls: 28,
+        elapsed: 5.4,
+      },
+    });
+  });
+
   it("stops preflight, marker publication, and signaling at the recovery deadline (#8262)", () => {
     expect(runHarness(CONTROL_DEADLINE_HARNESS)).toEqual({
       forwarding: [["ok", 41, 43], true],
@@ -455,6 +532,7 @@ describe("managed gateway recovery deadline", () => {
   it("applies one recovery deadline to every HTTP health check phase (#8262)", () => {
     expect(runHarness(HTTP_DEADLINE_HARNESS)).toEqual({
       healthy: true,
+      healthy_close_race: true,
       slow_body: false,
       slow_connect: false,
       slow_headers: false,

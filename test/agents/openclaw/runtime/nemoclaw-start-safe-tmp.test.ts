@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 
 import { extractShellFunctionFromSource } from "../../../support/shell-function-extractor";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 
 function safeTmpHelpers(src: string): string {
   const start = src.indexOf("_nemoclaw_safe_replace_tmp_file() {");
@@ -23,10 +29,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("captures Portable OpenClaw timestamps with a fixed numeric locale", () => {
-    const captureEpoch = extractShellFunctionFromSource(
-      src,
-      "_nemoclaw_capture_epoch_realtime",
-    );
+    const captureEpoch = extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime");
     const script = [
       "set -euo pipefail",
       captureEpoch,
@@ -119,9 +122,20 @@ describe("nemoclaw-start safe tmp file creation", () => {
   });
 
   it.each([
-    ["root parent after CAP_DAC_OVERRIDE drop", "0", "3|/tmp/auto-pair.log 600 root:root"],
-    ["non-root parent", "998", "2|/tmp/auto-pair.log 600"],
-  ])("creates an auto-pair log for the %s", (_label, uid, expected) => {
+    [
+      "root parent after CAP_DAC_OVERRIDE drop",
+      "0",
+      [
+        "3|/tmp/auto-pair.log 600 root:root",
+        "3|/tmp/nemoclaw-auto-pair-status.json 600 sandbox:sandbox",
+      ],
+    ],
+    [
+      "non-root parent",
+      "998",
+      ["2|/tmp/auto-pair.log 600", "2|/tmp/nemoclaw-auto-pair-status.json 600"],
+    ],
+  ])("creates separate auto-pair log and status files for the %s", (_label, uid, expected) => {
     const prepareAutoPairLog = extractShellFunctionFromSource(src, "prepare_auto_pair_log");
     const result = spawnSync(
       "bash",
@@ -129,8 +143,8 @@ describe("nemoclaw-start safe tmp file creation", () => {
         "-c",
         [
           "set -euo pipefail",
-          `id() { test \"\${1:-}\" = -u && printf '%s' ${JSON.stringify(uid)}; }`,
-          `_nemoclaw_safe_create_tmp_file() { printf '%s|%s\\n' \"$#\" \"$*\"; }`,
+          `id() { test "\${1:-}" = -u && printf '%s' ${JSON.stringify(uid)}; }`,
+          `_nemoclaw_safe_create_tmp_file() { printf '%s|%s\\n' "$#" "$*"; }`,
           prepareAutoPairLog,
           "prepare_auto_pair_log",
         ].join("\n"),
@@ -139,7 +153,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(expected);
+    expect(result.stdout.trim().split("\n")).toEqual(expected);
   });
 
   it("creates fixed runtime paths through the safe helper with the requested modes", () => {

@@ -5,7 +5,23 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import type { OpenShellGatewayObservation } from "../../adapters/openshell/gateway-observer";
+
 type GatewayStateModule = typeof import("./gateway-state");
+
+function gatewayObservation(
+  state: OpenShellGatewayObservation["state"],
+  diagnostic = "Gateway is not connected.",
+  activeGateway = "nemoclaw",
+): OpenShellGatewayObservation {
+  return {
+    state,
+    diagnostic,
+    activeGateway,
+    recoveryBlocked: false,
+    unavailable: state === "named_unhealthy" || state === "named_unreachable",
+  };
+}
 
 const requireDist = createRequire(import.meta.url);
 
@@ -15,7 +31,19 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   let getSandboxDockerRuntimeSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let getSandboxSpy: MockInstance;
+  let findSandboxAcrossGatewayRootsSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
+
+  function mockSandboxPhase(phase: string): void {
+    captureOpenshellSpy.mockImplementation((args: string[]) =>
+      args[0] === "policy"
+        ? { status: 0, output: "version: 1\nnetwork_policies: {}" }
+        : {
+            status: 0,
+            output: `Sandbox:\n  Name: instance-a\n  Phase: ${phase}`,
+          },
+    );
+  }
 
   beforeEach(async () => {
     const gatewayStatePath = requireDist.resolve("./gateway-state.js");
@@ -24,17 +52,16 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
     const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
     const registry = requireDist("../../state/registry.js");
+    const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
     const dockerHealth = requireDist("./docker-health.js");
     const gatewaySelect = requireDist("./gateway-select.js");
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
-    captureOpenshellSpy = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: "Sandbox:\n  Name: instance-a\n  Phase: Ready",
-    });
+    captureOpenshellSpy = vi.spyOn(openshellRuntime, "captureOpenshell");
+    mockSandboxPhase("Ready");
     getNamedGatewayLifecycleStateSpy = vi
       .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-      .mockReturnValue({ state: "healthy_named", status: "Gateway: nemoclaw" });
+      .mockResolvedValue(gatewayObservation("healthy_named", "Connected to gateway nemoclaw."));
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
       .mockResolvedValue({ recovered: false });
@@ -43,6 +70,14 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
     });
+    findSandboxAcrossGatewayRootsSpy = vi
+      .spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots")
+      .mockImplementation((name: unknown) => {
+        const entry = registry.getSandbox(String(name));
+        return entry
+          ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+          : null;
+      });
     getSandboxDockerRuntimeSpy = vi.spyOn(dockerHealth, "getSandboxDockerRuntime").mockReturnValue({
       health: "none",
       paused: false,
@@ -74,6 +109,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(combined).toContain("nemoclaw");
     expect(combined).toContain("openshell gateway select");
     expect(getSandboxSpy).toHaveBeenCalledWith("instance-a");
+    expect(findSandboxAcrossGatewayRootsSpy).toHaveBeenCalledWith("instance-a");
   });
 
   it("uses the sandbox's per-port gateway name in the hint for a non-default `NEMOCLAW_GATEWAY_PORT`", () => {
@@ -195,10 +231,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("reports a stopped container without crash guidance (#8695)", async () => {
-    captureOpenshellSpy.mockReturnValue({
-      status: 0,
-      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
-    });
+    mockSandboxPhase("Error");
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: false,
@@ -228,10 +261,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("steers a non-paused Error sandbox to the workspace-preserving start path (#7222)", async () => {
-    captureOpenshellSpy.mockReturnValue({
-      status: 0,
-      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
-    });
+    mockSandboxPhase("Error");
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
       lines.push(String(line));
@@ -253,10 +283,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("keeps rebuild guidance when an Error sandbox has no recoverable container", async () => {
-    captureOpenshellSpy.mockReturnValue({
-      status: 0,
-      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
-    });
+    mockSandboxPhase("Error");
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: false,
@@ -282,10 +309,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("keeps rebuild guidance for a paused container in a terminal phase other than Error", async () => {
-    captureOpenshellSpy.mockReturnValue({
-      status: 0,
-      output: "Sandbox:\n  Name: instance-a\n  Phase: Failed",
-    });
+    mockSandboxPhase("Failed");
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: true,
@@ -313,10 +337,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   });
 
   it("preserves docker-unpause recovery for a paused Error sandbox (#4495)", async () => {
-    captureOpenshellSpy.mockReturnValue({
-      status: 0,
-      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
-    });
+    mockSandboxPhase("Error");
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: true,
@@ -344,31 +365,33 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
 
   it.each([
     {
-      lifecycle: {
-        state: "named_unreachable",
-        status: "Gateway: nemoclaw\nConnection refused",
-      },
+      lifecycle: gatewayObservation("named_unreachable", "Gateway is unreachable."),
       expectedState: "gateway_unreachable_after_restart",
       expectedGatewayRecoveryFailed: undefined,
     },
     {
-      lifecycle: { state: "missing_named", status: "No gateway configured" },
+      lifecycle: gatewayObservation("named_unhealthy"),
+      expectedState: "gateway_unreachable_after_restart",
+      expectedGatewayRecoveryFailed: undefined,
+    },
+    {
+      lifecycle: gatewayObservation("missing_named", "No gateway configured"),
       expectedState: "gateway_missing_after_restart",
       expectedGatewayRecoveryFailed: undefined,
     },
     {
-      lifecycle: {
-        state: "connected_other",
-        activeGateway: "openshell",
-        status: "Gateway: openshell\nStatus: Connected",
-      },
+      lifecycle: gatewayObservation(
+        "connected_other",
+        "Connected to another gateway.",
+        "openshell",
+      ),
       expectedState: "gateway_error",
       expectedGatewayRecoveryFailed: true,
     },
   ])(
     "maps failed gateway recovery to $expectedState",
     async ({ lifecycle, expectedState, expectedGatewayRecoveryFailed }) => {
-      getNamedGatewayLifecycleStateSpy.mockReturnValue(lifecycle);
+      getNamedGatewayLifecycleStateSpy.mockResolvedValue(lifecycle);
 
       const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", {
         getState: async () => ({ state: "gateway_error", output: "transport error" }),
@@ -378,6 +401,20 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       expect(lookup.gatewayRecoveryFailed).toBe(expectedGatewayRecoveryFailed);
     },
   );
+
+  it("preserves restart guidance from an unhealthy recovery observation", async () => {
+    recoverNamedGatewayRuntimeSpy.mockResolvedValue({
+      recovered: false,
+      after: gatewayObservation("named_unhealthy"),
+    });
+    const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", {
+      getState: async () => ({ state: "gateway_error", output: "transport error" }),
+    });
+    expect(lookup).toMatchObject({
+      state: "gateway_unreachable_after_restart",
+      output: "Gateway is not connected.",
+    });
+  });
 
   it("prints reconnect and recreate guidance when identity drift persists", async () => {
     captureOpenshellSpy.mockReturnValue({
@@ -405,15 +442,21 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     exitSpy.mockRestore();
   });
 
-  it("prints restart guidance when the named gateway remains unreachable", async () => {
+  it.each([
+    {
+      state: "named_unreachable" as const,
+      observation: gatewayObservation("named_unreachable", "Gateway is unreachable."),
+    },
+    {
+      state: "named_unhealthy" as const,
+      observation: gatewayObservation("named_unhealthy"),
+    },
+  ])("prints restart guidance when the named gateway remains $state", async ({ observation }) => {
     captureOpenshellSpy.mockReturnValue({
       status: 1,
       output: "Error: transport error: Connection refused",
     });
-    getNamedGatewayLifecycleStateSpy.mockReturnValue({
-      state: "named_unreachable",
-      status: "Gateway: nemoclaw\nConnection refused",
-    });
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue(observation);
     const lines: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation((line = "") => {
       lines.push(String(line));

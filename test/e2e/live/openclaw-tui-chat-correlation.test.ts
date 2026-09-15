@@ -28,7 +28,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
-import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { ubuntuRepoManagedRuntime } from "../registry/matrix.ts";
 import { stripTerminalControl } from "../support/issue-4434-tui-capture.ts";
 import {
   buildIssue6194OpenShellApprovalExpectScript,
@@ -55,7 +55,7 @@ import {
 // expected-state probes; this test's regression-target probes are bespoke
 // websocket-trace assertions that don't fit the
 // `from(env) → from(state, instance)` model.
-const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
+const ENVIRONMENT = ubuntuRepoManagedRuntime("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-oc-tui-corr";
 // OpenClaw 2026.7.1 is the post-fix regression-guard version for #2603 + #3145.
@@ -267,7 +267,11 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
 function issue2603AttemptOutcome(
   repro: LiveIssue2603Trace,
   index: number,
-): Issue2603AttemptOutcome & { attempt: number; eventCount: number; chatEventCount: number } {
+): Issue2603AttemptOutcome & {
+  attempt: number;
+  eventCount: number;
+  chatEventCount: number;
+} {
   const failedAttempt = {
     attempt: index + 1,
     captureFailure: false,
@@ -647,7 +651,9 @@ test(
     const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
     const tuiSession = `${ISSUE6194_TUI_SESSION_PREFIX}-${instance.sandboxName}-${Date.now()}-${randomUUID()}`;
     precreateIssue6194Capture(captureFile);
-    writeFileSync(expectScript, buildIssue6194TuiExpectScript(), { mode: 0o700 });
+    writeFileSync(expectScript, buildIssue6194TuiExpectScript(), {
+      mode: 0o700,
+    });
     try {
       const tui = await host.command("expect", [expectScript], {
         artifactName: "issue6194-openclaw-tui-post-idle",

@@ -36,7 +36,6 @@ describe("nemoclaw CLI runtime recovery", () => {
               model: "nvidia/nemotron-3-super-120b-a12b",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
         }),

@@ -24,7 +24,7 @@ export const CREDENTIAL_WINDOW_STEPS = {
   fallbackAfterEviction: "fallback-after-eviction",
   deniedAfterKeyRemoval: "denied-after-key-removal",
   deniedAfterDetach: "denied-after-detach",
-  fallbackAfterRestart: "fallback-after-restart",
+  deniedAfterReadd: "denied-after-readd",
   stop: "stop",
 } as const;
 
@@ -34,7 +34,7 @@ export type CredentialWindowRequestStep =
   | (typeof CREDENTIAL_WINDOW_STEPS)["fallbackAfterEviction"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterKeyRemoval"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterDetach"]
-  | (typeof CREDENTIAL_WINDOW_STEPS)["fallbackAfterRestart"];
+  | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterReadd"];
 
 export function credentialWindowSecret(generation: number): string {
   return `${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}${String(generation).padStart(2, "0")}`;
@@ -108,7 +108,7 @@ const requestSteps = new Set([
   config.steps.fallbackAfterEviction,
   config.steps.deniedAfterKeyRemoval,
   config.steps.deniedAfterDetach,
-  config.steps.fallbackAfterRestart,
+  config.steps.deniedAfterReadd,
 ]);
 const seen = new Set();
 const outcomes = [];

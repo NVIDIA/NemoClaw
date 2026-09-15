@@ -97,37 +97,36 @@ function adaptersFor(order: string[] = []): {
 }
 
 describe("managed startup coordinator", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("dispatches exactly the %s adapter before commit", async (agent) => {
-    const order: string[] = [];
-    const prepared = preparedFor(agent);
-    const dependencies = dependenciesFor(prepared, order);
-    const { adapters, applyByAgent } = adaptersFor(order);
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "dispatches exactly the %s adapter before commit",
+    async (agent) => {
+      const order: string[] = [];
+      const prepared = preparedFor(agent);
+      const dependencies = dependenciesFor(prepared, order);
+      const { adapters, applyByAgent } = adaptersFor(order);
 
-    const result = await coordinateManagedStartupApplication(
-      inputFor(agent),
-      adapters,
-      dependencies,
-    );
+      const result = await coordinateManagedStartupApplication(
+        inputFor(agent),
+        adapters,
+        dependencies,
+      );
 
-    expect(result.adapterApplied).toBe(true);
-    expect(result.application.status).toBe("committed");
-    expect(order).toEqual(["prepare", `apply:${agent}`, "commit"]);
-    expect(applyByAgent[agent]).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        agent,
-        profile: prepared.profile,
-        fingerprint: prepared.fingerprint,
-      }),
-    );
-    (["openclaw", "hermes", "langchain-deepagents-code"] as const).forEach((otherAgent) => {
-      expect(applyByAgent[otherAgent]).toHaveBeenCalledTimes(otherAgent === agent ? 1 : 0);
-    });
-    expect(dependencies.commitApplication).toHaveBeenCalledWith(prepared);
-  });
+      expect(result.adapterApplied).toBe(true);
+      expect(result.application.status).toBe("committed");
+      expect(order).toEqual(["prepare", `apply:${agent}`, "commit"]);
+      expect(applyByAgent[agent]).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          agent,
+          profile: prepared.profile,
+          fingerprint: prepared.fingerprint,
+        }),
+      );
+      (["openclaw", "hermes", "langchain-deepagents-code"] as const).forEach((otherAgent) => {
+        expect(applyByAgent[otherAgent]).toHaveBeenCalledTimes(otherAgent === agent ? 1 : 0);
+      });
+      expect(dependencies.commitApplication).toHaveBeenCalledWith(prepared);
+    },
+  );
 
   it("does not reapply mutable config for an already committed profile", async () => {
     const prepared = preparedFor("openclaw", "already-committed");

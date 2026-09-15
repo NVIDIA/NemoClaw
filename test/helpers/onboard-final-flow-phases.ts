@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
+import type { PreparedExternalComponent } from "../../src/lib/onboard/external-component";
+import {
+  activateExternalComponent,
+  type ExternalComponentActivationProof,
+} from "../../src/lib/onboard/external-component/activation";
+import { prepareFinalOnboardFlowContext } from "../../src/lib/onboard/machine/flow-handoff";
 import type { DashboardDeliveryChain } from "../../src/lib/dashboard/contract";
 import type { OnboardMachineEvent } from "../../src/lib/onboard/machine/events";
-import { createFinalOnboardFlowPhases } from "../../src/lib/onboard/machine/final-flow-phases";
+import {
+  createFinalOnboardFlowPhases,
+  runFinalOnboardFlowSlice,
+} from "../../src/lib/onboard/machine/final-flow-phases";
 import type { OnboardFlowContext } from "../../src/lib/onboard/machine/flow-context";
 import type { PoliciesStateOptions } from "../../src/lib/onboard/machine/handlers/policies";
+import type { FinalizationStateOptions } from "../../src/lib/onboard/machine/handlers/finalization";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "../../src/lib/onboard/machine/runtime";
 import type { OnboardMachineState } from "../../src/lib/onboard/machine/types";
 import { OnboardRuntimeBoundary } from "../../src/lib/onboard/runtime-boundary";
@@ -24,6 +34,9 @@ export type Agent = { name: string };
 type WebSearchConfig = NonNullable<OnboardFlowContext["webSearchConfig"]>;
 
 export type RecorderOverrides = {
+  finalizationDeps?: Partial<
+    FinalizationStateOptions<Agent | null, DashboardDeliveryChain, VerifyDeploymentResult>["deps"]
+  >;
   loadSession?: () => Session | null;
   updateSession?: (mutator: (session: Session) => Session | void) => Session;
   recordStepSkipped?: (stepName: string) => Promise<Session>;
@@ -37,7 +50,6 @@ export type RecorderOverrides = {
       sandboxName?: string | null;
       provider?: string | null;
       model?: string | null;
-      policyPresets?: string[] | null;
     },
   ) => Promise<void>;
   recordStepComplete?: (stepName: string, updates?: SessionUpdates) => Promise<Session>;
@@ -58,19 +70,14 @@ export type RecorderOverrides = {
     agent: Agent | null,
   ) => void;
   reportDeploymentReadiness?: (healthy: boolean) => void;
-  getActiveSandbox?: PoliciesStateOptions<Agent | null, WebSearchConfig>["deps"]["getActiveSandbox"];
+  getActiveSandbox?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["getActiveSandbox"];
   setupPoliciesWithSelection?: PoliciesStateOptions<
     Agent | null,
     WebSearchConfig
   >["deps"]["setupPoliciesWithSelection"];
-  persistAppliedPolicyPresets?: PoliciesStateOptions<
-    Agent | null,
-    WebSearchConfig
-  >["deps"]["persistAppliedPolicyPresets"];
-  revalidatePolicyRequirements?: (
-    context: OnboardFlowContext<Agent | null>,
-    operation: string,
-  ) => void;
 };
 
 function cloneSession(session: Session): Session {
@@ -89,7 +96,6 @@ export function sessionAt(state: OnboardMachineState): Session {
     sandboxName: "my-sandbox",
     provider: "nim",
     model: "nvidia/test",
-    policyAuthority: "nemoclaw-managed",
     machine: {
       version: MACHINE_SNAPSHOT_VERSION,
       state,
@@ -198,7 +204,6 @@ export function createPhases(
     VerifyDeploymentResult
   >({
     branchState,
-    revalidatePolicyRequirements: recorders.revalidatePolicyRequirements,
     agentSetupDeps: {
       handleAgentSetup: vi.fn(async () => {
         order.push("agent-setup");
@@ -217,7 +222,7 @@ export function createPhases(
       setupOpenclaw: vi.fn(async () => {
         order.push("openclaw");
       }),
-      syncNemoClawConfigInSandbox: vi.fn(),
+      configureOpenclawSandbox: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
@@ -226,8 +231,7 @@ export function createPhases(
       toSessionUpdates: (updates) => updates as SessionUpdates,
     },
     policiesDeps: {
-      loadSession:
-        recorders.loadSession ?? (() => createSession({ policyAuthority: "nemoclaw-managed" })),
+      loadSession: recorders.loadSession ?? (() => createSession()),
       getActiveSandbox: recorders.getActiveSandbox ?? (() => null),
       mergePolicyMessagingChannels:
         recorders.mergePolicyMessagingChannels ?? ((selected) => selected),
@@ -235,7 +239,7 @@ export function createPhases(
       verifyCompatibleEndpointSandboxSmoke: vi.fn(),
       preparePolicyPresetResumeSelection: () => ({
         policyPresets: ["balanced"],
-        recordedPolicyPresetsNeedReconcile: false,
+        livePolicyPresetsNeedUpdate: false,
         disabledMessagingPolicyPresetApplied: false,
         suppressedAgentRequiredPresetsLive: false,
       }),
@@ -249,15 +253,12 @@ export function createPhases(
           order.push("policies");
           return ["balanced"];
         }),
-      updateSession:
-        recorders.updateSession ?? vi.fn((mutator) => mutator(createSession()) ?? createSession()),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
           sessionWithUpdates(updates),
         ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: recorders.persistAppliedPolicyPresets ?? vi.fn(),
     },
     finalization: {
       stagedLegacyKeys: [],
@@ -266,17 +267,13 @@ export function createPhases(
       webSearchProvider: (config) => (config.provider === "tavily" ? "tavily" : "brave"),
     },
     finalizationDeps: {
-      ensureAgentDashboardForward: vi.fn(() => {
-        order.push("agent-forward");
-        return 45123;
-      }),
       setDefaultSandbox: vi.fn(() => {
         order.push("set-default");
       }),
       toSessionUpdates: (updates) => updates as NonNullable<SessionUpdates>,
       removeLegacyCredentialsFile: vi.fn(),
       cleanupStaleHostFiles: vi.fn(),
-      checkAndRecoverSandboxProcesses: vi.fn(),
+      checkAndRecoverSandboxProcesses: vi.fn(async () => true),
       settleOrdinaryOpenClawPairing: vi.fn(async () => ({ kind: "settled" as const })),
       ordinaryOpenClawPairingIncompleteMessage: vi.fn(
         () => "OpenClaw onboarding is incomplete; resume onboarding.",
@@ -328,6 +325,95 @@ export function createPhases(
       printDashboard: recorders.printDashboard ?? vi.fn(),
       error: vi.fn(),
       log: vi.fn(),
+      ...recorders.finalizationDeps,
     },
   });
+}
+
+export function createProviderlessComponentFlow(agentName = "openclaw") {
+  const order: string[] = [];
+  const branchState = agentName === "openclaw" ? "openclaw" : "agent_setup";
+  const harness = createRuntimeHarness(sessionAt(branchState));
+  const revalidate = vi.fn();
+  const revalidateEndpoint = vi.fn();
+  const proof: ExternalComponentActivationProof = {
+    gatewayName: "nemoclaw",
+    sandboxId: "sandbox-123",
+    sandboxIdentityFingerprint: `sha256:${"b".repeat(64)}`,
+    lifecycleGeneration: "generation-1",
+    policySource: "sandbox",
+    policyHash: `sha256:${"a".repeat(64)}`,
+    policyActiveVersion: 1,
+    revalidate,
+  };
+  const component: PreparedExternalComponent = {
+    declaration: {
+      schemaVersion: 1,
+      componentId: "policy-governance",
+      interceptorSocketPath: "/run/component/interceptor.sock",
+      activationSocketPath: "/run/component/activation.sock",
+    },
+    revalidateBeforeGateway: vi.fn(),
+    revalidateBeforeActivation: revalidateEndpoint,
+  };
+  const activationId = "4b5a8e18-f967-4e27-a3b2-f2cc315abe21";
+  const response = {
+    schemaVersion: 1,
+    activationId,
+    componentId: component.declaration.componentId,
+    sandboxId: proof.sandboxId,
+    policyHash: proof.policyHash,
+    result: "activated",
+  };
+  const transport = vi.fn(async (_socket: string, _body: string) => JSON.stringify(response));
+  const evidence = vi.fn();
+  const createProof = vi.fn(() => {
+    order.push("verify-proof");
+    return proof;
+  });
+  const phases = createPhases(branchState, order, {
+    finalizationDeps: {
+      createExternalComponentActivationProof: createProof,
+      createExternalComponentActivationId: () => activationId,
+      activateExternalComponent: (registered, verified, id) =>
+        activateExternalComponent(
+          registered,
+          verified,
+          (socket, body) => {
+            order.push("activate");
+            return transport(socket, body);
+          },
+          id,
+        ),
+      setExternalComponentActivationEvidence: evidence,
+    },
+  });
+  const initial = prepareFinalOnboardFlowContext({
+    context: context({
+      agent: { name: agentName },
+      providerlessApf: true,
+      externalComponent: component,
+      model: null,
+      provider: null,
+    }),
+    session: harness.getSession(),
+  });
+  return {
+    order,
+    proof,
+    response,
+    transport,
+    evidence,
+    createProof,
+    revalidate,
+    revalidateEndpoint,
+    initial,
+    run: () =>
+      runFinalOnboardFlowSlice({
+        context: initial,
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: vi.fn(),
+      }),
+  };
 }

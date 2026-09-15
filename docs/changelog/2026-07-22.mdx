@@ -18,7 +18,7 @@ NemoClaw v0.0.92 updates OpenClaw and its sandbox Node.js runtime, documents hea
 - Live E2E tests now report ordered semantic phases, outcomes, durations, resource-release timing, and secret-safe stall diagnostics.
   Each run saves a progress artifact that identifies where failures or stalls occurred.
   Collection-time validation rejects missing or invalid phase plans before tests use live infrastructure.
-- Installer integrity checks now accept the reviewed OpenShell Homebrew formula transition only when the template hash matches its exact release asset set.
+- Installer integrity checks now accept the reviewed OpenShell Homebrew formula transition only when the template hash matches its release asset set.
   This maintains the fail-closed boundary while preserving the current archive-only installer contract.
 - Platform and image validation now compares canonical macOS watcher targets, raises the full WSL suite limit from 60 to 90 minutes, and capability-gates its Docker-only Hermes contract.
   The WSL tag test still verifies that a rejected concurrent update cannot replace `latest`.
@@ -33,7 +33,7 @@ NemoClaw v0.0.92 updates OpenClaw and its sandbox Node.js runtime, documents hea
 NemoClaw v0.0.91 strengthens completed sandbox images, makes rebuild replacement safer, documents the Hermes API token lifecycle, expands qualified DGX Station guidance, and restores historical release validation.
 
 - Completed OpenClaw, Hermes, and Deep Agents Code images now replace affected `node-tar` installations with reviewed versions and scan the final filesystem before publication.
-  Current and historical OpenClaw security-revision verifiers also validate exact dependency versions, resolved archives, integrity metadata, executable identity, and transactional state restoration in constrained containers.
+  Current and historical OpenClaw security-revision verifiers also validate dependency versions, resolved archives, integrity metadata, executable identity, and transactional state restoration in constrained containers.
 - Rebuilds now carry validated local-base trust through Deep Agents Code image preparation, reuse the outer state backup during inner onboarding, and wait for OpenShell to confirm sandbox deletion before removing registry state or creating a replacement.
   These checks prevent rebuild from rejecting its own current base, taking a second backup against stale gateway state, or racing an asynchronous sandbox deletion.
   Rebuild also stops before deletion when a manifest-declared state file cannot be archived unless you pass `--force`.

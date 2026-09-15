@@ -16,9 +16,8 @@ import type {
 } from "../fixtures/shell-probe.ts";
 import {
   assertHermesConfig,
+  assertHermesManagedAddSurvivesGatewayRestartAndStateLayout,
   assertHermesReloadRollback,
-  lowerHermesShieldsForCleanup,
-  reopenHermesMcpMaintenanceWindow,
 } from "../live/mcp-bridge-hermes-lifecycle.ts";
 
 interface RunnerCall {
@@ -152,10 +151,13 @@ describe("Hermes MCP live rollback inspection", () => {
 });
 
 describe("Hermes MCP managed configuration assertion", () => {
-  it("accepts a revision-scoped credential placeholder through the sandbox boundary (#10155)", async () => {
+  it("accepts a stable-handle credential placeholder through the sandbox boundary (#10155)", async () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-assertion-"));
     const configPath = path.join(temp, "config.yaml");
-    writeHermesConfig(configPath, "Bearer openshell:resolve:env:v12_FAKE_MCP_SECRET");
+    writeHermesConfig(
+      configPath,
+      `Bearer openshell:resolve:env:s${"a".repeat(64)}_FAKE_MCP_SECRET`,
+    );
 
     try {
       await expect(
@@ -189,112 +191,44 @@ describe("Hermes MCP managed configuration assertion", () => {
   });
 });
 
-describe("Hermes MCP post-rebuild maintenance", () => {
-  it("opens a fresh Shields-down timer before the final config mutation", async () => {
-    const runner = new RecordingRunner();
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-
-    await reopenHermesMcpMaintenanceWindow(host, "hermes-e2e");
-
-    expect(runner.calls).toEqual([
-      expect.objectContaining({
-        command: "nemoclaw",
-        args: ["hermes-e2e", "shields", "up"],
-        options: expect.objectContaining({
-          artifactName: "hermes-mcp-shields-up-before-post-rebuild-remove",
-          timeoutMs: 3 * 60_000,
-        }),
-      }),
-      expect.objectContaining({
-        command: "nemoclaw",
-        args: [
-          "hermes-e2e",
-          "shields",
-          "down",
-          "--timeout",
-          "15m",
-          "--reason",
-          "Post-rebuild MCP removal E2E",
-        ],
-        options: expect.objectContaining({
-          artifactName: "hermes-mcp-shields-down-before-post-rebuild-remove",
-          timeoutMs: 3 * 60_000,
-        }),
-      }),
+describe("Hermes MCP gateway restart", () => {
+  it("keeps the strict baseline root-owned and compatibility integrity current", async () => {
+    const mcpUrl = "https://mcp.example.test/mcp";
+    const hostRunner = new RecordingRunner([
+      shellResult(0, "Gateway restarted\nhealth passed\n"),
+      shellResult(
+        0,
+        `${JSON.stringify({
+          bridges: [{ server: "fake", url: mcpUrl, adapter: { registered: true } }],
+        })}\n`,
+      ),
     ]);
-  });
+    const sandboxRunner = new RecordingRunner([
+      shellResult(0, "HERMES_MCP_COMPAT_INTEGRITY_CURRENT\n"),
+      shellResult(0, `${JSON.stringify({ state: "matched" })}\n`),
+    ]);
 
-  it("keeps Shields up when posture normalization fails", async () => {
-    const runner = new RecordingRunner([shellResult(1)]);
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-
-    await expect(reopenHermesMcpMaintenanceWindow(host, "hermes-e2e")).rejects.toThrow(
-      "normalize Hermes shields before post-rebuild MCP removal failed: exit=1",
+    await assertHermesManagedAddSurvivesGatewayRestartAndStateLayout(
+      new HostCliClient(hostRunner, { cliPath: "nemoclaw" }),
+      new SandboxClient(sandboxRunner),
+      "hermes-e2e",
+      mcpUrl,
     );
 
-    expect(runner.calls).toEqual([
+    expect(hostRunner.calls).toEqual([
       expect.objectContaining({
         command: "nemoclaw",
-        args: ["hermes-e2e", "shields", "up"],
-      }),
-    ]);
-  });
-});
-
-describe("Hermes MCP cleanup posture", () => {
-  it("accepts an already-down Shields posture", async () => {
-    const runner = new RecordingRunner([
-      shellResult(1, "", "Config is already unlocked for hermes-e2e"),
-      shellResult(0, "  Shields: DOWN (temporarily unlocked)\n"),
-    ]);
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-
-    await lowerHermesShieldsForCleanup(host, "hermes-e2e");
-
-    expect(runner.calls).toEqual([
-      expect.objectContaining({
-        command: "nemoclaw",
-        args: ["hermes-e2e", "shields", "down", "--timeout", "5m", "--reason", "E2E cleanup"],
+        args: ["hermes-e2e", "gateway", "restart"],
       }),
       expect.objectContaining({
         command: "nemoclaw",
-        args: ["hermes-e2e", "shields", "status"],
+        args: ["hermes-e2e", "mcp", "list", "--json"],
       }),
     ]);
-  });
-
-  it("rejects cleanup when Shields remain up", async () => {
-    const runner = new RecordingRunner([
-      shellResult(1, "", "required executable does not exist"),
-      shellResult(0, "  Shields: UP\n"),
-    ]);
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-
-    await expect(lowerHermesShieldsForCleanup(host, "hermes-e2e")).rejects.toThrow(
-      "Hermes Shields cleanup could not confirm DOWN posture",
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain(
+      "! cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
     );
-  });
-
-  it("rejects unrelated absence output from Shields status", async () => {
-    const runner = new RecordingRunner([
-      shellResult(1, "", "Config transition failed"),
-      shellResult(1, "", "provider configuration not found"),
-    ]);
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-
-    await expect(lowerHermesShieldsForCleanup(host, "hermes-e2e")).rejects.toThrow(
-      "Hermes Shields cleanup could not confirm DOWN posture",
-    );
-  });
-
-  it("accepts cleanup after the sandbox is removed", async () => {
-    const runner = new RecordingRunner([
-      shellResult(1, "", "  Sandbox 'hermes-e2e' does not exist.\n"),
-    ]);
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-
-    await lowerHermesShieldsForCleanup(host, "hermes-e2e");
-
-    expect(runner.calls).toHaveLength(1);
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain('test "$strict_status" -ne 0');
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain('test "$compat_status" -eq 0');
   });
 });

@@ -4,6 +4,7 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { scopeGatewayOpenshellArgs } from "../../adapters/openshell/gateway-scope";
 import { runHermesPortableUninstallOpenShell } from "../../adapters/openshell/hermes-portable-uninstall";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { GatewayRegistryDocument } from "../../state/gateway-registry";
@@ -47,7 +48,6 @@ import {
   readHermesPortableLifecycleReceipt,
   type HermesPortableConfiguredReceipt,
 } from "../../onboard/experimental/hermes-portable-receipt";
-import { scopeGatewayOpenshellArgs } from "../../onboard/setup-inference";
 import {
   assertPreparedHostLocalInferenceRuntimePresent,
   inspectPreparedHostLocalInferenceSharingAuthority,
@@ -324,12 +324,12 @@ function targetAuthority(input: {
   });
 }
 
-function loadAuthority(
+async function loadAuthority(
   input: HermesPortableUninstallInput,
   deps: HermesPortableUninstallDeps,
   expected: HermesPortableUninstallAuthority | null,
   admittedAbsence: AdmittedResourceAbsence,
-): LoadedAuthority {
+): Promise<LoadedAuthority> {
   if (
     expected &&
     (expected.registryPathSha256 !== pathDigest(input.registryFile) ||
@@ -343,17 +343,18 @@ function loadAuthority(
   if (names.length === 0) throw new Error("Hermes Portable uninstall has no schema-5 targets");
   const registry = exactRegistry(input);
   const targetNames = new Set(names);
-  const loaded = names.map((sandboxName): LoadedTarget => {
+  const loaded: LoadedTarget[] = [];
+  for (const sandboxName of names) {
     const snapshot = readHermesPortableLifecycleReceipt(sandboxName, input.stateDir);
     if (!snapshot || snapshot.receipt.phase !== "active") {
       throw new Error(
         `Hermes Portable uninstall receipt '${sandboxName}' is missing or incomplete`,
       );
     }
-    const receipt = snapshot.receipt;
+    const historicalReceipt = snapshot.receipt;
     const row = registry.sandboxes[sandboxName] as SandboxEntry | undefined;
     if (!row) throw new Error(`Hermes Portable uninstall registry row '${sandboxName}' is missing`);
-    requireSandboxRow(row, receipt);
+    requireSandboxRow(row, historicalReceipt);
     const expectedTarget = expected?.targets.find((target) => target.sandboxName === sandboxName);
     const lifecycleDeps: HermesPortableLifecycleDeps = {
       ...deps.lifecycle,
@@ -363,13 +364,13 @@ function loadAuthority(
         name === sandboxName ? (exactRegistry(input).sandboxes[name] as SandboxEntry) : null,
       ...(deps.podmanAuthorityDeps ? { podmanAuthorityDeps: deps.podmanAuthorityDeps } : {}),
     };
-    const sandbox = prepareHermesPortableSandboxRemoval(
+    const sandbox = await prepareHermesPortableSandboxRemoval(
       sandboxName,
       {
         agent: "hermes",
         openshellDriver: "docker",
-        gatewayName: receipt.gatewayName,
-        lifecycleGeneration: receipt.lifecycleGeneration,
+        gatewayName: historicalReceipt.gatewayName,
+        lifecycleGeneration: historicalReceipt.lifecycleGeneration,
       },
       lifecycleDeps,
       {
@@ -377,6 +378,7 @@ function loadAuthority(
         ...(expectedTarget ? { expectedReceiptSha256: expectedTarget.lifecycleReceiptSha256 } : {}),
       },
     );
+    const receipt = sandbox.receipt;
     const runtime = createHermesPortableOllamaRuntimeAuthority({
       receipt,
       stateDir: input.stateDir,
@@ -419,6 +421,7 @@ function loadAuthority(
       directory: runtime.inferenceStateDir,
       transactionId: inference.receipt.publication.transactionId,
       targetSha256: inference.receipt.publication.targetSha256,
+      gatewayName: receipt.gatewayName,
       sandboxName,
       model: row.model!,
       credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
@@ -444,18 +447,20 @@ function loadAuthority(
     if (expectedTarget && !isDeepStrictEqual(authority, expectedTarget)) {
       throw new Error(`Hermes Portable uninstall authority drifted for '${sandboxName}'`);
     }
-    return Object.freeze({
-      row,
-      inferenceRow,
-      receipt,
-      sandbox,
-      provider,
-      runtime,
-      inference,
-      inferencePeers,
-      authority,
-    });
-  });
+    loaded.push(
+      Object.freeze({
+        row,
+        inferenceRow,
+        receipt,
+        sandbox,
+        provider,
+        runtime,
+        inference,
+        inferencePeers,
+        authority,
+      }),
+    );
+  }
   const authority = Object.freeze({
     registryPathSha256: pathDigest(input.registryFile),
     statePathSha256: pathDigest(input.stateDir),
@@ -463,6 +468,9 @@ function loadAuthority(
   });
   if (expected && !isDeepStrictEqual(authority, expected)) {
     throw new Error("Hermes Portable uninstall transaction authority drifted");
+  }
+  if (!isDeepStrictEqual(exactRegistry(input), registry)) {
+    throw new Error("Hermes Portable uninstall registry authority changed during observation");
   }
   return Object.freeze({ authority, registry, targets: Object.freeze(loaded) });
 }
@@ -473,36 +481,36 @@ function requireCache(cache: LoadedAuthority | null): LoadedAuthority {
 }
 
 /** Run schema-5 cleanup after the host fence, sorted lifecycle locks, and registry lock. */
-export function runHermesPortableUninstall(
+export async function runHermesPortableUninstall(
   input: HermesPortableUninstallInput,
   deps: HermesPortableUninstallDeps = {},
-): HermesPortableUninstallTransactionResult {
+): Promise<HermesPortableUninstallTransactionResult> {
   let cache: LoadedAuthority | null = null;
   return runHermesPortableUninstallTransaction(input.stateDir, {
-    prepare: () => {
-      cache = loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
+    prepare: async () => {
+      cache = await loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
       return cache.authority;
     },
-    prepareReplacement: () => {
+    prepareReplacement: async () => {
       if (schema5SandboxNames(input).length === 0) return null;
-      cache = loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
+      cache = await loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
       return cache.authority;
     },
-    revalidateResources: (authority, phase) => {
-      cache = loadAuthority(input, deps, authority, admittedResourceAbsence(phase));
+    revalidateResources: async (authority, phase) => {
+      cache = await loadAuthority(input, deps, authority, admittedResourceAbsence(phase));
     },
-    reconcileSandboxes: () => {
+    reconcileSandboxes: async () => {
       let removed = 0;
       for (const target of requireCache(cache).targets) {
-        target.sandbox.removeAndVerify();
+        await target.sandbox.removeAndVerify();
         if (target.sandbox.present) removed += 1;
       }
       return removed;
     },
-    reconcileProviders: () => {
+    reconcileProviders: async () => {
       for (const target of requireCache(cache).targets) {
         if (target.authority.provider.disposition === "remove") {
-          target.provider.removeAndVerify();
+          await target.provider.removeAndVerify();
         }
       }
     },
@@ -527,9 +535,9 @@ export function runHermesPortableUninstall(
         }
       }
     },
-    verifyResourcesAbsent: () => {
+    verifyResourcesAbsent: async () => {
       for (const target of requireCache(cache).targets) {
-        target.sandbox.verifyAbsent();
+        await target.sandbox.verifyAbsent();
         if (target.authority.provider.disposition === "remove") target.provider.verifyAbsent();
         else if (!target.provider.present) {
           throw new Error("Hermes Portable shared provider disappeared during uninstall");

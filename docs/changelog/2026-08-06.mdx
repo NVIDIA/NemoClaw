@@ -10,14 +10,14 @@ It makes agent manifests authoritative for persistent state and strengthens gate
 It also improves Hermes configuration safety, MCP diagnostics, credential isolation, and host installation guidance.
 
 - DGX Spark users can now opt into an experimental managed llama.cpp path backed by one repository-owned NVIDIA Nemotron recipe.
-  NemoClaw acquires and verifies the exact GGUF through the shared Hugging Face cache, publishes an authenticated loopback runtime, and uses owner, receipt, and journal state for onboarding, status, doctor, recovery, destroy, and uninstall.
+  NemoClaw acquires and verifies the GGUF through the shared Hugging Face cache, publishes an authenticated loopback runtime, and uses owner, receipt, and journal state for onboarding, status, doctor, recovery, destroy, and uninstall.
   This path remains experimental and does not establish a supported agent, model, and runtime tuple until its protected qualification and activation gates pass.
   For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server), the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Understand Host Files and State](/user-guide/openclaw/reference/host-files-and-state).
 - DGX Spark users can now select an opt-in fixed vLLM serving profile through the hosted installer or the CLI.
-  `profiles list` reports catalog entries and their host compatibility without changing resources, while `onboard --profile` records the exact catalog, recipe, and runtime provenance and rejects silent definition drift during resume.
+  `profiles list` reports catalog entries and their host compatibility without changing resources, while `onboard --profile` records the catalog, recipe, and runtime provenance and rejects silent definition drift during resume.
   For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server), [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Custom inference endpoints, MCP servers, and custom policy presets can now opt in to explicitly trusted private hosts.
-  NemoClaw keeps exact host allowlists, pins generated `allowed_ips`, preserves those pins across restart and rebuild, and applies configured certificate authority trust without widening the endpoint policy.
+  NemoClaw keeps host allowlists, pins generated `allowed_ips`, preserves those pins across restart and rebuild, and applies configured certificate authority trust without widening the endpoint policy.
   For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Create Custom Policy Presets](/user-guide/openclaw/network-policy/configure-policies/create-custom-policy-presets), and [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust).
 - Onboarding now offers a Personal network policy tier for trusted single-user environments that need broad TCP access on ports 80 and 443.
   The tier continues to block unspecified, loopback, and link-local destinations, and the documentation calls out its larger trust boundary so users can choose it deliberately.

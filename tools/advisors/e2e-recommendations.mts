@@ -8,7 +8,12 @@ import path from "node:path";
 // the analyzed PR worktree. PR-provided TypeScript is never imported.
 import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
 import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
-import { moduleTagDeclarations } from "../e2e/module-tags.mts";
+import {
+  credentialFreeTestProjectForFile,
+  credentialFreeTestRowFromModule,
+  SHARED_E2E_JOB_ID,
+  type CredentialFreeTestProject,
+} from "../e2e/credential-free-tests.mts";
 import {
   catalogueRecommendationSelectorIds,
   E2E_TARGET_CATALOGUE,
@@ -23,14 +28,14 @@ const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 export const E2E_RENDER_LIMIT = 20;
 const TRUSTED_REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const E2E_ALL_ID = "e2e-all";
-const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";
-const SHARED_E2E_JOB_ID = "shared-e2e";
 const REGISTRY_LIVE_ENTRYPOINT = "test/e2e/live/registry-targets.test.ts";
 const FREE_STANDING_LIVE_TEST_PATTERN = /^test\/e2e\/live\/[^/]+\.test\.ts$/;
 const FREE_STANDING_LIVE_FILE_PATTERN = /^test\/e2e\/live\/[^/]+\.ts$/;
 const ALLOWED_WORKFLOWS = new Set<string>([E2E_WORKFLOW]);
 const TARGET_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CONFIDENCES = ["low", "medium", "high"] as const;
+let trustedE2eWorkflowText: string | undefined;
+let trustedCredentialFreeTests: readonly E2eChangedCredentialFreeTest[] | undefined;
 const MODEL_COVERAGE_IDENTITY_FIELDS = ["workflow", "job", "script", "cost", "runner"] as const;
 const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
   /^src\/lib\/onboard(?:\.ts|\/)/,
@@ -81,6 +86,21 @@ export type E2eTargetRecommendation = {
   required: boolean;
   reason: string;
 };
+
+export type E2eRecommendationSelector = Omit<E2eTargetRecommendation, "workflow">;
+
+export function isSupportedE2eSelector(
+  item: Pick<E2eRecommendationSelector, "selectorType" | "id">,
+  allowedJobIds: ReadonlySet<string>,
+  supportedTargetIds?: readonly string[],
+): boolean {
+  if (!TARGET_ID_PATTERN.test(item.id)) return false;
+  if (item.selectorType === "all") return item.id === E2E_ALL_ID;
+  if (item.selectorType === "job") return allowedJobIds.has(item.id);
+  if (supportedTargetIds) return supportedTargetIds.includes(item.id);
+  const target = getTarget(item.id);
+  return target !== undefined && liveTargetSupport(target).supported;
+}
 
 export type E2eChangedCredentialFreeTest = {
   id: string;
@@ -371,7 +391,11 @@ function readE2eWorkflowText(): string | undefined {
 }
 
 function readTrustedE2eWorkflowText(): string {
-  return fs.readFileSync(path.join(TRUSTED_REPO_ROOT, E2E_WORKFLOW_PATH), "utf8");
+  trustedE2eWorkflowText ??= fs.readFileSync(
+    path.join(TRUSTED_REPO_ROOT, E2E_WORKFLOW_PATH),
+    "utf8",
+  );
+  return trustedE2eWorkflowText;
 }
 
 function buildE2eTargetNormalizationContext(
@@ -381,12 +405,10 @@ function buildE2eTargetNormalizationContext(
 ): E2eTargetNormalizationContext {
   const trustedWorkflowText = readTrustedE2eWorkflowText();
   const trustedCredentialFreeTests = discoverTrustedCredentialFreeTests();
-  const allowedJobIds = new Set(
-    [
-      ...extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
-      ...catalogueRecommendationSelectorIds(),
-    ],
-  );
+  const allowedJobIds = new Set([
+    ...extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
+    ...catalogueRecommendationSelectorIds(),
+  ]);
   // The analyzed workflow is untrusted input. It may explain why a changed test has
   // no trusted selector, but it must never introduce one absent from the trusted
   // workflow or catalogue.
@@ -416,7 +438,7 @@ function buildE2eTargetNormalizationContext(
   }
   for (const [file, project] of changedCredentialFreeProjects) {
     const source = changedSource(file, changedFileSources);
-    const row = source ? credentialFreeTestRow(file, source) : undefined;
+    const row = source ? changedCredentialFreeTestRow(file, project, source) : undefined;
     if (!row || !project || !isPrE2ePlanningJob(row.id)) continue;
     addMapValue(liveTestToJobs, row.file, row.id);
     allowedJobIds.add(row.id);
@@ -433,39 +455,20 @@ function buildE2eTargetNormalizationContext(
   };
 }
 
-function credentialFreeTestProjectForFile(file: string): "e2e-live" | "integration" | undefined {
-  if (/^test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts$/.test(file)) {
-    return "e2e-live";
-  }
-  if (/^test\/(?!e2e\/)(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.(?:js|ts)$/.test(file)) {
-    return "integration";
-  }
-  return undefined;
-}
-
-export function credentialFreeTestIdForFile(file: string): string | undefined {
-  if (!credentialFreeTestProjectForFile(file)) return undefined;
-  const id = path.posix.basename(file).replace(/\.test\.(?:js|ts)$/, "");
-  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) ? id : undefined;
-}
-
-function credentialFreeTestRow(
+function changedCredentialFreeTestRow(
   file: string,
+  project: CredentialFreeTestProject,
   source: string,
 ): E2eChangedCredentialFreeTest | undefined {
-  const id = credentialFreeTestIdForFile(file);
-  if (!id) return undefined;
-  const declarations = moduleTagDeclarations(source);
-  if (
-    declarations.some(({ tag }) => tag.startsWith("e2e/") && tag !== CREDENTIAL_FREE_TEST_TAG) ||
-    declarations.filter(({ tag }) => tag === CREDENTIAL_FREE_TEST_TAG).length !== 1
-  ) {
+  try {
+    const row = credentialFreeTestRowFromModule({ file, project, source });
+    return { id: row.id, file: row.file };
+  } catch {
     return undefined;
   }
-  return { id, file };
 }
-
 function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
+  if (trustedCredentialFreeTests) return [...trustedCredentialFreeTests];
   const rows: E2eChangedCredentialFreeTest[] = [];
   const testRoot = path.join(TRUSTED_REPO_ROOT, "test");
   const pending = [testRoot];
@@ -480,11 +483,14 @@ function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
       }
       if (!entry.isFile() || !/\.test\.(?:js|ts)$/.test(entry.name)) continue;
       const file = path.relative(TRUSTED_REPO_ROOT, absolute).split(path.sep).join("/");
-      const row = credentialFreeTestRow(file, fs.readFileSync(absolute, "utf8"));
+      const project = credentialFreeTestProjectForFile(file);
+      if (!project) continue;
+      const row = changedCredentialFreeTestRow(file, project, fs.readFileSync(absolute, "utf8"));
       if (row) rows.push(row);
     }
   }
-  return rows.sort((left, right) => left.id.localeCompare(right.id));
+  trustedCredentialFreeTests = rows.sort((left, right) => left.id.localeCompare(right.id));
+  return [...trustedCredentialFreeTests];
 }
 
 function extractAllowedE2eJobIds(
@@ -611,12 +617,12 @@ function deterministicFreeStandingJobRecommendations(
   return output.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function deterministicRiskRecommendations(
+export function deterministicRiskRecommendations(
   riskPlan: RiskPlan,
-  context: E2eTargetNormalizationContext,
+  context?: E2eTargetNormalizationContext,
 ): E2eTargetRecommendation[] {
   const jobs = riskPlan.requiredJobs
-    .filter((job) => context.allowedJobIds.has(job.id))
+    .filter((job) => !context || context.allowedJobIds.has(job.id))
     .map((job) => ({
       id: job.id,
       workflow: E2E_WORKFLOW,
@@ -626,6 +632,7 @@ function deterministicRiskRecommendations(
     }));
   const targets = riskPlan.requiredTargets
     .filter((target) => {
+      if (!context) return true;
       const definition = getTarget(target.id);
       return definition !== undefined && liveTargetSupport(definition).supported;
     })
@@ -659,17 +666,20 @@ function suppressFanoutForFocusedJobs(
     : recommendations;
 }
 
-function mergeRecommendations(
-  first: E2eTargetRecommendation[],
-  second: E2eTargetRecommendation[],
-): E2eTargetRecommendation[] {
-  const seen = new Set<string>();
-  return [...first, ...second].filter((item) => {
+export function mergeRecommendations<T extends E2eRecommendationSelector>(
+  first: T[],
+  second: T[],
+): T[] {
+  const selected = new Map<string, T>();
+  for (const item of [...first, ...second]) {
     const key = `${item.selectorType}:${item.id}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const previous = selected.get(key);
+    selected.set(
+      key,
+      previous ? { ...previous, required: previous.required || item.required } : item,
+    );
+  }
+  return [...selected.values()];
 }
 
 function sanitizeTargetRecommendations(
@@ -687,16 +697,7 @@ function sanitizeTargetRecommendations(
     if (!id || !suppliedReason || !workflow || !ALLOWED_WORKFLOWS.has(workflow)) continue;
     const selectorType = normalizeSelectorType(item.selectorType);
     if (!selectorType) continue;
-    if (selectorType === "all" && id !== E2E_ALL_ID) continue;
-    if (selectorType === "job" && !context.allowedJobIds.has(id)) continue;
-    if (selectorType !== "job" && !TARGET_ID_PATTERN.test(id)) continue;
-    const targetDefinition = selectorType === "target" ? getTarget(id) : undefined;
-    if (
-      selectorType === "target" &&
-      (!targetDefinition || !liveTargetSupport(targetDefinition).supported)
-    ) {
-      continue;
-    }
+    if (!isSupportedE2eSelector({ selectorType, id }, context.allowedJobIds)) continue;
     const key = `${selectorType}:${id}`;
     if (seen.has(key)) continue;
     seen.add(key);

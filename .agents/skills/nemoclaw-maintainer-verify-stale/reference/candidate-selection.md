@@ -8,7 +8,7 @@ Use after loading `SKILL.md` to choose an issue and establish its reported NemoC
 ## Contents
 
 - [Step 1: Determine Mode](#step-1-determine-mode)
-- [Step 2: Detect the Newest Exact NemoClaw Release Tag](#step-2-detect-the-newest-exact-nemoclaw-release-tag)
+- [Step 2: Detect the Newest NemoClaw Release Tag](#step-2-detect-the-newest-nemoclaw-release-tag)
 - [Step 3: Filter Candidates](#step-3-filter-candidates)
 - [Step 4: Parse Reported Version](#step-4-parse-reported-version)
 
@@ -119,9 +119,9 @@ In batch mode, work through items one at a time. Present each verification plan 
 
 ---
 
-## Step 2: Detect the Newest Exact NemoClaw Release Tag
+## Step 2: Detect the Newest NemoClaw Release Tag
 
-Select the highest `vX.Y.Z` release tag from the GitHub API. Do not use the installer's default selector: the default follows the maintainer-promoted `lkg` tag, which can lag the newest exact release tag. Use `gh api` rather than `git ls-remote` so the skill reuses the authenticated GitHub session.
+Select the highest `vX.Y.Z` release tag from the GitHub API. Do not use the installer's default selector: the default follows the maintainer-promoted `lkg` tag, which can lag the newest release tag. Use `gh api` rather than `git ls-remote` so the skill reuses the authenticated GitHub session.
 
 ```bash
 LATEST=$(gh api repos/NVIDIA/NemoClaw/tags --paginate --jq '.[].name' \
@@ -132,12 +132,12 @@ if tags:
     print(max(tags, key=lambda tag: tuple(map(int, tag[1:].split(".")))))
 ')
 
-[ -n "$LATEST" ] || { echo "ERROR: no exact vX.Y.Z release tag found"; exit 1; }
+[ -n "$LATEST" ] || { echo "ERROR: no vX.Y.Z release tag found"; exit 1; }
 
 echo "Newest release tag: $LATEST"
 ```
 
-This is the exact version the skill will verify against. Record it. Every install and comment must cite it.
+This is the version the skill will verify against. Record it. Every install and comment must cite it.
 
 ---
 

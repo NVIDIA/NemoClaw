@@ -27,8 +27,7 @@ function managedReceipt(
   profileAgent: ManagedImageAgent = agent,
 ): ManagedWorkloadReceipt {
   const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile(profileAgent));
-  const digest =
-    agent === "openclaw" ? "a" : agent === "hermes" ? "b" : agent === "pi" ? "e" : "c";
+  const digest = agent === "openclaw" ? "a" : agent === "hermes" ? "b" : agent === "pi" ? "e" : "c";
   return {
     schemaVersion: 1,
     kind: "managed-image",
@@ -61,24 +60,25 @@ function managedEntry(
 }
 
 describe("managed workload authority", () => {
-  it.each(
-    AGENTS.flatMap((agent) => PLATFORMS.map((platform) => [agent, platform] as const)),
-  )("validates exact %s authority on %s", (agent, platform) => {
-    const row = managedEntry(agent, platform);
-    const authority = readManagedWorkloadAuthority(row);
+  it.each(AGENTS.flatMap((agent) => PLATFORMS.map((platform) => [agent, platform] as const)))(
+    "validates exact %s authority on %s",
+    (agent, platform) => {
+      const row = managedEntry(agent, platform);
+      const authority = readManagedWorkloadAuthority(row);
 
-    expect(authority).toMatchObject({
-      agent,
-      contract: { agent, platform },
-      profile: { agent },
-      receipt: { kind: "managed-image", platform },
-    });
-    expect(authority?.receipt).not.toBe(row.workload);
-    expect(Object.isFrozen(authority)).toBe(true);
-    expect(Object.isFrozen(authority?.receipt)).toBe(true);
-    expect(Object.isFrozen(authority?.contract.source)).toBe(true);
-    expect(Object.isFrozen(authority?.profile.proxy)).toBe(true);
-  });
+      expect(authority).toMatchObject({
+        agent,
+        contract: { agent, platform },
+        profile: { agent },
+        receipt: { kind: "managed-image", platform },
+      });
+      expect(authority?.receipt).not.toBe(row.workload);
+      expect(Object.isFrozen(authority)).toBe(true);
+      expect(Object.isFrozen(authority?.receipt)).toBe(true);
+      expect(Object.isFrozen(authority?.contract.source)).toBe(true);
+      expect(Object.isFrozen(authority?.profile.proxy)).toBe(true);
+    },
+  );
 
   it("returns null only for an unambiguously non-managed workload", () => {
     expect(

@@ -356,12 +356,12 @@ def exit_with_receipt(receipt):
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
         local_paired_operator_token = ''
-        observe_deadline = time.monotonic() + ${CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
+        observe_deadline = approval_time.monotonic() + ${CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S}
         while not sync_approved_clone_device_auth(device, previous_approval_token):
-            remaining_observe_time = observe_deadline - time.monotonic()
+            remaining_observe_time = observe_deadline - approval_time.monotonic()
             if remaining_observe_time <= 0:
                 ${failedApproveAction}
-            time.sleep(min(${AUTO_PAIR_POST_TIMEOUT_POLL_S}, remaining_observe_time))
+            approval_time.sleep(min(${AUTO_PAIR_POST_TIMEOUT_POLL_S}, remaining_observe_time))
         approved_count += 1
     except (FileNotFoundError, OSError):
         ${failedApproveAction}
@@ -551,7 +551,7 @@ for pending_read_attempt in range(PENDING_READ_ATTEMPTS):
             ${exitWithReceipt("list-pending-invalid-shape")}
         break
     if pending_read_attempt + 1 < PENDING_READ_ATTEMPTS:
-        time.sleep(PENDING_READ_POLL_S)
+        approval_time.sleep(PENDING_READ_POLL_S)
 else:
     if pending_read_failure == 'unavailable':
         ${exitWithReceipt("list-pending-unavailable")}
@@ -1020,6 +1020,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 ${receiptPrelude}
 try:
     policy_source = base64.b64decode(
@@ -1029,6 +1030,7 @@ try:
     exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
     approval_request_decision = policy_globals['approval_request_decision']
     gateway_approval_env = policy_globals['gateway_approval_env']
+    approval_time = policy_globals.get('approval_time', time)
 except Exception:
     ${exitWithReceipt("policy-missing")}
 

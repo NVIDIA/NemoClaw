@@ -116,6 +116,96 @@ function waitForFile(filename: string, timeoutMs = 2_000): void {
 }
 
 describe("source require loader", () => {
+  it.each([
+    { built: false, prepareBuild: (_root: string) => {} },
+    {
+      built: true,
+      prepareBuild: (root: string) => {
+        fs.mkdirSync(path.join(root, "nemoclaw/dist/shared"), { recursive: true });
+        fs.writeFileSync(
+          path.join(root, "nemoclaw/dist/shared/fixture.cjs"),
+          "exports.value = 7;\n",
+        );
+      },
+    },
+  ])(
+    "loads shared CommonJS dependencies when build output exists: $built",
+    ({ built, prepareBuild }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-require-shared-"));
+      roots.push(root);
+      fs.mkdirSync(path.join(root, "test/helpers"), { recursive: true });
+      fs.mkdirSync(path.join(root, "src"));
+      fs.mkdirSync(path.join(root, "nemoclaw/src/shared"), { recursive: true });
+      fs.mkdirSync(path.join(root, "node_modules"));
+      fs.copyFileSync(
+        SOURCE_REQUIRE_HOOK,
+        path.join(root, "test/helpers/onboard-script-mocks.cjs"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/onboard-fixture-contract.json"),
+        path.join(root, "test/helpers/onboard-fixture-contract.json"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/register-source-require.ts"),
+        path.join(root, "test/helpers/register-source-require.ts"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/source-require-cache.ts"),
+        path.join(root, "test/helpers/source-require-cache.ts"),
+      );
+      fs.symlinkSync(
+        path.join(REPO_ROOT, "node_modules/typescript"),
+        path.join(root, "node_modules/typescript"),
+        "junction",
+      );
+      fs.writeFileSync(
+        path.join(root, "tsconfig.src.json"),
+        JSON.stringify({
+          compilerOptions: { module: "commonjs", target: "ES2022", esModuleInterop: true },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(root, "src/entry.ts"),
+        'export { value } from "../nemoclaw/dist/shared/fixture.cjs";\n',
+      );
+      fs.writeFileSync(
+        path.join(root, "nemoclaw/src/shared/fixture.cts"),
+        'export { value } from "./nested.cjs";\n',
+      );
+      fs.writeFileSync(
+        path.join(root, "nemoclaw/src/shared/nested.cts"),
+        "export const value: number = 42;\n",
+      );
+      prepareBuild(root);
+      const script = `
+const assert = require("node:assert/strict");
+const { createRequire } = require("node:module");
+require("./test/helpers/onboard-script-mocks.cjs");
+assert.equal(require("./src/entry.ts").value, ${built ? 7 : 42});
+const sourceRequire = createRequire(process.cwd() + "/src/entry.ts");
+assert.throws(() => sourceRequire("../other/dist/shared/fixture.cjs"), { code: "MODULE_NOT_FOUND" });
+assert.throws(() => sourceRequire("../nemoclaw/dist/shared/missing.cjs"), { code: "MODULE_NOT_FOUND" });
+const packagedRequire = createRequire(process.cwd() + "/dist/entry.js");
+${
+  built
+    ? 'assert.equal(packagedRequire("../nemoclaw/dist/shared/fixture.cjs").value, 7);'
+    : 'assert.throws(() => packagedRequire("../nemoclaw/dist/shared/fixture.cjs"), { code: "MODULE_NOT_FOUND" });'
+}
+`;
+      const result = spawnSync(process.execPath, ["-e", script], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
+        },
+        timeout: 10_000,
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(root, "nemoclaw/dist"))).toBe(built);
+    },
+  );
+
   it("emits opt-in cache statistics and reuses a cross-process cache entry (#6237)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-require-"));
     roots.push(root);
@@ -264,7 +354,17 @@ publishWhenConsumerIsReady();
           NEMOCLAW_SOURCE_REQUIRE_CACHE_POLL_MS: "5",
           NEMOCLAW_SOURCE_REQUIRE_CACHE_WAIT_MS: "2000",
         },
-        consumerReadyPath,
+        undefined,
+        `
+const fs = require("node:fs");
+const originalReadFileSync = fs.readFileSync;
+fs.readFileSync = function signalFirstCacheRead(filename, ...args) {
+  if (filename === ${JSON.stringify(cachePath)}) {
+    fs.writeFileSync(${JSON.stringify(consumerReadyPath)}, "ready\\n");
+  }
+  return originalReadFileSync.call(this, filename, ...args);
+};
+`,
       );
       const [code, signal] =
         publisher.exitCode !== null || publisher.signalCode !== null
@@ -424,17 +524,22 @@ fs.linkSync = function replaceSourceRequireLock(existingPath, claimPath) {
     expect(fs.readFileSync(targetPath, "utf8")).toBe("sentinel\n");
   });
 
-  it("limits bootstrap transpilation to source-mapped loader helpers (#6237)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-require-bootstrap-"));
+  it("defers the allowlisted bootstrap until the first CommonJS source require (#6237)", () => {
+    const root = fs.mkdtempSync(path.join(REPO_ROOT, "src/.source-require-bootstrap-"));
     roots.push(root);
+    const fixturePath = path.join(root, "fixture.ts");
     const unexpectedPath = path.join(root, "unexpected.ts");
+    fs.writeFileSync(fixturePath, "export const value = 42;\n");
     fs.writeFileSync(unexpectedPath, "export const unexpected = true;\n");
+    trackCacheArtifacts(fs.realpathSync(fixturePath));
     const script = `
 const Module = require("node:module");
 const path = require("node:path");
+const typescriptPath = require.resolve("typescript");
+const nativeTypeScriptLoader = Module._extensions[".ts"];
 const expected = new Set([
-  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "..", "helpers", "register-source-require.ts"))}),
-  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "..", "helpers", "source-require-cache.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "register-source-require.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-cache.ts"))}),
 ]);
 const compiled = [];
 const originalCompile = Module.prototype._compile;
@@ -445,29 +550,47 @@ Module.prototype._compile = function recordBootstrapSource(source, filename) {
   return originalCompile.call(this, source, filename);
 };
 let rejectedUnexpected = false;
+let testedBootstrap = false;
+let installedTypeScriptLoader;
 Object.defineProperty(Module._extensions, ".ts", {
   configurable: true,
+  enumerable: true,
   get() {
-    return undefined;
+    return installedTypeScriptLoader;
   },
   set(handler) {
-    try {
-      handler({ _compile() { throw new Error("unexpected module was compiled"); } }, ${JSON.stringify(unexpectedPath)});
-    } catch (error) {
-      rejectedUnexpected = String(error).includes("Refusing to bootstrap unexpected TypeScript module");
+    // The lazy hook is installed and later restored before bootstrap. Only
+    // exercise the bootstrap handler after TypeScript has been loaded.
+    if (require.cache[typescriptPath] !== undefined && handler && !testedBootstrap) {
+      testedBootstrap = true;
+      try {
+        handler({ _compile() { throw new Error("unexpected module was compiled"); } }, ${JSON.stringify(unexpectedPath)});
+      } catch (error) {
+        rejectedUnexpected = String(error).includes("Refusing to bootstrap unexpected TypeScript module");
+      }
     }
-    Object.defineProperty(Module._extensions, ".ts", {
-      configurable: true,
-      enumerable: true,
-      value: handler,
-      writable: true,
-    });
+    installedTypeScriptLoader = handler;
   },
 });
 require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});
-if (!rejectedUnexpected || compiled.length !== 2 || compiled.some((entry) => !entry.sourceMapped)) {
-  console.error(JSON.stringify({ compiled, rejectedUnexpected }));
+if (require.cache[typescriptPath] !== undefined) {
+  console.error(JSON.stringify({ typescriptLoaded: true }));
   process.exitCode = 9;
+} else {
+  const requireSource = Module.createRequire(path.join(${JSON.stringify(root)}, "entry.cjs"));
+  const fixture = requireSource("./fixture.js");
+  const registeredTypeScriptLoader = Module._extensions[".ts"];
+  if (
+    fixture.value !== 42 ||
+    require.cache[typescriptPath] === undefined ||
+    registeredTypeScriptLoader === nativeTypeScriptLoader ||
+    !rejectedUnexpected ||
+    compiled.length !== 2 ||
+    compiled.some((entry) => !entry.sourceMapped)
+  ) {
+    console.error(JSON.stringify({ fixture, compiled, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
+    process.exitCode = 9;
+  }
 }
 `;
     const result = spawnSync(process.execPath, ["-e", script], {

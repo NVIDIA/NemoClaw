@@ -27,7 +27,6 @@ export interface SandboxEntry {
   sandboxGpuDevice?: string | null;
   openshellDriver?: string | null;
   openshellVersion?: string | null;
-  policies?: string[] | null;
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
@@ -88,6 +87,8 @@ export interface ListSandboxesCommandDeps {
   loadLastSession: () => OnboardingSessionSummary | null;
   /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
   getActiveSessionCount?: (sandboxName: string) => number | null;
+  /** Derive applied preset names from the current OpenShell policy. */
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>;
   log?: (message?: string) => void;
 }
 
@@ -153,6 +154,8 @@ export interface ShowStatusCommandDeps {
    * that case. #2604.
    */
   getActiveSessionCount?: (sandboxName: string) => number | null;
+  /** Derive applied preset names from the current OpenShell policy. */
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>;
   /**
    * Report whether the named NemoClaw gateway is reachable. When omitted,
    * `showStatusCommand` keeps its legacy 0-exit behaviour; when provided and
@@ -160,7 +163,7 @@ export interface ShowStatusCommandDeps {
    * diagnostic and sets `process.exitCode = 1` so shell and CI callers can
    * detect the degraded state from `$?` (#3386).
    */
-  getGatewayHealth?: () => GatewayHealth;
+  getGatewayHealth?: () => GatewayHealth | Promise<GatewayHealth>;
   /** Render lifecycle-aware recovery guidance after an unhealthy gateway probe. */
   getGatewayStartGuidance?: () => string;
   /** Last authority durably selected by onboarding, with secret-free identity fields. */
@@ -174,9 +177,7 @@ export interface ShowStatusCommandDeps {
   findMessagingOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
   /** Receipt-only schema-5 phase lookup held by the global portable host fence. */
-  getHermesPortablePhase?: (
-    sandboxName: string,
-  ) => "pending" | "configuring" | "active" | null;
+  getHermesPortablePhase?: (sandboxName: string) => "pending" | "configuring" | "active" | null;
   /** Count receipt-root authority so an unregistered phase cannot permit ambient probes. */
   getHermesPortableHostAuthorityCount?: () => number;
   log?: (message?: string) => void;
@@ -293,11 +294,12 @@ function resolveDisplayAgent(sandbox: SandboxEntry): string {
  * resolving inference/GPU fields and marking gateway-recovered rows so unknown
  * agent/GPU state renders as "unknown" rather than OpenClaw/CPU defaults.
  */
-function buildSandboxInventoryRow(
+async function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
   getActiveSessionCount?: (sandboxName: string) => number | null,
-): SandboxInventoryRow {
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
+): Promise<SandboxInventoryRow> {
   const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox.name) : null;
   const sandboxGpuEnabled =
     typeof sandbox.sandboxGpuEnabled === "boolean"
@@ -316,7 +318,7 @@ function buildSandboxInventoryRow(
     sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
+    policies: (await getPolicyPresets?.(sandbox.name)) ?? [],
     agent: resolveDisplayAgent(sandbox),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
@@ -342,6 +344,18 @@ export async function getSandboxInventory(
       : null;
   const incompleteOnboarding = projectIncompleteOnboarding(recovery.sandboxes, lastSession);
 
+  const rows = await Promise.all(
+    recovery.sandboxes
+      .filter(isPublishedSandboxRegistration)
+      .map((sandbox) =>
+        buildSandboxInventoryRow(
+          sandbox,
+          resolvedDefault,
+          deps.getActiveSessionCount,
+          deps.getPolicyPresets,
+        ),
+      ),
+  );
   return {
     schemaVersion: 1,
     defaultSandbox: resolvedDefault,
@@ -353,11 +367,7 @@ export async function getSandboxInventory(
     incompleteOnboarding,
     // Pending rows are internal lifecycle state. They remain readable by their
     // recovery authority, but must not appear as completed sandboxes.
-    sandboxes: recovery.sandboxes
-      .filter(isPublishedSandboxRegistration)
-      .map((sandbox) =>
-        buildSandboxInventoryRow(sandbox, resolvedDefault, deps.getActiveSessionCount),
-      ),
+    sandboxes: rows,
   };
 }
 
@@ -468,12 +478,13 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
   renderSandboxInventoryText(inventory, log, liveInference);
 }
 
-function buildStatusSandboxRow(
+async function buildStatusSandboxRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
   liveInference: GatewayInference | null,
   portablePhase: "pending" | "configuring" | "active" | null,
-): StatusSandboxRow {
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
+): Promise<StatusSandboxRow> {
   const isDefault = sandbox.name === defaultSandbox;
   const liveModel = isDefault ? liveInference?.model : null;
   const liveProvider = isDefault ? liveInference?.provider : null;
@@ -497,11 +508,9 @@ function buildStatusSandboxRow(
     sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: Array.isArray(sandbox.policies)
-      ? sandbox.policies
-          .filter((policy): policy is string => typeof policy === "string")
-          .map((policy) => safeStatusString(policy) || policy)
-      : [],
+    policies: ((await getPolicyPresets?.(sandbox.name)) ?? []).map(
+      (policy) => safeStatusString(policy) || policy,
+    ),
     agent: redactFull(resolveDisplayAgent(sandbox)),
     ...(portablePhase ? { phase: portablePhase } : {}),
     ...(dashboardPort != null ? { dashboardPort } : {}),
@@ -556,7 +565,7 @@ function normalizeGatewayAuthority(
   };
 }
 
-export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
+export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<StatusReport> {
   const sandboxList = deps.listSandboxes();
   // Pending registrations are recovery state, not normal sandbox inventory.
   const sandboxes = sandboxList.sandboxes.filter(isPublishedSandboxRegistration);
@@ -578,19 +587,28 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
     sandboxList.sandboxes,
     deps.loadLastSession?.(),
   );
-  const liveInference =
-    sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
+  const liveInference = sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
   const gatewayHealth =
     deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable
-      ? deps.getGatewayHealth()
+      ? await deps.getGatewayHealth()
       : null;
-  const services =
-    !hasHermesPortable
-      ? (deps
-      .getServiceStatuses?.({ sandboxName: resolvedDefault || undefined })
-          .map(normalizeServiceStatus) ?? [])
-      : [];
+  const services = !hasHermesPortable
+    ? (deps
+        .getServiceStatuses?.({ sandboxName: resolvedDefault || undefined })
+        .map(normalizeServiceStatus) ?? [])
+    : [];
 
+  const rows = await Promise.all(
+    sandboxes.map((sandbox) =>
+      buildStatusSandboxRow(
+        sandbox,
+        resolvedDefault,
+        liveInference,
+        portablePhases.get(sandbox.name) ?? null,
+        deps.getPolicyPresets,
+      ),
+    ),
+  );
   return {
     schemaVersion: 1,
     defaultSandbox: safeStatusString(resolvedDefault),
@@ -605,14 +623,7 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
       ? null
       : normalizeGatewayAuthority(deps.getGatewayAuthority?.()),
     incompleteOnboarding,
-    sandboxes: sandboxes.map((sandbox) =>
-      buildStatusSandboxRow(
-        sandbox,
-        resolvedDefault,
-        liveInference,
-        portablePhases.get(sandbox.name) ?? null,
-      ),
-    ),
+    sandboxes: rows,
     services,
   };
 }
@@ -625,7 +636,7 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
  * from the stored onboarded model a `(onboarded: …)` line is appended.
  * Non-default rows and the unreachable-gateway case fall back to stored.
  */
-export function showStatusCommand(deps: ShowStatusCommandDeps): void {
+export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<void> {
   const log = deps.log ?? console.log;
   const sandboxList = deps.listSandboxes();
   // Pending registrations are recovery state, not normal sandbox inventory.
@@ -676,7 +687,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       // `nemoclaw <name> status` to see provider and session state.
       if (provider || model) {
         const parts = [provider, model].filter(Boolean).join(" / ");
-        log(`      Inference: ${parts}`);
+        log(`      Inference (configured): ${parts}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
         const count = deps.getActiveSessionCount(sb.name);
@@ -715,7 +726,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   // sandboxes has no expectation of a configured gateway, so the check is
   // suppressed in that case to avoid a spurious failure exit code.
   if (deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable) {
-    const health = deps.getGatewayHealth();
+    const health = await deps.getGatewayHealth();
     if (!health.healthy) {
       log("");
       const detail = health.reason ? ` (${health.reason})` : "";

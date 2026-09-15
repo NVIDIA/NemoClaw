@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Images / Base Image Platform
+name: Images / Build Base Image Platform
 
 on:
   workflow_call:
@@ -50,7 +50,7 @@ permissions:
 
 jobs:
   build:
-    name: Platform Digest / ${{ inputs.agent }} / ${{ inputs.arch }}
+    name: Build ${{ inputs.agent }} base image (${{ inputs.arch }})
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     permissions:
@@ -63,6 +63,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Download same-run npm audit evidence
+        if: inputs.agent == 'openclaw'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: reviewed-npm-audit
+          path: ${{ runner.temp }}/reviewed-npm-audit
 
       - name: Build and publish platform digest
         id: platform
@@ -77,3 +84,6 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.registry_password }}
           openclaw-version: ${{ inputs.openclaw-version }}
+          mcporter-audit-receipt: ${{ inputs.agent == 'openclaw' && format('{0}/reviewed-npm-audit/mcporter-runtime.receipt.json', runner.temp) || '' }}
+          mcporter-audit-raw-report: ${{ inputs.agent == 'openclaw' && format('{0}/reviewed-npm-audit/mcporter-runtime.raw.json', runner.temp) || '' }}
+          mcporter-audit-policy-result: ${{ inputs.agent == 'openclaw' && format('{0}/reviewed-npm-audit/mcporter-runtime.policy.json', runner.temp) || '' }}

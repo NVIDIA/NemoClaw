@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   detectGpu: vi.fn(),
+  detectGpuWithRuntimeProviderProof: vi.fn(),
   enforceDockerGpuPatchPreserveNetwork: vi.fn(),
   ensureValidatedWebSearchCredential: vi.fn(),
   isDockerDesktopWslRuntime: vi.fn(),
@@ -25,11 +26,15 @@ vi.mock("../../inference/nim", () => ({
 
 vi.mock("../../onboard/gateway-provider-metadata", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../onboard/gateway-provider-metadata")>();
-  return { ...actual, readGatewayProviderMetadata: mocks.readGatewayProviderMetadata };
+  return {
+    ...actual,
+    readGatewayProviderMetadata: mocks.readGatewayProviderMetadata,
+  };
 });
 
 vi.mock("./rebuild-onboard-dependencies", () => ({
   rebuildOnboardDependencies: {
+    detectGpuWithRuntimeProviderProof: mocks.detectGpuWithRuntimeProviderProof,
     ensureValidatedWebSearchCredential: mocks.ensureValidatedWebSearchCredential,
     preflightAuthoritativeRebuildTarget: mocks.preflightAuthoritativeRebuildTarget,
   },
@@ -75,7 +80,7 @@ const TARGET = {
   fromDockerfile: null,
   agentDefinition: null,
 } as unknown as RebuildTargetConfig;
-const ENTRY = { mcp: null } as unknown as RebuildSandboxEntry;
+const ENTRY = { mcp: null, openshellDriver: "docker" } as unknown as RebuildSandboxEntry;
 const RECREATE_OPTIONS = {
   sandboxGpu: "enable",
   sandboxGpuDevice: null,
@@ -87,7 +92,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
-    mocks.detectGpu.mockReturnValue({
+    mocks.detectGpuWithRuntimeProviderProof.mockReturnValue({
       type: "nvidia",
       name: "NVIDIA test GPU",
       count: 1,
@@ -95,6 +100,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
       perGpuMB: 24_576,
       nimCapable: true,
       platform: "linux",
+      containerGpuProof: { providerId: "docker", passed: true },
     });
     mocks.isLinuxDockerDriverGatewayEnabled.mockReturnValue(true);
     mocks.isDockerDesktopWslRuntime.mockReturnValue(false);
@@ -111,43 +117,46 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
     { control: "auto", selectedRoute: "native" },
     { control: "fallback", selectedRoute: "native" },
     { control: "1", selectedRoute: "compatibility" },
-  ] as const)("passes the $selectedRoute rebuild GPU route into network preflight (#6110)", async ({
-    control,
-    selectedRoute,
-  }) => {
-    vi.stubEnv("NEMOCLAW_DOCKER_GPU_PATCH", control);
-    const log = vi.fn();
-    const bail = vi.fn((message: string): never => {
-      throw new Error(message);
-    });
+  ] as const)(
+    "passes the $selectedRoute rebuild GPU route into network preflight (#6110)",
+    async ({ control, selectedRoute }) => {
+      vi.stubEnv("NEMOCLAW_DOCKER_GPU_PATCH", control);
+      const log = vi.fn();
+      const bail = vi.fn((message: string): never => {
+        throw new Error(message);
+      });
 
-    await expect(
-      preflightRebuildTargetRuntime(TARGET, ENTRY, RECREATE_OPTIONS, log, bail, {
-        skipImagePreflight: true,
-      }),
-    ).resolves.toEqual({
-      ok: true,
-      preparedImage: null,
-      requiresGatewayProviderReconfigure: false,
-    });
+      await expect(
+        preflightRebuildTargetRuntime(TARGET, ENTRY, RECREATE_OPTIONS, log, bail, {
+          skipImagePreflight: true,
+        }),
+      ).resolves.toEqual({
+        ok: true,
+        preparedImage: null,
+        requiresGatewayProviderReconfigure: false,
+      });
 
-    expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledOnce();
-    expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledWith(
-      "ollama-local",
-      expect.objectContaining({
-        sandboxGpuEnabled: true,
-        hostGpuPlatform: "linux",
-        sandboxGpuDevice: null,
-      }),
-      {
-        dockerDriverGateway: true,
-        selectedRoute,
-        gatewayPort: 8080,
-        log,
-      },
-    );
-    expect(bail).not.toHaveBeenCalled();
-  });
+      expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledOnce();
+      expect(mocks.detectGpuWithRuntimeProviderProof).toHaveBeenCalledExactlyOnceWith("docker");
+      expect(mocks.detectGpu).not.toHaveBeenCalled();
+      expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledWith(
+        "ollama-local",
+        expect.objectContaining({
+          sandboxGpuEnabled: true,
+          hostGpuPlatform: "linux",
+          sandboxGpuDevice: null,
+        }),
+        {
+          dockerDriverGateway: true,
+          selectedRoute,
+          gatewayPort: 8080,
+          log,
+          reverifyBridgeReachability: expect.any(Function),
+        },
+      );
+      expect(bail).not.toHaveBeenCalled();
+    },
+  );
 
   it("passes the immutable base provenance into replacement image preflight (#7144)", async () => {
     const metadata = {
@@ -167,7 +176,11 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
     } as const;
     const imagePreflight = vi
       .spyOn(rebuildImagePreflight, "preflightRebuildImage")
-      .mockResolvedValue({ ok: true, imageTag: "preflight:test", prepared: null } as never);
+      .mockResolvedValue({
+        ok: true,
+        imageTag: "preflight:test",
+        prepared: null,
+      } as never);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
@@ -198,10 +211,17 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
 describe("authoritative rebuild readiness", () => {
   it("passes recorded managed-vLLM intent to the pre-delete readiness gate (#9292)", async () => {
     const authority = { checkpoint: "gateway-authority" };
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
     mocks.preflightAuthoritativeRebuildTarget.mockResolvedValue(authority);
     const recreateOptions = {
       ...RECREATE_OPTIONS,
       allowDeferredN1xManagedVllm: true,
+      allowLegacyDgxStationQualification: true,
+      runtimeSelection,
     } as RebuildRecreateOnboardOpts;
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -219,8 +239,10 @@ describe("authoritative rebuild readiness", () => {
     expect(mocks.preflightAuthoritativeRebuildTarget).toHaveBeenCalledWith(
       expect.objectContaining({
         allowDeferredN1xManagedVllm: true,
+        allowLegacyDgxStationQualification: true,
         provider: "vllm-local",
         model: "test-model",
+        runtimeSelection,
         sandboxName: "alpha",
       }),
     );
@@ -232,9 +254,14 @@ describe("authoritative rebuild readiness", () => {
 describe("preflightRebuildTargetRuntime web search credential", () => {
   const WEB_SEARCH_TARGET = {
     ...TARGET,
-    durableConfig: { webSearchConfig: { fetchEnabled: true, provider: "brave" } },
+    durableConfig: {
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+    },
   } as unknown as RebuildTargetConfig;
-  const WEB_SEARCH_ENTRY = { name: "my-assistant", mcp: null } as unknown as RebuildSandboxEntry;
+  const WEB_SEARCH_ENTRY = {
+    name: "my-assistant",
+    mcp: null,
+  } as unknown as RebuildSandboxEntry;
   const GATEWAY_BINDING_METADATA = {
     name: "my-assistant-brave-search",
     type: "brave",
@@ -244,7 +271,10 @@ describe("preflightRebuildTargetRuntime web search credential", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
+    Object.defineProperty(process, "platform", {
+      ...platformDescriptor,
+      value: "linux",
+    });
     vi.stubEnv("BRAVE_API_KEY", "");
     mocks.detectGpu.mockReturnValue({
       type: "nvidia",
@@ -266,9 +296,11 @@ describe("preflightRebuildTargetRuntime web search credential", () => {
     vi.unstubAllEnvs();
   });
 
-  async function runPreflight(
-    target: RebuildTargetConfig = WEB_SEARCH_TARGET,
-  ): Promise<{ result: unknown; log: ReturnType<typeof vi.fn>; bail: ReturnType<typeof vi.fn> }> {
+  async function runPreflight(target: RebuildTargetConfig = WEB_SEARCH_TARGET): Promise<{
+    result: unknown;
+    log: ReturnType<typeof vi.fn>;
+    bail: ReturnType<typeof vi.fn>;
+  }> {
     const log = vi.fn();
     const bail = vi.fn();
     const result = await preflightRebuildTargetRuntime(
@@ -354,8 +386,13 @@ describe("preflightRebuildTargetRuntime web search credential", () => {
   it("keeps the validation path for non-OpenClaw agents that never reuse the binding", async () => {
     const hermesTarget = {
       ...WEB_SEARCH_TARGET,
-      durableConfig: { webSearchConfig: { fetchEnabled: true, provider: "tavily" } },
-      agentDefinition: { name: "hermes", webSearch: { supported: true, providers: ["tavily"] } },
+      durableConfig: {
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      },
+      agentDefinition: {
+        name: "hermes",
+        webSearch: { supported: true, providers: ["tavily"] },
+      },
     } as unknown as RebuildTargetConfig;
     mocks.ensureValidatedWebSearchCredential.mockResolvedValue("gateway-side-key");
 

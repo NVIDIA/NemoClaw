@@ -106,7 +106,6 @@ const STALE_LOCK_MS = 30_000;
 const PROCESS_EXIT_WAIT_ATTEMPTS = 30;
 const PROCESS_EXIT_WAIT_MS = 100;
 const ADAPTER_PROTOCOL_VERSION = "3";
-const OPEN_SHELL_DOCKER_NETWORK = "openshell-docker";
 
 interface AdapterIdentity {
   protocolVersion: string;
@@ -186,7 +185,7 @@ function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
   return normalized === "127.0.0.1" || normalized === "::1";
 }
 
-/** Parse one exact Docker IPAM subnet before it becomes a route-source capability. */
+/** Parse one exact runtime-provider subnet before it becomes a route-source capability. */
 function normalizeAllowedSourceCidr(value: string): string | null {
   const candidate = value.trim();
   const slash = candidate.lastIndexOf("/");
@@ -240,43 +239,6 @@ function routeSourcePolicyDigest(cidrs: readonly string[]): string {
     .createHash("sha256")
     .update(`nemoclaw:https-pin-route-sources:v1\0${[...cidrs].sort().join("\0")}`)
     .digest("hex");
-}
-
-function discoverOpenShellBridgeSourceCidrs(capture: typeof runCapture = runCapture): string[] {
-  let raw = "";
-  try {
-    raw = capture(
-      [
-        "docker",
-        "network",
-        "inspect",
-        OPEN_SHELL_DOCKER_NETWORK,
-        "--format",
-        "{{json .IPAM.Config}}",
-      ],
-      { ignoreError: true },
-    );
-  } catch {
-    raw = "";
-  }
-  try {
-    const parsed = JSON.parse(raw.trim()) as unknown;
-    if (!Array.isArray(parsed)) throw new Error("expected Docker IPAM array");
-    const cidrs = parsed
-      .map((entry) =>
-        entry && typeof entry === "object" && typeof (entry as JsonObject).Subnet === "string"
-          ? String((entry as JsonObject).Subnet)
-          : "",
-      )
-      .map(normalizeAllowedSourceCidr)
-      .filter((entry): entry is string => Boolean(entry));
-    if (cidrs.length > 0) return [...new Set(cidrs)];
-  } catch {
-    // Fall through to the fail-closed error below.
-  }
-  throw new Error(
-    `Cannot determine the ${OPEN_SHELL_DOCKER_NETWORK} bridge source CIDR; refusing to expose the credential-bearing HTTPS Pin Runtime adapter.`,
-  );
 }
 
 function controlChallengeProof(
@@ -453,7 +415,7 @@ function parseRoutePutBody(raw: JsonObject): RouteRuntime {
 export function createHttpsPinRuntimeAdapterServer(options: {
   controlToken: string;
   /**
-   * Exact OpenShell Docker IPAM subnets. Direct unit callers may omit this
+   * Exact runtime-provider sandbox source subnets. Direct unit callers may omit this
    * and get loopback-only behavior; the spawned production adapter always
    * receives inspected bridge CIDRs in its authenticated bootstrap.
    */
@@ -1214,7 +1176,7 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
   lookup?: EndpointDnsLookupFn;
-  discoverAllowedSourceCidrs?: () => string[];
+  discoverAllowedSourceCidrs: () => readonly string[];
 }): Promise<{
   baseUrl: string;
   localBaseUrl: string;
@@ -1266,7 +1228,7 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
     options.endpointUrl,
   );
   const allowedSourceCidrs = buildAllowedRouteSourceMatcher(
-    options.discoverAllowedSourceCidrs?.() ?? discoverOpenShellBridgeSourceCidrs(),
+    options.discoverAllowedSourceCidrs(),
   ).cidrs;
   // Keep the lifecycle lock through the whole adapter-registration
   // transaction. In particular, persistRouteState is a read/modify/write of
@@ -1576,7 +1538,6 @@ export const __test = {
   withAdapterLock,
   computeRespawnState,
   buildAllowedRouteSourceMatcher,
-  discoverOpenShellBridgeSourceCidrs,
   extractPersistedAllowedSourceCidrs,
   findReusableAdapterControlToken,
   revokeRouteLocked,

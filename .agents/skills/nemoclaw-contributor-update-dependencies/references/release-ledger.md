@@ -3,7 +3,7 @@
 
 # Release Ledger
 
-Use a release ledger to divide a dependency upgrade into adjacent migration ranges. Derive exact
+Use a release ledger to divide a dependency upgrade into adjacent migration ranges. Derive
 tag formats, publication mechanisms, and artifact types from the current upstream and downstream
 repositories.
 

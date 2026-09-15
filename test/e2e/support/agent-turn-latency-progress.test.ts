@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -13,8 +17,8 @@ import {
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import type { AgentTurnInference } from "../live/agent-turn-latency-helpers.ts";
 import {
-  bestEffortPreclean,
   cleanupTurnSandboxes,
+  hermesTurnCommand,
   installSandbox,
   turnLatencyInstallAttemptCount,
 } from "../live/agent-turn-latency-helpers.ts";
@@ -83,6 +87,47 @@ function failedProbe(stderr: string, timedOut = false): ShellProbeResult {
     timedOut,
   };
 }
+
+it.each([
+  { name: "without authentication", apiKey: "", headers: ["Content-Type: application/json"] },
+  {
+    name: "with authentication",
+    apiKey: "fixture key with spaces",
+    headers: ["Content-Type: application/json", "Authorization: Bearer fixture key with spaces"],
+  },
+])("preserves quoted Hermes request arguments $name", ({ apiKey, headers }) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw turn request-"));
+  try {
+    const capture = path.join(root, "request.args");
+    const payload = JSON.stringify({
+      messages: [{ role: "user", content: 'What\'s "$HOME" and `literal`?' }],
+    });
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          // Mock environment loading and curl so the probe cannot read host secrets or use the network.
+          "function .() { :; }",
+          'curl() { printf "%s\\0" "$@" > "$REQUEST_ARGS"; printf "%s" "{}" > "$3"; printf "200"; }',
+          hermesTurnCommand(payload),
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, API_SERVER_KEY: apiKey, REQUEST_ARGS: capture, TMPDIR: root },
+        timeout: 5_000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const args = fs.readFileSync(capture, "utf8").split("\0").slice(0, -1);
+    expect(args[args.indexOf("-d") + 1]).toBe(payload);
+    expect(args.filter((_, index) => args[index - 1] === "-H")).toEqual(headers);
+    expect(fs.existsSync(args[args.indexOf("-o") + 1]!)).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("live test progress", () => {
   afterEach(() => {
@@ -348,8 +393,9 @@ describe("live test progress", () => {
 
   it("reports each pre-clean boundary and closes its heartbeat activity", async () => {
     const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
     const openshell = vi.fn<SandboxClient["openshell"]>(async () => successfulProbe());
-    const host = { command } as unknown as HostCliClient;
+    const host = { cleanupGatewayRegistration, command } as unknown as HostCliClient;
     const sandbox = { openshell } as unknown as SandboxClient;
     const activityFinishes: ReturnType<typeof vi.fn>[] = [];
     const progress = {
@@ -365,14 +411,21 @@ describe("live test progress", () => {
     await cleanupTurnSandboxes(host, sandbox, fakeInference(), progress);
 
     expect(command).toHaveBeenCalledTimes(2);
-    expect(openshell).toHaveBeenCalledTimes(4);
+    expect(openshell).toHaveBeenCalledTimes(3);
+    expect(cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.objectContaining({
+        artifactName: "cleanup-gateway-destroy-turn-latency",
+        timeoutMs: 60_000,
+      }),
+    );
     expect(progress.activity.mock.calls).toEqual([
       ["cleanup: destroy openclaw sandbox"],
       ["cleanup: delete openclaw sandbox"],
       ["cleanup: destroy hermes sandbox"],
       ["cleanup: delete hermes sandbox"],
       ["cleanup: stop Hermes API forward"],
-      ["cleanup: destroy OpenShell gateway"],
+      ["cleanup: remove OpenShell gateway"],
     ]);
     expect(progress.event.mock.calls).toEqual([
       ["destroy openclaw sandbox started"],
@@ -385,8 +438,8 @@ describe("live test progress", () => {
       ["delete hermes sandbox passed"],
       ["stop Hermes API forward started"],
       ["stop Hermes API forward passed"],
-      ["destroy OpenShell gateway started"],
-      ["destroy OpenShell gateway passed"],
+      ["remove OpenShell gateway started"],
+      ["remove OpenShell gateway passed"],
     ]);
     expect(activityFinishes).toHaveLength(6);
     activityFinishes.forEach((finish) => {
@@ -394,21 +447,65 @@ describe("live test progress", () => {
     });
   });
 
-  it("keeps cleanup exception payloads out of live console diagnostics", async () => {
+  it("accepts absent OpenShell sandboxes during idempotent pre-clean", async () => {
+    const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
+    const openshell = vi
+      .fn<SandboxClient["openshell"]>()
+      .mockResolvedValueOnce(
+        failedProbe(
+          "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+        ),
+      )
+      .mockResolvedValueOnce(failedProbe("no such sandbox"))
+      .mockResolvedValue(successfulProbe());
+    const host = { cleanupGatewayRegistration, command } as unknown as HostCliClient;
+    const sandbox = { openshell } as unknown as SandboxClient;
+
+    await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).resolves.toBeUndefined();
+
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(openshell).toHaveBeenCalledTimes(3);
+    expect(cleanupGatewayRegistration).toHaveBeenCalledOnce();
+  });
+
+  it("aborts pre-clean on a nonzero command and identifies its redacted artifact", async () => {
+    const failed = failedProbe("opaque-cleanup-secret");
+    failed.artifacts.result = "artifacts/cleanup-openclaw-destroy.json";
+    const host = {
+      command: vi.fn<HostCliClient["command"]>(async () => failed),
+    } as unknown as HostCliClient;
+    const sandbox = {
+      openshell: vi.fn<SandboxClient["openshell"]>(async () => successfulProbe()),
+    } as unknown as SandboxClient;
+
+    await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).rejects.toThrow(
+      "cleanup failed (destroy openclaw sandbox); see artifacts/cleanup-openclaw-destroy.json",
+    );
+    expect(sandbox.openshell).not.toHaveBeenCalled();
+  });
+
+  it("aborts an install retry when cleanup throws without exposing its payload", async () => {
     const secret = "opaque-cleanup-exception-secret";
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      await expect(
-        bestEffortPreclean("destroy OpenClaw sandbox", async () => {
-          throw new Error(secret);
-        }),
-      ).resolves.toBe(false);
-      expect(warning).toHaveBeenCalledWith(
-        "best-effort cleanup failed (destroy OpenClaw sandbox); see redacted command artifacts",
-      );
-      expect(JSON.stringify(warning.mock.calls)).not.toContain(secret);
-    } finally {
-      warning.mockRestore();
-    }
+    const command = vi.fn<HostCliClient["command"]>(async () =>
+      failedProbe("Chat Completions API validation failed: request timed out"),
+    );
+    const host = { command } as unknown as HostCliClient;
+    const cleanupBeforeRetry = vi.fn(async () => {
+      throw new Error(secret);
+    });
+
+    const error = await installSandbox(
+      host,
+      "e2e-openclaw-turn-latency",
+      "openclaw",
+      fakeInference(),
+      cleanupBeforeRetry,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain(secret);
+    expect(command).toHaveBeenCalledOnce();
+    expect(cleanupBeforeRetry).toHaveBeenCalledOnce();
   });
 });

@@ -7,7 +7,9 @@ import type {
   TrustedShellCommand,
 } from "../shell-probe.ts";
 
-export { shellQuote } from "../../../../src/lib/core/shell-quote.ts";
+export function shellQuote(value: unknown): string {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
 
 export interface CommandRunner {
   run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult>;

@@ -11,6 +11,7 @@ import { addDarwinFcntlSealConstants } from "./darwin-fcntl-seal-fixture";
 export const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 export const patcher = path.join(agentDir, "patch-managed-deepagents-code.py");
 const packageFixtureDirs = new Set<string>();
+let cachedPatchedFixture: string | undefined;
 
 export function managedAutoApprovalPath(root: string): string {
   return path.join(root, "managed-auto-approval");
@@ -128,6 +129,16 @@ class CloseError(NetworkError):
 
 
 class ProxyError(TransportError):
+    pass
+`,
+  );
+  writeFixtureFile(tempDir, "langgraph/__init__.py", '"""Test package."""');
+  writeFixtureFile(tempDir, "langgraph/pregel/__init__.py", '"""Test package."""');
+  writeFixtureFile(
+    tempDir,
+    "langgraph/pregel/remote.py",
+    `
+class RemoteException(Exception):
     pass
 `,
   );
@@ -503,6 +514,10 @@ def _fetch_with_redirects(url, *, timeout):
     `
 from __future__ import annotations
 
+from pathlib import Path
+
+DEFAULT_CONFIG_DIR = Path("/tmp")
+
 
 class ModelConfigError(RuntimeError):
     pass
@@ -619,9 +634,9 @@ def _normalize_path(raw_path, project_context, label):
     packageDir,
     "hooks/__init__.py",
     `
-from deepagents_code.hooks.legacy import _load_hooks, _run_single_hook
+from deepagents_code.hooks.legacy import dispatch_hook, _load_hooks, _run_single_hook
 
-__all__ = ["_load_hooks", "_run_single_hook"]
+__all__ = ["dispatch_hook", "_load_hooks", "_run_single_hook"]
 `,
   );
   writeFixtureFile(
@@ -630,6 +645,8 @@ __all__ = ["_load_hooks", "_run_single_hook"]
     `
 from __future__ import annotations
 
+import asyncio
+import json
 import subprocess
 from typing import Any
 
@@ -637,12 +654,54 @@ _hooks_config = None
 
 
 def _load_hooks():
-    return [{"command": ["touch", "/tmp/unsafe-hook"]}]
+    global _hooks_config
+    if _hooks_config is None:
+        from deepagents_code.model_config import DEFAULT_CONFIG_DIR
+
+        path = DEFAULT_CONFIG_DIR / "hooks.json"
+        _hooks_config = json.loads(path.read_text()).get("hooks", []) if path.is_file() else []
+    return _hooks_config
 
 
 def _run_single_hook(command, event, payload_bytes):
     del event, payload_bytes
     subprocess.run(command, check=False)
+
+
+async def dispatch_hook(event, payload):
+    payload_bytes = json.dumps({"event": event, **payload}).encode()
+    for hook in _load_hooks():
+        if not hook.get("events") or event in hook["events"]:
+            await asyncio.to_thread(_run_single_hook, hook["command"], event, payload_bytes)
+`,
+  );
+  writeFixtureFile(
+    packageDir,
+    "hooks/manager.py",
+    `
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+class HooksManager:
+    def __init__(self, enabled):
+        self.enabled = enabled
+
+    @classmethod
+    def create(cls, *args, **kwargs):
+        del args, kwargs
+        return cls(True)
+
+    @classmethod
+    def inert(cls):
+        return cls(False)
+
+    def dispatch(self):
+        marker = os.environ.get("DCODE_FIXTURE_HOOK_MARKER")
+        if self.enabled and marker:
+            Path(marker).touch()
 `,
   );
   writeFixtureFile(
@@ -681,6 +740,9 @@ def _write_newline():
 
 async def _run_non_interactive_impl(*args, **kwargs):
     del args
+    from deepagents_code.hooks.manager import HooksManager
+
+    HooksManager.create().dispatch()
     if kwargs.get("message") == "fixture-json-task":
         return 0
     return kwargs
@@ -1001,7 +1063,12 @@ export function cleanupPackageFixtures(): void {
   packageFixtureDirs.clear();
 }
 
-export function patchFixture(tempDir: string): void {
+export function cleanupCachedPatchedFixture(): void {
+  if (cachedPatchedFixture) fs.rmSync(cachedPatchedFixture, { recursive: true, force: true });
+  cachedPatchedFixture = undefined;
+}
+
+function runPatcher(tempDir: string): void {
   execFileSync("python3", [patcher], {
     env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
   });
@@ -1026,4 +1093,27 @@ export function patchFixture(tempDir: string): void {
     )
     .replace("_MANAGED_FILE_OWNER_UID = 0", `_MANAGED_FILE_OWNER_UID = ${process.getuid?.() ?? 0}`);
   fs.writeFileSync(helperPath, helper, "utf8");
+}
+
+export function createPatchedPackageFixture(): string {
+  if (!cachedPatchedFixture) {
+    cachedPatchedFixture = createPackageFixture();
+    packageFixtureDirs.delete(cachedPatchedFixture);
+    runPatcher(cachedPatchedFixture);
+  }
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patched-"));
+  packageFixtureDirs.add(tempDir);
+  for (const name of fs.readdirSync(cachedPatchedFixture)) {
+    const target = path.join(tempDir, name);
+    fs.rmSync(target, { force: true, recursive: true });
+    fs.cpSync(path.join(cachedPatchedFixture, name), target, { recursive: true });
+  }
+  const helperPath = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
+  const helper = fs.readFileSync(helperPath, "utf8").replaceAll(cachedPatchedFixture, tempDir);
+  fs.writeFileSync(helperPath, helper, "utf8");
+  return tempDir;
+}
+
+export function patchFixture(tempDir: string): void {
+  runPatcher(tempDir);
 }

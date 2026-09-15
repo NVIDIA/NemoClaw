@@ -317,6 +317,19 @@ describe("Podman managed bootstrap held-workload inspection", () => {
     expect(() => inspect(fake.engine)).toThrow("image-owned root supervisor boundary");
   });
 
+  it.each(["0:0", "root:root"])(
+    "accepts the canonical OpenShell root supervisor identity %s",
+    (user) => {
+      const fake = engineWith([
+        result(listOutput()),
+        result(inspectOutput({ user })),
+        result(inspectOutput({ user })),
+      ]);
+
+      expect(inspect(fake.engine).runtimeId).toBe(RUNTIME_ID);
+    },
+  );
+
   it("rejects a stopped held workload before replacement preparation", () => {
     const fake = engineWith([result(listOutput()), result(inspectOutput({ running: false }))]);
 

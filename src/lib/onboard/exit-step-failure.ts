@@ -7,6 +7,7 @@ import { printOnboardResumeHint } from "./resume-hint";
 
 export interface ExitStepFailureSessionDeps {
   loadSession(): Pick<Session, "lastStepStarted"> | null;
+  releaseOnboardLock?(): void;
   finalizeIncompleteOnboardStep(
     stepName: string,
     message?: string | null,
@@ -56,6 +57,7 @@ export function registerIncompleteOnboardExitFailureHandler(
     // printOnboardResumeHint also self-dedupes against tailored hints.
     const interrupted = markLastStartedStepFailed(deps, message, true);
     if (!interrupted) return;
+    if (interrupted.status === "recovery_required") return;
     printOnboardResumeHint(portable, undefined, interrupted.sandboxName);
   };
 
@@ -80,8 +82,15 @@ export function registerIncompleteOnboardExitFailureHandler(
     setImmediate(() => {
       removeListener("SIGINT", onSigint);
       removeListener("SIGTERM", onSigterm);
-      failIncompleteStep(true);
-      kill(pid, signal);
+      try {
+        failIncompleteStep(true);
+      } finally {
+        try {
+          deps.releaseOnboardLock?.();
+        } finally {
+          kill(pid, signal);
+        }
+      }
     });
   };
   const onSigint = (): void => handleSignal("SIGINT");

@@ -37,6 +37,7 @@ const UPLOAD_E2E_ARTIFACTS_ACTION_PREFIX = "NVIDIA/NemoClaw/.github/actions/uplo
 const UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
 const MANAGED_IMAGE_BUILD_CACHE_PUBLISH_STEP = "Publish exact amd64 protected runtime build cache";
+const OPEN_SHELL_SDK_E2E_PACKAGE_UPLOAD_STEP = "Upload reviewed OpenShell SDK archive";
 const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME =
   "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}";
 const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH =
@@ -54,7 +55,6 @@ const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
 };
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
-const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION =
@@ -108,7 +108,43 @@ function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep
   );
 }
 
+function isExactReviewQueueResultUpload(jobName: string, step: WorkflowStep): boolean {
+  return (
+    jobName === "relevant-e2e" &&
+    isDeepStrictEqual(step, {
+      name: "Upload PR E2E results",
+      if: "${{ always() && inputs.checkout_sha != '' }}",
+      uses: UPLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "review-queue-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "${{ runner.temp }}/review-queue-e2e-result.json",
+        "if-no-files-found": "error",
+      },
+    })
+  );
+}
+
+function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep): boolean {
+  const inputs = record(step.with);
+  return (
+    jobName === "package-openshell-sdk" &&
+    step.name === OPEN_SHELL_SDK_E2E_PACKAGE_UPLOAD_STEP &&
+    step.uses === UPLOAD_ARTIFACT_ACTION &&
+    inputs.name === "${{ steps.identity.outputs.artifact_name }}" &&
+    inputs.path === "${{ steps.package.outputs.artifact_path }}" &&
+    inputs["if-no-files-found"] === "error" &&
+    inputs["retention-days"] === 1
+  );
+}
+
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
+  [
+    "external-gateway-health",
+    {
+      name: "e2e-external-gateway-health",
+      path: "e2e-artifacts/live/external-gateway-health/",
+    },
+  ],
   [
     "generate-matrix",
     {
@@ -121,13 +157,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-jetson-nvmap-gpu",
       path: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/",
-    },
-  ],
-  [
-    "retired-selector-compatibility",
-    {
-      name: "e2e-retired-selector-compatibility",
-      path: "e2e-artifacts/live/retired-selector-compatibility/",
     },
   ],
   [
@@ -158,7 +187,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "live",
     {
-      name: "e2e-${{ matrix.id }}",
+      name: "e2e-${{ matrix.execution_id }}",
       path: [
         "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
         "e2e-artifacts/live/${{ matrix.id }}/target.json",
@@ -207,17 +236,10 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "llama-cpp-dgx-spark-qualification",
-    {
-      name: "e2e-llama-cpp-dgx-spark-qualification",
-      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/",
-    },
-  ],
-  [
     "hermes-gpu-startup",
     {
-      name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
-      path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/",
+      name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}/",
     },
   ],
   [
@@ -230,15 +252,15 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "mcp-bridge",
     {
-      name: "e2e-mcp-bridge-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/",
+      name: "e2e-mcp-bridge-${{ matrix.agent }}-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/${{ matrix.runtime_provider }}/",
     },
   ],
   [
     "mcp-bridge-dev",
     {
-      name: "e2e-mcp-bridge-dev-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/",
+      name: "e2e-mcp-bridge-dev-${{ matrix.agent }}-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/${{ matrix.runtime_provider }}/",
     },
   ],
   [
@@ -251,8 +273,36 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "openshell-credential-generation-window",
     {
-      name: "e2e-openshell-credential-generation-window",
-      path: "e2e-artifacts/live/openshell-credential-generation-window/",
+      name: "e2e-openshell-credential-generation-window-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}/",
+    },
+  ],
+  [
+    SHARED_E2E_JOB_ID,
+    {
+      name: "e2e-${{ matrix.execution_id }}",
+      path: "e2e-artifacts/live/${{ matrix.execution_id }}/",
+    },
+  ],
+  [
+    "hermes-e2e",
+    {
+      name: "e2e-hermes-e2e-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/hermes-e2e/${{ matrix.runtime_provider }}/",
+    },
+  ],
+  [
+    "cloud-onboard",
+    {
+      name: "e2e-cloud-onboard-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/cloud-onboard/${{ matrix.runtime_provider }}/",
+    },
+  ],
+  [
+    "messaging-providers",
+    {
+      name: "e2e-messaging-providers-${{ matrix.runtime_provider }}",
+      path: "e2e-artifacts/live/messaging-providers/${{ matrix.runtime_provider }}/",
     },
   ],
 ]);
@@ -315,12 +365,18 @@ function validateUploadPlacement(
   // checkout. Its exact pre-checkout position is enforced by workflow-boundary.
   if (jobName === "generate-matrix") return;
   const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
-  if (
-    stepsAfterUpload.length > 1 ||
-    stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
-  ) {
+  const tailNames = stepsAfterUpload.map((step) => step.name);
+  const validTail = [
+    [],
+    ["Clean up Docker auth"],
+    ["Restore Docker CLI after native Podman E2E"],
+    ["Restore Docker CLI after native Podman E2E", "Clean up Docker auth"],
+    ["Restore Docker CLI after native Podman public install"],
+    ["Restore Docker CLI after native Podman public install", "Clean up Docker auth"],
+  ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
+  if (!validTail) {
     errors.push(
-      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
+      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only native Podman restoration and Docker auth cleanup`,
     );
   }
 }
@@ -398,7 +454,6 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "live" ||
           jobName === "native-runtime-qualification-podman-toolchain" ||
           jobName === "openshell-dev-artifact" ||
-          jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
           SHARED_E2E_JOBS.has(jobName) ||
@@ -462,7 +517,9 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
-        !isExactNativeRuntimeAggregateUpload(jobName, step)
+        !isExactOpenShellSdkE2ePackageUpload(jobName, step) &&
+        !isExactNativeRuntimeAggregateUpload(jobName, step) &&
+        !isExactReviewQueueResultUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }

@@ -69,24 +69,27 @@ describe("Dockerfile build-id cache policy (#4682)", () => {
   it.each([
     ["OpenClaw", path.join(REPO_ROOT, "Dockerfile")],
     ["Hermes", path.join(REPO_ROOT, "agents", "hermes", "Dockerfile")],
-  ])("keeps the managed stock %s context byte-identical across per-run IDs", (agentName, stockDockerfile) => {
-    expect(fs.existsSync(stockDockerfile), `missing managed ${agentName} Dockerfile`).toBe(true);
-    const stockSource = fs.readFileSync(stockDockerfile, "utf8");
-    const buildIdLines = stockSource
-      .split("\n")
-      .filter((line) => line.includes("NEMOCLAW_BUILD_ID") && !line.trimStart().startsWith("#"));
-    expect(buildIdLines, `${agentName} must not consume the preserved build ID`).toEqual([
-      "ARG NEMOCLAW_BUILD_ID=default",
-    ]);
+  ])(
+    "keeps the managed stock %s context byte-identical across per-run IDs",
+    (agentName, stockDockerfile) => {
+      expect(fs.existsSync(stockDockerfile), `missing managed ${agentName} Dockerfile`).toBe(true);
+      const stockSource = fs.readFileSync(stockDockerfile, "utf8");
+      const buildIdLines = stockSource
+        .split("\n")
+        .filter((line) => line.includes("NEMOCLAW_BUILD_ID") && !line.trimStart().startsWith("#"));
+      expect(buildIdLines, `${agentName} must not consume the preserved build ID`).toEqual([
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ]);
 
-    const firstBuild = dockerfileWith(stockSource);
-    const secondBuild = dockerfileWith(stockSource);
-    patchBuildId(firstBuild, "first-per-run-id", "preserve");
-    patchBuildId(secondBuild, "second-per-run-id", "preserve");
+      const firstBuild = dockerfileWith(stockSource);
+      const secondBuild = dockerfileWith(stockSource);
+      patchBuildId(firstBuild, "first-per-run-id", "preserve");
+      patchBuildId(secondBuild, "second-per-run-id", "preserve");
 
-    expect(fs.readFileSync(firstBuild, "utf8")).toBe(fs.readFileSync(secondBuild, "utf8"));
-    expect(fs.readFileSync(firstBuild, "utf8")).toMatch(/^ARG NEMOCLAW_BUILD_ID=default$/m);
-  });
+      expect(fs.readFileSync(firstBuild, "utf8")).toBe(fs.readFileSync(secondBuild, "utf8"));
+      expect(fs.readFileSync(firstBuild, "utf8")).toMatch(/^ARG NEMOCLAW_BUILD_ID=default$/m);
+    },
+  );
 
   it("sanitizes the custom per-run build ID", () => {
     const dockerfile = dockerfileWith("ARG NEMOCLAW_BUILD_ID=default\n");

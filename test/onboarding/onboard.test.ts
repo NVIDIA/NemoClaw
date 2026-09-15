@@ -54,7 +54,7 @@ type OnboardTestInternals = {
     session: T,
     selectedAgentName: string,
   ) => T;
-  arePolicyPresetsApplied: (sandboxName: string, selectedPresets?: string[]) => boolean;
+  arePolicyPresetsApplied: (sandboxName: string, selectedPresets?: string[]) => Promise<boolean>;
   pullAndResolveBaseImageDigest: () => { digest: string | null; ref: string } | null;
   createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
   SANDBOX_BASE_IMAGE: string;
@@ -101,8 +101,8 @@ const createDirectSetupInferenceHarness =
   createDirectSetupInferenceHarnessFactory(createSetupInference);
 
 describe("onboard helpers", () => {
-  it("does not treat an empty policy preset selection as already applied (#6042)", () => {
-    expect(arePolicyPresetsApplied("unused", [])).toBe(false);
+  it("does not treat an empty policy preset selection as already applied (#6042)", async () => {
+    expect(await arePolicyPresetsApplied("unused", [])).toBe(false);
   });
 
   it("adds host proxy variables to sandbox startup env args", () => {
@@ -532,7 +532,6 @@ startGateway(null).catch((error) => {
         messaging: true,
         resourceProfile: true,
       },
-      policyPresets: ["nous-web", "brave"],
       lastCompletedStep: "policies",
       lastStepStarted: "policies",
       steps: {
@@ -570,7 +569,6 @@ startGateway(null).catch((error) => {
       messaging: false,
       resourceProfile: true,
     });
-    expect(cleared.policyPresets).toBeNull();
     expect(cleared.steps.gateway.status).toBe("complete");
     expect(cleared.steps.provider_selection.status).toBe("pending");
     expect(cleared.steps.sandbox.status).toBe("pending");
@@ -665,6 +663,35 @@ startGateway(null).catch((error) => {
     assert.equal(evidence.parentCredentialUnchanged, true);
   });
 
+  it("uses the OpenShell 0.0.116 provider path without a compatibility-profile mutation", () => {
+    const { commands } = runProductionSetupInferenceCredentialBoundary({
+      credentialEnv: "OPENAI_API_KEY",
+      credentialValue: "sk-TEST-NOT-A-REAL-VALUE",
+      endpointUrl: "https://api.openai.com/v1",
+      model: "gpt-5.4",
+      provider: "openai-api",
+    });
+    const commandSequence = commands.map(({ argv }) => argv.join(" "));
+
+    assert.match(commandSequence[0] ?? "", /^provider get -g nemoclaw openai-api$/);
+    assert.ok(
+      commandSequence.some((command) =>
+        /^provider update -g nemoclaw openai-api(?: |$)/.test(command),
+      ),
+    );
+    assert.ok(
+      commandSequence.some((command) =>
+        /^inference set -g nemoclaw --no-verify --provider openai-api --model gpt-5\.4(?: |$)/.test(
+          command,
+        ),
+      ),
+    );
+    assert.ok(
+      commands.every(({ argv }) => !(argv[0] === "provider" && argv[1] === "profile")),
+      `unexpected compatibility-profile command: ${commandSequence.join(" | ")}`,
+    );
+  });
+
   it("restores the dashboard forward when onboarding reuses an existing ready sandbox", async () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-forward-"));
@@ -678,7 +705,7 @@ startGateway(null).catch((error) => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 	const runner = require(${runnerPath});
@@ -689,24 +716,29 @@ startGateway(null).catch((error) => {
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
+existingSandbox.installRuntimeObservation();
+const sandboxCommand = (command) => Array.isArray(command) ? command : _n(command).split(/\s+/u);
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
 	  const profileResult = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  return { status: 0 };
+  return existingSandbox.run(sandboxCommand(command)) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
-	  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return ["my-assistant", "Id: fixture-created-sandbox"].join(String.fromCharCode(10));
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  const sandboxResult = existingSandbox.run(sandboxCommand(command));
+  if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
-	registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
+	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	});
+	}, { sandboxId: existingSandbox.state.sandboxId });
 
 childProcess.spawn = (...args) => {
+  forwardService.recordSpawn(args);
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -717,6 +749,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"))}).isWsl = () => false;
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -749,8 +782,11 @@ const { createSandbox } = require(${onboardPath});
     }>(result.stdout);
     assert.equal(payload.sandboxName, "my-assistant");
     assert.ok(
-      payload.commands.some((entry: CommandEntry) =>
-        entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+      payload.commands.some(
+        (entry: CommandEntry) =>
+          entry.command.includes("forward service my-assistant") &&
+          entry.command.includes("--target-port 18789") &&
+          entry.command.includes("--local 127.0.0.1:18789"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );
@@ -783,7 +819,12 @@ const { createSandbox } = require(${onboardPath});
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? {
+                status: 0,
+                stdout:
+                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+                stderr: "",
+              }
             : undefined,
         overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
       });
@@ -796,12 +837,8 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile validation + provider get + provider update + inference set
-      assert.equal(
-        harness.commands[0].command,
-        "provider profile -g nemoclaw export openai --output json",
-      );
-      assert.equal(harness.commands.length, 4);
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands.length, 3);
     });
   });
   it("accepts gateway inference output that omits the Route line", async () => {
@@ -822,7 +859,12 @@ const { createSandbox } = require(${onboardPath});
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? {
+                status: 0,
+                stdout:
+                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+                stderr: "",
+              }
             : undefined,
         overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
       });
@@ -835,12 +877,8 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile validation + provider get + provider update + inference set
-      assert.equal(
-        harness.commands[0].command,
-        "provider profile -g nemoclaw export openai --output json",
-      );
-      assert.equal(harness.commands.length, 4);
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands.length, 3);
     });
   });
   it("uses the sandbox-base registry in pullAndResolveBaseImageDigest (#1904)", () => {
@@ -1079,7 +1117,7 @@ runner.runCapture = (command) => {
     return "Name: my-assistant\nId: sbx-portable-source\n";
   }
   if (value.includes("sandbox list")) return "my-assistant Ready";
-  if (value.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (value.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return require(${scriptMocksPath}).mockOnboardRunCapture(command, { defaultCurlOutput: "ok" }) || "";
 };
 
@@ -1121,7 +1159,6 @@ const { createSandboxWithTemporaryManagedRuntime } = require(${onboardPath});
       NEMOCLAW_RECREATE_SANDBOX: "1",
     };
     delete env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
-    delete env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",

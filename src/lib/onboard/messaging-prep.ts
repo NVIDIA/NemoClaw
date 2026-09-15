@@ -4,9 +4,10 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { webSearchProviderProfileId } from "../messaging/applier/web-search-provider-profile";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
-import * as braveProviderProfile from "./brave-provider-profile";
+import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
 import {
   bridgeProviderNamesForChannel,
   collectMessagingBridgeTokenDefs,
@@ -21,6 +22,14 @@ export interface MessagingTokenDef {
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
+}
+
+export function hasConfiguredMessagingCredential(tokenDef: MessagingTokenDef): boolean {
+  return [
+    tokenDef.token,
+    ...(tokenDef.additionalCredentials?.map((credential) => credential.token) ?? []),
+  ].some((token) => typeof token === "string" && token.trim().length > 0);
 }
 
 type MessagingCredentialDef = MessagingTokenDef & {
@@ -44,12 +53,17 @@ export interface CreateSandboxMessagingPrepInput {
   getCredential(envKey: string): string | null;
   normalizeCredentialValue(value: unknown): string;
   registerExtraPlaceholderProviders(
-    sandboxName: string,
     messagingTokenDefs: MessagingTokenDef[],
+    log?: (message: string) => void,
+    sources?: ExtraPlaceholderCredentialSources,
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
-  providerExistsInGateway(name: string): boolean;
-  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
+  providerExistsInGateway(name: string): boolean | Promise<boolean>;
+  providerMatchesGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): boolean | Promise<boolean>;
 }
 
 export interface CreateSandboxMessagingPrepResult {
@@ -64,9 +78,9 @@ export interface CreateSandboxMessagingPrepResult {
   missingWebSearchCredentialEnv: string | null;
 }
 
-export function prepareCreateSandboxMessaging(
+export async function prepareCreateSandboxMessaging(
   input: CreateSandboxMessagingPrepInput,
-): CreateSandboxMessagingPrepResult {
+): Promise<CreateSandboxMessagingPrepResult> {
   const requiresExactOpenClawProviderBinding =
     input.requireExactProviderBinding === true &&
     (!input.agentName || input.agentName.trim().toLowerCase() === "openclaw");
@@ -97,7 +111,6 @@ export function prepareCreateSandboxMessaging(
       return {
         name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
         envKey: credential.providerEnvKey,
-        token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
         providerType: staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         retainWhileDisabled: staticProviderType !== null,
       };
@@ -107,18 +120,19 @@ export function prepareCreateSandboxMessaging(
         !enabledEnvKeys ||
         enabledEnvKeys.has(envKey) ||
         (retainWhileDisabled && disabledEnvKeys.has(envKey)),
-    );
+    )
+    .map((definition) => ({
+      ...definition,
+      token: input.getValidatedMessagingTokenByEnvKey(input.channels, definition.envKey),
+    }));
   const messagingTokenDefs: MessagingTokenDef[] = messagingCredentialDefs
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey))
     .map(({ retainWhileDisabled: _retainWhileDisabled, ...definition }) => definition);
 
-  const webSearchEnabled = braveProviderProfile.shouldEnableWebSearch(input.webSearchConfig);
+  const webSearchEnabled = webSearch.isWebSearchEnabled(input.webSearchConfig);
   const webSearchProvider = webSearch.webSearchProviderForConfig(input.webSearchConfig);
   const webSearchCredentialEnv = webSearch.webSearchEnvFor(webSearchProvider);
-  const webSearchProviderType =
-    webSearchProvider === "tavily" && input.agentName?.trim().toLowerCase() === "hermes"
-      ? braveProviderProfile.HERMES_TAVILY_PROVIDER_PROFILE_ID
-      : webSearchProvider;
+  const webSearchProviderType = webSearchProviderProfileId(webSearchProvider, input.agentName);
   const webSearchProviderName = `${input.sandboxName}-${webSearchProvider}-search`;
   const webSearchApiKey = webSearchEnabled
     ? input.getCredential(webSearchCredentialEnv) ||
@@ -129,11 +143,11 @@ export function prepareCreateSandboxMessaging(
     requiresExactOpenClawProviderBinding &&
     webSearchEnabled &&
     !webSearchApiKey &&
-    input.providerMatchesGatewayCredential(
+    (await input.providerMatchesGatewayCredential(
       webSearchProviderName,
       webSearchProviderType,
       webSearchCredentialEnv,
-    );
+    ));
   const missingWebSearchCredentialEnv =
     webSearchEnabled && !webSearchApiKey && !reusableWebSearchProvider
       ? webSearchCredentialEnv
@@ -143,7 +157,7 @@ export function prepareCreateSandboxMessaging(
       disabledChannelNames,
       messagingTokenDefs,
       extraPlaceholderKeys: [],
-      hasMessagingTokens: messagingTokenDefs.some(({ token }) => !!token),
+      hasMessagingTokens: messagingTokenDefs.some(hasConfiguredMessagingCredential),
       reusableMessagingProviders: [],
       reusableMessagingChannels: [],
       missingBridgeChannels: [],
@@ -164,8 +178,8 @@ export function prepareCreateSandboxMessaging(
   // gateway-side (declared by a co-located provider-profile YAML) registers a
   // refresh-minted provider so the gateway mints the token (secret stays
   // gateway-side) and the L7 proxy injects it. The credential value is a sentinel
-  // (minted by refresh, configured post-create in onboard's
-  // upsertMessagingProviders wrapper). Today only Google Chat uses this.
+  // (minted by refresh, configured through the messaging applier). Today only
+  // Google Chat uses this.
   // Resolve the agent instead of defaulting it: an agent no manifest supports
   // must configure no bridge, not the OpenClaw one.
   const bridgeProfiles = messagingProviderProfiles.filter((profile) => profile.strategy !== null);
@@ -183,16 +197,21 @@ export function prepareCreateSandboxMessaging(
   );
 
   const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
-    input.sandboxName,
     messagingTokenDefs,
+    undefined,
+    {
+      env: input.env,
+      getCredential: input.getCredential,
+      normalizeCredentialValue: input.normalizeCredentialValue,
+    },
   );
-  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
+  const hasMessagingTokens = messagingTokenDefs.some(hasConfiguredMessagingCredential);
   const reusableMessagingProviders: string[] = reusableWebSearchProvider
     ? [webSearchProviderName]
     : [];
   const reusableMessagingChannels: string[] = [];
 
-  if (input.enabledChannels != null) {
+  if (input.enabledChannels != null || input.requireExactProviderBinding === true) {
     for (const {
       name,
       envKey,
@@ -203,7 +222,11 @@ export function prepareCreateSandboxMessaging(
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel) continue;
       const channelDisabled = disabledChannelNames.has(channel);
-      if (!input.enabledChannels.includes(channel) && !(channelDisabled && retainWhileDisabled)) {
+      if (
+        input.enabledChannels != null &&
+        !input.enabledChannels.includes(channel) &&
+        !(channelDisabled && retainWhileDisabled)
+      ) {
         continue;
       }
       if (channelDisabled && !retainWhileDisabled) continue;
@@ -213,10 +236,10 @@ export function prepareCreateSandboxMessaging(
       // provider already holding that authority.
       if (token && !channelDisabled) continue;
       const providerReusable = providerType
-        ? input.providerMatchesGatewayCredential(name, providerType, envKey)
+        ? await input.providerMatchesGatewayCredential(name, providerType, envKey)
         : requiresExactOpenClawProviderBinding
-          ? input.providerMatchesGatewayCredential(name, "generic", envKey)
-          : input.providerExistsInGateway(name);
+          ? await input.providerMatchesGatewayCredential(name, "generic", envKey)
+          : await input.providerExistsInGateway(name);
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
       if (!channelDisabled && !reusableMessagingChannels.includes(channel)) {
@@ -231,15 +254,21 @@ export function prepareCreateSandboxMessaging(
   // The name carries the channel but not the agent, and onboard can recreate a
   // sandbox name under a different agent, so match the gateway binding against
   // the selected profile rather than accepting any provider with that name.
-  if (input.enabledChannels != null) {
+  if (input.enabledChannels != null || input.requireExactProviderBinding === true) {
     for (const profile of bridgeProfiles) {
       const channel = profile.channelId;
-      if (!input.enabledChannels.includes(channel)) continue;
+      if (input.enabledChannels != null && !input.enabledChannels.includes(channel)) continue;
       if (disabledChannelNames.has(channel)) continue;
       for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel, [profile])) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;
         if (reusableMessagingProviders.includes(name)) continue;
-        if (!input.providerMatchesGatewayCredential(name, profile.profileId, profile.credentialKey))
+        if (
+          !(await input.providerMatchesGatewayCredential(
+            name,
+            profile.profileId,
+            profile.credentialKey,
+          ))
+        )
           continue;
         reusableMessagingProviders.push(name);
         if (!reusableMessagingChannels.includes(channel)) {

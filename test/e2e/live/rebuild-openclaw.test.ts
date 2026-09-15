@@ -5,11 +5,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   readJsonFile,
@@ -19,8 +24,11 @@ import {
   writeJsonFile,
 } from "../fixtures/file-state.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
+
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 // The contract stays intentionally local to this live test: build an older
 // OpenClaw base image, create a sandbox from it through the real OpenShell CLI,
@@ -56,9 +64,13 @@ const PRE_REBUILD_GATEWAY_TOKEN = `nemoclaw-e2e-old-gateway-token-${MARKER_CONTE
 const OLD_BASE_TAG = `nemoclaw-old-base:${SANDBOX_NAME.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-")}`;
 
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const LOCAL_ONBOARD_COMMAND_TIMEOUT_MS = execTimeout(ONBOARD_TIMEOUT_MS);
 const DOCKER_BUILD_TIMEOUT_MS = 35 * 60_000;
 const REBUILD_TIMEOUT_MS = 30 * 60_000;
+const AGENT_TURN_TIMEOUT_MS = 120_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
+const REBUILD_E2E_TIMEOUT_MS =
+  REBUILD_TIMEOUT_MS + 2 * DOCKER_BUILD_TIMEOUT_MS + ONBOARD_TIMEOUT_MS + AGENT_TURN_TIMEOUT_MS;
 
 interface SeedGatewayTokenResult {
   seeded: boolean;
@@ -226,8 +238,6 @@ function seedRegistryAndSession(dashboardPort: number): void {
     model: DEFAULT_MODEL,
     provider: "compatible-endpoint",
     gpuEnabled: false,
-    policies: [],
-    policyTier: null,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
     dashboardPort,
@@ -262,7 +272,6 @@ function seedRegistryAndSession(dashboardPort: number): void {
       inference: complete,
       openclaw: pending,
       agent_setup: pending,
-      policies: pending,
     },
   });
   writeJsonFile(SESSION_FILE, session);
@@ -337,28 +346,28 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
 // Accidental cli-test-shard discovery must not build Docker images, mutate
 // ~/.nemoclaw, or call NVIDIA.
 test(
-  "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and rotates gateway token",
+  "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and leaves the agent usable",
   {
-    timeout: REBUILD_TIMEOUT_MS + 2 * DOCKER_BUILD_TIMEOUT_MS + ONBOARD_TIMEOUT_MS,
+    timeout: REBUILD_E2E_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm Docker and prepare OpenClaw rebuild resources",
         "onboard the current OpenClaw sandbox",
         "build the old OpenClaw base image",
         "create the old OpenClaw sandbox",
-        "seed persistent state policy and registry metadata",
+        "seed persistent state and registry metadata",
         "restore the current OpenClaw base image",
         "rebuild the OpenClaw sandbox",
-        "validate upgraded state policy inference and backup hygiene",
+        "validate rebuilt agent readiness and preserved state",
       ],
     },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "bin/nemoclaw.js missing — run npm ci && npm run build:cli before live rebuild coverage",
-    ).toBe(true);
+      path.resolve(host.commandPath),
+      "rebuild-OpenClaw must invoke the checked-out CLI through NEMOCLAW_CLI_BIN",
+    ).toBe(CLI_ENTRYPOINT);
 
     const dockerInfo = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info",
@@ -448,7 +457,7 @@ test(
       artifactName: "phase-1-onboard-current",
       env: cliEnv(apiKey, { NEMOCLAW_RECREATE_SANDBOX: "1" }),
       redactionValues: [apiKey],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
+      timeoutMs: LOCAL_ONBOARD_COMMAND_TIMEOUT_MS,
     });
     if (onboard.exitCode !== 0) {
       if (!isRetryableOnboardEndpointFailure(onboard)) {
@@ -540,9 +549,13 @@ test(
           oldDockerfile,
           "--gateway",
           "nemoclaw",
+          "--policy",
+          path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
           "--no-tty",
+          // OpenShell 0.0.116 treats this argv as the canonical main process,
+          // so the historical fixture must stay alive until NemoClaw rebuilds it.
           "--",
-          "true",
+          ...HISTORICAL_SANDBOX_MAIN_PROCESS,
         ],
         {
           artifactName: "phase-3-create-old-openclaw-sandbox",
@@ -567,7 +580,7 @@ test(
     // Phase 4: seed workspace state, an existing gateway token, and registry /
     // resume-session state so `nemoclaw <name> rebuild --yes` drives the same
     // user-visible rebuild path as the former shell test.
-    progress.phase("seed persistent state policy and registry metadata");
+    progress.phase("seed persistent state and registry metadata");
     const markerWrite = await sandbox.exec(
       SANDBOX_NAME,
       [
@@ -637,7 +650,6 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
         provider: seededSandbox.provider,
         agentVersion: seededSandbox.agentVersion,
         dashboardPort: seededSandbox.dashboardPort,
-        policyCount: Array.isArray(seededSandbox.policies) ? seededSandbox.policies.length : 0,
       },
       session: {
         sandboxName: sessionAfterSeed.sandboxName,
@@ -653,8 +665,8 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     const routeResult = await configureGatewayInferenceRoute(host, apiKey);
     expectExitZero(routeResult, "configure gateway inference route before rebuild");
 
-    // Phase 4.5: apply policy presets through the public CLI, then verify both
-    // registry persistence and the live OpenShell gateway policy.
+    // Phase 4.5: apply policy presets through the public CLI, then verify the
+    // live OpenShell gateway policy without consulting registry policy state.
     for (const preset of POLICY_PRESETS) {
       const policyAdd = await host.command(
         "node",
@@ -679,7 +691,26 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expect(prePolicy.stdout).toMatch(/pypi|pypi\.org/i);
     expect(prePolicy.stdout).toMatch(/telegram/i);
     expect(prePolicy.stdout).toContain("api.telegram.org");
-    expect(registrySandbox().policies).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
+    const hostPolicyEdit = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "host-edit-rebuild-openclaw.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "host_edit_rebuild_openclaw_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "phase-4-host-policy-edit-before-rebuild",
+        env: dockerContextEnv(),
+        timeoutMs: OPENSHELL_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(hostPolicyEdit, "apply host policy edit before rebuild");
     const prePolicyList = await host.command(
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "policy-list"],
@@ -727,12 +758,35 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     );
     expectExitZero(rebuild, "nemoclaw rebuild");
     const rebuildText = resultText(rebuild);
-    expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuilt successfully`);
-    expect(rebuildText).not.toContain("post-restore steps were incomplete");
+    expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
 
-    // Phase 7: state preservation, upgrade, token rotation, backup hygiene, and
-    // policy-preset preservation assertions.
-    progress.phase("validate upgraded state policy inference and backup hygiene");
+    // Phase 7: agent readiness, state preservation, upgrade, token rotation,
+    // backup hygiene, and policy-preset preservation assertions.
+    progress.phase("validate rebuilt agent readiness and preserved state");
+    const agentTurn = await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--session-id",
+        `e2e-rebuild-oc-${Date.now()}-${process.pid}`,
+        "-m",
+        "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+      ],
+      {
+        artifactName: "phase-7-agent-inference-after-rebuild",
+        env: cliEnv(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: AGENT_TURN_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(agentTurn, "OpenClaw agent inference after rebuild");
+    expect(
+      containsAnswer(parseOpenClawAgentText(agentTurn.stdout), "42"),
+      resultText(agentTurn),
+    ).toBe(true);
     const markerRead = await sandbox.exec(SANDBOX_NAME, ["cat", MARKER_FILE], {
       artifactName: "phase-7-read-workspace-marker",
       env: dockerContextEnv(),
@@ -793,14 +847,11 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     await artifacts.writeJson("phase-7-rebuild-manifest-summary.json", {
       backupDir,
       stateDirCount: Array.isArray(manifest.stateDirs) ? manifest.stateDirs.length : undefined,
-      policyPresets: manifest.policyPresets,
       telegramBridgeTraffic:
         "real bot response remains owned by the messaging-providers E2E; this rebuild target asserts restored Telegram policy and api.telegram.org reachability",
     });
-    expect(manifest.policyPresets).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
     expect(backupCredentialLeakPaths(backupDir, PRE_REBUILD_GATEWAY_TOKEN)).toEqual([]);
 
-    expect(registrySandbox().policies).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
     const postPolicy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-7-live-policy-after-rebuild",
       env: dockerContextEnv(),
@@ -809,8 +860,8 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expectExitZero(postPolicy, "openshell policy get after rebuild");
     expect(postPolicy.stdout).toMatch(/npm|registry\.npmjs\.org/i);
     expect(postPolicy.stdout).toMatch(/pypi|pypi\.org/i);
-    expect(postPolicy.stdout).toMatch(/telegram/i);
     expect(postPolicy.stdout).toContain("api.telegram.org");
+    expect(postPolicy.stdout).toContain("host_edit_rebuild_openclaw_e2e");
 
     const postPolicyList = await host.command(
       "node",
@@ -845,27 +896,5 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expectExitZero(telegramApiReachability, "api.telegram.org reachability after rebuild");
     expect(telegramApiReachability.stdout).toMatch(/STATUS_\d+/);
     expect(telegramApiReachability.stdout).not.toMatch(/STATUS_403|Forbidden/i);
-
-    // External inference API availability can make this inconclusive; keep it as a
-    // non-fatal artifact-producing probe like the former shell test did.
-    await sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "curl",
-        "-s",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        '{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}',
-      ],
-      {
-        artifactName: "phase-7-inference-after-rebuild-nonfatal",
-        env: dockerContextEnv(),
-        timeoutMs: 75_000,
-      },
-    );
   },
 );

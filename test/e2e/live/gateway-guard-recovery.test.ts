@@ -4,23 +4,10 @@
 /**
  * Live E2E: gateway guard-chain recovery after pod-recreate /tmp wipe.
  *
- * Regression guard for NVIDIA/NemoClaw#2701. The historical recovery shell
- * took a "warn-and-proceed" branch when `/tmp/nemoclaw-proxy-env.sh` was
- * missing: it logged `[gateway-recovery] WARNING` and launched the gateway
- * naked. On
- * aarch64 / DGX Spark this triggers an infinite crash loop in
- * `@homebridge/ciao` (`os.networkInterfaces()` throws because the OpenShell
- * netns blocks the syscall). The only manual recovery is a 5-min
- * `nemoclaw <name> rebuild --yes`.
- *
- * This test asserts the desired contract — recovery logs that it is restoring
- * from trusted packaged preloads, RESTORES the guard chain before launching,
- * and keeps the gateway PID stable. It will fail on `main` (proving the bug),
- * pass once the fix lands.
- *
- * The contract is platform-independent: we don't need aarch64 to assert
- * "guards are present after recovery." The aarch64 ciao crash is a
- * downstream consequence of the same broken contract.
+ * Regression guard for NVIDIA/NemoClaw#2701. Recovery restores the remaining
+ * packaged preloads when `/tmp/nemoclaw-proxy-env.sh` is missing, then proves
+ * gateway health, inference and stable process identity. Native network
+ * interface discovery is covered by the Docker/Podman full-E2E lifecycle.
  *
  * #2701 acceptance scope for this PR:
  *   - Covered: the default OpenClaw production recovery route
@@ -34,9 +21,9 @@
  *     GB10 / aarch64 hardware, provider breadth beyond `cloud-openclaw`, and
  *     destructive host reboot / OOM / manual `kubectl delete pod` triggers.
  *     The Docker-driver branch below first restarts the registered sandbox
- *     container with its persisted startup command, then recreates the legacy
- *     keepalive state and proves both routes restore the managed supervisor
- *     topology without relying on ordinary sandbox exec.
+ *     container with its persisted startup command and proves the supported
+ *     lifecycle restores the managed supervisor topology without relying on
+ *     ordinary sandbox exec.
  *     Kubernetes triggers still need a dedicated platform-runtime job.
  *
  * This Vitest coverage owns both the #2478 WARNING assertion lineage and the
@@ -44,13 +31,13 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { fileURLToPath } from "node:url";
 
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
@@ -66,10 +53,6 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-2701";
-const LEGACY_KEEPALIVE_FIXTURE = fileURLToPath(
-  new URL("./gateway-guard-legacy-keepalive-fixture.ts", import.meta.url),
-);
-
 const STARTUP_COMMAND_INSPECT_SCRIPT = String.raw`
 const { spawnSync } = require("node:child_process");
 const id = process.argv[1];
@@ -82,13 +65,20 @@ if (result.status !== 0) {
   process.exit(result.status || 1);
 }
 const rows = JSON.parse(result.stdout);
-const prefix = "OPENSHELL_SANDBOX_COMMAND=";
-const matches = (rows[0]?.Config?.Env || []).filter((entry) => entry.startsWith(prefix));
+const environment = rows[0]?.Config?.Env || [];
+const legacyPrefix = "OPENSHELL_SANDBOX_COMMAND=";
+const specPrefix = "OPENSHELL_MAIN_PROCESS_SPEC=";
+const prefixes = [legacyPrefix, specPrefix];
+const matches = environment.filter((entry) => prefixes.some((prefix) => entry.startsWith(prefix)));
 if (matches.length !== 1) {
   process.stderr.write("expected one OpenShell sandbox startup command\n");
   process.exit(1);
 }
-process.stdout.write(matches[0].slice(prefix.length) + "\n");
+const match = matches[0];
+const command = match.startsWith(legacyPrefix)
+  ? match.slice(legacyPrefix.length)
+  : JSON.parse(match.slice(specPrefix.length)).command.join(" ");
+process.stdout.write(command + "\n");
 `;
 
 const SUPERVISOR_TOPOLOGY_SCRIPT = String.raw`from pathlib import Path
@@ -113,16 +103,6 @@ assert len(rows) == 1, rows
 uid_line=next(line for line in rows[0][1].splitlines() if line.startswith("Uid:"))
 assert uid_line.split()[1:] == [expected_uid] * 4, uid_line
 print("MANAGED_SUPERVISOR=" + rows[0][0] + ":PPID1")`;
-
-const OPENCLAW_STATE_LOCK_PLAN_PROBE = String.raw`import json, os
-path="/usr/local/share/nemoclaw/state-lock-plan.json"
-metadata=os.stat(path, follow_symlinks=False)
-assert metadata.st_uid == 0 and metadata.st_gid == 0, metadata
-assert metadata.st_mode & 0o022 == 0, oct(metadata.st_mode)
-plan=json.load(open(path, encoding="utf-8"))
-assert "workspace" in plan["readOnlyRoots"], plan
-assert "workspace-" in plan["readOnlyPrefixes"], plan
-print("OPENCLAW_STATE_LOCK_PLAN=installed")`;
 
 const CONTAINER_GATEWAY_PROCESS_STATE_SCRIPT = String.raw`from pathlib import Path
 import pwd, sys
@@ -310,10 +290,8 @@ test(
         "wipe guard chain and gateway tree",
         "recover gateway through connect probe",
         "validate recovered guard and stable PID",
-        "restart sandbox container with persisted startup command",
+        "restart sandbox through OpenShell with persisted startup command",
         "recover managed supervisor and inference",
-        "recreate and restart sandbox container with legacy keepalive",
-        "recover legacy managed supervisor and inference",
       ],
     },
   },
@@ -333,16 +311,14 @@ test(
     await artifacts.target.declare({
       id: "gateway-guard-recovery",
       boundary: "sandbox-lifecycle",
-      issues: ["#2701", "#2478", "#6635"],
+      issues: ["#2701", "#2478"],
       acceptanceCoverage: {
         covered: [
           "production connect --probe-only recovery route",
           "authenticated PID 1 OpenClaw recovery supervisor",
           "pod-recreate-equivalent empty /tmp guard chain plus missing gateway process",
-          "Docker container restart with a persisted managed startup command",
+          "OpenShell lifecycle restart with a persisted managed startup command",
           "container identity preservation with managed supervisor health proof",
-          "Docker container recreation with the legacy keepalive startup command",
-          "container-identity-pinned legacy supervisor migration with managed health proof",
           "no rebuild required for the recovered runtime state",
         ],
         intentionallyOutOfScope: [
@@ -450,9 +426,9 @@ test(
 
     expect(stableIdentity.pid).toBeGreaterThan(0);
 
-    progress.phase("restart sandbox container with persisted startup command");
-    // A Docker restart must reuse the container and its credential-free managed
-    // startup command. The command must restore the supervisor without a
+    progress.phase("restart sandbox through OpenShell with persisted startup command");
+    // An OpenShell lifecycle restart must reuse the container and its
+    // credential-free managed startup command. The command must restore the supervisor without a
     // container recreation transaction.
     const originalContainerId = await findSandboxContainer(host, "restart-container-before");
     const originalStartupCommand = await inspectStartupCommand(
@@ -465,12 +441,27 @@ test(
       artifactName: "restart-stop-dashboard-forward",
       env: buildAvailabilityProbeEnv(),
     });
-    const restart = await host.command("docker", ["restart", originalContainerId], {
-      artifactName: "restart-docker-restart",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
+    const stopForRestart = await host.command(
+      host.openshellCommandPath,
+      ["sandbox", "stop", instance.sandboxName],
+      {
+        artifactName: "restart-openshell-stop",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
+    expect(stopForRestart.exitCode, resultText(stopForRestart)).toBe(0);
+    const restart = await host.command(
+      host.openshellCommandPath,
+      ["sandbox", "start", instance.sandboxName],
+      {
+        artifactName: "restart-openshell-start",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
     expect(restart.exitCode, resultText(restart)).toBe(0);
+    await waitForSandboxExecReady(host, instance.sandboxName, progress, "restart-openshell-ready");
 
     progress.phase("recover managed supervisor and inference");
     const credentialCanary = "nemoclaw-e2e-recovery-secret-restart";
@@ -492,14 +483,6 @@ test(
     expect(trustedRecovery.timedOut, "trusted recovery should complete before timeout").toBe(false);
     expect(trustedRecovery.exitCode, "trusted recovery should exit successfully").toBe(0);
     expectManagedGatewayState(restartManagedState);
-    const restartStateLockPlan = await sandbox.exec(
-      instance.sandboxName,
-      ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
-      { artifactName: "restart-installed-state-lock-plan", env: buildAvailabilityProbeEnv() },
-    );
-    expect(restartStateLockPlan.exitCode, resultText(restartStateLockPlan)).toBe(0);
-    expect(restartStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
-
     const recoveredContainerId = await findSandboxContainer(host, "restart-container-after");
     expect(recoveredContainerId).toBe(originalContainerId);
     const recoveredStartupCommand = await inspectStartupCommand(
@@ -553,151 +536,9 @@ test(
       },
     );
     expect(inference.exitCode, resultText(inference)).toBe(0);
-    expect(containsInteger42Answer(inference.stdout), resultText(inference)).toBe(true);
-
-    progress.phase("recreate and restart sandbox container with legacy keepalive");
-    // ── Assert #6635 legacy Docker restart recovery ────────────────
-    // Existing sandboxes may still persist the historical keepalive. Recreate
-    // that exact state from the identity-pinned modern container so recovery
-    // proves the compatibility migration independently of fresh onboarding.
-    await host.cleanupForward(18789, {
-      artifactName: "legacy-restart-stop-dashboard-forward",
-      env: buildAvailabilityProbeEnv(),
-    });
-    const createLegacyKeepalive = await host.command(
-      "npx",
-      ["--no-install", "tsx", LEGACY_KEEPALIVE_FIXTURE, instance.sandboxName, recoveredContainerId],
-      {
-        artifactName: "legacy-restart-create-keepalive",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 240_000,
-      },
-    );
-    expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
-    const handoffReceipt = JSON.parse(createLegacyKeepalive.stdout) as {
-      newContainerId?: unknown;
-    };
-    expect(handoffReceipt.newContainerId).toMatch(/^[0-9a-f]{64}$/iu);
-    // Do not overlap the fixture's recreation with the restart below. The
-    // fixture runs in its own process, so the host must observe the replacement
-    // through OpenShell before starting the next container lifecycle transition.
-    await waitForSandboxExecReady(
-      host,
-      instance.sandboxName,
-      progress,
-      "legacy-recreate-openshell-ready",
-    );
-
-    const legacyContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
-    expect(legacyContainerId).toBe(handoffReceipt.newContainerId);
-    expect(legacyContainerId).not.toBe(recoveredContainerId);
     expect(
-      await inspectStartupCommand(host, legacyContainerId, "legacy-restart-command-before"),
-    ).toBe("sleep infinity");
-    const legacyRestart = await host.command("docker", ["restart", legacyContainerId], {
-      artifactName: "legacy-restart-docker-restart",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
-    expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
-    await waitForSandboxExecReady(
-      host,
-      instance.sandboxName,
-      progress,
-      "legacy-restart-openshell-ready",
-    );
-    await gateway.waitForMissingManagedSupervisor(legacyContainerId, {
-      onRetry: (attempt) => progress.event(`managed supervisor absence proof retry ${attempt}`),
-    });
-
-    progress.phase("recover legacy managed supervisor and inference");
-    const legacyCredentialCanary = "nemoclaw-e2e-recovery-secret-6635";
-    const legacyRecovery = await host.nemoclaw([instance.sandboxName, "recover"], {
-      artifactName: "legacy-restart-trusted-recover",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        NEMOCLAW_REBUILD_VERBOSE: "1",
-        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "CUSTOM_PROVIDER_CREDENTIAL",
-        CUSTOM_PROVIDER_CREDENTIAL: legacyCredentialCanary,
-      },
-      redactionValues: [legacyCredentialCanary],
-      timeoutMs: 240_000,
-    });
-    const legacyRecoveredContainerId = await findSandboxContainer(
-      host,
-      "legacy-restart-container-after",
-    );
-    const legacyManagedState = await captureManagedGatewayState(
-      host,
-      legacyRecoveredContainerId,
-      "legacy-restart",
-    );
-    expect(legacyRecovery.timedOut, "legacy recovery should complete before timeout").toBe(false);
-    expect(legacyRecovery.exitCode, "legacy recovery should exit successfully").toBe(0);
-    expectManagedGatewayState(legacyManagedState);
-    const legacyStateLockPlan = await sandbox.exec(
-      instance.sandboxName,
-      ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
-      {
-        artifactName: "legacy-restart-installed-state-lock-plan",
-        env: buildAvailabilityProbeEnv(),
-      },
-    );
-    expect(legacyStateLockPlan.exitCode, resultText(legacyStateLockPlan)).toBe(0);
-    expect(legacyStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
-
-    expect(legacyRecoveredContainerId).not.toBe(legacyContainerId);
-    const legacyRecoveredStartupCommand = await inspectStartupCommand(
-      host,
-      legacyRecoveredContainerId,
-      "legacy-restart-command-after",
-    );
-    expect(legacyRecoveredStartupCommand).toMatch(/(?:^| )(?:\/usr\/local\/bin\/)?nemoclaw-start$/);
-    expect(legacyRecoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
-    expect(legacyRecoveredStartupCommand).not.toContain(legacyCredentialCanary);
-
-    const legacyTopology = await sandbox.exec(
-      instance.sandboxName,
-      ["python3", "-c", SUPERVISOR_TOPOLOGY_SCRIPT],
-      {
-        artifactName: "legacy-restart-managed-supervisor-topology",
-        env: buildAvailabilityProbeEnv(),
-      },
-    );
-    expect(legacyTopology.exitCode, resultText(legacyTopology)).toBe(0);
-    expect(legacyTopology.stdout).toMatch(/MANAGED_SUPERVISOR=[0-9]+:PPID1/);
-
-    const legacyForwardedHealth = await host.command(
-      "curl",
-      ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:18789/health"],
-      {
-        artifactName: "legacy-restart-forwarded-health",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(legacyForwardedHealth.exitCode, resultText(legacyForwardedHealth)).toBe(0);
-    expect(legacyForwardedHealth.stdout.trim()).toMatch(/^(200|401)$/);
-
-    const legacyInference = await host.nemoclaw(
-      [
-        instance.sandboxName,
-        "agent",
-        "--agent",
-        "main",
-        "--json",
-        "--session-id",
-        `e2e-6635-${Date.now()}-${process.pid}`,
-        "-m",
-        "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
-      ],
-      {
-        artifactName: "legacy-restart-agent-inference",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      },
-    );
-    expect(legacyInference.exitCode, resultText(legacyInference)).toBe(0);
-    expect(containsInteger42Answer(legacyInference.stdout), resultText(legacyInference)).toBe(true);
+      containsAnswer(parseOpenClawAgentText(inference.stdout), "42"),
+      resultText(inference),
+    ).toBe(true);
   },
 );

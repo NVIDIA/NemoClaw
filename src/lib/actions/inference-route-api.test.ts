@@ -39,7 +39,6 @@ function session(overrides: Partial<Session> = {}): Session {
     routerPid: null,
     routerCredentialHash: null,
     webSearchConfig: null,
-    policyPresets: null,
     messagingPlan: null,
     migratedLegacyValueHashes: null,
     hermesToolGateways: null,

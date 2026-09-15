@@ -4,6 +4,7 @@
 import {
   MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES,
   type ManagedStartupRootApplyRequest,
+  isManagedStartupRootApplyAgent,
   parseManagedStartupRootApplyRequest,
   serializeManagedStartupRootApplyRequest,
 } from "../managed-startup/root-apply";
@@ -164,7 +165,7 @@ export function serializeManagedBootstrapImageCompletion(
   ) {
     fail("image completion identity is invalid");
   }
-  if (!["openclaw", "hermes", "langchain-deepagents-code"].includes(completion.agent)) {
+  if (!isManagedStartupRootApplyAgent(completion.agent)) {
     fail("image completion agent is invalid");
   }
   if (typeof completion.transactionPending !== "boolean") {
@@ -205,8 +206,7 @@ export function parseManagedBootstrapImageCompletion(
         .sort()
         .join(",") ||
     completion.schemaVersion !== MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION ||
-    typeof completion.agent !== "string" ||
-    !["openclaw", "hermes", "langchain-deepagents-code"].includes(completion.agent) ||
+    !isManagedStartupRootApplyAgent(completion.agent) ||
     typeof completion.bootstrapIdentity !== "string" ||
     !BOOTSTRAP_IDENTITY_RE.test(completion.bootstrapIdentity) ||
     typeof completion.profileFingerprint !== "string" ||

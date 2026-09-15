@@ -4,7 +4,7 @@
 # Weekly check that the pinned Dockerfile base-image digest is still current.
 # Fails with an actionable message when a newer node:22-trixie-slim is available.
 
-name: Images / Base Image Pins
+name: Images / Check Docker Base Image Pins
 
 on:
   schedule:
@@ -17,7 +17,6 @@ permissions:
 
 jobs:
   check-pin:
-    name: Check
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -32,6 +32,7 @@ function operationRuntime(
     engine: harness.engine,
     env: harness.env,
     acceleration: harness.operationAcceleration,
+    probeCleanupTiming: harness.probeCleanupTiming,
     authorityStore: harness.authorityStore,
     routeAuthorityStore: harness.routeAuthorityStore,
     onFailureEvidence: harness.onFailureEvidence,
@@ -51,6 +52,7 @@ describe("Podman host-local inference acceleration authority", () => {
         engine: harness.engine,
         env: harness.env,
         acceleration: "tpu" as never,
+        probeCleanupTiming: harness.probeCleanupTiming,
         authorityStore: harness.authorityStore,
         routeAuthorityStore: harness.routeAuthorityStore,
         onFailureEvidence: harness.onFailureEvidence,
@@ -69,6 +71,7 @@ describe("Podman host-local inference acceleration authority", () => {
       createPodmanHostLocalInferenceRuntime({
         engine: harness.engine,
         env: harness.env,
+        probeCleanupTiming: harness.probeCleanupTiming,
         authorityStore: harness.authorityStore,
         routeAuthorityStore: harness.routeAuthorityStore,
         authority,
@@ -191,6 +194,7 @@ describe("Podman host-local inference acceleration authority", () => {
       const validationRuntime = createPodmanHostLocalInferenceRuntime({
         engine: harness.engine,
         env: harness.env,
+        probeCleanupTiming: harness.probeCleanupTiming,
         authorityStore: harness.authorityStore,
         routeAuthorityStore: harness.routeAuthorityStore,
         authority: qualifyPodmanInferenceAuthority(harness.engine),

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { githubRest, githubRestPaginated } from "../advisors/github.mts";
 import {
@@ -360,11 +362,7 @@ async function collectOpenPrOverlaps(
         }
       }
       const uniqueSameFiles = [...new Set(allSameFiles)];
-      if (
-        uniqueSameFiles.length === 0 &&
-        duplicateLinkedIssues.length === 0 &&
-        !replacesCurrentPr
-      )
+      if (uniqueSameFiles.length === 0 && duplicateLinkedIssues.length === 0 && !replacesCurrentPr)
         return null;
       return {
         number,
@@ -402,6 +400,23 @@ export function declaresReplacement(text: string, currentPrNumber: number): bool
   );
 }
 
+export async function writeGitHubReviewContext(
+  env: NodeJS.ProcessEnv,
+  outputPath: string,
+): Promise<void> {
+  const context = await collectGitHubReviewContext(env);
+  const outputDirectory = path.dirname(outputPath);
+  fs.mkdirSync(outputDirectory, { recursive: true });
+  const resolvedOutput = path.resolve(outputPath);
+  if (resolvedOutput !== path.join(path.resolve(outputDirectory), "github-context.json")) {
+    throw new Error("Prepared GitHub context output must be named github-context.json");
+  }
+  fs.writeFileSync(resolvedOutput, serializePreparedGitHubContext(context), {
+    flag: "wx",
+    mode: 0o600,
+  });
+}
+
 export function hasOpenPrReplacement(overlaps: readonly OpenPrOverlap[] | undefined): boolean {
   return overlaps?.some((overlap) => overlap.replacesCurrentPr) ?? false;
 }
@@ -423,4 +438,11 @@ export function extractIssueRefs(text: string, prNumber: number): number[] {
     }
   }
   return [...numbers].sort((a, b) => a - b);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await writeGitHubReviewContext(
+    process.env,
+    "artifacts/pr-review-advisor-context/github-context.json",
+  );
 }
