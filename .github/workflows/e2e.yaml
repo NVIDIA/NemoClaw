@@ -3401,7 +3401,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@9e24e6f0dd8a8566f463432ab81e3ce3f9343d0a
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@6eb3e259150ca068e2b17653c7b83f31f5561c2c
 
       - name: Install OpenShell CLI
         run: env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -5074,7 +5074,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@9e24e6f0dd8a8566f463432ab81e3ce3f9343d0a
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@6eb3e259150ca068e2b17653c7b83f31f5561c2c
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
