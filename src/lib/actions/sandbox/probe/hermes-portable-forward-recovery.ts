@@ -19,7 +19,8 @@ import {
   type ForwardServiceTarget,
 } from "../../../adapters/openshell/forward-service";
 
-const FORWARD_SETTLEMENT_TIMEOUT_MS = 3_000;
+// A joint observation includes authority checks around every command and listener probe.
+const FORWARD_SETTLEMENT_TIMEOUT_MS = 30_000;
 const FORWARD_SETTLEMENT_INTERVAL_MS = 100;
 const FORWARD_SETTLEMENT_MAX_OBSERVATIONS =
   Math.ceil(FORWARD_SETTLEMENT_TIMEOUT_MS / FORWARD_SETTLEMENT_INTERVAL_MS) + 2;
@@ -452,6 +453,7 @@ function observeForwards(
     budget?.(1);
     states.set(port, exactOwner ? "healthy" : "occupied");
   }
+  budget?.(1);
   return { entries, states };
 }
 
@@ -724,7 +726,10 @@ export async function prepareHermesPortableLaunchForwards(
         await rollbackTouchedPorts(input, touchedPorts, retained);
       }
     } catch {
-      normalized = new HermesPortableForwardRecoveryError("restoration-unproved");
+      normalized = new HermesPortableForwardRecoveryError(
+        "restoration-unproved",
+        normalized.context,
+      );
     } finally {
       timing.finish("failed");
     }

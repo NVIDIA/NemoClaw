@@ -13,6 +13,7 @@
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "fast": [
+        "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
@@ -97,6 +98,7 @@
       "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
       "liveSources": ["test/e2e/live/native-runtime-qualification-case-executor.ts"],
       "fast": [
+        "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
         "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
         "test/e2e/support/native-runtime-qualification.test.ts",
@@ -136,6 +138,7 @@
       "liveSources": ["test/e2e/live/inference-routing-helpers.ts"],
       "fast": [
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
+        "nemoclaw/src/blueprint/runner.test.ts",
         "nemoclaw/src/blueprint/runner-identity.test.ts",
         "nemoclaw/src/blueprint/runtime-identity.test.ts",
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
@@ -219,7 +222,6 @@
     },
     {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
-      "liveSources": ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
         "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
@@ -228,7 +230,6 @@
         "src/lib/sandbox/privileged-exec.test.ts",
         "test/inference/managed/managed-gateway-control.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
-        "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
@@ -636,6 +637,7 @@
         "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/mcp-provider-rewrite-probe.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
+        "test/e2e/live/openshell-driver-config-test-wrapper.ts",
         "test/e2e/live/openshell-exact-main-exec.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
@@ -658,6 +660,7 @@
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
         "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts",
+        "test/e2e/support/openshell-exact-main-driver-config.test.ts",
         "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
         "test/mcp/mcp-bridge-servers.test.ts"
@@ -744,9 +747,8 @@
     {
       "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
       "liveSources": [
-        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-        "test/e2e/live/openshell-driver-config-test-wrapper.ts",
-        "test/e2e/live/json-envelope.ts"
+        "test/e2e/live/json-envelope.ts",
+        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"
       ],
       "fast": [
         "test/e2e/support/json-envelope.test.ts",
