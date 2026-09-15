@@ -428,7 +428,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@6eb3e259150ca068e2b17653c7b83f31f5561c2c
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6
 
       - name: Restore exact-commit CLI artifact
         if: ${{ inputs.restore_cli }}

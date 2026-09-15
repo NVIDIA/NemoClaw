@@ -33,8 +33,8 @@ export const E2E_ACTION_PROVENANCE = {
   },
   reviewedSdkInstall: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@6eb3e259150ca068e2b17653c7b83f31f5561c2c",
-    contentSha256: "15395589d3c1f3aeb85844a2200c8ae26c8f133760038dc01c3ea1cacce5ddbf",
+      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6",
+    contentSha256: "09f77858c4025bdef9c3ffb184a53041c9be8cc87f7853c403f22ea70391228b",
   },
   uploadArtifacts: {
     reference:
