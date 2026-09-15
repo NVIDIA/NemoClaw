@@ -589,7 +589,7 @@ function modelText(value: unknown, selection: RepairSelection, maximumCharacters
     )
     .replace(/\bhf_[A-Za-z0-9]{16,}\b/gu, "[credential removed]")
     .replace(/\bxox[abprs]-[A-Za-z0-9-]{8,}\b/gu, "[credential removed]")
-    .replace(/(?:github_pat_|ghp_|nvapi-|sk-)[A-Za-z0-9_-]{20,}/gu, "[credential removed]")
+    .replace(/(?:github_pat_|gh[oprsu]_|nvapi-|sk-)[A-Za-z0-9_-]{20,}/gu, "[credential removed]")
     .replace(
       /((?:api[_-]?key|authorization|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|\S+)/giu,
       "$1[credential removed]",
@@ -935,7 +935,7 @@ function changedPath(repository: string, change: { path: string; status: "A" | "
   const content = git(repository, ["show", object], true) as Buffer;
   if (content.includes(0)) fail(`repair patch contains binary data at ${change.path}`);
   if (
-    /(?:github_pat_|ghp_|nvapi-|sk-)[A-Za-z0-9_-]{20,}/u.test(content.toString("utf8")) ||
+    /(?:github_pat_|gh[oprsu]_|nvapi-|sk-)[A-Za-z0-9_-]{20,}/u.test(content.toString("utf8")) ||
     /(?:api[_-]?key|password|secret|token)\s*[:=]\s*["'][^"']{16,}["']/iu.test(
       content.toString("utf8"),
     )

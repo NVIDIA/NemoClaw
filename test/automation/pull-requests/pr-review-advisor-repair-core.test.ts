@@ -204,6 +204,10 @@ describe("PR Review Advisor repair core", () => {
   it("redacts unlabelled credential shapes before model egress (#10791)", () => {
     const awsCredential = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
     const jwtCredential = ["eyJabcdef", "payload123", "signature123"].join(".");
+    const githubOauthCredential = `gho_${"a".repeat(24)}`;
+    const githubRefreshCredential = `ghr_${"a".repeat(24)}`;
+    const githubServerCredential = `ghs_${"a".repeat(24)}`;
+    const githubUserCredential = `ghu_${"a".repeat(24)}`;
     const privateKeyLabel = ["PRIVATE", "KEY"].join(" ");
     const state = {
       pull: {
@@ -214,6 +218,10 @@ describe("PR Review Advisor repair core", () => {
           `-----BEGIN ${privateKeyLabel}-----`,
           "private-key-body",
           `-----END ${privateKeyLabel}-----`,
+          githubOauthCredential,
+          githubRefreshCredential,
+          githubServerCredential,
+          githubUserCredential,
         ].join("\n"),
       },
       comments: [],
@@ -234,6 +242,10 @@ describe("PR Review Advisor repair core", () => {
     expect(context).not.toContain(awsCredential);
     expect(context).not.toContain(jwtCredential);
     expect(context).not.toContain(privateKeyLabel);
+    expect(context).not.toContain(githubOauthCredential);
+    expect(context).not.toContain(githubRefreshCredential);
+    expect(context).not.toContain(githubServerCredential);
+    expect(context).not.toContain(githubUserCredential);
     expect(context).toContain("[credential removed]");
   });
 });
