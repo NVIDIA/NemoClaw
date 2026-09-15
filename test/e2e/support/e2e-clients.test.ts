@@ -472,6 +472,60 @@ describe("E2E fixture clients", () => {
     },
   );
 
+  it("scopes forward cleanup to its sandbox and gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 0 });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupForward(18789, {
+      gatewayName: "nemoclaw",
+      sandboxName: "e2e-double-a",
+    });
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["forward", "stop", "18789", "e2e-double-a", "--gateway", "nemoclaw"],
+    ]);
+  });
+
+  it("rejects incomplete forward cleanup ownership", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupForward(18789, { sandboxName: "e2e-double-a" })).rejects.toThrow(
+      "Scoped forward cleanup requires a gateway name and sandbox name.",
+    );
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("accepts an absent scoped forward", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "forward 18789 not found" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(
+      host.cleanupForward(18789, {
+        gatewayName: "nemoclaw",
+        sandboxName: "e2e-double-a",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("surfaces a foreign scoped forward without retrying an unscoped stop", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "forward belongs to another sandbox" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(
+      host.cleanupForward(18789, {
+        gatewayName: "nemoclaw",
+        sandboxName: "e2e-double-a",
+      }),
+    ).rejects.toThrow("cleanup forward 18789 failed: forward belongs to another sandbox");
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["forward", "stop", "18789", "e2e-double-a", "--gateway", "nemoclaw"],
+    ]);
+  });
+
   it.each(["permission denied", "daemon not running", "some unrelated error: not running"])(
     "host client surfaces unexpected forward cleanup failure: %s",
     async (stderr) => {
@@ -800,6 +854,29 @@ describe("E2E fixture clients", () => {
         env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw" }),
       },
     });
+  });
+
+  it("sandbox client proves exact-name absence from OpenShell list output", async () => {
+    const runner = new FakeRunner();
+    runner.stdout = "NAME\nassistant-copy\n";
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await expect(sandbox.expectAbsent("assistant")).resolves.toMatchObject({ exitCode: 0 });
+
+    runner.stdout = "NAME\nassistant\n";
+    await expect(sandbox.expectAbsent("assistant")).rejects.toThrow(
+      "openshell sandbox list still included 'assistant'",
+    );
+  });
+
+  it("sandbox client rejects an inconclusive OpenShell absence probe", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "gateway unavailable" });
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await expect(sandbox.expectAbsent("assistant")).rejects.toThrow(
+      "openshell sandbox list failed: gateway unavailable",
+    );
   });
 
   it("sandbox client preserves caller-provided probe options", async () => {
