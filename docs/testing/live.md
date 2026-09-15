@@ -105,6 +105,15 @@ Run only one of these live tests against a given deployment at a time.
 After intentional destroy, apply the retained configuration first.
 A read-only plan cannot observe workspace resources through a stopped gateway and will ask for that explicit reconciliation.
 
+## Hosted NVIDIA OpenClaw Parity
+
+The [issue #11810 Linux/Docker scenario](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) compares the pinned v0 canonical target with the closest v1 desired state.
+It requires separate clean v0 and v1 worktrees, a dedicated NVIDIA credential, an owned Docker daemon and deployment identity, a verified immutable v1 bundle, and redacted successful v0 evidence.
+
+The v1 ignored test refuses to run without the exact `issue-11810` acknowledgement and an ownership marker in a fresh state directory.
+It makes a paid or quota-consuming hosted inference request and destroys only the deployment bound to that state.
+Do not run it as part of an ignored-test aggregate.
+
 ## SSH Engine Transport
 
 The SDK's `ssh_live` tests are opt-in.

@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: openclaw-nvidia-hosted
+  uid: b8f25ac9-8e58-4c0b-98c3-17648f9a5575
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17691
+    engine: unix:///var/run/docker.sock
+    image: ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792
+    networkCIDR: 172.30.111.0/24
+  inferenceProviders:
+    - name: nvidia
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      agents:
+        - name: main
+          harness: openclaw
+          inference:
+            routes:
+              - name: primary
+                providerRef: nvidia
+                overrides:
+                  model: nvidia/nemotron-3-super-120b-a12b
