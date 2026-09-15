@@ -313,6 +313,29 @@
     {
       "path": ".local/dual-daemon/final-podman-containers.txt",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".local/dual-daemon/integrated-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".local/dual-daemon/integrated-clippy.log",
+      "sha256": "5418e98c0340c48cfdd7488cf23136d802972dc4cc9a90879073e65e35f0ca4d"
+    },
+    {
+      "path": ".local/dual-daemon/integrated-workspace.log",
+      "sha256": "d1f95e7599dd319f9090d816ddec788d8784596e0eaf56bd5f8c4747e402d150"
     }
-  ]
+  ],
+  "integration": {
+    "sourceRevision": "9e2cc0236ad0f222216194861ca4f409ead4714f",
+    "note": "Preserved concurrent Pi-only model validation after live testing. The OpenClaw execution path and runtime artifacts are unchanged.",
+    "workspace": {
+      "passed": 130,
+      "failed": 0,
+      "ignored": 35
+    },
+    "format": "passed",
+    "strictClippy": "passed"
+  }
 }
