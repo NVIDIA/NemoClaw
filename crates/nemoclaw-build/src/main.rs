@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod platform;
 mod runtime;
 use clap::{Parser, Subcommand};
 use nemoclaw_sdk::bundle::{self, Manifest};
@@ -253,7 +254,7 @@ async fn main() -> Result<()> {
             unreachable!("schema generation returned before build tool checks")
         }
         Action::Bundle { platform } => {
-            bundle(&pins, &platform.unwrap_or(bundle::platform()?)).await
+            bundle(&pins, &platform::select(platform, bundle::platform)?).await
         }
         Action::Runtime { manifest } => runtime::build_runtime(&pins, &manifest).await,
     }
