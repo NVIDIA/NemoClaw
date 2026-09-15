@@ -367,11 +367,13 @@ describe("connectSandbox probe-only observe mode", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    const lifecycleStartIndices = harness.captureOpenshellSpy.mock.calls.flatMap(([args], index) =>
+      Array.isArray(args) && args[0] === "sandbox" && args[1] === "start" ? [index] : [],
+    );
+    expect(lifecycleStartIndices).toHaveLength(1);
     expect(
-      harness.captureOpenshellSpy.mock.calls.filter(
-        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "start",
-      ),
-    ).toHaveLength(1);
+      harness.captureOpenshellSpy.mock.invocationCallOrder[lifecycleStartIndices[0]!],
+    ).toBeLessThan(harness.dockerStartSpy.mock.invocationCallOrder[0]!);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
