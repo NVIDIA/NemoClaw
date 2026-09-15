@@ -78,6 +78,10 @@ describe("reviewed OpenShell SDK E2E boundary", () => {
       fs.mkdirSync(runnerTemp);
       fs.mkdirSync(dependencyRoot);
       fs.writeFileSync(
+        path.join(directory, "credentialed-npmrc"),
+        "registry=https://registry.invalid/\n//registry.invalid/:_authToken=must-not-reach-installer\n",
+      );
+      fs.writeFileSync(
         path.join(dependencyRoot, "package.json"),
         JSON.stringify({ name: "fixture-transport", version: "1.0.0" }),
       );
@@ -96,7 +100,12 @@ describe("reviewed OpenShell SDK E2E boundary", () => {
       );
       fs.writeFileSync(
         path.join(sdkRoot, "index.js"),
-        'import { transport } from "fixture-transport"; export class OpenShellClient { static connect() { return transport; } }\n',
+        `import { transport } from "fixture-transport";
+const credentials = ["NODE_AUTH_TOKEN", "NPM_TOKEN", "NPM_CONFIG__AUTH_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"];
+if (credentials.some((name) => process.env[name])) throw new Error("credential reached fixture SDK");
+if (process.env.NPM_CONFIG_USERCONFIG !== "/dev/null") throw new Error("npm user config reached fixture SDK");
+export class OpenShellClient { static connect() { return transport; } }
+`,
       );
       const installedDependency = path.join(sdkRoot, "node_modules", "fixture-transport");
       fs.mkdirSync(path.dirname(installedDependency), { recursive: true });
@@ -200,6 +209,7 @@ describe("reviewed OpenShell SDK E2E boundary", () => {
           GITHUB_TOKEN: "must-not-reach-installer",
           NODE_AUTH_TOKEN: "must-not-reach-installer",
           NPM_CONFIG__AUTH_TOKEN: "must-not-reach-installer",
+          NPM_CONFIG_USERCONFIG: path.join(directory, "credentialed-npmrc"),
           NPM_TOKEN: "must-not-reach-installer",
           RUNNER_TEMP: runnerTemp,
         },

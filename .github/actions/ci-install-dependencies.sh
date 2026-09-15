@@ -57,6 +57,7 @@ if [ "$package_mode" = "artifact" ]; then
     echo "Artifact dependency installation must not receive a package credential." >&2
     exit 1
   fi
+  export NPM_CONFIG_USERCONFIG=/dev/null
 fi
 
 target_root="$(pwd -P)"

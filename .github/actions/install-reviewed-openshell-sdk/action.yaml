@@ -11,6 +11,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        export NPM_CONFIG_USERCONFIG=/dev/null
         env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
           bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none artifact
         env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
