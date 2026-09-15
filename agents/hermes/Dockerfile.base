@@ -409,7 +409,7 @@ RUN printf '%s\n' \
 # final image when selected.
 # New Hermes integrations should be installed by the agent workflow when they
 # are enabled rather than shipped in the base image by default.
-# Hermes 0.20.6 keeps agent-browser outside its root dependency graph. The
+# Hermes 0.21.3 keeps agent-browser outside its root dependency graph. The
 # root-owned runtime below installs the pinned package from a reviewed lockfile.
 # The WhatsApp adapter ships a separate Node project under
 # scripts/whatsapp-bridge whose dependencies Hermes otherwise installs lazily
@@ -580,7 +580,7 @@ RUN set -eu; \
 # route that uses File/Form, so without python-multipart the plugin's API routes
 # fail to mount ("Form data requires python-multipart to be installed").
 #
-# Hermes 0.20.6 resolves 0.0.32, the first stable release that addresses the
+# Hermes 0.21.3 resolves 0.0.32, the first stable release that addresses the
 # reviewed network-reachable GHSA-5rvq-cxj2-64vf CPU denial of service,
 # GHSA-6jv3-5f52-599m parser differential, and GHSA-v9pg-7xvm-68hf. Keep the
 # hash-verified install so the final image cannot inherit a stale published
@@ -643,7 +643,7 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 
-# Hermes 0.20.6 removed agent-browser from its root dependency graph. Install
+# Hermes 0.21.3 keeps agent-browser outside its root dependency graph. Install
 # the reviewed lockfile into an immutable root-owned runtime so browser
 # credentials never cross a sandbox-writable executable boundary.
 RUN HOME=/sandbox \

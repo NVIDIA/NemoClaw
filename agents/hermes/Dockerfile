@@ -275,7 +275,7 @@ RUN node /scripts/upgrade-bundled-npm.mts \
 # The immutable selected base owns the reviewed Hindsight and agent-browser
 # patches and the root-owned agent-browser runtime. Verify that inherited boundary
 # without adding a second network-capable install owner in the final image.
-# Apply the dashboard Host guard when the published 0.20.6 base predates that
+# Apply the dashboard Host guard when a published base predates that
 # source fix, then verify the exact accepted-host contract.
 # hadolint ignore=DL4006
 RUN rm /scripts/npm-12.0.2.tgz \
@@ -488,7 +488,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-# Hermes 0.20.6 pins the Hindsight version but does not authenticate a
+# Hermes 0.21.3 pins the Hindsight version but does not authenticate a
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
@@ -614,7 +614,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-star
 RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
 
-# Hermes v0.20.6's operator drain is scoped to one container epoch. NemoClaw's
+# Hermes v0.21.3's operator drain is scoped to one container epoch. NemoClaw's
 # rebuild drain must instead survive gateway and container restarts until the
 # restored scripts and cron jobs are revalidated. Patch the pinned drain
 # predicate to compose an independent root-owned marker, hydrate that predicate
@@ -647,7 +647,7 @@ RUN /usr/bin/python3 -I \
         "$NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256" /opt/hermes/cron/jobs.py \
     | sha256sum -c -
 
-# Hermes v0.20.6 writes gateway lifecycle metadata directly below HERMES_HOME.
+# Hermes v0.21.3 writes gateway lifecycle metadata directly below HERMES_HOME.
 # Managed stop/start recovery needs this metadata in the writable runtime
 # boundary. Relocate only Hermes's central PID/lock/status path helpers to the
 # existing writable runtime
@@ -683,7 +683,7 @@ RUN /usr/bin/python3 -I \
     && /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py gateway-process-identity
 
-# Hermes v0.20.6 creates its writable cron execution-history database below
+# Hermes v0.21.3 creates its writable cron execution-history database below
 # the directory that contains cron job definitions. Relocate only this audit
 # database to the existing cross-UID runtime boundary, and keep
 # Hermes' quick snapshot inventory aligned. Full source hashes and shape-constrained
@@ -691,7 +691,7 @@ RUN /usr/bin/python3 -I \
 ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=b8aae8925cacad654d7b09900bd1cc02d776feaec4662c06dde8f4b2f356e22e
 ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=b4a685a901abdffe2d1232099b3c27391775775a7011d52c90276cb15d3fd75d
 ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=b0838c1f2e120d8f97076c6321297077edc1f150dc6d4b84ba3d13327fcbb156
-# Hermes v0.20.6 drops explicit auxiliary output limits on custom endpoints.
+# Hermes v0.21.3 drops explicit auxiliary output limits on custom endpoints.
 # Preserve those limits on NemoClaw's managed inference route so session-title
 # generation cannot occupy Ollama's only inference slot until the context fills.
 ARG NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256=d04ffc133e115caddd6a1243979e317a512a4ffd8b259ec2b053a5057c26ba93
@@ -722,7 +722,7 @@ RUN set -eu; \
         /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
         /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
 
-# Hermes v0.20.6 computes `sessions list` preview from the first user message.
+# Hermes v0.21.3 computes `sessions list` preview from the first user message.
 # Its workspace-aware titled table then hides the preview behind an automatic
 # seed title. Patch both pinned source shapes and prove that an automatically
 # titled workspace row renders the latest resumed or continued one-shot turn
@@ -740,7 +740,7 @@ RUN printf '%s  %s\n' \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview \
     && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py
 
-# Hermes v0.20.6 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite
+# Hermes v0.21.3 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite
 # falls back to file-based temp storage for FK constraint processing (for
 # example, the ON DELETE CASCADE on session_model_usage -> sessions). The
 # OpenShell sandbox execution context used by
@@ -756,7 +756,7 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
     | sha256sum -c - \
     || { echo "ERROR: patch-hermes-sqlite-temp-store.py hash mismatch (update NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256)" >&2; exit 1; }
-# Hermes 0.20.6 autocommits every statement in its fresh Kanban schema.
+# Hermes 0.21.3 autocommits every statement in its fresh Kanban schema.
 # Apply the transaction at the single call site and fail if upstream moves it.
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
     && grep -q 'PRAGMA temp_store=MEMORY' /opt/hermes/hermes_state.py \
@@ -766,7 +766,7 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.p
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-delete
 
-# Hermes v0.20.6 forces the gateway-created Discord recovery ledger to 0600,
+# Hermes v0.21.3 forces the gateway-created Discord recovery ledger to 0600,
 # which prevents sandbox-owned online backup and makes a sandbox-restored
 # database unwritable by the gateway. The final layout uses a gateway:sandbox
 # setgid parent, and this source patch retains group write on the ledger.
@@ -787,7 +787,7 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-pe
 RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
         googlechat-override-seams
 
-# Hermes v0.20.6's bundled Langfuse plugin rejects OpenShell resolver
+# Hermes v0.21.3's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
 # the OpenShell public and secret placeholders when each placeholder is bound
 # to its matching standard Langfuse key. Raw keys keep Hermes' upstream
@@ -1025,7 +1025,7 @@ RUN printf '%s  %s\n' \
     && grep -Fqx '    env["npm_config_offline"] = "true"' /opt/hermes/tools/browser_tool.py \
     && rm /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
         /opt/nemoclaw-hermes-config/managed_policy.py
-# Hermes v0.20.6 has several built-in environment override paths that can
+# Hermes v0.21.3 has several built-in environment override paths that can
 # re-enable an explicitly disabled platform when ambient credentials exist.
 # Apply this after the profile-policy patch above, then bind both its
 # output module and this narrow patcher before preserving explicit disables
