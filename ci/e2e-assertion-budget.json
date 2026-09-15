@@ -21,8 +21,8 @@
       "namedAssertionHelpers": 588,
       "failCalls": 8,
       "throwGuards": 86,
-      "objectFieldAssertions": 200,
-      "assertionPoints": 2638,
+      "objectFieldAssertions": 198,
+      "assertionPoints": 2636,
       "generatedProbeBlocks": 117,
       "generatedProbeConditions": 300
     },
@@ -33,10 +33,10 @@
       "namedAssertionHelpers": 888,
       "failCalls": 38,
       "throwGuards": 625,
-      "objectFieldAssertions": 299,
-      "assertionPoints": 4107,
-      "generatedProbeBlocks": 269,
-      "generatedProbeConditions": 910
+      "objectFieldAssertions": 297,
+      "assertionPoints": 4105,
+      "generatedProbeBlocks": 268,
+      "generatedProbeConditions": 894
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -51,7 +51,7 @@
       "test/e2e/live/bootstrap-install-smoke.test.ts": [0,0,14,30,3],
       "test/e2e/live/brave-search.test.ts": [17,20,27,32,1],
       "test/e2e/live/brev-workspace-cleanup.test.ts": [0,0,0,1,0],
-      "test/e2e/live/channels-add-remove.test.ts": [40,93,40,93,0],
+      "test/e2e/live/channels-add-remove.test.ts": [40,91,40,93,0],
       "test/e2e/live/channels-stop-start.test.ts": [0,0,36,130,9],
       "test/e2e/live/cloud-inference.test.ts": [12,18,12,18,1],
       "test/e2e/live/cloud-onboard.test.ts": [22,24,22,24,1],
@@ -88,7 +88,7 @@
       "test/e2e/live/managed-image-protected-runtime.test.ts": [0,0,42,79,15],
       "test/e2e/live/mcp-bridge.test.ts": [48,164,194,499,46],
       "test/e2e/live/messaging-compatible-endpoint.test.ts": [13,19,13,28,2],
-      "test/e2e/live/messaging-providers.test.ts": [0,11,6,51,12],
+      "test/e2e/live/messaging-providers.test.ts": [0,11,6,51,11],
       "test/e2e/live/model-router-provider-routed-inference.test.ts": [1,2,1,2,0],
       "test/e2e/live/native-runtime-qualification-case.test.ts": [0,0,15,93,0],
       "test/e2e/live/network-policy.test.ts": [21,22,21,22,1],
