@@ -267,7 +267,7 @@ export function isExplicitMissingOpenShellSandboxOutput(
   const exactStructuredNotFound =
     /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu;
   const exactStatusNotFound =
-    /^(?:error:\s*)?(?:×\s*)?status:\s*["']?Not(?:\s+)?Found["']?\s*,\s*message:\s*["']sandbox not found["']$/iu;
+    /^(?:error:\s*)?(?:×\s*)?status:\s*["']?Not\s+Found["']?\s*,\s*message:\s*["']sandbox not found["']$/iu;
   if (exactStructuredNotFound.test(structured) || exactStatusNotFound.test(structured)) return true;
 
   const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
