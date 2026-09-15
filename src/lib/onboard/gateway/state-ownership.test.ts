@@ -25,7 +25,6 @@ function makeOwnership(
       NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
     }),
     resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
-    runCapture: () => "",
     runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
     ...overrides,
   });
@@ -76,23 +75,9 @@ describe("docker-driver gateway selected-state ownership", () => {
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(true);
   });
 
-  it("uses a self-delimiting ps environment fallback", () => {
+  it("fails closed when bounded process environment evidence is unavailable", () => {
     const ownership = makeOwnership({
       readProcessEnvironment: () => null,
-      runCapture: () =>
-        `openshell-gateway NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${gatewayIdForStateDir(STATE_DIR)} OPENSHELL_DB_URL=sqlite:${path.join(STATE_DIR, "openshell.db")} OTHER=value`,
-    });
-
-    expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(true);
-  });
-
-  it("fails closed when ps cannot delimit a selected database path containing whitespace", () => {
-    const stateDir = "/home/nvidia/NemoClaw gateways/8080";
-    const ownership = makeOwnership({
-      getDockerDriverGatewayStateDir: () => stateDir,
-      readProcessEnvironment: () => null,
-      runCapture: () =>
-        `openshell-gateway OPENSHELL_DB_URL=sqlite:${path.join(stateDir, "openshell.db")} OTHER=value`,
     });
 
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);

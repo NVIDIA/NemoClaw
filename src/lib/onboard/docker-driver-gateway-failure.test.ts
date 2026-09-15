@@ -426,7 +426,6 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       isPidAlive: () => true,
       readProcessEnvironment: () => null,
       resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
-      runCapture: () => "",
       runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
     });
     try {

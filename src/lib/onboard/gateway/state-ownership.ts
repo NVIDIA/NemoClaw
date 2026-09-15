@@ -27,7 +27,6 @@ interface DockerDriverGatewayStateOwnershipDeps {
   isPidAlive(pid: number): boolean;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
   resolveOpenShellGatewayBinary(): string | null;
-  runCapture(args: string[], opts?: { ignoreError?: boolean }): string;
   runCaptureEx(args: readonly string[]): ProcessScanResult;
 }
 
@@ -51,45 +50,11 @@ export function processEnvironmentUsesSelectedGatewayState(
   );
 }
 
-export function readDockerDriverGatewayProcessEnvironmentFromPs(
-  pid: number,
-  stateDir: string,
-  runCapture: (args: string[], opts?: { ignoreError?: boolean }) => string,
-): Record<string, string> | null {
-  // `ps eww` separates environment entries with spaces and does not preserve
-  // where a value containing whitespace ends. Do not use that fallback to
-  // authorize a state operation when the selected database path is ambiguous.
-  if (/\s/u.test(path.join(stateDir, "openshell.db"))) return null;
-  const command = runCapture(["ps", "eww", "-p", String(pid), "-o", "command="], {
-    ignoreError: true,
-  }).trim();
-  const tokens = command.split(/\s+/).filter(Boolean);
-  const processEnv: Record<string, string> = {};
-  for (const key of [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV, "OPENSHELL_DB_URL"] as const) {
-    const prefix = `${key}=`;
-    const matches = tokens
-      .map((token, index) => ({ index, token }))
-      .filter(({ token }) => token.startsWith(prefix));
-    if (matches.length > 1) return null;
-    const match = matches[0];
-    if (!match) continue;
-    const next = tokens[match.index + 1];
-    if (next && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(next)) return null;
-    processEnv[key] = match.token.slice(prefix.length);
-  }
-  return Object.keys(processEnv).length > 0 ? processEnv : null;
-}
-
 export function createDockerDriverGatewayStateOwnership(
   deps: DockerDriverGatewayStateOwnershipDeps,
 ): DockerDriverGatewayStateOwnership {
   const readProcessEnvironment = (pid: number) =>
-    (deps.readProcessEnvironment ?? readDockerDriverGatewayProcessEnvironment)(pid) ??
-    readDockerDriverGatewayProcessEnvironmentFromPs(
-      pid,
-      deps.getDockerDriverGatewayStateDir(),
-      deps.runCapture,
-    );
+    (deps.readProcessEnvironment ?? readDockerDriverGatewayProcessEnvironment)(pid);
 
   function isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean {
     if (!deps.isPidAlive(pid)) return false;
