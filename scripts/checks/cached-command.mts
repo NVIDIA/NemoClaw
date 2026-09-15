@@ -21,8 +21,8 @@ const DIGEST_INDEX_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 
 type FileIdentity = {
   type: "file";
-  dev: number;
-  ino: number;
+  dev: string;
+  ino: string;
   mode: number;
   size: number;
   mtimeMs: number;
@@ -41,17 +41,18 @@ type FingerprintTimings = {
   discovery: number;
   source: number;
   dependencies: number;
+  outputs: number;
 };
 
-function fileIdentity(stat: fs.Stats): FileIdentity {
+function fileIdentity(stat: fs.BigIntStats): FileIdentity {
   return {
     type: "file",
-    dev: stat.dev,
-    ino: stat.ino,
-    mode: stat.mode,
-    size: stat.size,
-    mtimeMs: stat.mtimeMs,
-    ctimeMs: stat.ctimeMs,
+    dev: stat.dev.toString(),
+    ino: stat.ino.toString(),
+    mode: Number(stat.mode),
+    size: Number(stat.size),
+    mtimeMs: Number(stat.mtimeNs) / 1_000_000,
+    ctimeMs: Number(stat.ctimeNs) / 1_000_000,
   };
 }
 
@@ -72,14 +73,13 @@ function validIdentity(value: unknown): value is FileIdentity {
   const candidate = value as Partial<FileIdentity>;
   return (
     candidate.type === "file" &&
-    [
-      candidate.dev,
-      candidate.ino,
-      candidate.mode,
-      candidate.size,
-      candidate.mtimeMs,
-      candidate.ctimeMs,
-    ].every((field) => typeof field === "number" && Number.isFinite(field) && field >= 0)
+    typeof candidate.dev === "string" &&
+    /^(?:0|[1-9]\d*)$/.test(candidate.dev) &&
+    typeof candidate.ino === "string" &&
+    /^(?:0|[1-9]\d*)$/.test(candidate.ino) &&
+    [candidate.mode, candidate.size, candidate.mtimeMs, candidate.ctimeMs].every(
+      (field) => typeof field === "number" && Number.isFinite(field) && field >= 0,
+    )
   );
 }
 
@@ -90,16 +90,19 @@ function git(root: string, args: string[]): string {
   return result.stdout;
 }
 
-function readStableFile(file: string, expected: fs.Stats): Buffer {
+function readStableFile(file: string, expected: fs.BigIntStats): Buffer {
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   try {
-    const opened = fs.fstatSync(descriptor);
+    const opened = fs.fstatSync(descriptor, { bigint: true });
     if (!opened.isFile() || !sameIdentity(fileIdentity(opened), fileIdentity(expected)))
       throw new Error("Validation input changed before reading");
     const bytes = fs.readFileSync(descriptor);
     if (
-      !sameIdentity(fileIdentity(fs.fstatSync(descriptor)), fileIdentity(opened)) ||
-      !sameIdentity(fileIdentity(fs.lstatSync(file)), fileIdentity(opened))
+      !sameIdentity(
+        fileIdentity(fs.fstatSync(descriptor, { bigint: true })),
+        fileIdentity(opened),
+      ) ||
+      !sameIdentity(fileIdentity(fs.lstatSync(file, { bigint: true })), fileIdentity(opened))
     )
       throw new Error("Validation input changed while reading");
     return bytes;
@@ -110,8 +113,8 @@ function readStableFile(file: string, expected: fs.Stats): Buffer {
 
 function loadDigestIndex(file: string): DigestIndex {
   try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.size > MAX_DIGEST_INDEX_BYTES) return new Map();
+    const stat = fs.lstatSync(file, { bigint: true });
+    if (!stat.isFile() || stat.size > BigInt(MAX_DIGEST_INDEX_BYTES)) return new Map();
     const parsed: unknown = JSON.parse(readStableFile(file, stat).toString("utf8"));
     if (!parsed || typeof parsed !== "object") return new Map();
     const candidate = parsed as { version?: unknown; entries?: unknown };
@@ -190,12 +193,12 @@ function saveDigestIndex(file: string, entries: DigestIndex, now: number): void 
   throw new Error("Concurrent digest-index publication did not stabilize");
 }
 
-function digestFile(file: string, expected: fs.Stats, index?: DigestIndex): string {
+function digestFile(file: string, expected: fs.BigIntStats, index?: DigestIndex): string {
   const canonical = fs.realpathSync(file);
   const identity = fileIdentity(expected);
   const cached = index?.get(canonical);
   if (cached && sameIdentity(cached.identity, identity)) {
-    const after = fs.lstatSync(file);
+    const after = fs.lstatSync(file, { bigint: true });
     if (!after.isFile() || !sameIdentity(fileIdentity(after), identity))
       throw new Error("Validation input changed while hashing");
     cached.lastSeen = Date.now();
@@ -220,9 +223,9 @@ function hashPaths(
       return;
     hash.update(file).update("\0");
     const absolute = path.resolve(root, file);
-    let stat: fs.Stats;
+    let stat: fs.BigIntStats;
     try {
-      stat = fs.lstatSync(absolute);
+      stat = fs.lstatSync(absolute, { bigint: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       hash.update("missing\0");
@@ -233,7 +236,7 @@ function hashPaths(
       hash.update(fs.readlinkSync(absolute));
       // Hash the destination too; a stable executable symlink is not tool identity.
       const resolved = fs.realpathSync(absolute);
-      const target = fs.lstatSync(resolved);
+      const target = fs.lstatSync(resolved, { bigint: true });
       if (target.isFile())
         hash
           .update(String(target.mode))
@@ -392,7 +395,7 @@ export function validationFingerprint(
   if (timings) timings.dependencies += performance.now() - dependencyStarted;
   const outputsStarted = performance.now();
   const outputs = hashPaths(root, outputPaths, false, digestIndex);
-  if (timings) timings.source += performance.now() - outputsStarted;
+  if (timings) timings.outputs += performance.now() - outputsStarted;
   return { inputs: inputs.digest("hex"), outputs };
 }
 
@@ -430,11 +433,16 @@ export function runCachedCommand(options: CachedCommandOptions): number {
     !/--(?:require|import|loader|experimental-loader)\b|(?:^|\s)-r/.test(env.NODE_OPTIONS ?? "");
   let before: ReturnType<typeof validationFingerprint> | undefined;
   const digests = loadDigestIndex(digestIndexFile);
-  const beforeTimings: FingerprintTimings = { discovery: 0, source: 0, dependencies: 0 };
+  const beforeTimings: FingerprintTimings = {
+    discovery: 0,
+    source: 0,
+    dependencies: 0,
+    outputs: 0,
+  };
   let compilerTime = 0;
   let postCheckTime = 0;
   const timingReport = () =>
-    `${label}: timings discovery=${Math.round(beforeTimings.discovery)} ms, source/config=${Math.round(beforeTimings.source)} ms, dependencies=${Math.round(beforeTimings.dependencies)} ms, compiler=${Math.round(compilerTime)} ms, post-check=${Math.round(postCheckTime)} ms, total=${Math.round(performance.now() - started)} ms`;
+    `${label}: timings discovery=${Math.round(beforeTimings.discovery)} ms, source/config=${Math.round(beforeTimings.source)} ms, dependencies=${Math.round(beforeTimings.dependencies)} ms, outputs=${Math.round(beforeTimings.outputs)} ms, compiler=${Math.round(compilerTime)} ms, post-check=${Math.round(postCheckTime)} ms, total=${Math.round(performance.now() - started)} ms`;
   try {
     if (cacheable)
       before = validationFingerprint(

@@ -15,6 +15,7 @@ import { changedCheckFiles } from "../../scripts/checks/run.mts";
 import {
   changeInputDuringRead,
   fixtureGit,
+  observeHighPrecisionIdentity,
   observeInputReads,
   replaceInputBeforeRead,
   validationFixture,
@@ -323,6 +324,20 @@ describe("validation reuse", () => {
     expect(options.execute).toHaveBeenCalledOnce();
   });
 
+  it("distinguishes high-precision dependency device and inode values (#11782)", () => {
+    const dependency = path.join(root, "node_modules/typescript/compiler.js");
+    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
+    const identity = observeHighPrecisionIdentity(dependency);
+    const options = check();
+    runCachedCommand(options);
+    identity.reads.mockClear();
+    identity.set(9_007_199_254_740_993n, 9_007_199_254_740_993n);
+    runCachedCommand(options);
+    expect(Number(9_007_199_254_740_992n)).toBe(Number(9_007_199_254_740_993n));
+    expect(identity.reads).toHaveBeenCalledOnce();
+    expect(options.execute).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["mode", (file: string) => fs.chmodSync(file, 0o600)],
     [
@@ -343,14 +358,33 @@ describe("validation reuse", () => {
   });
 
   it.each([
-    ["missing", (_index: string) => undefined],
-    ["malformed", (index: string) => writeFixture(root, path.relative(root, index), "broken")],
-    ["symlink", (index: string) => fs.symlinkSync("fixture.json", index)],
+    ["missing", (index: string) => fs.rmSync(index)],
+    [
+      "malformed",
+      (index: string) => {
+        fs.rmSync(index);
+        writeFixture(root, path.relative(root, index), "broken");
+      },
+    ],
+    [
+      "symlink",
+      (index: string) => {
+        fs.rmSync(index);
+        fs.symlinkSync("fixture.json", index);
+      },
+    ],
+    [
+      "numeric identity",
+      (index: string) => {
+        const contents = JSON.parse(fs.readFileSync(index, "utf8"));
+        contents.entries[0][1].identity.dev = 1;
+        fs.writeFileSync(index, JSON.stringify(contents));
+      },
+    ],
   ])("rehashes inputs when the digest index is %s (#11782)", (_state, prepareIndex) => {
     const options = check();
     runCachedCommand(options);
     const index = path.join(root, ".git/nemoclaw-validation/file-digests-v1.json");
-    fs.rmSync(index);
     prepareIndex(index);
     const observed = observeInputReads(path.join(root, "src/example.ts"));
     runCachedCommand(options);
@@ -406,7 +440,7 @@ describe("validation reuse", () => {
     runCachedCommand(options);
     expect(options.report).toHaveBeenCalledWith(
       expect.stringMatching(
-        /timings discovery=\d+ ms, source\/config=\d+ ms, dependencies=\d+ ms, compiler=\d+ ms, post-check=\d+ ms, total=\d+ ms/,
+        /timings discovery=\d+ ms, source\/config=\d+ ms, dependencies=\d+ ms, outputs=\d+ ms, compiler=\d+ ms, post-check=\d+ ms, total=\d+ ms/,
       ),
     );
   });
