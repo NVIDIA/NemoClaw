@@ -34,6 +34,7 @@ function runUnmodifiedWrapperWithTrustedPython(
   const realHermes = path.join(dir, "hermes.real");
   fs.copyFileSync(WRAPPER, wrapper);
   fs.copyFileSync(VALIDATOR, validator);
+  fs.writeFileSync(path.join(dir, ".env"), "API_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=8642\n");
   fs.writeFileSync(realHermes, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
   const candidates = `(${trustedPythonCandidates.map((value) => JSON.stringify(value)).join(", ")},)`;
   const driver = [
@@ -74,6 +75,23 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toContain("process environment");
     expect(run.stderr).toContain("SLACK_BOT_TOKEN");
     expect(run.stderr).not.toContain("xoxb-real-1234567890");
+    expect(run.realInvoked).toBe(false);
+  });
+
+  it("refuses gateway restart when the env file changes during validation", () => {
+    const validatorScript = `#!/usr/bin/env python3
+import pathlib
+import sys
+if sys.argv[1] == "env-file":
+    pathlib.Path(sys.argv[2]).write_text("SLACK_BOT_TOKEN=xoxb-mutated-secret\\n")
+raise SystemExit(0)
+`;
+    const run = runWrapper(["gateway", "restart"], {}, { validatorScript });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("env file changed during secret-boundary validation");
+    expect(run.stderr).toContain("SECRET_BOUNDARY_REFUSED");
+    expect(run.stderr).not.toContain("xoxb-mutated-secret");
     expect(run.realInvoked).toBe(false);
   });
 

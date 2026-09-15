@@ -60,9 +60,7 @@ describe("created Hermes credential environment reconciliation", () => {
     const execute = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
       .mockImplementation(async (_sandboxName, command) => {
-        events.push(
-          command.includes("validate-hermes-env-secret-boundary.py") ? "boundary" : "restart",
-        );
+        events.push(command === "hermes gateway restart" ? "restart" : "unexpected");
         return { status: 0, stdout: "", stderr: "" };
       });
     const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
@@ -73,8 +71,6 @@ describe("created Hermes credential environment reconciliation", () => {
 
     expect(events).toEqual([
       "identity:restarting Hermes gateway for sandbox 'alpha'",
-      "boundary",
-      "identity:restarting Hermes gateway after secret-boundary validation for sandbox 'alpha'",
       "restart",
       "identity:confirming Hermes gateway restart for sandbox 'alpha'",
     ]);

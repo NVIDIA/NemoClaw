@@ -5,7 +5,6 @@ import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier"
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import * as processRecovery from "../process-recovery";
-import { validateHermesRestartSecretBoundary } from "../hermes-secret-boundary-recovery";
 
 export function createHermesCredentialEnvReconciliationRuntime(
   runOpenshell: MessagingOpenShellRunner,
@@ -23,20 +22,6 @@ export function createHermesCredentialEnvReconciliationRuntime(
       }),
     restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const boundary = await validateHermesRestartSecretBoundary(
-        sandboxName,
-        processRecovery.executeSandboxExecCommand,
-      );
-      if (!boundary || boundary.status !== 0) {
-        return {
-          status: 1,
-          stdout: "",
-          stderr: "Hermes secret-boundary validation did not pass before native restart",
-        };
-      }
-      revalidate(
-        `restarting Hermes gateway after secret-boundary validation for sandbox '${sandboxName}'`,
-      );
       const result = await processRecovery.executeSandboxExecCommand(
         sandboxName,
         "hermes gateway restart",

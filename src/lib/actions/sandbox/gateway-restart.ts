@@ -5,7 +5,6 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
-import { validateHermesRestartSecretBoundary } from "./hermes-secret-boundary-recovery";
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -412,19 +411,13 @@ export async function restartSandboxGatewayWithDeps(
     );
   }
   const nativeCommand = `${agentName} gateway restart`;
-  if (agentName === "hermes") {
-    const boundary = await validateHermesRestartSecretBoundary(
-      sandboxName,
-      deps.executeSandboxExecCommand,
-    );
-    if (!boundary || boundary.status !== 0) {
-      const detail = "Hermes secret-boundary validation did not pass before native restart";
-      printGatewayRestartFailure(sandboxName, "secret-boundary refusal", detail);
-      return { ok: false, failureLayer: "secret-boundary refusal", detail };
-    }
-  }
   const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
   if (!restartResult || restartResult.status !== 0) {
+    const classified = classifyGatewayRestartFailure(restartResult);
+    if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
+      printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
+      return { ok: false, failureLayer: classified.layer, detail: classified.detail };
+    }
     const detail = restartResult
       ? sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
         `${nativeCommand} exited ${restartResult.status}`
