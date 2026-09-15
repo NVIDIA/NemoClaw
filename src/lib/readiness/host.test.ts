@@ -7,7 +7,7 @@ import systemReadinessSchema from "../../../schemas/system-readiness.schema.json
 import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
-import type { PlatformIdentity } from "./platform-qualification";
+import { collectPlatformIdentity, type PlatformIdentity } from "./platform-qualification";
 
 const { detectGpu, detectNvidiaDriverVersion, detectNvidiaPlatform } = vi.hoisted(() => ({
   detectGpu: vi.fn<(_deps?: unknown) => GpuDetection | null>(() => null),
@@ -179,6 +179,26 @@ describe("host readiness projection (#7408)", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
     );
+  });
+
+  it("treats a malformed selected OS release field as inconclusive (#11026)", () => {
+    const platformIdentity = collectPlatformIdentity({
+      readFile: () => "",
+      readdir: () => [],
+      openFile: () => {
+        throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
+      },
+      readBoundedOsRelease: () =>
+        'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS\n',
+    });
+    const result = report({}, { platformIdentity });
+
+    expect(platformIdentity.osId).toBeUndefined();
+    expect(platformIdentity.osVersionId).toBeUndefined();
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
+    );
+    expect(findingIds(result)).not.toContain("host.os.release_unqualified");
   });
 
   it.each([
