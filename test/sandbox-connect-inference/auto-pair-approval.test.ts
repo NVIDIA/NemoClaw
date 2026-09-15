@@ -5,12 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import {
-  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_MAX_APPROVALS,
-  CONNECT_AUTO_PAIR_TIMEOUT_MS,
-} from "../../src/lib/actions/sandbox/connect-autopair-budget";
 import { testTimeoutOptions } from "../helpers/timeouts";
 import {
   extractApprovalPassScript,
@@ -18,9 +12,6 @@ import {
   runConnect,
   setupFixture,
 } from "./helpers";
-
-// Evidence unavailability on macOS is a note, not a failure (#9278).
-const expectedProbeOnlyExitCode = 0;
 
 function findApprovalExec(state: {
   sandboxExecCalls: string[][];
@@ -30,23 +21,6 @@ function findApprovalExec(state: {
     (input) => input.includes("openclaw") && input.includes("devices") && input.includes("approve"),
   );
   return state.sandboxExecCalls[approvalIndex];
-}
-
-function findGatewayControlExec(dockerCalls: string[][]): string[] | undefined {
-  return dockerCalls.find((call) => {
-    const userIndex = call.indexOf("--user");
-    return (
-      call[0] === "exec" &&
-      userIndex > 1 &&
-      call.includes("LD_PRELOAD=") &&
-      call.includes("PYTHONUSERBASE=") &&
-      call.includes("PYTHONNOUSERSITE=1") &&
-      call[userIndex + 1] === "root" &&
-      call[userIndex + 3] === "/usr/local/bin/nemoclaw-gateway-control" &&
-      call[userIndex + 4] === "recover" &&
-      call.length === userIndex + 6
-    );
-  });
 }
 
 describe("sandbox connect auto-pair approval pass (#4263)", () => {

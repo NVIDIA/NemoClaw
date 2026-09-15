@@ -63,7 +63,6 @@ export function bindHermesPortableOnboardingLifecycleLock(
 }
 import {
   assertCurrentHermesPortableContainer,
-  configureHermesPortableRestartPolicy,
   enrollHermesPortableContainer,
   probeHermesPortableAuthenticatedHealth,
   type HermesPortableAuthenticatedHealthCapture,
@@ -1576,7 +1575,6 @@ export async function runHermesPortableOnboardingTransaction<T>(
       repairRegistryGatewayPort(configuringSnapshot.receipt, liveIdentity.liveIdentityFingerprint),
       liveIdentity.liveIdentityFingerprint,
     );
-    configureHermesPortableRestartPolicy(configuringSnapshot.receipt, containerDeps);
     const beforeRegistry = registryDisposition(configuringSnapshot.receipt);
     if (beforeRegistry.kind === "conflict") {
       fail(`registry conflicts with configuring authority: ${beforeRegistry.detail}`);

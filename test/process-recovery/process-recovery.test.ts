@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -79,24 +78,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-
-function decodeSandboxExecShellPayload(payload: string): string {
-  const match = payload.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| sh/);
-  return match ? Buffer.from(match[1], "base64").toString("utf8") : payload;
-}
-
-function getSandboxExecShellCommand(rawArgs: unknown): string {
-  const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-  return decodeSandboxExecShellPayload(String(args.at(-1) ?? ""));
-}
-
-function expectBoundedGatewayRecoveryCall(request: unknown): void {
-  expect(request).toHaveBeenCalledOnce();
-  expect(request).toHaveBeenCalledWith("hermes-box", "recover", expect.any(Number));
-  const timeout = (request as { mock: { calls: unknown[][] } }).mock.calls[0]?.[2];
-  expect(timeout).toBeGreaterThan(0);
-  expect(timeout).toBeLessThanOrEqual(210_000);
-}
 
 async function withFakeOpenshellBinary<T>(fn: () => T | Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
