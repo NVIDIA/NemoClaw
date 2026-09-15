@@ -349,6 +349,10 @@ pub struct Overrides {
 #[serde(default, deny_unknown_fields)]
 /// Managed vLLM service. Explicit placement and publication must appear together.
 pub struct Service {
+    /// Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ServiceAuthentication")]
+    pub authentication: Option<ServiceAuthentication>,
     /// Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "super::ManagedResource")]
@@ -388,6 +392,13 @@ pub struct Service {
     #[schemars(default)]
     /// GPU budget and resident watchdog thresholds. Omission selects the SDK defaults.
     pub memory: Memory,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+/// Generated bearer authentication for a managed inference service.
+pub enum ServiceAuthentication {
+    Bearer,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

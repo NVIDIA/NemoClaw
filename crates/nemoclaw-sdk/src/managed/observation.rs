@@ -321,6 +321,7 @@ impl Engine {
                 )
                 .await?
                 .ok_or(ObservationError::Incomplete)?;
+            spec.validate_image_authentication(&image)?;
             let image_config = image.config.as_ref().ok_or(ObservationError::Incomplete)?;
             let image_id = image
                 .id

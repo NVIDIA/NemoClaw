@@ -88,6 +88,28 @@ impl Spec {
         }
         Ok(())
     }
+    pub(crate) fn validate_image_authentication(
+        &self,
+        image: &bollard::models::ImageInspect,
+    ) -> Result<(), Error> {
+        if self
+            .service
+            .as_ref()
+            .is_some_and(|s| s.authentication.is_some())
+            && image
+                .config
+                .as_ref()
+                .and_then(|c| c.labels.as_ref())
+                .and_then(|l| l.get("org.nemoclaw.inference.authentication"))
+                .map(String::as_str)
+                != Some("bearer-v1")
+        {
+            return Err(Error::Conflict(
+                "runtime image lacks managed bearer authentication; rebuild the runtime image",
+            ));
+        }
+        Ok(())
+    }
     pub fn engine(&self) -> &str {
         self.service
             .as_ref()

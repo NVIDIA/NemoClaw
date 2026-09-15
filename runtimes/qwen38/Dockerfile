@@ -15,7 +15,8 @@ COPY supervisor-source.tar.gz supervisor.json /opt/nemoclaw/source/
 COPY Dockerfile build.json /opt/nemoclaw/source/
 ENTRYPOINT ["/usr/local/bin/nemoclaw-runtime"]
 CMD []
-LABEL org.nemoclaw.backend="vllm" \
+LABEL org.nemoclaw.inference.authentication="bearer-v1" \
+      org.nemoclaw.backend="vllm" \
       org.nemoclaw.recipe.protocol="v1" \
       org.nemoclaw.feature.ple="1" \
       org.nemoclaw.recipe="d03809008834124e80223c3482f2ddb59577a48f" \

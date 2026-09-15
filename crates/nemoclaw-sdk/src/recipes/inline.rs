@@ -231,7 +231,8 @@ impl InlineRecipe {
             return Err(bad());
         }
         for (key, value) in &settings.environment {
-            if !key.starts_with("VLLM_")
+            if key == "VLLM_API_KEY"
+                || !key.starts_with("VLLM_")
                 || !key
                     .bytes()
                     .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
@@ -242,7 +243,8 @@ impl InlineRecipe {
             }
         }
         for (key, value) in &settings.prepared_environment {
-            if !key.starts_with("VLLM_")
+            if key == "VLLM_API_KEY"
+                || !key.starts_with("VLLM_")
                 || !key
                     .bytes()
                     .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')

@@ -1733,9 +1733,11 @@ name = "nemoclaw-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.4.3",
  "nemoclaw-sdk",
  "process-wrap",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

@@ -309,7 +309,7 @@ pub(super) fn constrain(root: &mut Value) {
         {"if": at(&format!("{agent}/harness"), json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
         {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "openclaw"}}), true),
          "then": at(&route, forbid(&["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]), false)},
-        {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at(&format!("{agent}/harness"), json!({"const": "hermes"}), false), at(provider, json!({"required": ["credential"]}), true)]}},
+        {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at(&format!("{agent}/harness"), json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["ollamaProxy"]},{"required":["service"],"properties":{"service":{"required":["authentication"]}}}]}), true)]}},
         {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "pi"}}), true),
          "then": at(&route, forbid(&["piModel"]), false)},
         {"if": at(&format!("{provider}/ollama"), json!({}), true),
@@ -498,7 +498,7 @@ fn recipe_constraints(defs: &mut serde_json::Map<String, Value>) {
         property(
             settings,
             field,
-            json!({"propertyNames": {"pattern": "^VLLM_[A-Z0-9_]*$"}, "default": {}}),
+            json!({"propertyNames": {"pattern": "^VLLM_[A-Z0-9_]*$", "not":{"const":"VLLM_API_KEY"}}, "default": {}}),
         );
     }
     property(

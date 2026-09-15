@@ -5,7 +5,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum Source {
-    OllamaProxy { engine: String, spec: ServiceSpec },
+    OllamaProxy {
+        engine: String,
+        spec: Box<ServiceSpec>,
+    },
+    ManagedService {
+        spec: Box<crate::managed::Spec>,
+    },
 }
 impl Source {
     pub fn parse(value: &str, owner: &str, endpoint: &str) -> Result<Self, ObservationError> {
@@ -17,6 +23,20 @@ impl Source {
                     && spec.validate().is_ok()
                     && spec.owner == owner
                     && spec.proxy.as_ref().is_some_and(|p| p.endpoint == endpoint) => {}
+            Self::ManagedService { spec }
+                if spec.validate().is_ok()
+                    && spec.owner == owner
+                    && spec.service.as_ref().is_some_and(|s| {
+                        s.authentication.is_some()
+                            && s.publication.as_ref().map_or_else(
+                                || {
+                                    spec.bridge().is_ok_and(|b| {
+                                        endpoint == format!("http://{b}:{}/v1", s.serving.port)
+                                    })
+                                },
+                                |p| p.endpoint == endpoint,
+                            )
+                    }) => {}
             _ => return Err(ObservationError::BindingMismatch),
         }
         Ok(source)
@@ -24,6 +44,14 @@ impl Source {
     pub async fn resolve(&self) -> Result<String, ObservationError> {
         let work = async {
             match self {
+                Self::ManagedService { spec } => {
+                    let engine = Engine::connect(spec.engine())?;
+                    let observed = engine
+                        .observe_runtime(spec, "")
+                        .await?
+                        .ok_or(Error::Conflict("credential source is absent"))?;
+                    read_key(&engine, &observed.container_id).await
+                }
                 Self::OllamaProxy { engine, spec } => {
                     let engine = Engine::connect(engine)?;
                     let observed = engine
@@ -69,4 +97,45 @@ pub(crate) async fn read_key(engine: &Engine, id: &str) -> Result<String, Error>
         return Err(Error::State("managed inference credential is invalid"));
     }
     String::from_utf8(bytes).map_err(|_| Error::State("managed inference credential is invalid"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn credential_source_rejects_wrong_owner_endpoint_and_unsupported_image() {
+        let fixtures: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("managed/reference.json")).unwrap();
+        let mut spec: Box<crate::managed::Spec> =
+            serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
+        spec.service.as_mut().unwrap().authentication =
+            Some(crate::config::ServiceAuthentication::Bearer);
+        let endpoint = format!(
+            "http://{}:{}/v1",
+            spec.bridge().unwrap(),
+            spec.service.as_ref().unwrap().serving.port
+        );
+        let source = serde_json::to_string(&Source::ManagedService { spec: spec.clone() }).unwrap();
+        Source::parse(&source, &spec.owner, &endpoint).unwrap();
+        assert!(Source::parse(&source, "foreign", &endpoint).is_err());
+        assert!(Source::parse(&source, &spec.owner, "http://192.168.1.1:8080/v1").is_err());
+        let mut image: bollard::models::ImageInspect =
+            serde_json::from_value(serde_json::json!({"Config":{"Labels":{}}})).unwrap();
+        assert!(spec.validate_image_authentication(&image).is_err());
+        image
+            .config
+            .as_mut()
+            .unwrap()
+            .labels
+            .as_mut()
+            .unwrap()
+            .insert(
+                "org.nemoclaw.inference.authentication".into(),
+                "bearer-v1".into(),
+            );
+        spec.validate_image_authentication(&image).unwrap();
+        spec.service.as_mut().unwrap().authentication = None;
+        let source = serde_json::to_string(&Source::ManagedService { spec: spec.clone() }).unwrap();
+        assert!(Source::parse(&source, &spec.owner, &endpoint).is_err());
+    }
 }

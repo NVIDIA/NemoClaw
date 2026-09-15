@@ -153,12 +153,38 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             });
         }
     }
+    if provider
+        .service
+        .as_ref()
+        .is_some_and(|s| s.authentication.is_some())
+    {
+        let spec = runtime_targets(document, generations)
+            .map_err(|_| ConfigError("invalid managed credential source"))?
+            .into_iter()
+            .find(|t| t.kind == crate::managed::SERVICE_KIND)
+            .ok_or(ConfigError("missing managed credential source"))?
+            .values["spec"]
+            .clone();
+        let source = crate::inference_auth::Source::ManagedService {
+            spec: serde_json::from_str(&spec)
+                .map_err(|_| ConfigError("invalid managed credential source"))?,
+        };
+        result
+            .iter_mut()
+            .find(|r| r.address == "nemoclaw_provider.inference")
+            .unwrap()
+            .values
+            .insert(
+                "credential_source".into(),
+                serde_json::to_string(&source).expect("typed credential source"),
+            );
+    }
     if let Some(proxy) = &provider.ollama_proxy {
         let spec = crate::ollama::proxy::specification(document, generations)
             .map_err(|_| ConfigError("invalid Ollama proxy specification"))?;
         let source = crate::inference_auth::Source::OllamaProxy {
             engine: proxy.engine.clone(),
-            spec,
+            spec: Box::new(spec),
         };
         result
             .iter_mut()

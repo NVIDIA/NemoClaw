@@ -286,7 +286,12 @@ impl Document {
                 require(
                     agent.harness == "hermes"
                         && auth.provider_ref == provider.name
-                        && provider.credential.is_some(),
+                        && (provider.credential.is_some()
+                            || provider.ollama_proxy.is_some()
+                            || provider
+                                .service
+                                .as_ref()
+                                .is_some_and(|s| s.authentication.is_some())),
                     "Hermes API-key auth must reference the routed provider with a credential",
                 )?;
             }

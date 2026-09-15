@@ -127,6 +127,7 @@ impl Engine {
             image = self.image(spec.image()).await?;
         }
         let image = image.ok_or(ObservationError::Incomplete)?;
+        spec.validate_image_authentication(&image)?;
         if image.id.as_ref().is_none_or(String::is_empty)
             || image.architecture.as_deref()
                 != Some(

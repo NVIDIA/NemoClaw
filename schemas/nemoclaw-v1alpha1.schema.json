@@ -2293,6 +2293,10 @@
         ]
       },
       "properties": {
+        "authentication": {
+          "$ref": "#/$defs/ServiceAuthentication",
+          "description": "Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving."
+        },
         "backend": {
           "const": "vllm",
           "description": "Managed inference backend.",
@@ -2355,6 +2359,13 @@
         }
       },
       "type": "object"
+    },
+    "ServiceAuthentication": {
+      "description": "Generated bearer authentication for a managed inference service.",
+      "enum": [
+        "bearer"
+      ],
+      "type": "string"
     },
     "ServicePlacement": {
       "additionalProperties": false,
@@ -2540,6 +2551,9 @@
           "default": {},
           "description": "Literal VLLM_* environment values for serving. Do not place credentials here.",
           "propertyNames": {
+            "not": {
+              "const": "VLLM_API_KEY"
+            },
             "pattern": "^VLLM_[A-Z0-9_]*$"
           },
           "type": "object"
@@ -2590,6 +2604,9 @@
           "default": {},
           "description": "VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment.",
           "propertyNames": {
+            "not": {
+              "const": "VLLM_API_KEY"
+            },
             "pattern": "^VLLM_[A-Z0-9_]*$"
           },
           "type": "object"
@@ -3533,8 +3550,29 @@
                 "properties": {
                   "inferenceProviders": {
                     "items": {
-                      "required": [
-                        "credential"
+                      "anyOf": [
+                        {
+                          "required": [
+                            "credential"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "ollamaProxy"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "service": {
+                              "required": [
+                                "authentication"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "service"
+                          ]
+                        }
                       ]
                     }
                   }
