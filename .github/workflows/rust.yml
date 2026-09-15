@@ -74,6 +74,9 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo build --locked --workspace --all-targets
           cargo test --locked --workspace
+      - name: Check recipe attribution and preparation adapters
+        if: runner.os == 'Linux'
+        run: python3 -B -m unittest discover -s runtimes/qwen38 -p 'test_*.py'
       - name: Check generated configuration schema and reference
         run: |
           suffix=""

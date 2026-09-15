@@ -10,7 +10,11 @@ Write a behavioral test, observe it fail, implement the behavior, and run the fo
 Keep commits green and small; explain the failure, decision, and validation in commit bodies.
 Do not maintain a journal.
 
-Use Conventional Commits and SPDX Apache-2.0 source headers.
+Use Conventional Commits.
+Use SPDX Apache-2.0 headers for original NemoClaw code.
+Preserve upstream copyright and license notices in copied, adapted, translated, and generated code.
+Do not replace an upstream license with the repository default.
+Record the upstream source revision and dated modifications beside derived code; see [Qwen3.8 notices](runtimes/qwen38/NOTICE.md).
 Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` for the implemented workspace.
 
 Preserve other worktrees and live resources.

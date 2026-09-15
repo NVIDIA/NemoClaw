@@ -1,7 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (C) 2026 MiaAI Lab (https://x.com/MiaAI_lab)
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Verify every packed row against the pinned safetensors, with bounded RAM."""
+"""Verify every packed row against the pinned safetensors, with bounded RAM.
+
+Adapted from MiaAI Lab's files/build_ple_packed_table.py:
+https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark
+Revision: d03809008834124e80223c3482f2ddb59577a48f
+Modified 2026-09-11: check shape, size, snapshot, and every packed row; emit a hash.
+Attribution and license corrected 2026-09-15.
+See AGPL-3.0-or-later.txt and NOTICE.md beside this file.
+"""
 import hashlib
 import json
 import os

@@ -21,3 +21,9 @@ The [design decision](docs/design/scope.md) defines implementation boundaries an
 
 Follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
 Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/CONTRIBUTING.md) for documentation changes.
+
+## Licenses
+
+Original NemoClaw code uses [Apache-2.0](LICENSE).
+The Qwen3.8 artifact includes AGPL-3.0-or-later recipe code and adaptations.
+See [component attribution and license notices](runtimes/qwen38/NOTICE.md) for their scope and retained sources.

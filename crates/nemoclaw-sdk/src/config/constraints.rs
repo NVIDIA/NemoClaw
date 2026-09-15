@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Spark memory defaults were informed by MiaAI Lab's start.sh and memwatch.sh.
+// Upstream AGPL-3.0-or-later recipe and revision: runtimes/qwen38/NOTICE.md.
 //! Values shared by normalization, validation, and the authored-input schema.
 
 pub(crate) const KIND: &str = "NemoClawConfig";
