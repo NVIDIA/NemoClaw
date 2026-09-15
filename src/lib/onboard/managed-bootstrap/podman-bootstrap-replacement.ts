@@ -1094,6 +1094,7 @@ export function stopExactPodmanBootstrapOriginal(
   input: StopExactPodmanBootstrapOriginalInput,
 ): PodmanBootstrapPreparedReplacement {
   assertAuthority(input);
+  input.watcherLease.assertStillStopped();
   const journal = requireJournalPhase(input.journalStore.load(input.prepared.bootstrapIdentity), [
     "replacement-created",
   ]);
@@ -1107,7 +1108,7 @@ export function stopExactPodmanBootstrapOriginal(
   ) {
     failure("Podman bootstrap prepared replacement does not match the durable journal.");
   }
-  inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, true));
+  const original = inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload));
   const stateVolume = inspectStableStateVolume(
     input,
     stateVolumeExpectationFromJournal(journal, input.heldWorkload),
@@ -1121,12 +1122,14 @@ export function stopExactPodmanBootstrapOriginal(
       stateVolume,
     ),
   );
-  const stop = captureWhileWatcherHeld(
-    input,
-    ["container", "stop", journal.originalRuntimeId],
-    STOP_TIMEOUT_MS,
-  );
-  requireZero(stop, "Podman bootstrap original-container stop");
+  if (original.running) {
+    const stop = captureWhileWatcherHeld(
+      input,
+      ["container", "stop", journal.originalRuntimeId],
+      STOP_TIMEOUT_MS,
+    );
+    requireZero(stop, "Podman bootstrap original-container stop");
+  }
   inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
   inspectStableContainer(
     input,

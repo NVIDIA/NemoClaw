@@ -750,6 +750,30 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
   });
 
+  it("accepts the exact original when watcher quiescence already stopped it", () => {
+    const harness = new PodmanHarness();
+    const capture = vi.spyOn(harness.engine, "capture");
+    const store = journalStore();
+    const watcher = watcherLease();
+    const prepared = prepare(harness, store, watcher.lease);
+    harness.original.running = false;
+
+    const stopped = stopExactPodmanBootstrapOriginal({
+      engine: harness.engine,
+      journalStore: store,
+      watcherLease: watcher.lease,
+      prepared,
+      heldWorkload,
+    });
+
+    expect(stopped.journal.phase).toBe("original-stopped");
+    expect(harness.original.running).toBe(false);
+    expect(harness.replacement?.running).toBe(false);
+    expect(harness.calls).not.toContainEqual(["container", "stop", ORIGINAL_RUNTIME_ID]);
+    expect(capture).not.toHaveBeenCalledWith(["container", "stop", ORIGINAL_RUNTIME_ID], 60_000);
+    expect(watcher.assertStillStopped).toHaveBeenCalled();
+  });
+
   it.each([
     [
       "state-volume mountpoint",
