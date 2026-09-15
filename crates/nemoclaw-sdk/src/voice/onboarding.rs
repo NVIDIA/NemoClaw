@@ -109,13 +109,19 @@ impl Bootstrap {
             "--target-ref",
             grant.target_ref(),
             "--credential-fd",
-            "0",
+            "3",
             "--result-file",
             result
                 .to_str()
                 .ok_or(Error::State("VoiceClaw result path is invalid"))?,
         ];
-        let launched = run_started(&self.executable, &args, Stdio::from(credential), cancel);
+        let launched = run_started(
+            &self.executable,
+            &args,
+            Stdio::null(),
+            Some(credential),
+            cancel,
+        );
         let mut child = match launched {
             Ok(child) => child,
             Err(error) => {
@@ -235,7 +241,7 @@ async fn run(
     stdin: Stdio,
     cancel: &CancellationToken,
 ) -> Result<(), Error> {
-    let mut child = run_started(executable, args, stdin, cancel)?;
+    let mut child = run_started(executable, args, stdin, None, cancel)?;
     wait(child.as_mut(), args[0], cancel).await
 }
 
@@ -243,18 +249,32 @@ fn run_started(
     executable: &Path,
     args: &[&str],
     stdin: Stdio,
+    credential: Option<File>,
     cancel: &CancellationToken,
 ) -> Result<Box<dyn process_wrap::tokio::ChildWrapper>, Error> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    let mut command = CommandWrap::with_new(executable, |command| {
-        command
-            .args(args)
-            .stdin(stdin)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-    });
+    let mut child = tokio::process::Command::new(executable);
+    child
+        .args(args)
+        .stdin(stdin)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    #[cfg(unix)]
+    if let Some(credential) = credential {
+        use command_fds::{CommandFdExt, FdMapping};
+        child
+            .as_std_mut()
+            .fd_mappings(vec![FdMapping {
+                parent_fd: credential.into(),
+                child_fd: 3,
+            }])
+            .map_err(|_| Error::State("cannot map protected VoiceClaw credential"))?;
+    }
+    #[cfg(not(unix))]
+    let _ = credential;
+    let mut command: CommandWrap = child.into();
     command.wrap(KillOnDrop);
     #[cfg(unix)]
     command.wrap(process_wrap::tokio::ProcessGroup::leader());

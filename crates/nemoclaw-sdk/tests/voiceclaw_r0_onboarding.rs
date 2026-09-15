@@ -79,8 +79,9 @@ if [ "$stage" = prepare ]; then
 elif [ "$stage" = connect ]; then
   [ "$endpoint" = "http://127.0.0.1:3456/r0/connect" ]
   [ "$target" = "opaque-target" ]
-  [ "$fd" = 0 ]
-  IFS= read -r credential
+  [ "$fd" = 3 ]
+  IFS= read -r credential <&3
+  ! IFS= read -r unexpected
   [ "$credential" = "test-only-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" ]
   umask 077
   printf '{"profile":"nemoclaw-voice-r0/1","status":"ready","targetRef":"opaque-target","clientInstructions":"Read protected client access."}' > "$result"
@@ -157,7 +158,7 @@ result = values['--result-file']
 if stage == 'prepare':
     payload = {'profile': values['--profile'], 'status': 'prepared'}
 else:
-    credential = sys.stdin.readline().strip()
+    credential = os.fdopen(int(values['--credential-fd'])).readline().strip()
     url = urllib.parse.urlparse(values['--endpoint'])
     connection = http.client.HTTPConnection(url.hostname, url.port, timeout=2)
     connection.request('POST', url.path,
