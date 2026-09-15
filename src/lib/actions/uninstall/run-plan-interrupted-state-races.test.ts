@@ -75,6 +75,7 @@ interface RunInterruptedUninstallOptions {
   initialStateRoot?: (stateRoot: string) => string;
   onLog?: (message: string) => void;
   prepareState?: (stateRoot: string) => void;
+  realpathSync?: (target: string) => string;
   rmSync?: typeof fs.rmSync;
 }
 
@@ -116,6 +117,7 @@ async function runInterruptedUninstall(
         logs.push(message);
         onLog(message);
       },
+      realpathSync: options.realpathSync,
       resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
         endpoint: null,
         gatewayName,
@@ -156,6 +158,29 @@ afterEach(() => {
 });
 
 describe("interrupted pre-gateway uninstall races (#11395)", () => {
+  it("preserves selected state when its home cannot be resolved", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-home-resolution-"));
+    const port = 9123;
+    const resolutionFailure = Object.assign(new Error("injected home resolution failure"), {
+      code: "ENOENT",
+    });
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port, {
+        realpathSync: () => {
+          throw resolutionFailure;
+        },
+      });
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(fs.existsSync(result.stateRoot)).toBe(true);
+      expect(result.errors.join("\n")).toContain(
+        "Unable to resolve interrupted-uninstall recovery state before cleanup",
+      );
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
   it("uses scoped cleanup when a sibling already owns its onboarding lock", async () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-active-sibling-"));
     const port = 9123;

@@ -3622,7 +3622,7 @@ function interruptedUninstallStagingTrustFailure(stat: fs.Stats): string | null 
 }
 
 function interruptedUninstallStagingRoot(paths: UninstallPaths, runtime: UninstallRuntime): string {
-  const home = fs.realpathSync(path.resolve(runtime.env.HOME || os.homedir()));
+  const home = runtime.realpathSync(path.resolve(runtime.env.HOME || os.homedir()));
   const stagingRoot = path.join(
     home,
     `${INTERRUPTED_UNINSTALL_STAGING_PREFIX}${String(GATEWAY_PORT)}`,
@@ -3642,8 +3642,14 @@ function interruptedUninstallRecoveryRoots(stagingRoot: string): string[] {
   const parent = path.dirname(stagingRoot);
   const stagingName = path.basename(stagingRoot);
   const quarantinePrefix = `${stagingName}.cleanup-`;
-  return fs
-    .readdirSync(parent)
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(parent);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
+  return entries
     .filter(
       (entry) =>
         entry === stagingName ||
@@ -3786,12 +3792,18 @@ function recoverAbandonedInterruptedUninstallBeforeClassification(
   preservedEntries: readonly string[],
 ): boolean {
   let stagingRoot: string;
-  let recoveryRoots: string[];
   try {
     stagingRoot = interruptedUninstallStagingRoot(paths, runtime);
+  } catch (error) {
+    runtime.warn(
+      `Unable to resolve interrupted-uninstall recovery state before cleanup: ${formatError(error)}. The selected state was preserved.`,
+    );
+    return false;
+  }
+  let recoveryRoots: string[];
+  try {
     recoveryRoots = interruptedUninstallRecoveryRoots(stagingRoot);
   } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return true;
     runtime.warn(
       `Unable to inspect interrupted-uninstall recovery state before cleanup: ${formatError(error)}. The selected state was preserved.`,
     );
