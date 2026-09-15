@@ -72,7 +72,11 @@ function buildRunnerEnv(
   }
   if (replaceEnv) return normalizedExtra;
   if (executable !== undefined && path.basename(executable) === "docker") {
-    const selectedDockerHost = normalizedExtra.DOCKER_HOST ?? process.env.DOCKER_HOST;
+    const selectedDockerContext = String(
+      normalizedExtra.DOCKER_CONTEXT ?? process.env.DOCKER_CONTEXT ?? "",
+    ).trim();
+    const selectedDockerHost =
+      normalizedExtra.DOCKER_HOST ?? (selectedDockerContext ? undefined : process.env.DOCKER_HOST);
     return buildDockerSubprocessEnv(process.env, selectedDockerHost, normalizedExtra, {
       preserveDockerConfig:
         normalizedExtra.DOCKER_HOST === undefined &&

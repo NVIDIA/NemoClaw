@@ -304,6 +304,36 @@ describe("runner env merging", () => {
     expect(dockerEnv?.DOCKER_CONTEXT).toBeUndefined();
   });
 
+  it("keeps an unresolved context authoritative over the ambient Docker host (#11719)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue(null);
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "unresolved-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/context-docker-config");
+      vi.stubEnv("DOCKER_HOST", "unix:///ignored-host.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const dockerEnv = requireCall(withoutDockerAuthorityProbe(calls), 0)[2]?.env;
+    expect(dockerEnv).toMatchObject({
+      DOCKER_CONTEXT: "unresolved-context",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
+    });
+    expect(dockerEnv?.DOCKER_HOST).toBeUndefined();
+  });
+
   it("preserves Docker context and config only for Docker subprocesses (#8816)", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
@@ -350,7 +380,7 @@ describe("runner env merging", () => {
     expect(configSelectedDockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
   });
 
-  it("keeps Docker host precedence over an ambient Docker context (#8816)", () => {
+  it("keeps explicit host overrides while ambient context outranks ambient host (#11719)", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — intentional partial mock for testing
@@ -383,10 +413,10 @@ describe("runner env merging", () => {
     expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
     expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
     expect(requireCall(runnerCalls, 1)[2]?.env).toMatchObject({
-      DOCKER_HOST: "unix:///selected-fallback.sock",
+      DOCKER_CONTEXT: "ambient-context",
+      DOCKER_CONFIG: "/tmp/ambient-docker-config",
     });
-    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
-    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
+    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_HOST).toBeUndefined();
   });
 
   it("preserves process env when opts.env is provided to runCapture", () => {
