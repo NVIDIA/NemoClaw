@@ -308,9 +308,9 @@ async function buildSandboxInventoryRow(
   const inference = getSandboxEntryDisplayInference(sandbox);
 
   return {
-    name: sandbox.name,
-    model: inference.model,
-    provider: inference.provider,
+    name: safeStatusString(sandbox.name) || sandbox.name,
+    model: safeStatusString(inference.model),
+    provider: safeStatusString(inference.provider),
     gpuEnabled: sandbox.gpuEnabled === true,
     hostGpuDetected: sandbox.hostGpuDetected === true,
     sandboxGpuEnabled,
@@ -318,13 +318,17 @@ async function buildSandboxInventoryRow(
     sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: (await getPolicyPresets?.(sandbox.name)) ?? [],
-    agent: resolveDisplayAgent(sandbox),
+    policies: ((await getPolicyPresets?.(sandbox.name)) ?? []).map(
+      (policy) => safeStatusString(policy) || policy,
+    ),
+    agent: redactFull(resolveDisplayAgent(sandbox)),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
-    ...(sandbox.recoveredFromGateway ? { livePhase: sandbox.livePhase ?? null } : {}),
+    ...(sandbox.recoveredFromGateway
+      ? { livePhase: safeStatusString(sandbox.livePhase ?? null) }
+      : {}),
   };
 }
 
@@ -358,13 +362,18 @@ export async function getSandboxInventory(
   );
   return {
     schemaVersion: 1,
-    defaultSandbox: resolvedDefault,
+    defaultSandbox: safeStatusString(resolvedDefault),
     recovery: {
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
-    lastOnboardedSandbox,
-    incompleteOnboarding,
+    lastOnboardedSandbox: safeStatusString(lastOnboardedSandbox),
+    incompleteOnboarding: incompleteOnboarding
+      ? {
+          ...incompleteOnboarding,
+          name: safeStatusString(incompleteOnboarding.name) || incompleteOnboarding.name,
+        }
+      : null,
     // Pending rows are internal lifecycle state. They remain readable by their
     // recovery authority, but must not appear as completed sandboxes.
     sandboxes: rows,
