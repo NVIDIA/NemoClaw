@@ -34,7 +34,8 @@ The ledger does not authenticate itself; bind its candidate and specialist to th
 The workflow's `Require no Advisor blockers` job validates every specialist ledger and E2E receipt.
 It binds that evidence to the head and base SHAs resolved by the trusted workflow gate.
 It fails when any P0/P1 finding or unresolved E2E recommendation remains, or when the evidence is incomplete or malformed.
-The publication job still posts the run link after a blocker failure so the contributor can inspect the evidence.
+For automatic `workflow_run` PR runs, the publication job still posts the run link after a blocker failure so the contributor can inspect the evidence.
+Trusted manual dispatch does not run the publisher or post a PR comment.
 
 `test/fixtures/review-queue-findings-clear.json` and `test/fixtures/review-queue-findings-excluded-blocker.json` are producer-generated synthetic fixtures.
 The focused ledger tests rebuild both fixtures, validate canonical identity, and prove excluded findings remain present.

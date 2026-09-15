@@ -5,8 +5,8 @@
 
 The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs its
 model-backed analysis in OpenShell sandboxes from trusted GitHub Actions jobs and inspects PRs as
-read-only data. It posts a sticky comment that links to the complete specialist reviews in the
-workflow run.
+read-only data. For automatic PR runs, it posts a sticky comment that links to the complete
+specialist reviews in the workflow run. Manual dispatch does not post a PR comment.
 
 After a required `CI / Pull Request` run whose name ends in `gate true` succeeds, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Other completed CI runs do not schedule the Advisor. Each prompt owns a distinct review concern and defines its purpose, investigation method, evidence expectations, and finding threshold.
 
@@ -25,7 +25,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
 6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, findings ledger, and shared review-queue context.
 7. After every specialist completes successfully, a trusted aggregate job validates all exact-attempt finding ledgers and E2E receipts. It fails the workflow for any P0/P1 finding, unresolved E2E recommendation, or incomplete or malformed evidence.
-8. One publisher attempts to post a sticky comment that links to the workflow run, including after the aggregate job fails. A failed specialist suppresses publication.
+8. For automatic `workflow_run` PR runs, one publisher attempts to post a sticky comment that links to the workflow run, including after the aggregate job fails. A failed specialist suppresses publication. Manual dispatch does not run the publisher.
 
 For a PR-bound run, `Require no Advisor blockers` is the review-request signal. Request human review only when that job is green for the latest PR commit. It is not merge authorization, and contributors must still inspect the specialist reports.
 

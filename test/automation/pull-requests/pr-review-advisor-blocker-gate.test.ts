@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -135,6 +136,36 @@ it("blocks an unresolved E2E recommendation from any specialist", () => {
     unresolvedInterests: [interest],
   });
 });
+
+it.each([
+  ["clear", undefined, 0],
+  ["blocked", "security-built-in-quality", 1],
+] as const)(
+  "returns CLI exit status for %s evidence",
+  (_result, findingInterest, expectedStatus) => {
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        path.resolve("tools/pr-review-advisor/blocker-gate.mts"),
+        "--attempt",
+        ATTEMPT,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          EXPECTED_BASE_SHA: BASE_SHA,
+          EXPECTED_HEAD_SHA: HEAD_SHA,
+          PR_REVIEW_ADVISOR_ARTIFACTS: artifactTree({ findingInterest }),
+        },
+      },
+    );
+
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(expectedStatus);
+  },
+);
 
 const specialistEvidenceFiles = [
   ["review queue context", (_interest: string) => "review-queue-context.json"],
