@@ -2,6 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test]
+fn native_actions_use_verified_node24_release_pins() {
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
+    // Release tags and action.yml runtimes were verified against upstream.
+    // GitHub-owned actions and this rust-cache pin are permitted by repository policy.
+    let approved = [
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", // v7.0.1
+        "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",    // v6.1.0
+        "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6", // v2.9.2
+    ];
+    for step in workflow["jobs"]["native"]["steps"].as_array().unwrap() {
+        if let Some(action) = step["uses"].as_str() {
+            assert!(
+                approved.contains(&action),
+                "review action release, runtime, and policy: {action}"
+            );
+        }
+    }
+}
+
+#[test]
 fn verified_downloads_have_an_independent_source_stable_cache() {
     let workflow: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
