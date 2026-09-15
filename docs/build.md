@@ -45,7 +45,9 @@ Repository text uses LF on every platform so checkout newline conversion does no
 
 ## Build a Runtime Image
 
-Both runtime image builds require the qualified Linux ARM64 build host, Docker, and Buildx.
+Runtime image builds require Linux, Docker, and Buildx.
+The build host must match the artifact manifest's `platform`; omission selects `linux_arm64`, and `linux_amd64` requires a native AMD64 host.
+The builder rejects a mismatched host before building the supervisor or loading an image.
 The artifact manifest selects its Dockerfile, local inputs, immutable source downloads, image name, and reproducible timestamp.
 It downloads pinned sources and dependencies, builds locally, and loads the image into the selected local Docker daemon.
 
@@ -61,7 +63,17 @@ This build exports `.build/vllm/runtime.tar` and loads `nc-prototype-vllm:rust-v
 The image contains the shared supervisor and pinned vLLM base, without Qwen3.8 patches or preparation tools.
 Select the model through [model configuration](models.md).
 
-For Qwen3.8 preparation, run:
+For the AMD64 vLLM base used by the [Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host), run on a Linux AMD64 build host:
+
+```sh
+cargo run -p nemoclaw-build -- runtime runtimes/vllm-amd64/build.json
+```
+
+This build exports `.build/vllm-amd64/runtime.tar` and loads `nc-prototype-vllm-amd64:rust-v1`.
+It adds the same supervisor to the pinned AMD64 vLLM 0.27.1 base and includes no preparation tools or model weights.
+Selecting this artifact does not qualify GPU inference on the host.
+
+For Qwen3.8 preparation on Linux ARM64, run:
 
 ```sh
 cargo run -p nemoclaw-build -- runtime runtimes/qwen38/build.json
@@ -71,7 +83,7 @@ This build exports `.build/qwen38/runtime.tar` and loads `nc-prototype-qwen38:sp
 Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
-Use the immutable OCI manifest digest in the build output for `image.ref`.
+Use the immutable OCI manifest digest in the build output for `service.image`.
 Do not substitute a mutable tag or a digest copied from another build.
 If the selected daemon is remote, load the archive into that daemon before apply; a local image is not available there automatically.
 
@@ -79,12 +91,12 @@ If the selected daemon is remote, load the archive into that daemon before apply
 
 The builder creates a source archive with normalized timestamps and compiles the supervisor offline from that archive.
 It includes the Rust workspace, locked dependencies, their licenses, SDK policy attribution, and OpenShell protobuf inputs omitted by Cargo vendoring.
-It excludes the entire `runtimes/` tree, so neither image's supervisor archive contains recipe scripts.
+It excludes the entire `runtimes/` tree, so the supervisor archives contain no recipe scripts.
 Each image separately retains its selected Dockerfile and build manifest under `/opt/nemoclaw/source/`.
 The Qwen3.8 image also retains its preparation tools, upstream recipe, licenses, and modified vLLM sources.
 The build excludes dependency paths and parent Git metadata from compiler inputs.
 
-The [vLLM notice](../runtimes/vllm/NOTICE.md) and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.
+The [ARM64 vLLM notice](../runtimes/vllm/NOTICE.md), [AMD64 vLLM notice](../runtimes/vllm-amd64/NOTICE.md), and [Qwen3.8 notice](../runtimes/qwen38/NOTICE.md) identify retained sources and licenses.
 
 Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.

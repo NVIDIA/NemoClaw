@@ -8,7 +8,7 @@ Set `service.model.repository` and an exact 40-character commit in `service.mode
 There is no repository allowlist.
 
 Mutable branches and tags are rejected so a later apply cannot silently change weights.
-The OpenShell route's model must match the repository name.
+The OpenShell route's model must match `serving.modelName` when declared, or the repository name when it is omitted.
 
 A concrete configuration is in [examples/vllm.yaml](../examples/vllm.yaml).
 Its image digest refers to a locally built artifact, not a published registry image.
@@ -27,13 +27,16 @@ Gated repositories, custom remote-code models, GGUF, and nested checkpoint layou
 
 `memory.gpuMemoryGiB` budgets the model, runtime and KV cache together; its default is 16 GiB.
 `kvCacheGiB` is part of that budget.
-Capacity checks reject snapshots whose weights cannot fit the declared budget and retain the existing DGX Spark host checks.
-This adds model choice on the qualified Linux ARM64 GB10 host, not a new hardware platform.
+Capacity checks reject snapshots whose weights cannot fit the declared budget.
+Without `service.hardware` or an inline recipe, the host must satisfy the existing Linux ARM64 GB10 Spark contract.
 
 Backend startup still establishes actual model compatibility.
 
 Optional `serving.toolParser` and `serving.reasoningParser` select native vLLM parsers.
 Unsupported names are rejected.
+`serving.mambaBackend: flashinfer` selects the native FlashInfer Mamba backend.
+`serving.enforceEager: false` leaves compilation and CUDA graphs at vLLM's native defaults; omission retains eager execution.
+Inline recipes supply their own model name and execution settings and reject these ordinary-service overrides.
 There are no shell hooks, extra command arguments, or implicit model-specific settings.
 
 Snapshot directories include both repository and revision in their identity.
@@ -47,3 +50,30 @@ A watchdog stop requires explicit apply to recover.
 For models requiring preparation or patches, keep `backend: vllm` and declare an [inline recipe](recipes.md).
 Package the recipe’s tools in the pinned runtime image.
 There are no built-in model-specific backends.
+
+## Configure Nemotron on an AMD64 GPU Host
+
+[The Nemotron example](../examples/nemotron-amd64.yaml) declares the pinned NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 model, served name, native parsers, 65,536-token context, one sequence, and 4,096-token batch.
+Its source pins and adaptation are recorded in the [AMD64 runtime notice](../runtimes/vllm-amd64/NOTICE.md).
+It uses ordinary `backend: vllm` serving with no preparation recipe.
+
+The example requires an existing OpenShell gateway and a Linux AMD64 Docker host reached through SSH.
+That host must expose exactly one NVIDIA GPU with compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated GPU memory, and driver major 580 or newer.
+Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 runtime image](build.md#build-a-runtime-image) on a matching host, and load it into the selected Docker daemon.
+Replace the zero image digest, SSH alias, gateway endpoint, private publication address, and deployment UID before applying.
+Build a compatible OpenClaw sandbox image using the [Fabric image procedure](inference.md#build-an-image-with-the-configuration-interface), replace `sandboxes[].image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
+
+`service.hardware` declares the dedicated-GPU requirements.
+`memory.gpuMemoryUtilization: 0.75` allocates a fraction of the observed GPU memory and leaves KV-cache sizing to vLLM.
+Omit `gpuMemoryGiB` and `kvCacheGiB` in this mode; nonzero fixed budgets are rejected.
+The SDK checks snapshot weight size against the fraction of the declared minimum GPU memory and checks startup allocation against the observed total and free GPU memory.
+Host RAM is measured separately: the default 32 GiB reserve plus 20 GiB startup headroom must be available, and the resident host-memory watchdog remains active.
+A running service's allocation does not count as missing startup headroom during refresh.
+
+The example selects `container.ipc: host`, sharing the execution host's IPC namespace.
+Its declared 32 GiB shared-memory setting is retained in the container launch contract; host IPC uses the host's existing shared-memory mount.
+Omitting `container` preserves private IPC with an 8 GiB shared-memory allocation.
+The service uses [generated bearer authentication](inference.md#authenticate-a-managed-vllm-service).
+
+Schema, argument, capacity, SSH observation, and build-platform tests cover these contracts.
+They do not establish AMD64 image or GPU inference qualification; successful model loading and an agent response remain required on the target host.
