@@ -39,8 +39,6 @@ import {
   hermesPortableReservationForOnboarding,
   hermesPortableTestOpenShellAuthority as openshellExecutableAuthority,
   hermesPortableTestPodmanAuthority as podmanExecutableAuthority,
-  createHermesPortableContainerInspectResult,
-  unexpectedHermesPortablePodmanArgs as unexpectedPodmanArgs,
   type HermesPortableTransactionFixtureOptions,
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 
