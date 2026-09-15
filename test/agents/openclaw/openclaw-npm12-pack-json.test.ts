@@ -58,6 +58,25 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     }
   });
 
+  it("fails closed when two-file parser markers are distributed unevenly", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-npm12-uneven-markers-"));
+    const first = path.join(root, "npm-pack-install-first.js");
+    const second = path.join(root, "npm-pack-install-second.js");
+    try {
+      fs.writeFileSync(first, parserFixture());
+      fs.writeFileSync(second, parserFixture());
+      expect(patchOpenClawNpm12PackJson(root, "2026.3.11")).toBe("patched");
+
+      const patchedParser = fs.readFileSync(first, "utf8");
+      fs.writeFileSync(first, `${patchedParser}${patchedParser}`);
+      fs.writeFileSync(second, "export {};\n");
+
+      expect(() => patchOpenClawNpm12PackJson(root, "2026.3.11")).toThrow(/legacy=0, patched=2/);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("pins the one-file parser layout for OpenClaw 2026.4.24", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-npm12-2026-4-24-"));
     try {

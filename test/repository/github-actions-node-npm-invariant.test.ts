@@ -17,11 +17,11 @@ import {
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const GITHUB_ROOT = path.join(REPO_ROOT, ".github");
 const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
-const REVIEWED_NPM_ACTION = "setup-reviewed-npm";
 const IMMUTABLE_REVIEWED_NPM_ACTION =
   "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2";
 const IMMUTABLE_PREPARE_E2E_ACTION =
   "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c";
+const LOCAL_REVIEWED_NPM_ACTION = /^\.\/(?:[^/\s]+\/)*\.github\/actions\/setup-reviewed-npm$/u;
 
 type Step = {
   if?: string;
@@ -92,10 +92,15 @@ const setupNodeSteps = groups.flatMap(({ file, label, steps }) =>
   ),
 );
 
+function isLocalReviewedNpmAction(reference: string | undefined): boolean {
+  return LOCAL_REVIEWED_NPM_ACTION.test(reference ?? "");
+}
+
 function installsReviewedNpm(step: Step): boolean {
   return Boolean(
-    step.uses?.includes(REVIEWED_NPM_ACTION) ||
-    step.uses?.includes("/.github/actions/prepare-e2e@") ||
+    step.uses === IMMUTABLE_REVIEWED_NPM_ACTION ||
+    isLocalReviewedNpmAction(step.uses) ||
+    step.uses === IMMUTABLE_PREPARE_E2E_ACTION ||
     step.run?.includes("Install-WslNode") ||
     step.run?.includes("setup-reviewed-npm/verify-and-install-npm.sh"),
   );
@@ -119,7 +124,7 @@ function runsSanitizedReviewedNpmBootstrap(step: Step): boolean {
 }
 
 function runsNpm(step: Step): boolean {
-  return /(?:^|[\n;&|({])\s*(?:(?:sudo|env|[A-Za-z_][A-Za-z0-9_]*=\S*)\s+)*(?:npm|npx)(?:\s|$)/mu.test(
+  return /(?:^|[\n;&|({])\s*(?:(?:!|do|elif|else|if|then|until|while|sudo|env|[A-Za-z_][A-Za-z0-9_]*=\S*)\s+)*(?:npm|npx)(?:\s|$)/mu.test(
     step.run ?? "",
   );
 }
@@ -145,10 +150,20 @@ function sparseCheckoutPaths(checkout: Step | undefined): string[] | undefined {
 }
 
 describe("controlled setup-node environments", () => {
-  it.each(["CI=true npx vitest", "sudo npm ci", "env NODE_ENV=test npm ci"])(
-    "detects prefixed npm execution: %s",
-    (run) => expect(runsNpm({ run })).toBe(true),
-  );
+  it.each([
+    "CI=true npx vitest",
+    "sudo npm ci",
+    "env NODE_ENV=test npm ci",
+    "if npm ci; then echo ready; fi",
+  ])("detects prefixed npm execution: %s", (run) => expect(runsNpm({ run })).toBe(true));
+
+  it("rejects a similarly named unapproved npm setup action", () => {
+    expect(
+      installsReviewedNpm({
+        uses: "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm-fake@98669f24d35f18e49b6b2769cd68709509ea24f2",
+      }),
+    ).toBe(false);
+  });
 
   // source-shape-contract: security -- Changes to the reviewed npm bootstrap must select both PR image validation and the post-merge base-image publication path.
   it("selects image validation when the reviewed npm bootstrap changes", () => {
@@ -226,9 +241,7 @@ describe("controlled setup-node environments", () => {
   it("keeps every workflow-local reviewed npm action behind its matching checkout", () => {
     const actionSteps = workflowGroups.flatMap(({ file, label, steps }) =>
       steps.flatMap((step, index) =>
-        step.uses?.startsWith("./") && step.uses.includes(REVIEWED_NPM_ACTION)
-          ? [{ file, label, step, steps, index }]
-          : [],
+        isLocalReviewedNpmAction(step.uses) ? [{ file, label, step, steps, index }] : [],
       ),
     );
     const invalidCheckouts = actionSteps

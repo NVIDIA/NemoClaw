@@ -34,11 +34,16 @@ export function patchOpenClawNpm12PackJson(
     contents: fs.readFileSync(file, "utf8"),
     file,
   }));
-  const legacyMatches = inspected.flatMap(({ contents, file }) =>
-    Array.from({ length: occurrences(contents, LEGACY_ENTRIES) }, () => file),
+  const states = inspected.map(({ contents, file }) => ({
+    file,
+    legacy: occurrences(contents, LEGACY_ENTRIES),
+    patched: occurrences(contents, NPM12_ENTRIES),
+  }));
+  const legacyMatches = states.flatMap(({ file, legacy }) =>
+    Array.from({ length: legacy }, () => file),
   );
-  const patchedMatches = inspected.flatMap(({ contents, file }) =>
-    Array.from({ length: occurrences(contents, NPM12_ENTRIES) }, () => file),
+  const patchedMatches = states.flatMap(({ file, patched }) =>
+    Array.from({ length: patched }, () => file),
   );
 
   if (candidates.length !== layout.expectedFiles) {
@@ -46,9 +51,9 @@ export function patchOpenClawNpm12PackJson(
       `OpenClaw ${openClawVersion} npm pack JSON parser file count is unsupported: expected=${layout.expectedFiles}, found=${candidates.length}`,
     );
   }
-  if (legacyMatches.length === 0 && patchedMatches.length === layout.expectedFiles)
+  if (states.every(({ legacy, patched }) => legacy === 0 && patched === 1))
     return "already-patched";
-  if (legacyMatches.length !== layout.expectedFiles || patchedMatches.length !== 0) {
+  if (!states.every(({ legacy, patched }) => legacy === 1 && patched === 0)) {
     throw new Error(
       `OpenClaw ${openClawVersion} npm pack JSON parser shape is unsupported: legacy=${legacyMatches.length}, patched=${patchedMatches.length}`,
     );

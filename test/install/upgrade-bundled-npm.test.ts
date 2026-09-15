@@ -248,6 +248,18 @@ describe("reviewed bundled npm upgrade", () => {
     expect(() => upgradeBundledNpm(reviewedNpm(), { archivePath })).toThrow("integrity mismatch");
   });
 
+  it("fails closed on an empty explicitly supplied archive path", () => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upgradeBundledNpm(affectedNpm("11.16.0"), {
+        archivePath: "",
+        commandRunner: (command) => commands.push(command),
+      }),
+    ).toThrow(/must be a real file/);
+    expect(commands).toEqual([]);
+  });
+
   it("fails closed on reviewed-package drift", () => {
     const drifted = reviewedNpm();
     writePackage(drifted, "sigstore", "sigstore", "4.1.1");

@@ -239,13 +239,14 @@ export function upgradeBundledNpm(
     );
   }
 
-  const prepared = dependencies.archivePath
-    ? (() => {
-        const archivePath = resolve(dependencies.archivePath);
-        verifyReviewedNpmArchive(archivePath);
-        return { archivePath, cleanup: () => undefined };
-      })()
-    : (dependencies.prepareArchive ?? prepareReviewedNpmArchive)(commandRunner);
+  const prepared =
+    dependencies.archivePath !== undefined
+      ? (() => {
+          const archivePath = resolve(dependencies.archivePath);
+          verifyReviewedNpmArchive(archivePath);
+          return { archivePath, cleanup: () => undefined };
+        })()
+      : (dependencies.prepareArchive ?? prepareReviewedNpmArchive)(commandRunner);
   try {
     (dependencies.installArchive ?? installReviewedNpm)(prepared.archivePath, commandRunner);
     const reviewed = verifyReviewedNpm(root);

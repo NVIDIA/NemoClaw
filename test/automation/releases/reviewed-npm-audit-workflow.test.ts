@@ -324,7 +324,9 @@ describe("trusted npm audit workflow (#5896)", () => {
     expect(cacheBucketStep.run).toContain(
       "const identity = parseReviewedNpmIdentityConfig(configSource);",
     );
-    expect(cacheBucketStep.run).toContain("...identity");
+    expect(cacheBucketStep.run).toContain(
+      'hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], ...identity, registry: "https://registry.yarnpkg.com/", schemaVersion: 2 }));',
+    );
     expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
   });

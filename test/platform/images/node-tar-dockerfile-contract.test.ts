@@ -16,6 +16,7 @@ import {
   dockerfileInstructions,
   dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
+  requireSingleDockerfileCopySource,
   requireSingleReviewedDockerfileRunCommand,
 } from "../../helpers/dockerfile-run-commands";
 
@@ -385,7 +386,11 @@ describe("node-tar image remediation contract", () => {
         .replace(/\s+/g, " ");
       const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
       const helperCopy = patchInputStage.indexOf("scripts/lib/bundled-npm-package.mts");
-      const patchCopy = patchInputStage.indexOf("scripts/patch-bundled-npm-tar.mts");
+      const patchCopy = requireSingleDockerfileCopySource(
+        patchInputStage,
+        "scripts/patch-bundled-npm-tar.mts",
+        "/scripts/patch-bundled-npm-tar.mts",
+      ).start;
       const patchRuns = requireReviewedDockerfileRunCommands(
         source,
         patchCommand,
