@@ -155,9 +155,31 @@ pub async fn prepare(
             check_path(&staging, &file.name)?;
             let path = staging.join(&file.name);
             let modified = crate::snapshot::modified(&path, file.size)?;
-            // The verifier declares semantic correctness; the supervisor independently
-            // verifies the byte digest before recording the receipt.
-            if crate::bundle::hash_file(&path)? != file.sha256 {
+            receipt.files.push(VerifiedFile { file, modified });
+        }
+        validate_receipt(recipe, &key, &receipt)?;
+        for verified in &receipt.files {
+            use sha2::{Digest, Sha256};
+            use tokio::io::AsyncReadExt;
+            let path = staging.join(&verified.file.name);
+            let mut input = tokio::fs::File::open(&path).await.map_err(|_| invalid())?;
+            let mut digest = Sha256::new();
+            let mut buffer = vec![0u8; 64 * 1024];
+            loop {
+                let length = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled), result=input.read(&mut buffer)=>result.map_err(|_|invalid())?};
+                if length == 0 {
+                    break;
+                }
+                digest.update(&buffer[..length]);
+            }
+            let digest: String = digest
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            if digest != verified.file.sha256
+                || crate::snapshot::modified(&path, verified.file.size)? != verified.modified
+            {
                 return Err(invalid());
             }
             let mut options = fs::OpenOptions::new();
@@ -168,9 +190,10 @@ pub async fn prepare(
                 .open(&path)
                 .and_then(|f| f.sync_all())
                 .map_err(|_| invalid())?;
-            receipt.files.push(VerifiedFile { file, modified });
         }
-        validate_receipt(recipe, &key, &receipt)?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         save_json(&staging.join("complete.json"), &receipt)?;
         fs::rename(&staging, &directory).map_err(|_| invalid())?;
         #[cfg(unix)]

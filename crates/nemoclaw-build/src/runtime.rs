@@ -90,6 +90,8 @@ pub(super) async fn build_runtime(pins: &Pins, generic: bool) -> Result<()> {
         for name in [
             "Dockerfile",
             "apply_patches.py",
+            "prepare.py",
+            "verify.py",
             "pins.json",
             "NOTICE.md",
             "AGPL-3.0-or-later.txt",

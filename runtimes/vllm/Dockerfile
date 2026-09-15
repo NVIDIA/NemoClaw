@@ -7,4 +7,5 @@ COPY supervisor-source.tar.gz supervisor.json LICENSE /opt/nemoclaw/source/
 COPY NOTICE.md /opt/nemoclaw/source/NOTICE.md
 ENTRYPOINT ["/usr/local/bin/nemoclaw-runtime"]
 CMD []
-LABEL org.nemoclaw.backend="vllm"
+LABEL org.nemoclaw.backend="vllm" \
+      org.nemoclaw.recipe.protocol="v1"

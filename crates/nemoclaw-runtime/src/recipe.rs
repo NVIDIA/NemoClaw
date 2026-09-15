@@ -18,7 +18,7 @@ const PREPARER: &str = "/opt/nemoclaw/source/recipe/files/build_ple_packed_table
 const VERIFIER: &str = "/opt/nemoclaw/source/verify_packed.py";
 pub(crate) struct PreparedModel {
     pub model: PathBuf,
-    pub environment: std::collections::BTreeMap<&'static str, std::ffi::OsString>,
+    pub environment: std::collections::BTreeMap<String, std::ffi::OsString>,
 }
 struct PackagedTools;
 #[async_trait::async_trait]
@@ -115,7 +115,7 @@ async fn prepare_qwen38(
     report("preparing", "building and verifying packed PLE", 0)?;
     let prepared = root.join("prepared");
     spark::prepare(&prepared, &model, &PackagedTools, cancel).await?;
-    let mut environment: std::collections::BTreeMap<&'static str, std::ffi::OsString> = [
+    let mut environment: std::collections::BTreeMap<String, std::ffi::OsString> = [
         ("HF_HUB_OFFLINE", "1"),
         ("TRANSFORMERS_OFFLINE", "1"),
         ("VLLM_USE_V2_MODEL_RUNNER", "1"),
@@ -129,10 +129,10 @@ async fn prepare_qwen38(
         ("VLLM_CACHE_ROOT", "/data/vllm-cache"),
     ]
     .into_iter()
-    .map(|(key, value)| (key, value.into()))
+    .map(|(key, value)| (key.to_owned(), value.into()))
     .collect();
     environment.insert(
-        "VLLM_PLE_PACKED_TABLE_DIR",
+        "VLLM_PLE_PACKED_TABLE_DIR".into(),
         prepared.join(recipe.preparation_key()).into_os_string(),
     );
     Ok(PreparedModel { model, environment })
@@ -144,6 +144,10 @@ async fn prepare_generic(
     cancel: &CancellationToken,
 ) -> Result<PreparedModel, Error> {
     use nemoclaw_sdk::recipes::huggingface as hf;
+    if let Some(recipe) = &service.recipe {
+        crate::inline_recipe::PackagedRecipe(recipe).validate_files()?;
+    }
+
     let model = snapshot::directory(root, &hf::directory(service))?;
     let marker = model.join(hf::MANIFEST_FILE);
     let manifest = match std::fs::symlink_metadata(&marker) {
@@ -180,14 +184,54 @@ async fn prepare_generic(
     )
     .await
     .map_err(|_| Error::State("model download exceeded budget; partial data retained"))??;
-    let environment = [
+    let mut environment: std::collections::BTreeMap<String, std::ffi::OsString> = [
         ("HF_HUB_OFFLINE", "1"),
         ("TRANSFORMERS_OFFLINE", "1"),
         ("HF_HOME", "/data/huggingface"),
         ("VLLM_CACHE_ROOT", "/data/vllm-cache"),
     ]
     .into_iter()
-    .map(|(k, v)| (k, v.into()))
+    .map(|(k, v)| (k.to_owned(), v.into()))
     .collect();
+    if let Some(recipe) = &service.recipe {
+        report(
+            "preparing",
+            "running declared recipe preparation and verification",
+            0,
+        )?;
+        let memory = nemoclaw_sdk::hardware::linux::memory()?;
+        if memory.available
+            < (recipe.resources.preparation_memory_gi_b + service.memory.host_reserve_gib as u64)
+                * nemoclaw_sdk::hardware::GIB
+        {
+            return Err(Error::Conflict(
+                "memory headroom changed before recipe preparation",
+            ));
+        }
+        let root = root.join("prepared");
+        let receipt = nemoclaw_sdk::recipes::preparation::prepare(
+            &root,
+            &model,
+            service,
+            &crate::inline_recipe::PackagedRecipe(recipe),
+            cancel,
+        )
+        .await?;
+        for (key, value) in &recipe.serving.environment {
+            environment.insert(key.clone(), value.into());
+        }
+        for (key, path) in &recipe.serving.prepared_environment {
+            let directory = root.join(&receipt.key);
+            environment.insert(
+                key.clone(),
+                if path == "." {
+                    directory
+                } else {
+                    directory.join(path)
+                }
+                .into_os_string(),
+            );
+        }
+    }
     Ok(PreparedModel { model, environment })
 }

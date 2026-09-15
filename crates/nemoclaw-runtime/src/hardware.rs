@@ -26,7 +26,13 @@ async fn before_spark_start(
     cancel: &CancellationToken,
 ) -> Result<Capacity, Error> {
     let capacity = memory(profile)?;
-    if capacity.available < spec.gpu_bytes()? + 20 * GIB
+    if capacity.available
+        < spec.gpu_bytes()?
+            + spec
+                .recipe
+                .as_ref()
+                .map_or(20, |r| r.resources.startup_headroom_gi_b)
+                * GIB
         || spec.gpu_bytes()? + spec.memory.host_reserve_gib as u64 * GIB > capacity.total
     {
         return Err(Error::Conflict(
