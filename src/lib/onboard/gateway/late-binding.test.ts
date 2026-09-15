@@ -228,6 +228,32 @@ describe("gateway lifecycle late binding", () => {
     expect(stateOwner).not.toHaveBeenCalled();
   });
 
+  it("withholds a stop command when the service identity changes during ownership proof", async () => {
+    const serviceTarget = {
+      executablePath: "/opt/openshell/openshell-gateway",
+      pid: 5444,
+      stopCommand: "systemctl --user stop openshell-gateway",
+    };
+    const resolveServiceTarget = vi
+      .fn()
+      .mockReturnValueOnce(serviceTarget)
+      .mockReturnValueOnce({ ...serviceTarget, pid: 5445 });
+
+    await expect(
+      resolveSelectedGatewayServiceStopCommand({
+        checkGatewayPortAvailable: async () => ({
+          ok: false,
+          pid: serviceTarget.pid,
+          process: "openshell-gateway",
+        }),
+        getGatewayPortListenerRawScan: () => ({ complete: true, pids: [serviceTarget.pid] }),
+        getTrustedActiveOpenShellGatewayUserServiceStopTarget: resolveServiceTarget,
+        isDockerDriverGatewayPidUsingSelectedState: () => true,
+      }),
+    ).resolves.toBeNull();
+    expect(resolveServiceTarget).toHaveBeenCalledTimes(2);
+  });
+
   it("uses the current binding for select, add, and health commands", () => {
     let name = "initial";
     const runCaptureOpenshell = vi.fn((args: string[]) => args.join(" "));

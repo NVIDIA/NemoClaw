@@ -16,6 +16,7 @@ import {
   getOpenShellGatewayServiceStopCommand,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
 } from "./docker-driver-gateway-service";
+import { createDockerDriverGatewayStateOwnership } from "./gateway/state-ownership";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import { reportDockerDriverGatewayStartFailure } from "./docker-driver-gateway-failure";
 
@@ -411,17 +412,26 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     },
   );
 
-  it("omits the stop for a confirmed-unused standalone gateway (#8797)", () => {
+  it("moves state after a complete scan proves the standalone gateway is unused (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
       log,
       "migration 6 was previously applied and is missing in the resolved migrations\n",
     );
+    const stateOwnership = createDockerDriverGatewayStateOwnership({
+      getDockerDriverGatewayStateDir: () => dir,
+      isDockerDriverGatewayProcess: () => true,
+      isPidAlive: () => true,
+      readProcessEnvironment: () => null,
+      resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
+      runCapture: () => "",
+      runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
+    });
     try {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
-        isGatewayStateInUse: () => false,
+        isGatewayStateInUse: stateOwnership.isLegacyDockerDriverGatewayStateInUse,
         launchLogOffset: 0,
         resolveGatewayStopCommand: () => null,
       });

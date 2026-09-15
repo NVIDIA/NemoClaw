@@ -129,4 +129,8 @@ describe("docker-driver gateway selected-state ownership", () => {
 
     expect(ownership.isLegacyDockerDriverGatewayStateInUse()).toBe(expected);
   });
+
+  it("proves legacy state is unused after a complete empty process scan", () => {
+    expect(makeOwnership().isLegacyDockerDriverGatewayStateInUse()).toBe(false);
+  });
 });
