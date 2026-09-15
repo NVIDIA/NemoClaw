@@ -20,7 +20,7 @@ import {
   type GatewayReuseState,
   getGatewayReuseState,
   isGatewayHealthy,
-} from "../../state/gateway";
+} from "../../domain/gateway-reuse";
 import { dockerContainerInspectFormat } from "../docker";
 import {
   classifyManagedGatewayEndpointBinding,

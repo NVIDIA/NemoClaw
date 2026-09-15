@@ -3,7 +3,7 @@
 
 import type { ObserveOpenShellGatewayRequest } from "./gateway-observer";
 import type { OpenShellSandboxError } from "./sandbox-observer";
-import type { GatewayReuseState } from "../../state/gateway";
+import type { GatewayReuseState } from "../../domain/gateway-reuse";
 
 export type OpenShellGatewayReuseObservation = Readonly<{
   gatewayReuseState: GatewayReuseState;

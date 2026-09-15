@@ -8,7 +8,7 @@ import {
   hasStaleGateway,
   isGatewayHealthy,
   shouldSelectNamedGatewayForReuse,
-} from "../../state/gateway";
+} from "../../domain/gateway-reuse";
 import { withSelectedOpenShellCommandOptions } from "./command-argv";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type {
