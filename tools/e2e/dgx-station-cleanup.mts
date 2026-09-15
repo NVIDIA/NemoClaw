@@ -306,6 +306,10 @@ async function main(): Promise<void> {
     });
     succeeded = true;
     console.log(JSON.stringify(result));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await artifacts.writeText("cleanup-error.txt", reason);
+    throw error;
   } finally {
     progress.stop(succeeded ? "passed" : "failed");
   }

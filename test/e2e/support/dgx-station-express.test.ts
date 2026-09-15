@@ -88,6 +88,33 @@ describe("Station Express smoke boundaries", () => {
       Cmd: ["-lc", stationVllmCommands()[0]],
     },
   };
+  it("pins the default Ultra serving alias in both Station commands", () => {
+    for (const command of stationVllmCommands()) {
+      expect(command).toMatch(
+        /(?:^|\s)--served-model-name nvidia\/nemotron-3-ultra-550b-a55b(?:\s|$)/u,
+      );
+    }
+  });
+
+  it.each(["", "--served-model-name another/model"])(
+    "rejects a Station command with a missing or changed serving alias: %j",
+    (replacement) => {
+      for (const command of stationVllmCommands()) {
+        const changed = command.replace(
+          "--served-model-name nvidia/nemotron-3-ultra-550b-a55b",
+          replacement,
+        );
+        expect(() =>
+          assertStationVllm(
+            JSON.stringify([
+              { ...container, Config: { ...container.Config, Cmd: ["-lc", changed] } },
+            ]),
+          ),
+        ).toThrow("default Ultra");
+      }
+    },
+  );
+
   it("requires managed vLLM to run the default Ultra serving alias", () => {
     expect(assertStationVllm(JSON.stringify([container]))).toBe(container.Image);
     expect(() =>
@@ -617,7 +644,7 @@ it("rejects truncated cleanup output instead of accepting its successful exit", 
   }
 });
 
-it("runs standalone cleanup through the same TypeScript loader used by the backend", () => {
+function standaloneCleanup(baseline: string) {
   const home = cleanupHome();
   const bin = path.join(home, "bin");
   fs.mkdirSync(bin);
@@ -629,7 +656,7 @@ it("runs standalone cleanup through the same TypeScript loader used by the backe
   const artifacts = path.join(home, "artifacts");
   const result = spawnSync(
     process.execPath,
-    ["--no-warnings", "--import", "tsx", "tools/e2e/dgx-station-cleanup.mts", "[]"],
+    ["--no-warnings", "--import", "tsx", "tools/e2e/dgx-station-cleanup.mts", baseline],
     {
       cwd: process.cwd(),
       encoding: "utf8",
@@ -642,11 +669,41 @@ it("runs standalone cleanup through the same TypeScript loader used by the backe
       },
     },
   );
+  return { artifacts, result };
+}
+
+it("runs standalone cleanup through the same TypeScript loader used by the backend", () => {
+  const { artifacts, result } = standaloneCleanup("[]");
   expect(result.status, result.stderr).toBe(0);
   expect(JSON.parse(result.stdout)).toEqual({ uninstalled: false, fallbackVolumes: [] });
+  expect(fs.existsSync(path.join(artifacts, "cleanup-error.txt"))).toBe(false);
   expect(result.stderr).toContain("child lifecycle");
   expect(
     fs.statSync(path.join(artifacts, "shell/station-cleanup-volumes-restored.result.json")).mode &
       0o777,
   ).toBe(0o600);
+});
+
+it.each([
+  ["{}", "Invalid Station volume baseline"],
+  [JSON.stringify([STATION_STATE_VOLUME]), "Station state volume was present before the job"],
+])("retains a direct cleanup validation failure for baseline %s", (baseline, reason) => {
+  const { artifacts, result } = standaloneCleanup(baseline);
+  expect(result.status, result.stderr).toBe(1);
+  expect(result.stdout).toBe("");
+  const errorFile = path.join(artifacts, "cleanup-error.txt");
+  expect(fs.readFileSync(errorFile, "utf8")).toBe(reason);
+  expect(fs.statSync(errorFile).mode & 0o777).toBe(0o600);
+  expect(fs.existsSync(path.join(artifacts, "shell"))).toBe(false);
+});
+
+it("redacts a malformed cleanup input in its retained diagnostic", () => {
+  const secret = "hf_aaaaaaaaaa";
+  const { artifacts, result } = standaloneCleanup(secret);
+  expect(result.status, result.stderr).toBe(1);
+  const reason = fs.readFileSync(path.join(artifacts, "cleanup-error.txt"), "utf8");
+  expect(reason).toContain("JSON");
+  expect(reason).toContain("<REDACTED>");
+  expect(reason).not.toContain(secret);
+  expect(result.stdout + result.stderr).not.toContain(secret);
 });
