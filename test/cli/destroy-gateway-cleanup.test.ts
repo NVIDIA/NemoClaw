@@ -17,7 +17,7 @@ case "$1" in
       for arg do last_arg="$arg"; done
       case "$last_arg" in
         '{{.ID}}') printf 'aaaaaaaaaaaa\n' ;;
-        *) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n' ;;
+        *) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\t\tend\n' ;;
       esac
     fi
     ;;

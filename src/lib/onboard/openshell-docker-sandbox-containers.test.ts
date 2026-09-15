@@ -35,6 +35,7 @@ function observeContainerIds(ids: readonly string[], malformedRows = 0) {
       managedBy: "openshell",
       workspace: "default",
       sandboxId: "sb-alpha",
+      managedAlt: "",
     })),
     malformedRows,
   };
