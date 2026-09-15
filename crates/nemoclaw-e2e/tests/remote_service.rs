@@ -52,14 +52,19 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure() {
-    lifecycle("openclaw").await;
+    lifecycle("openclaw", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
 async fn managed_hermes_model_lifecycle_preserves_data_and_observes_native_probe() {
-    lifecycle("hermes").await;
+    lifecycle("hermes", false).await;
 }
-async fn lifecycle(harness: &str) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
+async fn managed_bearer_credentials_survive_export_reapply_and_destroy() {
+    lifecycle("hermes", true).await;
+}
+async fn lifecycle(harness: &str, authenticated: bool) {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
@@ -84,6 +89,10 @@ async fn lifecycle(harness: &str) {
         json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
     value["spec"]["inferenceProviders"][0]["service"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
+    if authenticated {
+        value["spec"]["inferenceProviders"][0]["service"]["authentication"] = "bearer".into();
+        value["spec"]["sandboxes"][0]["agents"][0]["auth"] = json!({"method":"api-key","providerRef":value["spec"]["inferenceProviders"][0]["name"]});
+    }
     save(root, "config.yaml", &value);
     let parsed = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let service = parsed.spec.inference_providers[0].service.as_ref().unwrap();
@@ -93,6 +102,11 @@ async fn lifecycle(harness: &str) {
     let key = recipe.key(service);
     let mut files = json!({});
     let mut stats = json!({});
+    let bearer = "d".repeat(64);
+    if authenticated {
+        files["/data/inference-key"] = json!({"raw":bearer});
+        stats["/data/inference-key"] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
+    }
     let mut receipt = serde_json::to_value(&manifest.files).unwrap();
     for file in receipt.as_array_mut().unwrap() {
         file["modified"] = json!(1);
@@ -115,7 +129,7 @@ async fn lifecycle(harness: &str) {
     save(
         root,
         "fixture.json",
-        &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.backend":service["backend"],"org.nemoclaw.model":service["model"]["revision"]}}}}),
+        &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.backend":service["backend"],"org.nemoclaw.model":service["model"]["revision"]}}}}),
     );
     save(root, "engine.json", &json!({"effects":0,"creates":0}));
     save(root, "control.json", &json!({"capacity_failure":true}));
@@ -133,10 +147,33 @@ async fn lifecycle(harness: &str) {
     let volume = read(root, "engine.json")["volume"].clone();
     save(root, "control.json", &json!({}));
     run(root, &bundle, "apply", "config.yaml", true).await;
+    if authenticated {
+        assert!(
+            gateway
+                .state
+                .lock()
+                .unwrap()
+                .providers
+                .values()
+                .any(|p| p.credentials.get("OPENAI_API_KEY") == Some(&bearer))
+        );
+        for name in [
+            "deployment/runtime/terraform.tfstate",
+            "deployment/terraform.tfstate",
+            "config.yaml",
+        ] {
+            assert!(
+                !fs::read_to_string(root.join(name))
+                    .unwrap()
+                    .contains(&bearer)
+            );
+        }
+    }
     let stable = read(root, "engine.json");
     let state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
     run(root, &bundle, "apply", "config.yaml", true).await;
     let exported = run(root, &bundle, "export", "", true).await;
+    assert!(!String::from_utf8_lossy(&exported).contains(&bearer));
     fs::write(root.join("export.yaml"), exported).unwrap();
     run(root, &bundle, "apply", "export.yaml", true).await;
     assert_eq!(read(root, "engine.json"), stable);
@@ -153,6 +190,18 @@ async fn lifecycle(harness: &str) {
         assert_eq!(read(root, "engine.json"), stable);
     }
     save(root, "control.json", &json!({}));
+    if authenticated {
+        let original = read(root, "fixture.json");
+        let mut corrupt = original.clone();
+        corrupt["stats"]["/data/inference-key"]["mode"] = json!(420);
+        save(root, "fixture.json", &corrupt);
+        run(root, &bundle, "export", "", false).await;
+        assert_eq!(
+            fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+            state
+        );
+        save(root, "fixture.json", &original);
+    }
     run(root, &bundle, "destroy", "", true).await;
     let after = read(root, "engine.json");
     assert!(after["container"].is_null());

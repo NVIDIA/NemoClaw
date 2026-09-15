@@ -71,13 +71,13 @@ with (root / "lock").open("w") as lock:
             if item is None:
                 code = 404
             else:
-                data = json.dumps(item).encode()
+                data = item["raw"].encode() if isinstance(item, dict) and "raw" in item else json.dumps(item).encode()
                 result = io.BytesIO()
                 with tarfile.open(fileobj=result, mode="w") as archive:
                     entry = tarfile.TarInfo(pathlib.PurePosixPath(name).name)
                     entry.size = len(data)
                     archive.addfile(entry, io.BytesIO(data))
-                value = result.getvalue()
+                value = result.getvalue()[:((len(data) + 511) // 512 + 3) * 512]
     elif method == "GET" and path.startswith("/containers/"):
         value = state.get("container")
     elif method == "POST" and path == "/volumes/create":
