@@ -3,6 +3,8 @@
 
 pub(crate) mod constraints;
 mod inference;
+#[doc(hidden)]
+pub mod schema;
 mod types;
 pub use inference::InferenceConnection;
 mod validation;

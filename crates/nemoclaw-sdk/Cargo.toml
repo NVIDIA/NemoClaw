@@ -9,7 +9,11 @@ publish = false
 [lints]
 workspace = true
 
+[dev-dependencies]
+jsonschema.workspace = true
+
 [dependencies]
+schemars.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

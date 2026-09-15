@@ -47,3 +47,5 @@ tar = "0.4"
 rustix = { version = "1", features = ["fs"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 flate2 = "1.1"
+schemars = "=1.2.2"
+jsonschema = { version = "=0.56.0", default-features = false }

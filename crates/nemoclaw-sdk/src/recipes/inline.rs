@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InlineRecipe {
     pub api_version: String,
@@ -21,11 +21,13 @@ pub struct InlineRecipe {
     pub licenses: Vec<String>,
     pub source_notices: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, required)]
     pub snapshot: Option<Manifest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, required)]
     pub reuse: Option<Reuse>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Compatibility {
     pub architecture: String,
@@ -34,13 +36,13 @@ pub struct Compatibility {
     pub min_host_memory_gi_b: u64,
     pub image_labels: BTreeMap<String, String>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Tool {
     pub executable: String,
     pub sha256: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Resources {
     pub prepared_bytes: u64,
@@ -48,22 +50,32 @@ pub struct Resources {
     pub gpu_memory_bytes: u64,
     pub startup_headroom_gi_b: u64,
 }
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct Settings {
     pub model_name: String,
+    #[schemars(default)]
     pub tool_parser: String,
+    #[schemars(default)]
     pub reasoning_parser: String,
+    #[schemars(default)]
     pub kv_cache_dtype: String,
+    #[schemars(default)]
     pub mamba_cache_dtype: String,
+    #[schemars(default)]
     pub lazy_loading: bool,
+    #[schemars(default)]
     pub chunked_prefill: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default, required)]
     pub compilation: Option<Compilation>,
+    #[schemars(default)]
     pub environment: BTreeMap<String, String>,
+    #[schemars(default)]
     pub prepared_environment: BTreeMap<String, String>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Compilation {
     pub mode: u8,
@@ -71,7 +83,7 @@ pub struct Compilation {
     pub capture_sizes: Vec<u32>,
 }
 /// Explicit cache import, verified by the new recipe before it is accepted.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Reuse {
     pub snapshot_directory: String,
