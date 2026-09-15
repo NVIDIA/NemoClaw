@@ -62,7 +62,7 @@ function metadata(
   return {
     baseRef: "origin/main",
     headRef: "HEAD",
-    changedFiles: ["test/e2e/registry/runtime-support.ts"],
+    changedFiles: ["test/e2e/registry/execution.ts"],
     ...overrides,
   };
 }
@@ -417,7 +417,7 @@ describe("E2E recommendation normalizer", () => {
   it("preserves valid selector-only recommendations", () => {
     const raw = {
       version: 1,
-      relevantChangedFiles: ["test/e2e/registry/runtime-support.ts"],
+      relevantChangedFiles: ["test/e2e/registry/execution.ts"],
       required: [
         {
           id: "e2e-all",
@@ -596,7 +596,7 @@ describe("E2E recommendation normalizer", () => {
     ]);
   });
 
-  it("drops unknown or unsupported registry ids while preserving live-supported ids and fan-out", () => {
+  it("drops unknown or removed registry ids while preserving executable ids and fan-out", () => {
     const raw = {
       required: [
         {
@@ -609,7 +609,7 @@ describe("E2E recommendation normalizer", () => {
           id: "ubuntu-repo-cloud-hermes",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
-          reason: "registry target not wired for live Vitest fixtures",
+          reason: "removed registry placeholder",
         },
         {
           id: "e2e-all",
@@ -1067,15 +1067,15 @@ jobs:
   it("filters relevantChangedFiles to the metadata changedFiles set", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
-        relevantChangedFiles: ["test/e2e/registry/runtime-support.ts", "fabricated/file.txt"],
+        relevantChangedFiles: ["test/e2e/registry/execution.ts", "fabricated/file.txt"],
         required: [],
         optional: [],
         noTargetE2eReason: "no impact",
         confidence: "low",
       },
-      metadata({ changedFiles: ["test/e2e/registry/runtime-support.ts"] }),
+      metadata({ changedFiles: ["test/e2e/registry/execution.ts"] }),
     );
-    expect(normalized.relevantChangedFiles).toEqual(["test/e2e/registry/runtime-support.ts"]);
+    expect(normalized.relevantChangedFiles).toEqual(["test/e2e/registry/execution.ts"]);
   });
 
   it("supplies a default noTargetE2eReason when none provided and there are no recommendations", () => {

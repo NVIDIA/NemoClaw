@@ -32,6 +32,46 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "rejects a target whose %s has no executable route (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "rejects unresolved execution coverage (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "compiles a run plan from executable target behavior",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-matrix.test.ts",
+      "test": "fails loudly when a platform has no default runner mapping",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "should reject duplicate target IDs",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "should reject target IDs that are unsafe for workflow regex filters and artifact paths",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "contains only the four executable typed targets (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "rejects dangling expected-state references (#11407)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
       "test": "rejects drift in the reviewed action and script contents",
       "category": "security"
