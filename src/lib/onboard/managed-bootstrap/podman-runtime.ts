@@ -2096,7 +2096,7 @@ export function createPodmanManagedBootstrapAdapter(
           outcome: "rolled-back",
           restoredRuntimeId: receipt.originalRuntimeId,
           restoredSpecHash: input.snapshot?.specHash ?? null,
-          heldWorkloadRemoved: false,
+          heldWorkloadRemoved: !runtimeExists(options.engine, receipt.originalRuntimeId),
           alreadyRolledBack: false,
           finalizedAt: new Date().toISOString(),
         });
