@@ -161,7 +161,8 @@ try {
     $preauthorizedAcl=Get-Acl -LiteralPath $preauthorized
     $preauthorizedRows=@($preauthorizedAcl.Access|ForEach-Object{
         $sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
-        [pscustomobject]@{sid=$sid;mask=[uint32]$_.FileSystemRights;inherited=$_.IsInherited;
+        $mask=[uint32]([int64]([int32]$_.FileSystemRights) -band 0xffffffffL)
+        [pscustomobject]@{sid=$sid;mask=$mask;inherited=$_.IsInherited;
             inheritanceFlags=[string]$_.InheritanceFlags;propagationFlags=[string]$_.PropagationFlags;
             accessControlType=[string]$_.AccessControlType}
     })
