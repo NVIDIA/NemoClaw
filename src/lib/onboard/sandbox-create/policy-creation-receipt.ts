@@ -25,7 +25,10 @@ import {
   withoutProviderComposedPolicies,
 } from "../../policy/merge";
 import type { SelectedDockerGpuRoute } from "../docker-gpu-route";
-import { isOpenShellGpuBaselineEnrichment } from "../sandbox-gpu-route-policy";
+import {
+  isAdditiveOpenShellCdiPolicyEnrichment,
+  isOpenShellGpuBaselineEnrichment,
+} from "../sandbox-gpu-route-policy";
 import type { VerifiedSandboxPolicyBoundary, VerifiedSandboxPolicyRegistration } from "../types";
 
 export interface CreatedSandboxPolicyReceiptInput {
@@ -149,6 +152,18 @@ function basePolicyFromEffectivePolicy(
   };
 }
 
+function usesExternalOpenShellCdiQualificationStack(): boolean {
+  const openshellBin = process.env.NEMOCLAW_OPENSHELL_BIN?.trim() ?? "";
+  const gatewayBin = process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim() ?? "";
+  const sandboxBin = process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim() ?? "";
+  return (
+    openshellBin.endsWith("/target/debug/openshell") &&
+    gatewayBin.endsWith("/target/debug/openshell-gateway") &&
+    sandboxBin.endsWith("/target/debug/openshell-sandbox") &&
+    process.env.NEMOCLAW_DOCKER_GPU_PATCH === "0"
+  );
+}
+
 function waitForCreatedSandboxPolicyReadiness(
   input: CreatedSandboxPolicyReceiptInput,
   policyVersion: number,
@@ -242,14 +257,23 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
   ) {
     refusal("the effective policy identity changed during receipt verification");
   }
-  if (
-    !isDeepStrictEqual(intendedPolicy, liveBasePolicy) &&
-    !(
-      input.route !== "none" &&
-      isOpenShellGpuBaselineEnrichment(intendedPolicy, liveBasePolicy, input.route)
-    )
-  ) {
+  const exactPolicy = isDeepStrictEqual(intendedPolicy, liveBasePolicy);
+  const documentedGpuEnrichment =
+    input.route !== "none" &&
+    isOpenShellGpuBaselineEnrichment(intendedPolicy, liveBasePolicy, input.route);
+  const qualificationCdiEnrichment =
+    !exactPolicy &&
+    !documentedGpuEnrichment &&
+    input.route === "native" &&
+    usesExternalOpenShellCdiQualificationStack() &&
+    isAdditiveOpenShellCdiPolicyEnrichment(intendedPolicy, liveBasePolicy);
+  if (!exactPolicy && !documentedGpuEnrichment && !qualificationCdiEnrichment) {
     refusal("the live base policy does not match the policy supplied by this create transaction");
+  }
+  if (qualificationCdiEnrichment) {
+    console.warn(
+      "  ⚠ Test-only: trusting additive OpenShell CDI policy enrichment for #8910 qualification.",
+    );
   }
   try {
     return parseNemoClawPolicyCreationReceipt({

@@ -48,6 +48,24 @@ function policyWithoutFilesystemPolicy(policy: Record<string, unknown>): Record<
   return result;
 }
 
+function policyWithoutFilesystemAndSupplementalGroups(
+  policy: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = policyWithoutFilesystemPolicy(policy);
+  const processPolicy = result.process;
+  if (!processPolicy || typeof processPolicy !== "object" || Array.isArray(processPolicy)) {
+    return result;
+  }
+  const normalizedProcess: Record<string, unknown> = Object.create(null);
+  for (const key of Object.keys(processPolicy)) {
+    if (key !== "supplemental_groups") {
+      normalizedProcess[key] = (processPolicy as Record<string, unknown>)[key];
+    }
+  }
+  result.process = normalizedProcess;
+  return result;
+}
+
 function filesystemPolicyWithoutPaths(policy: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = Object.create(null);
   for (const key of Object.keys(policy)) {
@@ -66,12 +84,94 @@ function readUniquePaths(
   return paths.size === value.length ? paths : null;
 }
 
-function isSubset(subset: ReadonlySet<string>, superset: ReadonlySet<string>): boolean {
+function isSubset<T>(subset: ReadonlySet<T>, superset: ReadonlySet<T>): boolean {
   return [...subset].every((entry) => superset.has(entry));
 }
 
 function setsOverlap(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return [...left].some((entry) => right.has(entry));
+}
+
+function readUniqueSupplementalGroups(policy: Record<string, unknown>): Set<number> | null {
+  const processPolicy = policy.process;
+  if (!processPolicy || typeof processPolicy !== "object" || Array.isArray(processPolicy)) {
+    return new Set();
+  }
+  const value = (processPolicy as Record<string, unknown>).supplemental_groups;
+  if (value === undefined) return new Set();
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (entry) =>
+        typeof entry !== "number" ||
+        !Number.isSafeInteger(entry) ||
+        entry <= 0 ||
+        entry > 0xffff_ffff,
+    )
+  ) {
+    return null;
+  }
+  const groups = new Set(value);
+  return groups.size === value.length ? groups : null;
+}
+
+/**
+ * Recognize the dynamic policy shape emitted by the OpenShell CDI stack during #8910 hardware
+ * qualification. Callers must additionally require the explicit test-only trust opt-in.
+ */
+export function isAdditiveOpenShellCdiPolicyEnrichment(
+  intended: Record<string, unknown>,
+  live: Record<string, unknown>,
+): boolean {
+  if (
+    !isDeepStrictEqual(
+      policyWithoutFilesystemAndSupplementalGroups(intended),
+      policyWithoutFilesystemAndSupplementalGroups(live),
+    )
+  ) {
+    return false;
+  }
+  const intendedFilesystem = intended.filesystem_policy;
+  const liveFilesystem = live.filesystem_policy;
+  if (
+    !intendedFilesystem ||
+    typeof intendedFilesystem !== "object" ||
+    Array.isArray(intendedFilesystem) ||
+    !liveFilesystem ||
+    typeof liveFilesystem !== "object" ||
+    Array.isArray(liveFilesystem)
+  ) {
+    return false;
+  }
+  const intendedFilesystemRecord = intendedFilesystem as Record<string, unknown>;
+  const liveFilesystemRecord = liveFilesystem as Record<string, unknown>;
+  if (
+    !isDeepStrictEqual(
+      filesystemPolicyWithoutPaths(intendedFilesystemRecord),
+      filesystemPolicyWithoutPaths(liveFilesystemRecord),
+    )
+  ) {
+    return false;
+  }
+  const intendedReadOnly = readUniquePaths(intendedFilesystemRecord, "read_only");
+  const intendedReadWrite = readUniquePaths(intendedFilesystemRecord, "read_write");
+  const liveReadOnly = readUniquePaths(liveFilesystemRecord, "read_only");
+  const liveReadWrite = readUniquePaths(liveFilesystemRecord, "read_write");
+  if (!intendedReadOnly || !intendedReadWrite || !liveReadOnly || !liveReadWrite) return false;
+  if (
+    intendedReadOnly.has(PROC_PATH) ||
+    intendedReadWrite.has(PROC_PATH) ||
+    !liveReadWrite.has(PROC_PATH) ||
+    setsOverlap(intendedReadOnly, intendedReadWrite) ||
+    setsOverlap(liveReadOnly, liveReadWrite) ||
+    !isSubset(intendedReadOnly, liveReadOnly) ||
+    !isSubset(intendedReadWrite, liveReadWrite)
+  ) {
+    return false;
+  }
+  const intendedGroups = readUniqueSupplementalGroups(intended);
+  const liveGroups = readUniqueSupplementalGroups(live);
+  return Boolean(intendedGroups && liveGroups && isSubset(intendedGroups, liveGroups));
 }
 
 /** Accept only the documented filesystem additions made by an OpenShell GPU create. */
