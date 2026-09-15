@@ -140,14 +140,16 @@ try {
             [pscustomobject]@{ sid=$sid; mask=$mask; inherited=$_.IsInherited;
                 accessControlType=[string]$_.AccessControlType }
         })
-        foreach ($sid in @('S-1-15-2-1','S-1-15-2-2')) {
-            $matches = @($rows | Where-Object { $_.sid -ceq $sid -and $_.accessControlType -ceq 'Allow' -and
-                ($_.mask -band $requiredReadMask) -eq $requiredReadMask })
-            if ($matches.Count -ne 1) { throw "The runtime image did not preserve the required AppContainer read grant for $sid on $directory." }
-        }
         [pscustomobject]@{ name=$_; sddl=$acl.Sddl; access=$rows }
     })
     $receipt['appContainerReadRoots'] = $readRoots
+    foreach ($root in $readRoots) {
+        foreach ($sid in @('S-1-15-2-1','S-1-15-2-2')) {
+            $matches = @($root.access | Where-Object { $_.sid -ceq $sid -and $_.accessControlType -ceq 'Allow' -and
+                ($_.mask -band $requiredReadMask) -eq $requiredReadMask })
+            if ($matches.Count -ne 1) { throw "The runtime image did not preserve the required AppContainer read grant for $sid on $($root.name)." }
+        }
+    }
     & $icacls $mount /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'The runtime image inventory could not apply its installer-owned identity.' }
     $mountedFiles = @($topLevelNames | ForEach-Object {
