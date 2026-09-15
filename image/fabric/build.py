@@ -6,10 +6,12 @@ Requires Docker, uv, and a native C/Rust build toolchain (maturin can provision
 Rust in its cache). Python and Rust build tools remain development dependencies.
 """
 import argparse
+import copy
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import posixpath
 from patch_pi import patch_pi
 from patch_hermes import patch_hermes
 import platform
@@ -29,10 +31,20 @@ HARNESSES = ("deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-ag
 
 
 def source_archive_filter(member, destination):
-    """Apply the data filter while excluding unused repository metadata links."""
-    if member.issym() and Path(member.name).parts[-2:] == (".claude", "skills"):
-        return None
-    return tarfile.data_filter(member, destination)
+    """Apply data-filter safety with link resolution compatible with Python 3.10."""
+    if not (member.issym() or member.islnk()):
+        return tarfile.data_filter(member, destination)
+    target = member.linkname
+    if member.issym():
+        target = posixpath.join(posixpath.dirname(member.name), target)
+    target = PurePosixPath(posixpath.normpath(target))
+    archive_root = PurePosixPath(member.name).parts[0]
+    if not target.parts or target.parts[0] != archive_root:
+        raise tarfile.LinkOutsideDestinationError(member, Path(destination) / target)
+    filtered = copy.copy(tarfile.tar_filter(member, destination))
+    filtered.uid = filtered.gid = None
+    filtered.uname = filtered.gname = None
+    return filtered
 
 
 def run(*args, **kwargs):
