@@ -578,13 +578,19 @@ async function runRequestedPullRequestReview(
       throw new Error(
         `Could not collect complete GitHub review context${context?.fetchError ? `: ${context.fetchError}` : ""}`,
       );
-    // The bounded GitHub response is intentionally serialized as read-only Advisor context into
-    // this process-owned, mode-0600 temporary file.
-    // lgtm[js/http-to-file-access]
-    fs.writeFileSync(contextPath, serializePreparedGitHubContext(context), {
-      flag: "wx",
-      mode: 0o600,
-    });
+    const contextFd = fs.openSync(
+      contextPath,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+      0o600,
+    );
+    try {
+      // lgtm[js/network-data-to-file] The bounded GitHub response is serialized as read-only
+      // Advisor context through this process-owned, mode-0600 exclusive descriptor.
+      // lgtm[js/http-to-file-access]
+      fs.writeFileSync(contextFd, serializePreparedGitHubContext(context));
+    } finally {
+      fs.closeSync(contextFd);
+    }
     const contextHead = (context.pullRequest as { head?: { sha?: unknown } } | undefined)?.head
       ?.sha;
     const contextBase = (context.pullRequest as { base?: { sha?: unknown } } | undefined)?.base
