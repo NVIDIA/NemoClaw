@@ -171,7 +171,7 @@ function parseOsRelease(contents: string): {
     if (/^(?:ID|VERSION_ID|PRETTY_NAME)=/.test(line) && !match) return {};
     if (!match) continue;
     const [, key, quotedValue, plainValue] = match;
-    if (!key || values.has(key)) continue;
+    if (!key || values.has(key)) return {};
     values.set(key, quotedValue ?? plainValue ?? "");
   }
   return {
