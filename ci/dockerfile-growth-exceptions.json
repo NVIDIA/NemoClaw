@@ -1,0 +1,11 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nTemporary, trusted-base exceptions to the root Dockerfile no-growth ratchet. PR #11105 is approved up to the exact ceilings below for the fully pinned OpenClaw 2026.9.1 npm archive graph. Approval: https://github.com/NVIDIA/NemoClaw/pull/11105#issuecomment-5684035349. Remove this exception after PR #11105 merges.",
+  "schemaVersion": 1,
+  "exceptions": [
+    {
+      "pullRequest": 11105,
+      "maxLines": 2619,
+      "maxBytes": 221645
+    }
+  ]
+}

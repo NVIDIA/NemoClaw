@@ -439,9 +439,10 @@ Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
 
 The `double-onboard-hermes` and `onboard-resume-hermes` entries run the existing
-onboarding scenarios with Hermes and API port 8643. They retain sandbox identity,
-registered dashboard and API ports, and direct forward listener evidence before
-and after reuse or resume. The original entries retain OpenClaw coverage.
+onboarding scenarios with Hermes and API port 8643. `double-onboard-hermes`
+retains one sandbox identity check and proves dashboard and API forward ownership
+after reuse. `onboard-resume-hermes` retains its before-and-after resume evidence.
+The original entries retain OpenClaw coverage.
 
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
