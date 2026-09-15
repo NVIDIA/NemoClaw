@@ -10,6 +10,15 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## CLI tests
+
+Run `cargo test -p nemoclaw-cli` for argument, dispatch, I/O, and process tests.
+The CLI's `args.rs` tests parse arguments and inspect help in-process. Its
+`dispatch.rs` tests inject input while calling the SDK, and `io.rs` tests use
+readers, writers, and temporary files to cover bounded input, cancellation, and
+output failures. Process tests cover exit codes, piping, secret-safe diagnostics,
+and preservation of an existing export file when observation fails.
+
 ## CI caches
 
 Native CI disables incremental compilation but retains the existing debug-symbol

@@ -25,6 +25,7 @@ pub(crate) enum Command {
     /// Preview configuration changes without changing runtime resources.
     #[command(after_help = "Examples:\n  nemoclaw plan spark.yaml\n  nemoclaw plan --destroy")]
     Plan {
+        /// Preview removal of owned workloads while retaining persistent data.
         #[arg(long, conflicts_with = "file")]
         destroy: bool,
         /// Desired-state YAML path, or - to read standard input.
@@ -82,5 +83,60 @@ mod tests {
     #[test]
     fn export_accepts_an_output_path() {
         assert!(Cli::try_parse_from(["nemoclaw", "export", "--output", "spark.yaml"]).is_ok());
+    }
+    #[test]
+    fn help_explains_inputs_outputs_and_safety_contracts() {
+        for (command, expected) in [
+            (
+                "plan",
+                vec![
+                    "without changing runtime resources",
+                    "nemoclaw plan --destroy",
+                ],
+            ),
+            (
+                "apply",
+                vec!["nemoclaw apply spark.yaml", "nemoclaw apply -"],
+            ),
+            ("export", vec!["without secret values", "--output"]),
+            ("destroy", vec!["retaining persistent data"]),
+        ] {
+            let error = Cli::try_parse_from(["nemoclaw", command, "--help"])
+                .err()
+                .unwrap();
+            assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+            for text in expected {
+                assert!(error.to_string().contains(text));
+            }
+        }
+        assert!(Cli::try_parse_from(["nemoclaw", "config", "apply"]).is_err());
+    }
+
+    #[test]
+    fn deployment_options_work_before_and_after_subcommands() {
+        for argv in [
+            vec![
+                "nemoclaw",
+                "--state-dir",
+                "state",
+                "--bundle",
+                "bundle",
+                "apply",
+                "spark.yaml",
+            ],
+            vec![
+                "nemoclaw",
+                "apply",
+                "spark.yaml",
+                "--state-dir",
+                "state",
+                "--bundle",
+                "bundle",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(argv).unwrap();
+            assert_eq!(cli.state_dir, PathBuf::from("state"));
+            assert_eq!(cli.bundle_dir, Some(PathBuf::from("bundle")));
+        }
     }
 }
