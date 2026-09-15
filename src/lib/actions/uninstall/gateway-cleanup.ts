@@ -5,12 +5,19 @@ import type { SpawnSyncOptions } from "node:child_process";
 import type { OpenShellGatewayReuseObserver } from "../../adapters/openshell/gateway-reuse";
 import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
 import {
+  isInterruptedPreGatewaySession,
+  isInterruptedPreGatewayTeardownSession,
   removeGatewayRegistrationThroughAdapter,
   resolveGatewayTeardownAuthority,
   type GatewayTeardownAuthorityResolver,
 } from "../../onboard/gateway-teardown-authority";
 
-export { resolveGatewayTeardownAuthority };
+export {
+  type GatewayTeardownAuthorityResolver,
+  isInterruptedPreGatewaySession,
+  isInterruptedPreGatewayTeardownSession,
+  resolveGatewayTeardownAuthority,
+};
 
 /** Gateway-specific dependencies needed by uninstall's cleanup transaction. */
 export interface GatewayCleanupRuntime {

@@ -66,6 +66,19 @@ Make `brew` available through `PATH` or inspect the formula before you remove Op
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
 
+For a nondefault port, uninstall can remove NemoClaw state when onboarding stopped during preflight before it created a gateway or registered a sandbox.
+This recovery applies only when onboarding used the default OpenShell gateway state directory.
+Leave `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` unset.
+If onboarding used a custom state root, uninstall exits nonzero and preserves the interrupted state.
+Resolve the preflight failure, then resume onboarding with the original port and custom state root.
+After onboarding creates the managed gateway, run uninstall with those same settings.
+The recorded failed session must match the selected managed gateway, and no selected sandbox registry, gateway registration, gateway state, managed gateway process, port listener, or active onboarding lock can exist.
+Uninstall acquires the selected state root's onboarding lock before cleanup and keeps it until that state is removed.
+It recovers a stale lock when the recorded process is no longer active.
+Immediately before deletion, uninstall atomically detaches the validated state root so a new onboarding run can safely recreate the original path.
+If a sibling gateway appears during cleanup, uninstall switches to gateway-scoped cleanup and preserves shared resources.
+If the evidence changes or the lock is unavailable, uninstall exits nonzero and preserves the state for a retry.
+
 ## Stop the Amazon Bedrock Runtime Adapter
 
 The selected gateway can use a host-local Amazon Bedrock Runtime adapter.
@@ -151,7 +164,9 @@ Let onboarding create the directory when possible. Every existing ancestor, from
 If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
 Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization.
 If uninstall reports that onboarding owns the state directory while onboarding is active, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
-If the reported `onboard.lock` remains after onboarding ended abruptly, confirm that no NemoClaw onboarding process is active in any environment that shares the state root, remove only the reported lock, and rerun uninstall.
+If the reported `onboard.lock` remains after onboarding ended abruptly, rerun uninstall after the recorded process ends so NemoClaw can recover the stale lock.
+Uninstall reports the lock path and preserves a recent malformed lock for 30 seconds because another process can still be writing it.
+Wait until the lock has not changed for at least 30 seconds, confirm that no onboarding process shares the state root, and retry.
 After successful managed cleanup, uninstall recursively removes that directory and all contents.
 Portable cleanup and `--keep-openshell` preserve it.
 </Warning>
