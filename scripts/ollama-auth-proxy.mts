@@ -289,17 +289,14 @@ function probeLsofLoopbackBind(port: number): BackendProbeResult | null {
 
 function assertBackendBoundToLoopback(port: number): void {
   if (process.env.NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE === "1") {
-    // PRA-5 audit trail: the operator override that disables the
-    // loopback probe MUST leave a durable record in the proxy's stderr so
-    // an incident investigator scanning proxy logs can see that
-    // enforcement was skipped, when, and via which knob. This is not a
-    // fail-closed decision (the operator explicitly asked for the
-    // override), but it must not be silent.
+    // The proxy warns when the operator override disables the loopback probe.
+    // Direct runs expose this stderr warning, and the managed launcher prints
+    // the same warning on the host. Issue #9846 owns a durable audit record.
     console.warn(
       `Ollama auth proxy: SECURITY PROBE SKIPPED. ` +
         `NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE=1 disabled the loopback ` +
-        `bind check for port ${port}. Any Ollama daemon on this host ` +
-        `reachable on a non-loopback interface will bypass the proxy's ` +
+        `bind check for port ${port}. A selected backend reachable on a ` +
+        `non-loopback interface will bypass the proxy's ` +
         `token check. Unset the env to restore enforcement.`,
     );
     return;
