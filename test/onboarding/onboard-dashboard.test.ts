@@ -47,10 +47,8 @@ async function captureReadySummary(
 ): Promise<string> {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const helpers = createOnboardDashboardHelpers({
-    runOpenshell: vi.fn(() => ({ status: 0 })),
     runCaptureOpenshell: vi.fn(() => ""),
     runCapture: vi.fn(() => ""),
-    openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
     cliName: () => cliName,
     agentProductName: () => "NemoClaw",
     getProviderLabel: (provider: string) => provider,
@@ -76,9 +74,7 @@ async function captureReadySummary(
 describe("onboard dashboard helpers", () => {
   function createTokenHelpers(sandboxTransferExecutor: OpenShellSandboxTransferExecutor) {
     return createOnboardDashboardHelpers({
-      runOpenshell: vi.fn(() => ({ status: 0 })),
       runCaptureOpenshell: vi.fn(() => ""),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -153,9 +149,7 @@ describe("onboard dashboard helpers", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const getSandbox = vi.fn(() => ({ hermesApiPort: 8643 }));
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell: vi.fn(() => ({ status: 0 })),
       runCaptureOpenshell: vi.fn(() => ""),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemohermes",
       agentProductName: () => "NemoHermes",
       getProviderLabel: (provider: string) => provider,
@@ -188,9 +182,7 @@ describe("onboard dashboard helpers", () => {
   it("rejects a malformed dashboard bind override in the verification chain", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0; rm -rf");
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell: vi.fn(() => ({ status: 0 })),
       runCaptureOpenshell: vi.fn(() => ""),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -222,10 +214,8 @@ describe("onboard dashboard helpers", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", undefined);
     const runCapture = vi.fn(() => "172.24.80.1 10.0.0.2\n");
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell: vi.fn(() => ({ status: 0 })),
       runCaptureOpenshell: vi.fn(() => ""),
       runCapture,
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -264,13 +254,10 @@ describe("onboard dashboard helpers", () => {
   });
 
   it("leaves listed legacy forwards for gateway teardown instead of stopping by shared PID record", () => {
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell,
       runCaptureOpenshell: vi.fn(
         () => "SANDBOX BIND PORT PID STATUS\nmy-sandbox 127.0.0.1 18789 4242 running",
       ),
-      openshellArgv: (args: string[]) => ["/usr/local/bin/openshell", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -286,18 +273,11 @@ describe("onboard dashboard helpers", () => {
     });
 
     helpers.stopAllDashboardForwards();
-
-    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("skips dashboard forwarding for terminal agents without declared ports", async () => {
-    const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
-      status: 0,
-    }));
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -315,19 +295,15 @@ describe("onboard dashboard helpers", () => {
         forward_ports: [],
       } as never),
     ).toBe(0);
-    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("prints the dashboard-url command instead of raw gateway-token guidance", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));
     const shouldShowNimLine = vi.fn(() => false);
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
       runCapture: vi.fn(() => ""),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -366,12 +342,9 @@ describe("onboard dashboard helpers", () => {
 
   it("shows the loopback dashboard URL with a WSL host-IP fallback under WSL", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
       runCapture: vi.fn(() => "172.22.1.1 10.0.0.2\n"),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -403,13 +376,10 @@ describe("onboard dashboard helpers", () => {
   });
 
   it("gives the agent dashboard both primary and port-rewritten WSL fallback URLs", async () => {
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const printAgentDashboardUi = vi.fn();
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
       runCapture: vi.fn(() => "172.22.1.1 10.0.0.2\n"),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -457,10 +427,8 @@ describe("onboard dashboard helpers", () => {
       const previousDashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT;
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const helpers = createOnboardDashboardHelpers({
-        runOpenshell: vi.fn(() => ({ status: 1 })),
         runCaptureOpenshell: vi.fn(() => ""),
         runCapture: vi.fn(() => ""),
-        openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
         cliName: () => "nemohermes",
         agentProductName: () => "NemoHermes",
         getProviderLabel: (provider: string) => provider,
@@ -508,10 +476,8 @@ describe("onboard dashboard helpers", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const note = vi.fn();
     const helpers = createOnboardDashboardHelpers({
-      runOpenshell: vi.fn(() => ({ status: 1 })),
       runCaptureOpenshell: vi.fn(() => ""),
       runCapture: vi.fn(() => ""),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
