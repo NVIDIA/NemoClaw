@@ -45,7 +45,6 @@ spec:
         tier: isolated
       agents:
         - name: assistant
-          type: fabric
           harness: openclaw
           inference:
             routes:

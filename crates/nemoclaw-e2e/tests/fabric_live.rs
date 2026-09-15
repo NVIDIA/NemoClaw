@@ -128,7 +128,6 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let agent = &document.spec.sandboxes[0].agents[0];
     assert_eq!(document.spec.gateway.management, "external");
     assert!(provider.service.is_none() && provider.ollama.is_none());
-    assert_eq!(agent.agent_type, "fabric");
     fs::create_dir_all(&directory).unwrap();
     let save = |name: &str, value: &Value| {
         fs::write(

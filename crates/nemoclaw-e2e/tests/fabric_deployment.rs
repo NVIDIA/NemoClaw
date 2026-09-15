@@ -28,7 +28,6 @@ async fn every_fabric_harness_preserves_conversations_and_rejects_runtime_drift(
         )
         .unwrap();
         document.spec.gateway.endpoint = fixture.endpoint.clone();
-        document.spec.sandboxes[0].agents[0].agent_type = "fabric".into();
         document.spec.sandboxes[0].agents[0].harness = harness.into();
         if harness == "claude" {
             document.spec.inference_providers[0].provider = "anthropic".into();

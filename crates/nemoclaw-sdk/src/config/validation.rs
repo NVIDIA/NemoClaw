@@ -220,8 +220,8 @@ impl Document {
             "agent requires a lowercase name",
         )?;
         require(
-            agent.agent_type == "fabric" && is_fabric_harness(&agent.harness),
-            "agent requires type fabric and a supported harness",
+            is_fabric_harness(&agent.harness),
+            "agent requires a supported harness",
         )?;
         require(
             agent.harness == "openclaw"
@@ -231,8 +231,7 @@ impl Document {
             "this harness requires external gateway and inference services",
         )?;
         require(
-            (agent.agent_type == "fabric" && agent.harness == "claude")
-                == (provider.provider == "anthropic"),
+            (agent.harness == "claude") == (provider.provider == "anthropic"),
             "Claude requires anthropic; other harnesses require openai",
         )?;
         require(

@@ -1,5 +1,5 @@
 {
-  "digest": "7d44794e5bef9b71a06ff37d4402254bf6e1034e5eaebc75874977c9ff1c26a4",
+  "digest": "7dba8bc87d5bb4a8c138503c1ed3972f85e1c441eca9b30152727a23f7716e4d",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -34,7 +34,6 @@
           "agents": [
             {
               "name": "main",
-              "type": "fabric",
               "harness": "nooa-bench",
               "inference": {
                 "routes": [

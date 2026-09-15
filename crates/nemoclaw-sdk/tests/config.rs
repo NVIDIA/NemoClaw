@@ -189,7 +189,6 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
     ] {
         let mut document = Document::parse(input.as_bytes()).unwrap();
         let agent = &mut document.spec.sandboxes[0].agents[0];
-        agent.agent_type = "fabric".into();
         agent.harness = "openclaw".into();
         document.spec.sandboxes[0].image.ref_.clear();
         document.defaults();
@@ -205,11 +204,29 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
             "fabric-openclaw"
         );
         let agent = &mut document.spec.sandboxes[0].agents[0];
-        agent.agent_type = "openclaw".into();
         agent.harness.clear();
-        assert!(
-            document.validate().is_err(),
-            "standalone OpenClaw must be rejected"
+        assert!(document.validate().is_err(), "a harness must be declared");
+    }
+}
+
+#[test]
+fn harness_is_the_only_agent_selector() {
+    let input = include_str!("fixtures/config/local.yaml");
+    let document = Document::parse(input.as_bytes()).unwrap();
+    assert_eq!(
+        document.spec.sandboxes[0].agents[0].runtime(),
+        "fabric-openclaw"
+    );
+    assert!(!document.yaml().unwrap().contains("type:"));
+    for field in ["type: fabric", "type: openclaw"] {
+        let legacy = input.replace(
+            "harness: openclaw",
+            &format!("{field}\n          harness: openclaw"),
         );
+        assert!(Document::parse(legacy.as_bytes()).is_err());
+    }
+    for invalid in ["", "unknown"] {
+        let changed = input.replace("harness: openclaw", &format!("harness: '{invalid}'"));
+        assert!(Document::parse(changed.as_bytes()).is_err());
     }
 }

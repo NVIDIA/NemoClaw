@@ -26,7 +26,6 @@ spec:
         tier: isolated
       agents:
         - name: main
-          type: fabric
           harness: codex
           inference:
             routes:

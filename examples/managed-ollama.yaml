@@ -28,7 +28,6 @@ spec:
         tier: isolated
       agents:
         - name: main
-          type: fabric
           harness: openclaw
           inference:
             routes:

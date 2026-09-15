@@ -142,9 +142,7 @@ pub struct Network {
 pub struct Agent {
     #[serde(rename = "name")]
     pub name: String,
-    #[serde(rename = "type")]
-    pub agent_type: String,
-    #[serde(rename = "harness", skip_serializing_if = "String::is_empty")]
+    #[serde(rename = "harness")]
     pub harness: String,
     #[serde(rename = "inference")]
     pub inference: Inference,

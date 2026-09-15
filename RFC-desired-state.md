@@ -198,7 +198,7 @@ qualifies the separation against the existing recipe, not another backend.
 
 ## One OpenClaw deployment path
 
-OpenClaw uses Fabric (`type: fabric`, `harness: openclaw`) for both external and
+OpenClaw uses Fabric (`harness: openclaw`) for both external and
 managed dependencies. The standalone Node bootstrap and its image recipe are
 removed. Gateway and inference ownership do not require a different agent
 launcher. Fabric owns the native OpenClaw gateway; native commands and channel
@@ -209,3 +209,9 @@ Missing or unsupported runtime labels are failed observations, never absence.
 Old standalone state is not silently converted; its previous bundle remains
 necessary for export or teardown. Sandbox identities and agent data are not
 migrated by changing the agent type in YAML.
+
+The agent schema has only `name`, `harness`, and `inference`. A constant
+`type: fabric` added no selection, so it is removed. The harness still determines
+the same `fabric-<harness>` runtime identity and OpenTofu resource graph.
+Configuration digests change because the serialized document changes; old
+retained intent is not automatically migrated.
