@@ -61,9 +61,11 @@ export type CapturedSandboxCommandResult = CapturedOpenShellCommandResult;
 export type CaptureOpenShellCommand = (
   args: string[],
   options: {
+    env?: Record<string, string>;
     ignoreError: true;
     includeStderr: true;
     includeStreams: true;
+    replaceEnv?: true;
     timeout: number;
   },
 ) => CapturedOpenShellCommandResult | Promise<CapturedOpenShellCommandResult>;
