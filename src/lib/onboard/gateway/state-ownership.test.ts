@@ -3,7 +3,7 @@
 
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { gatewayIdForStateDir } from "../docker-driver-gateway-config";
 import {
@@ -97,22 +97,22 @@ describe("docker-driver gateway selected-state ownership", () => {
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);
   });
 
-  it("fails closed when the legacy process scan times out", () => {
+  it("fails closed when the process scan times out", () => {
     const ownership = makeOwnership({
       runCaptureEx: () => ({ stdout: "", exitCode: null, timedOut: true }),
     });
 
-    expect(ownership.isLegacyDockerDriverGatewayStateInUse()).toBe(true);
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
   });
 
-  it("fails closed when the legacy process scan throws", () => {
+  it("fails closed when the process scan throws", () => {
     const ownership = makeOwnership({
       runCaptureEx: () => {
         throw new Error("process scan failed");
       },
     });
 
-    expect(ownership.isLegacyDockerDriverGatewayStateInUse()).toBe(true);
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
   });
 
   it.each([
@@ -129,18 +129,35 @@ describe("docker-driver gateway selected-state ownership", () => {
       processEnv: {
         NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
       } as Record<string, string>,
-      expected: false,
+      expected: true,
     },
-  ])("supplements runtime ownership only for $label", ({ processEnv, expected }) => {
+  ])("detects selected-state ownership for $label", ({ processEnv, expected }) => {
     const ownership = makeOwnership({
       readProcessEnvironment: () => processEnv,
       runCaptureEx: () => ({ stdout: "4242\n", exitCode: 0, timedOut: false }),
     });
 
-    expect(ownership.isLegacyDockerDriverGatewayStateInUse()).toBe(expected);
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(expected);
   });
 
-  it("proves legacy state is unused after a complete empty process scan", () => {
-    expect(makeOwnership().isLegacyDockerDriverGatewayStateInUse()).toBe(false);
+  it("classifies current and legacy selected-state owners from one process scan", () => {
+    const scan = vi.fn(() => ({ stdout: "4242\n4343\n", exitCode: 0, timedOut: false }));
+    const ownership = makeOwnership({
+      readProcessEnvironment: (pid): Record<string, string> =>
+        pid === 4242
+          ? { NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR) }
+          : {
+              NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: "default",
+              OPENSHELL_DB_URL: `sqlite:${path.join(STATE_DIR, "openshell.db")}`,
+            },
+      runCaptureEx: scan,
+    });
+
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
+    expect(scan).toHaveBeenCalledOnce();
+  });
+
+  it("proves selected state is unused after a complete empty process scan", () => {
+    expect(makeOwnership().isDockerDriverGatewayStateInUse()).toBe(false);
   });
 });

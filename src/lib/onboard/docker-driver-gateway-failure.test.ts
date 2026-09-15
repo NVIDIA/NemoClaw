@@ -431,7 +431,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     try {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
-        isGatewayStateInUse: stateOwnership.isLegacyDockerDriverGatewayStateInUse,
+        isGatewayStateInUse: stateOwnership.isDockerDriverGatewayStateInUse,
         launchLogOffset: 0,
         resolveGatewayStopCommand: () => null,
       });

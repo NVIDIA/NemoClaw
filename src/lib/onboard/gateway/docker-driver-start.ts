@@ -61,7 +61,6 @@ export interface DockerDriverGatewayStartDeps {
   isDockerDriverGatewayHttpReady: DynamicGatewayHelpers["isDockerDriverGatewayHttpReady"];
   isDockerDriverGatewayProcess: GatewayRuntimeHelpers["isDockerDriverGatewayProcess"];
   isDockerDriverGatewayProcessAlive: GatewayRuntimeHelpers["isDockerDriverGatewayProcessAlive"];
-  isDockerDriverGatewayStateInUse: GatewayRuntimeHelpers["isDockerDriverGatewayStateInUse"];
   isGatewayHealthy(status: string, namedInfo: string, activeInfo: string): boolean;
   isGatewayTcpReady: DynamicGatewayHelpers["isGatewayTcpReady"];
   isPidAlive: GatewayRuntimeHelpers["isPidAlive"];
@@ -427,9 +426,7 @@ export function createDockerDriverGatewayStart(
       reportDockerDriverGatewayStartFailure(logPath, childExit, {
         exitOnFailure,
         gatewayPort: deps.gatewayPort(),
-        isGatewayStateInUse: () =>
-          deps.isDockerDriverGatewayStateInUse() ||
-          stateOwnership.isLegacyDockerDriverGatewayStateInUse(),
+        isGatewayStateInUse: stateOwnership.isDockerDriverGatewayStateInUse,
         launchLogOffset: log.startOffset,
         resolveGatewayStopCommand: () => gatewayServiceStopCommand,
         ...(output ? { printError: (message?: string) => output.error(message ?? "") } : {}),

@@ -32,7 +32,7 @@ interface DockerDriverGatewayStateOwnershipDeps {
 
 export interface DockerDriverGatewayStateOwnership {
   isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean;
-  isLegacyDockerDriverGatewayStateInUse(): boolean;
+  isDockerDriverGatewayStateInUse(): boolean;
 }
 
 export function processEnvironmentUsesSelectedGatewayState(
@@ -47,18 +47,6 @@ export function processEnvironmentUsesSelectedGatewayState(
   if (namespace === selectedNamespace) return true;
   return (
     (namespace === undefined || namespace === "default") && databaseUrl === selectedDatabaseUrl
-  );
-}
-
-function processEnvironmentUsesLegacySelectedGatewayState(
-  processEnv: Readonly<Record<string, string>>,
-  stateDir: string,
-): boolean {
-  const namespace = processEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
-  const selectedDatabaseUrl = `sqlite:${path.join(stateDir, "openshell.db")}`;
-  return (
-    (namespace === undefined || namespace === "default") &&
-    processEnv.OPENSHELL_DB_URL === selectedDatabaseUrl
   );
 }
 
@@ -113,8 +101,8 @@ export function createDockerDriverGatewayStateOwnership(
       : false;
   }
 
-  /** Supplement current runtime ownership only for pre-namespace gateway processes. */
-  function isLegacyDockerDriverGatewayStateInUse(): boolean {
+  /** Fail closed unless one process scan proves no gateway uses the selected state. */
+  function isDockerDriverGatewayStateInUse(): boolean {
     let scan: ProcessScanResult;
     try {
       scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
@@ -137,7 +125,7 @@ export function createDockerDriverGatewayStateOwnership(
       const processEnv = readProcessEnvironment(pid);
       if (!processEnv) return true;
       if (
-        processEnvironmentUsesLegacySelectedGatewayState(
+        processEnvironmentUsesSelectedGatewayState(
           processEnv,
           deps.getDockerDriverGatewayStateDir(),
         )
@@ -148,5 +136,5 @@ export function createDockerDriverGatewayStateOwnership(
     return false;
   }
 
-  return { isDockerDriverGatewayPidUsingSelectedState, isLegacyDockerDriverGatewayStateInUse };
+  return { isDockerDriverGatewayPidUsingSelectedState, isDockerDriverGatewayStateInUse };
 }

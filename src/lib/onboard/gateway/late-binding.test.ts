@@ -44,18 +44,17 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
-  it("withholds a stop command when the active service uses another state (#11720)", async () => {
+  it("prints a stop command when the active service owns the selected listener and state", async () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
     const lines: string[] = [];
-    const stateInUse = vi.fn(() => true);
     const serviceTarget = vi.fn(() => ({
       executablePath: "/opt/openshell/openshell-gateway",
       pid: 5444,
       stopCommand: "systemctl --user stop openshell-gateway",
     }));
     const readProcessEnvironment = vi.fn(
-      () => "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=another-gateway",
+      () => `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${gatewayIdForStateDir(stateDir)}`,
     );
     const checkGatewayPortAvailable = vi
       .fn()
@@ -136,7 +135,6 @@ describe("gateway lifecycle late binding", () => {
         isDockerDriverGatewayHttpReady: async () => false,
         isDockerDriverGatewayProcess: () => true,
         isDockerDriverGatewayProcessAlive: () => false,
-        isDockerDriverGatewayStateInUse: stateInUse,
         isGatewayHealthy: () => false,
         isGatewayTcpReady: async () => false,
         isPidAlive: () => true,
@@ -147,7 +145,7 @@ describe("gateway lifecycle late binding", () => {
         resolveOpenShellSandboxBinary: () => null,
         runner: {
           runCapture: readProcessEnvironment,
-          runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
+          runCaptureEx: () => ({ stdout: "5444\n", exitCode: 0, timedOut: false }),
         },
         runCaptureOpenshell: () => "",
         sleepSeconds: vi.fn(),
@@ -165,15 +163,14 @@ describe("gateway lifecycle late binding", () => {
         }),
       ).rejects.toThrow(/failed to start within/);
 
-      expect(lines.join("\n")).toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
-      expect(lines.join("\n")).not.toContain("sudo lsof -iTCP -sTCP:LISTEN -P -n");
-      expect(lines.join("\n")).not.toContain("systemctl --user stop openshell-gateway");
-      expect(serviceTarget).toHaveBeenCalledOnce();
+      expect(lines.join("\n")).toContain("systemctl --user stop openshell-gateway");
+      expect(lines.join("\n")).toContain("nemoclaw onboard --resume");
+      expect(lines.join("\n")).not.toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
+      expect(serviceTarget).toHaveBeenCalledTimes(2);
       expect(readProcessEnvironment).toHaveBeenCalledWith(
         ["ps", "eww", "-p", "5444", "-o", "command="],
         { ignoreError: true },
       );
-      expect(stateInUse).toHaveBeenCalledOnce();
     } finally {
       spawnSpy.mockRestore();
       prepareSpy.mockRestore();
@@ -510,7 +507,6 @@ describe("gateway lifecycle late binding", () => {
       isDockerDriverGatewayHttpReady: async () => true,
       isDockerDriverGatewayProcess: () => true,
       isDockerDriverGatewayProcessAlive: () => false,
-      isDockerDriverGatewayStateInUse: () => false,
       isGatewayHealthy: () => true,
       isGatewayTcpReady: async () => true,
       isPidAlive: () => false,
