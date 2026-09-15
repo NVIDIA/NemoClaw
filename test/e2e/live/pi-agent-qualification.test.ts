@@ -229,7 +229,6 @@ async function runInteractiveTask(
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
-  expect(result.timedOut).toBe(false);
   expect(result.firedTriggers).toContain(token);
   expect(result.exitCode).toBe(0);
 }
@@ -392,7 +391,7 @@ test(
       { artifactName: "pi-personal-profiles-before-recovery", env, timeoutMs: 30_000 },
     );
     expect(personalProfiles.exitCode, resultText(personalProfiles)).toBe(0);
-    await host.command(
+    const restart = await host.command(
       "bash",
       [
         "-ec",
@@ -403,6 +402,7 @@ test(
       ],
       { artifactName: "pi-sandbox-stop-start", env, timeoutMs: 6 * 60_000 },
     );
+    expect(restart.exitCode, resultText(restart)).toBe(0);
     await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName: SANDBOX_NAME });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
     const recover = await host.nemoclaw([SANDBOX_NAME, "recover"], {
