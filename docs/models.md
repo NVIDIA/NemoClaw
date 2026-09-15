@@ -6,6 +6,10 @@ commit in `service.model.revision`. There is no repository allowlist. Mutable
 branches and tags are rejected so a later apply cannot silently change weights.
 The OpenShell route's model must match the repository name.
 
+A concrete configuration is in [examples/vllm.yaml](../examples/vllm.yaml). Its
+image digest refers to a locally built artifact, not a published registry image.
+Build the runtime locally and use the digest reported by your build.
+
 Build the local runtime with `cargo run -p nemoclaw-build -- vllm-runtime` and use
 its immutable image digest. This image contains the shared supervisor and
 unpatched vLLM, with retained source and license notices. It contains no model

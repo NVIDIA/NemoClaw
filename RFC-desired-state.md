@@ -236,3 +236,11 @@ and optional native parsers; the existing hardware profile and resident memory
 protection remain shared. Compatibility still depends on the selected image,
 model architecture and available capacity. Supporting arbitrary repository names
 does not establish support for remote model code or every checkpoint format.
+
+Live model selection exposed two independent compatibility boundaries. Qwen3-0.6B
+loaded and answered the first agent probe, but failed the repeated reply contract.
+Qwen3-4B required 4.5 GiB of KV cache for a 32K context, so the initial 4 GiB
+setting failed startup safely; declaring 6 GiB allowed it to load from the retained
+snapshot. Weight size alone cannot prove that serving settings or agent behavior
+will work. Keep those failures explicit rather than treating a downloadable model
+as a qualified agent backend or weakening the agent probe.

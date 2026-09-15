@@ -55,3 +55,15 @@ remains an accepted environment name alongside `NEMOCLAW_RUNTIME_SPEC`.
 Conflicting specifications fail before work begins. Managed containers continue
 using the legacy entrypoint/environment contract so existing pinned images and
 resource bindings remain valid; the image's default entrypoint uses the new name.
+
+For native safetensors models, build the model-independent image instead:
+
+```sh
+cargo run -p nemoclaw-build -- vllm-runtime
+```
+
+This uses the same pinned vLLM base and source-retaining supervisor build, without
+Qwen3.8 patches or preparation tools. It exports `.build/vllm/runtime.tar`, loads
+`nc-prototype-vllm:rust-v1` locally, and prints the immutable digest to use in YAML.
+The image is not published. Select the model separately as described in
+[model configuration](models.md).
