@@ -24,22 +24,31 @@ describe("onboarding command failures", () => {
     ).rejects.toThrow("unexpected boom");
   });
 
-  it("returns without rethrowing when a prompt rejects with SIGINT (#7439)", async () => {
+  it("returns without rethrowing and preserves exit code 130 when a prompt rejects with SIGINT (#7439, #11039)", async () => {
     const exit = vi.fn<(code: number) => never>();
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw Object.assign(new Error("Prompt interrupted"), {
-            code: "SIGINT",
-          });
-        },
-        error: () => {},
-        exit,
-      }),
-    ).resolves.toBeUndefined();
-    expect(exit).not.toHaveBeenCalled();
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await expect(
+        runOnboardCommand({
+          flags: {},
+          env: {},
+          runOnboard: async () => {
+            throw Object.assign(new Error("Prompt interrupted"), {
+              code: "SIGINT",
+            });
+          },
+          error: () => {},
+          exit,
+        }),
+      ).resolves.toBeUndefined();
+      expect(exit).not.toHaveBeenCalled();
+      // The signal handler cannot publish 130 when the process drains before
+      // asynchronous signal delivery, as at the agent-selection prompt.
+      expect(process.exitCode).toBe(130);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it("rethrows non-cancellation onboarding failures unchanged (#5976)", async () => {

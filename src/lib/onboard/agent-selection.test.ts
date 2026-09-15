@@ -81,4 +81,30 @@ describe("selectOnboardAgent interactive agent selection", () => {
     assert.equal(agent, null);
     assert.equal(prompt.mock.calls.length, 0);
   });
+
+  it("propagates SIGINT prompt interruption error to command boundary (#11039)", async () => {
+    const prompt = vi.fn(async () => {
+      throw Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+    });
+    const select = createSelectOnboardAgent({
+      resolveAgent,
+      loadAgent,
+      getAgentChoices,
+      isNonInteractive: () => false,
+      note: () => {},
+      log: () => {},
+      prompt,
+      selectFromNumberedMenu: selectFromNumberedMenuOrExit,
+    });
+
+    await assert.rejects(
+      async () => {
+        await select({ canPrompt: true });
+      },
+      (error: unknown) => {
+        const errno = error as NodeJS.ErrnoException;
+        return errno?.code === "SIGINT";
+      },
+    );
+  });
 });
