@@ -86,11 +86,49 @@ pub struct AgentAuth {
     pub provider_ref: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-/// Native OpenClaw tool access. Only the read-only allowlist is supported.
-pub struct AgentTools {
-    /// Exactly the read tool. Empty lists, wildcards, and other tool names are rejected.
-    pub allow: [AllowedTool; 1],
+#[serde(untagged, deny_unknown_fields)]
+/// OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
+pub enum AgentTools {
+    /// Expose only the read tool, independently of the gateway's discovery mode.
+    ReadOnly {
+        /// Exactly the read tool. Empty lists, wildcards, and other tool names are rejected.
+        allow: [AllowedTool; 1],
+    },
+    /// Select the shared gateway's tool discovery mode without granting additional tools.
+    Disclosure {
+        /// Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive.
+        disclosure: ToolDisclosure,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+/// OpenClaw tool presentation; this does not change tool permissions.
+pub enum ToolDisclosure {
+    /// Discover tools through structured search, with default limit 8 and maximum 20.
+    Progressive,
+    /// Disable tool search and expose permitted tools directly.
+    Direct,
+}
+impl ToolDisclosure {
+    pub(crate) fn shared<'a>(
+        tools: impl Iterator<Item = Option<&'a AgentTools>>,
+    ) -> Result<Self, ConfigError> {
+        let mut selected = None;
+        for tool in tools {
+            let mode = match tool {
+                Some(AgentTools::ReadOnly { .. }) => continue,
+                Some(AgentTools::Disclosure { disclosure }) => *disclosure,
+                None => Self::Progressive,
+            };
+            if selected.is_some_and(|prior| prior != mode) {
+                return Err(ConfigError(
+                    "OpenClaw agents must share a tool disclosure mode; omission means progressive",
+                ));
+            }
+            selected = Some(mode);
+        }
+        Ok(selected.unwrap_or(Self::Progressive))
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -124,6 +162,7 @@ impl RuntimeInference {
         if let Some(interfaces) = &self.interfaces {
             interfaces.validate(harness)?;
         }
+        ToolDisclosure::shared(self.agents.iter().map(|a| a.tools.as_ref()))?;
         let mut names = std::collections::BTreeSet::new();
         if !self.agents.is_empty()
             && (harness != "openclaw"

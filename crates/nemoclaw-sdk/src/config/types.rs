@@ -253,7 +253,7 @@ pub struct Agent {
     pub interfaces: Option<super::AgentInterfaces>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentTools")]
-    /// Optional OpenClaw tool restriction. Omission preserves native tools; allow: [read] exposes only the read tool, not OS-level filesystem isolation.
+    /// OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access.
     pub tools: Option<super::AgentTools>,
 }
 

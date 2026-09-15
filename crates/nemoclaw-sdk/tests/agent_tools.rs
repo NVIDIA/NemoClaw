@@ -83,3 +83,44 @@ fn invalid_rosters_and_permissions_fail_before_planning() {
         json!("another-model");
     assert!(parse(&v).is_err());
 }
+
+#[test]
+fn disclosure_round_trips_and_rejects_conflicting_gateway_modes() {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    for mode in ["progressive", "direct"] {
+        let mut v = input(3);
+        v["spec"]["sandboxes"][0]["agents"][0]["tools"] = json!({"disclosure":mode});
+        let d = parse(&v).expect("disclosure must parse");
+        assert!(schema.is_valid(&v));
+        assert_eq!(Document::parse(d.yaml().unwrap().as_bytes()).unwrap(), d);
+        let g: Generations = ["workspace", "provider", "sandbox"]
+            .map(|k| (k.into(), format!("{k}-generation")))
+            .into();
+        let rows = targets(&d, &g).unwrap();
+        let settings: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
+        assert_eq!(settings["agents"][0]["tools"]["disclosure"], mode);
+    }
+    for tools in [
+        json!({"disclosure":"DIRECT"}),
+        json!({"disclosure":null}),
+        json!({"disclosure":"other"}),
+        json!({"allow":["read"],"disclosure":"direct"}),
+    ] {
+        let mut v = input(1);
+        v["spec"]["sandboxes"][0]["agents"][0]["tools"] = tools;
+        assert!(parse(&v).is_err());
+        assert!(!schema.is_valid(&v));
+    }
+    let mut v = input(3);
+    v["spec"]["sandboxes"][0]["agents"][0]["tools"] = json!({"disclosure":"direct"});
+    v["spec"]["sandboxes"][0]["agents"][1]["tools"] = json!({"disclosure":"progressive"});
+    assert!(parse(&v).is_err());
+    v["spec"]["sandboxes"][0]["agents"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("tools");
+    assert!(
+        parse(&v).is_err(),
+        "omitted unrestricted mode means progressive"
+    );
+}

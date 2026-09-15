@@ -20,7 +20,7 @@ Empty or zero selects a default only where stated.
 - Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
-- The parser checks unique agent names and identical inference settings across multiple OpenClaw agents.
+- The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
 - The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
@@ -59,7 +59,7 @@ Paths:
 | `inference` | [Inference](#inference) | Yes | — | Primary inference route for this agent. |
 | `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access, declared only on the first agent in a sandbox. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `tools` | [AgentTools](#agenttools) | No | — | Optional OpenClaw tool restriction. Omission preserves native tools; allow: [read] exposes only the read tool, not OS-level filesystem isolation. |
+| `tools` | [AgentTools](#agenttools) | No | — | OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access. |
 
 ## AgentAuth
 
@@ -92,29 +92,47 @@ Paths:
 
 ## AgentTools
 
-Native OpenClaw tool access. Only the read-only allowlist is supported.
+OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
 - `spec.sandboxes[].agents[].tools`
 
+Accepted input: object or object.
+
+### Alternative 1
+
+Expose only the read tool, independently of the gateway's discovery mode.
+
+
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `allow` | array of [AllowedTool](#allowedtool) | Yes | — | Exactly the read tool. Empty lists, wildcards, and other tool names are rejected. Constraints: minimum items 1; maximum items 1. |
+
+### Alternative 2
+
+Select the shared gateway's tool discovery mode without granting additional tools.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `disclosure` | [ToolDisclosure](#tooldisclosure) | Yes | — | Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive. |
 
 ## AllowedTool
 
 Tool supported by the read-only OpenClaw policy.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Agent runtimes](../agents.md).
 
 Paths:
 
 - `spec.sandboxes[].agents[].tools.allow[]`
 
 Accepted input: string.
+
+Constraints: `"read"`.
 
 ## AuthMethod
 
@@ -930,3 +948,17 @@ Paths:
 |---|---|---|---|---|
 | `executable` | string | Yes | — | Absolute path to the executable inside the image. Traversal and empty path components are rejected. Constraints: pattern `^/`; maximum characters 4096. |
 | `sha256` | string | Yes | — | Lowercase SHA-256 of the executable file. Constraints: pattern `^[a-f0-9]{64}$`. |
+
+## ToolDisclosure
+
+OpenClaw tool presentation; this does not change tool permissions.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].tools.disclosure`
+
+Accepted input: string or string.
+
+Constraints: `"progressive"` or `"direct"`.

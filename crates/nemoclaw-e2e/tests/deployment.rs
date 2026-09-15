@@ -36,12 +36,31 @@ async fn multiple_agents_cli_export_reapply_and_policy_drift() {
     for name in ["reader", "reviewer", "auditor"] {
         let mut agent = primary.clone();
         agent.name = name.into();
-        agent.tools = Some(nemoclaw_sdk::config::AgentTools {
+        agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
             allow: [nemoclaw_sdk::config::AllowedTool::Read],
         });
         document.spec.sandboxes[0].agents.push(agent);
     }
     lifecycle(&document.yaml().unwrap()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn tool_disclosure_cli_export_reapply_and_drift() {
+    for mode in [
+        nemoclaw_sdk::config::ToolDisclosure::Direct,
+        nemoclaw_sdk::config::ToolDisclosure::Progressive,
+    ] {
+        let mut document =
+            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
+                .unwrap();
+        document.spec.sandboxes[0].agents[0].tools =
+            Some(nemoclaw_sdk::config::AgentTools::Disclosure { disclosure: mode });
+        // Exercise the existing launch-setting drift assertions as well as export/reapply.
+        document.spec.inference_providers[0].api =
+            Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
+        lifecycle(&document.yaml().unwrap()).await;
+    }
 }
 
 async fn lifecycle(input: &str) {

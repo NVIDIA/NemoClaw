@@ -70,7 +70,7 @@
         },
         "tools": {
           "$ref": "#/$defs/AgentTools",
-          "description": "Optional OpenClaw tool restriction. Omission preserves native tools; allow: [read] exposes only the read tool, not OS-level filesystem isolation."
+          "description": "OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access."
         }
       },
       "required": [
@@ -115,23 +115,42 @@
       "type": "object"
     },
     "AgentTools": {
-      "additionalProperties": false,
-      "description": "Native OpenClaw tool access. Only the read-only allowlist is supported.",
-      "properties": {
-        "allow": {
-          "description": "Exactly the read tool. Empty lists, wildcards, and other tool names are rejected.",
-          "items": {
-            "$ref": "#/$defs/AllowedTool"
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "description": "Expose only the read tool, independently of the gateway's discovery mode.",
+          "properties": {
+            "allow": {
+              "description": "Exactly the read tool. Empty lists, wildcards, and other tool names are rejected.",
+              "items": {
+                "$ref": "#/$defs/AllowedTool"
+              },
+              "maxItems": 1,
+              "minItems": 1,
+              "type": "array"
+            }
           },
-          "maxItems": 1,
-          "minItems": 1,
-          "type": "array"
+          "required": [
+            "allow"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Select the shared gateway's tool discovery mode without granting additional tools.",
+          "properties": {
+            "disclosure": {
+              "$ref": "#/$defs/ToolDisclosure",
+              "description": "Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive."
+            }
+          },
+          "required": [
+            "disclosure"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "allow"
       ],
-      "type": "object"
+      "description": "OpenClaw tool restriction or discovery mode. These forms are mutually exclusive."
     },
     "AllowedTool": {
       "description": "Tool supported by the read-only OpenClaw policy.",
@@ -2088,6 +2107,21 @@
         "sha256"
       ],
       "type": "object"
+    },
+    "ToolDisclosure": {
+      "description": "OpenClaw tool presentation; this does not change tool permissions.",
+      "oneOf": [
+        {
+          "const": "progressive",
+          "description": "Discover tools through structured search, with default limit 8 and maximum 20.",
+          "type": "string"
+        },
+        {
+          "const": "direct",
+          "description": "Disable tool search and expose permitted tools directly.",
+          "type": "string"
+        }
+      ]
     }
   },
   "$id": "urn:nemoclaw:config:v1alpha1",
@@ -3061,7 +3095,7 @@
     "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
-    "The parser checks unique agent names and identical inference settings across multiple OpenClaw agents.",
+    "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
     "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."

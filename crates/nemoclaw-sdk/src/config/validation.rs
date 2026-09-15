@@ -192,6 +192,7 @@ impl Document {
         )?;
         sandbox.network.validate()?;
         require(!sandbox.agents.is_empty(), "at least one agent is required")?;
+        ToolDisclosure::shared(sandbox.agents.iter().map(|a| a.tools.as_ref()))?;
         let mut names = std::collections::BTreeSet::new();
         for agent in &sandbox.agents {
             require(names.insert(&agent.name), "agent names must be unique")?;

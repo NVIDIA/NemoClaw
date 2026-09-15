@@ -374,7 +374,7 @@ async fn agent_roster_refresh_verifies_native_policy_without_mutation() {
     for name in ["reader", "reviewer"] {
         let mut agent = primary.clone();
         agent.name = name.into();
-        agent.tools = Some(nemoclaw_sdk::config::AgentTools {
+        agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
             allow: [nemoclaw_sdk::config::AllowedTool::Read],
         });
         document.spec.sandboxes[0].agents.push(agent);

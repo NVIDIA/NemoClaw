@@ -88,8 +88,28 @@ fn section(
         if !choices.is_empty() {
             writeln!(output, "Constraints: {choices}.\n").unwrap();
         }
+        for key in ["anyOf", "oneOf"] {
+            if let Some(variants) = schema[key].as_array() {
+                for (index, variant) in variants.iter().enumerate() {
+                    if variant.get("properties").is_some() {
+                        writeln!(
+                            output,
+                            "### Alternative {}\n\n{}\n",
+                            index + 1,
+                            description(variant, name)?
+                        )
+                        .unwrap();
+                        fields(output, name, variant)?;
+                    }
+                }
+            }
+        }
         return Ok(());
     }
+    fields(output, name, schema)
+}
+
+fn fields(output: &mut String, name: &str, schema: &Value) -> Result<(), String> {
     output.push_str("\n| Field | Input type | Required | Default | Description and constraints |\n|---|---|---|---|---|\n");
     let required = schema["required"].as_array();
     for (field, property) in schema["properties"]
@@ -146,7 +166,9 @@ fn guide(name: &str) -> &'static str {
         "AgentInterfaces" | "OpenClawDashboard" | "DashboardBind" => {
             "[Agent interfaces](../interfaces.md)"
         }
-        "Agent" => "[Agent runtimes](../agents.md)",
+        "Agent" | "AgentTools" | "AllowedTool" | "ToolDisclosure" => {
+            "[Agent runtimes](../agents.md)"
+        }
         _ => "[Configuration and credentials](../usage.md#configuration-and-credentials)",
     }
 }
@@ -211,15 +233,17 @@ fn constraints(schema: &Value) -> String {
             parts.push(format!("{label} {value}"));
         }
     }
-    if let Some(variants) = schema["anyOf"].as_array() {
-        parts.push(
-            variants
-                .iter()
-                .map(constraints)
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-                .join(" or "),
-        );
+    for key in ["anyOf", "oneOf"] {
+        if let Some(variants) = schema[key].as_array() {
+            parts.push(
+                variants
+                    .iter()
+                    .map(constraints)
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" or "),
+            );
+        }
     }
     if let Some(names) = schema.get("propertyNames") {
         parts.push(format!("keys: {}", constraints(names)));
@@ -293,6 +317,20 @@ fn collect_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reference_explains_tool_union_fields_and_disclosure_choices() {
+        let markdown = render_reference(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
+        let tools = markdown
+            .split("## AgentTools\n")
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        assert!(tools.contains("| `allow` |"));
+        assert!(tools.contains("| `disclosure` |"));
+        assert!(markdown.contains("`\"progressive\"` or `\"direct\"`"));
+    }
     #[test]
     fn reference_lists_named_enum_choices() {
         let markdown = render_reference(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
