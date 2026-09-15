@@ -168,3 +168,6 @@ pub use observation::{HostObservation, HostObserver};
 
 mod ssh;
 pub use ssh::SshHost;
+
+#[cfg(test)]
+mod tests;

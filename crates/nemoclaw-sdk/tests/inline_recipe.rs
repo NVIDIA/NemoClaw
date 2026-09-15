@@ -10,11 +10,11 @@ fn example() -> serde_json::Value {
     service["backend"] = "vllm".into();
     service["recipe"] = serde_json::json!({
         "apiVersion":"nemoclaw.nvidia.com/recipe/v1",
-        "compatibility":{"architecture":"arm64","gpu":"NVIDIA GB10","minDriverMajor":580,"minHostMemoryGiB":118,"imageLabels":{"org.nemoclaw.feature.ple":"1","org.nemoclaw.recipe.protocol":"v1"}},
+        "compatibility":{"architecture":"arm64","gpu":"NVIDIA GB10","minDriverMajor":580,"minHostMemoryGiB":118,"imageLabels":{"org.nemoclaw.feature.example":"1","org.nemoclaw.recipe.protocol":"v1"}},
         "preparation":{"executable":"/opt/recipe/prepare","sha256":"a".repeat(64)},
         "verification":{"executable":"/opt/recipe/verify","sha256":"b".repeat(64)},
         "resources":{"preparedBytes":1024,"preparationMemoryGiB":2,"gpuMemoryBytes":85899345920u64,"startupHeadroomGiB":20},
-        "serving":{"modelName":"qwen3.8-flash-next","toolParser":"qwen3_coder","reasoningParser":"qwen3","kvCacheDtype":"fp8","mambaCacheDtype":"bfloat16","lazyLoading":true,"chunkedPrefill":true,"environment":{"VLLM_PLE_CPU_OFFLOAD":"1"},"preparedEnvironment":{"VLLM_PLE_PACKED_TABLE_DIR":"."}},
+        "serving":{"modelName":"fixture-model","toolParser":"hermes","reasoningParser":"qwen3","kvCacheDtype":"fp8","mambaCacheDtype":"bfloat16","lazyLoading":true,"chunkedPrefill":true,"environment":{"VLLM_EXAMPLE_FEATURE":"1"},"preparedEnvironment":{"VLLM_EXAMPLE_PREPARED_DIR":"."}},
         "licenses":["/opt/recipe/LICENSE"],"sourceNotices":["/opt/recipe/NOTICE"]
     });
     value
@@ -104,42 +104,19 @@ async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data
 }
 
 #[test]
-fn qwen_example_preserves_snapshot_identity_and_typed_vllm_behavior() {
-    let document =
-        Document::parse(include_bytes!("../../../examples/spark-inline.yaml").as_slice()).unwrap();
-    let service = document.spec.inference_providers[0]
+fn preparation_keys_track_model_and_tool_identity() {
+    let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
+    let mut service = document.spec.inference_providers[0]
         .service
-        .as_ref()
+        .clone()
         .unwrap();
-    let recipe = service.recipe.as_ref().unwrap();
-    assert_eq!(
-        recipe.snapshot.as_ref().unwrap().key(),
-        nemoclaw_sdk::spark::model_manifest().key()
-    );
-    assert_eq!(
-        recipe.reuse.as_ref().unwrap().preparation_key,
-        nemoclaw_sdk::spark::preparation_key()
-    );
-    let legacy = Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
-    let old = legacy.spec.inference_providers[0].service.as_ref().unwrap();
-    let before = old
-        .arguments("/data/model", 121 * nemoclaw_sdk::hardware::GIB)
-        .unwrap();
-    let after = service
-        .arguments("/data/model", 121 * nemoclaw_sdk::hardware::GIB)
-        .unwrap();
-    assert_eq!(before.len(), after.len());
-    for (a, b) in before.iter().zip(&after) {
-        if a.starts_with('{') {
-            assert_eq!(
-                serde_json::from_str::<serde_json::Value>(a).unwrap(),
-                serde_json::from_str::<serde_json::Value>(b).unwrap()
-            );
-        } else {
-            assert_eq!(a, b);
-        }
-    }
-    assert_eq!(service.gpu_bytes().unwrap(), old.gpu_bytes().unwrap());
+    let original = service.clone();
+    let key = service.recipe.as_ref().unwrap().key(&service);
+    service.model.repository = "another/model".into();
+    assert_ne!(service.recipe.as_ref().unwrap().key(&service), key);
+    service = original;
+    service.recipe.as_mut().unwrap().preparation.sha256 = "c".repeat(64);
+    assert_ne!(service.recipe.as_ref().unwrap().key(&service), key);
 }
 
 #[tokio::test]
@@ -205,4 +182,60 @@ async fn failed_verification_never_publishes_a_completion_receipt() {
         );
         assert!(!staging.join("complete.json").exists());
     }
+}
+
+#[test]
+fn model_specific_backend_names_are_rejected() {
+    let mut document = serde_json::to_value(
+        Document::parse(include_bytes!("../../../examples/spark-inline.yaml").as_slice()).unwrap(),
+    )
+    .unwrap();
+    let service = &mut document["spec"]["inferenceProviders"][0]["service"];
+    service.as_object_mut().unwrap().remove("recipe");
+    service["backend"] = "vllm-qwen38-spark-v1".into();
+    assert!(Document::parse(serde_json::to_vec(&document).unwrap().as_slice()).is_err());
+}
+
+#[tokio::test]
+async fn published_directory_without_a_receipt_is_not_rebuilt() {
+    use nemoclaw_sdk::{
+        CancellationToken, Error,
+        recipes::preparation::{self, Action, Request, Runner},
+    };
+    struct NoTools;
+    #[async_trait::async_trait]
+    impl Runner for NoTools {
+        async fn run(
+            &self,
+            _: Action,
+            _: &Request<'_>,
+            _: &CancellationToken,
+        ) -> Result<Vec<u8>, Error> {
+            panic!("failed observation must not run preparation");
+        }
+    }
+    let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
+    let service = document.spec.inference_providers[0]
+        .service
+        .as_ref()
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let published = root
+        .path()
+        .join(service.recipe.as_ref().unwrap().key(service));
+    std::fs::create_dir(&published).unwrap();
+    std::fs::write(published.join("retained"), b"keep").unwrap();
+    assert!(
+        preparation::prepare(
+            root.path(),
+            root.path(),
+            service,
+            &NoTools,
+            &CancellationToken::new()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(std::fs::read(published.join("retained")).unwrap(), b"keep");
+    assert!(!published.join("complete.json").exists());
 }

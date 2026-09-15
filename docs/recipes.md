@@ -1,22 +1,21 @@
 # Inline model recipes
 
 An [ordinary vLLM service](../examples/vllm.yaml) needs a pinned image and model
-snapshot. Build its local image with `cargo run -p nemoclaw-build -- vllm-runtime`. Add
+snapshot. Build its local image with `cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json`. Add
 `service.recipe` when the model needs preparation or serving features supplied
 by its runtime image. The CLI does not load recipe code. Recipe authors package
 their executables, patches, licenses and source notices in that image; the YAML
 declares their contract.
 
 See [the inline Qwen example](../examples/spark-inline.yaml). Build its local image
-with `cargo run -p nemoclaw-build -- spark-runtime`; the example pins the resulting
+with `cargo run -p nemoclaw-build -- runtime runtimes/qwen38/build.json`; the example pins the resulting
 OCI manifest. Reproduce the pins from the implementation revision recorded in
 [the validation evidence](validation/rust-inline-recipes-linux-arm64.json);
 building later source can produce a different digest. This experiment does not
 publish the image. Its model-specific
-adapters live in `runtimes/qwen38`, outside the generic execution path. The old
-`vllm-qwen38-spark-v1` backend remains readable for established deployment state
-and older pinned images. New recipes use `backend: vllm` and do not require an
-entry in a Rust recipe registry.
+adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside
+the generic execution path. All vLLM services use `backend: vllm`. Model-specific
+backend names and the built-in recipe registry have been removed.
 
 ## Declaration
 
@@ -112,10 +111,9 @@ adopting another deployment's volume. Destroy retains model and prepared storage
 as before. Recipe execution adds no exception to the distinction between failed
 observation and confirmed resource absence.
 
-The legacy backend compatibility does not migrate deployment state from the
-removed native OpenClaw schema. That state must remain available for its original
-CLI; the inline live experiment uses a separate Fabric deployment. Current runtime
-container limits and live hardware qualification still target the Spark.
+Old model-specific backend configurations and native-agent state are unsupported.
+The current container limits and live hardware qualification still target the
+Spark; removing model-specific code does not qualify another GPU.
 
 Recipe declarations are trusted deployment input, and the pinned runtime image
 must be reviewed with its tools and dependencies. The executable hash is an

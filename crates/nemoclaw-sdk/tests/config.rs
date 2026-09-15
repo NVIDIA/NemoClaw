@@ -114,7 +114,7 @@ fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
     defaulted.spec.sandboxes[0].network.tier.clear();
     defaulted.defaults();
     assert_eq!(defaulted, original);
-    for timeout in [0, 899, 3601] {
+    for timeout in [0, 59, 3601] {
         let mut changed = original.clone();
         changed.spec.inference_providers[0]
             .service

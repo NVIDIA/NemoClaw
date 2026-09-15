@@ -3,8 +3,14 @@
 #![cfg(target_os = "linux")]
 use std::process::Command;
 #[test]
-fn renamed_executable_validates_both_current_and_legacy_configuration_before_work() {
-    for variable in ["NEMOCLAW_RUNTIME_SPEC", "NEMOCLAW_SPARK_SPEC"] {
+fn runtime_requires_current_configuration_and_validates_it_before_work() {
+    for (variable, expected) in [
+        (
+            "NEMOCLAW_RUNTIME_SPEC",
+            "invalid pinned runtime specification",
+        ),
+        ("NEMOCLAW_SPARK_SPEC", "missing runtime specification"),
+    ] {
         let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-runtime"))
             .env_remove("NEMOCLAW_RUNTIME_SPEC")
             .env_remove("NEMOCLAW_SPARK_SPEC")
@@ -13,21 +19,6 @@ fn renamed_executable_validates_both_current_and_legacy_configuration_before_wor
             .unwrap();
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
-        assert!(
-            String::from_utf8(output.stderr)
-                .unwrap()
-                .contains("invalid pinned runtime specification")
-        );
+        assert!(String::from_utf8(output.stderr).unwrap().contains(expected));
     }
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-runtime"))
-        .env("NEMOCLAW_RUNTIME_SPEC", "current")
-        .env("NEMOCLAW_SPARK_SPEC", "legacy")
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("conflicting runtime specifications")
-    );
 }

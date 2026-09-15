@@ -1,16 +1,9 @@
 [
   {
     "config": {
-      "Hostname": "",
-      "Domainname": "",
-      "User": "0:0",
+      "AttachStderr": false,
       "AttachStdin": false,
       "AttachStdout": false,
-      "AttachStderr": false,
-      "Tty": false,
-      "OpenStdin": false,
-      "StdinOnce": false,
-      "Env": null,
       "Cmd": [
         "--config",
         "/var/lib/docker/volumes/fixture/_data/gateway.toml",
@@ -26,110 +19,117 @@
         "--db-url",
         "sqlite:/var/lib/docker/volumes/fixture/_data/gateway.db"
       ],
-      "Image": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
-      "Volumes": null,
-      "WorkingDir": "",
+      "Domainname": "",
       "Entrypoint": [
         "/usr/local/bin/openshell-gateway"
       ],
+      "Env": null,
+      "Hostname": "",
+      "Image": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
       "Labels": {
         "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "nemoclaw.nvidia.com/runtime-spec": "79ff0c5ae8c7f783673212d06faade5df4c70a81bd53ac7efd2cbe37ea98489e",
         "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
-      }
+      },
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Tty": false,
+      "User": "0:0",
+      "Volumes": null,
+      "WorkingDir": ""
     },
     "gatewayConfig": "[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nssh_socket_path = \"/var/lib/docker/volumes/fixture/_data/ssh\"\nsupervisor_bin = \"/var/lib/docker/volumes/fixture/_data/openshell-sandbox\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-gateway\"\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
     "hostConfig": {
-      "Binds": null,
-      "ContainerIDFile": "",
-      "LogConfig": {
-        "Type": "json-file",
-        "Config": {
-          "max-file": "3",
-          "max-size": "32m"
-        }
-      },
-      "NetworkMode": "host",
-      "PortBindings": null,
-      "RestartPolicy": {
-        "Name": "no",
-        "MaximumRetryCount": 0
-      },
       "AutoRemove": false,
-      "VolumeDriver": "",
-      "VolumesFrom": null,
-      "ConsoleSize": [
-        0,
-        0
-      ],
+      "Binds": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceWriteIOps": null,
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
       "CapAdd": null,
       "CapDrop": [
         "ALL"
       ],
+      "Cgroup": "",
+      "CgroupParent": "",
       "CgroupnsMode": "",
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "ContainerIDFile": "",
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpuShares": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "Devices": null,
       "Dns": null,
       "DnsOptions": null,
       "DnsSearch": null,
       "ExtraHosts": null,
       "GroupAdd": null,
+      "IOMaximumBandwidth": 0,
+      "IOMaximumIOps": 0,
       "IpcMode": "",
-      "Cgroup": "",
-      "Links": null,
-      "OomScoreAdj": 0,
-      "PidMode": "",
-      "Privileged": false,
-      "PublishAllPorts": false,
-      "ReadonlyRootfs": false,
-      "SecurityOpt": [
-        "no-new-privileges"
-      ],
-      "UTSMode": "",
-      "UsernsMode": "",
-      "ShmSize": 0,
       "Isolation": "",
-      "CpuShares": 0,
+      "Links": null,
+      "LogConfig": {
+        "Config": {
+          "max-file": "3",
+          "max-size": "32m"
+        },
+        "Type": "json-file"
+      },
+      "MaskedPaths": null,
       "Memory": 0,
-      "NanoCpus": 0,
-      "CgroupParent": "",
-      "BlkioWeight": 0,
-      "BlkioWeightDevice": null,
-      "BlkioDeviceReadBps": null,
-      "BlkioDeviceWriteBps": null,
-      "BlkioDeviceReadIOps": null,
-      "BlkioDeviceWriteIOps": null,
-      "CpuPeriod": 0,
-      "CpuQuota": 0,
-      "CpuRealtimePeriod": 0,
-      "CpuRealtimeRuntime": 0,
-      "CpusetCpus": "",
-      "CpusetMems": "",
-      "Devices": null,
-      "DeviceCgroupRules": null,
-      "DeviceRequests": null,
       "MemoryReservation": 0,
       "MemorySwap": 0,
       "MemorySwappiness": null,
-      "OomKillDisable": null,
-      "PidsLimit": null,
-      "Ulimits": null,
-      "CpuCount": 0,
-      "CpuPercent": 0,
-      "IOMaximumIOps": 0,
-      "IOMaximumBandwidth": 0,
       "Mounts": [
         {
-          "Type": "volume",
           "Source": "nc-68d203b0c7e6083f-gateway-data",
-          "Target": "/var/lib/docker/volumes/fixture/_data"
+          "Target": "/var/lib/docker/volumes/fixture/_data",
+          "Type": "volume"
         },
         {
-          "Type": "bind",
           "Source": "/var/run/docker.sock",
-          "Target": "/var/run/docker.sock"
+          "Target": "/var/run/docker.sock",
+          "Type": "bind"
         }
       ],
-      "MaskedPaths": null,
-      "ReadonlyPaths": null
+      "NanoCpus": 0,
+      "NetworkMode": "host",
+      "OomKillDisable": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "PidsLimit": null,
+      "PortBindings": null,
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyPaths": null,
+      "ReadonlyRootfs": false,
+      "RestartPolicy": {
+        "MaximumRetryCount": 0,
+        "Name": "no"
+      },
+      "SecurityOpt": [
+        "no-new-privileges"
+      ],
+      "ShmSize": 0,
+      "UTSMode": "",
+      "Ulimits": null,
+      "UsernsMode": "",
+      "VolumeDriver": "",
+      "VolumesFrom": null
     },
     "labels": {
       "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -140,18 +140,9 @@
   },
   {
     "config": {
-      "Hostname": "",
-      "Domainname": "",
-      "User": "0:0",
+      "AttachStderr": false,
       "AttachStdin": false,
       "AttachStdout": false,
-      "AttachStderr": false,
-      "Tty": false,
-      "OpenStdin": false,
-      "StdinOnce": false,
-      "Env": [
-        "XDG_STATE_HOME=/var/lib/docker/volumes/fixture/_data/state"
-      ],
       "Cmd": [
         "--config",
         "/var/lib/docker/volumes/fixture/_data/gateway.toml",
@@ -167,110 +158,119 @@
         "--db-url",
         "sqlite:/var/lib/docker/volumes/fixture/_data/gateway.db"
       ],
-      "Image": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
-      "Volumes": null,
-      "WorkingDir": "",
+      "Domainname": "",
       "Entrypoint": [
         "/usr/local/bin/openshell-gateway"
       ],
+      "Env": [
+        "XDG_STATE_HOME=/var/lib/docker/volumes/fixture/_data/state"
+      ],
+      "Hostname": "",
+      "Image": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
       "Labels": {
         "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "nemoclaw.nvidia.com/runtime-spec": "d44810edbd6a8cfe0b0a2d58db46e6d9f72350f97795810e7d8dce069345d4c3",
         "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
-      }
+      },
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Tty": false,
+      "User": "0:0",
+      "Volumes": null,
+      "WorkingDir": ""
     },
     "gatewayConfig": "[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nssh_socket_path = \"/var/lib/docker/volumes/fixture/_data/ssh\"\nsupervisor_bin = \"/var/lib/docker/volumes/fixture/_data/openshell-sandbox\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-gateway\"\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
     "hostConfig": {
-      "Binds": null,
-      "ContainerIDFile": "",
-      "LogConfig": {
-        "Type": "json-file",
-        "Config": {
-          "max-file": "3",
-          "max-size": "32m"
-        }
-      },
-      "NetworkMode": "host",
-      "PortBindings": null,
-      "RestartPolicy": {
-        "Name": "no",
-        "MaximumRetryCount": 0
-      },
       "AutoRemove": false,
-      "VolumeDriver": "",
-      "VolumesFrom": null,
-      "ConsoleSize": [
-        0,
-        0
-      ],
+      "Binds": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceWriteIOps": null,
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
       "CapAdd": null,
       "CapDrop": [
         "ALL"
       ],
+      "Cgroup": "",
+      "CgroupParent": "",
       "CgroupnsMode": "",
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "ContainerIDFile": "",
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpuShares": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "Devices": null,
       "Dns": null,
       "DnsOptions": null,
       "DnsSearch": null,
       "ExtraHosts": null,
       "GroupAdd": null,
+      "IOMaximumBandwidth": 0,
+      "IOMaximumIOps": 0,
       "IpcMode": "",
-      "Cgroup": "",
-      "Links": null,
-      "OomScoreAdj": 0,
-      "PidMode": "",
-      "Privileged": false,
-      "PublishAllPorts": false,
-      "ReadonlyRootfs": false,
-      "SecurityOpt": [
-        "no-new-privileges"
-      ],
-      "UTSMode": "",
-      "UsernsMode": "",
-      "ShmSize": 0,
       "Isolation": "",
-      "CpuShares": 0,
+      "Links": null,
+      "LogConfig": {
+        "Config": {
+          "max-file": "3",
+          "max-size": "32m"
+        },
+        "Type": "json-file"
+      },
+      "MaskedPaths": null,
       "Memory": 0,
-      "NanoCpus": 0,
-      "CgroupParent": "",
-      "BlkioWeight": 0,
-      "BlkioWeightDevice": null,
-      "BlkioDeviceReadBps": null,
-      "BlkioDeviceWriteBps": null,
-      "BlkioDeviceReadIOps": null,
-      "BlkioDeviceWriteIOps": null,
-      "CpuPeriod": 0,
-      "CpuQuota": 0,
-      "CpuRealtimePeriod": 0,
-      "CpuRealtimeRuntime": 0,
-      "CpusetCpus": "",
-      "CpusetMems": "",
-      "Devices": null,
-      "DeviceCgroupRules": null,
-      "DeviceRequests": null,
       "MemoryReservation": 0,
       "MemorySwap": 0,
       "MemorySwappiness": null,
-      "OomKillDisable": null,
-      "PidsLimit": null,
-      "Ulimits": null,
-      "CpuCount": 0,
-      "CpuPercent": 0,
-      "IOMaximumIOps": 0,
-      "IOMaximumBandwidth": 0,
       "Mounts": [
         {
-          "Type": "volume",
           "Source": "nc-68d203b0c7e6083f-gateway-data",
-          "Target": "/var/lib/docker/volumes/fixture/_data"
+          "Target": "/var/lib/docker/volumes/fixture/_data",
+          "Type": "volume"
         },
         {
-          "Type": "bind",
           "Source": "/var/run/docker.sock",
-          "Target": "/var/run/docker.sock"
+          "Target": "/var/run/docker.sock",
+          "Type": "bind"
         }
       ],
-      "MaskedPaths": null,
-      "ReadonlyPaths": null
+      "NanoCpus": 0,
+      "NetworkMode": "host",
+      "OomKillDisable": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "PidsLimit": null,
+      "PortBindings": null,
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyPaths": null,
+      "ReadonlyRootfs": false,
+      "RestartPolicy": {
+        "MaximumRetryCount": 0,
+        "Name": "no"
+      },
+      "SecurityOpt": [
+        "no-new-privileges"
+      ],
+      "ShmSize": 0,
+      "UTSMode": "",
+      "Ulimits": null,
+      "UsernsMode": "",
+      "VolumeDriver": "",
+      "VolumesFrom": null
     },
     "labels": {
       "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -281,18 +281,9 @@
   },
   {
     "config": {
-      "Hostname": "",
-      "Domainname": "",
-      "User": "0:0",
+      "AttachStderr": false,
       "AttachStdin": false,
       "AttachStdout": false,
-      "AttachStderr": false,
-      "Tty": false,
-      "OpenStdin": false,
-      "StdinOnce": false,
-      "Env": [
-        "XDG_STATE_HOME=/var/lib/docker/volumes/fixture/_data/state"
-      ],
       "Cmd": [
         "--config",
         "/var/lib/docker/volumes/fixture/_data/gateway.toml",
@@ -308,110 +299,119 @@
         "--db-url",
         "sqlite:/var/lib/docker/volumes/fixture/_data/gateway.db"
       ],
-      "Image": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
-      "Volumes": null,
-      "WorkingDir": "",
+      "Domainname": "",
       "Entrypoint": [
         "/usr/local/bin/openshell-gateway"
       ],
+      "Env": [
+        "XDG_STATE_HOME=/var/lib/docker/volumes/fixture/_data/state"
+      ],
+      "Hostname": "",
+      "Image": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
       "Labels": {
         "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "nemoclaw.nvidia.com/runtime-spec": "b9624ee058afcd9f721dfb8b24210cf23570b8e49bbaa137f84984a5d64f1280",
         "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
-      }
+      },
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Tty": false,
+      "User": "0:0",
+      "Volumes": null,
+      "WorkingDir": ""
     },
     "gatewayConfig": "[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nssh_socket_path = \"/var/lib/docker/volumes/fixture/_data/ssh\"\nsupervisor_bin = \"/var/lib/docker/volumes/fixture/_data/openshell-sandbox\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-gateway\"\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
     "hostConfig": {
-      "Binds": null,
-      "ContainerIDFile": "",
-      "LogConfig": {
-        "Type": "json-file",
-        "Config": {
-          "max-file": "3",
-          "max-size": "32m"
-        }
-      },
-      "NetworkMode": "host",
-      "PortBindings": null,
-      "RestartPolicy": {
-        "Name": "no",
-        "MaximumRetryCount": 0
-      },
       "AutoRemove": false,
-      "VolumeDriver": "",
-      "VolumesFrom": null,
-      "ConsoleSize": [
-        0,
-        0
-      ],
+      "Binds": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceWriteIOps": null,
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
       "CapAdd": null,
       "CapDrop": [
         "ALL"
       ],
+      "Cgroup": "",
+      "CgroupParent": "",
       "CgroupnsMode": "",
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "ContainerIDFile": "",
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpuShares": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "Devices": null,
       "Dns": null,
       "DnsOptions": null,
       "DnsSearch": null,
       "ExtraHosts": null,
       "GroupAdd": null,
+      "IOMaximumBandwidth": 0,
+      "IOMaximumIOps": 0,
       "IpcMode": "",
-      "Cgroup": "",
-      "Links": null,
-      "OomScoreAdj": 0,
-      "PidMode": "",
-      "Privileged": false,
-      "PublishAllPorts": false,
-      "ReadonlyRootfs": false,
-      "SecurityOpt": [
-        "no-new-privileges"
-      ],
-      "UTSMode": "",
-      "UsernsMode": "",
-      "ShmSize": 0,
       "Isolation": "",
-      "CpuShares": 0,
+      "Links": null,
+      "LogConfig": {
+        "Config": {
+          "max-file": "3",
+          "max-size": "32m"
+        },
+        "Type": "json-file"
+      },
+      "MaskedPaths": null,
       "Memory": 0,
-      "NanoCpus": 0,
-      "CgroupParent": "",
-      "BlkioWeight": 0,
-      "BlkioWeightDevice": null,
-      "BlkioDeviceReadBps": null,
-      "BlkioDeviceWriteBps": null,
-      "BlkioDeviceReadIOps": null,
-      "BlkioDeviceWriteIOps": null,
-      "CpuPeriod": 0,
-      "CpuQuota": 0,
-      "CpuRealtimePeriod": 0,
-      "CpuRealtimeRuntime": 0,
-      "CpusetCpus": "",
-      "CpusetMems": "",
-      "Devices": null,
-      "DeviceCgroupRules": null,
-      "DeviceRequests": null,
       "MemoryReservation": 0,
       "MemorySwap": 0,
       "MemorySwappiness": null,
-      "OomKillDisable": null,
-      "PidsLimit": null,
-      "Ulimits": null,
-      "CpuCount": 0,
-      "CpuPercent": 0,
-      "IOMaximumIOps": 0,
-      "IOMaximumBandwidth": 0,
       "Mounts": [
         {
-          "Type": "volume",
           "Source": "nc-68d203b0c7e6083f-gateway-data",
-          "Target": "/var/lib/docker/volumes/fixture/_data"
+          "Target": "/var/lib/docker/volumes/fixture/_data",
+          "Type": "volume"
         },
         {
-          "Type": "bind",
           "Source": "/var/run/docker.sock",
-          "Target": "/var/run/docker.sock"
+          "Target": "/var/run/docker.sock",
+          "Type": "bind"
         }
       ],
-      "MaskedPaths": null,
-      "ReadonlyPaths": null
+      "NanoCpus": 0,
+      "NetworkMode": "host",
+      "OomKillDisable": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "PidsLimit": null,
+      "PortBindings": null,
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyPaths": null,
+      "ReadonlyRootfs": false,
+      "RestartPolicy": {
+        "MaximumRetryCount": 0,
+        "Name": "no"
+      },
+      "SecurityOpt": [
+        "no-new-privileges"
+      ],
+      "ShmSize": 0,
+      "UTSMode": "",
+      "Ulimits": null,
+      "UsernsMode": "",
+      "VolumeDriver": "",
+      "VolumesFrom": null
     },
     "labels": {
       "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -422,43 +422,112 @@
   },
   {
     "config": {
-      "Hostname": "",
-      "Domainname": "",
-      "User": "",
+      "AttachStderr": false,
       "AttachStdin": false,
       "AttachStdout": false,
-      "AttachStderr": false,
-      "Tty": false,
-      "OpenStdin": false,
-      "StdinOnce": false,
-      "Env": [
-        "NEMOCLAW_SPARK_SPEC={\"backend\":\"vllm-qwen38-spark-v1\",\"image\":\"nc-prototype-qwen38@sha256:c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb\",\"model\":{\"repository\":\"Mia-AiLab/Qwen3.8-Flash-Next-NVFP4\",\"revision\":\"925d7be6c14c6c9442ef83e8f05b5a3c39304f69\"},\"serving\":{\"port\":18888,\"contextTokens\":32768,\"maxSequences\":1,\"batchTokens\":1024,\"speculativeTokens\":0,\"startupTimeoutSeconds\":1800},\"memory\":{\"hostReserveGiB\":32,\"kvCacheGiB\":8,\"minAvailableGiB\":8,\"minFreeGiB\":3,\"freeGateGiB\":12,\"consecutiveSamples\":5}}"
-      ],
       "Cmd": [],
-      "Image": "nc-prototype-qwen38@sha256:c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb",
-      "Volumes": null,
-      "WorkingDir": "",
+      "Domainname": "",
       "Entrypoint": [
-        "/usr/local/bin/nemoclaw-spark"
+        "/usr/local/bin/nemoclaw-runtime"
       ],
+      "Env": [
+        "NEMOCLAW_RUNTIME_SPEC={\"recipe\":{\"apiVersion\":\"nemoclaw.nvidia.com/recipe/v1\",\"compatibility\":{\"architecture\":\"arm64\",\"gpu\":\"NVIDIA GB10\",\"minDriverMajor\":580,\"minHostMemoryGiB\":118,\"imageLabels\":{\"org.nemoclaw.recipe.protocol\":\"v1\"}},\"preparation\":{\"executable\":\"/opt/recipe/prepare\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"verification\":{\"executable\":\"/opt/recipe/verify\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"resources\":{\"preparedBytes\":30064771072,\"preparationMemoryGiB\":20,\"gpuMemoryBytes\":91804925952,\"startupHeadroomGiB\":20},\"serving\":{\"modelName\":\"fixture-model\",\"toolParser\":\"\",\"reasoningParser\":\"\",\"kvCacheDtype\":\"fp8\",\"mambaCacheDtype\":\"\",\"lazyLoading\":true,\"chunkedPrefill\":true,\"environment\":{},\"preparedEnvironment\":{}},\"licenses\":[\"/opt/recipe/LICENSE\"],\"sourceNotices\":[\"/opt/recipe/NOTICE\"],\"snapshot\":{\"repository\":\"fixture/model\",\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"files\":[{\"name\":\"config.json\",\"size\":1,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"model.safetensors\",\"size\":1,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}},\"backend\":\"vllm\",\"image\":\"fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"model\":{\"repository\":\"fixture/model\",\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"serving\":{\"port\":18888,\"contextTokens\":32768,\"maxSequences\":1,\"batchTokens\":1024,\"speculativeTokens\":0,\"startupTimeoutSeconds\":1800},\"memory\":{\"hostReserveGiB\":32,\"kvCacheGiB\":8,\"minAvailableGiB\":8,\"minFreeGiB\":3,\"freeGateGiB\":12,\"consecutiveSamples\":5}}"
+      ],
+      "Hostname": "",
+      "Image": "fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "Labels": {
         "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "nemoclaw.nvidia.com/runtime-spec": "2ad773af02c9c600f4332b55404e9fee1992e0f55e3ba707a3d1a7ad2b861def",
+        "nemoclaw.nvidia.com/runtime-spec": "983febe224220f68160c18fc4d83a3dd39d876869d5c5f606ec58a0f2f509dc4",
         "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
-      }
+      },
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Tty": false,
+      "User": "",
+      "Volumes": null,
+      "WorkingDir": ""
     },
     "gatewayConfig": "[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nssh_socket_path = \"/var/lib/docker/volumes/fixture/_data/ssh\"\nsupervisor_bin = \"/var/lib/docker/volumes/fixture/_data/openshell-sandbox\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-inference\"\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
     "hostConfig": {
+      "AutoRemove": false,
       "Binds": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceWriteIOps": null,
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
+      "CapAdd": null,
+      "CapDrop": [
+        "ALL"
+      ],
+      "Cgroup": "",
+      "CgroupParent": "",
+      "CgroupnsMode": "",
+      "ConsoleSize": [
+        0,
+        0
+      ],
       "ContainerIDFile": "",
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpuShares": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "DeviceCgroupRules": null,
+      "DeviceRequests": [
+        {
+          "Capabilities": [
+            [
+              "gpu"
+            ]
+          ],
+          "Count": -1,
+          "DeviceIDs": null,
+          "Driver": "",
+          "Options": null
+        }
+      ],
+      "Devices": null,
+      "Dns": null,
+      "DnsOptions": null,
+      "DnsSearch": null,
+      "ExtraHosts": null,
+      "GroupAdd": null,
+      "IOMaximumBandwidth": 0,
+      "IOMaximumIOps": 0,
+      "IpcMode": "",
+      "Isolation": "",
+      "Links": null,
       "LogConfig": {
-        "Type": "json-file",
         "Config": {
           "max-file": "3",
           "max-size": "32m"
-        }
+        },
+        "Type": "json-file"
       },
+      "MaskedPaths": null,
+      "Memory": 111669149696,
+      "MemoryReservation": 0,
+      "MemorySwap": 111669149696,
+      "MemorySwappiness": null,
+      "Mounts": [
+        {
+          "Source": "nc-68d203b0c7e6083f-inference-data",
+          "Target": "/data",
+          "Type": "volume"
+        }
+      ],
+      "NanoCpus": 0,
       "NetworkMode": "nc-68d203b0c7e6083f-network",
+      "OomKillDisable": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "PidsLimit": null,
       "PortBindings": {
         "18888/tcp": [
           {
@@ -467,109 +536,40 @@
           }
         ]
       },
-      "RestartPolicy": {
-        "Name": "no",
-        "MaximumRetryCount": 0
-      },
-      "AutoRemove": false,
-      "VolumeDriver": "",
-      "VolumesFrom": null,
-      "ConsoleSize": [
-        0,
-        0
-      ],
-      "CapAdd": null,
-      "CapDrop": [
-        "ALL"
-      ],
-      "CgroupnsMode": "",
-      "Dns": null,
-      "DnsOptions": null,
-      "DnsSearch": null,
-      "ExtraHosts": null,
-      "GroupAdd": null,
-      "IpcMode": "",
-      "Cgroup": "",
-      "Links": null,
-      "OomScoreAdj": 0,
-      "PidMode": "",
       "Privileged": false,
       "PublishAllPorts": false,
+      "ReadonlyPaths": null,
       "ReadonlyRootfs": false,
+      "RestartPolicy": {
+        "MaximumRetryCount": 0,
+        "Name": "no"
+      },
       "SecurityOpt": [
         "no-new-privileges"
       ],
-      "UTSMode": "",
-      "UsernsMode": "",
       "ShmSize": 8589934592,
-      "Isolation": "",
-      "CpuShares": 0,
-      "Memory": 111669149696,
-      "NanoCpus": 0,
-      "CgroupParent": "",
-      "BlkioWeight": 0,
-      "BlkioWeightDevice": null,
-      "BlkioDeviceReadBps": null,
-      "BlkioDeviceWriteBps": null,
-      "BlkioDeviceReadIOps": null,
-      "BlkioDeviceWriteIOps": null,
-      "CpuPeriod": 0,
-      "CpuQuota": 0,
-      "CpuRealtimePeriod": 0,
-      "CpuRealtimeRuntime": 0,
-      "CpusetCpus": "",
-      "CpusetMems": "",
-      "Devices": null,
-      "DeviceCgroupRules": null,
-      "DeviceRequests": [
-        {
-          "Driver": "",
-          "Count": -1,
-          "DeviceIDs": null,
-          "Capabilities": [
-            [
-              "gpu"
-            ]
-          ],
-          "Options": null
-        }
-      ],
-      "MemoryReservation": 0,
-      "MemorySwap": 111669149696,
-      "MemorySwappiness": null,
-      "OomKillDisable": null,
-      "PidsLimit": null,
+      "UTSMode": "",
       "Ulimits": [
         {
-          "Name": "memlock",
           "Hard": -1,
+          "Name": "memlock",
           "Soft": -1
         },
         {
-          "Name": "stack",
           "Hard": 67108864,
+          "Name": "stack",
           "Soft": 67108864
         }
       ],
-      "CpuCount": 0,
-      "CpuPercent": 0,
-      "IOMaximumIOps": 0,
-      "IOMaximumBandwidth": 0,
-      "Mounts": [
-        {
-          "Type": "volume",
-          "Source": "nc-68d203b0c7e6083f-inference-data",
-          "Target": "/data"
-        }
-      ],
-      "MaskedPaths": null,
-      "ReadonlyPaths": null
+      "UsernsMode": "",
+      "VolumeDriver": "",
+      "VolumesFrom": null
     },
     "labels": {
       "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "nemoclaw.nvidia.com/runtime-spec": "2ad773af02c9c600f4332b55404e9fee1992e0f55e3ba707a3d1a7ad2b861def",
+      "nemoclaw.nvidia.com/runtime-spec": "983febe224220f68160c18fc4d83a3dd39d876869d5c5f606ec58a0f2f509dc4",
       "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
     },
-    "spec": "{\"kind\":\"inference_service\",\"name\":\"nc-68d203b0c7e6083f-inference\",\"owner\":\"302ff5e1-088d-42ce-959f-4ff4c3570c13\",\"generation\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"gateway\":{\"management\":\"managed\",\"endpoint\":\"http://127.0.0.1:17681\",\"engine\":\"unix:///var/run/docker.sock\",\"image\":\"ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792\",\"networkCIDR\":\"172.30.110.0/24\"},\"service\":{\"backend\":\"vllm-qwen38-spark-v1\",\"image\":\"nc-prototype-qwen38@sha256:c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb\",\"model\":{\"repository\":\"Mia-AiLab/Qwen3.8-Flash-Next-NVFP4\",\"revision\":\"925d7be6c14c6c9442ef83e8f05b5a3c39304f69\"},\"serving\":{\"port\":18888,\"contextTokens\":32768,\"maxSequences\":1,\"batchTokens\":1024,\"speculativeTokens\":0,\"startupTimeoutSeconds\":1800},\"memory\":{\"hostReserveGiB\":32,\"kvCacheGiB\":8,\"minAvailableGiB\":8,\"minFreeGiB\":3,\"freeGateGiB\":12,\"consecutiveSamples\":5}}}"
+    "spec": "{\"kind\":\"inference_service\",\"name\":\"nc-68d203b0c7e6083f-inference\",\"owner\":\"302ff5e1-088d-42ce-959f-4ff4c3570c13\",\"generation\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"gateway\":{\"management\":\"managed\",\"endpoint\":\"http://127.0.0.1:17681\",\"engine\":\"unix:///var/run/docker.sock\",\"image\":\"ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792\",\"networkCIDR\":\"172.30.110.0/24\"},\"service\":{\"recipe\":{\"apiVersion\":\"nemoclaw.nvidia.com/recipe/v1\",\"compatibility\":{\"architecture\":\"arm64\",\"gpu\":\"NVIDIA GB10\",\"minDriverMajor\":580,\"minHostMemoryGiB\":118,\"imageLabels\":{\"org.nemoclaw.recipe.protocol\":\"v1\"}},\"preparation\":{\"executable\":\"/opt/recipe/prepare\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"verification\":{\"executable\":\"/opt/recipe/verify\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"resources\":{\"preparedBytes\":30064771072,\"preparationMemoryGiB\":20,\"gpuMemoryBytes\":91804925952,\"startupHeadroomGiB\":20},\"serving\":{\"modelName\":\"fixture-model\",\"toolParser\":\"\",\"reasoningParser\":\"\",\"kvCacheDtype\":\"fp8\",\"mambaCacheDtype\":\"\",\"lazyLoading\":true,\"chunkedPrefill\":true,\"environment\":{},\"preparedEnvironment\":{}},\"licenses\":[\"/opt/recipe/LICENSE\"],\"sourceNotices\":[\"/opt/recipe/NOTICE\"],\"snapshot\":{\"repository\":\"fixture/model\",\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"files\":[{\"name\":\"config.json\",\"size\":1,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"model.safetensors\",\"size\":1,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}},\"backend\":\"vllm\",\"image\":\"fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"model\":{\"repository\":\"fixture/model\",\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"serving\":{\"port\":18888,\"contextTokens\":32768,\"maxSequences\":1,\"batchTokens\":1024,\"speculativeTokens\":0,\"startupTimeoutSeconds\":1800},\"memory\":{\"hostReserveGiB\":32,\"kvCacheGiB\":8,\"minAvailableGiB\":8,\"minFreeGiB\":3,\"freeGateGiB\":12,\"consecutiveSamples\":5}}}"
   }
 ]

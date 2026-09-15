@@ -37,18 +37,8 @@ async fn main() -> std::process::ExitCode {
                 Err(Error::State("runtime specification is not UTF-8"))
             }
         };
-        let current = read("NEMOCLAW_RUNTIME_SPEC")?;
-        let legacy = read("NEMOCLAW_SPARK_SPEC")?;
-        if current
-            .as_ref()
-            .zip(legacy.as_ref())
-            .is_some_and(|(a, b)| a != b)
-        {
-            return Err(Error::Conflict("conflicting runtime specifications"));
-        }
-        let text = current
-            .or(legacy)
-            .ok_or(Error::State("missing runtime specification"))?;
+        let text =
+            read("NEMOCLAW_RUNTIME_SPEC")?.ok_or(Error::State("missing runtime specification"))?;
         let spec: Service = serde_json::from_str(&text)
             .map_err(|_| Error::State("invalid pinned runtime specification"))?;
         spec.validate()?;

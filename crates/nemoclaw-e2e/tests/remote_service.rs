@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_sdk::{config::Document, spark};
+use nemoclaw_sdk::{config::Document, recipes::huggingface};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -76,38 +76,37 @@ async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure(
     value["spec"]["inferenceProviders"][0]["service"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     save(root, "config.yaml", &value);
-    let manifest = spark::model_manifest();
+    let parsed = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let service = parsed.spec.inference_providers[0].service.as_ref().unwrap();
+    let recipe = service.recipe.as_ref().unwrap();
+    let manifest = recipe.snapshot.as_ref().unwrap();
+    let model = huggingface::directory(service);
+    let key = recipe.key(service);
     let mut files = json!({});
     let mut stats = json!({});
     let mut receipt = serde_json::to_value(&manifest.files).unwrap();
     for file in receipt.as_array_mut().unwrap() {
         file["modified"] = json!(1);
-        let path = format!(
-            "/data/models/{}/{}",
-            manifest.revision,
-            file["name"].as_str().unwrap()
-        );
+        let path = format!("/data/{}/{}", model, file["name"].as_str().unwrap());
         stats[path] = json!({"name":file["name"],"size":file["size"],"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
     }
-    files[format!("/data/models/{}/.nemoclaw-complete.json", manifest.revision)] =
+    files[format!("/data/{}/.nemoclaw-complete.json", model)] =
         json!({"manifest":manifest.key(),"files":receipt});
     let mut prepared = Vec::new();
-    for name in [
-        spark::PREPARED_FILE.to_string(),
-        format!("{}.json", spark::PREPARED_FILE),
-    ] {
+    for name in ["prepared.bin".to_string(), "prepared.json".to_string()] {
         prepared.push(json!({"name":name,"size":1,"sha256":"a".repeat(64),"modified":1}));
-        stats[format!("/data/prepared/{}/{name}", spark::preparation_key())] = json!({"name":name,"size":1,"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
+        stats[format!("/data/prepared/{}/{name}", key)] = json!({"name":name,"size":1,"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
     }
-    files[format!("/data/prepared/{}/complete.json", spark::preparation_key())] =
-        json!({"key":spark::preparation_key(),"files":prepared});
+    files[format!("/data/prepared/{}/complete.json", key)] = json!({"key":key,"files":prepared});
+    files[format!("/data/{model}/{}", huggingface::MANIFEST_FILE)] =
+        serde_json::to_value(manifest).unwrap();
     files["/data/status.json"] =
         json!({"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42});
     let service = &value["spec"]["inferenceProviders"][0]["service"];
     save(
         root,
         "fixture.json",
-        &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.backend":service["backend"],"org.nemoclaw.model":service["model"]["revision"]}}}}),
+        &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.backend":service["backend"],"org.nemoclaw.model":service["model"]["revision"]}}}}),
     );
     save(root, "engine.json", &json!({"effects":0,"creates":0}));
     save(root, "control.json", &json!({"capacity_failure":true}));

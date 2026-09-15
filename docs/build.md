@@ -24,17 +24,18 @@ runtime qualification; the retained validation records identify tested hosts.
 Build the Spark runtime on Linux ARM64 with Docker and Buildx:
 
 ```sh
-cargo run -p nemoclaw-build -- spark-runtime
+cargo run -p nemoclaw-build -- runtime runtimes/qwen38/build.json
 ```
 
-The fixed recipe downloads a checksum-verified source archive, builds the Rust
+The artifact manifest selects its local Dockerfile and inputs, immutable source
+downloads, image name, and reproducible timestamp. The generic builder builds the Rust
 supervisor, vendors locked dependencies and their licenses, and assembles a
 source archive with normalized timestamps. It compiles the supervisor offline
 from that exact archive, including OpenShell protobuf inputs that Cargo vendoring
 does not collect. Dependency paths and parent Git metadata are excluded from
 the compiler inputs. The Dockerfile applies the pinned
 patches to the pinned base image and retains the original and modified sources.
-It exports `.build/spark/runtime.tar` and loads the image locally as
+It exports `.build/qwen38/runtime.tar` and loads the image locally as
 `nc-prototype-qwen38:spark-rust-v1`. This command does not launch inference or
 publish the image. Configuration must use the resulting immutable image digest.
 
@@ -48,18 +49,16 @@ builder replaces `dist/<platform>`; copy it to a dedicated location for a long
 live experiment before rebuilding. Repository text uses LF on every platform so
 source-derived provider versions do not change with checkout newline conversion.
 
-The image contains the shared `nemoclaw-runtime` executable. Its preparation
-adapter selects the pinned Qwen recipe, the vLLM backend, and the Spark hardware
-profile. The old `nemoclaw-spark` path is a symlink, and `NEMOCLAW_SPARK_SPEC`
-remains an accepted environment name alongside `NEMOCLAW_RUNTIME_SPEC`.
-Conflicting specifications fail before work begins. Managed containers continue
-using the legacy entrypoint/environment contract so existing pinned images and
-resource bindings remain valid; the image's default entrypoint uses the new name.
+The image contains the shared `nemoclaw-runtime` executable. The deployment's
+inline recipe supplies preparation and verification tools; `backend: vllm`
+selects serving behavior. Managed containers use `/usr/local/bin/nemoclaw-runtime`
+and `NEMOCLAW_RUNTIME_SPEC`. The former Spark entrypoint and environment aliases
+are no longer accepted.
 
 For native safetensors models, build the model-independent image instead:
 
 ```sh
-cargo run -p nemoclaw-build -- vllm-runtime
+cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json
 ```
 
 This uses the same pinned vLLM base and source-retaining supervisor build, without

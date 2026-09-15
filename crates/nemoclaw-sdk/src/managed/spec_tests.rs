@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 #[test]
-fn runtime_specs_and_launch_contracts_match_go_reference() {
+fn runtime_specs_preserve_ownership_and_explicit_launch_contracts() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();
     for fixture in fixtures {

@@ -15,7 +15,6 @@ pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub const DEFAULT_AGENT_IMAGE: &str =
     "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd";
 pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792";
-pub const MODEL_NAME: &str = "qwen3.8-flash-next";
 
 /// Configuration errors contain fixed diagnostic text, never source values.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,12 +192,9 @@ impl Service {
         if let Some(recipe) = &self.recipe {
             return &recipe.serving.model_name;
         }
-        if self.backend == crate::recipes::huggingface::BACKEND {
-            &self.model.repository
-        } else {
-            MODEL_NAME
-        }
+        &self.model.repository
     }
+
     pub fn defaults(&mut self) {
         for (value, default) in [
             (&mut self.serving.port, 18888),

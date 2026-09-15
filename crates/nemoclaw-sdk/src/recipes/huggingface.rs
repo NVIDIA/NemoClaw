@@ -35,6 +35,9 @@ pub(crate) fn gpu_bytes(service: &Service) -> u64 {
         * GIB
 }
 pub fn validate(service: &Service) -> Result<(), ConfigError> {
+    if service.backend != BACKEND {
+        return Err(ConfigError("unsupported inference backend"));
+    }
     let repository = &service.model.repository;
     if !regex::Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$")
         .unwrap()

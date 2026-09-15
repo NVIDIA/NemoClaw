@@ -6,7 +6,7 @@ use nemoclaw_sdk::{
     config::Document,
     docker::Engine,
     managed::{RuntimeObservation, Spec},
-    spark,
+    recipes::huggingface,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -90,12 +90,16 @@ async fn capture(directory: &Path) -> Value {
     let observed = engine.observe_runtime(&spec, &id).await.unwrap().unwrap();
     engine.verify_artifacts(&observed).await.unwrap();
     let mut receipts = BTreeMap::new();
+    let service = spec.service.as_ref().unwrap();
     for path in [
         format!(
-            "/data/models/{}/.nemoclaw-complete.json",
-            spark::model_manifest().revision
+            "/data/{}/.nemoclaw-complete.json",
+            huggingface::directory(service)
         ),
-        format!("/data/prepared/{}/complete.json", spark::preparation_key()),
+        format!(
+            "/data/prepared/{}/complete.json",
+            service.recipe.as_ref().unwrap().key(service)
+        ),
     ] {
         let bytes = engine
             .read_file(&observed.container_id, &path, 1 << 20)

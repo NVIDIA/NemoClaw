@@ -52,17 +52,20 @@ async fn run_owned(
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
-    let recipe = nemoclaw_sdk::recipes::resolve(spec)?;
-    let prepared = crate::recipe::prepare(recipe, spec, Path::new(ROOT), cancel).await?;
+    let prepared = crate::recipe::prepare(spec, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(
             "memory protection tripped by operator; explicit apply required",
         ));
     }
-    let profile = recipe.hardware();
+    let profile = nemoclaw_sdk::hardware::Profile::SparkV1;
     let capacity = crate::hardware::before_start(profile, spec, cancel).await?;
-    let (mut command, readiness) =
-        crate::backend::launch(recipe.backend(), spec, &prepared, capacity.total)?;
+    let (mut command, readiness) = crate::backend::launch(
+        nemoclaw_sdk::backends::Backend::Vllm,
+        spec,
+        &prepared,
+        capacity.total,
+    )?;
     command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
     let mut child = command
         .spawn()

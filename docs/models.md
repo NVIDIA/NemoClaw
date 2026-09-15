@@ -10,7 +10,7 @@ A concrete configuration is in [examples/vllm.yaml](../examples/vllm.yaml). Its
 image digest refers to a locally built artifact, not a published registry image.
 Build the runtime locally and use the digest reported by your build.
 
-Build the local runtime with `cargo run -p nemoclaw-build -- vllm-runtime` and use
+Build the local runtime with `cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json` and use
 its immutable image digest. This image contains the shared supervisor and
 unpatched vLLM, with retained source and license notices. It contains no model
 weights or model-specific preparation tools.
@@ -40,5 +40,6 @@ process while preserving its storage volume and previous snapshots. Failed
 observation stops planning; failed startup retains the established container and
 model data. A watchdog stop requires explicit apply to recover.
 
-The `vllm-qwen38-spark-v1` backend remains a specialized pinned PLE recipe. Its
-patches, preparation identity and tuning are not applied to other models.
+For models requiring preparation or patches, keep `backend: vllm` and declare an
+[inline recipe](recipes.md) whose tools are packaged in the pinned runtime image.
+There are no built-in model-specific backends.

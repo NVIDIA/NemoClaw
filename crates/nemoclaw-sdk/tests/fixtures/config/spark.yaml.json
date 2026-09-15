@@ -1,5 +1,5 @@
 {
-  "digest": "f1ecf73d3d46b7f371610f269f30d4c57bc53558010f8bf37259653925a4e823",
+  "digest": "718636c22f042c74dc35c2f55136f7136b74f13e48e6d9d5116ca88b63c72230",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -9,10 +9,10 @@
     },
     "spec": {
       "gateway": {
-        "management": "managed",
         "endpoint": "http://127.0.0.1:17681",
         "engine": "unix:///var/run/docker.sock",
         "image": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
+        "management": "managed",
         "networkCIDR": "172.30.110.0/24"
       },
       "inferenceProviders": [
@@ -20,60 +20,119 @@
           "name": "qwen",
           "provider": "openai",
           "service": {
-            "backend": "vllm-qwen38-spark-v1",
-            "image": "nc-prototype-qwen38@sha256:c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb",
-            "model": {
-              "repository": "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
-              "revision": "925d7be6c14c6c9442ef83e8f05b5a3c39304f69"
-            },
-            "serving": {
-              "port": 18888,
-              "contextTokens": 32768,
-              "maxSequences": 1,
-              "batchTokens": 1024,
-              "speculativeTokens": 0,
-              "startupTimeoutSeconds": 1800
-            },
+            "backend": "vllm",
+            "image": "fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "memory": {
+              "consecutiveSamples": 5,
+              "freeGateGiB": 12,
               "hostReserveGiB": 32,
               "kvCacheGiB": 8,
               "minAvailableGiB": 8,
-              "minFreeGiB": 3,
-              "freeGateGiB": 12,
-              "consecutiveSamples": 5
+              "minFreeGiB": 3
+            },
+            "model": {
+              "repository": "fixture/model",
+              "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "recipe": {
+              "apiVersion": "nemoclaw.nvidia.com/recipe/v1",
+              "compatibility": {
+                "architecture": "arm64",
+                "gpu": "NVIDIA GB10",
+                "imageLabels": {
+                  "org.nemoclaw.recipe.protocol": "v1"
+                },
+                "minDriverMajor": 580,
+                "minHostMemoryGiB": 118
+              },
+              "licenses": [
+                "/opt/recipe/LICENSE"
+              ],
+              "preparation": {
+                "executable": "/opt/recipe/prepare",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "resources": {
+                "gpuMemoryBytes": 91804925952,
+                "preparationMemoryGiB": 20,
+                "preparedBytes": 30064771072,
+                "startupHeadroomGiB": 20
+              },
+              "serving": {
+                "chunkedPrefill": true,
+                "environment": {},
+                "kvCacheDtype": "fp8",
+                "lazyLoading": true,
+                "mambaCacheDtype": "",
+                "modelName": "fixture-model",
+                "preparedEnvironment": {},
+                "reasoningParser": "",
+                "toolParser": ""
+              },
+              "snapshot": {
+                "files": [
+                  {
+                    "name": "config.json",
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "size": 1
+                  },
+                  {
+                    "name": "model.safetensors",
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "size": 1
+                  }
+                ],
+                "repository": "fixture/model",
+                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "sourceNotices": [
+                "/opt/recipe/NOTICE"
+              ],
+              "verification": {
+                "executable": "/opt/recipe/verify",
+                "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "serving": {
+              "batchTokens": 1024,
+              "contextTokens": 32768,
+              "maxSequences": 1,
+              "port": 18888,
+              "speculativeTokens": 0,
+              "startupTimeoutSeconds": 1800
             }
           }
         }
       ],
       "sandboxes": [
         {
-          "name": "assistant",
-          "image": {
-            "ref": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd"
-          },
-          "runtime": {
-            "provider": "docker"
-          },
-          "network": {
-            "tier": "isolated"
-          },
           "agents": [
             {
-              "name": "assistant",
+              "harness": "openclaw",
               "inference": {
                 "routes": [
                   {
                     "name": "primary",
-                    "providerRef": "qwen",
                     "overrides": {
-                      "model": "qwen3.8-flash-next"
-                    }
+                      "model": "fixture-model"
+                    },
+                    "providerRef": "qwen"
                   }
                 ]
               },
-              "harness": "openclaw"
+              "name": "assistant"
             }
-          ]
+          ],
+          "image": {
+            "ref": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd"
+          },
+          "name": "assistant",
+          "network": {
+            "tier": "isolated"
+          },
+          "runtime": {
+            "provider": "docker"
+          }
         }
       ]
     }

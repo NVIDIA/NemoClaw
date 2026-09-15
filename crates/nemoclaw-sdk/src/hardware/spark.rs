@@ -47,7 +47,7 @@ pub fn check_capacity(
         .ok_or(Error::State("invalid remaining storage capacity"))?;
     if c.disk_free < disk {
         return Err(Error::Conflict(
-            "insufficient disk for remaining pinned model, packed PLE, and 16 GiB working reserve",
+            "insufficient disk for remaining pinned model, prepared data, and 16 GiB working reserve",
         ));
     }
     if starting && c.foreign_gpu_processes != 0 {

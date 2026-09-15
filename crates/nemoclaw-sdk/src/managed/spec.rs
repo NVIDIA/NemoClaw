@@ -7,7 +7,7 @@ mod tests;
 use crate::{
     Error,
     config::{Gateway, Service},
-    spark::GIB,
+    hardware::GIB,
 };
 use bollard::models::ContainerCreateBody;
 use serde::{Deserialize, Serialize};
@@ -161,10 +161,10 @@ impl Spec {
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":"/var/run/docker.sock","Target":"/var/run/docker.sock"}]);
         } else {
             let service = self.service.as_ref().expect("validated service");
-            config["Entrypoint"] = json!(["/usr/local/bin/nemoclaw-spark"]);
+            config["Entrypoint"] = json!(["/usr/local/bin/nemoclaw-runtime"]);
             config["Cmd"] = json!([]);
             config["Env"] = json!([format!(
-                "NEMOCLAW_SPARK_SPEC={}",
+                "NEMOCLAW_RUNTIME_SPEC={}",
                 serde_json::to_string(&self.runtime_service()).expect("service JSON")
             )]);
             host["NetworkMode"] = json!(self.network());

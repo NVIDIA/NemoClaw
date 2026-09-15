@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use sha2::{Digest, Sha256};
-fn hex(bytes: impl AsRef<[u8]>) -> String {
-    bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
-}
+use crate::config::Service;
 fn service() -> Service {
     crate::config::Document::parse(
         include_str!("../../tests/fixtures/config/spark.yaml").as_bytes(),
@@ -29,14 +26,23 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
         disk_free: 200 * GIB,
         foreign_gpu_processes: 0,
     };
-    let download = model_manifest().bytes().unwrap();
+    let download = service
+        .recipe
+        .as_ref()
+        .unwrap()
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .bytes()
+        .unwrap();
+    let prepared = service.recipe.as_ref().unwrap().resources.prepared_bytes;
     service
-        .check_capacity(&good, true, download, PREPARED_BYTES)
+        .check_capacity(&good, true, download, prepared)
         .unwrap();
     let mut cached = good.clone();
     cached.free = GIB;
     service
-        .check_capacity(&cached, true, download, PREPARED_BYTES)
+        .check_capacity(&cached, true, download, prepared)
         .unwrap();
     for dimension in [
         "memory",
@@ -60,8 +66,7 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
             _ => unreachable!(),
         }
         assert!(
-            spec.check_capacity(&bad, true, download, PREPARED_BYTES)
-                .is_err(),
+            spec.check_capacity(&bad, true, download, prepared).is_err(),
             "{dimension}"
         );
     }
@@ -112,31 +117,4 @@ fn available_memory_may_be_below_free_memory_after_kernel_reserves() {
         read_memory(b"MemTotal: 120 kB\nMemAvailable: 90 kB\nMemFree: 130 kB\n".as_slice())
             .is_err()
     );
-}
-#[test]
-fn pinned_manifest_and_preparation_identity_match_reference() {
-    assert_eq!(
-        hex(Sha256::digest(include_bytes!(
-            "../recipes/qwen38/model.json"
-        ))),
-        "c11c41935994dc9fd1d3c15e94bdcdcb0893052f55475b62e946e6a31adb4e61"
-    );
-    let manifest = model_manifest();
-    manifest.validate().unwrap();
-    assert_eq!(manifest.files.len(), 51);
-    assert_eq!(manifest.bytes().unwrap(), 105935744618);
-    assert_eq!(
-        manifest.key(),
-        "d2f64e56b5a66a1ec6d0f6552f2f6c2b33551015bb3b343b55e824586a7b702c"
-    );
-    assert_eq!(
-        preparation_key(),
-        "7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43"
-    );
-    let argv = service().arguments("/data/model", 121 * GIB).unwrap();
-    assert!(
-        argv.windows(2)
-            .any(|pair| pair == ["--gpu-memory-utilization", "0.706"])
-    );
-    assert!(!argv.iter().any(|arg| arg == "--speculative-config"));
 }

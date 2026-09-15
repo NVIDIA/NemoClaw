@@ -5,7 +5,6 @@ use crate::{
     Error,
     docker::Engine,
     snapshot::{Receipt, VerifiedFile},
-    spark,
 };
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -67,26 +66,16 @@ impl Engine {
                 .service
                 .as_ref()
                 .ok_or(Error::State("missing inference specification"))?;
-            let generic = service.backend == crate::recipes::huggingface::BACKEND;
-            let (manifest, model) = if generic {
-                let model = format!("/data/{}", crate::recipes::huggingface::directory(service));
-                let bytes = self
-                    .read_file(
-                        &observed.container_id,
-                        &format!("{model}/{}", crate::recipes::huggingface::MANIFEST_FILE),
-                        4 << 20,
-                    )
-                    .await?
-                    .ok_or(Error::State("selected model manifest is unobservable"))?;
-                (
-                    crate::recipes::huggingface::decode_manifest(service, &bytes)?,
-                    model,
+            let model = format!("/data/{}", crate::recipes::huggingface::directory(service));
+            let bytes = self
+                .read_file(
+                    &observed.container_id,
+                    &format!("{model}/{}", crate::recipes::huggingface::MANIFEST_FILE),
+                    4 << 20,
                 )
-            } else {
-                let m = spark::model_manifest();
-                let p = format!("/data/models/{}", m.revision);
-                (m, p)
-            };
+                .await?
+                .ok_or(Error::State("selected model manifest is unobservable"))?;
+            let manifest = crate::recipes::huggingface::decode_manifest(service, &bytes)?;
             let bytes = self
                 .read_file(
                     &observed.container_id,
@@ -123,25 +112,6 @@ impl Engine {
                 }
                 return Ok(());
             }
-            if generic {
-                return Ok(());
-            }
-            let prepared = format!("/data/prepared/{}", spark::preparation_key());
-            let bytes = self
-                .read_file(
-                    &observed.container_id,
-                    &format!("{prepared}/complete.json"),
-                    1 << 20,
-                )
-                .await?
-                .ok_or(Error::State("complete PLE preparation is unobservable"))?;
-            let receipt: spark::Preparation = serde_json::from_slice(&bytes)
-                .map_err(|_| Error::State("invalid preparation completion receipt"))?;
-            validate_preparation(&receipt)?;
-            for file in &receipt.files {
-                self.verify_artifact_file(&observed.container_id, &prepared, file)
-                    .await?;
-            }
             Ok(())
         };
         tokio::time::timeout(std::time::Duration::from_secs(30), work)
@@ -163,10 +133,6 @@ impl Engine {
         verify_stat(file, &stat)
     }
 }
-#[cfg(all(test, unix))]
-fn validate_snapshot(receipt: &Receipt) -> Result<(), Error> {
-    validate_snapshot_manifest(receipt, &spark::model_manifest())
-}
 fn validate_snapshot_manifest(
     receipt: &Receipt,
     manifest: &crate::snapshot::Manifest,
@@ -181,18 +147,6 @@ fn validate_snapshot_manifest(
     {
         return Err(Error::Conflict(
             "model snapshot receipt conflicts with immutable pin",
-        ));
-    }
-    Ok(())
-}
-fn validate_preparation(receipt: &spark::Preparation) -> Result<(), Error> {
-    if receipt.key != spark::preparation_key()
-        || receipt.files.len() != 2
-        || receipt.files[0].file.name != spark::PREPARED_FILE
-        || receipt.files[1].file.name != format!("{}.json", spark::PREPARED_FILE)
-    {
-        return Err(Error::Conflict(
-            "packed PLE provenance conflicts with pinned preparation",
         ));
     }
     Ok(())

@@ -60,19 +60,31 @@ impl Backend {
             }
             return Ok(args);
         }
-        if service.backend == crate::recipes::huggingface::BACKEND {
-            return crate::recipes::huggingface::arguments(service, model_directory, total);
-        }
-        match self {
-            Self::Vllm => {
-                let recipe = crate::recipes::resolve(service)?;
-                vllm::arguments(
-                    &service.serving,
-                    model_directory,
-                    total,
-                    recipe.vllm_settings(service)?,
-                )
-            }
-        }
+        crate::recipes::huggingface::arguments(service, model_directory, total)
+    }
+}
+impl Service {
+    pub fn gpu_bytes(&self) -> Result<u64, Error> {
+        self.validate()?;
+        Ok(crate::recipes::huggingface::gpu_bytes(self))
+    }
+    pub fn check_capacity(
+        &self,
+        capacity: &crate::hardware::Capacity,
+        starting: bool,
+        download_remaining: u64,
+        preparation_remaining: u64,
+    ) -> Result<(), Error> {
+        crate::hardware::Profile::SparkV1.check_capacity(
+            self,
+            capacity,
+            starting,
+            download_remaining,
+            preparation_remaining,
+        )
+    }
+    pub fn arguments(&self, model_directory: &str, total: u64) -> Result<Vec<String>, Error> {
+        self.validate()?;
+        Backend::Vllm.arguments(self, model_directory, total)
     }
 }

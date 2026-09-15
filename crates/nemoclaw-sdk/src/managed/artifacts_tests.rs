@@ -70,7 +70,9 @@ async fn status_requires_complete_current_evidence_and_never_mutates() {
 
 #[test]
 fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
-    let manifest = spark::model_manifest();
+    let service = observed().spec.service.unwrap();
+    let recipe = service.recipe.as_ref().unwrap();
+    let manifest = recipe.snapshot.as_ref().unwrap().clone();
     let modified = timestamp("2026-09-14T00:00:00.123456789Z")
         .unwrap()
         .unix_timestamp_nanos() as u64;
@@ -78,20 +80,21 @@ fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
         manifest: manifest.key(),
         files: manifest
             .files
+            .clone()
             .into_iter()
             .map(|file| VerifiedFile { file, modified })
             .collect(),
     };
-    validate_snapshot(&receipt).unwrap();
+    validate_snapshot_manifest(&receipt, &manifest).unwrap();
     let original = receipt.clone();
     receipt.files.swap(0, 1);
-    assert!(validate_snapshot(&receipt).is_err());
+    assert!(validate_snapshot_manifest(&receipt, &manifest).is_err());
     receipt = original.clone();
     receipt.files.pop();
-    assert!(validate_snapshot(&receipt).is_err());
+    assert!(validate_snapshot_manifest(&receipt, &manifest).is_err());
     receipt = original;
     receipt.manifest = "wrong".into();
-    assert!(validate_snapshot(&receipt).is_err());
+    assert!(validate_snapshot_manifest(&receipt, &manifest).is_err());
     let file = &receipt.files[0];
     let mut stat = bollard::container::PathStatResponse {
         name: file.file.name.clone(),
@@ -112,29 +115,33 @@ fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
     stat.file_mode = 0o600;
     stat.link_target = "elsewhere".into();
     assert!(verify_stat(file, &stat).is_err());
-    let mut prep = spark::Preparation {
-        key: spark::preparation_key(),
-        files: [
-            spark::PREPARED_FILE.to_owned(),
-            format!("{}.json", spark::PREPARED_FILE),
-        ]
-        .into_iter()
-        .map(|name| VerifiedFile {
-            file: crate::snapshot::File {
-                name,
-                size: 100,
-                sha256: "a".repeat(64),
-            },
-            modified,
-        })
-        .collect(),
+    let mut prep = crate::recipes::preparation::Completion {
+        key: recipe.key(&service),
+        files: ["prepared.bin".to_owned(), "prepared.json".to_owned()]
+            .into_iter()
+            .map(|name| VerifiedFile {
+                file: crate::snapshot::File {
+                    name,
+                    size: 100,
+                    sha256: "a".repeat(64),
+                },
+                modified,
+            })
+            .collect(),
     };
-    validate_preparation(&prep).unwrap();
-    prep.files.swap(0, 1);
-    assert!(validate_preparation(&prep).is_err());
-    prep.files.swap(0, 1);
+    crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep).unwrap();
+    let original = prep.clone();
+    prep.files[1] = prep.files[0].clone();
+    assert!(
+        crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep)
+            .is_err()
+    );
+    prep = original;
     prep.key = "wrong".into();
-    assert!(validate_preparation(&prep).is_err());
+    assert!(
+        crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep)
+            .is_err()
+    );
 }
 #[tokio::test]
 async fn unavailable_artifacts_are_errors_not_runtime_absence() {
@@ -148,6 +155,7 @@ async fn unavailable_artifacts_are_errors_not_runtime_absence() {
             let mut observation = observed();
             if generic {
                 let service = observation.spec.service.as_mut().unwrap();
+                service.recipe = None;
                 service.backend = "vllm".into();
                 service.model.repository = "owner/model".into();
                 service.model.revision = "a".repeat(40);

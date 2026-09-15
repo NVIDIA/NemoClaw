@@ -3,9 +3,10 @@
 use nemoclaw_sdk::config::Document;
 
 #[test]
-fn a_different_model_uses_generic_serving_without_ple_or_qwen38_flags() {
+fn a_different_model_uses_generic_serving_without_recipe_settings() {
     let mut doc = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let service = doc.spec.inference_providers[0].service.as_mut().unwrap();
+    service.recipe = None;
     service.backend = "vllm".into();
     service.model.repository = "Qwen/Qwen3-0.6B".into();
     service.model.revision = "c1899de289a04d12100db370d81485cdf75e47ca".into();
@@ -38,6 +39,7 @@ fn model_identity_and_capacity_are_not_a_repository_allowlist() {
     };
     let mut doc = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let service = doc.spec.inference_providers[0].service.as_mut().unwrap();
+    service.recipe = None;
     service.backend = "vllm".into();
     service.model.repository = "some-owner/a-completely-different-model".into();
     service.model.revision = "a".repeat(40);

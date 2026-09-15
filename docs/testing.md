@@ -149,14 +149,14 @@ ARM64/x64, and Windows x64. CI's protocol and lifecycle fixtures do not establis
 local Docker, Podman, GPU, or real model availability on those platforms. Build
 logs and runtime evidence must be reported separately.
 
-For complete Spark qualification, use the concrete `examples/spark.yaml` on an
+For complete Spark qualification, use the concrete `examples/spark-inline.yaml` on an
 available GB10 host. Change its deployment UID, gateway port, and network only
 when creating a separate experiment. Build the pinned local runtime artifact
 first, check capacity, and preserve the same state directory throughout:
 
 ```sh
-nemoclaw plan --state-dir .local/spark examples/spark.yaml
-nemoclaw apply --state-dir .local/spark examples/spark.yaml
+nemoclaw plan --state-dir .local/spark examples/spark-inline.yaml
+nemoclaw apply --state-dir .local/spark examples/spark-inline.yaml
 nemoclaw export --state-dir .local/spark > .local/spark-export.yaml
 nemoclaw apply --state-dir .local/spark .local/spark-export.yaml
 ```
