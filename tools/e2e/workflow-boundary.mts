@@ -770,6 +770,8 @@ const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
   ["test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts", ["openclaw-plugin-runtime-exdev"]],
+  ["test/helpers/openshell-components.ts", ["mcp-bridge", "openclaw-plugin-runtime-exdev"]],
+  ["test/e2e/live/openshell-driver-config-test-wrapper.ts", ["mcp-bridge"]],
   [
     "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
     ["openclaw-plugin-runtime-exdev"],
@@ -1742,8 +1744,16 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     return;
   }
 
-  if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
-    errors.push("hermes-e2e job must depend on publication and generate-matrix validation");
+  if (
+    !isDeepStrictEqual(job.needs, [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "hermes-e2e job must depend on publication, generate-matrix, and reviewed OpenShell SDK validation",
+    );
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
     errors.push("hermes-e2e job must use validated hermes_selected output");
@@ -1801,6 +1811,26 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("hermes-e2e checkout step must set persist-credentials=false");
   }
+  const sdkDownload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Download reviewed OpenShell SDK archive",
+  );
+  if (
+    asRecord(sdkDownload?.with).name !== "${{ needs.package-openshell-sdk.outputs.artifact_name }}"
+  ) {
+    errors.push("hermes-e2e SDK download must use the reviewed package artifact");
+  }
+  if (asRecord(sdkDownload?.with).path !== "${{ runner.temp }}/openshell-sdk") {
+    errors.push("hermes-e2e SDK download must use the isolated runner SDK directory");
+  }
+  requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install reviewed OpenShell SDK archive without package credentials",
+  );
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {

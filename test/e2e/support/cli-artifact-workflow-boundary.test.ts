@@ -258,7 +258,7 @@ async function writeTraversalArchive(context: ArchiveFixtureContext): Promise<vo
       ? ["-s", "|^outside.txt$|dist/../outside.txt|"]
       : ["--transform=s|^outside.txt$|dist/../outside.txt|"];
   await runSuccessfulProcess(
-    "tar",
+    process.platform === "darwin" ? "/usr/bin/tar" : "tar",
     ["-cf", context.payload, ...transform, "-C", context.payloadRoot, "outside.txt"],
     { owner: context.owner },
   );

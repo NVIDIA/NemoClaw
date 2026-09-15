@@ -26,7 +26,7 @@ before those targets run; local runners must provide it themselves.
   It does not run onboarding or inference and does not satisfy release
   qualification.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility` for Ubuntu 26.04, macOS, and WSL.
-  On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
+  Its independent macOS live job and WSL shard 1 run live E2E only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
@@ -284,12 +284,11 @@ boundaries are the behavior under test.
 `.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
 It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
 The matrix disables `fail-fast`.
-The first macOS shard has a 150-minute job timeout. Its live E2E has a
-70-minute timeout, and every other step shares the remaining job time. The
-other shards have 30 minutes.
+Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
+job has a 150-minute budget, including its 70-minute live test and cleanup.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
 
-On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
+The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.
 Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.
@@ -812,30 +811,58 @@ recreation each run once. If onboarding or recreation reports missing canonical
 CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
 record structured diagnostics, attempts to write bounded `failed-no-retry`
 evidence, and then stops without automatically resuming the ambiguously mutated
-session. An evidence
-write failure propagates, so that retry artifact may be absent. `tools.invoke`
+session. An evidence write failure propagates, so that retry artifact may be
+absent. `tools.invoke`
 assertions prove the plugin version after onboarding, restart, and recreation.
-The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
-across the proven filesystem boundary before restart. `e2e-support` tests own
-sandbox-create interception and wrapper argument rewriting. Onboarding and
-recreation load the test-only interceptor; all other OpenShell commands use the
-canonical binary so dashboard forward ownership remains verifiable. Deterministic
-tests own exact package versions and third-party replacement internals. Runtime inspection and catalog
-permutations are outside this live contract. Workspace preservation and policy
-selection retain their focused coverage instead of another assertion in this
-target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
+The job uses OpenClaw's real plugin installer from a read-only host mount whose
+device differs from the extension target. This proves installation across the
+filesystem boundary, not a particular internal `EXDEV` system call or fallback.
+
+The live assertions stop at the boundary outcomes: v1 after onboarding,
+distinct source and target devices, a successful real install, v1-exdev after a
+real gateway restart, v2 after recreation, and registered cleanup. The target
+does not rewrite OpenShell commands or assert terminal wording. Its one
+forward-specific setup check proves the restarted listener belongs to the exact
+canonical OpenShell command before targeted termination, then bounds port
+release before recreation. Fast tests own the listener matching and
+termination behavior. `e2e-support` also owns canonical component composition,
+immutable image handoff, recreation command shape, fixture extraction safety,
+output parsing, and cleanup ordering. Deterministic tests own exact package
+versions and third-party replacement internals. Runtime inspection and catalog
+permutations remain outside this live contract. Workspace preservation and
+policy selection retain their focused coverage. The `rebuild-openclaw` job
+remains the canonical live rebuild coverage.
 
 The current-checkout fixture locally prebuilds repository-controlled images
-with BuildKit. It verifies each local tag, then passes the matching immutable
-image ID to OpenShell. User-supplied `--from` Dockerfiles retain the
-gateway-builder trust boundary and are never host-prebuilt by this fixture.
-The current-checkout fixture enables local base-image resolution after the
-workflow removes Docker Hub credentials.
+with BuildKit. It verifies each local tag, extracts the cross-device payload
+from the matching immutable image ID into a fresh canonical `/dev/shm`
+directory, and mounts that directory read-only at the same target during
+onboarding and recreation. A minimal custom Dockerfile pins the image ID while
+preserving the tool-disclosure build arguments. Canonical OpenShell CLI,
+gateway, and sandbox executables own every forward lifecycle command. User
+`--from` Dockerfiles retain the gateway-builder trust boundary and are never
+host-prebuilt by this fixture. The current-checkout fixture enables local
+base-image resolution after the workflow removes Docker Hub credentials.
 
 The release-baseline lane is retired. Historical package versions are not part
 of this current runtime contract.
 
-Push-run timing for the reduced lifecycle has not yet been measured.
+At issue creation, the live target had 9 direct `expect` calls and 17 direct
+assertion points across 654 lines. Its three companions raised the transitive
+totals to 9 `expect` calls, 32 assertion points, and three generated probe
+blocks across 1,178 lines. A passing seven-phase run took about 20 minutes even
+though the core cross-device install took about seven seconds. After #11552
+fixed canonical forward ownership, the current base kept those assertion totals
+while growing to 658 target lines and 1,202 transitive live lines. Its first
+automatic main run completed the live step in 7 minutes 26 seconds.
+
+The #11547 reduction keeps all seven phases and the target's 9 direct `expect`
+calls while lowering the direct assertion points from 17 to 16. Its two
+companions bring the transitive totals to 9 `expect` calls, 25 assertion points,
+and no generated probe blocks across 1,140 lines. Against the current base, the
+live target falls from 658 to 585 lines and the transitive live surface falls
+from 1,202 to 1,140 lines.
+Push-run timing for this revision is recorded by the focused PR E2E run.
 
 ## OpenShell development artifact retention
 
@@ -1698,7 +1725,8 @@ for the recorded PR number, selected repository, selected commit SHA, base commi
 workflow SHA. A changed PR source repository, head commit SHA, or base commit SHA invalidates a
 head-to-base comparison.
 
-The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
+The platform-evidence workflow runs only on configured pushes to `main`.
+It serializes runs for the same ref, retains the pending queue, and does not cancel an older commit when a newer `main` push arrives.
 The experimental portable-profile workflow can run for pull requests, matching `main` pushes, and manual dispatch.
 Its `portable-launch` job runs only when `github.ref` is `refs/heads/main`.
 The `portable-launch` job's exercise step exposes the long-lived repository `NVIDIA_INFERENCE_API_KEY` to the checked-out source through its environment.

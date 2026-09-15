@@ -27,6 +27,7 @@ import {
   clearRebuildMcpHandoff,
   clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
+  readRebuildPolicyHandoff,
   readRebuildMcpHandoff,
   type RebuildBackupManifest,
   runRebuildBackupPhase,
@@ -654,7 +655,7 @@ async function rebuildSandboxUnlocked(
             `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
           );
         }
-        const restored = runRebuildRestorePhase({
+        const restored = await runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
           targetImageIsCustom: Boolean(fromDockerfile),
@@ -838,6 +839,16 @@ async function rebuildSandboxUnlocked(
           // path only after digest-verifying the policy handoff bound to the
           // prepared recovery manifest, so there is no live policy to recapture.
           if (staleRecovery) return validation;
+          // Prepared legacy recovery freezes source policy before the gateway upgrade.
+          // Revalidate that handoff instead of recapturing unreadable live state.
+          if (preparedBackupRecovery) {
+            return backup.backupManifest && readRebuildPolicyHandoff(backup.backupManifest)
+              ? validation
+              : {
+                  ok: false,
+                  message: "The prepared recovery policy handoff changed before sandbox deletion.",
+                };
+          }
           try {
             return (await capturePolicyHandoff(runtimeSelection))
               ? validation
@@ -917,9 +928,9 @@ async function rebuildSandboxUnlocked(
         });
       let hermesCronRestoreIdentity: HermesCronRestoreIdentity | undefined;
       const restored = hermesCronRestorePlan?.requiresDispatchGate
-        ? (() => {
+        ? await (async () => {
             try {
-              const transaction = runHermesCronRestoreTransaction(
+              const transaction = await runHermesCronRestoreTransaction(
                 sandboxName,
                 restore,
                 (state, identity) => {
@@ -942,7 +953,7 @@ async function rebuildSandboxUnlocked(
               return bail("Hermes cron restore validation failed; dispatch was not re-enabled.");
             }
           })()
-        : restore();
+        : await restore();
       const postRestoreVerification = await runRebuildPostRestorePhase({
         sandboxName,
         targetAgentName: rebuildAgent || "openclaw",

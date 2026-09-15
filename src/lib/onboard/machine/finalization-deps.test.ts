@@ -806,6 +806,25 @@ describe("finalization process-recovery refusal propagation", () => {
     ).resolves.toBe(false);
   });
 
+  it("pauses onboarding when the stopped gateway could not be recovered", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
+        "fresh-hermes",
+        { quiet: true },
+        { HOME: "/home/kiosk" },
+      ),
+    ).resolves.toBe(false);
+  });
+
   it("allows checked terminal recovery without a gateway process (#11758)", async () => {
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: vi.fn(async () => ({

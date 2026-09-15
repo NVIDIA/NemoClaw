@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAgent } from "../../agent/defs";
-import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import {
   executeHermesPortableGatewaySupervisorAction,
   type HermesPortableLifecycleDeps,
@@ -72,7 +72,7 @@ describe("Hermes portable gateway control", () => {
     deps: HermesPortableLifecycleDeps,
     request: Partial<Parameters<typeof executeHermesPortableGatewaySupervisorAction>[2]> = {},
   ) {
-    return withMcpLifecycleLockSync(
+    return withMcpLifecycleLock(
       SANDBOX,
       () =>
         executeHermesPortableGatewaySupervisorAction(
@@ -90,16 +90,63 @@ describe("Hermes portable gateway control", () => {
     );
   }
 
+  it.each(["before", "after"] as const)(
+    "holds the lifecycle lock until the %s-control policy observation settles",
+    async (phase) => {
+      const fixture = lifecycleDeps(activeReceipt());
+      const capture = fixture.podman.getMockImplementation()!;
+      const accepted = { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" };
+      const control = vi.fn(() => accepted);
+      fixture.podman.mockImplementation((args) =>
+        args.includes("/usr/local/bin/nemoclaw-gateway-control") ? control() : capture(args),
+      );
+      let release!: () => void;
+      let entered!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const observing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const immediate = () => ({ status: 0, stdout: Buffer.from(POLICY), stderr: Buffer.alloc(0) });
+      const delayed = async () => {
+        entered();
+        await pending;
+        throw new Error("policy observation refused");
+      };
+      const captures = phase === "before" ? [delayed] : [immediate, delayed];
+      const capturePolicy = vi.fn(() => captures.shift()!());
+      const operation = controlWithLock({ ...fixture.deps, capturePolicy });
+      const result = expect(operation).rejects.toThrow("policy observation refused");
+      await observing;
+      let competitorEntered = false;
+      const competitor = withMcpLifecycleLock(
+        SANDBOX,
+        async () => {
+          competitorEntered = true;
+        },
+        { stateDir: path.join(stateDir, "state"), pollIntervalMs: 1 },
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(competitorEntered).toBe(false);
+      expect(control).toHaveBeenCalledTimes(phase === "before" ? 0 : 1);
+      release();
+      await result;
+      await competitor;
+      expect(competitorEntered).toBe(true);
+    },
+  );
+
   it.each([
     { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" },
     { status: 1, stdout: "", stderr: "SECRET_BOUNDARY_REFUSED" },
-  ])("returns the receipt-owned privileged validator result: $status", (result) => {
+  ])("returns the receipt-owned privileged validator result: $status", async (result) => {
     const fixture = lifecycleDeps(activeReceipt());
     const capture = fixture.podman.getMockImplementation()!;
     fixture.podman.mockImplementation((args) =>
       args.includes("/usr/local/bin/nemoclaw-gateway-control") ? result : capture(args),
     );
-    expect(controlWithLock(fixture.deps)).toEqual(result);
+    await expect(controlWithLock(fixture.deps)).resolves.toEqual(result);
     const command = fixture.podman.mock.calls.find(([args]) =>
       args.includes("/usr/local/bin/nemoclaw-gateway-control"),
     )?.[0];
@@ -120,9 +167,9 @@ describe("Hermes portable gateway control", () => {
     { label: "another pinned container", request: { expectedContainerId: "b".repeat(64) } },
     { label: "a restart", request: { action: "restart" as const } },
     { label: "an invalid nonce", request: { nonce: "untrusted" } },
-  ])("refuses privileged control for $label before execution", ({ request }) => {
+  ])("refuses privileged control for $label before execution", async ({ request }) => {
     const fixture = lifecycleDeps(activeReceipt());
-    expect(() => controlWithLock(fixture.deps, request)).toThrow();
+    await expect(controlWithLock(fixture.deps, request)).rejects.toThrow();
     expect(
       fixture.podman.mock.calls.some(([args]) =>
         args.includes("/usr/local/bin/nemoclaw-gateway-control"),
@@ -130,11 +177,11 @@ describe("Hermes portable gateway control", () => {
     ).toBe(false);
   });
 
-  it("refuses a registry owner mismatch before privileged execution", () => {
+  it("refuses a registry owner mismatch before privileged execution", async () => {
     const fixture = lifecycleDeps(activeReceipt(), true, {
       registry: { lifecycleGeneration: "other" },
     });
-    expect(() => controlWithLock(fixture.deps)).toThrow("registry authority disagrees");
+    await expect(controlWithLock(fixture.deps)).rejects.toThrow("registry authority disagrees");
     expect(
       fixture.podman.mock.calls.some(([args]) =>
         args.includes("/usr/local/bin/nemoclaw-gateway-control"),
@@ -142,7 +189,7 @@ describe("Hermes portable gateway control", () => {
     ).toBe(false);
   });
 
-  it("rejects privileged success when container identity changes during validation", () => {
+  it("rejects privileged success when container identity changes during validation", async () => {
     const fixture = lifecycleDeps(activeReceipt());
     const capture = fixture.podman.getMockImplementation()!;
     let executed = false;
@@ -158,13 +205,13 @@ describe("Hermes portable gateway control", () => {
         ? { ...result, stdout: result.stdout.replace(CONTAINER_ID, "b".repeat(64)) }
         : result;
     });
-    expect(() => controlWithLock(fixture.deps)).toThrow();
+    await expect(controlWithLock(fixture.deps)).rejects.toThrow();
     expect(executed).toBe(true);
   });
 
-  it("requires the lifecycle lock before privileged control", () => {
+  it("requires the lifecycle lock before privileged control", async () => {
     const fixture = lifecycleDeps(activeReceipt());
-    expect(() =>
+    await expect(
       executeHermesPortableGatewaySupervisorAction(
         SANDBOX,
         lifecycleContext(),
@@ -175,7 +222,7 @@ describe("Hermes portable gateway control", () => {
         },
         fixture.deps,
       ),
-    ).toThrow("requires the sandbox lifecycle lock");
+    ).rejects.toThrow("requires the sandbox lifecycle lock");
     expect(fixture.podman).not.toHaveBeenCalled();
   });
 });

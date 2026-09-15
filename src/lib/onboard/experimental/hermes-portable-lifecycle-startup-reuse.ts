@@ -17,7 +17,7 @@ interface RetainedLifecycle {
   readonly commandEnv: NodeJS.ProcessEnv;
   readonly entry: unknown;
   readonly deps: HermesPortableLifecycleDeps;
-  readonly verify: () => boolean;
+  readonly verify: () => Promise<boolean>;
 }
 
 const completed = new WeakMap<HermesPortableStartupOperation, RetainedLifecycle>();
@@ -40,7 +40,7 @@ export function retainHermesPortableLifecycleStartup(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps,
-  verify: () => boolean,
+  verify: () => Promise<boolean>,
   commandEnv: NodeJS.ProcessEnv,
 ): void {
   const scope = currentScope(sandboxName, deps);
@@ -56,11 +56,11 @@ export function retainHermesPortableLifecycleStartup(
 }
 
 /** A later probe must still prove live identity, policy, container and authenticated health. */
-export function tryReuseHermesPortableLifecycleStartup(
+export async function tryReuseHermesPortableLifecycleStartup(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps,
-): boolean {
+): Promise<boolean> {
   const scope = currentScope(sandboxName, deps);
   const retained = scope && completed.get(scope);
   if (!scope || !retained) return false;
@@ -82,7 +82,7 @@ export function tryReuseHermesPortableLifecycleStartup(
     }
   };
   assertRegistry();
-  const ready = retained.verify();
+  const ready = await retained.verify();
   assertRegistry();
   if (!ready || currentScope(sandboxName, deps) !== scope) return false;
   completed.set(scope, retained);

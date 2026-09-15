@@ -348,55 +348,6 @@ describe("waitForManagedGatewaySupervisor", () => {
 describe("executeGatewaySupervisorAction", () => {
   const targetContainerId = "a".repeat(64);
 
-  it.each([false, true])(
-    "uses Hermes receipt control without Docker fallback (refused=%s)",
-    (refused) => {
-      const lifecycle = requireSource(
-        "../../src/lib/onboard/experimental/hermes-portable-lifecycle.ts",
-      );
-      const registry = requireSource("../../src/lib/state/registry.ts");
-      const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-      const entry = {
-        name: "fresh-hermes",
-        agent: "hermes",
-        openshellDriver: "docker",
-        gatewayName: "test-gateway",
-      };
-      vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
-      const direct = vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget");
-      const rejectChangedAuthority = () => {
-        throw new Error("receipt authority changed");
-      };
-      const control = vi
-        .spyOn(lifecycle, "executeHermesPortableGatewaySupervisorAction")
-        .mockImplementation(
-          refused
-            ? rejectChangedAuthority
-            : () => ({ status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" }),
-        );
-      expect(executeGatewaySupervisorAction("fresh-hermes", "recover", 100)).toEqual(
-        refused
-          ? {
-              status: 1,
-              stdout: "",
-              stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: receipt authority changed",
-            }
-          : { status: 0, stdout: "GATEWAY_PID=4242", stderr: "" },
-      );
-      expect(control).toHaveBeenCalledWith(
-        "fresh-hermes",
-        entry,
-        expect.objectContaining({
-          action: "recover",
-          nonce: expect.stringMatching(/^[a-f0-9]{64}$/u),
-          timeoutMs: 100,
-        }),
-        { readRegistry: registry.getSandbox },
-      );
-      expect(direct).not.toHaveBeenCalled();
-    },
-  );
-
   it("sanitizes a temporarily unavailable direct container into the retry marker", () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {

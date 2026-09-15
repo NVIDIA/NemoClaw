@@ -17,6 +17,7 @@ import {
   stopHermesPortableSandboxLifecycle,
 } from "./hermes-portable-lifecycle";
 import { publishHermesPortableSuccessorReceipt } from "./hermes-portable-receipt";
+import type { HermesPortablePolicyCaptureResult } from "./hermes-portable-policy-state";
 import {
   createHermesPortableLifecycleTestReceipt,
   createHermesPortableLifecycleTestDeps,
@@ -77,7 +78,7 @@ describe("Portable lifecycle startup handoff", () => {
     };
     const recover = () => recoverHermesPortableSandboxLifecycle(SANDBOX, context, deps);
     const stop = () => stopHermesPortableSandboxLifecycle(SANDBOX, context, () => undefined, deps);
-    const run = (operation: () => void, now: () => number = () => 0) =>
+    const run = (operation: () => void | Promise<void>, now: () => number = () => 0) =>
       withMcpLifecycleLock(
         SANDBOX,
         () => withHermesPortableStartupOperation(SANDBOX, lockDir, operation, deps.env, now),
@@ -98,10 +99,10 @@ describe("Portable lifecycle startup handoff", () => {
 
   it("hands completed startup to the next probe while rechecking live authority (#11574)", async () => {
     const h = setup();
-    await h.run(() => {
-      expect(h.recover()).toEqual({ kind: "recovered" });
+    await h.run(async () => {
+      expect(await h.recover()).toEqual({ kind: "recovered" });
       h.fixture.captureOpenShell.mockClear();
-      expect(h.recover()).toEqual({ kind: "already-running" });
+      expect(await h.recover()).toEqual({ kind: "already-running" });
       expect(h.execReadiness()).toBe(false);
       expect(h.fixture.captureOpenShell.mock.calls.some(([args]) => args.includes("get"))).toBe(
         true,
@@ -115,60 +116,96 @@ describe("Portable lifecycle startup handoff", () => {
 
   it("hands startup to a probe using its exact sanitized command environment (#11574)", async () => {
     const h = setup();
-    await h.run(() => {
-      h.recover();
+    await h.run(async () => {
+      await h.recover();
       Object.assign(h.deps, { env: h.commandEnv });
       h.fixture.captureOpenShell.mockClear();
-      expect(h.recover()).toEqual({ kind: "already-running" });
+      expect(await h.recover()).toEqual({ kind: "already-running" });
       expect(h.execReadiness()).toBe(false);
     });
   });
 
   it("does not treat a modified command environment as the startup environment (#11574)", async () => {
     const h = setup();
-    await h.run(() => {
-      h.recover();
+    await h.run(async () => {
+      await h.recover();
       Object.assign(h.deps, { env: { ...h.commandEnv, UNEXPECTED_STARTUP_VALUE: "changed" } });
       h.fixture.captureOpenShell.mockClear();
-      expect(h.recover()).toEqual({ kind: "already-running" });
+      expect(await h.recover()).toEqual({ kind: "already-running" });
       expect(h.execReadiness()).toBe(true);
     });
   });
 
   it("rejects socket drift after startup (#11574)", async () => {
     const h = setup();
-    await h.run(() => {
-      h.recover();
+    await h.run(async () => {
+      await h.recover();
       h.fixture.captureSocketAuthority.mockImplementation(() => {
         throw new Error("socket changed");
       });
-      expect(h.recover).toThrow("socket changed");
+      await expect(h.recover()).rejects.toThrow("socket changed");
+      expect(h.fixture.launchOpenShell).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("waits for retained policy observation and rejects a failed read (#11574)", async () => {
+    const h = setup();
+    const capturePolicy = vi.fn(async (): Promise<HermesPortablePolicyCaptureResult> => ({
+      status: 0,
+      stdout: Buffer.from(POLICY),
+      stderr: Buffer.alloc(0),
+    }));
+    Object.assign(h.deps, { capturePolicy });
+    await h.run(async () => {
+      await h.recover();
+      let release!: (result: HermesPortablePolicyCaptureResult) => void;
+      let observed!: () => void;
+      const observationStarted = new Promise<void>((resolve) => {
+        observed = resolve;
+      });
+      const pendingPolicy = new Promise<HermesPortablePolicyCaptureResult>((resolve) => {
+        release = resolve;
+      });
+      capturePolicy.mockImplementationOnce(() => {
+        observed();
+        return pendingPolicy;
+      });
+      let settled = false;
+      const recovery = h.recover().finally(() => {
+        settled = true;
+      });
+      const rejected = expect(recovery).rejects.toThrow("live OpenShell policy read failed");
+      await observationStarted;
+      expect(settled).toBe(false);
+      expect(h.fixture.launchOpenShell).toHaveBeenCalledOnce();
+      release({ status: 1, stdout: Buffer.alloc(0), stderr: Buffer.from("policy unavailable") });
+      await rejected;
       expect(h.fixture.launchOpenShell).toHaveBeenCalledOnce();
     });
   });
 
   it("rejects registry drift after startup (#11574)", async () => {
     const h = setup();
-    await h.run(() => {
-      h.recover();
+    await h.run(async () => {
+      await h.recover();
       const entry = h.deps.readRegistry();
       h.deps.readRegistry = () => ({ ...entry, model: "changed" });
-      expect(h.recover).toThrow("registry changed");
+      await expect(h.recover()).rejects.toThrow("registry changed");
       expect(h.fixture.launchOpenShell).toHaveBeenCalledOnce();
     });
   });
 
   it.each(["policy", "get"])("rejects changed live %s after startup (#11574)", async (command) => {
     const h = setup();
-    await h.run(() => {
-      h.recover();
+    await h.run(async () => {
+      await h.recover();
       const original = h.fixture.captureOpenShell.getMockImplementation()!;
       h.fixture.captureOpenShell.mockImplementation((args) =>
         args.includes(command)
           ? { status: 0, stdout: "invalid authority", stderr: "" }
           : original(args),
       );
-      expect(h.recover).toThrow();
+      await expect(h.recover()).rejects.toThrow();
       expect(h.fixture.launchOpenShell).toHaveBeenCalledOnce();
     });
   });
@@ -177,11 +214,11 @@ describe("Portable lifecycle startup handoff", () => {
     const h = setup();
     let now = 0;
     await h.run(
-      () => {
-        h.recover();
+      async () => {
+        await h.recover();
         now = 60_000;
         h.fixture.captureOpenShell.mockClear();
-        expect(h.recover()).toEqual({ kind: "already-running" });
+        expect(await h.recover()).toEqual({ kind: "already-running" });
         expect(h.execReadiness()).toBe(true);
       },
       () => now,
@@ -190,11 +227,11 @@ describe("Portable lifecycle startup handoff", () => {
 
   it("recovers again after a supported stop (#11574)", async () => {
     const h = setup();
-    await h.run(() => {
-      h.recover();
-      h.stop();
+    await h.run(async () => {
+      await h.recover();
+      await h.stop();
       h.fixture.captureOpenShell.mockClear();
-      expect(h.recover()).toEqual({ kind: "recovered" });
+      expect(await h.recover()).toEqual({ kind: "recovered" });
       expect(h.execReadiness()).toBe(true);
       expect(h.fixture.launchOpenShell).toHaveBeenCalledTimes(2);
     });
@@ -202,8 +239,8 @@ describe("Portable lifecycle startup handoff", () => {
 
   it("returns to full recovery after an unhealthy observation (#11574)", async () => {
     const h = setup();
-    await h.run(() => {
-      h.recover();
+    await h.run(async () => {
+      await h.recover();
       const original = h.fixture.captureOpenShell.getMockImplementation()!;
       h.fixture.captureOpenShell.mockClear();
       const unhealthy = vi
@@ -214,7 +251,7 @@ describe("Portable lifecycle startup handoff", () => {
           ? unhealthy()
           : original(args),
       );
-      expect(h.recover()).toEqual({ kind: "already-running" });
+      expect(await h.recover()).toEqual({ kind: "already-running" });
       expect(h.execReadiness()).toBe(true);
     });
   });
@@ -224,11 +261,11 @@ describe("Portable lifecycle startup handoff", () => {
     { TEST_STARTUP_VALUE: "changed" },
   ])("uses full recovery after environment changes to %j (#11574)", async (change) => {
     const h = setup();
-    await h.run(() => {
-      h.recover();
+    await h.run(async () => {
+      await h.recover();
       Object.assign(h.deps.env, change);
       h.fixture.captureOpenShell.mockClear();
-      expect(h.recover()).toEqual({ kind: "already-running" });
+      expect(await h.recover()).toEqual({ kind: "already-running" });
       expect(h.execReadiness()).toBe(true);
     });
   });

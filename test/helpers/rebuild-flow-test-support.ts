@@ -35,6 +35,7 @@ export type RebuildFlowSession = Record<string, unknown> & {
   steps: Record<string, RebuildFlowStep>;
 };
 export type RebuildFlowOverrides = {
+  useRealPortableRetirementBoundary?: boolean;
   agentName?: string;
   sessionAgentName?: string | null;
   entryUpdatesAfterVersionCheck?: Record<string, unknown>;

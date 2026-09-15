@@ -368,6 +368,7 @@ export const finalizationHandlerDeps = {
     });
     return (
       result.checked === true &&
+      (result.wasRunning !== false || result.recovered === true) &&
       !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
     );
   },

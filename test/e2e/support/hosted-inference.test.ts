@@ -660,6 +660,10 @@ printf '{"data":[]}'
       requestCanaryMarker: "EXPECTED_REQUEST_CANARY",
       requireAuth: true,
       responseText: "RESP_OK",
+      toolCallOnCanary: {
+        name: "sessions_spawn",
+        arguments: '{"task":"Reply with PONG"}',
+      },
     });
 
     try {
@@ -692,7 +696,21 @@ printf '{"data":[]}'
       });
       expect(chat.status).toBe(200);
       expect(await chat.json()).toMatchObject({
-        choices: [{ message: { content: "CHAT_OK" } }],
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              tool_calls: [
+                {
+                  function: {
+                    name: "sessions_spawn",
+                    arguments: '{"task":"Reply with PONG"}',
+                  },
+                },
+              ],
+            },
+          },
+        ],
       });
 
       const responses = await fetch(`${fake.baseUrl}/responses`, {
