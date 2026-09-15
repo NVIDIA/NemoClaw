@@ -222,6 +222,7 @@ export function allowedRepairPath(file: string): boolean {
     ) ||
     /(?:^|\/)(?:package[.]json|Dockerfile(?:[.].*)?|[.]gitmodules|[.]gitattributes)$/u.test(file) ||
     /(?:^|\/)(?:generated|_build)(?:\/|$)/iu.test(file) ||
+    file === "test/automation/pull-requests/pr-review-advisor-repair-validation-e2e.test.ts" ||
     file.startsWith(".github/") ||
     file.startsWith(".agents/") ||
     file.startsWith("test/e2e/")

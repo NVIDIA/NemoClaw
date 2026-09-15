@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import {
+  allowedRepairPath,
   assertValidatedRepair,
   attemptKey,
   candidateDigest,
@@ -96,6 +97,14 @@ function selection(sourceHeadSha: string): RepairSelection {
 }
 
 describe("PR Review Advisor trusted validation", () => {
+  it("keeps the live repair runtime proof outside the repairable path set (#10791)", () => {
+    expect(
+      allowedRepairPath(
+        "test/automation/pull-requests/pr-review-advisor-repair-validation-e2e.test.ts",
+      ),
+    ).toBe(false);
+  });
+
   it("keeps validation artifact cardinality aligned with the specialist catalog (#10791)", () => {
     const schema = JSON.parse(
       fs.readFileSync(
