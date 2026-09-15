@@ -101,10 +101,7 @@ describe("shared CI dependency installer", () => {
       ["production", "extra", "unexpected"],
       "Usage: ci-install-dependencies.sh [full|production|none] [auto|artifact|registry]\n",
     ],
-    [
-      ["none", "unexpected"],
-      "Unsupported package dependency source mode: unexpected\n",
-    ],
+    [["none", "unexpected"], "Unsupported package dependency source mode: unexpected\n"],
   ] as const)("rejects unsupported install arguments before npm runs [case %#]", (args, error) => {
     const fixture = makeFixture();
 
