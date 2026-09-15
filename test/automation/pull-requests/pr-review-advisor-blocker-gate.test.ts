@@ -136,7 +136,13 @@ it("blocks an unresolved E2E recommendation from any specialist", () => {
   });
 });
 
-it.each([
+const specialistEvidenceFiles = [
+  ["review queue context", (_interest: string) => "review-queue-context.json"],
+  ["finding ledger", (interest: string) => `pr-review-${interest}-findings.json`],
+  ["E2E receipt", (interest: string) => `pr-review-${interest}-e2e.json`],
+] as const;
+
+const invalidEvidenceMutations = [
   ["missing", (file: string) => fs.unlinkSync(file)],
   ["malformed", (file: string) => fs.writeFileSync(file, "{}")],
   [
@@ -147,14 +153,18 @@ it.each([
       fs.symlinkSync(target, file);
     },
   ],
-])("fails closed for %s specialist evidence", (_variant, mutate) => {
+] as const;
+
+it.each(
+  specialistEvidenceFiles.flatMap(([artifactType, fileName]) =>
+    invalidEvidenceMutations.map(
+      ([variant, mutate]) => [artifactType, variant, fileName, mutate] as const,
+    ),
+  ),
+)("fails closed for a %s that is %s", (_artifactType, _variant, fileName, mutate) => {
   const root = artifactTree();
   const interest = expectedSpecialists[0]!;
-  const file = path.join(
-    root,
-    `pr-review-specialist-${interest}-${ATTEMPT}`,
-    `pr-review-${interest}-e2e.json`,
-  );
+  const file = path.join(root, `pr-review-specialist-${interest}-${ATTEMPT}`, fileName(interest));
   mutate(file);
   expect(() => evaluate(root)).toThrow();
 });
