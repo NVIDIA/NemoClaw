@@ -706,6 +706,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Scan managed-image MCP artifacts for fixture credentials",
   );
   if (
+    mcpSecretScan?.id !== "mcp_artifact_secret_scan" ||
     mcpSecretScan?.if !== "${{ always() && inputs.target_id == 'managed-image-mcp-discovery' }}" ||
     mcpSecretScan.run !==
       'npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"'
@@ -730,7 +731,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const upload = requireStep(errors, workflowSteps, "Upload E2E artifacts");
   if (
     upload?.if !==
-      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' }}" ||
+      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' && (inputs.target_id != 'managed-image-mcp-discovery' || steps.mcp_artifact_secret_scan.outcome == 'success') }}" ||
     upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference ||
     !isDeepStrictEqual(record(upload.with), {
       name: "${{ steps.execution_plan.outputs.upload_name }}",

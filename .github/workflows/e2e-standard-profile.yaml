@@ -656,7 +656,8 @@ jobs:
           fi
           npx tsx tools/e2e/target-catalogue.mts run "$CATALOGUE_ID" "$TEST_FILE"
 
-      - name: Scan managed-image MCP artifacts for fixture credentials
+      - id: mcp_artifact_secret_scan
+        name: Scan managed-image MCP artifacts for fixture credentials
         if: ${{ always() && inputs.target_id == 'managed-image-mcp-discovery' }}
         run: npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"
 
@@ -749,7 +750,7 @@ jobs:
             e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt
 
       - name: Upload E2E artifacts
-        if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' }}
+        if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' && (inputs.target_id != 'managed-image-mcp-discovery' || steps.mcp_artifact_secret_scan.outcome == 'success') }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: ${{ steps.execution_plan.outputs.upload_name }}

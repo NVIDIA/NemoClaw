@@ -26,6 +26,28 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("rejects managed-image MCP uploads that ignore the credential scan outcome", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
+        "utf8",
+      ),
+    ) as { jobs: { run: { steps: Array<{ name?: string; if?: string }> } } };
+    const upload = profile.jobs.run.steps.find(({ name }) => name === "Upload E2E artifacts")!;
+    upload.if =
+      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' }}";
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
+    const profilePath = path.join(directory, "profile.yaml");
+    try {
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must upload only its validated artifact path with the reviewed action",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
     expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(
       FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
