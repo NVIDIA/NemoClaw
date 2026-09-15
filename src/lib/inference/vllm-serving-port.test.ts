@@ -455,6 +455,12 @@ describe("managed vLLM serving-port guard (#8685)", () => {
       MANAGED_CONTAINER_ID,
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
+    expect(mocks.dockerCapture).toHaveBeenCalledWith(
+      ["port", MANAGED_CONTAINER_ID, "8000"],
+      expect.objectContaining({
+        env: expect.objectContaining({ DOCKER_CONTEXT: "default" }),
+      }),
+    );
     expect(mocks.dockerRunDetached).toHaveBeenCalled();
     expect(errSpy.mock.calls.flat().join("\n")).not.toContain("another process");
     const dockerOptions = [
