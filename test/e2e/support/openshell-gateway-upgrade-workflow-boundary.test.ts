@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   catalogueTarget,
   E2E_TARGET_CATALOGUE,
@@ -15,6 +15,7 @@ import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-g
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
+  captureGatewayUpgradeProbeEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
@@ -92,6 +93,20 @@ describe("OpenShell gateway upgrade boundary", () => {
         /exact reviewed gateway-upgrade fixture/,
       );
     });
+  });
+
+  it("retains both gateway probes when one exits nonzero", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 1 })
+      .mockResolvedValueOnce({ exitCode: 0 });
+    const sandboxName = "name with spaces; literal-argument";
+
+    await expect(captureGatewayUpgradeProbeEvidence(sandboxName, capture)).resolves.toBe(false);
+    expect(capture.mock.calls).toEqual([
+      ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
+      ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
+    ]);
   });
 
   it("freshens only the retryable old fixture install", () => {

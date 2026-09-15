@@ -99,6 +99,25 @@ function absentProbe() {
   };
 }
 
+function listedPresentProbe(phase = "Ready") {
+  return {
+    status: 0,
+    output: "",
+    stdout: JSON.stringify([
+      {
+        id: SANDBOX_ID,
+        name: "alpha",
+        labels: {},
+        resource_version: 1,
+        created_at: "2026-09-12T00:00:00Z",
+        phase,
+        current_policy_version: 1,
+      },
+    ]),
+    stderr: "",
+  };
+}
+
 describe("non-resumed onboard replacement journal (#7735)", () => {
   let session: Session;
 
@@ -322,13 +341,88 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
   });
 
-  it("fails closed when the gateway reports neither a live sandbox nor explicit absence", () => {
-    mocks.captureOpenshell.mockReturnValue({
+  it.each([
+    `Error: code: 'Internal error', message: "h2 protocol error"`,
+    `Error: code: 'Permission denied', message: "sandbox has no spec"`,
+    `Error: code: 'Internal error', message: "sandbox has no spec"\nconnection refused`,
+    `Error: code: 'Permission denied', message: "provider 'compatible-endpoint' not found"`,
+    `Error: code: 'The system is not in a state required for the operation's execution', message: "gateway 'nemoclaw' not found"`,
+    `Error: code: 'The system is not in a state required for the operation's execution', message: "provider 'compatible-endpoint' not found"\nconnection refused`,
+  ])("does not inventory an unrelated or mixed diagnostic [case %#]", (stderr) => {
+    mocks.captureOpenshell.mockReturnValue({ status: 1, output: "", stdout: "", stderr });
+    expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
+    expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(1);
+    expect(mocks.captureOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    'status: Internal, message: "sandbox has no spec", details: []',
+    `Error: code: 'Internal error', message: "sandbox has no spec"`,
+    `Error:   × code: 'Internal error', message: "sandbox has no spec"\n`,
+    `Error:   × code: 'Internal error',\n  │ message: "sandbox has no spec"\n`,
+    `Error:   × code: 'The system is not in a state required for the operation's\n  │ execution', message: "provider 'compatible-endpoint' not found"\n\n`,
+  ])("journals retained legacy identity for the OpenShell diagnostic [case %#]", (diagnostic) => {
+    const configFailure = {
       status: 1,
       output: "",
       stdout: "",
-      stderr: "Error: connection refused",
+      stderr: diagnostic,
+    };
+    mocks.captureOpenshell
+      .mockReturnValueOnce(configFailure)
+      .mockReturnValueOnce(listedPresentProbe("Provisioning"))
+      .mockReturnValueOnce(configFailure)
+      .mockReturnValueOnce(listedPresentProbe("Provisioning"));
+
+    open();
+
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "planned",
+      sourceLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
     });
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
+      expect.objectContaining({ timeout: 15_000 }),
+    );
+  });
+
+  it.each([
+    { status: 1, stdout: "", stderr: "transport error" },
+    { status: 0, stdout: "malformed-json", stderr: "" },
+  ])("reports inconclusive inventory without exposing its output [case %#]", (inventory) => {
+    mocks.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      })
+      .mockReturnValueOnce({ ...inventory, output: "credential-canary" });
+    let thrown: unknown;
+    try {
+      open();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/Legacy config is unreadable; inventory=unknown/);
+    expect((thrown as Error).message).not.toContain("credential-canary");
+    expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+  });
+
+  it("does not infer deletion from an empty inventory after a config read fails", () => {
+    mocks.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: 'status: Internal, message: "sandbox has no spec", details: []',
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "[]", stderr: "" });
 
     expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();

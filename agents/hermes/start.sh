@@ -203,15 +203,19 @@ prepare_restricted_log() {
 }
 
 _START_LOG="/tmp/nemoclaw-start.log"
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$EUID" -eq 0 ]; then
   prepare_restricted_log "$_START_LOG" root:root 600
 else
   prepare_restricted_log "$_START_LOG" "" 600
 fi
 exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 
-# ── Drop unnecessary Linux capabilities (shared) ────────────────
-drop_capabilities /usr/local/bin/nemoclaw-start "$@"
+# OpenShell 0.0.116 starts managed workloads as the non-root image user and
+# owns their capability enforcement. Retain the compatibility drop only for a
+# direct container runtime that explicitly overrides the image user to root.
+if [ "$(id -u)" -eq 0 ]; then
+  drop_capabilities /usr/local/bin/nemoclaw-start "$@"
+fi
 
 NEMOCLAW_CMD=("$@")
 

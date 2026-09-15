@@ -337,11 +337,22 @@ describe("sandbox registry metadata", () => {
     const occupied = dashboardPorts.getRegistryOccupiedDashboardPorts("other-sandbox");
     expect(occupied.size).toBe(0);
     expect(
-      dashboardPorts.findAvailableDashboardPort(
+      dashboardPorts.findAvailableDashboardPortFromObservations(
         "other-sandbox",
         18789,
-        null,
-        () => false,
+        [
+          {
+            state: "absent",
+            forward: {
+              gatewayEndpoint: "https://127.0.0.1:8080",
+              gatewayName: "nemoclaw",
+              workspace: "default",
+              sandboxName: "other-sandbox",
+              localHost: "127.0.0.1",
+              port: 18789,
+            },
+          },
+        ],
         occupied,
       ),
     ).toBe(18789);
