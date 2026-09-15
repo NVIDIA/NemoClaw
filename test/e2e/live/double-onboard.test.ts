@@ -31,6 +31,11 @@ const RECOVERY_PROBE_TIMEOUT_MS =
   Number(process.env.NEMOCLAW_E2E_RECOVERY_PROBE_TIMEOUT_SECONDS ?? 180) * 1_000;
 const TEST_TIMEOUT_MS = testTimeout(90 * 60_000);
 
+interface ForwardCleanupTarget {
+  port: string;
+  sandboxName: string;
+}
+
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 validateSandboxName(SANDBOX_A);
 validateSandboxName(SANDBOX_B);
@@ -184,8 +189,19 @@ async function waitForSandboxAbsent(
 async function cleanupDoubleOnboardResources(
   host: HostCliClient,
   sandbox: SandboxClient,
-  forwardPorts: readonly string[],
+  forwardTargets: readonly ForwardCleanupTarget[],
 ): Promise<void> {
+  for (const { port, sandboxName } of forwardTargets) {
+    await ignoreCleanupError(() =>
+      host.cleanupForward(Number(port), {
+        artifactName: `cleanup-openshell-forward-stop-${sandboxName}-${port}`,
+        env: commandEnv(),
+        gatewayName: "nemoclaw",
+        sandboxName,
+        timeoutMs: 30_000,
+      }),
+    );
+  }
   const names = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
   for (const name of names) {
     await ignoreCleanupError(() =>
@@ -202,15 +218,6 @@ async function cleanupDoubleOnboardResources(
         artifactName: `cleanup-openshell-sandbox-delete-${name}`,
         env: commandEnv(),
         timeoutMs: 60_000,
-      }),
-    );
-  }
-  for (const port of forwardPorts) {
-    await ignoreCleanupError(() =>
-      sandbox.openshell(["forward", "stop", port], {
-        artifactName: `cleanup-openshell-forward-stop-${port}`,
-        env: commandEnv(),
-        timeoutMs: 30_000,
       }),
     );
   }
@@ -324,16 +331,15 @@ test(
       process.env.NEMOCLAW_AGENT === "hermes"
         ? (process.env.NEMOCLAW_HERMES_API_PORT ?? "8643")
         : null;
-    const forwardPorts = [DASHBOARD_PORT_A, DASHBOARD_PORT_B, hermesApiPort].filter(
-      (port): port is string => Boolean(port),
-    );
-    forwardPorts.forEach((port) => {
-      cleanup.trackForward(host, Number(port), {
-        artifactName: `cleanup-openshell-forward-stop-${port}`,
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-    });
+    const forwardTargets: ForwardCleanupTarget[] = [
+      ...(INSTALL_SANDBOX_NAME
+        ? [{ port: DASHBOARD_PORT_A, sandboxName: INSTALL_SANDBOX_NAME }]
+        : []),
+      { port: DASHBOARD_PORT_A, sandboxName: SANDBOX_A },
+      { port: DASHBOARD_PORT_B, sandboxName: SANDBOX_B },
+      ...(hermesApiPort ? [{ port: hermesApiPort, sandboxName: SANDBOX_A }] : []),
+    ];
+    const forwardPorts = [...new Set(forwardTargets.map(({ port }) => port))];
     const cleanupSandboxNames = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
     [...cleanupSandboxNames].reverse().forEach((name) => {
       cleanup.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
@@ -349,6 +355,15 @@ test(
         timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
       });
     });
+    forwardTargets.forEach(({ port, sandboxName }) => {
+      cleanup.trackForward(host, Number(port), {
+        artifactName: `cleanup-openshell-forward-stop-${sandboxName}-${port}`,
+        env: commandEnv(),
+        gatewayName: "nemoclaw",
+        sandboxName,
+        timeoutMs: 30_000,
+      });
+    });
 
     await artifacts.target.declare({
       id: "double-onboard",
@@ -362,7 +377,7 @@ test(
       ],
     });
 
-    await cleanupDoubleOnboardResources(host, sandbox, forwardPorts);
+    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets);
     await lifecycle.stopGatewayRuntime();
     await ignoreCleanupError(() =>
       host.cleanupGatewayRegistration("nemoclaw", {
@@ -558,7 +573,7 @@ test(
     expect(registryHas(SANDBOX_A), "replacement did not register sandbox A").toBe(true);
 
     progress.phase("remove double-onboard resources");
-    await cleanupDoubleOnboardResources(host, sandbox, forwardPorts);
+    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets);
     await waitForSandboxAbsent(sandbox, SANDBOX_A, 60_000);
     await waitForSandboxAbsent(sandbox, SANDBOX_B, 60_000);
     expect(

@@ -472,6 +472,60 @@ describe("E2E fixture clients", () => {
     },
   );
 
+  it("scopes forward cleanup to its sandbox and gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 0 });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupForward(18789, {
+      gatewayName: "nemoclaw",
+      sandboxName: "e2e-double-a",
+    });
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["forward", "stop", "18789", "e2e-double-a", "--gateway", "nemoclaw"],
+    ]);
+  });
+
+  it("rejects incomplete forward cleanup ownership", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupForward(18789, { sandboxName: "e2e-double-a" })).rejects.toThrow(
+      "Scoped forward cleanup requires a gateway name and sandbox name.",
+    );
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("accepts an absent scoped forward", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "forward 18789 not found" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(
+      host.cleanupForward(18789, {
+        gatewayName: "nemoclaw",
+        sandboxName: "e2e-double-a",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("surfaces a foreign scoped forward without retrying an unscoped stop", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "forward belongs to another sandbox" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(
+      host.cleanupForward(18789, {
+        gatewayName: "nemoclaw",
+        sandboxName: "e2e-double-a",
+      }),
+    ).rejects.toThrow("cleanup forward 18789 failed: forward belongs to another sandbox");
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["forward", "stop", "18789", "e2e-double-a", "--gateway", "nemoclaw"],
+    ]);
+  });
+
   it.each(["permission denied", "daemon not running", "some unrelated error: not running"])(
     "host client surfaces unexpected forward cleanup failure: %s",
     async (stderr) => {

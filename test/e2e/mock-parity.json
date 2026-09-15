@@ -487,7 +487,8 @@
         "src/lib/onboard/sandbox-registration.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/onboarding/onboard-finalization-dashboard-forward.test.ts"
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
+        "test/onboarding/onboard-sandbox-recreation.test.ts"
       ]
     },
     {
