@@ -5,8 +5,11 @@ import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gatewa
 import { isValidName } from "../../sandbox-name-contract";
 import {
   createTempSshConfig,
+  runWithTempSshConfigCleanupAsync,
   TempSshConfigCleanupError,
+  TempSshConfigOperationCleanupError,
   type TempSshConfig,
+  type TempSshConfigRunResult,
 } from "../../sandbox/temp-ssh-config";
 import { resolveOpenshell } from "./resolve";
 import {
@@ -92,14 +95,18 @@ export function createCliOpenShellSandboxSshExecutor(
           );
         } catch (error) {
           if (error instanceof TempSshConfigCleanupError) {
-            return { kind: "failed", reason: "cleanup", retainedDirectory: error.dir };
+            return {
+              kind: "failed",
+              reason: "cleanup",
+              retainedDirectory: error.dir,
+              cleanupError: error,
+            };
           }
           throw error;
         }
-        let outcome: OpenShellSandboxSshResult | undefined;
-        let operationError: unknown;
+        let sshPhase: TempSshConfigRunResult<OpenShellSandboxSshResult>;
         try {
-          outcome = await (async () => {
+          sshPhase = await runWithTempSshConfigCleanupAsync(temporary, async () => {
             const result = await run(
               "ssh",
               [
@@ -145,34 +152,37 @@ export function createCliOpenShellSandboxSshExecutor(
               stdout: result.stdout,
               stderr: result.stderr,
             };
-          })();
+          });
         } catch (error) {
-          operationError = error;
-        }
-        try {
-          temporary.cleanup();
-        } catch (error) {
-          if (error instanceof TempSshConfigCleanupError) {
-            const command =
-              outcome?.kind === "completed"
-                ? {
-                    exitCode: outcome.exitCode,
-                    stdout: outcome.stdout,
-                    stderr: outcome.stderr,
-                  }
-                : outcome?.command;
+          if (error instanceof TempSshConfigOperationCleanupError) {
             return {
               kind: "failed",
               reason: "cleanup",
-              retainedDirectory: error.dir,
-              ...(deps.commandTransport && command ? { command } : {}),
+              retainedDirectory: error.cleanupError.dir,
+              operationError: error.operationError,
+              cleanupError: error.cleanupError,
             };
           }
           throw error;
         }
-        if (operationError !== undefined) throw operationError;
-        if (!outcome) throw new Error("OpenShell SSH transport completed without an outcome");
-        return outcome;
+        if (sshPhase.cleanupError) {
+          const command =
+            sshPhase.result.kind === "completed"
+              ? {
+                  exitCode: sshPhase.result.exitCode,
+                  stdout: sshPhase.result.stdout,
+                  stderr: sshPhase.result.stderr,
+                }
+              : sshPhase.result.command;
+          return {
+            kind: "failed",
+            reason: "cleanup",
+            retainedDirectory: sshPhase.cleanupError.dir,
+            cleanupError: sshPhase.cleanupError,
+            ...(deps.commandTransport && command ? { command } : {}),
+          };
+        }
+        return sshPhase.result;
       } catch {
         return { kind: "failed", reason: "transport" };
       }

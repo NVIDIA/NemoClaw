@@ -156,7 +156,9 @@ describe("discoverFreshOpenClawImagePluginInstalls", () => {
       });
       expect(result).toEqual({
         ok: false,
-        error: `OpenClaw plugin discovery completed, but temporary SSH configuration remains at ${JSON.stringify(retainedDirectory)}`,
+        error:
+          `OpenClaw plugin discovery completed, but temporary SSH configuration remains at ${JSON.stringify(retainedDirectory)}. ` +
+          "Remove that directory before retrying.",
       });
       expect(retainedDirectory).toContain("nemoclaw-plugin-discovery-");
     } finally {

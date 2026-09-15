@@ -6,7 +6,7 @@ import { spawnSync, type SpawnSyncOptions } from "child_process";
 
 import { isObjectRecord } from "../core/json-types.js";
 import { shellQuote } from "../core/shell-quote.js";
-import { createTempSshConfig, TempSshConfigCleanupError } from "../sandbox/temp-ssh-config.js";
+import { createTempSshConfig, runWithTempSshConfigCleanup } from "../sandbox/temp-ssh-config.js";
 import {
   OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS,
   shouldPreserveOpenClawManagedExtensions,
@@ -214,42 +214,21 @@ export function discoverFreshOpenClawImagePluginInstalls(
     return { ok: false, error: "could not get SSH config for OpenClaw plugin discovery" };
   }
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-plugin-discovery-");
-  let outcome: OpenClawManagedExtensionDiscoveryResult | undefined;
-  let operationError: unknown;
-  try {
-    outcome = discoverFreshOpenClawPluginExtensionDirs(deps, tempSshConfig.file, sandboxName, dir);
-  } catch (error) {
-    operationError = error;
-  }
-  let cleanupError: unknown;
-  try {
-    tempSshConfig.cleanup();
-  } catch (error) {
-    cleanupError = error;
-  }
-  if (operationError !== undefined) {
-    if (cleanupError !== undefined) {
-      throw new AggregateError(
-        [operationError, cleanupError],
-        `OpenClaw plugin discovery failed and temporary SSH configuration remains at ${JSON.stringify(tempSshConfig.dir)}`,
-      );
-    }
-    throw operationError;
-  }
-  if (cleanupError !== undefined) {
-    const retainedDirectory =
-      cleanupError instanceof TempSshConfigCleanupError ? cleanupError.dir : tempSshConfig.dir;
-    const cleanupMessage = `temporary SSH configuration remains at ${JSON.stringify(retainedDirectory)}`;
+  const sshPhase = runWithTempSshConfigCleanup(tempSshConfig, () =>
+    discoverFreshOpenClawPluginExtensionDirs(deps, tempSshConfig.file, sandboxName, dir),
+  );
+  if (sshPhase.cleanupError) {
+    const cleanupMessage =
+      `temporary SSH configuration remains at ${JSON.stringify(sshPhase.cleanupError.dir)}. ` +
+      "Remove that directory before retrying.";
     return {
       ok: false,
-      error:
-        outcome && !outcome.ok
-          ? `${outcome.error}; ${cleanupMessage}`
-          : `OpenClaw plugin discovery completed, but ${cleanupMessage}`,
+      error: !sshPhase.result.ok
+        ? `${sshPhase.result.error}; ${cleanupMessage}`
+        : `OpenClaw plugin discovery completed, but ${cleanupMessage}`,
     };
   }
-  if (!outcome) throw new Error("OpenClaw plugin discovery completed without an outcome");
-  return outcome;
+  return sshPhase.result;
 }
 
 function isSafeOpenClawPluginInstallId(id: string): boolean {

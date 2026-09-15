@@ -17,6 +17,7 @@ import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-defin
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
   createTempSshConfig,
+  runWithTempSshConfigCleanupAsync,
   TempSshConfigCleanupError,
   type TempSshConfig,
 } from "../../sandbox/temp-ssh-config";
@@ -668,75 +669,47 @@ export function createCliHermesAcpSshTransport(
         detached: (deps.platform ?? process.platform) !== "win32",
         env: environment,
       };
-      let outcome: HermesAcpSshOutcome | undefined;
-      let operationError: unknown;
-      try {
-        outcome = await (async () => {
-          let probe: ChildProcessWithoutNullStreams;
-          try {
-            probe = spawnChild(
-              binaries.ssh,
-              buildHermesAcpProbeSshArgs(temporary.file, host),
-              spawnOptions,
-            );
-          } catch {
-            return failure("invocation", "The SSH client could not start.", 1);
-          }
-          const expected = `${HERMES_LIFECYCLE_DEFINITION.agentVersion}\n${ACP_SDK_VERSION}`;
-          const probeFailure = await runProbe(
-            probe,
-            expected,
-            request,
-            deps.signalSource ?? processSignals,
+      const sshPhase = await runWithTempSshConfigCleanupAsync(temporary, async () => {
+        let probe: ChildProcessWithoutNullStreams;
+        try {
+          probe = spawnChild(
+            binaries.ssh,
+            buildHermesAcpProbeSshArgs(temporary.file, host),
+            spawnOptions,
           );
-          if (probeFailure) return probeFailure;
-
-          const statusNonce = (
-            deps.createSessionStatusNonce ??
-            (() => randomBytes(SESSION_STATUS_NONCE_BYTES).toString("hex"))
-          )();
-          assertSessionStatusNonce(statusNonce);
-          let session: ChildProcessWithoutNullStreams;
-          try {
-            session = spawnChild(
-              binaries.ssh,
-              buildHermesAcpSessionSshArgs(temporary.file, host, statusNonce),
-              spawnOptions,
-            );
-          } catch {
-            return failure("invocation", "The SSH client could not start.", 1);
-          }
-          request.onSessionStarted?.();
-          return await runSession(
-            session,
-            request,
-            deps.signalSource ?? processSignals,
-            statusNonce,
-          );
-        })();
-      } catch (error) {
-        operationError = error;
-      }
-      let cleanupOperationError: TempSshConfigCleanupError | undefined;
-      try {
-        temporary.cleanup();
-      } catch (error) {
-        cleanupOperationError =
-          error instanceof TempSshConfigCleanupError
-            ? error
-            : new TempSshConfigCleanupError(temporary.dir, error);
-      }
-      if (operationError !== undefined && cleanupOperationError) {
-        throw new AggregateError(
-          [operationError, cleanupOperationError],
-          `Hermes ACP transport failed and temporary SSH configuration remains at ${JSON.stringify(temporary.dir)}`,
+        } catch {
+          return failure("invocation", "The SSH client could not start.", 1);
+        }
+        const expected = `${HERMES_LIFECYCLE_DEFINITION.agentVersion}\n${ACP_SDK_VERSION}`;
+        const probeFailure = await runProbe(
+          probe,
+          expected,
+          request,
+          deps.signalSource ?? processSignals,
         );
-      }
-      if (operationError !== undefined) throw operationError;
-      if (!outcome) throw new Error("Hermes ACP transport completed without an outcome");
-      return cleanupOperationError
-        ? { ...outcome, cleanupError: cleanupError(cleanupOperationError.dir) }
-        : outcome;
+        if (probeFailure) return probeFailure;
+
+        const statusNonce = (
+          deps.createSessionStatusNonce ??
+          (() => randomBytes(SESSION_STATUS_NONCE_BYTES).toString("hex"))
+        )();
+        assertSessionStatusNonce(statusNonce);
+        let session: ChildProcessWithoutNullStreams;
+        try {
+          session = spawnChild(
+            binaries.ssh,
+            buildHermesAcpSessionSshArgs(temporary.file, host, statusNonce),
+            spawnOptions,
+          );
+        } catch {
+          return failure("invocation", "The SSH client could not start.", 1);
+        }
+        request.onSessionStarted?.();
+        return await runSession(session, request, deps.signalSource ?? processSignals, statusNonce);
+      });
+      return sshPhase.cleanupError
+        ? { ...sshPhase.result, cleanupError: cleanupError(sshPhase.cleanupError.dir) }
+        : sshPhase.result;
     },
   };
 }

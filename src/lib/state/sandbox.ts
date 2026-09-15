@@ -55,8 +55,9 @@ import {
 import { shellQuote } from "../runner.js";
 import {
   createTempSshConfig,
+  runWithTempSshConfigCleanup,
+  runWithTempSshConfigCleanupAsync,
   TempSshConfigCleanupError,
-  type TempSshConfig,
 } from "../sandbox/temp-ssh-config.js";
 import {
   SnapshotSanitizerPrerequisiteError,
@@ -1704,67 +1705,8 @@ function classifyPreBackupAuditEntry(
   return "violation";
 }
 
-type TempSshConfigRunResult<T> = Readonly<{
-  result: T;
-  cleanupError?: TempSshConfigCleanupError;
-}>;
-type TempSshConfigOperationFailure = Readonly<{ error: unknown }> | undefined;
-
 function retainedTempSshConfigMessage(error: TempSshConfigCleanupError): string {
   return `${error.message}. Remove that directory before continuing.`;
-}
-
-function finishTempSshConfigRun<T>(
-  tempSshConfig: TempSshConfig,
-  result: T,
-  operationFailure: TempSshConfigOperationFailure,
-): TempSshConfigRunResult<T> {
-  let cleanupError: TempSshConfigCleanupError | undefined;
-  try {
-    tempSshConfig.cleanup();
-  } catch (error) {
-    cleanupError =
-      error instanceof TempSshConfigCleanupError
-        ? error
-        : new TempSshConfigCleanupError(tempSshConfig.dir, error);
-  }
-
-  if (operationFailure && cleanupError) {
-    throw new AggregateError(
-      [operationFailure.error, cleanupError],
-      `Sandbox state operation failed and temporary SSH configuration remains at ${JSON.stringify(tempSshConfig.dir)}`,
-    );
-  }
-  if (operationFailure) throw operationFailure.error;
-  return cleanupError ? { result, cleanupError } : { result };
-}
-
-function runWithTempSshConfigCleanup<T>(
-  tempSshConfig: TempSshConfig,
-  operation: () => T,
-): TempSshConfigRunResult<T> {
-  let result!: T;
-  let operationFailure: TempSshConfigOperationFailure;
-  try {
-    result = operation();
-  } catch (error) {
-    operationFailure = { error };
-  }
-  return finishTempSshConfigRun(tempSshConfig, result, operationFailure);
-}
-
-async function runWithTempSshConfigCleanupAsync<T>(
-  tempSshConfig: TempSshConfig,
-  operation: () => Promise<T>,
-): Promise<TempSshConfigRunResult<T>> {
-  let result!: T;
-  let operationFailure: TempSshConfigOperationFailure;
-  try {
-    result = await operation();
-  } catch (error) {
-    operationFailure = { error };
-  }
-  return finishTempSshConfigRun(tempSshConfig, result, operationFailure);
 }
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
@@ -2301,54 +2243,65 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     };
   }
 
-  // SECURITY: Strip credentials from the local backup
-  sanitizeBackupDirectory(backupPath);
+  try {
+    // SECURITY: Strip credentials from the local backup
+    sanitizeBackupDirectory(backupPath);
 
-  // Record dynamically discovered directories in the manifest alongside the
-  // exact declarations so restoreSandboxState() can find them in backupPath.
-  // Preserve exact declaration order, followed by prefix-discovery order.
-  const discoveredStateDirs = backedUpDirs.filter(
-    (dirName) =>
-      !stateDirs.includes(dirName) && stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
-  );
-  if (discoveredStateDirs.length > 0) {
-    manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
-    _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
-  }
-  manifest.backedUpDirs = backedUpDirs;
-  manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
-    manifest.stateDirs.includes(failedDir),
-  );
-  manifest.backupComplete =
-    failedDirs.length === 0 && failedFiles.length === 0 && cleanupError === undefined;
+    // Record dynamically discovered directories in the manifest alongside the
+    // exact declarations so restoreSandboxState() can find them in backupPath.
+    // Preserve exact declaration order, followed by prefix-discovery order.
+    const discoveredStateDirs = backedUpDirs.filter(
+      (dirName) =>
+        !stateDirs.includes(dirName) &&
+        stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
+    );
+    if (discoveredStateDirs.length > 0) {
+      manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
+      _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
+    }
+    manifest.backedUpDirs = backedUpDirs;
+    manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
+      manifest.stateDirs.includes(failedDir),
+    );
+    manifest.backupComplete =
+      failedDirs.length === 0 && failedFiles.length === 0 && cleanupError === undefined;
 
-  const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
-  if (publicationError) {
+    const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+    if (publicationError) {
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        error: cleanupError
+          ? `${publicationError}; ${retainedTempSshConfigMessage(cleanupError)}`
+          : publicationError,
+      };
+    }
+    writeManifest(backupPath, manifest);
+    manifest.backupPath = backupPath;
+
     return {
-      success: false,
-      backedUpDirs: [],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      error: cleanupError
-        ? `${publicationError}; ${retainedTempSshConfigMessage(cleanupError)}`
-        : publicationError,
+      success: failedDirs.length === 0 && failedFiles.length === 0 && cleanupError === undefined,
+      unreachable,
+      manifest,
+      backedUpDirs,
+      failedDirs,
+      ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
+      backedUpFiles,
+      failedFiles,
+      ...(cleanupError ? { error: retainedTempSshConfigMessage(cleanupError) } : {}),
     };
+  } catch (error) {
+    if (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `Sandbox state backup finalization failed and temporary SSH configuration remains at ${JSON.stringify(cleanupError.dir)}`,
+      );
+    }
+    throw error;
   }
-  writeManifest(backupPath, manifest);
-  manifest.backupPath = backupPath;
-
-  return {
-    success: failedDirs.length === 0 && failedFiles.length === 0 && cleanupError === undefined,
-    unreachable,
-    manifest,
-    backedUpDirs,
-    failedDirs,
-    ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
-    backedUpFiles,
-    failedFiles,
-    ...(cleanupError ? { error: retainedTempSshConfigMessage(cleanupError) } : {}),
-  };
 }
 
 // ── Restore ────────────────────────────────────────────────────────

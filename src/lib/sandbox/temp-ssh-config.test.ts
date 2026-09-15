@@ -6,7 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createTempSshConfig, TempSshConfigCleanupError } from "./temp-ssh-config.js";
+import {
+  createTempSshConfig,
+  runWithTempSshConfigCleanup,
+  runWithTempSshConfigCleanupAsync,
+  TempSshConfigCleanupError,
+  TempSshConfigOperationCleanupError,
+} from "./temp-ssh-config.js";
 
 describe("createTempSshConfig", () => {
   let tmpRoot: string;
@@ -83,5 +89,42 @@ describe("createTempSshConfig", () => {
     );
 
     remove.mockRestore();
+  });
+
+  it.each([
+    {
+      variant: "synchronous",
+      run: (temp: ReturnType<typeof createTempSshConfig>, operation: () => never) =>
+        runWithTempSshConfigCleanup(temp, operation),
+    },
+    {
+      variant: "asynchronous",
+      run: (temp: ReturnType<typeof createTempSshConfig>, operation: () => never) =>
+        runWithTempSshConfigCleanupAsync(temp, async () => operation()),
+    },
+  ])("preserves $variant operation and cleanup failures in order (#10947)", async ({ run }) => {
+    const temp = createTempSshConfig("Host openshell-alpha\n", "nemoclaw-ssh-combined-");
+    const operationError = new Error("operation failed");
+    const remove = vi.spyOn(fs, "rmSync").mockImplementationOnce(() => {
+      throw new Error("remove failed");
+    });
+
+    let failure: unknown;
+    try {
+      await run(temp, () => {
+        throw operationError;
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(TempSshConfigOperationCleanupError);
+    expect((failure as AggregateError).errors).toEqual([
+      operationError,
+      expect.objectContaining({ name: "TempSshConfigCleanupError", dir: temp.dir }),
+    ]);
+
+    remove.mockRestore();
+    temp.cleanup();
   });
 });

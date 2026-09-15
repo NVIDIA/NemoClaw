@@ -11,6 +11,13 @@ export type TempSshConfig = {
   cleanup: () => void;
 };
 
+export type TempSshConfigRunResult<T> = Readonly<{
+  result: T;
+  cleanupError?: TempSshConfigCleanupError;
+}>;
+
+type TempSshConfigOperationFailure = Readonly<{ error: unknown }> | undefined;
+
 export class TempSshConfigCleanupError extends Error {
   readonly dir: string;
 
@@ -22,6 +29,71 @@ export class TempSshConfigCleanupError extends Error {
     this.name = "TempSshConfigCleanupError";
     this.dir = dir;
   }
+}
+
+export class TempSshConfigOperationCleanupError extends AggregateError {
+  readonly operationError: unknown;
+  readonly cleanupError: TempSshConfigCleanupError;
+
+  constructor(operationError: unknown, cleanupError: TempSshConfigCleanupError) {
+    super(
+      [operationError, cleanupError],
+      `SSH operation failed and temporary SSH configuration remains at ${JSON.stringify(cleanupError.dir)}`,
+    );
+    this.name = "TempSshConfigOperationCleanupError";
+    this.operationError = operationError;
+    this.cleanupError = cleanupError;
+  }
+}
+
+function finishTempSshConfigRun<T>(
+  tempSshConfig: TempSshConfig,
+  result: T,
+  operationFailure: TempSshConfigOperationFailure,
+): TempSshConfigRunResult<T> {
+  let cleanupError: TempSshConfigCleanupError | undefined;
+  try {
+    tempSshConfig.cleanup();
+  } catch (error) {
+    cleanupError =
+      error instanceof TempSshConfigCleanupError
+        ? error
+        : new TempSshConfigCleanupError(tempSshConfig.dir, error);
+  }
+
+  if (operationFailure && cleanupError) {
+    throw new TempSshConfigOperationCleanupError(operationFailure.error, cleanupError);
+  }
+  if (operationFailure) throw operationFailure.error;
+  return cleanupError ? { result, cleanupError } : { result };
+}
+
+export function runWithTempSshConfigCleanup<T>(
+  tempSshConfig: TempSshConfig,
+  operation: () => T,
+): TempSshConfigRunResult<T> {
+  let result!: T;
+  let operationFailure: TempSshConfigOperationFailure;
+  try {
+    result = operation();
+  } catch (error) {
+    operationFailure = { error };
+  }
+  return finishTempSshConfigRun(tempSshConfig, result, operationFailure);
+}
+
+export async function runWithTempSshConfigCleanupAsync<T>(
+  tempSshConfig: TempSshConfig,
+  operation: () => Promise<T>,
+): Promise<TempSshConfigRunResult<T>> {
+  let result!: T;
+  let operationFailure: TempSshConfigOperationFailure;
+  try {
+    result = await operation();
+  } catch (error) {
+    operationFailure = { error };
+  }
+  return finishTempSshConfigRun(tempSshConfig, result, operationFailure);
 }
 
 function removeTempDir(dir: string): void {

@@ -221,10 +221,45 @@ describe("CLI sandbox SSH execution", () => {
       }),
     });
 
+    expect(await executor.run(request)).toMatchObject({
+      kind: "failed",
+      reason: "cleanup",
+      retainedDirectory,
+      cleanupError: { name: "TempSshConfigCleanupError", dir: retainedDirectory },
+    });
+  });
+
+  it("preserves SSH execution and credential cleanup failures together (#10947)", async () => {
+    const { run } = fixture();
+    const retainedDirectory = "/tmp/nemoclaw-ssh-combined-failure";
+    const operationError = new Error("private diagnostic");
+    const cleanupError = new TempSshConfigCleanupError(
+      retainedDirectory,
+      new Error("injected failure"),
+    );
+    run
+      .mockReset()
+      .mockResolvedValueOnce(success)
+      .mockResolvedValueOnce({ ...success, stdout: config })
+      .mockRejectedValueOnce(operationError);
+    const executor = createCliOpenShellSandboxSshExecutor({
+      resolveBinary: () => "/bin/openshell",
+      runBuffered: run,
+      createTempConfig: () => ({
+        dir: retainedDirectory,
+        file: `${retainedDirectory}/ssh_config`,
+        cleanup: () => {
+          throw cleanupError;
+        },
+      }),
+    });
+
     expect(await executor.run(request)).toEqual({
       kind: "failed",
       reason: "cleanup",
       retainedDirectory,
+      operationError,
+      cleanupError,
     });
   });
 
@@ -243,10 +278,11 @@ describe("CLI sandbox SSH execution", () => {
       }),
     });
 
-    expect(await executor.run(request)).toEqual({
+    expect(await executor.run(request)).toMatchObject({
       kind: "failed",
       reason: "cleanup",
       retainedDirectory,
+      cleanupError: { name: "TempSshConfigCleanupError", dir: retainedDirectory },
       command: { exitCode: 17, stdout: "out", stderr: "err" },
     });
   });

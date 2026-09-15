@@ -38,6 +38,10 @@ function throwInjectedCleanupFailure(): never {
   throw Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
 }
 
+function throwInjectedManifestFailure(): never {
+  throw new Error("injected manifest publication failure");
+}
+
 function isSnapshotSshTempDirectory(target: fs.PathLike): boolean {
   return /^nemoclaw-state-[A-Za-z0-9]{6}$/u.test(path.basename(String(target)));
 }
@@ -271,7 +275,7 @@ describe("runtime auth state across snapshot backup/restore (#6852)", () => {
 });
 
 describe("snapshot temporary SSH credential cleanup", () => {
-  it("fails backup and restore with retained-directory guidance (#10947)", async () => {
+  it("preserves cleanup failures through backup finalization and restore (#10947)", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-cleanup-"));
     try {
       const binDir = path.join(fixture, "bin");
@@ -291,6 +295,7 @@ describe("snapshot temporary SSH credential cleanup", () => {
       const backupPath = completeBackup.manifest!.backupPath;
 
       const originalRmSync = fs.rmSync;
+      const originalRenameSync = fs.renameSync;
       const retainedDirectories: string[] = [];
       fs.rmSync = ((target, options) =>
         isSnapshotSshTempDirectory(target)
@@ -309,8 +314,29 @@ describe("snapshot temporary SSH credential cleanup", () => {
           success: false,
           error: expect.stringContaining("Remove that directory before continuing"),
         });
-        expect(retainedDirectories).toHaveLength(2);
+
+        fs.renameSync = ((source, destination) =>
+          path.basename(String(destination)) === "rebuild-manifest.json"
+            ? throwInjectedManifestFailure()
+            : originalRenameSync(source, destination)) as typeof fs.renameSync;
+        syncBuiltinESMExports();
+        let finalizationFailure: unknown;
+        try {
+          sandboxState.backupSandboxState("alpha", { name: "combined-failure" });
+        } catch (error) {
+          finalizationFailure = error;
+        }
+        expect(finalizationFailure).toBeInstanceOf(AggregateError);
+        expect((finalizationFailure as AggregateError).errors).toEqual([
+          expect.objectContaining({ message: "injected manifest publication failure" }),
+          expect.objectContaining({
+            name: "TempSshConfigCleanupError",
+            dir: retainedDirectories[2],
+          }),
+        ]);
+        expect(retainedDirectories).toHaveLength(3);
       } finally {
+        fs.renameSync = originalRenameSync;
         fs.rmSync = originalRmSync;
         syncBuiltinESMExports();
         originalRmSync(retainedDirectories[0] ?? path.join(fixture, "missing-temp-0"), {
@@ -318,6 +344,10 @@ describe("snapshot temporary SSH credential cleanup", () => {
           force: true,
         });
         originalRmSync(retainedDirectories[1] ?? path.join(fixture, "missing-temp-1"), {
+          recursive: true,
+          force: true,
+        });
+        originalRmSync(retainedDirectories[2] ?? path.join(fixture, "missing-temp-2"), {
           recursive: true,
           force: true,
         });
