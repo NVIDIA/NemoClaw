@@ -13,6 +13,8 @@ export interface OpenClawTelegramState {
   credentialPresent: boolean;
   pluginEnabled: boolean;
   pluginPresent: boolean;
+  gatewayCredentialReady?: boolean;
+  runtimeCredentialState?: "missing" | "revision-scoped" | "unexpected";
 }
 
 export function openClawHasConfiguredTelegram(state: OpenClawTelegramState): boolean {
