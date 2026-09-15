@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { mkdtemp, mkdir, rm, writeFile, chmod, readFile, access } from "node:fs/promises";
-import { createServer, type AddressInfo, type Socket } from "node:net";
+import net, { createServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
   attemptNativeUiCleanup,
   watchNativeUiSandbox,
+  observeNativeSandboxCreation,
+  confirmNativeUiRegistryEmpty,
 } from "../../packaging/windows/runtime/native-ui-lifecycle.mts";
 import {
   readNativeUiTunnelMarker,
@@ -16,6 +20,71 @@ import {
 } from "../../packaging/windows/runtime/native-ui-tunnel.mts";
 
 describe("contained native UI relay failures", () => {
+  it.each(["EACCES", "EPERM"])("rejects a %s connection denial before readiness", async (code) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "native-ui-denial-"));
+    const controller = new AbortController();
+    const denied = Object.assign(new Error("Connection denied"), { code });
+    const connect = vi.spyOn(net, "createConnection").mockImplementation(() => {
+      const socket = new net.Socket();
+      queueMicrotask(() => socket.emit("error", denied));
+      return socket;
+    });
+    let failure: unknown;
+    const tunnel = startNativeUiTunnel({
+      relayRoot: directory,
+      relayToken: "owned-token",
+      uiPort: 12345,
+      signal: controller.signal,
+    }).catch((error: unknown) => {
+      failure = error;
+    });
+    try {
+      await vi.waitFor(() => expect(failure).toBe(denied));
+      expect(connect).toHaveBeenCalledTimes(1);
+      await expect(access(path.join(directory, "ready"))).rejects.toThrow();
+    } finally {
+      controller.abort();
+      await tunnel;
+      connect.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only the owned shutdown token before the UI starts", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "native-ui-startup-stop-"));
+    const controller = new AbortController();
+    const connect = vi.spyOn(net, "createConnection").mockImplementation(() => {
+      const socket = new net.Socket();
+      queueMicrotask(() =>
+        socket.emit("error", Object.assign(new Error("Not ready"), { code: "ECONNREFUSED" })),
+      );
+      return socket;
+    });
+    await writeFile(path.join(directory, "shutdown"), "wrong-token");
+    let stopped = false;
+    const tunnel = startNativeUiTunnel({
+      relayRoot: directory,
+      relayToken: "owned-token",
+      uiPort: 12345,
+      signal: controller.signal,
+    }).then(() => {
+      stopped = true;
+    });
+    void tunnel.catch(() => {});
+    try {
+      await vi.waitFor(() => expect(connect.mock.calls.length).toBeGreaterThanOrEqual(2));
+      expect(stopped).toBe(false);
+      await writeFile(path.join(directory, "shutdown"), "owned-token");
+      await vi.waitFor(() => expect(stopped).toBe(true));
+      await expect(access(path.join(directory, "ready"))).rejects.toThrow();
+    } finally {
+      controller.abort();
+      await tunnel.catch(() => {});
+      connect.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([0, 4096])(
     "reads a regular %i-byte marker through its opened descriptor",
     async (size) => {
@@ -102,6 +171,116 @@ describe("contained native UI relay failures", () => {
 });
 
 describe("native OpenClaw session lifecycle", () => {
+  it.each([
+    {
+      message: "code: 'Client specified an invalid argument', message: private-value",
+      rejected: true,
+    },
+    {
+      message: "code: 'The service is currently unavailable', message: private-value",
+      rejected: false,
+    },
+    { message: "connection reset after submitting request", rejected: false },
+  ])(
+    "reports failed creation promptly without exposing stderr: $message",
+    async ({ message, rejected }) => {
+      const child = spawn(
+        process.execPath,
+        ["-e", `process.stderr.write(${JSON.stringify(message)}); process.exitCode = 1;`],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const creation = observeNativeSandboxCreation(child);
+      const error = await creation.failure.catch((failure: unknown) => failure);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("sandbox creation failed (1)");
+      expect((error as Error).message).not.toContain("private-value");
+      expect(creation.wasRejected()).toBe(rejected);
+      expect(child.stderr.listenerCount("data")).toBe(0);
+    },
+  );
+
+  it("keeps an interrupted request ambiguous even after a rejection-like diagnostic", async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `process.stderr.write("code: 'Client specified an invalid argument', message: interrupted"); process.stdout.write("ready"); setInterval(() => {}, 1000);`,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const creation = observeNativeSandboxCreation(child);
+    try {
+      await once(child.stdout, "data");
+      child.kill();
+      await expect(creation.failure).rejects.toThrow("sandbox creation failed");
+      expect(creation.wasRejected()).toBe(false);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+    }
+  });
+
+  it("does not confuse a successful create command with UI readiness", async () => {
+    const child = spawn(process.execPath, ["-e", "process.exitCode = 0"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const closed = once(child, "close");
+    const creation = observeNativeSandboxCreation(child);
+    let failed = false;
+    void creation.failure.catch(() => {
+      failed = true;
+    });
+    await closed;
+    expect(failed).toBe(false);
+    expect(creation.wasRejected()).toBe(false);
+    expect(child.stderr.listenerCount("data")).toBe(0);
+  });
+
+  it("classifies a process that never spawned without disclosing its path", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "native-create-missing-"));
+    try {
+      const child = spawn(path.join(directory, "missing-private-executable"), [], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const creation = observeNativeSandboxCreation(child);
+      await expect(creation.failure).rejects.toThrow("sandbox request could not run");
+      expect(creation.wasRejected()).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32").each([
+    { output: "[]", code: 0, empty: true },
+    { output: '[{"name":"owned"}]', code: 0, empty: false },
+    { output: '{"sandboxes":[]}', code: 0, empty: false },
+    { output: "invalid-json", code: 0, empty: false },
+    { output: "[]", code: 1, empty: false },
+  ])(
+    "requires a successful empty registry before skipping rejected-creation cleanup: $output/$code",
+    async ({ output, code, empty }) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "native-create-registry-"));
+      try {
+        const script = path.join(directory, "registry.mjs");
+        const executable = path.join(directory, "openshell-fixture");
+        const quote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
+        await writeFile(
+          script,
+          `if (JSON.stringify(process.argv.slice(2)) !== '["sandbox","list","-o","json"]') process.exit(2); process.stdout.write(${JSON.stringify(output)}); process.exitCode = ${code};`,
+        );
+        await writeFile(
+          executable,
+          `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
+        );
+        await chmod(executable, 0o700);
+        const result = confirmNativeUiRegistryEmpty(executable, { PATH: "/usr/bin:/bin" });
+        if (empty) await expect(result).resolves.toBeUndefined();
+        else await expect(result).rejects.toThrow();
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("closes an owned listener, file, and state lease after earlier cleanup failures", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "native-ui-cleanup-"));
     const file = path.join(directory, "owned-state");

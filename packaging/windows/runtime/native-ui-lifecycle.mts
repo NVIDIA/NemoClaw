@@ -10,6 +10,61 @@ type GatewayState = Pick<ChildProcess, "exitCode" | "signalCode">;
 type StateLease = { assertHeld(): void };
 type CleanupStep = readonly [label: string, action: () => unknown];
 
+export function observeNativeSandboxCreation(child: ChildProcess) {
+  let rejected = false;
+  let stderr = "";
+  const capture = (chunk: Buffer | string) => {
+    stderr = (stderr + chunk.toString()).slice(-8192);
+  };
+  child.stderr?.on("data", capture);
+  const failure = new Promise<never>((_, reject) => {
+    child.once("error", () => {
+      rejected = child.pid === undefined;
+      reject(new Error("The OpenShell sandbox request could not run."));
+    });
+    const closed = (code: number | null, signal: NodeJS.Signals | null) => {
+      child.stderr?.removeListener("data", capture);
+      if (code === 0 && signal === null) return;
+      // Only this explicit server rejection is definitive. Transport errors and
+      // interrupted requests still require the ordinary cleanup/reconciliation path.
+      rejected ||=
+        signal === null &&
+        !child.killed &&
+        code !== null &&
+        code !== 0 &&
+        stderr.includes("code: 'Client specified an invalid argument', message:");
+      reject(
+        new Error(
+          `OpenShell sandbox creation failed (${code ?? signal ?? "unknown"}) before UI readiness.`,
+        ),
+      );
+    };
+    child.once("close", closed);
+    if (child.exitCode !== null || child.signalCode !== null)
+      closed(child.exitCode, child.signalCode);
+  });
+  void failure.catch(() => {});
+  return { failure, wasRejected: () => rejected };
+}
+
+export async function confirmNativeUiRegistryEmpty(
+  openshell: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  const result = await execFileAsync(openshell, ["sandbox", "list", "-o", "json"], {
+    env: environment,
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 10_000,
+    maxBuffer: 1024 * 1024,
+  });
+  const registry: unknown = JSON.parse(result.stdout);
+  // This gateway belongs to one session. Malformed output or any retained entry
+  // must not turn a failed create request into permission to skip cleanup.
+  if (!Array.isArray(registry) || registry.length !== 0)
+    throw new Error("The private UI gateway registry is not confirmed empty.");
+}
+
 // The workload's receipt precedes its process exit. Wait for the MXC executor
 // itself to finish teardown before deletion can terminate its process monitor.
 export async function waitForNativeMxcCompletion(

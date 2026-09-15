@@ -27,8 +27,8 @@ $ciNode = Join-Path $WorkDirectory 'application\node\node.exe'
 if ((Get-FileHash -LiteralPath $ciNode -Algorithm SHA256).Hash.ToLowerInvariant() -cne '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878') {
     throw 'The CI controller Node executable differs from the pinned Windows ARM64 input.'
 }
-& $ciNode --experimental-strip-types --no-warnings --test (Join-Path $SourceRoot 'packaging\windows\installer\control-installed-openclaw-input.test.mts')
-if ($LASTEXITCODE -ne 0) { throw 'The actual Windows observer input controls failed.' }
+& $ciNode --experimental-strip-types --no-warnings --test (Join-Path $SourceRoot 'packaging\windows\installer\control-installed-openclaw-input.test.mts') (Join-Path $SourceRoot 'packaging\windows\installer\run-installed-acceptance.test.mts')
+if ($LASTEXITCODE -ne 0) { throw 'The Windows observer or diagnostic controls failed.' }
 
 $work = [IO.Path]::GetFullPath($WorkDirectory)
 $setup = "$work\package\NemoClawSetup-$ProductVersion-windows-arm64.exe"
@@ -92,8 +92,11 @@ try {
 } catch { $primary = $_ }
 finally {
   try {
-    $diagnostic = Get-ItemPropertyValue -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClaw\InstallDiagnostics' -Name RuntimeMaintenancePrimary -ErrorAction SilentlyContinue
-    if ($null -ne $diagnostic) { $timings.nativeRuntimeFailure = @{ retainedPrimary = [string]$diagnostic } }
+    $diagnostic = Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClaw\InstallDiagnostics' -ErrorAction Stop
+    $diagnostic = $diagnostic.PSObject.Properties['RuntimeMaintenancePrimary']
+    if ($null -ne $diagnostic) { $timings.nativeRuntimeFailure = @{ retainedPrimary = [string]$diagnostic.Value } }
+  } catch [System.Management.Automation.ItemNotFoundException] {
+    # A successful transaction need not retain a diagnostic key or value.
   } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; retained native diagnostic collection also failed.' } }
   # MSI records the helper's actual exit code even when Burn cannot retain its
   # stderr. Capture the bounded classification before uninstall adds another

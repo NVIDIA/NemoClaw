@@ -10,33 +10,33 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
-import { writeNativeGatewayConfig } from "./native-security.mts";
+import { nativeQualificationLoopbackConfig, writeNativeGatewayConfig } from "./native-security.mts";
 import { nativeDiagnosticTail } from "./native-session-diagnostics.mts";
 
 const TIMEOUT_MS = 300_000;
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const sleep = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-function fail(message) {
+function fail(message: string): never {
   throw new Error(`Native Windows MXC turn qualification failed: ${message}`);
 }
 
-export function requiredFile(file, label) {
+export function requiredFile(file: string, label: string) {
   const resolved = path.resolve(file);
   const stat = fs.statSync(resolved, { throwIfNoEntry: false });
   if (!stat?.isFile()) fail(`${label} is missing`);
   return resolved;
 }
 
-export function requiredDirectory(directory, label) {
+export function requiredDirectory(directory: string, label: string) {
   const resolved = path.resolve(directory);
   const stat = fs.statSync(resolved, { throwIfNoEntry: false });
   if (!stat?.isDirectory()) fail(`${label} is missing`);
   return resolved;
 }
 
-export function argumentValue(name) {
+export function argumentValue(name: string) {
   const index = process.argv.indexOf(name);
   if (index < 0) return null;
   const value = process.argv[index + 1];
@@ -44,7 +44,7 @@ export function argumentValue(name) {
   return value;
 }
 
-export function allowlistedWindowsEnvironment(extra = {}) {
+export function allowlistedWindowsEnvironment(extra: NodeJS.ProcessEnv = {}) {
   const allowedNames = new Set(
     [
       "ComSpec",
@@ -62,7 +62,7 @@ export function allowlistedWindowsEnvironment(extra = {}) {
       "windir",
     ].map((name) => name.toLowerCase()),
   );
-  const environment = {};
+  const environment: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && allowedNames.has(name.toLowerCase())) environment[name] = value;
   }
@@ -70,7 +70,7 @@ export function allowlistedWindowsEnvironment(extra = {}) {
 }
 
 export async function freePort() {
-  return await new Promise((resolve, reject) => {
+  return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
@@ -84,7 +84,12 @@ export async function freePort() {
   });
 }
 
-export async function waitForPort(port, child, label = "OpenShell gateway", timeout = 60_000) {
+export async function waitForPort(
+  port: number,
+  child: ChildProcess,
+  label = "OpenShell gateway",
+  timeout = 60_000,
+) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) fail(`${label} exited before readiness`);
@@ -107,11 +112,13 @@ export async function waitForPort(port, child, label = "OpenShell gateway", time
   fail(`${label} did not become ready`);
 }
 
+type NativeCommandResult = { exitCode: number; stdout: string; stderr: string };
+
 export async function run(
-  file,
-  args,
-  environment,
-  label,
+  file: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  label: string,
   timeout = TIMEOUT_MS,
   diagnostics?: {
     capture(channel: string, chunk: Buffer | string): void;
@@ -123,7 +130,7 @@ export async function run(
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  return await new Promise((resolve, reject) => {
+  return await new Promise<NativeCommandResult>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     let outputExceeded = false;
@@ -208,14 +215,14 @@ export async function waitForNativeTurnResult(
   fail("installed OpenClaw turn did not publish a result");
 }
 
-export async function stopChild(child) {
+export async function stopChild(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) return true;
-  const exited = new Promise((resolve) => child.once("exit", () => resolve(true)));
+  const exited = new Promise<boolean>((resolve) => child.once("exit", () => resolve(true)));
   child.kill();
   return await Promise.race([exited, sleep(5000).then(() => false)]);
 }
 
-export async function removeDirectory(directory) {
+export async function removeDirectory(directory: string) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       fs.rmSync(directory, { recursive: true, force: true });
@@ -226,7 +233,7 @@ export async function removeDirectory(directory) {
   return false;
 }
 
-export async function waitForFileText(file, expected, timeout = 30_000) {
+export async function waitForFileText(file: string, expected: string, timeout = 30_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (fs.existsSync(file) && fs.readFileSync(file, "utf8").includes(expected)) return true;
@@ -235,7 +242,7 @@ export async function waitForFileText(file, expected, timeout = 30_000) {
   return false;
 }
 
-export function jsonContainsExactValue(value, target) {
+export function jsonContainsExactValue(value: unknown, target: unknown): boolean {
   if (value === target) return true;
   if (Array.isArray(value)) return value.some((item) => jsonContainsExactValue(item, target));
   if (value !== null && typeof value === "object")
@@ -243,11 +250,14 @@ export function jsonContainsExactValue(value, target) {
   return false;
 }
 
-export function quoteYamlPath(value) {
+export function quoteYamlPath(value: string) {
   return JSON.stringify(value.replaceAll("\\", "/"));
 }
 
-export function sanitizedDiagnostic(text, replacements) {
+export function sanitizedDiagnostic(
+  text: string,
+  replacements: readonly (readonly [string, string])[],
+) {
   let sanitized = text.slice(-64 * 1024);
   for (const [value, replacement] of replacements) {
     if (value) sanitized = sanitized.replaceAll(value, replacement);
@@ -257,7 +267,7 @@ export function sanitizedDiagnostic(text, replacements) {
     .replaceAll(/[A-Za-z0-9_-]{32,}/gu, "<opaque>");
 }
 
-function probeSource() {
+export function probeSource() {
   return String.raw`import { Worker } from "node:worker_threads";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -402,7 +412,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
     "OpenShell gateway",
   );
   const installedOpenClawRoot = requiredDirectory(
-    runtimeLease.agentRoot,
+    runtimeLease.agentRoot ?? fail("sealed OpenClaw runtime is missing"),
     "sealed OpenClaw runtime",
   );
   requiredFile(path.join(installedOpenClawRoot, "openclaw-app.cjs"), "OpenClaw entrypoint");
@@ -552,7 +562,27 @@ async function main(runtimeLease: NativeRuntimeSession) {
       "--policy",
       policyPath,
       "--driver-config-json",
-      JSON.stringify({ mxc: { command: [node, probePath], cwd: shareRoot, windows_ui: true } }),
+      JSON.stringify({
+        mxc: {
+          command: [node, probePath],
+          cwd: shareRoot,
+          windows_ui: true,
+          ...nativeQualificationLoopbackConfig(
+            JSON.parse(
+              (
+                await run(
+                  path.join(installRoot, "mxc", "wxc-exec.exe"),
+                  ["--probe"],
+                  allowlistedWindowsEnvironment(),
+                  "Selecting the qualification network policy",
+                  15_000,
+                )
+              ).stdout,
+            ),
+            [mockPort],
+          ),
+        },
+      }),
       "--no-tty",
     ];
     for (const [name, value] of Object.entries(sandboxEnvironment))

@@ -75,19 +75,23 @@ export async function startNativeUiTunnel({
   )
     throw new Error("The contained native UI tunnel identity is invalid.");
   signal?.throwIfAborted();
+  const shutdownRequested = () =>
+    readNativeUiTunnelMarker(join(relayRoot, "shutdown"), measurements) === relayToken;
   const waitForUi = async () => {
     const deadline = Date.now() + 180_000;
     while (Date.now() < deadline) {
       signal?.throwIfAborted();
-      const connected = await new Promise((resolvePromise) => {
+      if (shutdownRequested()) return false;
+      const connected = await new Promise<boolean>((resolvePromise, reject) => {
         const socket = net.createConnection({ host: "127.0.0.1", port: uiPort, signal });
         socket.once("connect", () => {
           socket.destroy();
           resolvePromise(true);
         });
-        socket.once("error", () => {
+        socket.once("error", (error: NodeJS.ErrnoException) => {
           socket.destroy();
-          resolvePromise(false);
+          if (error.code === "EACCES" || error.code === "EPERM") reject(error);
+          else resolvePromise(false);
         });
         socket.setTimeout(500, () => {
           socket.destroy();
@@ -95,7 +99,7 @@ export async function startNativeUiTunnel({
         });
       });
       signal?.throwIfAborted();
-      if (connected) return;
+      if (connected) return true;
       await delay(250, undefined, { signal });
     }
     throw new Error("The agent Web UI did not become ready inside MXC");
@@ -132,7 +136,7 @@ export async function startNativeUiTunnel({
     }
   };
   const startFileTunnel = async () => {
-    await waitForUi();
+    if (!(await waitForUi()) || shutdownRequested()) return;
     signal?.throwIfAborted();
     if (!fs.statSync(relayRoot, { throwIfNoEntry: false })?.isDirectory()) {
       throw new Error("MXC UI relay directory is unavailable");

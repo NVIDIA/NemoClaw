@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   brokerOperationForRequest,
   nativeCredentialBinding,
+  nativeQualificationLoopbackConfig,
   readOpenedRegularFile,
   readWindowsCredential,
   resolveBrokerUpstreamUrl,
@@ -51,6 +52,47 @@ function mockCredentialOutput(chunks: Buffer[], code = 0) {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe("qualification loopback policy selection", () => {
+  it("allows only selected ports on BaseContainer and preserves the AppContainer default", () => {
+    expect(
+      nativeQualificationLoopbackConfig(
+        { tier: "base-container", needsDaclAugmentation: false },
+        [12345, 23456, 12345],
+      ),
+    ).toEqual({ loopback_ports: [12345, 23456] });
+    expect(
+      nativeQualificationLoopbackConfig(
+        { tier: "appcontainer-dacl", needsDaclAugmentation: true },
+        [12345],
+      ),
+    ).toEqual({});
+  });
+  it.each([
+    null,
+    {},
+    { tier: "other" },
+    { tier: "base-container", needsDaclAugmentation: true },
+    { tier: "appcontainer-dacl", needsDaclAugmentation: false },
+  ])("rejects an unknown or inconsistent probe %j", (probe) => {
+    expect(() => nativeQualificationLoopbackConfig(probe, [12345])).toThrow();
+  });
+  it.each([
+    { ports: [] },
+    { ports: [0] },
+    { ports: [-1] },
+    { ports: [65536] },
+    { ports: [1.5] },
+    { ports: [NaN] },
+  ])("rejects invalid ports $ports", ({ ports }) => {
+    expect(() =>
+      nativeQualificationLoopbackConfig(
+        { tier: "base-container", needsDaclAugmentation: false },
+        ports,
+      ),
+    ).toThrow();
+  });
 });
 
 describe("native Windows runtime security boundaries", () => {

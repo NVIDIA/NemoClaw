@@ -4,12 +4,76 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Nvidia.NemoClaw.Bootstrapper;
 
 public static class HostPreparationDiagnosticControls
 {
-    public static int Main() => Run();
+    public static int Main(string[] args)
+    {
+        Run();
+        PreparationControls(args);
+        return 0;
+    }
+
+    private static void PreparationControls(string[] args)
+    {
+        foreach (var tier in new[] { "base-container", "appcontainer-dacl" })
+        {
+            var augment = tier == "appcontainer-dacl";
+            var parsed = NativeHostPreparation.ParseTier(JsonSerializer.Serialize(new { tier, needsDaclAugmentation = augment }));
+            Require(parsed == tier, "The selected tier changed.");
+            foreach (var package in new[] { "MxcSystemDrivePreparation", "MxcNullDevicePreparation" })
+            {
+                Require(NativeHostPreparation.SkipPackage(package, parsed, false) == !augment, "Preparation did not follow the selected tier.");
+                Require(NativeHostPreparation.SkipPackage(package, null, true), "Uninstall required a capability probe.");
+                Reject(() => NativeHostPreparation.SkipPackage(package, null, false));
+            }
+            Require(!NativeHostPreparation.SkipPackage("NemoClawArm64Msi", parsed, false), "Backend selection skipped the application.");
+            Require(!NativeHostPreparation.SkipPackage("NemoClawRuntimeFinalization", parsed, false), "Backend selection skipped runtime finalization.");
+        }
+        foreach (var text in new[] {
+            "{broken", "{}", "[]", new string(' ', 8193),
+            "{\"tier\":\"base-container\",\"needsDaclAugmentation\":true}",
+            "{\"tier\":\"appcontainer-dacl\",\"needsDaclAugmentation\":false}",
+            "{\"tier\":\"appcontainer-bfs\",\"needsDaclAugmentation\":false}",
+            "{\"tier\":\"base-container\",\"needsDaclAugmentation\":\"false\"}",
+            "{\"tier\":\"appcontainer-dacl\",\"tier\":\"base-container\",\"needsDaclAugmentation\":false}",
+        }) Reject(() => NativeHostPreparation.ParseTier(text));
+        foreach (var length in new[] { 0, 8192, 8193 })
+        {
+            using var stream = new StreamReader(new MemoryStream(Encoding.UTF8.GetBytes(new string('x', length))));
+            if (length > 8192) Reject(() => NativeHostPreparation.ReadBoundedAsync(stream, CancellationToken.None).GetAwaiter().GetResult());
+            else Require(NativeHostPreparation.ReadBoundedAsync(stream, CancellationToken.None).GetAwaiter().GetResult().Length == length, "Bounded probe output was truncated.");
+        }
+
+        var directory = Path.Combine(Path.GetTempPath(), "nemoclaw-probe-control-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var substitute = Path.Combine(directory, "substituted.exe");
+            File.WriteAllText(substitute, "not the pinned MXC binary");
+            Reject(() => NativeHostPreparation.ProbeAsync(substitute).GetAwaiter().GetResult());
+            Reject(() => NativeHostPreparation.ProbeAsync(Path.Combine(directory, "missing.exe")).GetAwaiter().GetResult());
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+        if (args.Length > 1) throw new Exception("Expected only an optional pinned MXC probe path.");
+        if (args.Length == 1)
+        {
+            var tier = NativeHostPreparation.ProbeAsync(args[0]).GetAwaiter().GetResult();
+            Console.WriteLine("Actual pinned MXC read-only probe: " + tier);
+        }
+        Console.WriteLine("Backend preparation controls passed; installed runtime qualification remains separate.");
+    }
+
+    private static void Reject(Action action)
+    {
+        try { action(); }
+        catch (Exception error) when (error is InvalidOperationException or JsonException or KeyNotFoundException or IOException) { return; }
+        throw new Exception("Invalid preparation input was accepted.");
+    }
 
     public static int Run()
     {
