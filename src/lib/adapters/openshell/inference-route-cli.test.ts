@@ -93,6 +93,17 @@ describe("CLI inference route observation", () => {
     },
   );
 
+  it("rejects heading-free Not configured output", async () => {
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "Not configured" });
+
+    await expect(
+      createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute(namedRequest),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "schema", reason: "malformed_output" },
+    });
+  });
+
   it("uses the legacy selected-gateway fallback only for the base gateway", async () => {
     const capture = vi
       .fn()

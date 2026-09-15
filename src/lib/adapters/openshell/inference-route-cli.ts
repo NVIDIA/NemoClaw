@@ -175,7 +175,7 @@ function parseRoute(output: string): OpenShellInferenceRouteResult {
     const modelMatch = trimmed.match(/^Model:\s*(.+)$/u);
     if (providerMatch) provider = provider === null ? providerMatch[1].trim() : "";
     if (modelMatch) model = model === null ? modelMatch[1].trim() : "";
-    if (/^Not configured$/iu.test(trimmed)) unconfigured = true;
+    if (hasInferenceSection && /^Not configured$/iu.test(trimmed)) unconfigured = true;
   }
   if (sectionCount > 1 || (unconfigured && (provider !== null || model !== null))) {
     return failure({
