@@ -17,7 +17,12 @@ import {
   cleanupWhenCommandAvailable,
   cleanupWhenOpenShellAvailable,
 } from "../fixtures/cleanup-resources.ts";
-import { assertExitZero, resultText, sandboxAccessEnv } from "../fixtures/clients/index.ts";
+import {
+  assertExitZero,
+  outputContainsSandbox,
+  resultText,
+  sandboxAccessEnv,
+} from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -27,6 +32,7 @@ import { pollUntil } from "../fixtures/polling.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-survival";
 const MIN_OPENSHELL_VERSION = "0.0.24";
+const DASHBOARD_PORT = Number(process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
 
 function versionGte(actual: string, minimum: string): boolean {
   const actualParts = actual.split(".").map((part) => Number.parseInt(part, 10));
@@ -53,6 +59,7 @@ function installEnv(hostedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_AGENT: "openclaw",
+    NEMOCLAW_DASHBOARD_PORT: String(DASHBOARD_PORT),
   };
 }
 
@@ -75,6 +82,7 @@ async function waitForNativeAgentReady(
     artifactName: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>,
   artifactPrefix: string,
+  gatewayPort: number,
 ): Promise<void> {
   await pollUntil({
     artifactPrefix,
@@ -82,7 +90,7 @@ async function waitForNativeAgentReady(
     delayMs: 5_000,
     probe: (_attempt, artifactName) =>
       exec(
-        `code="$(curl -q --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 http://127.0.0.1:18789/health)"; case "$code" in 200|401) printf '%s\\n' ready ;; *) exit 1 ;; esac`,
+        `code="$(curl -q --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 http://127.0.0.1:${String(gatewayPort)}/health)"; case "$code" in 200|401) printf '%s\\n' ready ;; *) exit 1 ;; esac`,
         artifactName,
       ),
     accept: (result) => result.exitCode === 0 && result.stdout.trim() === "ready",
@@ -119,6 +127,10 @@ test(
   }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
+    expect(
+      Number.isSafeInteger(DASHBOARD_PORT) && DASHBOARD_PORT >= 1024 && DASHBOARD_PORT <= 65_535,
+      "NEMOCLAW_DASHBOARD_PORT must be an integer between 1024 and 65535",
+    ).toBe(true);
 
     await artifacts.target.declare({
       id: "sandbox-survival",
@@ -246,7 +258,7 @@ test(
       provider: "nvidia",
       providerEnv: "cloud",
       platformOs: "ubuntu",
-      gatewayUrl: "http://127.0.0.1:18789",
+      gatewayUrl: `http://127.0.0.1:${String(DASHBOARD_PORT)}`,
       result: install,
     };
 
@@ -269,7 +281,7 @@ test(
         timeoutMs: 60_000,
       });
     await expectSandboxExecAlive(SANDBOX_NAME, execShell, "baseline-sandbox-exec-alive");
-    await waitForNativeAgentReady(execShell, "baseline-native-agent-ready");
+    await waitForNativeAgentReady(execShell, "baseline-native-agent-ready", DASHBOARD_PORT);
 
     progress.phase("write persistent OpenClaw markers");
     const markerValue = `nemoclaw-survival-${Date.now()}`;
@@ -309,7 +321,7 @@ test(
       artifactNamePrefix: "post-restart-openshell-sandbox-ready",
     });
     await expectSandboxExecAlive(SANDBOX_NAME, execShell, "post-restart-sandbox-exec-alive");
-    await waitForNativeAgentReady(execShell, "post-start-native-agent-ready");
+    await waitForNativeAgentReady(execShell, "post-start-native-agent-ready", DASHBOARD_PORT);
     await stateValidation.expectSandboxMarkers(instance, markers, "post-restart-marker-read");
     await stateValidation.expectSandboxDirectoryPopulated(
       instance,
@@ -322,6 +334,14 @@ test(
       artifactName: "final-destroy-sandbox-survival",
       timeoutMs: 15 * 60_000,
     });
+    const postDestroyList = await sandbox.list({
+      artifactName: "post-destroy-openshell-sandbox-list",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    assertExitZero(postDestroyList, "openshell sandbox list after destroy");
+    const destroyedAtEnd = !outputContainsSandbox(postDestroyList, SANDBOX_NAME);
+    expect(destroyedAtEnd, "sandbox remained listed after destroy").toBe(true);
 
     await artifacts.target.complete({
       id: "sandbox-survival",
@@ -332,7 +352,7 @@ test(
         nativeAgentReadyBeforeStop: true,
         markersPersistedAfterStart: true,
         nativeAgentReadyAfterStart: true,
-        destroyedAtEnd: true,
+        destroyedAtEnd,
       },
     });
   },
