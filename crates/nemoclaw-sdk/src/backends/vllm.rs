@@ -37,13 +37,17 @@ impl<'a> Settings<'a> {
             }
         } else {
             Self {
-                name: &service.model.repository,
+                name: service.served_model(),
                 gpu_bytes: super::validation::gpu_bytes(service),
                 tool_parser: &service.serving.tool_parser,
                 reasoning_parser: &service.serving.reasoning_parser,
                 kv_cache_dtype: "",
                 mamba_cache_dtype: "",
-                kv_cache_bytes: Some(service.memory.kv_cache_gib as u64 * GIB),
+                kv_cache_bytes: service
+                    .memory
+                    .gpu_memory_utilization
+                    .is_none()
+                    .then_some(service.memory.kv_cache_gib as u64 * GIB),
                 lazy_loading: false,
                 chunked_prefill: false,
                 compilation: None,
@@ -58,11 +62,22 @@ pub(crate) fn arguments(
 ) -> Result<Vec<String>, Error> {
     service.validate()?;
     let model = Settings::resolve(service);
-    if total == 0 || model.gpu_bytes > total {
+    if total == 0
+        || model.gpu_bytes > total
+        || service
+            .hardware
+            .as_ref()
+            .is_some_and(|h| total < h.min_gpu_memory_bytes)
+    {
         return Err(Error::Conflict("invalid total memory for inference budget"));
     }
     let v = &service.serving;
-    let utilization = (model.gpu_bytes as f64 / total as f64 * 1000.0).floor() / 1000.0;
+    let utilization = service
+        .memory
+        .gpu_memory_utilization
+        .as_ref()
+        .and_then(serde_json::Number::as_f64)
+        .unwrap_or_else(|| (model.gpu_bytes as f64 / total as f64 * 1000.0).floor() / 1000.0);
     let mut args: Vec<String> = [
         "-m",
         "vllm.entrypoints.openai.api_server",
@@ -81,7 +96,14 @@ pub(crate) fn arguments(
     .into();
     for (flag, value) in [
         ("--port", v.port.to_string()),
-        ("--gpu-memory-utilization", format!("{utilization:.3}")),
+        (
+            "--gpu-memory-utilization",
+            service
+                .memory
+                .gpu_memory_utilization
+                .as_ref()
+                .map_or_else(|| format!("{utilization:.3}"), ToString::to_string),
+        ),
         ("--max-num-seqs", v.max_sequences.to_string()),
         ("--max-num-batched-tokens", v.batch_tokens.to_string()),
         ("--max-model-len", v.context_tokens.to_string()),
@@ -91,6 +113,7 @@ pub(crate) fn arguments(
     for (flag, value) in [
         ("--kv-cache-dtype", model.kv_cache_dtype),
         ("--mamba-ssm-cache-dtype", model.mamba_cache_dtype),
+        ("--mamba-backend", v.mamba_backend.as_str()),
         ("--reasoning-parser", model.reasoning_parser),
         ("--tool-call-parser", model.tool_parser),
     ] {
@@ -117,7 +140,7 @@ pub(crate) fn arguments(
             "--compilation-config".into(),
             compilation,
         ]);
-    } else {
+    } else if v.enforce_eager != Some(false) {
         args.push("--enforce-eager".into());
     }
     if v.speculative_tokens > 0 {

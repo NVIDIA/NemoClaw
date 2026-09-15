@@ -54,19 +54,38 @@ struct Measurements {
     memory: String,
     gpu: String,
     processes: String,
+    #[serde(default)]
+    gpu_memory: Option<String>,
     disk_free: u64,
 }
 #[cfg(unix)]
 fn decode(bytes: &[u8]) -> Result<HostObservation, Error> {
     let data: Measurements =
         serde_json::from_slice(bytes).map_err(|_| ObservationError::Incomplete)?;
-    if data.daemon.is_empty() || !matches!(data.architecture.as_str(), "arm64" | "aarch64") {
+    if data.daemon.is_empty()
+        || !matches!(
+            data.architecture.as_str(),
+            "arm64" | "aarch64" | "amd64" | "x86_64"
+        )
+    {
         return Err(Error::Conflict(
-            "remote inference requires a Linux ARM64 Docker host",
+            "remote inference requires a Linux ARM64 or AMD64 Docker host",
         ));
     }
     let mut capacity = super::read_memory(data.memory.as_bytes())?;
-    capacity.architecture = "arm64".into();
+    capacity.architecture = if matches!(data.architecture.as_str(), "arm64" | "aarch64") {
+        "arm64"
+    } else {
+        "amd64"
+    }
+    .into();
+    if capacity.architecture == "amd64" {
+        capacity.gpu_memory = Some(super::nvidia::dedicated_memory(
+            data.gpu_memory
+                .as_deref()
+                .ok_or(ObservationError::Incomplete)?,
+        )?);
+    }
     (
         capacity.gpu,
         capacity.driver_major,
@@ -82,6 +101,20 @@ fn decode(bytes: &[u8]) -> Result<HostObservation, Error> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[test]
+    fn amd64_measurements_require_dedicated_gpu_memory_and_compute_capability() {
+        let mut value = serde_json::json!({"daemon":"remote", "architecture":"x86_64", "memory":"MemTotal: 256000000 kB\nMemAvailable: 196000000 kB\nMemFree: 64000000 kB\n", "gpu":"NVIDIA fixture, 580.0\n", "processes":"", "disk_free":1000000000000_u64});
+        assert!(decode(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["gpu_memory"] = "98304, 90112, 9.0\n".into();
+        let capacity = decode(&serde_json::to_vec(&value).unwrap())
+            .unwrap()
+            .for_engine("remote")
+            .unwrap();
+        assert_eq!(capacity.architecture, "amd64");
+        assert_eq!(capacity.gpu_memory.unwrap().total, 96 * super::super::GIB);
+        value["gpu_memory"] = "[N/A], [N/A], 9.0".into();
+        assert!(decode(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
     #[test]
     fn remote_measurements_require_complete_host_data_and_matching_daemon() {
         let value = serde_json::json!({

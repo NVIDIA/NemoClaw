@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::{
-    CancellationToken, Error,
-    config::Service,
-    hardware::{Capacity, GIB},
-};
+use nemoclaw_sdk::{CancellationToken, Error, config::Service, hardware::Capacity};
 use std::time::Duration;
 pub(crate) fn memory() -> Result<Capacity, Error> {
     nemoclaw_sdk::hardware::linux::memory()
@@ -13,26 +9,11 @@ pub(crate) async fn before_start(
     spec: &Service,
     cancel: &CancellationToken,
 ) -> Result<Capacity, Error> {
-    let capacity = memory()?;
-    if capacity.available
-        < spec.gpu_bytes()?
-            + spec
-                .recipe
-                .as_ref()
-                .map_or(20, |r| r.resources.startup_headroom_gi_b)
-                * GIB
-        || spec.gpu_bytes()? + spec.memory.host_reserve_gib as u64 * GIB > capacity.total
-    {
-        return Err(Error::Conflict(
-            "memory headroom changed during preparation; service was not started",
-        ));
-    }
-    let gpu = tokio::process::Command::new("nvidia-smi")
-        .args(["--query-compute-apps=pid", "--format=csv,noheader,nounits"])
-        .kill_on_drop(true)
-        .output();
-    let gpu = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(15),gpu)=>result.map_err(|_|Error::State("GPU availability observation timed out"))?.map_err(|_|Error::State("GPU availability is unobservable"))?};
-    if !gpu.status.success() || !String::from_utf8_lossy(&gpu.stdout).trim().is_empty() {
+    let mut capacity = memory()?;
+    let gpu = nemoclaw_sdk::hardware::nvidia::populate(&mut capacity);
+    tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=tokio::time::timeout(Duration::from_secs(30),gpu)=>result.map_err(|_|Error::State("GPU availability observation timed out"))?? };
+    nemoclaw_sdk::hardware::check_memory(spec, &capacity, true)?;
+    if capacity.foreign_gpu_processes != 0 {
         return Err(Error::Conflict(
             "GPU availability changed after preparation; service was not started",
         ));

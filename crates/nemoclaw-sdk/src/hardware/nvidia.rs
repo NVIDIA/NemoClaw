@@ -53,9 +53,85 @@ fn single_gpu<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<(String, u
         .map_err(|_| Error::State("driver version is unobservable"))?;
     Ok((name.into(), major))
 }
+/// Decode one GPU's MiB memory counters and major.minor compute capability.
+#[cfg(any(unix, test))]
+pub fn dedicated_memory(text: &str) -> Result<super::DedicatedGpu, Error> {
+    let error = || Error::State("dedicated GPU memory or compute capability is unobservable");
+    let mut lines = text.trim().lines();
+    let line = lines.next().ok_or_else(error)?;
+    if lines.next().is_some() {
+        return Err(error());
+    }
+    let fields: Vec<_> = line.split(',').map(str::trim).collect();
+    if fields.len() != 3 {
+        return Err(error());
+    }
+    let bytes = |s: &str| {
+        s.parse::<u64>()
+            .ok()
+            .filter(|n| *n <= 4 * (1 << 20))
+            .and_then(|n| n.checked_mul(1 << 20))
+            .ok_or_else(error)
+    };
+    let total = bytes(fields[0])?;
+    let free = bytes(fields[1])?;
+    let (major, minor) = fields[2].split_once('.').ok_or_else(error)?;
+    let major = major.parse::<u32>().map_err(|_| error())?;
+    let minor = minor.parse::<u32>().map_err(|_| error())?;
+    if total == 0 || free > total || !(1..=99).contains(&major) || minor > 9 {
+        return Err(error());
+    }
+    Ok(super::DedicatedGpu {
+        total,
+        free,
+        compute_capability: major * 10 + minor,
+    })
+}
+
+#[cfg(target_os = "linux")]
+pub async fn populate(capacity: &mut super::Capacity) -> Result<(), Error> {
+    capacity.architecture = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "amd64",
+        other => other,
+    }
+    .into();
+    let gpu = query("--query-gpu=name,driver_version").await?;
+    let processes = query("--query-compute-apps=pid").await?;
+    (
+        capacity.gpu,
+        capacity.driver_major,
+        capacity.foreign_gpu_processes,
+    ) = inventory(&gpu, &processes)?;
+    if capacity.architecture == "amd64" {
+        capacity.gpu_memory = Some(dedicated_memory(
+            &query("--query-gpu=memory.total,memory.free,compute_cap").await?,
+        )?);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dedicated_gpu_parser_rejects_missing_ambiguous_or_inconsistent_measurements() {
+        let gpu = dedicated_memory("98304, 90112, 9.0\n").unwrap();
+        assert_eq!(gpu.total, 96 * super::super::GIB);
+        assert_eq!(gpu.compute_capability, 90);
+        for text in [
+            "",
+            "[N/A], [N/A], 9.0",
+            "1, 2, 9.0",
+            "0, 0, 9.0",
+            "98304, 90112, 9.0\n98304, 90112, 9.0",
+            "98304, 90112, 9.10",
+            "98304, 90112, 9",
+            "999999999999, 0, 9.0",
+        ] {
+            assert!(dedicated_memory(text).is_err(), "{text}");
+        }
+    }
     #[test]
     fn gpu_parser_rejects_extra_lines_without_consuming_the_rest() {
         let lines = ["NVIDIA GB10, 580", "NVIDIA GB10, 580"]

@@ -188,7 +188,11 @@ pub(crate) fn verify_container(
         || !host.cap_add.as_ref().is_none_or(Vec::is_empty)
         || host.auto_remove.unwrap_or(false)
         || !host.pid_mode.as_deref().unwrap_or("").is_empty()
-        || !matches!(host.ipc_mode.as_deref().unwrap_or(""), "" | "private")
+        || (if host.ipc_mode.as_deref().is_none_or(|m| m.is_empty()) {
+            "private"
+        } else {
+            host.ipc_mode.as_deref().unwrap()
+        }) != expected_host.ipc_mode.as_deref().unwrap_or("private")
         || !host.devices.as_ref().is_none_or(Vec::is_empty)
         || host.memory.unwrap_or(0) != expected_host.memory.unwrap_or(0)
         || host.memory_swap.unwrap_or(0) != expected_host.memory_swap.unwrap_or(0)

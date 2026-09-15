@@ -349,6 +349,14 @@ pub struct Overrides {
 #[serde(default, deny_unknown_fields)]
 /// Managed vLLM service. Explicit placement and publication must appear together.
 pub struct Service {
+    /// Optional single NVIDIA GPU requirements on Linux AMD64 with dedicated GPU memory. Omission keeps the existing Spark or inline-recipe host contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ServiceHardware")]
+    pub hardware: Option<super::ServiceHardware>,
+    /// Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ServiceContainer")]
+    pub container: Option<super::ServiceContainer>,
     /// Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceAuthentication")]
@@ -423,6 +431,18 @@ pub struct Model {
 #[serde(default, deny_unknown_fields)]
 /// Limits apply with or without a recipe. Recipe serving settings replace the ordinary service parser settings.
 pub struct Serving {
+    /// Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.
+    #[serde(rename = "modelName", skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    pub model_name: String,
+    /// Native Mamba backend without a recipe. Empty uses vLLM's default; flashinfer selects the pinned image's FlashInfer backend.
+    #[serde(rename = "mambaBackend", skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    pub mamba_backend: String,
+    /// Without a recipe, omission or true enables eager execution; false leaves compilation and CUDA graphs at vLLM's native defaults.
+    #[serde(rename = "enforceEager", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "bool")]
+    pub enforce_eager: Option<bool>,
     #[serde(rename = "toolParser", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     /// Native vLLM tool-call parser used when no recipe is declared. Empty omits the parser flag.
@@ -462,6 +482,13 @@ pub struct Serving {
 #[serde(default, deny_unknown_fields)]
 /// Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 pub struct Memory {
+    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware and excludes a recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    #[serde(
+        rename = "gpuMemoryUtilization",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "f64")]
+    pub gpu_memory_utilization: Option<serde_json::Number>,
     #[serde(rename = "gpuMemoryGiB", skip_serializing_if = "is_zero")]
     #[schemars(default)]
     /// Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.
@@ -472,7 +499,7 @@ pub struct Memory {
     pub host_reserve_gib: i64,
     #[serde(rename = "kvCacheGiB")]
     #[schemars(default)]
-    /// KV cache allocation in GiB for ordinary vLLM. Recipe serving does not emit this explicit cache-allocation flag.
+    /// KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
     pub kv_cache_gib: i64,
     #[serde(rename = "minAvailableGiB")]
     #[schemars(default)]

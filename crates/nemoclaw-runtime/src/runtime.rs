@@ -63,8 +63,12 @@ async fn run_owned(
         ));
     }
     let capacity = crate::hardware::before_start(spec, cancel).await?;
-    let (mut command, readiness) =
-        crate::backend::launch(spec, &prepared, capacity.total, credential)?;
+    let (mut command, readiness) = crate::backend::launch(
+        spec,
+        &prepared,
+        nemoclaw_sdk::hardware::serving_memory(spec, &capacity)?,
+        credential,
+    )?;
     command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
     let mut child = command
         .spawn()

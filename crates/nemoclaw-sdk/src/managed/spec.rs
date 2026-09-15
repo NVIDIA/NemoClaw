@@ -226,7 +226,20 @@ impl Spec {
             )]);
             host["NetworkMode"] = json!(self.network());
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":"/data"}]);
-            host["ShmSize"] = json!(8 * GIB);
+            host["ShmSize"] = json!(
+                service
+                    .container
+                    .as_ref()
+                    .map_or(8, |c| c.shared_memory_gi_b)
+                    * GIB
+            );
+            if service
+                .container
+                .as_ref()
+                .is_some_and(|c| c.ipc == crate::config::ServiceIpc::Host)
+            {
+                host["IpcMode"] = json!("host");
+            }
             host["Memory"] = json!(104 * GIB);
             host["MemorySwap"] = json!(104 * GIB);
             host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);

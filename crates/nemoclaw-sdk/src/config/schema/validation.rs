@@ -330,6 +330,11 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
     let service = &mut defs["Service"];
     property(service, "backend", json!({"const": c::BACKEND}));
     property(service, "image", json!({"pattern": c::IMAGE}));
+    service["allOf"] = json!([
+        {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
+        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
+        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
+    ]);
     service["dependentRequired"] =
         json!({"placement": ["publication"], "publication": ["placement"]});
     service["if"] = json!({"required": ["recipe"]});
@@ -400,8 +405,65 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
         memory,
         "gpuMemoryGiB",
         json!({"minimum": 0, "maximum": c::GPU_MEMORY_MAX,
-        "x-nemoclaw-default-rule": format!("Omitted or zero stays zero in the document. Without a recipe, the backend uses {} GiB. With a recipe, resources.gpuMemoryBytes supplies the budget.", c::GPU_MEMORY_DEFAULT)}),
+        "x-nemoclaw-default-rule": format!("Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses {} GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here.", c::GPU_MEMORY_DEFAULT)}),
     );
+    property(
+        &mut defs["Serving"],
+        "modelName",
+        json!({"anyOf":[{"const":""},{"pattern":c::MODEL}],"default":""}),
+    );
+    property(
+        &mut defs["Serving"],
+        "mambaBackend",
+        json!({"enum":["","flashinfer"],"default":""}),
+    );
+    property(
+        &mut defs["ServiceHardware"],
+        "architecture",
+        json!({"const":"amd64"}),
+    );
+    property(
+        &mut defs["ServiceHardware"],
+        "minComputeCapability",
+        json!({"minimum":10,"maximum":999}),
+    );
+    property(
+        &mut defs["ServiceHardware"],
+        "minGpuMemoryBytes",
+        json!({"minimum":4_u64*(1<<30),"maximum":4_u64*(1<<40)}),
+    );
+    property(
+        &mut defs["ServiceHardware"],
+        "minDriverMajor",
+        json!({"minimum":1,"maximum":9999}),
+    );
+    property(
+        &mut defs["ServiceContainer"],
+        "sharedMemoryGiB",
+        json!({"minimum":1,"maximum":64}),
+    );
+    property(
+        &mut defs["Memory"],
+        "gpuMemoryUtilization",
+        json!({"minimum":0.05,"maximum":0.95}),
+    );
+    // A fractional GPU budget delegates KV allocation to vLLM. The fixed-budget
+    // path keeps its existing authored zero/default behavior and 4..12 GiB bound.
+    defs["Memory"]["properties"]["kvCacheGiB"]
+        .as_object_mut()
+        .unwrap()
+        .remove("minimum");
+    defs["Memory"]["properties"]["kvCacheGiB"]
+        .as_object_mut()
+        .unwrap()
+        .remove("anyOf");
+    defs["Memory"]["properties"]["kvCacheGiB"]["minimum"] = json!(0);
+    defs["Memory"]["properties"]["kvCacheGiB"]["x-nemoclaw-default-rule"] = json!(
+        "Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache."
+    );
+    defs["Memory"]["allOf"] = json!([
+        {"if":{"required":["gpuMemoryUtilization"]},"then":{"properties":{"kvCacheGiB":{"const":0},"gpuMemoryGiB":{"const":0}}},"else":{"properties":{"kvCacheGiB":{"anyOf":[{"const":0},{"minimum":c::KV_CACHE.min,"maximum":c::KV_CACHE.max}]}}}}
+    ]);
     recipe_constraints(defs);
 }
 

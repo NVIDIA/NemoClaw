@@ -303,7 +303,7 @@ fn defaulted_numeric_bounds_match_the_parser_at_each_boundary() {
         ("serving", "port", 1024, 65535),
         ("serving", "contextTokens", 8192, 65536),
         ("serving", "maxSequences", 1, 2),
-        ("serving", "batchTokens", 512, 2048),
+        ("serving", "batchTokens", 512, 4096),
         ("serving", "startupTimeoutSeconds", 60, 3600),
         ("memory", "hostReserveGiB", 28, 64),
         ("memory", "kvCacheGiB", 4, 12),

@@ -28,7 +28,11 @@ pub(crate) fn validate_memory(
     }
     require(
         c::HOST_RESERVE.contains(memory.host_reserve_gib)
-            && c::KV_CACHE.contains(memory.kv_cache_gib)
+            && (if memory.gpu_memory_utilization.is_some() {
+                memory.kv_cache_gib == 0
+            } else {
+                c::KV_CACHE.contains(memory.kv_cache_gib)
+            })
             && c::MIN_AVAILABLE.contains(memory.min_available_gib)
             && c::MIN_FREE.contains(memory.min_free_gib)
             && c::FREE_GATE.contains(memory.free_gate_gib)

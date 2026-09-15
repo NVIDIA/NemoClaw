@@ -239,7 +239,11 @@ impl Service {
         if let Some(recipe) = &self.recipe {
             return &recipe.serving.model_name;
         }
-        &self.model.repository
+        if self.serving.model_name.is_empty() {
+            &self.model.repository
+        } else {
+            &self.serving.model_name
+        }
     }
 
     pub fn defaults(&mut self) {
@@ -265,7 +269,14 @@ impl Service {
                 &mut self.memory.host_reserve_gib,
                 constraints::HOST_RESERVE.default,
             ),
-            (&mut self.memory.kv_cache_gib, constraints::KV_CACHE.default),
+            (
+                &mut self.memory.kv_cache_gib,
+                if self.memory.gpu_memory_utilization.is_some() {
+                    0
+                } else {
+                    constraints::KV_CACHE.default
+                },
+            ),
             (
                 &mut self.memory.min_available_gib,
                 constraints::MIN_AVAILABLE.default,
@@ -290,3 +301,6 @@ impl Service {
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+mod service_hardware;
+pub use service_hardware::{ServiceContainer, ServiceHardware, ServiceIpc};

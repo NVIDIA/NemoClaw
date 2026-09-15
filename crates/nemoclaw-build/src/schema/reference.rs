@@ -162,7 +162,8 @@ fn guide(name: &str) -> &'static str {
         "InlineRecipe" | "Compatibility" | "Tool" | "Resources" | "Settings" | "Compilation"
         | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../recipes.md)",
         "ServicePlacement" | "ServicePublication" => "[SSH model service](../remote-service.md)",
-        "Service" | "Model" | "Serving" | "Memory" => "[Managed models](../models.md)",
+        "Service" | "Model" | "Serving" | "Memory" | "ServiceHardware" | "ServiceContainer"
+        | "ServiceIpc" => "[Managed models](../models.md)",
         "InferenceProvider"
         | "Inference"
         | "Route"

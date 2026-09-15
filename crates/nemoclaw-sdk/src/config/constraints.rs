@@ -29,7 +29,7 @@ pub(crate) const HARNESSES: &[&str] = &[
     "pi",
 ];
 pub(crate) const TOOL_PARSERS: &[&str] = &["", "hermes", "qwen3_coder", "llama3_json", "mistral"];
-pub(crate) const REASONING_PARSERS: &[&str] = &["", "qwen3", "deepseek_r1"];
+pub(crate) const REASONING_PARSERS: &[&str] = &["", "qwen3", "deepseek_r1", "nemotron_v3"];
 pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
 pub(crate) const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";
 pub(crate) const RUNTIME: &str = "docker";
@@ -65,7 +65,7 @@ pub(crate) const MAX_SEQUENCES: DefaultedInteger = DefaultedInteger {
 pub(crate) const BATCH_TOKENS: DefaultedInteger = DefaultedInteger {
     default: 1024,
     min: 512,
-    max: 2048,
+    max: 4096,
 };
 pub(crate) const STARTUP_TIMEOUT: DefaultedInteger = DefaultedInteger {
     default: 1800,
