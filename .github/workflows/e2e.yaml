@@ -743,6 +743,13 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha" >&2; exit 1; }
+          if [[ -z "$PR_NUMBER" ]]; then
+            [[ "$NVIDIA_OWNED" == "true" && "$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$CHECKOUT_SHA" == "$BASE_SHA" ]] || {
+              echo "::error::PR-less checkout validation requires the exact current main commit" >&2
+              exit 1
+            }
+            exit 0
+          fi
           auth_args=()
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
             [[ -n "$GITHUB_TOKEN" ]] || { echo "::error::authenticated NVIDIA-owned checkout validation requires a GitHub token" >&2; exit 1; }
