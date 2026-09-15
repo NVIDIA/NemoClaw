@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import * as processRecovery from "../../actions/sandbox/process-recovery";
+import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxEntry } from "../../state/registry";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
@@ -36,6 +38,22 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
 
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
+
+  it("uses direct native health instead of the retired managed probe", async () => {
+    const wait = vi
+      .spyOn(processRecovery, "waitForRecoveredSandboxGateway")
+      .mockResolvedValueOnce(true);
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+
+    await expect(runtime.waitForGateway("alpha", vi.fn())).resolves.toBe(true);
+
+    expect(wait).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ managedProbeImpl: expect.any(Function) }),
+    );
+    expect(wait.mock.calls[0]![1]!.managedProbeImpl!("alpha")).toBeNull();
+    wait.mockRestore();
+  });
 
   it("finalizes sandbox registration before reconciling credentials (#9833)", async () => {
     const events: string[] = [];

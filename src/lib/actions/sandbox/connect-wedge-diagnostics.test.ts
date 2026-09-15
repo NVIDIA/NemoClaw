@@ -72,6 +72,12 @@ describe("connectSandbox wedge diagnostic failures", () => {
     expect(errorOutput).toContain("Check /tmp/gateway.log inside the sandbox for details.");
     expect(errorOutput).not.toContain("untrusted diagnostic failure");
     expect(harness.sandboxRunBufferedSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledTimes(2);
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.checkAndRecoverSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

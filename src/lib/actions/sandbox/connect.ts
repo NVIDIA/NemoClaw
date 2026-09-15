@@ -2092,6 +2092,8 @@ async function runConnectEntryPreflight(
             retainedHermesLifecycleRecovery.assertCurrent();
             return { kind: retainedHermesLifecycleRecovery.kind } as const;
           })
+        : !hermesPortable
+          ? ({ kind: "not-installed" } as const)
         : await measureAsync("lifecycle", async () =>
             hermesPortableCommandAuthority
               ? await recoverPortableDemoSandboxLifecycleForConnect(
@@ -2099,17 +2101,11 @@ async function runConnectEntryPreflight(
                   registered,
                   gatewayName,
                   hermesPortableCommandAuthority,
-                  hermesPortable && probeTiming
-                    ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
-                    : undefined,
-                  hermesPortable && probeTiming
-                    ? { onComplete: writeHermesPortableCurrentnessTiming }
-                    : undefined,
-                  hermesPortable && probeTiming
-                    ? { onComplete: writeHermesPortableInspectionTiming }
-                    : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableLifecycleRecoveryTiming } : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableCurrentnessTiming } : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableInspectionTiming } : undefined,
                 )
-              : hermesPortable && probeTiming
+              : probeTiming
                 ? await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     registered,

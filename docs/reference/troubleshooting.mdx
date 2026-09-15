@@ -1459,9 +1459,9 @@ systemctl --user stop nemoclaw-openshell-gateway
 
 ### `gateway restart` or `recover` reports `privileged control unavailable`
 
-Built-in OpenClaw and Hermes lifecycle commands require a running direct sandbox container that belongs to the named NemoClaw registry entry. The host uses registry-scoped privileged direct-container control to send an authenticated request to the controller for the live topology. It does not fall back to ordinary `openshell sandbox exec`, SSH, or a manual in-sandbox relaunch.
+Built-in OpenClaw and Hermes lifecycle commands require a running sandbox that belongs to the named NemoClaw registry entry. NemoClaw invokes the agent's native lifecycle command through the exact selected OpenShell sandbox and then observes native health and host forwards.
 
-Current built-in images support two direct-container shapes. A direct root-entrypoint container uses the root PID 1 supervisor. An OpenShell-managed container uses `/opt/openshell/bin/openshell-sandbox` as PID 1, exactly one nonroot `nemoclaw-start` supervisor, and the installed root-owned mode `0500` managed controller. An arbitrary nonroot entrypoint that does not match that managed process shape fails with `privileged control unavailable`. Kubernetes and other deployments without a matching direct container also fail closed with `privileged control unavailable`. Run the lifecycle command from a supported direct-container deployment rather than trying to launch the gateway by hand.
+Current built-in images preserve the agent startup wiring and OpenShell credential projection while leaving gateway restart, background work, cron, and child-agent lifecycle with the native agent. Custom images must preserve those attachment and credential contracts without adding a second NemoClaw lifecycle controller.
 
 On a direct-container deployment, first confirm that the sandbox is running:
 
