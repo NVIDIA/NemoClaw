@@ -1983,17 +1983,19 @@ async function runConnectEntryPreflight(
     withinLifecycleFence?: (route: {
       readonly hermesPortable: boolean;
       readonly hermesPortableCommandAuthority?: HermesPortableReadinessCommandAuthority;
-      readonly requalify: () => void;
+      readonly requalify: () => Promise<void>;
     }) => Promise<void>;
   },
 ): Promise<void> {
   const measure = <T>(stage: "authority" | "lifecycle" | "gateway", operation: () => T): T =>
     probeTiming ? probeTiming.measure(stage, operation) : operation();
-  const measureAsync = <T>(stage: "gateway", operation: () => Promise<T>): Promise<T> =>
-    probeTiming ? probeTiming.measureAsync(stage, operation) : operation();
+  const measureAsync = <T>(
+    stage: "gateway" | "lifecycle",
+    operation: () => Promise<T>,
+  ): Promise<T> => (probeTiming ? probeTiming.measureAsync(stage, operation) : operation());
   await withPortableConnectSandboxLifecycleLock(sandboxName, async () => {
     let hermesPortable = false;
-    let requalify = () => undefined;
+    let requalify = async (): Promise<void> => undefined;
     try {
       measure("authority", assertNoOpenShellGatewayEndpointOverride);
       const authority = measure("authority", () =>
@@ -2035,9 +2037,9 @@ async function runConnectEntryPreflight(
             retainedHermesLifecycleRecovery.assertCurrent();
             return { kind: retainedHermesLifecycleRecovery.kind } as const;
           })
-        : measure("lifecycle", () =>
+        : await measureAsync("lifecycle", async () =>
             hermesPortableCommandAuthority
-              ? recoverPortableDemoSandboxLifecycleForConnect(
+              ? await recoverPortableDemoSandboxLifecycleForConnect(
                   sandboxName,
                   registered,
                   gatewayName,
@@ -2053,7 +2055,7 @@ async function runConnectEntryPreflight(
                     : undefined,
                 )
               : hermesPortable && probeTiming
-                ? recoverPortableDemoSandboxLifecycleForConnect(
+                ? await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     registered,
                     gatewayName,
@@ -2062,7 +2064,7 @@ async function runConnectEntryPreflight(
                     { onComplete: writeHermesPortableCurrentnessTiming },
                     { onComplete: writeHermesPortableInspectionTiming },
                   )
-                : recoverPortableDemoSandboxLifecycleForConnect(
+                : await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     registered,
                     gatewayName,
@@ -2091,7 +2093,7 @@ async function runConnectEntryPreflight(
           ),
         );
       }
-      requalify = () => {
+      requalify = async () => {
         if (!hermesAuthority) {
           if (
             measure(
@@ -2119,9 +2121,9 @@ async function runConnectEntryPreflight(
         if (!probeOnly) {
           const activeAuthority = hermesAuthority;
           const currentGateway = resolveSandboxGatewayName(activeAuthority.entry);
-          const recovery = measure("lifecycle", () =>
+          const recovery = await measureAsync("lifecycle", async () =>
             hermesPortableCommandAuthority
-              ? recoverPortableDemoSandboxLifecycleForConnect(
+              ? await recoverPortableDemoSandboxLifecycleForConnect(
                   sandboxName,
                   activeAuthority.entry,
                   currentGateway,
@@ -2133,7 +2135,7 @@ async function runConnectEntryPreflight(
                   probeTiming ? { onComplete: writeHermesPortableInspectionTiming } : undefined,
                 )
               : hermesPortable && probeTiming
-                ? recoverPortableDemoSandboxLifecycleForConnect(
+                ? await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     activeAuthority.entry,
                     currentGateway,
@@ -2142,7 +2144,7 @@ async function runConnectEntryPreflight(
                     { onComplete: writeHermesPortableCurrentnessTiming },
                     { onComplete: writeHermesPortableInspectionTiming },
                   )
-                : recoverPortableDemoSandboxLifecycleForConnect(
+                : await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     activeAuthority.entry,
                     currentGateway,
@@ -2198,7 +2200,7 @@ async function runConnectEntryPreflight(
       ...(hermesPortableCommandAuthority ? { hermesPortableCommandAuthority } : {}),
       requalify,
     });
-    requalify();
+    await requalify();
   });
 }
 
@@ -2320,13 +2322,13 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
           : undefined,
         successLogs: ["  Sandbox is ready. Connecting..."],
       });
-      requalify();
+      await requalify();
       // ── Inference route swap (#1248, #3390) ───────────────────────
       const agent = agentRuntime.getSessionAgent(sandboxName);
       const sb = hermesPortable
         ? await verifyHermesPortableInferenceRouteOrExit(sandboxName, agent)
         : await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-      requalify();
+      await requalify();
       if (hermesPortable) {
         const authority = requireHermesPortableActiveLifecycleAuthority(
           sandboxName,
@@ -2442,7 +2444,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           // proof-backed requalification and lifecycle recovery exactly once;
           // executable, socket, receipt, container, or policy drift still
           // fails inside those authorities before another readiness read.
-          const requalified = probeTiming!.measure("authority", () =>
+          const requalified = await probeTiming!.measureAsync("authority", () =>
             requalifyPortableAgentSandboxAuthority(
               sandboxName,
               portableAgentLifecycleAuthorityDeps(),
@@ -2461,7 +2463,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           );
           const registered = active.entry;
           requalified.assertCurrent();
-          const recovery = probeTiming!.measure("lifecycle", () =>
+          const recovery = await probeTiming!.measureAsync("lifecycle", () =>
             recoverPortableDemoSandboxLifecycleForConnect(
               sandboxName,
               registered,
@@ -2497,7 +2499,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             requalified.kind === "already-current" && qualified.kind === "current";
         }
         if (qualified.kind === "requalification-required") {
-          const requalified = probeTiming!.measure("authority", () =>
+          const requalified = await probeTiming!.measureAsync("authority", () =>
             requalifyPortableAgentSandboxAuthority(
               sandboxName,
               portableAgentLifecycleAuthorityDeps(),
@@ -2631,7 +2633,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
         return null;
       }
       if (!portableAuthorityReady) {
-        probeTiming!.measure("authority", () =>
+        await probeTiming!.measureAsync("authority", () =>
           requalifyPortableAgentSandboxAuthority(
             sandboxName,
             portableAgentLifecycleAuthorityDeps(),
@@ -2807,7 +2809,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" }),
               );
             }
-            requalify();
+            await requalify();
             await runSandboxConnectProbe(sandboxName, {
               hermesPortable,
               ...(hermesPortableCommandAuthority ? { hermesPortableCommandAuthority } : {}),
@@ -2824,7 +2826,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 }),
               );
             }
-            requalify();
+            await requalify();
           },
         });
         const retainedCommand = hermesReadinessAuthority?.command;
@@ -2979,18 +2981,18 @@ async function prepareConnectSandboxWithinLifecycleFence(
       throw new Error("Hermes portable lifecycle authority appeared during interactive connect");
     }
   };
-  const requalifyHermesPortableForConnect = (): {
+  const requalifyHermesPortableForConnect = async (): Promise<{
     readonly env: NodeJS.ProcessEnv;
     readonly executablePath: string;
     readonly gatewayName: string;
-  } => {
+  }> => {
     requalifyPortableDisposition();
     const qualified = hermesAuthority;
     if (!qualified) {
       throw new Error("Hermes portable registry authority changed before interactive connect");
     }
     const gatewayName = resolveSandboxGatewayName(qualified.entry);
-    const recovery = recoverPortableDemoSandboxLifecycleForConnect(
+    const recovery = await recoverPortableDemoSandboxLifecycleForConnect(
       sandboxName,
       qualified.entry,
       gatewayName,
@@ -3008,7 +3010,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
   requalifyPortableDisposition();
   if (!hermesPortable) prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
   requalifyPortableDisposition();
-  const portableAuthority = hermesPortable ? requalifyHermesPortableForConnect() : null;
+  const portableAuthority = hermesPortable ? await requalifyHermesPortableForConnect() : null;
   return {
     executor: createCliOpenShellSandboxSessionExecutor({
       hostCwd: ROOT,
