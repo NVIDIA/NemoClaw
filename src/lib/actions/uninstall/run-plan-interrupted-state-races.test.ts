@@ -460,7 +460,7 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     };
     const rmSync: typeof fs.rmSync = (target, options) =>
       failedQuarantineRoot === null && String(target).startsWith(`${detachedRoot}.cleanup-`)
-        ? failQuarantineRemoval(target, options)
+        ? failQuarantineRemoval(target)
         : fs.rmSync(target, options);
     try {
       const first = await runInterruptedUninstall(tmpHome, port, {
