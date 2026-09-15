@@ -637,8 +637,11 @@ export function createDockerGpuSandboxCreatePatch(
           });
           const rollbackError = await rollbackAfterFailure();
           if (rollbackError) {
-            attachManagedBootstrapRollbackError(failure, rollbackError);
-            console.error(`  ${rollbackError.message}`);
+            const sanitizedRollbackError = attachManagedBootstrapRollbackError(
+              failure,
+              rollbackError,
+            );
+            console.error(`  ${sanitizedRollbackError.message}`);
           }
           throw failure;
         }
@@ -661,8 +664,11 @@ export function createDockerGpuSandboxCreatePatch(
         });
         const rollbackError = await rollbackAfterFailure();
         if (rollbackError) {
-          attachManagedBootstrapRollbackError(failure, rollbackError);
-          console.error(`  ${rollbackError.message}`);
+          const sanitizedRollbackError = attachManagedBootstrapRollbackError(
+            failure,
+            rollbackError,
+          );
+          console.error(`  ${sanitizedRollbackError.message}`);
         }
         throw failure;
       }

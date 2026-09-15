@@ -363,7 +363,7 @@ export class ManagedBootstrapRecoveryBlockedError extends Error {
 }
 
 /** Retain rollback evidence on the original failure, redacting Error and string details before adding recovery guidance. */
-export function attachManagedBootstrapRollbackError(failure: Error, rollbackError: unknown): void {
+export function attachManagedBootstrapRollbackError(failure: Error, rollbackError: unknown): Error {
   const redactedRollbackError = sanitizeOnboardFailure(rollbackError);
   Object.defineProperty(failure, "managedBootstrapRollbackError", {
     configurable: true,
@@ -381,14 +381,14 @@ export function attachManagedBootstrapRollbackError(failure: Error, rollbackErro
     messageDescriptor && "value" in messageDescriptor && typeof messageDescriptor.value === "string"
       ? redactOnboardErrorText(messageDescriptor.value)
       : "Managed bootstrap failed.";
-  if (message.includes(detail)) return;
+  if (message.includes(detail)) return redactedRollbackError;
   const nextMessage = `${message}\nManaged bootstrap rollback requires attention: ${detail}`;
   if (
     messageDescriptor &&
     !messageDescriptor.configurable &&
     (!("value" in messageDescriptor) || !messageDescriptor.writable)
   ) {
-    return;
+    return redactedRollbackError;
   }
   Object.defineProperty(failure, "message", {
     configurable: messageDescriptor?.configurable ?? true,
@@ -396,6 +396,7 @@ export function attachManagedBootstrapRollbackError(failure: Error, rollbackErro
     value: nextMessage,
     writable: messageDescriptor && "value" in messageDescriptor ? messageDescriptor.writable : true,
   });
+  return redactedRollbackError;
 }
 
 export interface ManagedBootstrapAdapter {

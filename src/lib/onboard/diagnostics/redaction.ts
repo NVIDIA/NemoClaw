@@ -26,11 +26,12 @@ interface DiagnosticWalk {
 const CUSTOM_INSPECT = Symbol.for("nodejs.util.inspect.custom");
 const UNIVERSAL_SHADOWS = [
   ["toJSON", undefined],
-  [CUSTOM_INSPECT, undefined],
+  [CUSTOM_INSPECT, safeDiagnosticInspect],
   ["toString", safeDiagnosticCoercion],
   ["valueOf", safeDiagnosticCoercion],
   [Symbol.toPrimitive, safeDiagnosticCoercion],
   [Symbol.toStringTag, undefined],
+  ["constructor", undefined],
 ] as const;
 const ERROR_CONTROL_SHADOWS = [
   ["bang", undefined],
@@ -45,6 +46,7 @@ const ERROR_RENDER_FIELDS = [
   ["message", "Onboarding failed."],
   ["stack", "<REDACTED>"],
   ["code", undefined],
+  ["exitCode", undefined],
   ["ref", undefined],
   ["cause", undefined],
   ["errors", undefined],
@@ -55,6 +57,11 @@ const REDACTED_ERROR_MESSAGE =
 /** Return a fixed primitive without consulting any diagnostic object state. */
 function safeDiagnosticCoercion(): string {
   return "[REDACTED ERROR]";
+}
+
+/** Return an inert primitive when Node performs structured inspection. */
+function safeDiagnosticInspect(): string {
+  return "<REDACTED>";
 }
 
 /** Identify a key whose visible description contains credential material. */
@@ -76,7 +83,12 @@ function isCoercionHook(key: PropertyKey): boolean {
 
 /** Identify properties that every retained diagnostic container shadows locally. */
 function isUniversalShadow(key: PropertyKey): boolean {
-  return isRendererHook(key) || isCoercionHook(key) || key === Symbol.toStringTag;
+  return (
+    isRendererHook(key) ||
+    isCoercionHook(key) ||
+    key === Symbol.toStringTag ||
+    key === "constructor"
+  );
 }
 
 /** Identify Oclif control fields that must never inherit or retain active values. */
@@ -98,6 +110,7 @@ function isErrorRenderField(key: PropertyKey): boolean {
     key === "message" ||
     key === "stack" ||
     key === "code" ||
+    key === "exitCode" ||
     key === "ref" ||
     key === "cause" ||
     key === "errors"
@@ -106,7 +119,15 @@ function isErrorRenderField(key: PropertyKey): boolean {
 
 /** Admit only native, non-Proxy Error objects to identity-preserving redaction. */
 export function isTrustedOnboardError(value: unknown): value is Error {
-  return typeof value === "object" && value !== null && !isProxy(value) && isNativeError(value);
+  if (typeof value !== "object" || value === null || isProxy(value) || !isNativeError(value)) {
+    return false;
+  }
+  let current = Object.getPrototypeOf(value) as object | null;
+  while (current) {
+    if (isProxy(current)) return false;
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+  return true;
 }
 
 /** Limit property traversal to plain records so class instances retain their behavior. */

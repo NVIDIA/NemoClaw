@@ -3,6 +3,7 @@
 
 import { inspect } from "node:util";
 
+import { Command } from "@oclif/core";
 import * as prettyPrintModule from "../../../node_modules/@oclif/core/lib/errors/errors/pretty-print.js";
 import { assert, describe, expect, it, vi } from "vitest";
 
@@ -56,6 +57,63 @@ async function catchOnboardFailure(failure: unknown): Promise<unknown> {
 }
 
 describe("onboarding command failures", () => {
+  it("shadows every inherited error field read by Oclif Command.catch", async () => {
+    const secret = `nvapi-${"j".repeat(60)}`;
+    const exitCode = vi.fn(() => {
+      throw new Error(secret);
+    });
+    const message = vi.fn(() => {
+      throw new Error(secret);
+    });
+    class CatchError extends Error {}
+    Object.defineProperties(CatchError.prototype, {
+      exitCode: { configurable: true, get: exitCode },
+      message: { configurable: true, get: message },
+    });
+    const sanitized = await catchOnboardFailure(new CatchError());
+    assert(sanitized instanceof Error);
+    const previousExitCode = process.exitCode;
+    try {
+      process.exitCode = undefined;
+      await expect(
+        (
+          Command.prototype as unknown as {
+            catch: (this: { jsonEnabled: () => boolean }, error: Error) => Promise<unknown>;
+          }
+        ).catch.call({ jsonEnabled: () => false }, sanitized),
+      ).rejects.toBe(sanitized);
+
+      expect(process.exitCode).toBe(1);
+      expect(exitCode).not.toHaveBeenCalled();
+      expect(message).not.toHaveBeenCalled();
+      expect(inspect(sanitized, { depth: null })).not.toContain(secret);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("preserves a safe own exitCode through Oclif Command.catch", async () => {
+    const failure = new Error("Onboarding failed") as Error & { exitCode: number };
+    failure.exitCode = 17;
+    const sanitized = await catchOnboardFailure(failure);
+    assert(sanitized instanceof Error);
+    const previousExitCode = process.exitCode;
+    try {
+      process.exitCode = undefined;
+      await expect(
+        (
+          Command.prototype as unknown as {
+            catch: (this: { jsonEnabled: () => boolean }, error: Error) => Promise<unknown>;
+          }
+        ).catch.call({ jsonEnabled: () => false }, sanitized),
+      ).rejects.toBe(sanitized);
+
+      expect(process.exitCode).toBe(17);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it.each([
     ["message", `nvapi-${"4".repeat(60)}`],
     ["name", `nvapi-${"5".repeat(60)}`],
@@ -188,6 +246,26 @@ describe("onboarding command failures", () => {
     assert(caught !== failure);
     expect(get).not.toHaveBeenCalled();
     expect(getOwnPropertyDescriptor).not.toHaveBeenCalled();
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+  });
+
+  it.each([
+    ["immediate", (prototype: object) => prototype],
+    ["deeper", (prototype: object) => Object.create(prototype) as object],
+  ])("rejects a native Error with a %s Proxy-backed prototype", async (_kind, wrap) => {
+    const secret = `nvapi-${"l".repeat(60)}`;
+    const getPrototypeOf = vi.fn(() => {
+      throw new Error(secret);
+    });
+    const proxyPrototype = new Proxy(Error.prototype, { getPrototypeOf });
+    const failure = new Error("Onboarding failed");
+    Object.setPrototypeOf(failure, wrap(proxyPrototype));
+
+    const caught = await catchOnboardFailure(failure);
+
+    assert(caught instanceof Error);
+    assert(caught !== failure);
+    expect(getPrototypeOf).not.toHaveBeenCalled();
     expect(inspect(caught, { depth: null })).not.toContain(secret);
   });
 
@@ -328,7 +406,32 @@ describe("onboarding command failures", () => {
     expect(customInspect).not.toHaveBeenCalled();
     expect(inspect(failure, { depth: null })).not.toContain(secret);
     expect(customInspect).not.toHaveBeenCalled();
-    expect(Object.getOwnPropertyDescriptor(failure, inspect.custom)?.value).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(failure, inspect.custom)?.value).toBeTypeOf("function");
+  });
+
+  it("uses inert inspection before Node consults a poisoned Array constructor", async () => {
+    const secret = `nvapi-${"m".repeat(60)}`;
+    const constructor = vi.fn(() => {
+      throw new Error(secret);
+    });
+    const sanitized = await catchOnboardFailure(new Error("Onboarding failed"));
+    assert(sanitized instanceof Error);
+    const arrayConstructor = Object.getOwnPropertyDescriptor(Array.prototype, "constructor");
+    assert(arrayConstructor);
+    let rendered = "";
+    try {
+      Object.defineProperty(Array.prototype, "constructor", {
+        configurable: true,
+        get: constructor,
+      });
+      rendered = inspect(sanitized, { depth: null });
+    } finally {
+      Object.defineProperty(Array.prototype, "constructor", arrayConstructor);
+    }
+
+    expect(rendered).toBe("<REDACTED>");
+    expect(rendered).not.toContain(secret);
+    expect(constructor).not.toHaveBeenCalled();
   });
 
   it("neutralizes an inherited structured-inspection function without invoking it", async () => {
@@ -620,10 +723,11 @@ describe("onboarding command failures", () => {
       writable: false,
     });
 
-    attachManagedBootstrapRollbackError(failure, rollback);
+    const attached = attachManagedBootstrapRollbackError(failure, rollback);
 
-    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(Error);
-    expect(failure.managedBootstrapRollbackError).not.toBe(rollback);
+    expect(attached).toBeInstanceOf(Error);
+    expect(failure.managedBootstrapRollbackError).toBe(attached);
+    expect(attached).not.toBe(rollback);
     expect(inspect(failure, { depth: null })).not.toContain(secret);
   });
 
@@ -816,6 +920,65 @@ describe("onboarding command failures", () => {
       delete (Object.prototype as Record<PropertyKey, unknown>)[Symbol.toStringTag];
       delete (Array.prototype as unknown as Record<PropertyKey, unknown>)[Symbol.toStringTag];
     }
+  });
+
+  it("keeps util.inspect from reading later-poisoned prototype constructors", async () => {
+    const secret = `nvapi-${"k".repeat(60)}`;
+    const errorConstructorAccess = vi.fn(() => {
+      throw new Error(`${secret}:error`);
+    });
+    const objectConstructorAccess = vi.fn(() => {
+      throw new Error(`${secret}:object`);
+    });
+    const arrayConstructorAccess = vi.fn(() => {
+      throw new Error(`${secret}:array`);
+    });
+    const failure = new Error("Onboarding failed") as Error & { context?: unknown };
+    failure.context = { list: [{ detail: "safe" }] };
+    const sanitized = await catchOnboardFailure(failure);
+    assert(sanitized instanceof Error);
+    const context = (sanitized as Error & { context: { list: unknown[] } }).context;
+    const nested = context.list[0] as object;
+    expect(Object.getOwnPropertyDescriptor(sanitized, "constructor")?.value).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(context, "constructor")?.value).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(context.list, "constructor")?.value).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(nested, "constructor")?.value).toBeUndefined();
+    const errorConstructor = Object.getOwnPropertyDescriptor(Error.prototype, "constructor");
+    const objectConstructor = Object.getOwnPropertyDescriptor(Object.prototype, "constructor");
+    const arrayConstructor = Object.getOwnPropertyDescriptor(Array.prototype, "constructor");
+    assert(errorConstructor);
+    assert(objectConstructor);
+    assert(arrayConstructor);
+    let rendered = "";
+    try {
+      Object.defineProperty(Error.prototype, "constructor", {
+        configurable: true,
+        get: errorConstructorAccess,
+      });
+      Object.defineProperty(Object.prototype, "constructor", {
+        configurable: true,
+        get: objectConstructorAccess,
+      });
+      Object.defineProperty(Array.prototype, "constructor", {
+        configurable: true,
+        get: arrayConstructorAccess,
+      });
+
+      rendered = inspect(sanitized, { depth: null });
+    } finally {
+      Object.defineProperty(Error.prototype, "constructor", errorConstructor);
+      Object.defineProperty(Object.prototype, "constructor", objectConstructor);
+      Object.defineProperty(Array.prototype, "constructor", arrayConstructor);
+    }
+
+    expect(rendered).not.toContain(secret);
+    expect(errorConstructorAccess).not.toHaveBeenCalled();
+    expect(objectConstructorAccess).not.toHaveBeenCalled();
+    expect(arrayConstructorAccess).not.toHaveBeenCalled();
+    expect(sanitized).toBe(failure);
+    expect(sanitized).toBeInstanceOf(Error);
+    expect(Array.isArray(context.list)).toBe(true);
+    expect(Object.getPrototypeOf(context)).toBeNull();
   });
 
   it("redacts a complete private-key block before reporting a typed onboarding error", async () => {
