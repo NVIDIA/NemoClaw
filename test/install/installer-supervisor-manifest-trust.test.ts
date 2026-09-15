@@ -14,7 +14,11 @@ import {
   V00116_SUPERVISOR_MANIFEST_DIGEST,
 } from "../helpers/openshell-release-fixtures";
 
-import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
+import {
+  selectCentralizedGatewayStateOwnershipRuntime,
+  selectPreparedCentralizedGatewayStateOwnershipRuntime,
+  selectPreparedGatewayRuntime,
+} from "../helpers/prepared-gateway-runtime";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const PARSER = path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts");
@@ -149,6 +153,35 @@ describe("OpenShell supervisor manifest trust", () => {
   it("accepts the gateway runtime template that prepares the Docker driver environment (#11212)", () => {
     const result = runParser({ transformSupervisor: selectPreparedGatewayRuntime });
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("accepts the prospective centralized gateway state-ownership template (#11720)", () => {
+    const result = runParser({
+      transformSupervisor: selectCentralizedGatewayStateOwnershipRuntime,
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("accepts the prepared centralized gateway state-ownership template (#11720)", () => {
+    const result = runParser({
+      transformSupervisor: selectPreparedCentralizedGatewayStateOwnershipRuntime,
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    ["centralized", selectCentralizedGatewayStateOwnershipRuntime],
+    ["prepared centralized", selectPreparedCentralizedGatewayStateOwnershipRuntime],
+  ])("rejects an operational mutation of the %s state-ownership template (#11720)", (_, select) => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        select(source).replace(
+          "ghcr.io/nvidia/openshell/supervisor@${manifestDigest}",
+          "registry.invalid/openshell/supervisor@${manifestDigest}",
+        ),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("supervisor runtime operational template is not base-trusted");
   });
 
   it("rejects a repository mutation of the gateway-preparation runtime template (#11212)", () => {

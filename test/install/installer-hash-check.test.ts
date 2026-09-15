@@ -34,7 +34,11 @@ import {
   removeV00106OperationalTrust,
 } from "../helpers/openshell-installer-template";
 
-import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
+import {
+  selectCentralizedGatewayStateOwnershipRuntime,
+  selectPreparedCentralizedGatewayStateOwnershipRuntime,
+  selectPreparedGatewayRuntime,
+} from "../helpers/prepared-gateway-runtime";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALLER_TEMPLATE = fs.readFileSync(
@@ -907,6 +911,39 @@ function expectTrustedRelease(
   expect(result.stdout).toContain("All installer hashes are current");
 }
 
+function expectSelectedGatewayRuntimeTemplateAccepted(transform: (source: string) => string): void {
+  const version = "0.0.116";
+  const root = createFixture(version);
+  const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
+  const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
+  const source = fs.readFileSync(path.join(REPO_ROOT, runtimePath), "utf8");
+  const selected = transform(source).replace(
+    /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
+    candidatePins.trim(),
+  );
+  fs.writeFileSync(path.join(root, runtimePath), selected);
+  const result = spawnSync(
+    "node",
+    [
+      "--no-warnings",
+      path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
+      "--blueprint",
+      path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
+      "--installer",
+      path.join(root, "scripts/install-openshell.sh"),
+      "--brev-installer",
+      path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
+      "--supervisor-runtime",
+      path.join(root, runtimePath),
+      "--format",
+      "tsv",
+    ],
+    { encoding: "utf8" },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain(version);
+}
+
 describe("installer hash verification", () => {
   it("verifies all installer and Brev pins from token-free checksum manifests", () => {
     const result = runFixture("complete");
@@ -979,36 +1016,17 @@ describe("installer hash verification", () => {
   });
 
   it("accepts the gateway-preparation template with selected OpenShell 0.0.116 (#11212)", () => {
-    const version = "0.0.116";
-    const root = createFixture(version);
-    const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
-    const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
-    const source = fs.readFileSync(path.join(REPO_ROOT, runtimePath), "utf8");
-    const prepared = selectPreparedGatewayRuntime(source).replace(
-      /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
-      candidatePins.trim(),
+    expectSelectedGatewayRuntimeTemplateAccepted(selectPreparedGatewayRuntime);
+  });
+
+  it("accepts centralized gateway state ownership with selected OpenShell 0.0.116 (#11720)", () => {
+    expectSelectedGatewayRuntimeTemplateAccepted(selectCentralizedGatewayStateOwnershipRuntime);
+  });
+
+  it("accepts prepared centralized gateway state ownership with OpenShell 0.0.116 (#11720)", () => {
+    expectSelectedGatewayRuntimeTemplateAccepted(
+      selectPreparedCentralizedGatewayStateOwnershipRuntime,
     );
-    fs.writeFileSync(path.join(root, runtimePath), prepared);
-    const result = spawnSync(
-      "node",
-      [
-        "--no-warnings",
-        path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
-        "--blueprint",
-        path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
-        "--installer",
-        path.join(root, "scripts/install-openshell.sh"),
-        "--brev-installer",
-        path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
-        "--supervisor-runtime",
-        path.join(root, runtimePath),
-        "--format",
-        "tsv",
-      ],
-      { encoding: "utf8" },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain(version);
   });
 
   it("rejects v0.0.116 pins when the stable selector requests a GNU sandbox (#10790)", () => {
