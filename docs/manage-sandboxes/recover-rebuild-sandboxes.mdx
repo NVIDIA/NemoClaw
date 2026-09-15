@@ -123,7 +123,9 @@ When the exact runner is stopped, they resume only that runner; they do not sele
 Missing authority, a same-name replacement, or other drift stops recovery before NemoClaw treats another resource as the runner.
 Success requires a final route proof from inside the sandbox.
 
-Ordinary `connect` and direct `launch` do not resume the runner.
+Ordinary `connect` can resume the runner when its recorded inference route is unavailable.
+When `launch` runs its complete preflight, it uses the same recovery path before it opens a session.
+A launch that accepts existing launch-readiness evidence skips that preflight.
 For another configured provider, `recover` and `connect --probe-only` verify the recorded inference route and check and repair required forwards without requiring or starting an Ollama runner.
 If a check fails after recovery starts a stopped runner, NemoClaw restores the runner and registry to their prior states or reports that restoration could not be proved.
 
