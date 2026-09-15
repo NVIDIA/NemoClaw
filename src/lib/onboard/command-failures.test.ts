@@ -185,6 +185,98 @@ describe("onboarding command failures", () => {
     expect(Object.getOwnPropertyDescriptor(failure, inspect.custom)?.value).toBeUndefined();
   });
 
+  it("neutralizes an inherited structured-inspection function without invoking it", async () => {
+    const secret = `nvapi-${"p".repeat(60)}`;
+    const customInspect = vi.fn(() => `Leaked diagnostic: ${secret}`);
+    class StructuredError extends Error {}
+    Object.defineProperty(StructuredError.prototype, inspect.custom, {
+      configurable: true,
+      value: customInspect,
+    });
+    const failure = new StructuredError("Onboarding failed");
+    Object.preventExtensions(failure);
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(customInspect).not.toHaveBeenCalled();
+    expect(caught).not.toBe(failure);
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+    expect(customInspect).not.toHaveBeenCalled();
+  });
+
+  it("neutralizes own and inherited JSON renderers without invoking them", async () => {
+    const ownSecret = `nvapi-${"q".repeat(60)}`;
+    const inheritedSecret = `nvapi-${"r".repeat(60)}`;
+    const ownRenderer = vi.fn(() => ({ credential: ownSecret }));
+    const inheritedRenderer = vi.fn(() => ({ credential: inheritedSecret }));
+    class JsonError extends Error {}
+    Object.defineProperty(JsonError.prototype, "toJSON", {
+      configurable: true,
+      value: inheritedRenderer,
+    });
+    const nested = new JsonError("Nested failure");
+    const failure = new Error("Onboarding failed", { cause: nested });
+    Object.defineProperty(failure, "toJSON", {
+      configurable: true,
+      value: ownRenderer,
+      writable: true,
+    });
+
+    await rethrowOnboardFailure(failure);
+
+    expect(ownRenderer).not.toHaveBeenCalled();
+    expect(inheritedRenderer).not.toHaveBeenCalled();
+    expect(JSON.stringify(failure)).not.toContain(ownSecret);
+    expect(JSON.stringify(nested)).not.toContain(inheritedSecret);
+    expect(ownRenderer).not.toHaveBeenCalled();
+    expect(inheritedRenderer).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a diagnostic function name contains a secret", async () => {
+    const secret = `nvapi-${"s".repeat(60)}`;
+    const diagnostic = { [secret]: () => undefined }[secret];
+    const failure = new Error("Onboarding failed") as Error & { diagnostic?: unknown };
+    failure.diagnostic = diagnostic;
+    expect(inspect(diagnostic)).toContain(secret);
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(caught).not.toBe(failure);
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+  });
+
+  it("fails closed when a diagnostic symbol value contains a secret", async () => {
+    const secret = `nvapi-${"t".repeat(60)}`;
+    const diagnostic = Symbol(secret);
+    const failure = new Error("Onboarding failed") as Error & { diagnostic?: unknown };
+    failure.diagnostic = diagnostic;
+    expect(inspect(diagnostic)).toContain(secret);
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(caught).not.toBe(failure);
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+  });
+
+  it("fails closed when string or symbol diagnostic property keys contain secrets", async () => {
+    const stringSecret = `nvapi-${"u".repeat(60)}`;
+    const symbolSecret = `nvapi-${"v".repeat(60)}`;
+    const failure = new Error("Onboarding failed") as Error & Record<string, unknown>;
+    failure[stringSecret] = "diagnostic";
+    expect(inspect(failure, { depth: null })).toContain(stringSecret);
+    const symbolFailure = new Error("Onboarding failed");
+    Object.defineProperty(symbolFailure, Symbol(symbolSecret), { value: "diagnostic" });
+    expect(inspect(symbolFailure, { depth: null, showHidden: true })).toContain(symbolSecret);
+
+    const caught = await catchOnboardFailure(failure);
+    const symbolCaught = await catchOnboardFailure(symbolFailure);
+
+    expect(caught).not.toBe(failure);
+    expect(symbolCaught).not.toBe(symbolFailure);
+    expect(inspect(caught, { depth: null })).not.toContain(stringSecret);
+    expect(inspect(symbolCaught, { depth: null, showHidden: true })).not.toContain(symbolSecret);
+  });
+
   it("returns an opaque fallback without partially rewriting immutable error data", async () => {
     const messageSecret = `nvapi-${"k".repeat(60)}`;
     const immutableSecret = `nvapi-${"l".repeat(60)}`;

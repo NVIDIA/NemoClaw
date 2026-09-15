@@ -22,8 +22,21 @@ interface DiagnosticWalk {
 }
 
 const CUSTOM_INSPECT = Symbol.for("nodejs.util.inspect.custom");
+const RENDERER_HOOKS = ["toJSON", CUSTOM_INSPECT] as const;
 const REDACTED_ERROR_MESSAGE =
   "Onboarding failed; diagnostic details were redacted because they could not be sanitized safely.";
+
+/** Identify a key whose visible description contains credential material. */
+function isSensitiveDiagnosticKey(key: PropertyKey): boolean {
+  if (key === CUSTOM_INSPECT) return false;
+  const text = typeof key === "symbol" ? (key.description ?? "") : String(key);
+  return redactOnboardErrorText(text) !== text;
+}
+
+/** Renderer hooks are removed rather than treated as ordinary diagnostic values. */
+function isRendererHook(key: PropertyKey): boolean {
+  return key === "toJSON" || key === CUSTOM_INSPECT;
+}
 
 /** Limit property traversal to plain records so class instances retain their behavior. */
 function isPlainDiagnosticObject(value: object): value is Record<PropertyKey, unknown> {
@@ -42,6 +55,10 @@ function createDiagnosticTarget(value: object): object | null {
 /** Reuse visited targets so shared references and cycles survive redaction without recursive calls. */
 function redactNestedDiagnostic(value: unknown, walk: DiagnosticWalk): unknown {
   if (typeof value === "string") return redactOnboardErrorText(value);
+  if (typeof value === "function" || typeof value === "symbol") {
+    walk.unsafe = true;
+    return value;
+  }
   if (typeof value !== "object" || value === null) return value;
   if (walk.seen.has(value)) return walk.seen.get(value);
 
@@ -83,7 +100,7 @@ function redactAccessor(
     descriptor: {
       configurable: descriptor.configurable,
       enumerable: descriptor.enumerable,
-      value: "<REDACTED>",
+      value: isRendererHook(key) ? undefined : "<REDACTED>",
       writable: true,
     },
   });
@@ -98,7 +115,7 @@ function redactStoredValue(
   walk: DiagnosticWalk,
 ): void {
   const value =
-    key === CUSTOM_INSPECT && typeof descriptor.value === "function"
+    isRendererHook(key) && descriptor.value !== undefined
       ? undefined
       : redactNestedDiagnostic(descriptor.value, walk);
   const replacement = { ...descriptor, value };
@@ -114,14 +131,53 @@ function redactStoredValue(
   walk.updates.push({ target, key, descriptor: replacement });
 }
 
+/** Shadow inherited rendering hooks without reading or invoking their values. */
+function neutralizeInheritedRendererHooks(
+  source: object,
+  target: object,
+  walk: DiagnosticWalk,
+): void {
+  for (const key of RENDERER_HOOKS) {
+    if (Object.hasOwn(source, key)) continue;
+    let prototype = Object.getPrototypeOf(source) as object | null;
+    let inherited = false;
+    while (prototype) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
+      if (descriptor) {
+        inherited = !("value" in descriptor) || typeof descriptor.value === "function";
+        break;
+      }
+      prototype = Object.getPrototypeOf(prototype) as object | null;
+    }
+    if (!inherited) continue;
+    if (source === target && !Object.isExtensible(target)) {
+      walk.unsafe = true;
+      return;
+    }
+    const descriptor = {
+      configurable: true,
+      enumerable: false,
+      value: undefined,
+      writable: true,
+    };
+    if (source === target) walk.updates.push({ target, key, descriptor });
+    else Object.defineProperty(target, key, descriptor);
+  }
+}
+
 /** Copy stored diagnostics without invoking accessors or changing descriptor visibility. */
 function redactStoredDiagnosticProperties(
   source: object,
   target: object,
   walk: DiagnosticWalk,
 ): void {
+  neutralizeInheritedRendererHooks(source, target, walk);
   for (const key of Reflect.ownKeys(source)) {
     if (walk.unsafe) return;
+    if (isSensitiveDiagnosticKey(key)) {
+      walk.unsafe = true;
+      return;
+    }
     const descriptor = Object.getOwnPropertyDescriptor(source, key);
     if (!descriptor) continue;
     if ("value" in descriptor) redactStoredValue(source, target, key, descriptor, walk);
