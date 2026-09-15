@@ -101,7 +101,19 @@ it.each([
     "analysis commit binding",
     "needs.require-green-checks.outputs.head_sha || ''",
     "needs.require-green-checks.outputs.base_sha || ''",
-    "Unified advisor must prepare the PR revision from the successful checks run",
+    "Unified advisor must prepare the resolved PR revision",
+  ],
+  [
+    "manual PR base binding",
+    "needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.base_sha || ''",
+    "github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || ''",
+    "Unified advisor must prepare the resolved PR revision",
+  ],
+  [
+    "manual PR head binding",
+    "needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.head_sha || ''",
+    "github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || ''",
+    "Unified advisor must prepare the resolved PR revision",
   ],
   [
     "blocker gate dependency",

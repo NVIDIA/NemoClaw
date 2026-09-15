@@ -189,11 +189,11 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     targetPreparation.env?.TARGET_BASE !==
       "${{ github.event_name == 'workflow_run' && 'main' || inputs.target_base }}" ||
     targetPreparation.env?.PR_BASE_SHA !==
-      "${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || '' }}" ||
+      "${{ needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.base_sha || '' }}" ||
     targetPreparation.env?.EXPECTED_HEAD_SHA !==
-      "${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}"
+      "${{ needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.head_sha || '' }}"
   ) {
-    errors.push("Unified advisor must prepare the PR revision from the successful checks run");
+    errors.push("Unified advisor must prepare the resolved PR revision");
   }
   const specialistEnv = specialist.env ?? {};
   if (

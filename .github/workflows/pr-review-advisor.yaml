@@ -327,8 +327,8 @@ jobs:
           TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}
           TARGET_PR: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
           TARGET_BASE: ${{ github.event_name == 'workflow_run' && 'main' || inputs.target_base }}
-          PR_BASE_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || '' }}
-          EXPECTED_HEAD_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}
+          PR_BASE_SHA: ${{ needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.base_sha || '' }}
+          EXPECTED_HEAD_SHA: ${{ needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.head_sha || '' }}
           GIT_LFS_SKIP_SMUDGE: "1"
           TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |
