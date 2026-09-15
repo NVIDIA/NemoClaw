@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(unix, test))]
 use crate::Error;
 #[cfg(target_os = "linux")]
 pub async fn query(query: &str) -> Result<String, Error> {
@@ -15,7 +15,7 @@ pub async fn query(query: &str) -> Result<String, Error> {
     }
     String::from_utf8(output.stdout).map_err(|_| Error::State("GPU inventory is incomplete"))
 }
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(unix, test))]
 pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Error> {
     let lines: Vec<_> = gpu.trim().lines().collect();
     if lines.len() != 1 {
