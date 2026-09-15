@@ -320,7 +320,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       expect(
         f.runOpenshellMock.mock.calls.map(([args]) => args).filter((args) => args[1] === "delete"),
       ).toEqual([
-        ["sandbox", "delete", "beta"],
+        ["sandbox", "delete", "-g", "nemoclaw", "beta"],
         ["provider", "delete", expect.stringMatching(/^beta-/u)],
       ]);
       expect(providerDeletes()).toHaveLength(1);
