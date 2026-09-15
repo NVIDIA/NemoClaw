@@ -24,8 +24,12 @@ const SANDBOX_NAME = "my-assistant";
 const OPENSHELL_FIXTURE_VERSION = "0.0.116";
 
 // Output fixtures that mirror real OpenShell CLI output.
+const gatewayListNemoclaw = (gatewayName: string, port: number) =>
+  JSON.stringify([
+    { name: gatewayName, endpoint: `https://127.0.0.1:${String(port)}`, active: true },
+  ]);
 const gatewayInfoNemoclaw = (gatewayName: string, port: number) =>
-  `Gateway Info\n\nGateway: ${gatewayName}\nGateway endpoint: https://127.0.0.1:${port}/\n`;
+  `Gateway Info\n\nGateway: ${gatewayName}\nGateway endpoint: https://127.0.0.1:${String(port)}/\n`;
 
 const statusConnectedNemoclaw = (gatewayName: string, port: number) =>
   `Server Status\n\nGateway: ${gatewayName}\nServer: https://127.0.0.1:${port}/\nStatus: Connected\n`;
@@ -36,6 +40,8 @@ interface ScenarioScript {
   sandboxGet: Array<{ output: string; exit: number }>;
   // openshell status responses, cycled
   status: Array<{ output: string; exit: number }>;
+  // openshell gateway list responses, cycled
+  gatewayList: Array<{ output: string; exit: number }>;
   // openshell gateway info responses, cycled
   gatewayInfo: Array<{ output: string; exit: number }>;
   // openshell gateway select response
@@ -135,6 +141,10 @@ if (args[0] === "-V" || args[0] === "--version") {
 
 if (args[0] === "status") {
   emit(cycle("status", script.status));
+}
+
+if (args[0] === "gateway" && args[1] === "list") {
+  emit(cycle("gatewayList", script.gatewayList));
 }
 
 if (args[0] === "gateway" && args[1] === "info") {
@@ -387,6 +397,7 @@ describe("connect preserves the registry without reconstructing policy in scenar
       writeStubOpenshell({
         sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
         status: [{ output: statusConnectedNemoclaw(gatewayName, gatewayPort), exit: 0 }],
+        gatewayList: [{ output: gatewayListNemoclaw(gatewayName, gatewayPort), exit: 0 }],
         gatewayInfo: [{ output: gatewayInfoNemoclaw(gatewayName, gatewayPort), exit: 0 }],
         gatewaySelect: { output: "", exit: 0 },
         selectFlipsActive: false,

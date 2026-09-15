@@ -33,9 +33,9 @@ function input() {
     gatewayName: GATEWAY_NAME,
     gatewayPort: GATEWAY_PORT,
     expectedEndpoint: `https://169.254.2.2:${String(GATEWAY_PORT)}`,
-    managedGatewayOutputs: [
-      `Server: https://169.254.2.2:${String(GATEWAY_PORT)}/`,
-      `Gateway endpoint: https://169.254.2.2:${String(GATEWAY_PORT)}/`,
+    managedGatewayEndpoints: [
+      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
+      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
     ],
     portAvailable: false,
     installedOpenShellVersion: "0.0.116",
@@ -140,7 +140,7 @@ describe("native Podman gateway readiness", () => {
     const observation = observeNativePodmanGatewayReadiness(
       {
         ...input(),
-        managedGatewayOutputs: [`Server: https://169.254.2.2:8990/`],
+        managedGatewayEndpoints: [`https://169.254.2.2:8990`],
       },
       readinessDeps(),
     );

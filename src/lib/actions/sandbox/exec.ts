@@ -133,7 +133,7 @@ export function cleanupFailureMessage(commandCode: number, detail: string): stri
   return `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): ${detail}`;
 }
 
-function defaultSelectGateway(sandboxName: string): GatewaySelectResult {
+function defaultSelectGateway(sandboxName: string): Promise<GatewaySelectResult> {
   return (
     require("./gateway-select") as typeof import("./gateway-select")
   ).selectSandboxOwningGateway(sandboxName);
@@ -155,7 +155,7 @@ export type ExecSandboxDeps = {
   /** Resolve the sandbox's recorded agent before applying agent-specific post-exec effects. */
   resolveSandboxAgent?: SandboxExecAgentResolver;
   /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
-  selectGateway?: (sandboxName: string) => GatewaySelectResult;
+  selectGateway?: (sandboxName: string) => GatewaySelectResult | Promise<GatewaySelectResult>;
   /** Defer terminal process exit until an outer lifecycle lock is released. */
   exit?: (code: number) => never;
 };
@@ -288,7 +288,7 @@ export async function startSandboxExec(
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
     exit(1);
   }
-  const gatewaySelection = (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
+  const gatewaySelection = await (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
   if (gatewaySelection.outcome === "failed") {
     console.error(
       `  Failed to select gateway '${gatewaySelection.gatewayName}' for sandbox '${sandboxName}'.`,
