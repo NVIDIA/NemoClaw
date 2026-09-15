@@ -40,7 +40,7 @@
           "nemoclaw_route.primary"
         ],
         "generation": "sandbox-generation",
-        "image": "nc-fabric-pi@sha256:756d503e26b4bcdf8bbf815a614eca92855c7afed4f888e4a389d2a31c9a8ba6",
+        "image": "nc-fabric-pi@sha256:fc53fc5a0c37bd487fc58e41886cd1afe8af387c6c8cf410e632c045a03a20dc",
         "lifecycle": {
           "prevent_destroy": true
         },

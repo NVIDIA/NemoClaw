@@ -19,7 +19,7 @@ spec:
   sandboxes:
     - name: assistant
       image:
-        ref: nc-fabric-pi@sha256:756d503e26b4bcdf8bbf815a614eca92855c7afed4f888e4a389d2a31c9a8ba6
+        ref: nc-fabric-pi@sha256:fc53fc5a0c37bd487fc58e41886cd1afe8af387c6c8cf410e632c045a03a20dc
       runtime:
         provider: docker
       network:
@@ -35,7 +35,7 @@ spec:
                   model: qwen3:4b
                   piModel:
                     api: openai-completions
-                    contextTokens: 8192
-                    maxOutputTokens: 2048
+                    contextWindow: 8192
+                    maxTokens: 2048
                     reasoning: false
                     input: [text]

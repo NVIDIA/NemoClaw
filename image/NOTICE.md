@@ -18,7 +18,7 @@ disabled. Fixture evidence does not establish model quality or live inference.
 
 The Pi recipe applies the local `fabric/patch_pi.py` correction to the verified
 Fabric source. It retains upstream headers and adds model resolution from the
-NemoClaw configuration, explicit custom-model metadata, and a matching inference
+NemoClaw configuration, opaque native model configuration, and a matching inference
 probe. The image retains the patched TypeScript source and records the local
 source hashes in `/opt/nemoclaw/provenance.json`. These changes are not part of
 the pinned upstream Fabric release.

@@ -25,19 +25,6 @@ def configuration(name, harness="deepagents", model=None):
                 or not isinstance(model.get("model"), str)
                 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}", model["model"])):
             raise ValueError("Pi requires a valid configured route model")
-        if "piModel" in model:
-            metadata = model["piModel"]
-            if (not isinstance(metadata, dict)
-                    or set(metadata) != {"api", "contextTokens", "maxOutputTokens", "reasoning", "input"}
-                    or metadata["api"] not in ("openai-completions", "openai-responses")
-                    or type(metadata["contextTokens"]) is not int
-                    or type(metadata["maxOutputTokens"]) is not int
-                    or not 0 < metadata["maxOutputTokens"] <= metadata["contextTokens"] <= 2147483647
-                    or type(metadata["reasoning"]) is not bool
-                    or not isinstance(metadata["input"], list) or not metadata["input"]
-                    or any(item not in ("text", "image") for item in metadata["input"])
-                    or len(set(metadata["input"])) != len(metadata["input"])):
-                raise ValueError("Pi requires valid explicit model metadata")
     adapter = {"deepagents": "nvidia.fabric.langchain.deepagents",
                "hermes": "nvidia.fabric.hermes",
                "openclaw": "nemoclaw.local.openclaw",

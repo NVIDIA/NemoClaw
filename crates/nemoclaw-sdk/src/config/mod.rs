@@ -57,7 +57,40 @@ impl Document {
                 _ => false,
             }
         }
-        if has_null(&tree) {
+        // The agent owns values inside its opaque model object, including null.
+        // Keep the existing null policy everywhere else in deployment intent.
+        let mut structural = tree.clone();
+        if let Some(sandboxes) = structural
+            .pointer_mut("/spec/sandboxes")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for sandbox in sandboxes {
+                if let Some(agents) = sandbox
+                    .get_mut("agents")
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    for agent in agents {
+                        if let Some(routes) = agent
+                            .pointer_mut("/inference/routes")
+                            .and_then(serde_json::Value::as_array_mut)
+                        {
+                            for route in routes {
+                                if let Some(overrides) = route
+                                    .get_mut("overrides")
+                                    .and_then(serde_json::Value::as_object_mut)
+                                    && overrides
+                                        .get("piModel")
+                                        .is_some_and(serde_json::Value::is_object)
+                                {
+                                    overrides.remove("piModel");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if has_null(&structural) {
             return Err(ConfigError("omit optional fields instead of using null"));
         }
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {

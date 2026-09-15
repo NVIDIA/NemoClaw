@@ -245,26 +245,10 @@ impl Document {
                 && MODEL.is_match(&route.overrides.model),
             "primary route must reference the declared provider and valid model",
         )?;
-        if let Some(model) = &route.overrides.pi_model {
-            require(
-                agent.harness == "pi"
-                    && matches!(
-                        model.api.as_str(),
-                        "openai-completions" | "openai-responses"
-                    )
-                    && model.max_output_tokens > 0
-                    && model.max_output_tokens <= model.context_tokens
-                    && model.context_tokens <= i32::MAX as u32
-                    && !model.input.is_empty()
-                    && model.input.len() <= 2
-                    && model
-                        .input
-                        .iter()
-                        .all(|input| matches!(input.as_str(), "text" | "image"))
-                    && (model.input.len() != 2 || model.input[0] != model.input[1]),
-                "piModel requires Pi, a supported API, explicit context/output limits, and unique text/image inputs",
-            )?;
-        }
+        require(
+            route.overrides.pi_model.is_none() || agent.harness == "pi",
+            "piModel is supported only by the Pi harness",
+        )?;
         require(
             provider.service.is_none()
                 || (route.overrides.model == provider.service.as_ref().unwrap().served_model()

@@ -2,41 +2,45 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ModelRuntime } from '/opt/fabric-source/adapters/typescript/node_modules/@earendil-works/pi-coding-agent/dist/index.js';
 import { InMemoryCredentialStore } from '/opt/fabric-source/adapters/typescript/node_modules/@earendil-works/pi-ai/dist/index.js';
-import { resolveConfiguredModel } from '/opt/fabric-source/adapters/typescript/pi/dist/pi-model.js';
+import { loadConfiguredModel } from '/opt/fabric-source/adapters/typescript/pi/dist/pi-model.js';
 
-const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(),
-  modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
 const selected = { provider: 'openai', model: 'gpt-4o-mini', base_url: 'https://inference.local/v1' };
+const load = (metadata, model = 'qwen3:4b') => loadConfiguredModel({ ...selected, model,
+  ...(metadata === undefined ? {} : { settings: { model_metadata: metadata } }) }, new InMemoryCredentialStore());
 
-test('catalog selection retains the configured identity and that model metadata', () => {
-  const catalog = runtime.getModel(selected.provider, selected.model);
-  assert.ok(catalog);
-  const model = resolveConfiguredModel(selected, catalog);
-  assert.equal(model.id, 'gpt-4o-mini');
-  assert.equal(model.baseUrl, selected.base_url);
-  assert.equal(model.contextWindow, catalog.contextWindow);
-  assert.deepEqual(model.cost, catalog.cost);
+test('Pi resolves the declared catalog model', async () => {
+  const loaded = await load(undefined, selected.model);
+  try {
+    assert.equal(loaded.model.id, selected.model);
+    assert.equal(loaded.model.baseUrl, selected.base_url);
+  } finally { await loaded.cleanup(); }
 });
 
-test('custom identity and explicit metadata are registered without a catalog alias', () => {
-  const config = { ...selected, model: 'qwen3:4b', settings: { model_metadata: {
-    api: 'openai-completions', contextTokens: 8192, maxOutputTokens: 2048,
-    reasoning: false, input: ['text'],
-  } } };
-  const model = resolveConfiguredModel(config);
-  runtime.registerProvider(config.provider, { baseUrl: model.baseUrl, api: model.api, models: [model] });
-  const actual = runtime.getModel(config.provider, config.model);
-  assert.equal(actual.id, config.model);
-  assert.equal(actual.contextWindow, 8192);
-  assert.equal(actual.maxTokens, 2048);
-  assert.equal(actual.api, 'openai-completions');
-  assert.equal(actual.reasoning, false);
-  assert.deepEqual(actual.input, ['text']);
-  assert.deepEqual(actual.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+test('Pi loads native fields, applies defaults, and preserves deployment identity', async () => {
+  const loaded = await load({ api: 'openai-completions', contextWindow: 8192,
+    maxTokens: 2048, thinkingLevelMap: { off: null }, samplingParams: { temperature: 0.17 },
+    compat: { supportsDeveloperRole: false }, id: 'wrong-model', baseUrl: 'https://wrong.example/v1' });
+  try {
+    const model = loaded.model;
+    assert.equal(model.id, 'qwen3:4b');
+    assert.equal(model.baseUrl, selected.base_url);
+    assert.equal(model.contextWindow, 8192);
+    assert.equal(model.maxTokens, 2048);
+    assert.equal(model.api, 'openai-completions');
+    assert.deepEqual(model.thinkingLevelMap, { off: null });
+    assert.deepEqual(model.samplingParams, { temperature: 0.17 });
+    assert.equal(model.compat.supportsDeveloperRole, false);
+    assert.equal(model.reasoning, false);
+    assert.deepEqual(model.input, ['text']);
+  } finally { await loaded.cleanup(); }
 });
 
-test('unknown models without metadata fail instead of borrowing another model', () => {
-  assert.throws(() => resolveConfiguredModel({ ...selected, model: 'custom-model' }), /piModel/);
+test('Pi rejects invalid native schema values and invalid context limits', async () => {
+  await assert.rejects(load({ api: 'openai-completions', contextWindow: 'invalid' }), /Invalid models.json schema/);
+  await assert.rejects(load({ api: 'openai-completions', contextWindow: -1 }), /invalid contextWindow/);
+});
+
+test('unknown models without configuration fail instead of borrowing another model', async () => {
+  await assert.rejects(load(undefined, 'custom-model'), /piModel/);
 });

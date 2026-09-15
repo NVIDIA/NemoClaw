@@ -11,8 +11,8 @@ class PiModelConfiguration(unittest.TestCase):
             self.assertEqual(config['models']['default']['model'], model)
 
     def test_custom_model_metadata_reaches_the_adapter(self):
-        options = {'api': 'openai-completions', 'contextTokens': 8192,
-                   'maxOutputTokens': 2048, 'reasoning': False, 'input': ['text']}
+        options = {'futureOption': {'nested': [None, 7, True]}, 'thinkingLevelMap': {'off': None},
+                   'contextWindow': 'Pi validates this'}
         config = configuration('main', 'pi', {'model': 'qwen3:4b', 'piModel': options})
         self.assertEqual(config['models']['default']['settings']['model_metadata'], options)
 
@@ -72,13 +72,6 @@ class PiRuntimeConfiguration(unittest.IsolatedAsyncioTestCase):
         self.fail_start = False
         await self.host.configure({'model': 'custom-model'})
         self.assertTrue(self.host.status()['ready'])
-
-    async def test_invalid_metadata_does_not_stop_the_running_model(self):
-        await self.host.configure({'model': 'gpt-4o-mini'})
-        with self.assertRaisesRegex(ValueError, 'metadata'):
-            await self.host.prepare({'model': 'custom-model', 'piModel': {}})
-        self.assertTrue(self.host.status()['ready'])
-        self.assertEqual(self.stops, [])
 
     async def test_failed_stop_cannot_start_an_overlapping_runtime(self):
         await self.host.configure({'model': 'gpt-4o-mini'})

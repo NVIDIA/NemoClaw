@@ -249,12 +249,36 @@ fn pi_preserves_yaml_model_ids_and_explicit_custom_metadata() {
     route.overrides.model = "gpt-4o-mini".into();
     route.overrides.pi_model = None;
     catalog.validate().unwrap();
-    for (from, to) in [
-        ("contextTokens: 8192", "contextTokens: 1024"),
-        ("api: openai-completions", "api: unsupported"),
-        ("input: [text]", "input: [text, text]"),
-        ("harness: pi", "harness: codex"),
+    assert!(Document::parse(input.replace("harness: pi", "harness: codex").as_bytes()).is_err());
+}
+
+#[test]
+fn pi_model_is_an_optional_opaque_object() {
+    let mut tree: Value = serde_json::to_value(
+        Document::parse(include_str!("fixtures/config/fabric-pi.yaml").as_bytes()).unwrap(),
+    )
+    .unwrap();
+    let opaque = serde_json::json!({"contextWindow": "Pi validates this", "futureOption": {"nested": [null, 7, true]}, "thinkingLevelMap": {"off": null}});
+    tree["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["piModel"] =
+        opaque.clone();
+    let parsed = Document::parse(tree.to_string().as_bytes()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&parsed).unwrap()["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"]
+            [0]["overrides"]["piModel"],
+        opaque
+    );
+    assert_eq!(
+        Document::parse(parsed.yaml().unwrap().as_bytes()).unwrap(),
+        parsed
+    );
+    for invalid in [
+        serde_json::json!("text"),
+        serde_json::json!([]),
+        serde_json::json!(7),
+        Value::Null,
     ] {
-        assert!(Document::parse(input.replace(from, to).as_bytes()).is_err());
+        tree["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["piModel"] =
+            invalid;
+        assert!(Document::parse(tree.to_string().as_bytes()).is_err());
     }
 }

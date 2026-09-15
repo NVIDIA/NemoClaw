@@ -15,28 +15,32 @@ gateway and inference services. The strict schema rejects unsupported combinatio
 
 ## Pi model selection
 
-Pi receives the model ID from `inference.routes[].overrides.model`. There is no
-catalog-model substitution. For a model in Pi's OpenAI catalog, omit `piModel`
-to use that model's catalog metadata. For a custom model, supply its protocol,
-context limit, output limit, reasoning support, and accepted inputs explicitly:
+Pi receives the model ID from `inference.routes[].overrides.model`. Omit
+`piModel` to use that model's OpenAI catalog entry. When supplied, `piModel` is
+an opaque object passed to Pi as a native `models.json` model definition:
 
 ```yaml
 overrides:
   model: qwen3:4b
   piModel:
     api: openai-completions
-    contextTokens: 8192
-    maxOutputTokens: 2048
+    contextWindow: 8192
+    maxTokens: 2048
     reasoning: false
     input: [text]
 ```
 
-Set these values to match your endpoint. `api` accepts `openai-completions` or
-`openai-responses`. `input` accepts `text` and `image`. Explicit metadata also
-overrides catalog metadata when your endpoint has different limits. Custom
-metadata disables Pi's cost estimates; it does not imply free inference.
-A model outside the catalog without `piModel` fails startup with resources
-retained. Correct the metadata and apply again.
+NemoClaw checks that `piModel` is an object. Pi owns its fields, defaults, and
+validation. Native options such as `cost`, `compat`, `samplingParams`, and
+`thinkingLevelMap` pass through, including nested null values. NemoClaw always
+supplies the route's model ID and OpenShell endpoint; `id` and `baseUrl` inside
+`piModel` cannot replace them. Credentials remain supplied through OpenShell.
+
+Use Pi's native `contextWindow` and `maxTokens` names; the former NemoClaw
+`contextTokens` and `maxOutputTokens` names are no longer translated. Set limits
+and capabilities to match your endpoint. Pi rejects invalid native values at
+startup, with resources retained for a corrected apply. The inference probe
+also uses Pi's native model API.
 
 Apply configures Pi after creating the route. A model or metadata change stops
 Pi before the route changes and starts a new Pi runtime in the existing sandbox.

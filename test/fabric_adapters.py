@@ -112,7 +112,7 @@ async def main():
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     model = {'model': 'qwen3:4b', 'piModel': {'api': 'openai-completions',
-        'contextTokens': 8192, 'maxOutputTokens': 2048, 'reasoning': False, 'input': ['text']}} if HARNESS == 'pi' else None
+        'contextWindow': 8192, 'maxTokens': 2048, 'reasoning': False, 'input': ['text']}} if HARNESS == 'pi' else None
     if HARNESS == 'pi' and os.environ.get('FABRIC_PI_CATALOG') == '1':
         model = {'model': 'gpt-4o-mini'}
     config = configuration('fixture', HARNESS, model)
