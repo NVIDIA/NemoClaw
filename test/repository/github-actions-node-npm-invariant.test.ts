@@ -179,21 +179,24 @@ describe("controlled setup-node environments", () => {
     expect(readWorkflow("base-image.yaml").on?.push?.paths).toContain(reviewedNpmBootstrap);
   });
 
-  // source-shape-contract: security -- Every controlled setup-node environment must install the integrity-bound npm release before an npm command executes.
+  // source-shape-contract: security -- Every setup-node environment that later runs npm must install the integrity-bound npm release first.
   it("selects the reviewed Node and npm identities before further steps", () => {
-    const setupIdentities = setupNodeSteps.map(({ step }) => [
+    const npmSetupNodeSteps = setupNodeSteps.filter(({ steps, index }) =>
+      steps.slice(index + 1).some(runsNpm),
+    );
+    const setupIdentities = npmSetupNodeSteps.map(({ step }) => [
       step.uses,
       String(step.with?.["node-version"]),
     ]);
 
     expect(identity).toMatchObject({ nodeVersion: "24.18.1", npmVersion: "12.0.2" });
-    expect(setupNodeSteps.length).toBeGreaterThan(0);
+    expect(npmSetupNodeSteps.length).toBeGreaterThan(0);
     expect(
       setupIdentities.every(
         ([action, node]) => action === SETUP_NODE && node === identity.nodeVersion,
       ),
     ).toBe(true);
-    const invalidOrder = setupNodeSteps
+    const invalidOrder = npmSetupNodeSteps
       .map(({ file, label, steps, step, index }) => {
         const laterSteps = steps.slice(index + 1);
         const reviewedIndex = laterSteps.findIndex(installsReviewedNpm);

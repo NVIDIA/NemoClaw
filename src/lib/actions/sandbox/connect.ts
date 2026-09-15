@@ -497,7 +497,7 @@ async function runSandboxConnectProbe(
     if (!(await measureAsync("pairing", () => settlePortablePairingOrExit(sandboxName)))) {
       measure("pairing", () => runConnectAutoPairApprovalPass(sandboxName));
     }
-    console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
+    console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
     return;
   }
   await measureAsync("inference", () => ensureSandboxInferenceRouteOrExit(sandboxName, agent));
