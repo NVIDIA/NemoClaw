@@ -53,8 +53,13 @@ export function processEnvironmentUsesSelectedGatewayState(
 
 function readProcessEnvironmentFromPs(
   pid: number,
+  stateDir: string,
   runCapture: DockerDriverGatewayStateOwnershipDeps["runCapture"],
 ): Record<string, string> | null {
+  // `ps eww` separates environment entries with spaces and does not preserve
+  // where a value containing whitespace ends. Do not use that fallback to
+  // authorize a state operation when the selected database path is ambiguous.
+  if (/\s/u.test(path.join(stateDir, "openshell.db"))) return null;
   const command = runCapture(["ps", "eww", "-p", String(pid), "-o", "command="], {
     ignoreError: true,
   }).trim();
@@ -70,9 +75,15 @@ function readProcessEnvironmentFromPs(
 export function createDockerDriverGatewayStateOwnership(
   deps: DockerDriverGatewayStateOwnershipDeps,
 ): DockerDriverGatewayStateOwnership {
-  const readProcessEnvironment = (pid: number) =>
-    (deps.readProcessEnvironment ?? readDockerDriverGatewayProcessEnvironment)(pid) ??
-    readProcessEnvironmentFromPs(pid, deps.runCapture);
+  const readProcessEnvironment = (pid: number) => {
+    const processEnv = (deps.readProcessEnvironment ?? readDockerDriverGatewayProcessEnvironment)(
+      pid,
+    );
+    return (
+      processEnv ??
+      readProcessEnvironmentFromPs(pid, deps.getDockerDriverGatewayStateDir(), deps.runCapture)
+    );
+  };
 
   function isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean {
     if (!deps.isPidAlive(pid)) return false;

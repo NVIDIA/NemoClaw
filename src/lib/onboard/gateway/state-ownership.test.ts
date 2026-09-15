@@ -76,6 +76,24 @@ describe("docker-driver gateway selected-state ownership", () => {
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(true);
   });
 
+  it("fails closed when the ps fallback cannot preserve whitespace in the selected state", () => {
+    const stateDir = "/home/nvidia/NemoClaw gateway/8080";
+    const runCapture = vi.fn(
+      () =>
+        `openshell-gateway NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${gatewayIdForStateDir(stateDir)} OPENSHELL_DB_URL=sqlite:${path.join(stateDir, "openshell.db")}`,
+    );
+    const ownership = makeOwnership({
+      getDockerDriverGatewayStateDir: () => stateDir,
+      readProcessEnvironment: () => null,
+      runCapture,
+      runCaptureEx: () => ({ stdout: "4242\n", exitCode: 0, timedOut: false }),
+    });
+
+    expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
+    expect(runCapture).not.toHaveBeenCalled();
+  });
+
   it("retains the all-process guard for a legacy gateway replacement", () => {
     const readProcessEnvironment = vi.fn(() => ({
       NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: "default",
@@ -96,5 +114,9 @@ describe("docker-driver gateway selected-state ownership", () => {
     });
 
     expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
+  });
+
+  it("proves the selected state is unused after a complete empty process scan", () => {
+    expect(makeOwnership().isDockerDriverGatewayStateInUse()).toBe(false);
   });
 });
