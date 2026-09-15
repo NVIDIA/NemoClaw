@@ -218,6 +218,9 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requiredReadOneOfPaths).toEqual([context.diffPath]);
       expect(turn.prompt).toContain("Inspect changed files and their diffs on demand");
       expect(turn.prompt).toContain("do not try to preload the complete diff");
+      expect(turn.prompt).not.toContain(
+        "Treat the trusted human review as the frozen review contract",
+      );
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.terminalSubmitToolName).toBe(RECORD_ADVISOR_FINDINGS_TOOL);
       expect(turn.terminalSubmitRepairPrompt).toContain(RECORD_ADVISOR_FINDINGS_TOOL);

@@ -166,6 +166,16 @@ describe("repository-owned PR review coordination", () => {
     );
   });
 
+  it("rejects an unsupported Advisor status before it can reach approval", () => {
+    const malformed = snapshot({ advisor: clear() });
+    const changed = {
+      ...malformed,
+      advisor: { ...malformed.advisor, status: "unknown" },
+    } as unknown as CoordinatorSnapshot;
+
+    expect(() => decideReviewAction(changed)).toThrow("Advisor status is invalid");
+  });
+
   it("rejects non-blocking Advisor noise at the input boundary", () => {
     const noisyFinding = {
       ...finding("optional-cleanup"),

@@ -228,6 +228,9 @@ function validateSnapshot(snapshot: CoordinatorSnapshot): void {
   fullSha(snapshot.pullRequest.headSha, "pullRequest.headSha");
   fullSha(snapshot.pullRequest.baseSha, "pullRequest.baseSha");
   if (snapshot.advisor) {
+    if (snapshot.advisor.status !== "clear" && snapshot.advisor.status !== "blocked") {
+      throw new Error("Advisor status is invalid");
+    }
     fullSha(snapshot.advisor.headSha, "advisor.headSha");
     fullSha(snapshot.advisor.baseSha, "advisor.baseSha");
     if (snapshot.advisor.status === "clear" && snapshot.advisor.findings.length > 0) {

@@ -159,21 +159,34 @@ export async function collectGitHubReviewContext(
 
   const context: GitHubReviewContext = { repo, prNumber };
   try {
-    const [rawPullRequest, openPulls, reviews, reviewComments] = await Promise.all([
+    const [rawPullRequest, openPulls, reviews] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
       githubRestPaginated<unknown>(
         `repos/${repo}/pulls?state=open&sort=updated&direction=desc`,
         token,
         100,
       ),
-      githubRestPaginated<unknown>(`repos/${repo}/pulls/${prNumber}/reviews`, token, 100),
-      githubRestPaginated<unknown>(`repos/${repo}/pulls/${prNumber}/comments`, token, 100),
+      githubRestPaginated<unknown>(`repos/${repo}/pulls/${prNumber}/reviews`, token),
     ]);
     context.pullRequest = summarizePullRequest(rawPullRequest);
+    const currentHeadSha =
+      stringOrUndefined(getPath<unknown>(rawPullRequest, ["head", "sha"])) ?? "";
+    const selectedReview = selectFollowUpReview(
+      reviews,
+      [],
+      currentHeadSha,
+      env.PR_REVIEW_ADVISOR_REVIEWER_LOGIN,
+    );
+    const reviewComments = selectedReview
+      ? await githubRestPaginated<unknown>(
+          `repos/${repo}/pulls/${prNumber}/reviews/${selectedReview.reviewId}/comments`,
+          token,
+        )
+      : [];
     context.followUpReview = selectFollowUpReview(
       reviews,
       reviewComments,
-      stringOrUndefined(getPath<unknown>(rawPullRequest, ["head", "sha"])) ?? "",
+      currentHeadSha,
       env.PR_REVIEW_ADVISOR_REVIEWER_LOGIN,
     );
     const prTitle = stringOrUndefined(getPath<unknown>(rawPullRequest, ["title"])) || "";
@@ -278,8 +291,7 @@ export function selectFollowUpReview(
             : null,
       body: boundedText(comment.body, COMMENT_BODY_CHARACTER_LIMIT, "review comment"),
     }))
-    .filter(({ path }) => path.length > 0)
-    .slice(0, 100);
+    .filter(({ path }) => path.length > 0);
 
   return {
     reviewId,

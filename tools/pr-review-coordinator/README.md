@@ -27,6 +27,7 @@ belongs to the frozen contract or was newly proven on the exact follow-up delta.
 - Already-reported findings become a frozen contract and are not repeated on later commits.
 - Follow-up feedback is allowed only for a validated P0/P1 blocker newly introduced or newly
   proven by the reviewed delta.
+- Malformed evidence and unsupported Advisor statuses are rejected before a decision.
 - Ambiguous evidence, stale results, pending prerequisites, drafts, self-authored changes, and
   duplicate exact-head writes stay quiet.
 - Approval is proposed only for an exact head with a clear Advisor result, passing required checks,
