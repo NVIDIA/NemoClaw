@@ -200,6 +200,61 @@ describe("lib/resolve-openshell", () => {
 describe("Hermes portable OpenShell executable authority", () => {
   const childEnv = { HOME: "/home/test", PATH: "/opt/nemoclaw/bin" };
 
+  it.runIf(process.platform !== "win32")(
+    "rejects a real 0775 directory and accepts it after permission repair (#11717)",
+    () => {
+      const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-authority-mode-"));
+      const binaryDirectory = path.join(temporaryRoot, "bin");
+      const executablePath = path.join(binaryDirectory, "openshell");
+      fs.mkdirSync(binaryDirectory, { mode: 0o775 });
+      fs.chmodSync(binaryDirectory, 0o775);
+      fs.writeFileSync(executablePath, "openshell-binary", { mode: 0o755 });
+      const runVersion = vi.fn(() => ({
+        status: 0,
+        stdout: "openshell 0.0.116\n",
+        stderr: "",
+      }));
+      const lstat = (filePath: string): PodmanExecutableStat => {
+        const stat = fs.lstatSync(filePath, { bigint: true });
+        const usesRealMode =
+          filePath === temporaryRoot || filePath.startsWith(`${temporaryRoot}${path.sep}`);
+        return {
+          dev: stat.dev,
+          ino: stat.ino,
+          mode: usesRealMode ? stat.mode : stat.mode & ~0o022n,
+          uid: stat.uid,
+          size: stat.size,
+          mtimeNs: stat.mtimeNs,
+          ctimeNs: stat.ctimeNs,
+          isDirectory: () => stat.isDirectory(),
+          isFile: () => stat.isFile(),
+          isSymbolicLink: () => stat.isSymbolicLink(),
+        };
+      };
+      const capture = () =>
+        captureHermesPortableOpenShellExecutableAuthority(executablePath, childEnv, childEnv, {
+          uid: process.getuid?.(),
+          realpath: (filePath) => fs.realpathSync(filePath),
+          lstat,
+          readFile: (filePath) => fs.readFileSync(filePath),
+          resolve: () => executablePath,
+          runVersion,
+        });
+
+      try {
+        expect(capture).toThrow(binaryDirectory);
+        expect(capture).toThrow("mode 0775");
+        expect(runVersion).not.toHaveBeenCalled();
+
+        fs.chmodSync(binaryDirectory, 0o755);
+        expect(capture().executable.executablePath).toBe(executablePath);
+        expect(runVersion).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(temporaryRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each(["/opt/nemoclaw/bin", AUTHORITY_BINARY])(
     "names the writable path %s and its permission remedy before execution (#11717)",
     (rejectedPath) => {
