@@ -4,6 +4,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getSandboxMock = vi.fn();
+const dockerRunMock = vi.fn(() => ({ status: 0, stderr: "", stdout: "Server: Docker" }));
+
+vi.mock("../../adapters/docker/run", () => ({
+  dockerCapture: vi.fn(() => ""),
+  dockerRun: (...args: unknown[]) => dockerRunMock(...args),
+}));
 
 vi.mock("../../state/registry", () => ({
   getSandbox: (...args: unknown[]) => getSandboxMock(...args),
@@ -23,6 +29,7 @@ import {
   classifyGatewayFailure,
   classifyObservedSandboxContainerFailure,
   type GatewayFailureRunners,
+  isDockerDaemonReachable,
   isDockerRuntimeDown,
 } from "./gateway-failure-classifier";
 
@@ -144,6 +151,35 @@ describe("classifyObservedSandboxContainerFailure", () => {
 });
 
 describe("isDockerRuntimeDown", () => {
+  beforeEach(() => {
+    getSandboxMock.mockReset();
+    dockerRunMock.mockReset();
+    dockerRunMock.mockReturnValue({ status: 0, stderr: "", stdout: "Server: Docker" });
+  });
+
+  it("rejects Docker client output when the daemon request fails (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 1,
+      stderr: "Cannot connect to the Docker daemon",
+      stdout: "Client: Docker Engine - Community",
+    });
+
+    expect(isDockerDaemonReachable()).toBe(false);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
+  });
+
+  it("accepts Docker info only when the daemon request succeeds (#11715)", () => {
+    expect(isDockerDaemonReachable()).toBe(true);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(false);
+    expect(dockerRunMock).toHaveBeenCalledWith(["info"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: 3000,
+    });
+  });
+
   it("does not invoke Docker for a native Podman sandbox", () => {
     getSandboxMock.mockReturnValue({ openshellDriver: " PODMAN " });
     const dockerInfo = vi.fn(() => false);

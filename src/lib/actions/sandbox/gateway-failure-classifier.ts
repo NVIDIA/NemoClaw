@@ -3,8 +3,7 @@
 
 import net from "node:net";
 
-import { dockerInfo } from "../../adapters/docker/info";
-import { dockerCapture } from "../../adapters/docker/run";
+import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
@@ -64,7 +63,13 @@ export type SandboxContainerFailureRunners = {
 };
 
 function defaultDockerInfo(): boolean {
-  return dockerInfo({ ignoreError: true, timeout: DOCKER_TIMEOUT_MS }).length > 0;
+  return (
+    dockerRun(["info"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: DOCKER_TIMEOUT_MS,
+    }).status === 0
+  );
 }
 
 export function isDockerDaemonReachable(): boolean {
