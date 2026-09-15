@@ -3,7 +3,6 @@
 use super::*;
 use crate::{
     compile::Generations,
-    docker::Engine,
     ollama::{OllamaBackend, ServiceSpec},
 };
 const SERVICE: &str = "nemoclaw_ollama.service";
@@ -65,7 +64,8 @@ impl Deployment {
         let Some(config) = &document.spec.inference_providers[0].ollama else {
             return Ok(());
         };
-        Engine::connect(&config.engine)?
+        self.engines
+            .resolve(&config.engine)?
             .preflight_ollama(
                 &specification(document, generations)?,
                 bindings.get(SERVICE).map(|b| b.id.as_str()).unwrap_or(""),
@@ -107,7 +107,7 @@ impl Deployment {
             ("bind_address".into(), spec.bind_address),
         ]
         .into();
-        let backend = OllamaBackend::new(Engine::connect(&config.engine)?);
+        let backend = OllamaBackend::new(self.engines.resolve(&config.engine)?);
         backend
             .read("ollama", &row, false)
             .await?

@@ -209,3 +209,6 @@ pub(crate) mod fixture;
 
 #[cfg(all(test, unix))]
 mod two_engines;
+
+mod connections;
+pub use connections::Connections;

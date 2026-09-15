@@ -78,6 +78,7 @@ pub struct Deployment {
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
+    engines: crate::docker::Connections,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -86,7 +87,14 @@ impl Deployment {
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
+            engines: crate::docker::Connections::default(),
         }
+    }
+    /// Supply in-process engine connections. Provider subprocesses independently
+    /// connect to the same explicit endpoints carried by compiled resource specs.
+    pub fn with_engines(mut self, engines: crate::docker::Connections) -> Self {
+        self.engines = engines;
+        self
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
         self.secrets = secrets;

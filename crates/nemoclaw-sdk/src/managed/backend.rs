@@ -7,9 +7,13 @@ use crate::{
     docker::Engine,
 };
 pub const GATEWAY_STORAGE_KIND: &str = "gateway_storage";
-#[derive(Default)]
-pub struct ManagedBackend;
+pub struct ManagedBackend {
+    engine: Engine,
+}
 impl ManagedBackend {
+    pub fn new(engine: Engine) -> Self {
+        Self { engine }
+    }
     pub fn supports(kind: &str) -> bool {
         matches!(
             kind,
@@ -23,6 +27,9 @@ impl ManagedBackend {
         apply: bool,
         removing: bool,
     ) -> Result<Option<Row>, Error> {
+        if self.engine.endpoint() != connection_endpoint(kind, row)? {
+            return Err(ObservationError::BindingMismatch.into());
+        }
         let encoded = row.get("spec").ok_or(ObservationError::Incomplete)?;
         let id = row.get("id").map(String::as_str).unwrap_or("");
         let mut result = Row::from([("spec".into(), encoded.clone())]);
@@ -30,15 +37,15 @@ impl ManagedBackend {
             let spec: Storage =
                 serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
             spec.validate()?;
-            let engine = Engine::connect(&spec.engine)?;
+            let engine = &self.engine;
             if apply {
-                Some(spec.ensure(&engine, id).await?)
+                Some(spec.ensure(engine, id).await?)
             } else {
-                spec.observe(&engine, id).await?
+                spec.observe(engine, id).await?
             }
         } else {
             let spec = specification(kind, encoded)?;
-            let engine = Engine::connect(&spec.gateway.engine)?;
+            let engine = &self.engine;
             if kind == GATEWAY_STORAGE_KIND {
                 engine.gateway_storage(&spec, id, apply).await?
             } else {
@@ -109,6 +116,9 @@ impl Backend for ManagedBackend {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
+        if self.engine.endpoint() != connection_endpoint(kind, prior)? {
+            return Err(ObservationError::BindingMismatch);
+        }
         if !matches!(kind, GATEWAY_KIND | SERVICE_KIND) {
             return Err(ObservationError::Backend(
                 "persistent storage deletion is forbidden",
@@ -120,7 +130,7 @@ impl Backend for ManagedBackend {
             .get("id")
             .filter(|id| !id.is_empty())
             .ok_or(ObservationError::Incomplete)?;
-        let engine = Engine::connect(&spec.gateway.engine).map_err(diagnostic)?;
+        let engine = &self.engine;
         if destroying {
             engine.remove_runtime(&spec, id).await
         } else {
@@ -163,7 +173,7 @@ mod tests {
             ("spec".into(), storage.json().unwrap()),
             ("id".into(), String::new()),
         ]);
-        let backend = ManagedBackend;
+        let backend = ManagedBackend::new(Engine::connect(&fixture.endpoint).unwrap());
         assert_eq!(backend.read(STORAGE_KIND, &row, false).await.unwrap(), None);
         *response.lock().unwrap() = (
             200,
@@ -189,5 +199,21 @@ mod tests {
         response.lock().unwrap().1["Labels"][super::super::OWNER_LABEL] = json!("foreign");
         assert!(backend.read(STORAGE_KIND, &row, false).await.is_err());
         assert!(backend.ensure(STORAGE_KIND, &row).await.error.is_some());
+    }
+}
+
+/// Extract connection selection before constructing the resource backend.
+pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationError> {
+    let encoded = row.get("spec").ok_or(ObservationError::Incomplete)?;
+    if kind == STORAGE_KIND {
+        let spec: Storage =
+            serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
+        spec.validate().map_err(diagnostic)?;
+        Ok(spec.engine)
+    } else {
+        Ok(specification(kind, encoded)
+            .map_err(diagnostic)?
+            .gateway
+            .engine)
     }
 }

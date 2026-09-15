@@ -79,3 +79,45 @@ async fn same_named_resources_failures_and_cleanup_stay_with_the_selected_daemon
     assert_eq!(state_a.lock().unwrap().deletes, 1);
     assert_eq!(state_b.lock().unwrap().deletes, 0);
 }
+
+#[tokio::test]
+async fn injected_connections_are_explicit_and_never_fall_back_to_a_local_daemon() {
+    use super::Connections;
+    let (first, _) = daemon("first").await;
+    let (second, _) = daemon("second").await;
+    let connections = Connections::fixed([
+        Engine::connect(&first.endpoint).unwrap(),
+        Engine::connect(&second.endpoint).unwrap(),
+    ])
+    .unwrap();
+    assert_eq!(
+        connections
+            .resolve(&first.endpoint)
+            .unwrap()
+            .info()
+            .await
+            .unwrap()
+            .id
+            .as_deref(),
+        Some("first")
+    );
+    assert_eq!(
+        connections
+            .resolve(&second.endpoint)
+            .unwrap()
+            .info()
+            .await
+            .unwrap()
+            .id
+            .as_deref(),
+        Some("second")
+    );
+    assert!(connections.resolve("unix:///var/run/docker.sock").is_err());
+    assert!(
+        Connections::fixed([
+            Engine::connect(&first.endpoint).unwrap(),
+            Engine::connect(&first.endpoint).unwrap(),
+        ])
+        .is_err()
+    );
+}

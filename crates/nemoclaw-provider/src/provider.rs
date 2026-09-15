@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use nemoclaw_sdk::{
     ObservationError,
     config::{Credential, Gateway, TLS},
-    docker::Engine,
+    docker::{Connections, Engine},
     managed::ManagedBackend,
     ollama::OllamaBackend,
     openshell::{EnvironmentSecrets, OpenShell},
@@ -42,8 +42,19 @@ fn text(value: Value<String>) -> String {
     }
 }
 #[derive(Default)]
-struct ConfiguredBackend(RwLock<Option<OpenShell>>, RwLock<Option<Engine>>);
+struct ConfiguredBackend(
+    RwLock<Option<OpenShell>>,
+    RwLock<Option<Engine>>,
+    Connections,
+);
 impl ConfiguredBackend {
+    fn managed(&self, kind: &str, row: &Row) -> Result<ManagedBackend, ObservationError> {
+        let endpoint = nemoclaw_sdk::managed::connection_endpoint(kind, row)?;
+        self.2
+            .resolve(&endpoint)
+            .map(ManagedBackend::new)
+            .map_err(|_| ObservationError::Backend("engine connection unavailable"))
+    }
     fn ollama(&self) -> Result<OllamaBackend, ObservationError> {
         self.1
             .read()
@@ -71,7 +82,7 @@ impl Backend for ConfiguredBackend {
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
         if ManagedBackend::supports(kind) {
-            return ManagedBackend.read(kind, prior, removing).await;
+            return self.managed(kind, prior)?.read(kind, prior, removing).await;
         }
         if OllamaBackend::supports(kind) {
             return self.ollama()?.read(kind, prior, removing).await;
@@ -80,7 +91,10 @@ impl Backend for ConfiguredBackend {
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
         if ManagedBackend::supports(kind) {
-            return ManagedBackend.ensure(kind, desired).await;
+            return match self.managed(kind, desired) {
+                Ok(backend) => backend.ensure(kind, desired).await,
+                Err(error) => Mutation::failed(error),
+            };
         }
         if OllamaBackend::supports(kind) {
             return match self.ollama() {
@@ -100,7 +114,10 @@ impl Backend for ConfiguredBackend {
         destroying: bool,
     ) -> Result<(), ObservationError> {
         if ManagedBackend::supports(kind) {
-            return ManagedBackend.remove(kind, prior, destroying).await;
+            return self
+                .managed(kind, prior)?
+                .remove(kind, prior, destroying)
+                .await;
         }
         if OllamaBackend::supports(kind) {
             return self.ollama()?.remove(kind, prior, destroying).await;
@@ -163,7 +180,7 @@ impl Provider for NemoClawProvider {
         let engine = if endpoint.is_empty() {
             None
         } else {
-            match Engine::connect(&endpoint) {
+            match self.backend.2.resolve(&endpoint) {
                 Ok(engine) => Some(engine),
                 Err(error) => {
                     diags.root_error("Ollama engine configuration", error.to_string());

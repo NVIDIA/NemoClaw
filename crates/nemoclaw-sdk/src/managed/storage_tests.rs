@@ -60,3 +60,62 @@ async fn model_storage_recovers_lost_creation_and_never_recreates_bound_data() {
     assert!(storage.ensure(&engine, &id).await.is_err());
     assert_eq!(state.lock().unwrap().creates, 1);
 }
+
+#[tokio::test]
+async fn changed_connection_cannot_adopt_an_identical_volume_on_a_different_daemon() {
+    let mut storage = Storage {
+        name: "nc-0123456789abcdef-inference-data".into(),
+        owner: "302ff5e1-088d-42ce-959f-4ff4c3570c13".into(),
+        generation: "b".repeat(32),
+        engine: "unix:///unused".into(),
+    };
+    let volume = json!({"Name":storage.name,"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/shared/_data","CreatedAt":"same-time","Labels":storage.labels(),"Options":{}});
+    let start = |id: &'static str, volume: Value| async move {
+        Fixture::start(move |request| {
+            assert_eq!(
+                request.method, "GET",
+                "identity mismatch reached a mutation"
+            );
+            let value = if request.path == "/info" {
+                json!({"ID":id})
+            } else {
+                volume.clone()
+            };
+            Some((200, serde_json::to_vec(&value).unwrap()))
+        })
+        .await
+    };
+    let a = start("daemon-a", volume.clone()).await;
+    let alias_a = start("daemon-a", volume.clone()).await;
+    let b = start("daemon-b", volume).await;
+    storage.engine = a.endpoint.clone();
+    let id = storage
+        .observe(&Engine::connect(&a.endpoint).unwrap(), "")
+        .await
+        .unwrap()
+        .unwrap();
+    // A different socket reaching the same daemon retains resource identity.
+    storage.engine = alias_a.endpoint.clone();
+    assert_eq!(
+        storage
+            .observe(&Engine::connect(&alias_a.endpoint).unwrap(), &id)
+            .await
+            .unwrap(),
+        Some(id.clone())
+    );
+    // Even identical names, labels and timestamps do not permit a target change.
+    storage.engine = b.endpoint.clone();
+    let error = storage
+        .ensure(&Engine::connect(&b.endpoint).unwrap(), &id)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Observation(ObservationError::BindingMismatch)
+    ));
+    let encoded = storage.json().unwrap();
+    let backend = crate::managed::ManagedBackend::new(Engine::connect(&a.endpoint).unwrap());
+    use crate::backend::{Backend, Row};
+    let row = Row::from([("spec".into(), encoded), ("id".into(), id)]);
+    assert!(backend.ensure(STORAGE_KIND, &row).await.error.is_some());
+}

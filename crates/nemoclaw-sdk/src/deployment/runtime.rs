@@ -95,11 +95,10 @@ struct Preflight {
     gateway_running: bool,
 }
 async fn preflight(
-    document: &Document,
+    engine: &Engine,
     targets: &[Target],
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<Preflight, Error> {
-    let engine = Engine::connect(&document.spec.gateway.engine)?;
     let mut result = Preflight {
         expected: allowed(targets),
         replacements: BTreeSet::new(),
@@ -133,7 +132,7 @@ async fn preflight(
         let observed = if target.kind == STORAGE_KIND {
             let spec: Storage = serde_json::from_str(&target.values["spec"])
                 .map_err(|_| Error::State("invalid compiled storage"))?;
-            spec.observe(&engine, id).await?
+            spec.observe(engine, id).await?
         } else {
             let spec: Spec = serde_json::from_str(&target.values["spec"])
                 .map_err(|_| Error::State("invalid compiled gateway storage"))?;
@@ -208,7 +207,8 @@ impl Deployment {
         let stage = Store::open(&store.directory.join("runtime"))?;
         let bindings = stage.bindings()?;
         let targets = compile::runtime_targets(document, &record.generations)?;
-        let checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=preflight(document,&targets,&bindings)=>result?};
+        let engine = self.engines.resolve(&document.spec.gateway.engine)?;
+        let checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=preflight(&engine,&targets,&bindings)=>result?};
         self.prepare(
             bundle,
             &stage,
@@ -290,7 +290,7 @@ impl Deployment {
         };
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(90),gateway)=>result.map_err(|_|Error::State("managed gateway readiness failed; identity and data retained"))??};
         let bindings = stage.bindings()?;
-        let engine = Engine::connect(&document.spec.gateway.engine)?;
+        let engine = self.engines.resolve(&document.spec.gateway.engine)?;
         let inference = async {
             for target in targets.iter().filter(|t| t.kind == SERVICE_KIND) {
                 let spec: Spec = serde_json::from_str(&target.values["spec"])
@@ -342,7 +342,7 @@ impl Deployment {
                 "export requires all managed runtime bindings",
             ));
         }
-        let engine = Engine::connect(&record.document.spec.gateway.engine)?;
+        let engine = self.engines.resolve(&record.document.spec.gateway.engine)?;
         let work = async {
             for target in targets {
                 let binding = bindings.get(&target.address).ok_or(Error::Conflict(
@@ -355,7 +355,7 @@ impl Deployment {
                 }
                 let mut row = target.values.clone();
                 row.insert("id".into(), binding.id.clone());
-                crate::managed::ManagedBackend
+                crate::managed::ManagedBackend::new(engine.clone())
                     .read(&target.kind, &row, false)
                     .await?
                     .ok_or(Error::Conflict(

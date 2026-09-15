@@ -86,7 +86,13 @@ async fn managed_ollama_bundle_preserves_models_across_noop_export_and_failed_ob
         .unwrap()
         .engine = engine.endpoint.clone();
     let directory = tempfile::tempdir().unwrap();
-    let deployment = Deployment::new(directory.path(), &bundle);
+    let deployment = Deployment::new(directory.path(), &bundle).with_engines(
+        nemoclaw_sdk::docker::Connections::fixed([nemoclaw_sdk::docker::Engine::connect(
+            &engine.endpoint,
+        )
+        .unwrap()])
+        .unwrap(),
+    );
     let cancel = CancellationToken::new();
     assert_eq!(
         deployment
