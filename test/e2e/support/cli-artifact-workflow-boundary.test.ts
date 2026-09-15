@@ -177,7 +177,6 @@ async function writeCliArchive(
     "openshell-observation-boundary.cjs",
     "openshell-policy-boundary.cjs",
     "sandbox-name.cjs",
-    "snapshot-sanitizer-boundary.cjs",
   ]) {
     fs.writeFileSync(path.join(shared, boundary), "module.exports = {};\n");
   }

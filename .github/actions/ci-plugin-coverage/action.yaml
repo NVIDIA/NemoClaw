@@ -36,8 +36,7 @@ runs:
           --coverage.reportsDirectory=coverage/plugin \
           --coverage.include="nemoclaw/src/**/*.ts" \
           --coverage.include="nemoclaw/src/**/*.cts" \
-          --coverage.exclude="**/*.test.ts" \
-          --coverage.exclude="nemoclaw/src/shared/snapshot-sanitizer-boundary.cts"
+          --coverage.exclude="**/*.test.ts"
         npx tsx scripts/check-coverage-ratchet.mts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
 
     - name: Upload plugin coverage report
