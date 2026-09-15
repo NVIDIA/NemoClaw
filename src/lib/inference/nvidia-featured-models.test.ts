@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { CLOUD_MODEL_OPTIONS } from "./config";
 import {
   createNvidiaFeaturedModelPromptOptionsLoader,
   fetchNvidiaFeaturedModels,
@@ -36,6 +37,7 @@ describe("NVIDIA featured model catalog", () => {
             { model: "z-ai/glm-5.1", "model-name": "GLM 5.1" },
             { model: "z-ai/glm-5.2", "model-name": "GLM 5.2" },
             { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
+            { model: "minimaxai/minimax-m3", "model-name": "Minimax M3" },
             {
               model: "nvidia/nemotron-3-super-120b-a12b",
               "model-name": "Nemotron 3 Super 120B",
@@ -83,7 +85,12 @@ describe("NVIDIA featured model catalog", () => {
           httpStatus: 200,
           curlStatus: 0,
           body: JSON.stringify({
-            "featured-models": [{ model: "minimaxai/minimax-m3", "model-name": "Minimax M3" }],
+            "featured-models": [
+              {
+                model: "nvidia/nemotron-3-super-120b-a12b",
+                "model-name": "Nemotron 3 Super 120B",
+              },
+            ],
           }),
           stderr: "",
           message: "",
@@ -93,7 +100,7 @@ describe("NVIDIA featured model catalog", () => {
 
     expect(result).toEqual({
       ok: true,
-      models: [{ id: "minimaxai/minimax-m3", label: "Minimax M3" }],
+      models: [{ id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" }],
     });
   });
 
@@ -156,7 +163,6 @@ describe("NVIDIA featured model catalog", () => {
     expect(models.map((model) => model.id)).toEqual([
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-super-120b-a12b",
-      "minimaxai/minimax-m3",
     ]);
     expect(warnings).toEqual([
       "  Warning: failed to load NVIDIA's featured model catalog; falling back to the bundled list (service unavailable; HTTP 503).",
@@ -245,9 +251,7 @@ describe("NVIDIA featured model catalog", () => {
       warn: (message) => warnings.push(message),
     });
 
-    expect(models).toEqual(
-      expect.arrayContaining([{ id: "minimaxai/minimax-m3", label: "Minimax M3" }]),
-    );
+    expect(models).toEqual(CLOUD_MODEL_OPTIONS);
     expect(warnings).toEqual([
       "  Warning: failed to load NVIDIA's featured model catalog; falling back to the bundled list (catalog returned no safe model IDs).",
     ]);
@@ -339,7 +343,6 @@ describe("NVIDIA featured model catalog", () => {
     expect(options.cloudModelOptions.map((option) => option.id)).toEqual([
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-super-120b-a12b",
-      "minimaxai/minimax-m3",
     ]);
   });
 
