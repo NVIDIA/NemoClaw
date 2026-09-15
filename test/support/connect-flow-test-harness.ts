@@ -372,7 +372,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       ...portableAuthorityDeps(),
     })) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
-    .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
+    .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnect")
     .mockImplementation((async (input: {
       verifyRoute: () => Promise<unknown>;
       prepareProbeDependency?: () => Promise<{ release: () => void }>;
