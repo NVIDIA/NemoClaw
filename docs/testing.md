@@ -10,6 +10,43 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## Local coverage
+
+Install the pinned coverage tool and the LLVM tools for the repository's Rust
+version once:
+
+```sh
+cargo install cargo-llvm-cov --version 0.9.1 --locked
+rustup component add llvm-tools-preview
+```
+
+Then run from the repository root:
+
+```sh
+cargo coverage
+```
+
+Open `target/llvm-cov/html/index.html` for the report. This alias runs the normal
+workspace tests with coverage instrumentation and excludes the private
+`nemoclaw-e2e` fixture implementation from the report; its tests still run and
+contribute coverage to the other crates. Ignored bundle and live tests remain
+opt-in. Prebuilt runtime bundles are not instrumented by this command.
+
+Coverage artifacts stay under the Git-ignored `target/` directory. Coverage uses
+a separate build directory, so the first run recompiles dependencies. On a
+memory-constrained host, use `CARGO_BUILD_JOBS=2 cargo coverage`. The same linker
+and `PROTOC` prerequisites apply as for ordinary tests.
+
+To print a summary from the collected data without rerunning tests:
+
+```sh
+cargo llvm-cov report --ignore-filename-regex nemoclaw-e2e
+```
+
+There is no coverage threshold or CI coverage job.
+
+## Integration and live qualification
+
 The private `nemoclaw-e2e` crate runs the actual provider protocol through
 OpenTofu 1.12.6. Supply an absolute executable path explicitly:
 
