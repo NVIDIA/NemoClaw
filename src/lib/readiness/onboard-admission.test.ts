@@ -203,7 +203,6 @@ describe("onboarding readiness admission (#7411)", () => {
       finding(ONBOARD_READINESS_FINDING_IDS.containerToolkitMissing),
       finding(ONBOARD_READINESS_FINDING_IDS.cdiMissing),
       finding(ONBOARD_READINESS_FINDING_IDS.cdiStale),
-      finding(ONBOARD_READINESS_FINDING_IDS.nvidiaRuntimeMissing),
     ];
 
     expect(
@@ -231,14 +230,14 @@ describe("onboarding readiness admission (#7411)", () => {
       evaluateOnboardReadinessAdmission(
         report({
           capabilities,
-          findings: [finding(ONBOARD_READINESS_FINDING_IDS.nvidiaRuntimeMissing)],
+          findings: [finding(ONBOARD_READINESS_FINDING_IDS.cdiMissing)],
           status: "incompatible",
         }),
         DEFAULT_OPTIONS,
       ),
     ).toMatchObject({
       admitted: false,
-      findingIds: [ONBOARD_READINESS_FINDING_IDS.nvidiaRuntimeMissing],
+      findingIds: [ONBOARD_READINESS_FINDING_IDS.cdiMissing],
     });
   });
 

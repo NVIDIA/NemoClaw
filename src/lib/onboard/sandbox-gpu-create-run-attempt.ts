@@ -718,7 +718,6 @@ export function createSandboxGpuCreateAttemptRunner(
             openshellSandboxCommand: input.sandboxStartupCommand,
             requiredUlimits: input.requiredUlimits,
             timeoutSecs: input.sandboxReadyTimeoutSecs,
-            backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
             deps,
           }));
     const inspectNativeRuntime = (): NativeRuntimeSnapshot | null => {

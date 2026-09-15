@@ -86,12 +86,12 @@ describe("resolveDockerGpuRoutePlan", () => {
       config: { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
       options: LINUX_DOCKER,
       expected: [
-        "compatibility-only",
-        "compatibility-only",
-        "compatibility-only",
         "native-only",
-        "compatibility-only",
-        "compatibility-only",
+        "native-only",
+        "native-only",
+        "native-only",
+        "native-only",
+        "native-only",
       ],
     },
   ] as const;
@@ -133,6 +133,7 @@ describe("resolveDockerGpuRoutePlan", () => {
     );
     expect(matrixByKey.get("Docker Desktop WSL:0")).toBe("compatibility-only");
     expect(matrixByKey.get("Jetson/Tegra:0")).toBe("native-only");
+    expect(matrixByKey.get("Jetson/Tegra:1")).toBe("native-only");
     expect(matrixByKey.get("ordinary Linux Docker:unset")).toBe("native-only");
     expect(matrixByKey.get("ordinary Linux Docker:auto")).toBe("native-only");
     expect(matrixByKey.get("ordinary Linux Docker:fallback")).toBe("native-with-fallback");
@@ -175,6 +176,19 @@ describe("resolveDockerGpuRoutePlan", () => {
     ).toBe("compatibility-only");
     expect(log.mock.calls.map(([message]) => message).join("\n")).toMatch(
       /0 ignored on Docker Desktop WSL.*--no-gpu/s,
+    );
+  });
+
+  it("keeps Jetson on native CDI when compatibility is requested", () => {
+    const log = vi.fn();
+    expect(
+      resolveDockerGpuRoutePlan(
+        { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
+        { ...LINUX_DOCKER, env: { NEMOCLAW_DOCKER_GPU_PATCH: "1" }, log },
+      ),
+    ).toBe("native-only");
+    expect(log.mock.calls.map(([message]) => message).join("\n")).toMatch(
+      /ignored on Jetson\/Tegra.*native OpenShell CDI.*--no-gpu/su,
     );
   });
 });

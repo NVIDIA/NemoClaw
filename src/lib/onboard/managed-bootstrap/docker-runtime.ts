@@ -15,7 +15,6 @@ import { dockerImageInspect } from "../../adapters/docker/inspect";
 import { dockerPullWithProgressWatchdog } from "../../adapters/docker/pull";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
 import { createDockerGpuDiagnosticRedactor } from "../docker-gpu-diagnostic-redaction";
-import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
 import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
 import type {
   DockerGpuPatchDeps,
@@ -59,7 +58,6 @@ function dockerReplacementOptions(
   mode: DockerGpuPatchMode,
   input: ManagedBootstrapRuntimeCreateLifecycleInput,
 ) {
-  const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
   return {
     values: {
       gpuModeArgs: [...mode.args],
@@ -69,8 +67,6 @@ function dockerReplacementOptions(
       requiredUlimits: input.requiredLimits.map(
         (limit) => `${limit.name}=${limit.soft}:${limit.hard}`,
       ),
-      extraGroupGids:
-        backend === "jetson" && input.route === "compatibility" ? detectTegraDeviceGroupGids() : [],
     },
   };
 }
@@ -147,7 +143,6 @@ function selectedDockerMode(
   input: ManagedBootstrapRuntimeCreateLifecycleInput,
   dockerDesktopWsl: boolean | undefined,
 ): DockerGpuPatchMode {
-  const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
   if (input.route !== "compatibility" || !input.sandboxGpuConfig.sandboxGpuEnabled) {
     return buildDockerGpuMode("startup-command");
   }
@@ -165,18 +160,15 @@ function selectedDockerMode(
       {
         image: managedBootstrapImageReference(input),
         device: input.sandboxGpuConfig.sandboxGpuDevice,
-        backend,
         dockerDesktopWsl,
         ...(dockerDesktopWsl ? { pullPolicy: "never" as const } : {}),
       },
       withDockerClientEnvDeps(input.dependencies as DockerGpuPatchDeps, prepared),
     );
     if (selection.mode) return selection.mode;
-    const message =
-      backend === "jetson"
-        ? "Docker did not accept the Jetson NVIDIA runtime GPU mode for managed bootstrap."
-        : "Docker did not accept a compatibility GPU mode for managed bootstrap.";
-    throw new Error(`${message}${formatDockerGpuModeFailureDetails(selection.attempts)}`);
+    throw new Error(
+      `Docker did not accept a compatibility GPU mode for managed bootstrap.${formatDockerGpuModeFailureDetails(selection.attempts)}`,
+    );
   } finally {
     warnIfDockerBuildEnvironmentCleanupFailed(
       prepared.cleanup(),
@@ -249,7 +241,6 @@ function createDockerLifecycle(
   const dockerDesktopWsl =
     input.route === "compatibility" ? isDockerDesktopWslRuntime() : undefined;
   const preselectedMode = dockerDesktopWsl ? null : selectedDockerMode(input, dockerDesktopWsl);
-  const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
   const persistStartupCommand =
     input.persistStartupCommand && (input.route !== "native" || input.requiredLimits.length > 0);
   const commandExecutor = input.dependencies.commandExecutor;
@@ -265,7 +256,6 @@ function createDockerLifecycle(
     openshellSandboxCommand: input.heldWorkloadArgv,
     requiredUlimits: input.requiredLimits,
     timeoutSecs: input.timeoutSecs,
-    backend,
     dockerDesktopWsl,
     deps: { ...input.dependencies, commandExecutor },
     ...(input.onPatchFailure

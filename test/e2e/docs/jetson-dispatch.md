@@ -168,15 +168,17 @@ whether the cancellation outcome is absent, pending, succeeded, or failed.
 commit under review. Managed-image lookup uses the separately dispatched
 publication commit. Candidate identity checks continue to use the commit under
 review. The controller contract requires the
-`jetson-nvmap-gpu` target ID. While
-[issue #7610](https://github.com/NVIDIA/NemoClaw/issues/7610) remains open, the
-test disables sandbox GPU access.
+`jetson-nvmap-gpu` target ID. For
+[PR #8910](https://github.com/NVIDIA/NemoClaw/pull/8910), the target is the
+candidate proof for native OpenShell CDI GPU passthrough on AGX Thor and IGX
+Orin. It does not establish product support by itself.
 
 The test verifies these requirements:
 
-- The host identifies as a Jetson device.
+- The host identifies as AGX Thor or IGX Orin.
 - `/dev/nvmap` is a character device on the host.
-- Docker reports the NVIDIA runtime.
+- Docker discovers an NVIDIA CDI GPU device.
+- A readable NVIDIA CDI specification declares `/dev/nvmap` and `libcuda.so`.
 - NemoClaw installation completes without prompts.
 - The sandbox registry records the immutable published
   `ghcr.io/nvidia/nemoclaw/openclaw-sandbox` digest selected for `linux/arm64`,
@@ -184,23 +186,28 @@ The test verifies these requirements:
 - The installed commands resolve inside the Jetson job workspace.
 
 The live test runs `bash install.sh --non-interactive` with
-`NEMOCLAW_SANDBOX_GPU=0`. `install.sh` does not accept `--no-gpu`, so this
-setting is equivalent to `nemoclaw onboard --no-gpu`.
+`NEMOCLAW_SANDBOX_GPU=1`. The native route leaves device injection, driver
+library mounts, supplemental groups, and CDI-derived policy enrichment under
+OpenShell ownership. The test rejects NemoClaw's Docker GPU compatibility
+recreation path.
 
 A passing test requires these results:
 
-- Installation reports that sandbox GPU access is disabled by configuration.
-- `nemoclaw e2e-jetson-nvmap status` reports `Sandbox GPU: disabled`.
-- `nemoclaw e2e-jetson-nvmap status` does not report a CUDA result,
-  `/dev/nvmap`, or `/opt/nvidia`.
-- `/dev/nvmap` is absent from inside the sandbox, including as a symbolic link.
+- Onboarding reports successful `nvidia-smi`, proc-comm, and `cuInit(0)` GPU
+  proofs.
+- `nemoclaw e2e-jetson-nvmap status` reports `Sandbox GPU: enabled` and
+  `CUDA verified`.
+- The OpenShell sandbox command runs as a non-root identity, can read `/sys`,
+  can access `/dev/nvmap`, and can run `nvidia-smi`.
+- Loading `libcuda.so.1` and calling `cuInit(0)` inside that sandbox returns
+  zero.
 
 The test writes `phase-2-published-managed-image.json` with the registry
 workload receipt, digest-qualified managed-image reference, and inspected image
 labels used to prove its agent, contracts, source revision, and platform.
 
-The test result verifies CPU-only onboarding for the named commit and Jetson
-device. It does not verify CUDA or OpenClaw Jetson device-group preservation.
-It does not establish that `cuInit(0)` works through OpenShell or that issue
-`#7610` is resolved. The test records phase evidence through the shared live
-E2E artifact fixtures.
+The test result is candidate evidence for the named commit and reported
+device. The OpenShell dependency stack must be released, and AGX Thor and IGX
+Orin must each produce an independent successful run before #8910 can leave
+draft or the integration can be described as supported. The test records phase
+evidence through the shared live E2E artifact fixtures.

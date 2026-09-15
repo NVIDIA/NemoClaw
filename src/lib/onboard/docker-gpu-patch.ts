@@ -7,7 +7,6 @@ import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redac
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import type {
   DockerContainerState,
-  DockerGpuPatchBackend,
   DockerGpuPatchDeps,
   DockerGpuPatchFailureClassification,
   DockerGpuPatchFailureContext,
@@ -18,7 +17,6 @@ import type {
 } from "./docker-gpu-patch-types";
 
 export { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
-export { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 export {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
@@ -63,7 +61,6 @@ export type {
   DockerContainerInspect,
   DockerContainerState,
   DockerGpuCloneRunOptions,
-  DockerGpuPatchBackend,
   DockerGpuPatchDeps,
   DockerGpuPatchDiagnostics,
   DockerGpuPatchFailureClassification,
@@ -128,12 +125,6 @@ export async function applyDockerGpuPatchOrExit(
     sandboxName: string;
     gpuDevice?: string | null;
     timeoutSecs: number;
-    // Forwarded to `recreateOpenShellDockerSandboxWithGpu` so the Jetson
-    // backend selects the NVIDIA runtime mode AND grants the Tegra device-node
-    // group(s) to the sandbox user (#4231). Without threading this through, the
-    // `ensureApplied` fallback path would recreate the container without
-    // /dev/nvmap group access.
-    backend?: DockerGpuPatchBackend;
     openshellSandboxCommand?: readonly string[] | null;
     dockerDesktopWsl?: boolean;
   },
@@ -257,7 +248,7 @@ export function printDockerGpuPatchFailureAndExit(
   console.error("  Escape hatches:");
   console.error("    NEMOCLAW_DOCKER_GPU_PATCH=1  use only the Docker GPU compatibility path.");
   console.error(
-    "    NEMOCLAW_DOCKER_GPU_PATCH=0  use native OpenShell GPU injection (ignored on Docker Desktop WSL; Jetson also defaults to the compatibility path).",
+    "    NEMOCLAW_DOCKER_GPU_PATCH=0  use native OpenShell GPU injection (ignored on Docker Desktop WSL; required on Jetson/Tegra).",
   );
   console.error(
     "    NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",

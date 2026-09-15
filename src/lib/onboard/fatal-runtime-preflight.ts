@@ -46,7 +46,6 @@ import { createArm64ContainerGpuProver } from "./runtime-provider/nvidia-contain
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   exitOnSandboxGpuConfigErrors,
-  printJetsonNvidiaRuntimeUnavailableError,
   resolveSandboxGpuFlagFromOptions,
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
@@ -115,14 +114,6 @@ export interface ReadinessGatedRuntimePreflightResult extends FatalRuntimePrefli
 }
 
 const exitProcessByDefault = (code: number): never => process.exit(code);
-const JETSON_INAPPLICABLE_CDI_ADVISORY_IDS = new Set([
-  "warn_nvidia_cdi_refresh_unhealthy",
-  "wsl_docker_desktop_gpu_compatibility",
-  "generate_nvidia_cdi_spec",
-  "refresh_nvidia_cdi_spec",
-  "install_nvidia_container_toolkit",
-]);
-
 export interface OnboardHostReadinessOptions {
   explicitlyOptedOutGpuPassthrough: boolean;
   /** Preserve provider-bound proof state across readiness collection phases. */
@@ -247,8 +238,6 @@ export function assertOnboardSystemReadiness(
     }
     return readinessReport;
   }
-  const jetsonRuntimeMissing = admission.findingIds.includes("host.gpu.nvidia_runtime_missing");
-
   if (
     admission.findingIds.includes("host.docker.unavailable") ||
     admission.findingIds.includes("host.docker.daemon_unreachable")
@@ -261,16 +250,10 @@ export function assertOnboardSystemReadiness(
     admission.findingIds.includes("host.gpu.cdi_stale")
   ) {
     printCdiSpecUnavailableError();
-  } else if (jetsonRuntimeMissing) {
-    printJetsonNvidiaRuntimeUnavailableError();
   } else {
     printReadinessFailure(readinessReport, admission.findingIds, admission.capabilityIds);
   }
-  printRemediationActions(
-    jetsonRuntimeMissing
-      ? advisories.filter(({ id }) => !JETSON_INAPPLICABLE_CDI_ADVISORY_IDS.has(id))
-      : advisories,
-  );
+  printRemediationActions(advisories);
   exitProcess(1);
   throw new Error("Onboarding continued after a blocking system readiness result.");
 }

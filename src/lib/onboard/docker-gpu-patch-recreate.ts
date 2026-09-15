@@ -12,7 +12,6 @@ import {
 } from "../adapters/docker";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
-import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
@@ -58,7 +57,6 @@ type RecreateDeps = Required<
     | "now"
     | "detectSandboxFallbackDns"
     | "probeContainerDns"
-    | "detectTegraDeviceGroupGids"
   >
 > &
   DockerGpuPatchDeps;
@@ -78,7 +76,6 @@ function recreateDeps(deps: DockerGpuPatchDeps): RecreateDeps {
     now: () => new Date(),
     detectSandboxFallbackDns: () => detectSandboxFallbackDns(),
     probeContainerDns: (options) => probeContainerDns(options),
-    detectTegraDeviceGroupGids: () => detectTegraDeviceGroupGids(),
     ...deps,
   };
 }
@@ -157,7 +154,6 @@ type RecreateOpenShellDockerSandboxContainerOptions = {
   openshellSandboxCommand?: readonly string[] | null;
   requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
   expectedOldContainerId?: string | null;
-  backend?: "generic" | "jetson";
   dockerDesktopWsl?: boolean;
   modeOverride?: DockerGpuPatchMode;
 };
@@ -224,7 +220,6 @@ export function recreateOpenShellDockerSandboxContainer(
           {
             image,
             device: options.gpuDevice,
-            backend: options.backend,
             dockerDesktopWsl: options.dockerDesktopWsl,
           },
           deps,
@@ -232,11 +227,7 @@ export function recreateOpenShellDockerSandboxContainer(
     context.modeAttempts = selection.attempts;
     context.selectedMode = selection.mode;
     if (!selection.mode) {
-      throw new Error(
-        options.backend === "jetson"
-          ? "Docker did not accept the Jetson NVIDIA runtime GPU mode."
-          : "Docker did not accept --gpus, NVIDIA runtime, or CDI GPU modes.",
-      );
+      throw new Error("Docker did not accept --gpus, NVIDIA runtime, or CDI GPU modes.");
     }
 
     const originalName = dockerContainerName(inspect);
@@ -269,21 +260,6 @@ export function recreateOpenShellDockerSandboxContainer(
         console.warn(
           `  ⚠ Sandbox fallback DNS probe inconclusive with --dns ${cloneFallbackDns} ` +
             `(reason: ${dnsProbe.reason ?? "unknown"}); continuing without blocking recreation.`,
-        );
-      }
-    }
-    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
-      const tegraGroupGids = d.detectTegraDeviceGroupGids();
-      if (tegraGroupGids.length > 0) {
-        cloneOptions.extraGroupGids = tegraGroupGids;
-        console.log(
-          `  ✓ Granting sandbox user the detected Jetson GPU device groups via --group-add ${tegraGroupGids.join(
-            ", ",
-          )} (so CUDA can initialize as a non-root user)`,
-        );
-      } else {
-        console.warn(
-          "  ⚠ Could not resolve the group owning Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and is group-readable on the host.",
         );
       }
     }

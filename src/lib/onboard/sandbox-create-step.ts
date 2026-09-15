@@ -38,7 +38,6 @@ export type SandboxCreateStepContext = {
   prebuild: LaunchInput["prebuild"];
   useDockerGpuPatch: boolean;
   gpuDevice: string | null | undefined;
-  gpuBackend: "jetson" | "generic";
   timeoutSecs: number;
 };
 
@@ -110,7 +109,6 @@ export async function runSandboxCreateStep(
     gpuDevice: context.gpuDevice,
     openshellSandboxCommand: sandboxStartupCommand,
     timeoutSecs: context.timeoutSecs,
-    backend: context.gpuBackend,
     deps: {
       runOpenshell: deps.runOpenshell,
       runCaptureOpenshell: deps.runCaptureOpenshell,

@@ -85,8 +85,9 @@ export type NativeGpuFallbackCleanupDeps = {
  * whyNotSourceFix: supported OpenShell/Docker versions cannot be upgraded atomically.
  * regressionTest: create failure classification, fallback orchestration, cleanup, and live Hermes.
  * removalCondition: native injection replaces compatibility on every supported host.
- * Ordinary Linux also requires explicit `NEMOCLAW_DOCKER_GPU_PATCH=fallback`; WSL/Jetson are
- * separately gated, and unrelated create/readiness failures retain their existing paths.
+ * Ordinary Linux also requires explicit `NEMOCLAW_DOCKER_GPU_PATCH=fallback`; WSL is separately
+ * gated, and unrelated create/readiness failures retain their existing paths. Jetson uses native
+ * OpenShell CDI only.
  */
 export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
   const text = String(output ?? "");

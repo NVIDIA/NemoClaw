@@ -9,7 +9,7 @@ export function formatSandboxGpuPassthroughNote(options: {
   sandboxGpuMode?: string | null;
 }): string {
   if (options.hostGpuPlatform === "jetson") {
-    return "  NVIDIA Jetson/Tegra GPU detected; enabling sandbox GPU through Docker NVIDIA runtime. Use --no-gpu to opt out.";
+    return "  NVIDIA Jetson/Tegra GPU detected; enabling sandbox GPU through native OpenShell CDI. Use --no-gpu to opt out.";
   }
   if (options.resumeHasResolvedGpuIntent && options.recordedGpuPassthroughBeforePreflight) {
     return "  [resume] Continuing GPU passthrough from the saved onboarding session.";

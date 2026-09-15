@@ -5,7 +5,7 @@
     "maxByFile": {
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 24,
       "src/lib/actions/sandbox/process-recovery.ts": 26,
-      "src/lib/adapters/docker/index.ts": 41,
+      "src/lib/adapters/docker/index.ts": 40,
       "src/lib/adapters/openshell/client.ts": 18,
       "src/lib/adapters/openshell/command-argv.ts": 17,
       "src/lib/adapters/openshell/resolve.ts": 25,
@@ -63,7 +63,7 @@
   },
   "allowedCycles": [],
   "maxRootFiles": {
-    "src/lib/onboard": 299,
+    "src/lib/onboard": 298,
     "src/lib/actions": 18,
     "src/lib/actions/sandbox": 175,
     "src/lib/state": 37,

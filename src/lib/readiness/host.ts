@@ -447,13 +447,10 @@ export function projectHostReadiness(
       dockerEvidenceUsable &&
       host.hasNvidiaGpu &&
       host.dockerCdiSpecDirs.length > 0 &&
-      host.hostGpuPlatform !== "jetson" &&
       !(host.isWsl && host.runtime === "docker-desktop");
     const containerToolkitApplies =
-      host.hasNvidiaGpu &&
-      host.hostGpuPlatform !== "jetson" &&
-      !(host.isWsl && host.runtime === "docker-desktop");
-    const jetsonRuntimeApplies =
+      host.hasNvidiaGpu && !(host.isWsl && host.runtime === "docker-desktop");
+    const jetsonRuntimeObservationApplies =
       dockerEvidenceUsable && host.hasNvidiaGpu && host.hostGpuPlatform === "jetson";
     const cdiHealthy =
       !cdiApplies ||
@@ -538,7 +535,7 @@ export function projectHostReadiness(
       ),
       observation(
         "host.gpu.nvidia_runtime",
-        jetsonRuntimeApplies ? host.dockerNvidiaRuntimeAvailable : false,
+        jetsonRuntimeObservationApplies ? host.dockerNvidiaRuntimeAvailable : false,
       ),
       observation("host.gpu.cdi", cdiApplies ? cdiHealthy : false),
       observation("host.gpu.cdi_stale", cdiApplies ? host.cdiNvidiaGpuSpecStale : false),
@@ -593,11 +590,7 @@ export function projectHostReadiness(
       capability("host.gpu.nvidia_available", stateOf(host.hasNvidiaGpu)),
       capability(
         "host.gpu.container_toolkit_available",
-        jetsonRuntimeApplies
-          ? stateOf(host.dockerNvidiaRuntimeAvailable)
-          : containerToolkitApplies
-            ? stateOf(host.nvidiaContainerToolkitInstalled)
-            : "present",
+        containerToolkitApplies ? stateOf(host.nvidiaContainerToolkitInstalled) : "present",
       ),
       capability("host.gpu.cdi_healthy", cdiApplies ? stateOf(cdiHealthy) : "present"),
     ];
@@ -665,15 +658,6 @@ export function projectHostReadiness(
           "host.gpu.container_toolkit_missing",
           "blocking",
           "NVIDIA Container Toolkit is missing.",
-          ["host.gpu.container_toolkit_available"],
-        ),
-      );
-    if (jetsonRuntimeApplies && host.dockerNvidiaRuntimeAvailable === false)
-      findings.push(
-        finding(
-          "host.gpu.nvidia_runtime_missing",
-          "blocking",
-          "Docker NVIDIA runtime support is missing for Jetson/Tegra sandbox GPU.",
           ["host.gpu.container_toolkit_available"],
         ),
       );

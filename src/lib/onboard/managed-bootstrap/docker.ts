@@ -777,14 +777,12 @@ function parseRequiredUlimits(value: unknown): DockerUlimit[] {
 function replacementPlan(options: ManagedBootstrapReplacementOptions): {
   readonly mode: DockerGpuPatchMode;
   readonly requiredUlimits: readonly DockerUlimit[];
-  readonly extraGroupGids: readonly string[];
 } {
   const allowed = new Set([
     "gpuModeArgs",
     "gpuModeDevice",
     "gpuModeKind",
     "gpuModeLabel",
-    "extraGroupGids",
     "requiredUlimits",
   ]);
   const unknown = Object.keys(options.values).filter((key) => !allowed.has(key));
@@ -805,14 +803,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
       device: String(options.values.gpuModeDevice ?? ""),
       args,
     },
-    extraGroupGids: exactStringArray(options.values.extraGroupGids ?? [], "extra group GIDs").map(
-      (value) => {
-        if (!/^\d+$/u.test(value)) {
-          throw new Error(`Managed bootstrap Docker supplementary group '${value}' is invalid.`);
-        }
-        return value;
-      },
-    ),
     requiredUlimits: parseRequiredUlimits(options.values.requiredUlimits),
   };
 }
@@ -1157,7 +1147,6 @@ function assertReplacementMatchesIntent(
   plan: {
     readonly mode: DockerGpuPatchMode;
     readonly requiredUlimits: readonly DockerUlimit[];
-    readonly extraGroupGids: readonly string[];
   },
   intendedWorkloadArgv: readonly string[],
   omitOciImageUser: boolean,
@@ -1223,10 +1212,7 @@ function assertReplacementMatchesIntent(
   }
   assertExactStringSet(
     observedHost.GroupAdd,
-    [
-      ...stringSet(originalHost.GroupAdd, "original supplementary groups"),
-      ...plan.extraGroupGids,
-    ].filter((value, index, values) => values.indexOf(value) === index),
+    stringSet(originalHost.GroupAdd, "original supplementary groups"),
     "supplementary groups",
   );
   const observedUlimits = canonicalUlimits(observedHost.Ulimits, "replacement ulimits");
@@ -3828,7 +3814,6 @@ export function createDockerManagedBootstrapAdapter(
         image: expectedImageReference(snapshot.image.repository, snapshot.image.manifestDigest),
         openshellSandboxCommand: handle.intendedWorkloadArgv,
         requiredUlimits: plan.requiredUlimits,
-        extraGroupGids: plan.extraGroupGids,
         containerEntrypoint: MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
         containerCommand: trampolineCommand,
         containerName: stagingName,

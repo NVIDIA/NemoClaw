@@ -247,10 +247,6 @@ describe("host readiness projection (#7408)", () => {
 
   it.each([
     [
-      { cdiNvidiaGpuSpecMissing: true, nvidiaContainerToolkitInstalled: false },
-      { detectHostGpuPlatform: () => "jetson" as const },
-    ],
-    [
       {
         isWsl: true,
         runtime: "docker-desktop",
@@ -283,9 +279,9 @@ describe("host readiness projection (#7408)", () => {
     );
 
     expect(detectNvidiaPlatform).toHaveBeenCalledOnce();
-    expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
-    expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
-    expect(result.status).toBe("supported");
+    expect(state(result, "host.gpu.cdi_healthy")).toBe("absent");
+    expect(findingIds(result)).toContain("host.gpu.cdi_missing");
+    expect(result.status).toBe("incompatible");
   });
 
   it("recognizes a Jetson GPU through the canonical detector without nvidia-smi", () => {
@@ -305,27 +301,27 @@ describe("host readiness projection (#7408)", () => {
     );
 
     expect(state(result, "host.gpu.nvidia_available")).toBe("present");
-    expect(state(result, "host.gpu.container_toolkit_available")).toBe("present");
-    expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
-    expect(findingIds(result)).not.toContain("host.gpu.container_toolkit_missing");
-    expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
+    expect(state(result, "host.gpu.container_toolkit_available")).toBe("absent");
+    expect(state(result, "host.gpu.cdi_healthy")).toBe("absent");
+    expect(findingIds(result)).toContain("host.gpu.container_toolkit_missing");
+    expect(findingIds(result)).toContain("host.gpu.cdi_missing");
   });
 
-  it("blocks Jetson GPU admission when Docker lacks the NVIDIA runtime", () => {
+  it("blocks Jetson GPU admission when native CDI is unavailable (#8910)", () => {
     const result = report(
-      { dockerNvidiaRuntimeAvailable: false },
+      {
+        cdiNvidiaGpuSpecMissing: true,
+        cdiNvidiaGpuSpecNeedsRepair: true,
+        nvidiaContainerToolkitInstalled: false,
+      },
       { detectHostGpuPlatform: () => "jetson" },
     );
 
     expect(state(result, "host.gpu.container_toolkit_available")).toBe("absent");
-    expect(result.observations).toContainEqual({
-      id: "host.gpu.nvidia_runtime",
-      state: "absent",
-      value: false,
-    });
+    expect(state(result, "host.gpu.cdi_healthy")).toBe("absent");
     expect(result.findings).toContainEqual(
       expect.objectContaining({
-        id: "host.gpu.nvidia_runtime_missing",
+        id: "host.gpu.cdi_missing",
         severity: "blocking",
       }),
     );

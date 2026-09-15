@@ -63,22 +63,6 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     },
   );
 
-  it("uses Jetson NVIDIA runtime args without selecting generic --gpus or CDI candidates", () => {
-    expect(buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }).args).toEqual([
-      "--runtime",
-      "nvidia",
-      "--env",
-      "NVIDIA_VISIBLE_DEVICES=all",
-      "--env",
-      "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
-    ]);
-    expect(
-      buildDockerGpuModeCandidates("all", { backend: "jetson", cdiAvailable: true }).map(
-        (mode) => mode.kind,
-      ),
-    ).toEqual(["nvidia-runtime"]);
-  });
-
   it("prefers CDI over --gpus when the host advertises an NVIDIA CDI spec", () => {
     // Repro for #4948: on a Docker-CDI GPU host (e.g. Ubuntu 24.04 with
     // /etc/cdi/nvidia.yaml), `docker create --gpus all` is *accepted* so the
@@ -329,29 +313,6 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
       }),
     ]);
     expect(dockerRun).toHaveBeenCalledTimes(2);
-  });
-
-  it("probes only NVIDIA runtime for Jetson Docker GPU mode", () => {
-    const dockerCapture = vi.fn(() => "");
-    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id" }));
-    const selected = selectDockerGpuPatchMode(
-      { image: "openshell/sandbox:abc", backend: "jetson" },
-      { dockerCapture, dockerRun, dockerRm: vi.fn(() => ({ status: 0 })) },
-    );
-
-    expect(selected.mode?.kind).toBe("nvidia-runtime");
-    expect(selected.attempts.map((attempt) => attempt.mode.kind)).toEqual(["nvidia-runtime"]);
-    expect(dockerRun).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        "create",
-        "--runtime",
-        "nvidia",
-        "--env",
-        "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
-      ]),
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(dockerCapture).not.toHaveBeenCalled();
   });
 
   it("prefers CDI only when Docker reports readable NVIDIA CDI specs", () => {

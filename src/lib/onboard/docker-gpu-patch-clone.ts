@@ -727,13 +727,6 @@ export function buildDockerGpuCloneRunArgs(
   for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
   const groupAdds = new Set(stringArray(host.GroupAdd));
   for (const group of groupAdds) args.push("--group-add", group);
-  for (const gid of options.extraGroupGids ?? []) {
-    const normalized = String(gid).trim();
-    if (normalized && !groupAdds.has(normalized)) {
-      groupAdds.add(normalized);
-      args.push("--group-add", normalized);
-    }
-  }
   for (const ulimit of dockerUlimits(inspect, options.requiredUlimits)) {
     args.push("--ulimit", `${ulimit.name}=${ulimit.soft}:${ulimit.hard}`);
   }

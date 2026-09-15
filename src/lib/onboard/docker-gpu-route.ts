@@ -50,7 +50,7 @@ function warnForLegacyNonzeroControl(control: string, log: (message: string) => 
  * SOURCE_OF_TRUTH_REVIEW (explicit ordinary-Linux GPU fallback; #6110):
  * invalidState: explicit fallback sees native rejection or trusted proof of no GPU attachment.
  * sourceBoundary: OpenShell `--gpu` plus structured Docker/NVIDIA evidence and proven cleanup.
- * whyNotSourceFix: supported stacks cannot upgrade atomically; WSL/Jetson still need compatibility.
+ * whyNotSourceFix: supported stacks cannot upgrade atomically; Docker Desktop WSL still needs compatibility.
  * regressionTest: sandbox-gpu-create-failure-classification.test.ts and
  * sandbox-gpu-fallback-orchestration.test.ts prove authorization, cleanup, and one retry.
  * removalCondition: native injection works on every supported host and compatibility is retired.
@@ -75,6 +75,17 @@ export function resolveDockerGpuRoutePlan(
     .trim()
     .toLowerCase();
   const log = options.log ?? ((message: string) => console.warn(message));
+
+  if (config.hostGpuPlatform === "jetson") {
+    if (control !== "" && control !== "auto" && control !== "0") {
+      log(
+        `  NEMOCLAW_DOCKER_GPU_PATCH=${control} ignored on Jetson/Tegra: supported Jetson GPU passthrough requires native OpenShell CDI.`,
+      );
+      log("  Skip sandbox GPU passthrough with --no-gpu or NEMOCLAW_SANDBOX_GPU=0.");
+    }
+    return "native-only";
+  }
+
   warnForLegacyNonzeroControl(control, log);
 
   if (dockerDesktopWsl) {
@@ -87,9 +98,6 @@ export function resolveDockerGpuRoutePlan(
     return "compatibility-only";
   }
 
-  if (config.hostGpuPlatform === "jetson") {
-    return control === "0" ? "native-only" : "compatibility-only";
-  }
   if (control === "fallback") return "native-with-fallback";
   if (control === "" || control === "auto" || control === "0") return "native-only";
 

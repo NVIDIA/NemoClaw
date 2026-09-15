@@ -15,10 +15,6 @@
 
 import * as registry from "../state/registry";
 
-export type GpuPassthroughRecoveryOptions = {
-  missingRuntimePlatform?: "jetson" | null;
-};
-
 /**
  * Returns the multi-line recovery hint for the GPU-passthrough mismatch
  * branch in onboard. Caller is expected to emit each line on its own line
@@ -33,19 +29,7 @@ export type GpuPassthroughRecoveryOptions = {
  * line each; only the last carries `--cleanup-gateway` so the gateway lives
  * until every sandbox is gone.
  */
-export function gpuPassthroughRecoveryLines(
-  names: readonly string[] | null,
-  options: GpuPassthroughRecoveryOptions = {},
-): string[] {
-  if (options.missingRuntimePlatform === "jetson") {
-    return [
-      "  Jetson/Tegra sandbox GPU requires Docker NVIDIA runtime support.",
-      "  Destroying/recreating the sandbox or gateway will not repair a missing NVIDIA runtime.",
-      "  Use CPU sandbox mode instead:",
-      "    nemoclaw onboard --no-gpu",
-    ];
-  }
-
+export function gpuPassthroughRecoveryLines(names: readonly string[] | null): string[] {
   const cleanNames = (names ?? []).map((n) => n.trim()).filter((n) => n.length > 0);
 
   if (cleanNames.length === 0) {
@@ -106,8 +90,6 @@ export function getRegisteredSandboxNamesForGpuRecovery(): string[] {
 export function reportGpuPassthroughRecovery(
   emit: (line: string) => void,
   loadNames: () => string[] = getRegisteredSandboxNamesForGpuRecovery,
-  options: GpuPassthroughRecoveryOptions = {},
 ): void {
-  const names = options.missingRuntimePlatform === "jetson" ? [] : loadNames();
-  for (const line of gpuPassthroughRecoveryLines(names, options)) emit(line);
+  for (const line of gpuPassthroughRecoveryLines(loadNames())) emit(line);
 }

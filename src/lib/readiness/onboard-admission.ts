@@ -25,7 +25,6 @@ export const ONBOARD_READINESS_FINDING_IDS = {
   containerToolkitMissing: "host.gpu.container_toolkit_missing",
   cdiMissing: "host.gpu.cdi_missing",
   cdiStale: "host.gpu.cdi_stale",
-  nvidiaRuntimeMissing: "host.gpu.nvidia_runtime_missing",
   dockerUnavailable: "host.docker.unavailable",
   dockerHostInvalid: "host.docker.host_invalid",
   dockerDaemonUnreachable: "host.docker.daemon_unreachable",
@@ -86,7 +85,6 @@ const GPU_FINDINGS = new Set<string>([
   ONBOARD_READINESS_FINDING_IDS.containerToolkitMissing,
   ONBOARD_READINESS_FINDING_IDS.cdiMissing,
   ONBOARD_READINESS_FINDING_IDS.cdiStale,
-  ONBOARD_READINESS_FINDING_IDS.nvidiaRuntimeMissing,
 ]);
 
 const STANDARD_DOCKER_FINDINGS = new Set<string>([

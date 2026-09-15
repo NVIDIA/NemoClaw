@@ -437,7 +437,7 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(validateGpu).not.toHaveBeenCalled();
   });
 
-  it("preserves Jetson NVIDIA runtime remediation before GPU-enabled effects (#7411)", () => {
+  it("requires Jetson CDI readiness before GPU-enabled effects (#8910)", () => {
     const exit = vi.fn((_code: number): never => {
       throw new Error("exit");
     });
@@ -445,7 +445,7 @@ describe("report-backed runtime readiness (#7411)", () => {
     const host = {
       ...hostWithRuntime("docker"),
       hasNvidiaGpu: true,
-      dockerNvidiaRuntimeAvailable: false,
+      dockerCdiSpecDirs: ["/var/run/cdi"],
       cdiNvidiaGpuSpecMissing: true,
       cdiNvidiaGpuSpecNeedsRepair: true,
       nvidiaContainerToolkitInstalled: true,
@@ -466,9 +466,9 @@ describe("report-backed runtime readiness (#7411)", () => {
       }),
     ).toThrow("exit");
     const output = error.mock.calls.map(([line]) => line).join("\n");
-    expect(output).toContain("sudo nvidia-ctk runtime configure --runtime=docker");
-    expect(output).not.toContain("Generate NVIDIA CDI device specs");
-    expect(output).not.toContain("nvidia-ctk cdi generate");
+    expect(output).toContain("Generate NVIDIA CDI device specs");
+    expect(output).toContain("nvidia-ctk cdi generate");
+    expect(output).not.toContain("runtime configure --runtime=docker");
 
     const optOutExit = vi.fn();
     assertOnboardHostReadiness(host, gpu, {

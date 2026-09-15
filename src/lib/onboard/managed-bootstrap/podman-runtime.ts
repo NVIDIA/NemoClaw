@@ -845,10 +845,6 @@ function optionArgs(
   if (Array.isArray(limits)) {
     for (const limit of limits) args.push("--ulimit", String(limit));
   }
-  const groups = values.extraGroupGids;
-  if (Array.isArray(groups)) {
-    for (const group of groups) args.push("--group-add", String(group));
-  }
   return args;
 }
 
@@ -2287,7 +2283,6 @@ function createLifecycle(
             requiredUlimits: input.requiredLimits.map(
               (limit) => `${limit.name}=${String(limit.soft)}:${String(limit.hard)}`,
             ),
-            extraGroupGids: [],
           },
         },
       });

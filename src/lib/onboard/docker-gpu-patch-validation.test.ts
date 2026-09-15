@@ -54,7 +54,7 @@ describe("Docker GPU startup command validation (#6110)", () => {
   it.each([
     ["Docker --gpus", buildDockerGpuMode("gpus")],
     ["native CDI", buildDockerGpuMode("cdi")],
-    ["Jetson runtime", buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" })],
+    ["NVIDIA runtime", buildDockerGpuMode("nvidia-runtime")],
   ])("preserves the OpenShell supervisor boundary for %s", (_label, mode) => {
     const extraPlaceholderKeys = ["TELEGRAM_BOT_TOKEN_AGENT_A", "SLACK_BOT_TOKEN_AGENT_B"];
     const extraPlaceholderEnv: string[] = [];

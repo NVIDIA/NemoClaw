@@ -59,7 +59,6 @@ function makeContext(overrides: Partial<SandboxCreateStepContext> = {}): Sandbox
     prebuild: { buildCtx: "/tmp/ctx", buildId: "b1", dockerDriverGateway: null, origin: "local" },
     useDockerGpuPatch: false,
     gpuDevice: null,
-    gpuBackend: "generic" as const,
     timeoutSecs: 300,
   };
   return { ...base, ...overrides } as unknown as SandboxCreateStepContext;
@@ -96,7 +95,6 @@ describe("runSandboxCreateStep", () => {
       makeContext({
         useDockerGpuPatch: true,
         gpuDevice: "nvidia.com/gpu=all",
-        gpuBackend: "jetson",
       }),
       deps,
     );
@@ -113,13 +111,12 @@ describe("runSandboxCreateStep", () => {
         },
       }),
     );
-    // GPU patch is created with the startup command from the launch result + backend/device.
+    // GPU patch is created with the startup command from the launch result and device.
     expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
       expect.objectContaining({
         route: "compatibility",
         openshellSandboxCommand: ["run", "alpha"],
         gpuDevice: "nvidia.com/gpu=all",
-        backend: "jetson",
       }),
     );
     // stream is fed the launch command + env.

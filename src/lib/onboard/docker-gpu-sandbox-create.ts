@@ -13,7 +13,6 @@ import {
 } from "./docker-gpu-patch";
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import type {
-  DockerGpuPatchBackend,
   DockerGpuPatchDeps,
   DockerGpuPatchFailureClassification,
   DockerGpuPatchFailureContext,
@@ -101,7 +100,6 @@ type DockerGpuSandboxCreatePatchOptions = {
   openshellSandboxCommand?: readonly string[] | null;
   requiredUlimits?: Parameters<RecreateStartupPatchFn>[0]["requiredUlimits"];
   timeoutSecs: number;
-  backend?: DockerGpuPatchBackend;
   /**
    * Whether the host is Docker Desktop WSL. Defaults to the cached
    * `isDockerDesktopWslRuntime()` probe. When true, the GPU patch skips the CDI
@@ -223,7 +221,6 @@ export function createDockerGpuSandboxCreatePatch(
     openshellSandboxCommand: options.openshellSandboxCommand ?? null,
     requiredUlimits: options.requiredUlimits ?? null,
     timeoutSecs: options.timeoutSecs,
-    backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
   };
   const recreationEnabled =

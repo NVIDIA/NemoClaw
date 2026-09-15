@@ -42,14 +42,6 @@ export type DockerGpuPatchDeps = {
   detectSandboxFallbackDns?: () => string | null;
   /** Probe the exact fallback resolver before destructive recreation. */
   probeContainerDns?: ContainerDnsProbeFn;
-  /**
-   * Resolve the host group ID(s) that own the Jetson/Tegra GPU device nodes
-   * (`/dev/nvmap`, `/dev/nvhost-*`, and `/dev/dri/renderD*`). Used by the
-   * Jetson recreate to grant the sandbox user matching `--group-add`
-   * membership so CUDA can open them (#4231, #7610). Injectable so the Jetson
-   * permission path is testable without Tegra hardware.
-   */
-  detectTegraDeviceGroupGids?: () => string[];
   /** Injectable directory lister for unit testing CDI spec discovery. */
   readDir?: (dirPath: string) => string[] | null;
   /** Injectable file reader for unit testing CDI spec content checks. */
@@ -62,8 +54,6 @@ export type DockerGpuPatchDeps = {
 };
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi" | "startup-command";
-export type DockerGpuPatchBackend = "generic" | "jetson";
-
 export type DockerGpuPatchMode = {
   kind: DockerGpuPatchModeKind;
   label: string;
@@ -130,14 +120,6 @@ export type DockerGpuCloneRunOptions = {
   containerName?: string | null;
   /** Preserve managed-bootstrap-only launch fields during stopped replacement. */
   preserveManagedLaunchSpec?: boolean;
-  /**
-   * Extra supplementary group IDs to add to the recreated container via
-   * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
-   * device nodes; granting the sandbox user membership lets CUDA's nvmap init
-   * open them instead of failing with `NvRmMemInitNvmap ... Permission
-   * denied` (#4231, #7610).
-   */
-  extraGroupGids?: readonly string[] | null;
 };
 
 export type DockerGpuPatchDiagnostics = {

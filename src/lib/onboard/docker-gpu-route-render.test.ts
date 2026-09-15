@@ -24,7 +24,7 @@ describe("Docker GPU route rendering", () => {
     [GPU_CONFIG, { NEMOCLAW_DOCKER_GPU_PATCH: "0" }, false],
     [GPU_CONFIG, { NEMOCLAW_DOCKER_GPU_PATCH: "1" }, true],
     [{ sandboxGpuEnabled: false }, {}, false],
-    [{ sandboxGpuEnabled: true, hostGpuPlatform: "jetson" }, {}, true],
+    [{ sandboxGpuEnabled: true, hostGpuPlatform: "jetson" }, {}, false],
     [
       { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
       { NEMOCLAW_DOCKER_GPU_PATCH: "0" },

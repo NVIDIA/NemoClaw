@@ -63,18 +63,24 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     {
       label: "Jetson default",
       hostGpuPlatform: "jetson",
-      expected: "compatibility-only",
+      expected: "native-only",
     },
     {
       label: "Jetson auto",
       hostGpuPlatform: "jetson",
       control: "auto",
-      expected: "compatibility-only",
+      expected: "native-only",
     },
     {
-      label: "Jetson opt-out",
+      label: "Jetson native control",
       hostGpuPlatform: "jetson",
       control: "0",
+      expected: "native-only",
+    },
+    {
+      label: "Jetson forced compatibility",
+      hostGpuPlatform: "jetson",
+      control: "1",
       expected: "native-only",
     },
   ])("resolves $label to $expected", (testCase) => {
@@ -193,5 +199,23 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
         "linux",
       ).gpuRoutePlan,
     ).toBe("native-only");
+  });
+
+  it("explains why Jetson ignores the compatibility control", () => {
+    const log = vi.fn();
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: false,
+        env: { NEMOCLAW_DOCKER_GPU_PATCH: "1" },
+        platform: "linux",
+        log,
+      },
+    );
+
+    expect(result.gpuRoutePlan).toBe("native-only");
+    expect(result.logMessage).toContain("native OpenShell CDI");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("ignored on Jetson/Tegra"));
   });
 });

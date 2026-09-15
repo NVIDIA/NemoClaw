@@ -9,9 +9,7 @@ vi.mock("../adapters/docker", () => ({
 
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
-  dockerNvidiaRuntimeAvailable,
   formatSandboxGpuPassthroughNote,
-  parseDockerRuntimeNames,
   sandboxGpuRemediationLines,
   validatePodmanSandboxGpuPreflight,
   validateSandboxGpuPreflight,
@@ -29,9 +27,9 @@ function sandboxGpuConfig(overrides: Partial<SandboxGpuConfig> = {}): SandboxGpu
   };
 }
 describe("sandbox GPU preflight routing", () => {
-  it("formats Jetson sandbox GPU notes around the NVIDIA runtime backend", () => {
+  it("formats Jetson sandbox GPU notes around native OpenShell CDI", () => {
     expect(formatSandboxGpuPassthroughNote({ hostGpuPlatform: "jetson" })).toContain(
-      "Docker NVIDIA runtime",
+      "native OpenShell CDI",
     );
     expect(
       formatSandboxGpuPassthroughNote({
@@ -44,32 +42,18 @@ describe("sandbox GPU preflight routing", () => {
     );
   });
 
-  it("parses Docker runtime names from JSON and plain-text output", () => {
-    expect(parseDockerRuntimeNames('{"io.containerd.runc.v2":{},"nvidia":{}}')).toContain("nvidia");
-    expect(parseDockerRuntimeNames("runc nvidia io.containerd.runc.v2")).toContain("nvidia");
-    expect(parseDockerRuntimeNames("<no value>")).toEqual([]);
-  });
-
-  it("checks Jetson sandbox GPU support through Docker NVIDIA runtime availability", () => {
-    const dockerInfo = vi.fn(() => '{"runc":{},"nvidia":{}}');
-    expect(dockerNvidiaRuntimeAvailable({ dockerInfoFormat: dockerInfo })).toBe(true);
-
+  it("checks Jetson sandbox GPU support through the CDI specification", () => {
+    const getDockerCdiSpecDirs = vi.fn(() => ["/var/run/cdi"]);
+    const findReadableNvidiaCdiSpecFiles = vi.fn(() => ["/var/run/cdi/nvidia.yaml"]);
     expect(() =>
       validateSandboxGpuPreflight(sandboxGpuConfig({ hostGpuPlatform: "jetson" }), {
         platform: "linux",
-        dockerInfoFormat: dockerInfo,
-        getDockerCdiSpecDirs: vi.fn(() => {
-          throw new Error("Jetson preflight must not require CDI");
-        }),
-        findReadableNvidiaCdiSpecFiles: vi.fn(() => {
-          throw new Error("Jetson preflight must not inspect CDI specs");
-        }),
+        getDockerCdiSpecDirs,
+        findReadableNvidiaCdiSpecFiles,
       }),
     ).not.toThrow();
-    expect(dockerInfo).toHaveBeenCalledWith(
-      "{{json .Runtimes}}",
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(getDockerCdiSpecDirs).toHaveBeenCalledOnce();
+    expect(findReadableNvidiaCdiSpecFiles).toHaveBeenCalledWith(["/var/run/cdi"]);
   });
 
   it("keeps generic Linux sandbox GPU preflight on the CDI path", () => {
@@ -246,7 +230,7 @@ describe("sandbox GPU preflight routing", () => {
     );
   });
 
-  it("exits with an explicit Jetson NVIDIA runtime message when runtime support is missing", () => {
+  it("exits with CDI remediation when Jetson has no NVIDIA CDI specification", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
       code?: number | string | null,
@@ -258,13 +242,13 @@ describe("sandbox GPU preflight routing", () => {
       expect(() =>
         validateSandboxGpuPreflight(sandboxGpuConfig({ hostGpuPlatform: "jetson" }), {
           platform: "linux",
-          dockerInfoFormat: vi.fn(() => '{"runc":{}}'),
+          getDockerCdiSpecDirs: vi.fn(() => ["/var/run/cdi"]),
+          findReadableNvidiaCdiSpecFiles: vi.fn(() => []),
         }),
       ).toThrow("exit:1");
       const message = errorSpy.mock.calls.map((call) => call[0]).join("\n");
-      expect(message).toContain("Docker NVIDIA runtime was not detected");
-      expect(message).toContain("NVIDIA Container Runtime semantics, not CDI");
-      expect(message).toContain("nvidia-ctk runtime configure --runtime=docker");
+      expect(message).toContain("Docker CDI GPU support was not detected");
+      expect(message).toContain("nvidia-ctk cdi generate");
     } finally {
       errorSpy.mockRestore();
       exitSpy.mockRestore();

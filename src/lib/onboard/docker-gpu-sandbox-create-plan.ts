@@ -56,8 +56,8 @@ export function resolveProfileGpuCreatePlan(
  * sourceBoundary: this host-control step selects the route; renderers may only implement it.
  * whyNotSourceFix: the shipped suppressGpuFlag seam cannot be removed atomically with consumers.
  * regressionTest: Docker GPU route matrix plus the legacy suppression case.
- * removalCondition: migrate that seam separately, and retire compatibility after WSL, Jetson, and
- *   legacy nonzero NEMOCLAW_DOCKER_GPU_PATCH no longer require recreation.
+ * removalCondition: migrate that seam separately, and retire compatibility after WSL and legacy
+ *   nonzero NEMOCLAW_DOCKER_GPU_PATCH no longer require recreation.
  */
 export function resolveDockerGpuSandboxCreatePlan(
   config: DockerGpuSandboxConfig,
@@ -100,13 +100,13 @@ function gpuRouteLogMessage(
     case "none":
       return null;
     case "compatibility-only":
-      return hostGpuPlatform === "jetson"
-        ? "  Jetson sandbox GPU enabled; using NVIDIA Container Runtime instead of CDI/--gpus."
-        : "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization.";
+      return "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization.";
     case "native-with-fallback":
       return "  Operator-authorized GPU fallback enabled; trying native OpenShell injection with one compatibility retry.";
     case "native-only":
-      return "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.";
+      return hostGpuPlatform === "jetson"
+        ? "  Jetson sandbox GPU enabled through native OpenShell CDI policy enrichment."
+        : "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.";
     default: {
       const exhaustiveRoute: never = route;
       throw new Error(`Unhandled Docker GPU route: ${exhaustiveRoute}`);

@@ -61,7 +61,7 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: CANDIDATE_SOURCE_REVISION,
     NEMOCLAW_RECREATE_SANDBOX: "1",
-    NEMOCLAW_SANDBOX_GPU: "0",
+    NEMOCLAW_SANDBOX_GPU: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     PATH: process.env.PATH,
@@ -107,51 +107,45 @@ fi`,
 }
 
 test(
-  "Jetson onboarding disables sandbox GPU access (#7610)",
+  "Jetson onboarding proves native OpenShell CDI CUDA (#8910)",
   {
     timeout: TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "detect Jetson hardware",
         "clear previous Jetson runtime state",
-        "confirm nvmap and NVIDIA Docker runtime",
-        "install NemoClaw with sandbox GPU access disabled",
-        "confirm sandbox GPU access is disabled",
-        "confirm the sandbox excludes /dev/nvmap",
+        "confirm nvmap and NVIDIA CDI",
+        "install NemoClaw with native sandbox GPU access",
+        "confirm NemoClaw recorded the CUDA proof",
+        "prove non-root CUDA through the OpenShell sandbox",
       ],
     },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "jetson-nvmap-gpu",
-      issue: 7610,
+      issue: 8910,
       boundary:
-        "CPU-only Jetson/Tegra onboarding through install.sh, OpenShell, and nemoclaw status with NEMOCLAW_SANDBOX_GPU=0",
+        "AGX Thor or IGX Orin onboarding through install.sh and native OpenShell CDI with non-root cuInit(0)=0",
       sandboxName: SANDBOX_NAME,
     });
 
-    // A1: Skip before changing Docker or OpenShell state when the host is not a Jetson device.
+    // A1: Skip before changing Docker or OpenShell state when the host is not
+    // one of the accepted qualification devices.
     progress.phase("detect Jetson hardware");
     const hardwareGate = await hostShell(
       host,
-      String.raw`if [ -e /dev/nvmap ]; then
-  echo "jetson:/dev/nvmap"
-elif [ -f /etc/nv_tegra_release ]; then
-  echo "jetson:/etc/nv_tegra_release"
-elif [ -r /proc/device-tree/model ] && grep -qi "jetson\|orin\|tegra" /proc/device-tree/model 2>/dev/null; then
-  printf 'jetson:model:'
-  tr -d '\0' </proc/device-tree/model
-  printf '\n'
-else
-  echo "non-jetson"
-fi`,
+      String.raw`model="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || true)"
+gpu="$(nvidia-smi -L 2>/dev/null || true)"
+case "$model $gpu" in
+  *Thor*|*IGX*Orin*) printf 'qualified:model=%s gpu=%s\n' "$model" "$gpu" ;;
+  *) printf 'unsupported:model=%s gpu=%s\n' "$model" "$gpu" ;;
+esac`,
       "phase-0-jetson-hardware-gate",
     );
     expect(hardwareGate.exitCode, resultText(hardwareGate)).toBe(0);
-    hardwareGate.stdout.startsWith("jetson:") ||
-      skip(
-        "This test requires a Jetson/Tegra host with /dev/nvmap. Source tests cover Jetson GPU patch behavior in src/lib/onboard/docker-gpu-patch-jetson.test.ts.",
-      );
+    hardwareGate.stdout.startsWith("qualified:") ||
+      skip("This test requires an AGX Thor or IGX Orin host with /dev/nvmap.");
 
     const gatewayCleanupOptions = {
       artifactName: "cleanup-jetson-openshell-gateway",
@@ -215,7 +209,7 @@ fi`,
     progress.phase("clear previous Jetson runtime state");
     await cleanupJetsonSandbox(host);
 
-    progress.phase("confirm nvmap and NVIDIA Docker runtime");
+    progress.phase("confirm nvmap and NVIDIA CDI");
     const hostNvmap = await hostShell(
       host,
       "test -c /dev/nvmap && ls -l /dev/nvmap",
@@ -224,28 +218,35 @@ fi`,
     expect(hostNvmap.exitCode, resultText(hostNvmap)).toBe(0);
     expect(hostNvmap.stdout).toContain("/dev/nvmap");
 
-    expect(env().NEMOCLAW_NON_INTERACTIVE).toBe("1");
-    expect(env().NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE).toBe("1");
-    expect(env().NEMOCLAW_SANDBOX_GPU).toBe("0");
-
-    // A2: The Jetson test requires Docker and the NVIDIA runtime.
+    // A2: Native Jetson GPU onboarding requires Docker CDI discovery and a
+    // readable NVIDIA spec. The OpenShell stack owns translating that spec
+    // into sandbox devices, libraries, groups, and policy.
     const docker = await host.command("docker", ["info"], {
       artifactName: "phase-1-docker-info",
       env: env(),
       timeoutMs: 30_000,
     });
     expect(docker.exitCode, resultText(docker)).toBe(0);
-    const dockerRuntimes = await host.command(
+    const dockerCdiDevices = await host.command(
       "docker",
-      ["info", "--format", "{{json .Runtimes}}"],
+      ["info", "--format", "{{json .DiscoveredDevices}}"],
       {
-        artifactName: "phase-1-docker-runtimes",
+        artifactName: "phase-1-docker-cdi-devices",
         env: env(),
         timeoutMs: 30_000,
       },
     );
-    expect(dockerRuntimes.exitCode, resultText(dockerRuntimes)).toBe(0);
-    expect(resultText(dockerRuntimes)).toMatch(/"nvidia"|nvidia:/u);
+    expect(dockerCdiDevices.exitCode, resultText(dockerCdiDevices)).toBe(0);
+    expect(resultText(dockerCdiDevices)).toMatch(/nvidia\.com\/gpu=(?:0|all)/u);
+    const cdiSpec = await hostShell(
+      host,
+      String.raw`set -euo pipefail
+spec="$(grep -R -l '/dev/nvmap' /etc/cdi /run/cdi 2>/dev/null | sort -u | sed -n '1p')"
+grep -q 'libcuda\.so' "$spec"
+printf 'nvidia_cdi_spec=%s\n' "$spec"`,
+      "phase-1-nvidia-cdi-spec",
+    );
+    expect(cdiSpec.exitCode, resultText(cdiSpec)).toBe(0);
 
     const inference = await startFakeOpenAiCompatibleServer({
       apiKey: INFERENCE_API_KEY,
@@ -274,9 +275,9 @@ fi`,
       NEMOCLAW_PROVIDER: "custom",
     };
 
-    // A3: install.sh does not accept --no-gpu. NEMOCLAW_SANDBOX_GPU=0 selects
-    // the same CPU-only behavior while #7610 blocks GPU verification through OpenShell.
-    progress.phase("install NemoClaw with sandbox GPU access disabled");
+    // A3: install.sh must complete on the native OpenShell CDI route. NemoClaw
+    // may verify the GPU only through sandbox exec as the sandbox identity.
+    progress.phase("install NemoClaw with native sandbox GPU access");
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
       artifactName: "phase-2-install-jetson-nvmap",
       cwd: REPO_ROOT,
@@ -382,10 +383,17 @@ done`,
     expect(installedBinaries.exitCode, resultText(installedBinaries)).toBe(0);
     expect(installedBinaries.stdout.trim().split("\n")).toHaveLength(4);
 
-    expect(resultText(install)).toMatch(/Sandbox GPU(?::)? disabled by configuration/u);
+    const installLog = resultText(install);
+    expect(installLog).toContain("Jetson sandbox GPU enabled through native OpenShell CDI");
+    expect(installLog).not.toMatch(
+      /Recreating OpenShell Docker sandbox container with NVIDIA GPU access|Docker GPU mode selected/u,
+    );
+    expect(installLog).toMatch(
+      /GPU proof passed: nvidia-smi when available.*GPU proof passed: \/proc\/<pid>\/task\/<tid>\/comm write.*GPU proof passed: cuInit\(0\) via libcuda\.so\.1/su,
+    );
 
-    // A4: a passing live E2E result verifies CPU-only onboarding, not CUDA usability.
-    progress.phase("confirm sandbox GPU access is disabled");
+    // A4: the durable status must retain the successful onboarding CUDA proof.
+    progress.phase("confirm NemoClaw recorded the CUDA proof");
     const status = await hostShell(
       host,
       `nemoclaw "$NEMOCLAW_SANDBOX_NAME" status`,
@@ -393,27 +401,29 @@ done`,
       120_000,
     );
     expect(status.exitCode, resultText(status)).toBe(0);
-    expect(resultText(status)).toContain("Sandbox GPU: disabled");
-    expect(resultText(status)).not.toMatch(/CUDA verified|last CUDA proof failed|CUDA unverified/u);
-    expect(resultText(status)).not.toContain("/dev/nvmap");
-    expect(resultText(status)).not.toContain("/opt/nvidia");
+    expect(resultText(status)).toContain("Sandbox GPU: enabled");
+    expect(resultText(status)).toContain("CUDA verified");
 
-    progress.phase("confirm the sandbox excludes /dev/nvmap");
-    const sandboxNvmap = await sandbox.execShell(
+    progress.phase("prove non-root CUDA through the OpenShell sandbox");
+    const sandboxCuda = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(String.raw`if [ -e /dev/nvmap ] || [ -L /dev/nvmap ]; then
-  echo "CPU-only sandbox unexpectedly exposes /dev/nvmap" >&2
-  ls -ld /dev/nvmap >&2
-  exit 1
-fi
-printf 'absent:/dev/nvmap\n'`),
+      trustedSandboxShellScript(String.raw`set -euo pipefail
+test "$(id -u)" -ne 0
+printf 'sandbox_uid=%s\n' "$(id -u)"
+test -c /dev/nvmap
+ls /sys >/dev/null
+printf 'nemoclaw-cuda' > /proc/self/comm
+command -v nvidia-smi
+nvidia-smi -L
+python3 -c 'import ctypes; lib=ctypes.CDLL("libcuda.so.1"); rc=lib.cuInit(0); print("cuInit(0)=%d" % rc); raise SystemExit(0 if rc == 0 else 1)'`),
       {
-        artifactName: "phase-5-sandbox-nvmap-absent",
+        artifactName: "phase-5-sandbox-native-cdi-cuda",
         env: env(),
         timeoutMs: 60_000,
       },
     );
-    expect(sandboxNvmap.exitCode, resultText(sandboxNvmap)).toBe(0);
-    expect(sandboxNvmap.stdout.trim()).toBe("absent:/dev/nvmap");
+    expect(sandboxCuda.exitCode, resultText(sandboxCuda)).toBe(0);
+    expect(sandboxCuda.stdout).toMatch(/sandbox_uid=[1-9][0-9]*/u);
+    expect(sandboxCuda.stdout).toContain("cuInit(0)=0");
   },
 );

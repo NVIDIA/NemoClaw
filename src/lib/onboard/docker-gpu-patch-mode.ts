@@ -10,7 +10,6 @@ import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
 import type {
-  DockerGpuPatchBackend,
   DockerGpuPatchDeps,
   DockerGpuPatchMode,
   DockerGpuPatchModeAttempt,
@@ -48,7 +47,6 @@ function normalizeGpuDeviceForCdi(device: string | null | undefined): string {
 export function buildDockerGpuMode(
   kind: DockerGpuPatchModeKind,
   device?: string | null,
-  options: { backend?: DockerGpuPatchBackend } = {},
 ): DockerGpuPatchMode {
   if (kind === "startup-command") {
     return {
@@ -70,9 +68,6 @@ export function buildDockerGpuMode(
   }
   if (kind === "nvidia-runtime") {
     const args = ["--runtime", "nvidia", "--env", `NVIDIA_VISIBLE_DEVICES=${dockerDevice}`];
-    if (options.backend === "jetson") {
-      args.push("--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility");
-    }
     return {
       kind,
       label: `--runtime nvidia (NVIDIA_VISIBLE_DEVICES=${dockerDevice})`,
@@ -93,13 +88,9 @@ export function buildDockerGpuModeCandidates(
   device?: string | null,
   options: {
     cdiAvailable?: boolean;
-    backend?: DockerGpuPatchBackend;
     dockerDesktopWsl?: boolean;
   } = {},
 ): DockerGpuPatchMode[] {
-  if (options.backend === "jetson") {
-    return [buildDockerGpuMode("nvidia-runtime", device, { backend: "jetson" })];
-  }
   // Match OpenShell's CDI preference when a usable NVIDIA spec is present,
   // while retaining --gpus and the NVIDIA runtime as compatibility fallbacks.
   // Docker Desktop WSL may advertise CDI directories without a resolvable
@@ -278,19 +269,17 @@ export function selectDockerGpuPatchMode(
   options: {
     image: string;
     device?: string | null;
-    backend?: DockerGpuPatchBackend;
     dockerDesktopWsl?: boolean;
     pullPolicy?: "never";
   },
   deps: DockerGpuPatchDeps = {},
 ): { mode: DockerGpuPatchMode | null; attempts: DockerGpuPatchModeAttempt[] } {
-  const cdiAvailable = options.backend === "jetson" ? false : dockerReportsNvidiaCdiDevices(deps);
+  const cdiAvailable = dockerReportsNvidiaCdiDevices(deps);
   const attempts: DockerGpuPatchModeAttempt[] = [];
   const attemptsPerMode = options.dockerDesktopWsl ? 2 : 1;
   const sleep = deps.sleep ?? sleepSeconds;
   for (const mode of buildDockerGpuModeCandidates(options.device, {
     cdiAvailable,
-    backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl,
   })) {
     for (let attemptNumber = 0; attemptNumber < attemptsPerMode; attemptNumber += 1) {

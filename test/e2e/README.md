@@ -12,7 +12,7 @@ before those targets run; local runners must provide it themselves.
   It selects targets and jobs that own changed files, then publishes the `Relevant E2E` check.
   It also supports trusted manual dispatches for the latest PR commit.
   Full manual runs dispatched against `main` publish the `Release qualification` check for the candidate commit SHA.
-  Each trusted push to `main` selects the CPU-only `jetson-nvmap-gpu` proof.
+  Each trusted push to `main` selects the native CDI `jetson-nvmap-gpu` candidate proof.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
@@ -1522,7 +1522,7 @@ E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
 Each push to `main` compares `github.event.before` with `github.sha`.
 The planner selects catalogue targets, tagged credential-free tests, registry targets, and retained workflow jobs that own changed files.
-The planner also selects the CPU-only `jetson-nvmap-gpu` proof for every trusted push.
+The planner also selects the native CDI `jetson-nvmap-gpu` candidate proof for every trusted push.
 Changes to the central workflow, planner, or shared execution helpers select the complete default E2E set.
 If no other E2E target owns a changed file, `Relevant E2E` requires only the Jetson proof.
 Otherwise, `Relevant E2E` requires every selected workflow job to pass.

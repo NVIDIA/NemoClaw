@@ -411,10 +411,10 @@ describe("managed DGX Spark cluster topology qualification", () => {
     report.findings = [
       ...report.findings,
       {
-        id: "host.gpu.nvidia_runtime_missing",
+        id: "host.gpu.cdi_missing",
         severity: "blocking" as const,
-        summary: "Docker NVIDIA runtime support is missing for Jetson/Tegra sandbox GPU.",
-        capabilityIds: ["host.gpu.container_toolkit_available"],
+        summary: "The NVIDIA CDI specification is missing.",
+        capabilityIds: ["host.gpu.cdi_healthy"],
       },
     ];
     input.peers[0]!.readiness = report;

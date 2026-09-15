@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerInfoFormat } from "../adapters/docker";
 import { failLine, warnLine } from "../cli/terminal-style";
 import type { GpuDetection } from "../inference/nim";
 import type { SandboxGpuProofResult } from "../state/registry";
@@ -19,8 +18,6 @@ import {
 } from "./wsl-docker-desktop-gpu";
 
 export { formatSandboxGpuPassthroughNote } from "./sandbox-gpu-notes";
-
-const SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS = 30_000;
 
 // Docker Engine's built-in CDI spec directories. `docker info` can report no
 // CDISpecDirs (daemon unreachable from this process, or an engine that omits
@@ -58,18 +55,13 @@ export function resolveSandboxGpuFlagFromOptions(opts: SandboxGpuFlagOptions): S
   return null;
 }
 
-// Jetson/Tegra CUDA failures are usually device/group permission issues rather
-// than CDI/runtime misconfiguration: the sandbox sees the GPU but the agent
-// user lacks access to the Tegra device nodes. Surface the concrete devices and
-// groups so the user can fix the recreate rather than seeing a bare "enabled"
-// status that hides an unusable GPU (#4231).
 export function jetsonGpuProofRemediationLines(): string[] {
   return [
-    "Jetson/Tegra CUDA proof did not pass. CUDA needs access to the Tegra device",
-    "nodes; confirm the sandbox propagates them and the agent user's groups:",
-    "  ls -l /dev/nvmap /dev/nvhost-* (must be readable by the sandbox)",
-    "  add the host video/render groups via --group-add when recreating",
-    "Then recreate the sandbox, or force CPU behavior with NEMOCLAW_SANDBOX_GPU=0.",
+    "Jetson/Tegra CUDA proof did not pass through native OpenShell CDI.",
+    "Confirm the installed OpenShell release supplies the CDI-derived device nodes",
+    "(including /dev/nvmap), libraries, supplemental groups, and read-only CUDA",
+    "sysfs access, then recreate the sandbox. Or force CPU behavior with",
+    "NEMOCLAW_SANDBOX_GPU=0.",
   ];
 }
 
@@ -98,62 +90,6 @@ export function exitOnSandboxGpuConfigErrors(
     for (const error of config.errors) console.error(failLine(error));
     exitProcess(1);
   }
-}
-
-export function parseDockerRuntimeNames(value: string | null | undefined): string[] {
-  const raw = String(value || "").trim();
-  if (!raw || raw === "<no value>") return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.map((entry) => String(entry || "").trim()).filter(Boolean);
-    }
-    if (parsed && typeof parsed === "object") {
-      return Object.keys(parsed)
-        .map((entry) => entry.trim())
-        .filter(Boolean);
-    }
-  } catch {
-    // Fall through to the plain-text parser below.
-  }
-  return raw
-    .split(/[\s,{}":]+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-export function dockerNvidiaRuntimeAvailable(deps: SandboxGpuPreflightDeps = {}): boolean {
-  const dockerInfo = deps.dockerInfoFormat ?? dockerInfoFormat;
-  try {
-    const runtimeOutput = dockerInfo("{{json .Runtimes}}", {
-      ignoreError: true,
-      timeout: SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS,
-    });
-    return parseDockerRuntimeNames(runtimeOutput).includes("nvidia");
-  } catch {
-    return false;
-  }
-}
-
-export function printJetsonNvidiaRuntimeUnavailableError(): void {
-  console.error("");
-  console.error(failLine("Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU."));
-  console.error("    Jetson sandbox GPU uses NVIDIA Container Runtime semantics, not CDI.");
-  console.error("    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:");
-  console.error("      sudo nvidia-ctk runtime configure --runtime=docker");
-  console.error("      sudo systemctl restart docker");
-  console.error("    Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.");
-}
-
-function validateJetsonSandboxGpuPreflight(
-  deps: SandboxGpuPreflightDeps,
-  exitProcess: (code: number) => never,
-): void {
-  if (!dockerNvidiaRuntimeAvailable(deps)) {
-    printJetsonNvidiaRuntimeUnavailableError();
-    exitProcess(1);
-  }
-  console.log("  ✓ Docker NVIDIA runtime detected for Jetson/Tegra sandbox GPU");
 }
 
 export interface DirectSandboxGpuVerifierDeps extends WslDockerDesktopDetectionDeps {
@@ -377,11 +313,6 @@ export function validateSandboxGpuPreflight(
   if (!config.sandboxGpuEnabled) return;
   const platform = deps.platform ?? process.platform;
   if (platform !== "linux") return;
-
-  if (config.hostGpuPlatform === "jetson") {
-    validateJetsonSandboxGpuPreflight(deps, exitProcess);
-    return;
-  }
 
   const wslDockerDesktopStatus = detectWslDockerDesktopStatus(deps);
   if (wslDockerDesktopStatus === "docker-desktop") {
