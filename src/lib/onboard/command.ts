@@ -579,8 +579,7 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // print a clear message and exit non-zero instead of either crashing with
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
   if (cancellationCode !== "EOF") {
-    if (error instanceof Error) redactOnboardError(error);
-    throw error;
+    throw error instanceof Error ? redactOnboardError(error) : error;
   }
   return reportOnboardCommandError(deps, "  Installation cancelled");
 }

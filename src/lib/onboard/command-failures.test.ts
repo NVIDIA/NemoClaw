@@ -9,6 +9,7 @@ import { captureHermesPortableOpenShellExecutableAuthority } from "../adapters/o
 import { PodmanExecutablePermissionError } from "../adapters/podman/executable-authority";
 import { runOnboardCommand } from "./command";
 import { GatewayManagementDeclarationError } from "./gateway-management";
+import { attachManagedBootstrapRollbackError } from "./managed-bootstrap/adapter";
 
 /** Expose the exit code without terminating the test process. */
 function exitWithCode(code: number): never {
@@ -31,6 +32,19 @@ async function rethrowOnboardFailure(failure: Error): Promise<void> {
   ).rejects.toBe(failure);
 }
 
+/** Return the failure that crosses the command boundary. */
+async function catchOnboardFailure(failure: Error): Promise<unknown> {
+  return runOnboardCommand({
+    flags: {},
+    env: {},
+    runOnboard: async () => {
+      throw failure;
+    },
+    error: vi.fn(),
+    exit: exitWithCode,
+  }).catch((error: unknown) => error);
+}
+
 describe("onboarding command failures", () => {
   it("redacts nested causes without replacing the errors or their recovery diagnostics", async () => {
     const secret = `nvapi-${"b".repeat(60)}`;
@@ -44,7 +58,8 @@ describe("onboarding command failures", () => {
     expect(failure.cause).toBe(cause);
     expect(cause.cause).toBe(leaf);
     expect(leaf.message).toBe("Provider failed: <REDACTED>");
-    expect(leaf.stack).toBe("Provider stack: <REDACTED>");
+    expect(leaf.stack).not.toContain(secret);
+    expect(leaf.stack).toContain("<REDACTED>");
     expect(cause.message).toBe("Retry after correcting permissions.");
     expect(inspect(failure, { depth: null })).not.toContain(secret);
   });
@@ -72,8 +87,10 @@ describe("onboarding command failures", () => {
     expect(nested.errors[0]).toBe(rollback);
     expect(failure.cause).toBe(primary);
     expect(primary.message).toBe("Primary failure: <REDACTED>");
-    expect(primary.stack).toBe("Primary stack: <REDACTED>");
-    expect(rollback.stack).toBe("Rollback stack: <REDACTED>");
+    expect(primary.stack).not.toContain(secret);
+    expect(primary.stack).toContain("<REDACTED>");
+    expect(rollback.stack).not.toContain(secret);
+    expect(rollback.stack).toContain("<REDACTED>");
     const rendered = inspect(failure, { depth: null });
     expect(rendered).not.toContain(secret);
     expect(rendered).not.toContain("synthetic-key-payload");
@@ -133,6 +150,108 @@ describe("onboarding command failures", () => {
     expect(accessor).not.toHaveBeenCalled();
   });
 
+  it("neutralizes a throwing stack accessor without invoking it", async () => {
+    const secret = `nvapi-${"i".repeat(60)}`;
+    const failure = new Error("Onboarding failed");
+    const stackAccessor = vi.fn(() => {
+      throw new Error(secret);
+    });
+    Object.defineProperty(failure, "stack", {
+      configurable: true,
+      get: stackAccessor,
+    });
+
+    await rethrowOnboardFailure(failure);
+
+    expect(stackAccessor).not.toHaveBeenCalled();
+    expect(failure.stack).toBe("<REDACTED>");
+  });
+
+  it("neutralizes a custom structured-inspection function without invoking it", async () => {
+    const secret = `nvapi-${"j".repeat(60)}`;
+    const failure = new Error("Onboarding failed");
+    const customInspect = vi.fn(() => `Leaked diagnostic: ${secret}`);
+    Object.defineProperty(failure, inspect.custom, {
+      configurable: true,
+      value: customInspect,
+      writable: true,
+    });
+
+    await rethrowOnboardFailure(failure);
+
+    expect(customInspect).not.toHaveBeenCalled();
+    expect(inspect(failure, { depth: null })).not.toContain(secret);
+    expect(customInspect).not.toHaveBeenCalled();
+    expect(Object.getOwnPropertyDescriptor(failure, inspect.custom)?.value).toBeUndefined();
+  });
+
+  it("returns an opaque fallback without partially rewriting immutable error data", async () => {
+    const messageSecret = `nvapi-${"k".repeat(60)}`;
+    const immutableSecret = `nvapi-${"l".repeat(60)}`;
+    const originalMessage = `Onboarding failed: ${messageSecret}`;
+    const failure = new Error(originalMessage);
+    Object.defineProperty(failure, "diagnostic", {
+      configurable: false,
+      enumerable: true,
+      value: immutableSecret,
+      writable: false,
+    });
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBe(failure);
+    expect(inspect(caught, { depth: null })).not.toContain(messageSecret);
+    expect(inspect(caught, { depth: null })).not.toContain(immutableSecret);
+    expect(failure.message).toBe(originalMessage);
+  });
+
+  it("returns an opaque fallback for immutable aggregate members", async () => {
+    const secret = `nvapi-${"m".repeat(60)}`;
+    const failure = new AggregateError([secret], "Onboarding failed");
+    Object.freeze(failure.errors);
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBe(failure);
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+    expect(failure.errors).toEqual([secret]);
+  });
+
+  it("returns an opaque fallback for an unsupported nested diagnostic container", async () => {
+    const secret = `nvapi-${"o".repeat(60)}`;
+    const failure = new Error("Onboarding failed") as Error & { context?: unknown };
+    failure.context = new (class DiagnosticContext {
+      readonly credential = secret;
+    })();
+
+    const caught = await catchOnboardFailure(failure);
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBe(failure);
+    expect(inspect(caught, { depth: null })).not.toContain(secret);
+  });
+
+  it("attaches the returned fallback for an immutable rollback diagnostic", () => {
+    const secret = `nvapi-${"n".repeat(60)}`;
+    const failure = new Error("Managed bootstrap failed") as Error & {
+      managedBootstrapRollbackError?: unknown;
+    };
+    const rollback = new Error("Rollback failed");
+    Object.defineProperty(rollback, "diagnostic", {
+      configurable: false,
+      value: secret,
+      writable: false,
+    });
+
+    attachManagedBootstrapRollbackError(failure, rollback);
+
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(Error);
+    expect(failure.managedBootstrapRollbackError).not.toBe(rollback);
+    expect(inspect(failure, { depth: null })).not.toContain(secret);
+  });
+
   it("redacts managed bootstrap rollback diagnostics before rethrow", async () => {
     const secret = `nvapi-${"f".repeat(60)}`;
     const rollback = new Error(`Rollback failed: ${secret}`);
@@ -148,7 +267,8 @@ describe("onboarding command failures", () => {
     expect(failure.managedBootstrapRollbackError).toBe(rollback);
     expect(rollback.cause).toBe(failure);
     expect(rollback.message).toBe("Rollback failed: <REDACTED>");
-    expect(rollback.stack).toBe("Rollback stack: <REDACTED>");
+    expect(rollback.stack).not.toContain(secret);
+    expect(rollback.stack).toContain("<REDACTED>");
     expect(inspect(failure, { depth: null })).not.toContain(secret);
   });
 
@@ -190,7 +310,7 @@ describe("onboarding command failures", () => {
     expect(failure.stack).not.toContain("PRIVATE KEY");
     expect(failure.message).toContain("<REDACTED>");
     expect(failure.message).toContain("Retry after correcting permissions.");
-    expect(failure.stack).toContain("Retry after correcting permissions.");
+    expect(failure.stack).toContain("<REDACTED>");
   });
 
   it("redacts credential strings nested in plain diagnostic objects without following cycles", async () => {

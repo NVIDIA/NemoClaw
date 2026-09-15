@@ -366,7 +366,7 @@ export class ManagedBootstrapRecoveryBlockedError extends Error {
 export function attachManagedBootstrapRollbackError(failure: Error, rollbackError: unknown): void {
   let redactedRollbackError = rollbackError;
   if (rollbackError instanceof Error) {
-    redactOnboardError(rollbackError);
+    redactedRollbackError = redactOnboardError(rollbackError);
   } else if (typeof rollbackError === "string") {
     redactedRollbackError = redactOnboardErrorText(rollbackError);
   }

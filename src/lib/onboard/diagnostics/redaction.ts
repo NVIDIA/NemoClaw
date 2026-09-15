@@ -8,10 +8,22 @@ interface DiagnosticTask {
   target: object;
 }
 
+interface DiagnosticUpdate {
+  target: object;
+  key: PropertyKey;
+  descriptor: PropertyDescriptor;
+}
+
 interface DiagnosticWalk {
   pending: DiagnosticTask[];
   seen: WeakMap<object, object>;
+  updates: DiagnosticUpdate[];
+  unsafe: boolean;
 }
+
+const CUSTOM_INSPECT = Symbol.for("nodejs.util.inspect.custom");
+const REDACTED_ERROR_MESSAGE =
+  "Onboarding failed; diagnostic details were redacted because they could not be sanitized safely.";
 
 /** Limit property traversal to plain records so class instances retain their behavior. */
 function isPlainDiagnosticObject(value: object): value is Record<PropertyKey, unknown> {
@@ -34,7 +46,10 @@ function redactNestedDiagnostic(value: unknown, walk: DiagnosticWalk): unknown {
   if (walk.seen.has(value)) return walk.seen.get(value);
 
   const target = createDiagnosticTarget(value);
-  if (!target) return value;
+  if (!target) {
+    walk.unsafe = true;
+    return value;
+  }
   walk.seen.set(value, target);
   walk.pending.push({ source: value, target });
   return target;
@@ -49,6 +64,56 @@ function retainAggregateMembers(error: AggregateError, walk: DiagnosticWalk): vo
   walk.pending.push({ source: descriptor.value, target: descriptor.value });
 }
 
+/** Replace an accessor without invoking it, or reject an immutable accessor fail closed. */
+function redactAccessor(
+  source: object,
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+  walk: DiagnosticWalk,
+): void {
+  if (source !== target) return;
+  if (!descriptor.configurable) {
+    walk.unsafe = true;
+    return;
+  }
+  walk.updates.push({
+    target,
+    key,
+    descriptor: {
+      configurable: descriptor.configurable,
+      enumerable: descriptor.enumerable,
+      value: "<REDACTED>",
+      writable: true,
+    },
+  });
+}
+
+/** Plan one stored-value rewrite, rejecting immutable secret carriers fail closed. */
+function redactStoredValue(
+  source: object,
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+  walk: DiagnosticWalk,
+): void {
+  const value =
+    key === CUSTOM_INSPECT && typeof descriptor.value === "function"
+      ? undefined
+      : redactNestedDiagnostic(descriptor.value, walk);
+  const replacement = { ...descriptor, value };
+  if (source !== target) {
+    Object.defineProperty(target, key, replacement);
+    return;
+  }
+  if (Object.is(value, descriptor.value)) return;
+  if (!descriptor.configurable && !descriptor.writable) {
+    walk.unsafe = true;
+    return;
+  }
+  walk.updates.push({ target, key, descriptor: replacement });
+}
+
 /** Copy stored diagnostics without invoking accessors or changing descriptor visibility. */
 function redactStoredDiagnosticProperties(
   source: object,
@@ -56,19 +121,16 @@ function redactStoredDiagnosticProperties(
   walk: DiagnosticWalk,
 ): void {
   for (const key of Reflect.ownKeys(source)) {
+    if (walk.unsafe) return;
     const descriptor = Object.getOwnPropertyDescriptor(source, key);
     if (!descriptor) continue;
-    if ("value" in descriptor) descriptor.value = redactNestedDiagnostic(descriptor.value, walk);
-    else if (source === target) continue;
-    Object.defineProperty(target, key, descriptor);
+    if ("value" in descriptor) redactStoredValue(source, target, key, descriptor, walk);
+    else redactAccessor(source, target, key, descriptor, walk);
   }
 }
 
 /** Sanitize every stored error diagnostic without invoking arbitrary accessors. */
 function redactErrorDiagnostic(error: Error, walk: DiagnosticWalk): void {
-  // Node exposes the standard stack slot as an own accessor; it is the only
-  // accessor this boundary reads so arbitrary diagnostic getters stay inert.
-  error.stack = error.stack && redactOnboardErrorText(error.stack);
   if (error instanceof AggregateError) retainAggregateMembers(error, walk);
   redactStoredDiagnosticProperties(error, error, walk);
 }
@@ -98,14 +160,39 @@ function redactDiagnosticTask(task: DiagnosticTask, walk: DiagnosticWalk): void 
   }
 }
 
-/** Redact causes and aggregate members; Error identities and shared cyclic links remain intact. */
-export function redactOnboardError(error: Error): void {
+/** Construct an opaque replacement when the original graph cannot be safely rewritten. */
+function createFailClosedError(): Error {
+  const fallback = new Error(REDACTED_ERROR_MESSAGE);
+  Object.defineProperty(fallback, "stack", {
+    configurable: true,
+    enumerable: false,
+    value: `Error: ${REDACTED_ERROR_MESSAGE}`,
+    writable: true,
+  });
+  return fallback;
+}
+
+/** Redact an error graph, retaining mutable identities or returning an opaque fallback. */
+export function redactOnboardError(error: Error): Error {
   const walk: DiagnosticWalk = {
     pending: [{ source: error, target: error }],
     seen: new WeakMap([[error, error]]),
+    updates: [],
+    unsafe: false,
   };
-  // An iterative walk also supports deep cause chains without consuming the call stack.
-  for (const task of walk.pending) redactDiagnosticTask(task, walk);
+  try {
+    // An iterative walk also supports deep cause chains without consuming the call stack.
+    for (const task of walk.pending) {
+      redactDiagnosticTask(task, walk);
+      if (walk.unsafe) return createFailClosedError();
+    }
+    for (const update of walk.updates) {
+      Object.defineProperty(update.target, update.key, update.descriptor);
+    }
+    return error;
+  } catch {
+    return createFailClosedError();
+  }
 }
 
 /** Redact complete secret blocks before bounding individual diagnostic lines. */

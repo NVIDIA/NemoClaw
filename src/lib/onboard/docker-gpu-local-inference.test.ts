@@ -482,7 +482,8 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
     expect(failure.message).not.toContain(secret);
     expect(failure.managedBootstrapRollbackError).toBe(rollbackError);
     expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
-    expect(rollbackError.stack).toBe("Rollback stack: <REDACTED>");
+    expect(rollbackError.stack).not.toContain(secret);
+    expect(rollbackError.stack).toContain("<REDACTED>");
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
     expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
   });

@@ -367,7 +367,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     );
     expect(failure.message).not.toContain(secret);
     expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
-    expect(rollbackError.stack).toBe("Rollback stack: <REDACTED>");
+    expect(rollbackError.stack).not.toContain(secret);
+    expect(rollbackError.stack).toContain("<REDACTED>");
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
   });
 
@@ -574,7 +575,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     );
     expect(patchError.message).not.toContain(secret);
     expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
-    expect(rollbackError.stack).toBe("Rollback stack: <REDACTED>");
+    expect(rollbackError.stack).not.toContain(secret);
+    expect(rollbackError.stack).toContain("<REDACTED>");
   });
 
   it("hard-stops a structured failed GPU proof on the compatibility route", async () => {
@@ -683,6 +685,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     );
     expect(proofError.message).not.toContain(secret);
     expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
-    expect(rollbackError.stack).toBe("Rollback stack: <REDACTED>");
+    expect(rollbackError.stack).not.toContain(secret);
+    expect(rollbackError.stack).toContain("<REDACTED>");
   });
 });
