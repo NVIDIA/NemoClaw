@@ -795,7 +795,17 @@ test(
       [apiKey],
       "compatible-endpoint-inference-local-chat",
     );
-    expect(fake.requests().length).toBeGreaterThan(sandboxRequestOffset);
+    expect(
+      fake
+        .requests()
+        .slice(sandboxRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions",
+        ),
+    ).toBe(true);
   },
 );
 
