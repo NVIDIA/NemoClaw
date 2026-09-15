@@ -42,6 +42,7 @@ const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
+const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
@@ -266,18 +267,19 @@ async function runOpenClawSubagentTurn(
   );
 }
 
+export function managedHermesBoundaryPoisonCommand(): string {
+  return `set -eu; cp /sandbox/.hermes/.env ${shellQuote(HERMES_BOUNDARY_BACKUP)}; printf '%s\\n' ${shellQuote(`DEVTEST_API_TOKEN=${HERMES_BOUNDARY_SENTINEL}`)} >> /sandbox/.hermes/.env`;
+}
+
 async function proveHermesRestartSecretBoundary(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const backup = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
   const poison = await sandbox.execShell(
     sandboxName,
-    trustedSandboxShellScript(
-      `set -eu; cp /sandbox/.hermes/.env ${shellQuote(backup)}; printf '%s\n' ${shellQuote(`DEVTEST_API_TOKEN=${HERMES_BOUNDARY_SENTINEL}`)} >> /sandbox/.hermes/.env`,
-    ),
+    trustedSandboxShellScript(managedHermesBoundaryPoisonCommand()),
     {
       artifactName: "hermes-poison-env-before-native-restart",
       env,
@@ -297,7 +299,7 @@ async function proveHermesRestartSecretBoundary(
   const restore = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
-      `set -eu; cp ${shellQuote(backup)} /sandbox/.hermes/.env; rm -f ${shellQuote(backup)}`,
+      `set -eu; cp ${shellQuote(HERMES_BOUNDARY_BACKUP)} /sandbox/.hermes/.env; rm -f ${shellQuote(HERMES_BOUNDARY_BACKUP)}`,
     ),
     {
       artifactName: "hermes-restore-env-after-native-restart-refusal",
