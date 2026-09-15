@@ -147,7 +147,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $imageWorkers 'input.txt'),'preauthorized read',[Text.UTF8Encoding]::new($false))
     & $imageBuilder -RuntimeRoot $imageSource -RuntimeId ('a' * 64) -OutputImage $image -ReceiptPath $imageReceipt
     [IO.Directory]::CreateDirectory($imageMount) | Out-Null
-    @("select vdisk file=`"$image`"",'attach vdisk readonly',"assign mount=`"$imageMount`"",'exit') |
+    @("select vdisk file=`"$image`"",'attach vdisk readonly','select partition 1',"assign mount=`"$imageMount`"",'exit') |
         Set-Content -LiteralPath $imageAttach -Encoding ascii
     $attachOutput=@(& $diskpart /s $imageAttach 2>&1)
     $attachStatus=$LASTEXITCODE
