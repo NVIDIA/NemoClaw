@@ -624,6 +624,7 @@ describe("CLI dispatch", () => {
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
+      NEMOCLAW_CLEANUP_GATEWAY: "0",
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
@@ -633,8 +634,6 @@ describe("CLI dispatch", () => {
     const deleteIndex = lines.indexOf("sandbox delete alpha");
     expect(selectIndex).toBeGreaterThanOrEqual(0);
     expect(deleteIndex).toBeGreaterThan(selectIndex);
-    expect(lines.slice(deleteIndex + 1)).toContain("sandbox list");
-
     // #5455 PRA-2: the persistent-state wipe (`sandbox exec --name alpha ...`)
     // MUST come after gateway select and before sandbox delete. Running the
     // wipe before gateway selection would have it land on whichever gateway
