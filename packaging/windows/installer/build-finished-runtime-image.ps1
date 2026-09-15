@@ -98,7 +98,11 @@ try {
     foreach ($entry in @(
         @{ sid='S-1-5-18'; rights=[Security.AccessControl.FileSystemRights]::FullControl },
         @{ sid='S-1-5-32-544'; rights=[Security.AccessControl.FileSystemRights]::FullControl },
-        @{ sid='S-1-5-11'; rights=[Security.AccessControl.FileSystemRights]::ReadAndExecute }
+        @{ sid='S-1-5-11'; rights=[Security.AccessControl.FileSystemRights]::ReadAndExecute },
+        # MXC can skip per-session DACL writes when its package SIDs already
+        # have the requested read-only grant on this read-only volume.
+        @{ sid='S-1-15-2-1'; rights=[Security.AccessControl.FileSystemRights]::ReadAndExecute },
+        @{ sid='S-1-15-2-2'; rights=[Security.AccessControl.FileSystemRights]::ReadAndExecute }
     )) {
         $principal = [Security.Principal.SecurityIdentifier]::new($entry['sid'])
         $rule = [Security.AccessControl.FileSystemAccessRule]::new($principal, $entry['rights'], $inherit,
@@ -139,7 +143,7 @@ try {
         maximumMiB = $maximumMiB
     }
     $receipt['innerFilesystemCompression'] = 'ntfs-inherited-before-population'
-    $receipt['innerFilesystemAcl'] = 'system-and-administrators-full-authenticated-users-read-execute; administrators-owned'
+    $receipt['innerFilesystemAcl'] = 'system-and-administrators-full-authenticated-users-and-appcontainer-packages-read-execute; administrators-owned'
     $receipt['manifestSha256'] = $sourceManifestSha256
     $receipt.status = 'built-detached-and-verified'
 } catch {
