@@ -4,11 +4,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getSandboxMock = vi.fn();
-const dockerRunMock = vi.fn(() => ({ status: 0, stderr: "", stdout: "Server: Docker" }));
+const dockerRunMock = vi.fn(
+  (_args: readonly string[], _options?: Record<string, unknown>) => ({
+    status: 0,
+    stderr: "",
+    stdout: "Server: Docker",
+  }),
+);
 
 vi.mock("../../adapters/docker/run", () => ({
   dockerCapture: vi.fn(() => ""),
-  dockerRun: (...args: unknown[]) => dockerRunMock(...args),
+  dockerRun: (args: readonly string[], options?: Record<string, unknown>) =>
+    dockerRunMock(args, options),
 }));
 
 vi.mock("../../state/registry", () => ({
