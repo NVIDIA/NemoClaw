@@ -23,7 +23,7 @@ fn specification(document: &Document, generations: &Generations) -> Result<Servi
             .ok_or(Error::State("missing Ollama generation"))?
             .clone(),
         image: config.image.clone(),
-        network: config.network.clone(),
+        network: config.network.name().into(),
         bind_address: provider
             .endpoint
             .strip_prefix("http://")

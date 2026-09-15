@@ -295,7 +295,7 @@ impl Document {
                         && !ollama
                             .engine
                             .contains(['$', '%', '{', '}', '\r', '\n', '\0'])
-                        && SLUG.is_match(&ollama.network)
+                        && SLUG.is_match(ollama.network.name())
                         && IMAGE.is_match(&ollama.image)
                         && ollama.image.starts_with("ollama/ollama@sha256:"),
                     "Ollama requires a local Unix socket, named network, and pinned ollama/ollama image",

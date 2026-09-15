@@ -342,6 +342,35 @@
       ],
       "type": "object"
     },
+    "ExternalManagement": {
+      "description": "NemoClaw uses this resource without managing its lifecycle or administrative configuration.",
+      "oneOf": [
+        {
+          "const": "external",
+          "description": "The resource is provided by its external owner.",
+          "type": "string"
+        }
+      ]
+    },
+    "ExternalNetwork": {
+      "additionalProperties": false,
+      "description": "Identify a network owned outside this deployment.",
+      "properties": {
+        "management": {
+          "$ref": "#/$defs/ExternalManagement",
+          "description": "Optional external ownership declaration. Omission means external."
+        },
+        "name": {
+          "description": "Existing network name on the Ollama Docker engine.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "File": {
       "additionalProperties": false,
       "description": "One immutable file in a model snapshot.",
@@ -798,9 +827,8 @@
           "type": "string"
         },
         "network": {
-          "description": "Name of the existing Docker network.",
-          "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "type": "string"
+          "$ref": "#/$defs/NetworkReference",
+          "description": "Name of the existing Docker network."
         }
       },
       "required": [
@@ -1035,6 +1063,20 @@
         }
       },
       "type": "object"
+    },
+    "NetworkReference": {
+      "anyOf": [
+        {
+          "description": "Existing network name; equivalent to management: external.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ExternalNetwork",
+          "description": "Explicit external network reference."
+        }
+      ],
+      "description": "An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network."
     },
     "OpenClawDashboard": {
       "additionalProperties": false,
@@ -1477,6 +1519,10 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9._-]+$",
           "type": "string"
+        },
+        "management": {
+          "$ref": "#/$defs/ExternalManagement",
+          "description": "Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy."
         },
         "port": {
           "description": "Proxy TCP port, from 1 through 65535.",

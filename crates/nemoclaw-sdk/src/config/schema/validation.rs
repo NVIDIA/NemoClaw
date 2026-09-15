@@ -208,9 +208,10 @@ pub(super) fn constrain(root: &mut Value) {
         "engine",
         json!({"pattern": "^unix:///"}),
     );
+    defs["NetworkReference"]["anyOf"][0]["pattern"] = json!(c::SLUG);
     property(
-        &mut defs["ManagedOllama"],
-        "network",
+        &mut defs["ExternalNetwork"],
+        "name",
         json!({"pattern": c::SLUG}),
     );
     property(

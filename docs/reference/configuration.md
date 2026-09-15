@@ -246,6 +246,36 @@ Paths:
 |---|---|---|---|---|
 | `explicit` | [ExplicitPolicy](#explicitpolicy) | Yes | — | Complete sandbox policy in OpenShell YAML field names. |
 
+## ExternalManagement
+
+NemoClaw uses this resource without managing its lifecycle or administrative configuration.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.inferenceProviders[].ollama.network.management`
+- `spec.sandboxes[].network.proxy.management`
+
+Accepted input: string.
+
+Constraints: `"external"`.
+
+## ExternalNetwork
+
+Identify a network owned outside this deployment.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.inferenceProviders[].ollama.network`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external. |
+| `name` | string | Yes | — | Existing network name on the Ollama Docker engine. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
 ## File
 
 One immutable file in a model snapshot.
@@ -381,7 +411,7 @@ Paths:
 |---|---|---|---|---|
 | `engine` | string | Yes | — | Local Unix Docker socket URL. Constraints: pattern `^unix:///`. |
 | `image` | string | Yes | — | Immutable ollama/ollama image reference. Constraints: pattern `^ollama/ollama@sha256:[a-f0-9]{64}$`. |
-| `network` | string | Yes | — | Name of the existing Docker network. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `network` | [NetworkReference](#networkreference) | Yes | — | Name of the existing Docker network. |
 
 ## Manifest
 
@@ -464,6 +494,20 @@ Paths:
 | `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. |
 | `proxy` | [Proxy](#proxy) | No | — | HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
+
+## NetworkReference
+
+An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.inferenceProviders[].ollama.network`
+
+Accepted input: string or [ExternalNetwork](#externalnetwork).
+
+Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`.
 
 ## OpenClawDashboard
 
@@ -710,6 +754,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
+| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy. |
 | `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
 ## ReasoningEffort

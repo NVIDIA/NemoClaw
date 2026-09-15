@@ -7,6 +7,8 @@ mod inference;
 mod interfaces;
 pub use agent_inference::*;
 pub use interfaces::*;
+mod management;
+pub use management::*;
 mod network;
 pub use network::*;
 #[doc(hidden)]

@@ -160,7 +160,7 @@ pub fn compile(
             .unwrap_or("");
         resources["nemoclaw_ollama"] = json!({"service":{
             "name":format!("{}-ollama",document.workspace()),"owner":document.metadata.uid,
-            "generation":generation(generations,"ollama")?,"image":ollama.image,"network":ollama.network,
+            "generation":generation(generations,"ollama")?,"image":ollama.image,"network":ollama.network.name(),
             "bind_address":authority,"running":"true","lifecycle":{"prevent_destroy":true}
         }});
         let mut storage = resources["nemoclaw_ollama"]["service"].clone();

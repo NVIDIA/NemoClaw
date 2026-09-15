@@ -159,7 +159,7 @@ pub struct ManagedOllama {
     pub image: String,
     #[serde(rename = "network")]
     /// Name of the existing Docker network.
-    pub network: String,
+    pub network: super::NetworkReference,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
