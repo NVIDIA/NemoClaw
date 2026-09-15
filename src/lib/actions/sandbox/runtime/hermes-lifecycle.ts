@@ -34,6 +34,9 @@ export function createHermesCredentialEnvReconciliationRuntime(
           stderr: "Hermes secret-boundary validation did not pass before native restart",
         };
       }
+      revalidate(
+        `restarting Hermes gateway after secret-boundary validation for sandbox '${sandboxName}'`,
+      );
       const result = await processRecovery.executeSandboxExecCommand(
         sandboxName,
         "hermes gateway restart",

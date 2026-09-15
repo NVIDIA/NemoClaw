@@ -55,6 +55,32 @@ describe("created Hermes credential environment reconciliation", () => {
     wait.mockRestore();
   });
 
+  it("revalidates identity after the secret boundary and before native restart", async () => {
+    const events: string[] = [];
+    const execute = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockImplementation(async (_sandboxName, command) => {
+        events.push(
+          command.includes("validate-hermes-env-secret-boundary.py") ? "boundary" : "restart",
+        );
+        return { status: 0, stdout: "", stderr: "" };
+      });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+
+    await expect(
+      runtime.restartGateway("alpha", (operation) => events.push(`identity:${operation}`)),
+    ).resolves.toEqual({ status: 0, stdout: "", stderr: "" });
+
+    expect(events).toEqual([
+      "identity:restarting Hermes gateway for sandbox 'alpha'",
+      "boundary",
+      "identity:restarting Hermes gateway after secret-boundary validation for sandbox 'alpha'",
+      "restart",
+      "identity:confirming Hermes gateway restart for sandbox 'alpha'",
+    ]);
+    execute.mockRestore();
+  });
+
   it("finalizes sandbox registration before reconciling credentials (#9833)", async () => {
     const events: string[] = [];
 
