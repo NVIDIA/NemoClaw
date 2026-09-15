@@ -851,7 +851,12 @@ describe("managed gateway port readiness (#7411)", () => {
 case "$1" in
   --version) printf 'openshell 0.0.116\\n' ;;
   status) printf 'Server Status\\nGateway: ${gatewayName}\\nServer: ${endpoint}/\\nConnected\\n' ;;
-  gateway) printf 'Gateway Info\\nGateway: ${gatewayName}\\nGateway endpoint: ${endpoint}/\\n' ;;
+  gateway)
+    case "$2" in
+      list) printf '%s\\n' '[{"name":"${gatewayName}","endpoint":"${endpoint}","active":true}]' ;;
+      *) printf 'Gateway Info\\nGateway: ${gatewayName}\\nGateway endpoint: ${endpoint}/\\n' ;;
+    esac
+    ;;
   *) exit 1 ;;
 esac
 `,
