@@ -73,3 +73,15 @@ async fn ssh_upload_and_streamed_download_preserve_container_identity() {
         Some(id.as_str())
     );
 }
+
+#[tokio::test]
+#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE on a Linux ARM64 NVIDIA host; read-only remote host collection"]
+async fn ssh_capacity_belongs_to_the_selected_docker_host() {
+    use nemoclaw_sdk::hardware::{HostObserver, SshHost};
+    let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
+    let observation = SshHost.observe(&engine).await.unwrap();
+    let daemon = engine.info().await.unwrap().id.unwrap();
+    let capacity = observation.for_engine(&daemon).unwrap();
+    assert_eq!(capacity.architecture, "arm64");
+    assert!(capacity.total > 0 && capacity.disk_free > 0);
+}

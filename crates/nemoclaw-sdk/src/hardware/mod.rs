@@ -165,3 +165,6 @@ mod observation;
 #[cfg(unix)]
 pub(crate) use observation::LocalHost;
 pub use observation::{HostObservation, HostObserver};
+
+mod ssh;
+pub use ssh::SshHost;

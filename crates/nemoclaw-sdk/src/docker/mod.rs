@@ -15,6 +15,7 @@ use std::{io::Read, time::Duration};
 pub struct Engine {
     pub(crate) api: bollard::Docker,
     endpoint: String,
+    pub(crate) host_observer_explicit: bool,
     pub(crate) host_observer: std::sync::Arc<dyn crate::hardware::HostObserver>,
 }
 impl Engine {
@@ -35,6 +36,7 @@ impl Engine {
             Ok(Self {
                 api,
                 endpoint: endpoint.into(),
+                host_observer_explicit: false,
                 host_observer: std::sync::Arc::new(crate::hardware::LocalHost),
             })
         }
@@ -50,6 +52,7 @@ impl Engine {
         mut self,
         observer: std::sync::Arc<dyn crate::hardware::HostObserver>,
     ) -> Self {
+        self.host_observer_explicit = true;
         self.host_observer = observer;
         self
     }
@@ -227,3 +230,6 @@ mod connections;
 pub use connections::Connections;
 
 mod ssh;
+
+#[cfg(unix)]
+pub(crate) use ssh::command as ssh_command;

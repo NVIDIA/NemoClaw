@@ -48,6 +48,7 @@ impl Engine {
             Ok(Self {
                 api,
                 endpoint: endpoint.into(),
+                host_observer_explicit: false,
                 host_observer: std::sync::Arc::new(RemoteHost),
             })
         }
@@ -86,25 +87,8 @@ async fn exchange(
         hyper::header::HOST,
         hyper::header::HeaderValue::from_static("docker"),
     );
-    let mut child = tokio::process::Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "StrictHostKeyChecking=yes",
-            "-o",
-            "ConnectTimeout=10",
-            "-o",
-            "ControlMaster=no",
-            "-o",
-            "ControlPath=none",
-            "--",
-            &target,
-            "docker",
-            "system",
-            "dial-stdio",
-        ])
+    let mut child = command(&target)
+        .args(["docker", "system", "dial-stdio"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -125,4 +109,26 @@ async fn exchange(
         let _ = child.wait().await;
     });
     sender.send_request(request).await.map_err(Into::into)
+}
+
+#[cfg(unix)]
+pub(crate) fn command(target: &str) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("ssh");
+    command.args([
+        "-T",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
+        "--",
+        target,
+    ]);
+    command.kill_on_drop(true);
+    command
 }
