@@ -3,13 +3,28 @@
 """Check recipe coverage against the pinned Fabric source, including non-Python adapters."""
 import json
 from pathlib import Path
+import tarfile
 import unittest
 
-from build import HARNESSES, REVISION, ROOT
+from build import HARNESSES, REVISION, ROOT, source_archive_filter
 from fabric import configuration
 
 
 class RecipeCoverage(unittest.TestCase):
+    def test_safe_archive_links_use_member_relative_resolution(self):
+        metadata = tarfile.TarInfo(f'NeMo-Fabric-{REVISION}/.claude/skills')
+        metadata.type = tarfile.SYMTYPE
+        metadata.linkname = '../.agents/skills'
+        self.assertEqual(source_archive_filter(metadata, Path('/tmp/build')).linkname,
+                         metadata.linkname)
+
+        source = tarfile.TarInfo(f'NeMo-Fabric-{REVISION}/sdk/source.py')
+        self.assertEqual(source_archive_filter(source, Path('/tmp/build')).name, source.name)
+
+        metadata.linkname = '../../../outside'
+        with self.assertRaises(tarfile.LinkOutsideDestinationError):
+            source_archive_filter(metadata, Path('/tmp/build'))
+
     def test_every_upstream_adapter_has_a_recipe(self):
         source = next((ROOT / '.build').glob(f'fabric*/NeMo-Fabric-{REVISION}'), ROOT / '.build/missing')
         self.assertTrue(source.is_dir(), 'build the default image to populate the verified source first')
