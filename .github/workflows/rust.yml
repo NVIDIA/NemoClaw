@@ -84,4 +84,4 @@ jobs:
           if [ "$TEST_PLATFORM" != windows_amd64 ]; then
             tests+=(--test ollama)
           fi
-          cargo test --locked --workspace "${tests[@]}" -- --ignored
+          cargo test --locked --workspace "${tests[@]}" -- --ignored --test-threads=2

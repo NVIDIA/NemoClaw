@@ -5,102 +5,137 @@ use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
 use std::{fs, path::PathBuf};
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
-async fn every_fabric_harness_preserves_conversations_and_rejects_runtime_drift() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+#[test]
+fn harness_lifecycles_are_independently_selectable() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--list", "--ignored"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let listing = String::from_utf8(output.stdout).unwrap();
     for harness in [
         "deepagents",
         "hermes",
         "openclaw",
         "claude",
         "codex",
-        "mini-swe-agent",
+        "mini_swe_agent",
         "nooa",
-        "nooa-bench",
-        "remote-agent",
+        "nooa_bench",
+        "remote_agent",
         "pi",
     ] {
-        let directory = tempfile::tempdir().unwrap();
-        let fixture = Fixture::start().await;
-        let mut document = Document::parse(
-            include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-        )
-        .unwrap();
-        document.spec.gateway.endpoint = fixture.endpoint.clone();
-        document.spec.sandboxes[0].agents[0].harness = harness.into();
-        if harness == "claude" {
-            document.spec.inference_providers[0].provider = "anthropic".into();
+        assert!(
+            listing
+                .lines()
+                .any(|line| line == format!("harness_{harness}: test")),
+            "{harness} must be individually schedulable by the bounded test runner"
+        );
+    }
+}
+
+macro_rules! harness_test {
+    ($name:ident, $harness:literal) => {
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+        async fn $name() {
+            harness_preserves_conversations_and_rejects_runtime_drift($harness).await;
         }
-        let deployment = Deployment::new(directory.path(), &bundle);
-        let cancel = CancellationToken::new();
-        let applied = deployment.apply(&document, &cancel).await.unwrap();
-        assert!(
-            applied.agent_response.is_empty(),
-            "apply must not inject a conversation into {harness}"
-        );
-        let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-        let effects = fixture.state.lock().unwrap().effects;
-        assert_eq!(effects, 4);
-        assert!(
-            deployment
-                .apply(&document, &cancel)
-                .await
-                .unwrap()
-                .changes
-                .is_empty()
-        );
-        assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-        assert_eq!(
-            fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-            state
-        );
-        assert!(
-            fixture
-                .state
-                .lock()
-                .unwrap()
-                .exec_calls
-                .iter()
-                .all(|command| !command
-                    .iter()
-                    .any(|arg| arg == "invoke" || arg == "--message"))
-        );
-        let mut changed = document.clone();
-        changed.spec.sandboxes[0].agents[0].harness = if harness == "deepagents" {
-            "hermes"
-        } else {
-            "deepagents"
-        }
-        .into();
-        changed.spec.inference_providers[0].provider = "openai".into();
-        assert!(
-            deployment.apply(&changed, &cancel).await.is_err(),
-            "{harness} replacement must be refused"
-        );
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    };
+}
+
+harness_test!(harness_deepagents, "deepagents");
+harness_test!(harness_hermes, "hermes");
+harness_test!(harness_openclaw, "openclaw");
+harness_test!(harness_claude, "claude");
+harness_test!(harness_codex, "codex");
+harness_test!(harness_mini_swe_agent, "mini-swe-agent");
+harness_test!(harness_nooa, "nooa");
+harness_test!(harness_nooa_bench, "nooa-bench");
+harness_test!(harness_remote_agent, "remote-agent");
+harness_test!(harness_pi, "pi");
+
+async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str) {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    document.spec.sandboxes[0].agents[0].harness = harness.into();
+    if harness == "claude" {
+        document.spec.inference_providers[0].provider = "anthropic".into();
+    }
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    let applied = deployment.apply(&document, &cancel).await.unwrap();
+    assert!(
+        applied.agent_response.is_empty(),
+        "apply must not inject a conversation into {harness}"
+    );
+    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    let effects = fixture.state.lock().unwrap().effects;
+    assert_eq!(effects, 4);
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        state
+    );
+    assert!(
         fixture
             .state
             .lock()
             .unwrap()
-            .sandboxes
-            .values_mut()
-            .next()
-            .unwrap()
-            .spec
-            .as_mut()
-            .unwrap()
-            .environment
-            .insert("OPENAI_API_KEY".into(), "changed".into());
-        assert!(deployment.export(&cancel).await.is_err());
-        assert!(deployment.plan(&document, &cancel).await.is_err());
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-        assert_eq!(
-            fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-            state
-        );
+            .exec_calls
+            .iter()
+            .all(|command| !command
+                .iter()
+                .any(|arg| arg == "invoke" || arg == "--message"))
+    );
+    let mut changed = document.clone();
+    changed.spec.sandboxes[0].agents[0].harness = if harness == "deepagents" {
+        "hermes"
+    } else {
+        "deepagents"
     }
+    .into();
+    changed.spec.inference_providers[0].provider = "openai".into();
+    assert!(
+        deployment.apply(&changed, &cancel).await.is_err(),
+        "{harness} replacement must be refused"
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .values_mut()
+        .next()
+        .unwrap()
+        .spec
+        .as_mut()
+        .unwrap()
+        .environment
+        .insert("OPENAI_API_KEY".into(), "changed".into());
+    assert!(deployment.export(&cancel).await.is_err());
+    assert!(deployment.plan(&document, &cancel).await.is_err());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        state
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

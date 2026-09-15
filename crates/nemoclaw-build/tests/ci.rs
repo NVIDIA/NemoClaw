@@ -2,6 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test]
+fn fixture_lifecycles_have_bounded_parallelism_on_every_platform() {
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
+    let steps = workflow["jobs"]["native"]["steps"].as_array().unwrap();
+    let script = steps
+        .iter()
+        .filter_map(|step| step["run"].as_str())
+        .find(|script| script.contains("--ignored"))
+        .unwrap();
+    assert!(script.contains("-- --ignored --test-threads=2"));
+}
+
+#[test]
 fn native_commands_preserve_workspace_features_between_build_and_test() {
     let workflow: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();

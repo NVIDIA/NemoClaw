@@ -78,6 +78,12 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test deployment --test fabric_deployment -- --ignored
 ```
 
+CI runs the fixture lifecycle tests with `--test-threads=2`. Each Fabric
+harness is an independent ignored test with its own temporary state and gRPC
+fixture. To qualify one harness, append its test name, for example
+`-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound,
+use `-- --ignored --test-threads=2`.
+
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply,
 readiness failure without replacement, failed observation without state loss,
 export/reapply, interrupted destroy, and retained workspace recovery. The
