@@ -195,7 +195,7 @@ When more than one registered Hermes sandbox has that name, pass `--gateway <nam
 
 Before the adapter starts the session, it revalidates the registered sandbox and its ready state under the sandbox lifecycle lock.
 It also revalidates the sandbox lifecycle generation, identity, and OpenShell gateway.
-It can start a gateway only when the adapter observes that the exact recorded selected gateway is unreachable.
+It can select and, when required, start only that exact gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
 A conflicting or ambiguous gateway identity, authentication, schema, timeout, or other observation failure stops the adapter before gateway startup or session creation.
 
 </AgentOnly>

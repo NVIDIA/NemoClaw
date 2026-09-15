@@ -12,7 +12,7 @@ It also improves sandbox transfers, native Podman and OpenClaw networking, and t
   Forward recovery now allows 30 seconds for verification and 60 seconds for the complete transaction, while retaining the original structured failure when cleanup cannot be proved.
   Related changes: [PR #11759](https://github.com/NVIDIA/NemoClaw/pull/11759) and [PR #11735](https://github.com/NVIDIA/NemoClaw/pull/11735).
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Set Up Ollama](/user-guide/hermes/inference/local-inference/set-up-ollama), and the [Hermes CLI Commands Reference](/user-guide/hermes/reference/commands).
-- The Hermes `nemoclaw-acp` adapter can start only its exact recorded, selected OpenShell gateway when that gateway is unreachable.
+- The Hermes `nemoclaw-acp` adapter can select and, when required, start only its exact recorded OpenShell gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
   Conflicting or ambiguous gateway identities, authentication errors, schema failures, timeouts, and other observation failures stop recovery before gateway startup or ACP session creation.
   Related changes: [PR #11691](https://github.com/NVIDIA/NemoClaw/pull/11691) and [PR #11681](https://github.com/NVIDIA/NemoClaw/pull/11681).
   For more information, refer to the [Hermes CLI Commands Reference](/user-guide/hermes/reference/commands) and [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
