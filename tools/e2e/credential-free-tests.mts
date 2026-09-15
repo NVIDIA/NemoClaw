@@ -62,6 +62,14 @@ const CREDENTIAL_FREE_TEST_COVERAGE = {
     unresolvedReason: "",
     gatewayRuntimes: ["docker"],
   },
+  "pr-review-advisor-repair-validation-e2e": {
+    agentRuntime: "none",
+    observableOutcome:
+      "Advisor repair validation runs the trusted plan in /sandbox/repo and seals its receipt",
+    environmentOrInferenceEndpoint: "Credential-free OpenShell sandbox; no inference endpoint",
+    unresolvedReason: "",
+    gatewayRuntimes: ["docker"],
+  },
   "vllm-docker-storage": {
     agentRuntime: "none",
     observableOutcome: "vLLM storage gate accepts and rejects the intended host states",

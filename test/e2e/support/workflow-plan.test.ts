@@ -90,7 +90,7 @@ describe("E2E workflow plan", () => {
     ).toEqual({
       catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 4,
-      "shared-e2e": 2,
+      "shared-e2e": 3,
       "retained-workflow": 15,
       staging: 1,
     });
@@ -101,7 +101,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(84);
+    expect(plan.coverageMatrix).toHaveLength(85);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
