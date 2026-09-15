@@ -15,7 +15,7 @@ import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime
 import {
   OPENSHELL_HEAVY_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-} from "../../adapters/openshell/timeouts";
+} from "../../adapters/openshell/command-execution";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";

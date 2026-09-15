@@ -14,4 +14,8 @@ export {
   getInstalledOpenshellVersion,
   runOpenshellCommand,
 } from "./client";
-export { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+export {
+  OPENSHELL_HEAVY_TIMEOUT_MS,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "./timeouts";
