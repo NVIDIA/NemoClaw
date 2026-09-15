@@ -57,6 +57,14 @@ fn service(directory: &Path) -> (Spec, String) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_LIVE_MODEL_CONFIG, NEMOCLAW_LIVE_MODEL_STATE, NEMOCLAW_TEST_BUNDLE; owns and destroys this experiment only"]
 async fn selected_model_apply_export_and_watchdog_recovery_preserve_data_and_identity() {
+    exercise(true).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit owned model configuration, state and bundle; resumes established resources and destroys workloads only after verification"]
+async fn selected_model_continues_from_retained_state() {
+    exercise(false).await;
+}
+async fn exercise(fresh: bool) {
     let explicit = |name| {
         let p = PathBuf::from(std::env::var_os(name).expect(name));
         assert!(p.is_absolute());
@@ -73,11 +81,15 @@ async fn selected_model_apply_export_and_watchdog_recovery_preserve_data_and_ide
         .unwrap();
     assert_eq!(desired.backend, "vllm");
     let planned = deployment.plan(&document, &cancel).await.unwrap();
-    assert!(!planned.changes.is_empty());
-    // A first plan must not leave any actual resource binding.
-    if let Ok(bytes) = fs::read(directory.join("runtime/terraform.tfstate")) {
-        let state: Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(state["resources"].as_array().is_none_or(Vec::is_empty));
+    if fresh {
+        assert!(!planned.changes.is_empty());
+        // A first plan must not leave any actual resource binding.
+        if let Ok(bytes) = fs::read(directory.join("runtime/terraform.tfstate")) {
+            let state: Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(state["resources"].as_array().is_none_or(Vec::is_empty));
+        }
+    } else {
+        assert!(directory.join("runtime/terraform.tfstate").is_file());
     }
     let applied = deployment.apply(&document, &cancel).await.unwrap();
     assert!(
@@ -194,8 +206,26 @@ async fn selected_model_apply_export_and_watchdog_recovery_preserve_data_and_ide
         receipt
     );
     deployment.destroy(&cancel).await.unwrap();
-    assert!(engine.observe_runtime(&spec, &id).await.unwrap().is_none());
-    let proof = json!({"passed":true,"model":desired.model,"image":desired.image,"deployment":document.metadata.uid,"bindings":before,"containerId":observed.container_id,"agentReply":applied.agent_response,"recoveredReply":recovered.agent_response,"unchangedApply":true,"exportReapply":true,"receiptUnchanged":true,"noPreparation":true,"watchdogStoppedWithoutRestart":true,"explicitRecoveryPreservedIdentity":true,"destroyedWithStorageRetained":true});
+    // Refresh rejects a missing bound container to prevent accidental recreation.
+    // Intentional destroy removes that binding; verify Docker and retained state.
+    assert!(
+        engine
+            .container(&observed.container_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let retained = bindings(&directory);
+    assert_eq!(retained.len(), 3);
+    for address in [
+        "nemoclaw_workspace.deployment",
+        "nemoclaw_gateway_storage.runtime",
+        "nemoclaw_inference_storage.runtime",
+    ] {
+        assert_eq!(retained.get(address), before.get(address));
+        assert!(retained.contains_key(address));
+    }
+    let proof = json!({"passed":true,"freshApply":fresh,"model":desired.model,"image":desired.image,"deployment":document.metadata.uid,"bindings":before,"containerId":observed.container_id,"agentReply":applied.agent_response,"recoveredReply":recovered.agent_response,"unchangedApply":true,"exportReapply":true,"receiptUnchanged":true,"noPreparation":true,"watchdogStoppedWithoutRestart":true,"explicitRecoveryPreservedIdentity":true,"destroyedWithStorageRetained":true});
     fs::write(
         directory.join("model-proof.json"),
         serde_json::to_vec_pretty(&proof).unwrap(),

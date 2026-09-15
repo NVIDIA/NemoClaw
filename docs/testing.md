@@ -190,3 +190,32 @@ The live image-change test above is the deployment acceptance gate: the new imag
 must preserve cached artifacts and independent bindings, return an agent response,
 and produce no changes on subsequent apply and export/reapply. A fixture process
 proves supervisor independence; it does not qualify another real serving backend.
+
+The generic model lifecycle has a separate opt-in live test. Supply a fresh,
+owned deployment configuration with a free gateway port and subnet, its state
+directory, and an immutable bundle:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_LIVE_MODEL_CONFIG=/absolute/path/to/vllm.yaml \
+NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
+  cargo test -p nemoclaw-e2e --test model_live \
+    selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
+```
+
+It checks initial apply and an actual agent reply, unchanged apply, export and
+reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
+Explicit recovery must preserve resource identities and the snapshot receipt.
+Successful completion destroys workloads, retains storage, and writes
+`model-proof.json` in the supplied state directory. Failures retain resources
+for diagnosis; reconcile that state before starting another run. Retained gateway
+storage includes its network, so a different deployment needs a different subnet.
+
+For an established deployment whose gateway is running, select
+`selected_model_continues_from_retained_state` with the same environment variables.
+It runs the same lifecycle assertions without the fresh-plan assertion. Run only
+one of these live tests against a given deployment at a time.
+
+After intentional destroy, apply the retained configuration first. A read-only
+plan cannot observe workspace resources through a stopped gateway and will ask
+for that explicit reconciliation.
