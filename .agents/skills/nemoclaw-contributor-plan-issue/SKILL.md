@@ -41,7 +41,7 @@ NemoClaw ownership from the location of the issue.
 
 ## Define completion
 
-Apply the root [Planning and review](../../../AGENTS.md#planning-and-review) scope lock. Record the
+Apply the root [Product Scope Gate](../../../AGENTS.md#product-scope-gate) scope lock. Record the
 accepted boundary and the condition that requires re-planning.
 
 Describe observable acceptance and the shortest stable validation for each applicable behavior.
