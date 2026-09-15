@@ -150,6 +150,7 @@ function reconstructSupervisorLaunchCommand(
   entry: NonNullable<ReturnType<typeof registry.getSandbox>>,
   quiet: boolean,
   deps: ManagedSupervisorRelaunchDeps,
+  inspectedEnvironment: readonly string[],
 ): string[] | null {
   const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName) ?? null;
@@ -176,6 +177,13 @@ function reconstructSupervisorLaunchCommand(
     }
     chatUiUrl = profile.dashboard.browserUrl;
   }
+  const recoveryEnv = { ...process.env };
+  delete recoveryEnv.OPENCLAW_GATEWAY_URL;
+  const gatewayUrls = inspectedEnvironment
+    .filter((value) => value.startsWith("OPENCLAW_GATEWAY_URL="))
+    .map((value) => value.slice("OPENCLAW_GATEWAY_URL=".length));
+  if (gatewayUrls.length > 1) return null;
+  if (gatewayUrls[0]) recoveryEnv.OPENCLAW_GATEWAY_URL = gatewayUrls[0];
   const { envArgs } = buildSandboxRuntimeEnvArgs({
     agent,
     chatUiUrl,
@@ -195,7 +203,7 @@ function reconstructSupervisorLaunchCommand(
     extraPlaceholderKeys: [],
     observabilityEnabled: entry.observabilityEnabled === true,
     sandboxName,
-    env: process.env,
+    env: recoveryEnv,
     omitCredentialEnv: true,
   });
   return ["env", ...envArgs, "nemoclaw-start"];
@@ -217,9 +225,6 @@ export function relaunchManagedSupervisorSession(
   if (!entry) return null;
   const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
   if (!usesLegacyManagedGatewayRecovery(entry)) return null;
-  const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, quiet, deps);
-  if (startupCommand === null) return null;
-
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
   const inspect = deps.inspectContainer ?? inspectContainer;
   const confirmMissingSupervisor = deps.confirmMissingSupervisor;
@@ -244,7 +249,16 @@ export function relaunchManagedSupervisorSession(
           timeout: (seconds + 5) * 1000,
         });
       });
-    if (!hasLegacyKeepaliveStartup(inspect(containerId))) return null;
+    const containerInspect = inspect(containerId);
+    if (!hasLegacyKeepaliveStartup(containerInspect)) return null;
+    const startupCommand = reconstructSupervisorLaunchCommand(
+      sandboxName,
+      entry,
+      quiet,
+      deps,
+      containerInspect.Config?.Env ?? [],
+    );
+    if (startupCommand === null) return null;
     if (!confirmMissingSupervisor?.(containerId)) return null;
     let backup = backupState(sandboxName);
     // Docker can restore the OpenShell exec relay before its SSH transport.
@@ -336,7 +350,7 @@ export function relaunchManagedSupervisorSession(
       }
       let stateRestored = false;
       try {
-        stateRestored = restoreState(sandboxName, backupManifest.backupPath).success;
+        stateRestored = (await restoreState(sandboxName, backupManifest.backupPath)).success;
       } catch {
         stateRestored = false;
       }

@@ -453,7 +453,10 @@ export function advisorTurnFlowErrors(
     }
   }
   const oneOfReads = events.flatMap((event, index) =>
-    event.type === "read" && tools.requiredReadOneOfPaths?.includes(event.path)
+    event.type === "read" &&
+    tools.requiredReadOneOfPaths?.includes(event.path) &&
+    event.fileSize > 0 &&
+    (event.endOffset === null || event.endOffset >= event.offset)
       ? [{ event, index }]
       : [],
   );
@@ -643,8 +646,27 @@ export function sanitizeToolName(name: string): string {
   );
 }
 
-export function promptWithRequiredContextTools(prompt: string, toolNames: string[]): string {
-  if (toolNames.length === 0) return prompt;
-  const tools = toolNames.map((name) => `\`${name}\``).join(", ");
-  return `${prompt.trimEnd()}\n\nRequired context tools: ${tools}. Their results are not preloaded; call each before answering.`;
+export function promptWithRequiredContextTools(
+  prompt: string,
+  toolNames: string[],
+  requiredReadOneOfPaths: string[] = [],
+): string {
+  const requirements: string[] = [];
+  if (toolNames.length > 0) {
+    const tools = toolNames.map((name) => `\`${name}\``).join(", ");
+    requirements.push(
+      `Required context tools: ${tools}. Their results are not preloaded; call each before answering.`,
+    );
+  }
+  if (requiredReadOneOfPaths.length > 0) {
+    for (const requiredPath of requiredReadOneOfPaths) {
+      if (/[\r\n\0]/u.test(requiredPath)) {
+        throw new Error("Advisor required-read paths cannot contain line breaks or NUL bytes");
+      }
+    }
+    requirements.push(
+      `Required files:\n${requiredReadOneOfPaths.map((requiredPath) => `- ${requiredPath}`).join("\n")}\nRead at least one exact path above with \`read\` before writing analysis.`,
+    );
+  }
+  return requirements.length > 0 ? `${prompt.trimEnd()}\n\n${requirements.join("\n\n")}` : prompt;
 }

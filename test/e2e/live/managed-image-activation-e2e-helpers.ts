@@ -32,6 +32,7 @@ import {
 } from "../fixtures/docker-build-guard.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
+import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
@@ -231,17 +232,51 @@ async function runAgentTurn(
       timeoutMs: AGENT_TIMEOUT_MS,
     },
   );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  expect(resultText(result)).toMatch(/\bPONG\b/iu);
+  expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
+    true,
+  );
 }
 
-async function preclean(
+export function managedOpenClawSubagentCommand(sessionId: string): string[] {
+  return agentTurnCommand("openclaw", sessionId).map((value) =>
+    value === "Reply with exactly one word: PONG"
+      ? "NEMOCLAW_MANAGED_SUBAGENT: use sessions_spawn once with task 'Reply with exactly one word: PONG', wait for its result, then reply PONG"
+      : value,
+  );
+}
+
+async function runOpenClawSubagentTurn(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const result = await sandbox.exec(
+    sandboxName,
+    managedOpenClawSubagentCommand(`managed-openclaw-subagent-${Date.now()}`),
+    {
+      artifactName: "openclaw-native-loopback-subagent",
+      env,
+      redactionValues: [API_KEY],
+      timeoutMs: AGENT_TIMEOUT_MS,
+    },
+  );
+  expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
+    true,
+  );
+}
+
+export async function preclean(
   host: HostCliClient,
   lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
+  await initializeGatewayForCleanup(host, GATEWAY, {
+    artifactName: `pre-cleanup-initialize-gateway-${sandboxName}`,
+    env,
+    timeoutMs: 3 * 60_000,
+  });
   await host.bestEffortCleanupSandbox(sandboxName, {
     artifactName: `pre-cleanup-nemoclaw-${sandboxName}`,
     env,
@@ -466,6 +501,7 @@ async function qualifyAgent(
   await host.expectStatus(sandboxName, { env, timeoutMs: 120_000 });
   await sandbox.expectListed(sandboxName, { env });
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
+  if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   const marker = `managed-activation-${agent}-${Date.now()}`;
   const writeMarker = await sandbox.execShell(
     sandboxName,
@@ -534,6 +570,15 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     publicHost: "host.openshell.internal",
     requireAuth: true,
     requireAuthModels: true,
+    requestCanaryMarker: "NEMOCLAW_MANAGED_SUBAGENT",
+    toolCallOnCanary: {
+      name: "sessions_spawn",
+      arguments: JSON.stringify({
+        task: "Reply with exactly one word: PONG",
+        mode: "run",
+        cleanup: "delete",
+      }),
+    },
   });
   cleanup.trackDisposable("close managed activation inference responder", async () => {
     await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
@@ -558,9 +603,11 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
   expect(chatRequests.length).toBeGreaterThanOrEqual(SHIPPED_MANAGED_IMAGE_AGENTS.length * 2);
-  expect(chatRequests.every((request) => request.auth === "ok" && request.model === MODEL)).toBe(
-    true,
-  );
+  expect(
+    chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
+      chatRequests.some((request) => request.requestCanaryPresent === true) &&
+      chatRequests.some((request) => request.toolResultPresent === true),
+  ).toBe(true);
   await artifacts.writeText("docker-argv.log", trace);
   await artifacts.writeJson("managed-image-activation-summary.json", {
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,
