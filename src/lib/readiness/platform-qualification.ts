@@ -119,7 +119,8 @@ function readBoundedRegularFile(filePath: string, maxBytes: number): string | un
     const contents = Buffer.alloc(maxBytes + 1);
     const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);
     if (bytesRead > maxBytes) return undefined;
-    return contents.toString("utf8", 0, bytesRead).trim() || undefined;
+    const decoded = contents.toString("utf8", 0, bytesRead);
+    return decoded.trim() ? decoded : undefined;
   } catch {
     return undefined;
   } finally {
@@ -136,7 +137,7 @@ function readInjectedOsRelease(
   try {
     const contents = readFile(filePath);
     if (Buffer.byteLength(contents) > maxBytes) return undefined;
-    return contents.trim() || undefined;
+    return contents.trim() ? contents : undefined;
   } catch {
     return undefined;
   }
