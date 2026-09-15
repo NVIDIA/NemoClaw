@@ -51,6 +51,7 @@ export interface SplitProcessSecurityReport {
 export interface SecurityPostureSummary {
   capabilitySurfaces: {
     connect: CapabilitySurfaceReport;
+    entrypoint: CapabilitySurfaceReport;
     exec: CapabilitySurfaceReport;
   };
   configureGuard: true;
@@ -75,7 +76,7 @@ export interface CapabilitySurfaceReport {
   capInh: string;
   capPrm: string;
   gid: number;
-  surface: "connect" | "exec";
+  surface: "connect" | "entrypoint" | "exec";
   uid: number;
 }
 
@@ -543,7 +544,7 @@ export function parseCapabilitySurfaceReport(
     throw new Error(`${surface} child emitted ${lines.length} capability proof markers`);
   }
   const pattern = new RegExp(
-    `^${CAPABILITY_SURFACE_MARKER} surface=(connect|exec) uid=(\\d+) gid=(\\d+) CapInh=([0-9a-f]{16}) CapPrm=([0-9a-f]{16}) CapEff=([0-9a-f]{16}) CapBnd=([0-9a-f]{16}) CapAmb=([0-9a-f]{16})$`,
+    `^${CAPABILITY_SURFACE_MARKER} surface=(connect|entrypoint|exec) uid=(\\d+) gid=(\\d+) CapInh=([0-9a-f]{16}) CapPrm=([0-9a-f]{16}) CapEff=([0-9a-f]{16}) CapBnd=([0-9a-f]{16}) CapAmb=([0-9a-f]{16})$`,
     "u",
   );
   const match = pattern.exec(lines[0]!);
@@ -971,6 +972,17 @@ export async function assertSecurityPosture(
     splitProcess.sandboxUid,
     splitProcess.sandboxGid,
   );
+  const childSupervisor = selectNemoclawStartSupervisor(splitProcess.childSupervisors);
+  const entrypointCapabilitySurface: CapabilitySurfaceReport = {
+    capAmb: childSupervisor.status.capAmb,
+    capBnd: childSupervisor.status.capBnd,
+    capEff: childSupervisor.status.capEff,
+    capInh: childSupervisor.status.capInh,
+    capPrm: childSupervisor.status.capPrm,
+    gid: splitProcess.sandboxGid,
+    surface: "entrypoint",
+    uid: splitProcess.sandboxUid,
+  };
 
   const rcFiles = await sandbox.execShell(
     sandboxName,
@@ -1081,6 +1093,7 @@ tail -n 20 "$log"
   return {
     capabilitySurfaces: {
       connect: connectCapabilitySurface,
+      entrypoint: entrypointCapabilitySurface,
       exec: execCapabilitySurface,
     },
     configureGuard: true,
@@ -1092,7 +1105,7 @@ tail -n 20 "$log"
       openshell: openshellVersions[0],
     },
     splitProcess: {
-      childSupervisor: selectNemoclawStartSupervisor(splitProcess.childSupervisors),
+      childSupervisor,
       supervisor: splitProcess.supervisor,
     },
     startupLogClean: true,

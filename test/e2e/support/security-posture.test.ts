@@ -1040,6 +1040,16 @@ describe("security posture fixture", () => {
             capBnd: ZERO_CAPABILITIES,
             capAmb: ZERO_CAPABILITIES,
           },
+          entrypoint: {
+            surface: "entrypoint",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
           exec: {
             surface: "exec",
             uid: 1000,
