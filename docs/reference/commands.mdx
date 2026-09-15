@@ -190,7 +190,7 @@ nemoclaw-acp --sandbox <name> [--gateway <name>] [--timeout <seconds>]
 ```
 
 `--sandbox` is required.
-When more than one registered Hermes sandbox has that name, pass `--gateway <name>` to select its owning NemoClaw gateway.
+When the sandbox name is registered on more than one gateway, pass `--gateway <name>` to select its owning NemoClaw gateway.
 `--timeout` ends the ACP session after the specified positive number of seconds, up to `86,400`.
 
 Before the adapter starts the session, it revalidates the registered sandbox and its ready state under the sandbox lifecycle lock.
