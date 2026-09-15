@@ -1457,6 +1457,7 @@ dependencies = [
  "nemoclaw-sdk",
  "reqwest",
  "serde",
+ "serde-saphyr",
  "serde_json",
  "sha2",
  "tar",
