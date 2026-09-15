@@ -63,6 +63,12 @@ async fn tool_disclosure_cli_export_reapply_and_drift() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift() {
+    lifecycle(include_str!("../../../examples/openclaw-dashboard.yaml")).await;
+}
+
 async fn lifecycle(input: &str) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));

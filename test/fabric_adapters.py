@@ -146,10 +146,27 @@ async def main():
             if HARNESS == 'pi':
                 subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'configure', 'fixture', 'pi', json.dumps(model)], check=True)
             startup_requests = len(requests)
+            interface_token = Path('/sandbox/.openclaw/interface-token').read_text() if os.environ.get('FABRIC_TEST_INTERFACES') == '1' else None
             for _ in range(2):
                 subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS, *extra], check=True)
             mismatch = subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'wrong-name', HARNESS])
             assert mismatch.returncode != 0, 'readiness accepted different configuration'
+            if interface_token:
+                subprocess.run([sys.executable, '/opt/nemoclaw/interfaces.py', 'devices', 'list'], check=True)
+                token_path = Path('/sandbox/.openclaw/interface-token')
+                token_path.write_text('0' * 64)
+                invalid = subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS, *extra])
+                assert invalid.returncode != 0, 'running gateway accepted incorrect access credential'
+                token_path.write_text(interface_token)
+                native_path = Path('/sandbox/.openclaw/openclaw.json')
+                retained = native_path.read_text()
+                changed = json.loads(retained)
+                changed['gateway']['controlUi']['dangerouslyDisableDeviceAuth'] = True
+                native_path.write_text(json.dumps(changed))
+                invalid = subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS, *extra])
+                assert invalid.returncode != 0, 'readiness accepted weakened device authentication'
+                native_path.write_text(retained)
+                subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS, *extra], check=True)
             assert len(requests) == startup_requests, 'readiness made an inference request'
             requests.clear()
             if HARNESS == 'pi':
@@ -178,6 +195,8 @@ async def main():
     if HARNESS == 'pi':
         subprocess.run(['node', '/opt/fabric-source/adapters/typescript/pi/dist/pi-probe.js', json.dumps(model)], check=True)
     runtime = await Fabric().start_runtime(FabricConfig.model_validate(config), base_dir='/sandbox')
+    if interface_token:
+        assert Path('/sandbox/.openclaw/interface-token').read_text() == interface_token, 'runtime restart rotated the retained credential'
     results = []
     try:
         for _ in range(2):
@@ -205,7 +224,7 @@ async def main():
         assert requests and all(request['body']['model'] == model['model'] for request in requests), requests
     if HARNESS in ('mini-swe-agent', 'nooa', 'nooa-bench'):
         assert Path('/sandbox/workspace/tool-proof.txt').read_text() == 'FABRIC_FIXTURE_OK'
-    Path('/evidence/proof.json').write_text(json.dumps({'harness': HARNESS, 'readiness_without_inference': True,
+    Path('/evidence/proof.json').write_text(json.dumps({'harness': HARNESS, 'readiness_without_inference': True, 'authenticated_interfaces_verified': os.environ.get('FABRIC_TEST_INTERFACES') == '1',
         'tool_file_verified': HARNESS in ('mini-swe-agent', 'nooa', 'nooa-bench'),
         'stopped': True, 'ordered_invocations': len(results), 'runtime_id': runtime.runtime_id, 'request_paths': sorted({r['path'] for r in requests}),
         **({'configured_model': model['model'], 'request_models': sorted({r['body']['model'] for r in requests}),

@@ -161,3 +161,16 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 
 These fixtures check four-agent and disclosure-mode export/reapply and failed observation without mutation or lost state.
 The local OpenShell fixture simulates the runtime observation result; native enforcement is covered separately by the tool factory test.
+
+## OpenClaw Interface Lifecycle
+
+With a freshly built OpenClaw image and the prerequisites above, run:
+
+```sh
+python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-prototype-fabric:openclaw --interfaces
+```
+
+This offline test uses the nondefault port 18800, lists native pairing requests with the authenticated helper, rejects an incorrect token and weakened native device-auth settings, restores the original settings, and verifies that a runtime restart retains the token.
+Its evidence includes `authenticated_interfaces_verified` in `proof.json`.
+The bundle fixture is `openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift` in the `deployment` test binary.
+[Recorded Linux ARM64 results](../validation/rust-openclaw-interfaces-linux-arm64.json) distinguish native gateway checks from simulated OpenShell lifecycle behavior.
