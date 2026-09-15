@@ -125,6 +125,10 @@ pub struct Gateway {
 #[serde(default, deny_unknown_fields)]
 /// Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.
 pub struct InferenceProvider {
+    /// Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::Management")]
+    pub management: Option<super::Management>,
     #[serde(rename = "name")]
     /// Provider name referenced by the primary route.
     pub name: String,

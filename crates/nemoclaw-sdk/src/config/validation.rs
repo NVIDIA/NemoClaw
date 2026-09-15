@@ -154,6 +154,17 @@ impl Document {
             "this slice requires exactly one inference provider and one sandbox",
         )?;
         let provider = &self.spec.inference_providers[0];
+        let management = if provider.service.is_some() || provider.ollama.is_some() {
+            Management::Managed
+        } else {
+            Management::External
+        };
+        require(
+            provider
+                .management
+                .is_none_or(|declared| declared == management),
+            "inference management must match service or Ollama (managed) or endpoint alone (external)",
+        )?;
         require(
             SLUG.is_match(&provider.name)
                 && constraints::PROVIDERS.contains(&provider.provider.as_str()),

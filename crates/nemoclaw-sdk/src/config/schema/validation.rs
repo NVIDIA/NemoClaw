@@ -197,6 +197,9 @@ pub(super) fn constrain(root: &mut Value) {
     provider["else"] =
         json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
     provider["allOf"] = json!([
+        {"if": {"anyOf": [{"required": ["service"]}, {"required": ["ollama"]}]},
+         "then": {"properties": {"management": {"const": "managed"}}},
+         "else": {"properties": {"management": {"const": "external"}}}},
         {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])},
         {"if": {"required": ["ollama"]}, "then": {
             "properties": {"endpoint": {"pattern": "^http://.+:[0-9]+/v1$"}},

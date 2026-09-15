@@ -151,6 +151,10 @@ fn fields(output: &mut String, name: &str, schema: &Value) -> Result<(), String>
 
 fn guide(name: &str) -> &'static str {
     match name {
+        "Management" | "ExternalManagement" | "ManagedManagement" | "ManagedResource"
+        | "NetworkReference" | "ExternalNetwork" => {
+            "[Resource ownership](../usage.md#resource-ownership)"
+        }
         "Network" | "Proxy" | "ExplicitPolicy" | "ExplicitPolicySelection" => {
             "[Sandbox policy and proxy](../sandbox-network.md)"
         }

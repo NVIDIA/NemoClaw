@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
 
+/// Ownership of the inference server, separate from NemoClaw's owned routing registration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Management {
+    /// The deployment manages the declared service or Ollama daemon.
+    Managed,
+    /// The deployment uses the endpoint without managing its server.
+    External,
+}
+
 /// NemoClaw uses this resource without managing its lifecycle or administrative configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]

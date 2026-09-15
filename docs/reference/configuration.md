@@ -250,7 +250,7 @@ Paths:
 
 NemoClaw uses this resource without managing its lifecycle or administrative configuration.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Resource ownership](../usage.md#resource-ownership).
 
 Paths:
 
@@ -265,7 +265,7 @@ Constraints: `"external"`.
 
 Identify a network owned outside this deployment.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Resource ownership](../usage.md#resource-ownership).
 
 Paths:
 
@@ -371,6 +371,7 @@ Paths:
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata. |
 | `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by service and ollama. |
 | `endpoint` | string | Without service | — | Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address. |
+| `management` | [Management](#management) | No | — | Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode. |
 | `name` | string | Yes | — | Provider name referenced by the primary route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `ollama` | [ManagedOllama](#managedollama) | No | — | Manage Ollama through a local Unix Docker socket and an existing network. Requires an explicit private or loopback IP:port/v1 HTTP endpoint. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
@@ -403,7 +404,7 @@ Paths:
 
 NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Resource ownership](../usage.md#resource-ownership).
 
 Paths:
 
@@ -444,7 +445,7 @@ Paths:
 
 Explicit ownership for a dependency whose creation settings remain on its parent. Only managed ownership is implemented.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Resource ownership](../usage.md#resource-ownership).
 
 Paths:
 
@@ -458,6 +459,20 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `management` | [ManagedManagement](#managedmanagement) | Yes | — | Managed ownership. Omit the enclosing object to keep the same behavior. |
+
+## Management
+
+Ownership of the inference server, separate from NemoClaw's owned routing registration.
+
+Guide: [Resource ownership](../usage.md#resource-ownership).
+
+Paths:
+
+- `spec.inferenceProviders[].management`
+
+Accepted input: string or string.
+
+Constraints: `"managed"` or `"external"`.
 
 ## Manifest
 
@@ -546,7 +561,7 @@ Paths:
 
 An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Resource ownership](../usage.md#resource-ownership).
 
 Paths:
 

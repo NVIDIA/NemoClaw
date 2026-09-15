@@ -637,6 +637,36 @@
       "additionalProperties": false,
       "allOf": [
         {
+          "else": {
+            "properties": {
+              "management": {
+                "const": "external"
+              }
+            }
+          },
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "service"
+                ]
+              },
+              {
+                "required": [
+                  "ollama"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "management": {
+                "const": "managed"
+              }
+            }
+          }
+        },
+        {
           "if": {
             "properties": {
               "endpoint": {
@@ -716,6 +746,10 @@
           "description": "Inference HTTP(S) URL. Required without service; omit or leave empty with service. HTTP requires a literal private or loopback address.",
           "type": "string",
           "x-nemoclaw-required": "Without service"
+        },
+        "management": {
+          "$ref": "#/$defs/Management",
+          "description": "Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode."
         },
         "name": {
           "description": "Provider name referenced by the primary route.",
@@ -899,6 +933,21 @@
         "management"
       ],
       "type": "object"
+    },
+    "Management": {
+      "description": "Ownership of the inference server, separate from NemoClaw's owned routing registration.",
+      "oneOf": [
+        {
+          "const": "managed",
+          "description": "The deployment manages the declared service or Ollama daemon.",
+          "type": "string"
+        },
+        {
+          "const": "external",
+          "description": "The deployment uses the endpoint without managing its server.",
+          "type": "string"
+        }
+      ]
     },
     "Manifest": {
       "additionalProperties": false,

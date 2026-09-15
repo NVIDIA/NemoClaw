@@ -141,3 +141,76 @@ fn ollama_storage_and_model_management_preserve_existing_lifecycle() {
         assert!(!schema.is_valid(&invalid));
     }
 }
+
+#[test]
+fn inference_management_must_match_the_selected_service_form() {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    for (source, mode) in [
+        (
+            include_str!("../../../examples/fabric-openclaw.yaml"),
+            "external",
+        ),
+        (
+            include_str!("../../../examples/managed-ollama.yaml"),
+            "managed",
+        ),
+        (include_str!("../../../examples/vllm.yaml"), "managed"),
+    ] {
+        let legacy: Value = serde_saphyr::from_str(source).unwrap();
+        let mut explicit = legacy.clone();
+        explicit["spec"]["inferenceProviders"][0]["management"] = json!(mode);
+        let document = parse(&explicit).expect("inference ownership must parse");
+        assert!(schema.is_valid(&explicit));
+        let generations: Generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "ollama",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+        assert_eq!(
+            compile(&document, &generations, "test").unwrap(),
+            compile(&parse(&legacy).unwrap(), &generations, "test").unwrap()
+        );
+        explicit["spec"]["inferenceProviders"][0]["management"] = json!(if mode == "managed" {
+            "external"
+        } else {
+            "managed"
+        });
+        assert!(parse(&explicit).is_err());
+        assert!(!schema.is_valid(&explicit));
+    }
+}
+
+#[test]
+fn remote_network_management_does_not_change_placement_or_publication() {
+    let legacy: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/remote-vllm.yaml")).unwrap();
+    let mut explicit = legacy.clone();
+    explicit["spec"]["inferenceProviders"][0]["service"]["placement"]["network"] =
+        json!({"management":"managed"});
+    let document = parse(&explicit).unwrap();
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    assert!(schema.is_valid(&explicit));
+    let generations: Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
+    assert_eq!(
+        nemoclaw_sdk::compile::compile_runtime(&document, &generations, "test").unwrap(),
+        nemoclaw_sdk::compile::compile_runtime(&parse(&legacy).unwrap(), &generations, "test")
+            .unwrap()
+    );
+    explicit["spec"]["inferenceProviders"][0]["service"]["placement"]["network"]["management"] =
+        json!("external");
+    assert!(parse(&explicit).is_err());
+    assert!(!schema.is_valid(&explicit));
+}

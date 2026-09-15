@@ -70,6 +70,16 @@ async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift() 
 }
 
 async fn lifecycle(input: &str) {
+    lifecycle_with_ownership(input, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn optional_management_plan_export_reapply_preserves_resources() {
+    lifecycle_with_ownership(include_str!("../../../examples/explicit-policy.yaml"), true).await;
+}
+
+async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
     assert!(bundle.is_absolute());
@@ -117,6 +127,33 @@ async fn lifecycle(input: &str) {
     assert!(applied.is_ok(), "{applied:?}");
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
+    if declare_ownership {
+        document.spec.inference_providers[0].management =
+            Some(nemoclaw_sdk::config::Management::External);
+        document.spec.sandboxes[0]
+            .network
+            .proxy
+            .as_mut()
+            .unwrap()
+            .management = Some(nemoclaw_sdk::config::ExternalManagement::External);
+        assert!(
+            deployment
+                .plan(&document, &cancel)
+                .await
+                .unwrap()
+                .changes
+                .is_empty()
+        );
+        assert!(
+            deployment
+                .apply(&document, &cancel)
+                .await
+                .unwrap()
+                .changes
+                .is_empty()
+        );
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    }
     let exported = Command::new(
         bundle
             .join("bin")
