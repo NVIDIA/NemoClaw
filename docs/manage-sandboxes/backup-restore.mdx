@@ -244,7 +244,8 @@ A Deep Agents target created from a custom Dockerfile restores `config.toml` as 
 
 ### Validate Before Replacement
 
-Before a Deep Agents rebuild changes the sandbox, NemoClaw verifies the recorded inference route, provider, model, reasoning settings, web search selection, base image, and policy inputs. If a late check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
+Before a Deep Agents rebuild changes the sandbox, NemoClaw verifies the recorded inference route, provider, model, reasoning settings, web search selection, base image, and policy inputs.
+If a late check fails, NemoClaw does not delete the existing sandbox.
 
 </AgentOnly>
 

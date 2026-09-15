@@ -17,8 +17,8 @@ import {
   destroy,
   dockerImage,
   dockerInspect,
-  gatewayDrift,
   forwardRecovery,
+  gatewayDrift,
   gatewayRuntime,
   gatewayState,
   gatewayTeardownAuthority,
@@ -36,12 +36,12 @@ import {
   onboardCredentialEnv,
   onboardSession,
   openshellRuntime,
-  providerCommand,
   policies,
   policyGet,
   policyState,
   portableRetirementAuthority,
   processRecovery,
+  providerCommand,
   purgeRebuildModule,
   type RebuildFlowHarness,
   type RebuildFlowOverrides,
@@ -53,12 +53,12 @@ import {
   rebuildOnboardDependencies,
   rebuildPreparedImageContext,
   rebuildRoutePreflight,
-  removedImmutabilityMigration,
   rebuildUsageNotice,
+  registerHarnessRebuildBackup,
   registry,
   crossPortRegistry,
   registryPersistence,
-  registerHarnessRebuildBackup,
+  removedImmutabilityMigration,
   resolve,
   sandboxList,
   sandboxSession,
@@ -67,6 +67,7 @@ import {
   sourceSandboxGateway,
 } from "./rebuild-flow-harness";
 
+export type { RebuildFlowHarness, RebuildFlowOverrides } from "./rebuild-flow-harness";
 export {
   createHarnessTempDir,
   installRebuildFlowTestHooks,
@@ -78,7 +79,6 @@ export {
   tempFiles,
 } from "./rebuild-flow-harness";
 export { makePreparedRecoveryManifest };
-export type { RebuildFlowHarness, RebuildFlowOverrides } from "./rebuild-flow-harness";
 
 function expectPolicyCaptureOptions() {
   return {
@@ -756,6 +756,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           stderr: "sandbox alpha not found",
         };
       }
+      if (argv[0] === "provider" && argv[1] === "list") {
+        const provider = String(currentSandboxEntry.provider ?? "compatible-endpoint");
+        const credentialEnv =
+          "credentialEnv" in currentSandboxEntry &&
+          typeof currentSandboxEntry.credentialEnv === "string"
+            ? currentSandboxEntry.credentialEnv
+            : "COMPATIBLE_API_KEY";
+        const output = JSON.stringify([
+          { name: provider, credential_keys: credentialEnv ? [credentialEnv] : [] },
+        ]);
+        return { status: 0, output, stdout: output, stderr: "" };
+      }
       return argv[0] === "provider" && argv[1] === "get"
         ? {
             status: 0,
@@ -998,7 +1010,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const mcpSourceEntries = overrides.mcpPreparation?.entries ?? [];
   vi.spyOn(mcpBridgeProviderInspection, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
     {
-      gatewayName: "nemoclaw",
+      gatewayName: String(currentSandboxEntry.gatewayName ?? "nemoclaw"),
       workspace: "default",
     },
   );
