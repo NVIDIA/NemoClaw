@@ -287,3 +287,22 @@ This does not qualify long-context accuracy or general tool-use reliability.
 
 [Fabric-only OpenClaw validation](validation/rust-fabric-only-openclaw-linux-arm64.json) covers the shared managed-apply agent probe, a real response through OpenShell, unchanged apply, export/reapply, and stable Fabric runtime identity.
 The test creates and removes an owned sandbox against an existing inference service.
+
+## Additional Agent Integrations
+
+The current declared integrations include [OpenClaw tracing](#openclaw-tracing) and [Brave web search](#brave-web-search).
+Native agent capabilities do not by themselves establish a complete NemoClaw deployment procedure.
+
+| Workflow | Documentation status |
+|---|---|
+| Messaging channels, including Discord, Google Chat, Teams, Slack, Telegram, WeChat, and WhatsApp | **TBD** — needs verified enrollment, egress, credentials, and data-retention procedures |
+| Managed MCP bridge and server add/update/remove | **TBD** — no equivalent current NemoClaw CLI workflow |
+| Arbitrary OpenClaw or Hermes plugin installation | **TBD** — requires a verified image, configuration, and lifecycle procedure; the declared Brave integration is documented above |
+| Memory search and embedding-service setup | **TBD** — needs evidence for the endpoint, credentials, policy, and native settings |
+| Context compaction configuration | **TBD** — verify behavior against the pinned native runtime before reusing earlier guidance |
+| Auxiliary-model sub-agents | **TBD** — current declared OpenClaw agents share one primary route |
+| Deep Agents tracing and managed collector lifecycle | **TBD** — the implemented OpenClaw tracing profile uses an existing local collector |
+| Verified file/history backup and restoration for each harness | **TBD** — see [deployment state](state.md) |
+
+Use [migration](migration.md) for the earlier-product boundary.
+These TBD entries do not extend the current [configuration contract](reference/configuration.md).

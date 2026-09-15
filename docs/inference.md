@@ -205,3 +205,21 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 
 The deterministic lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
 The [offline harness fixture](testing/fixtures.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
+
+## Additional Inference Workflows
+
+The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
+Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
+
+| Workflow or claim | Documentation status |
+|---|---|
+| Managed llama.cpp or NVIDIA NIM installation | **TBD** — no corresponding managed backend in the current configuration contract |
+| Managed model router and model-pool lifecycle | **TBD** — requires implementation and lifecycle evidence |
+| Distributed inference across multiple Sparks or Stations | **TBD** — SSH engine placement does not establish multi-node inference |
+| Separate physical inference host | **TBD** — requires qualification beyond the retained same-host two-daemon result |
+| Vendor-specific catalog selection and validation | **TBD** — compatible API selection does not implement the earlier onboarding catalogs |
+| End-to-end hosted-provider guides for NVIDIA, OpenAI, Anthropic, Gemini, OpenRouter, and Nous | **TBD** — qualify the specific endpoint, API, harness, and model before promising compatibility |
+| Gated model repositories, custom remote-code models, GGUF, and nested checkpoints in the generic managed backend | **TBD** — outside the current [managed-model contract](models.md) |
+
+These gaps do not prevent use of a separately verified external endpoint with an accepted API.
+They do prevent treating an old provider or platform guide as evidence for the current implementation.

@@ -61,3 +61,13 @@ Python 3, Docker and `nvidia-smi` must already be available on that host.
 No packages are installed.
 
 This transport does not tunnel inference traffic.
+
+## Package Distribution and API Reference
+
+The public Rust API is exported from [the SDK crate](../crates/nemoclaw-sdk/src/lib.rs).
+The [deployment implementation](../crates/nemoclaw-sdk/src/deployment/mod.rs) defines the lifecycle methods used above.
+See [the provider guide](provider.md) for the bundled OpenTofu boundary and [CLI reference](reference/cli.md) for terminal access.
+
+Published package installation and version-selection instructions: **TBD**.
+Complete SDK API reference and compiled application examples for custom secret resolution, progress, and cancellation: **TBD**.
+Compatibility policy across SDK releases and migration from the earlier TypeScript lifecycle package: **TBD**.

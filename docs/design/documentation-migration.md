@@ -17,7 +17,7 @@ The comparison uses these immutable revisions:
 | Source | Revision | Role |
 |---|---|---|
 | `origin/main` | `97745a7ad9649f851704493e4b670b3674f875aa` | Previous documentation and publishing inputs |
-| This checkout and `origin/v1` | `089a4bffb07c8386b0487bb1c6d7760836f6c4f0` | Implemented behavior and current task guides |
+| v1 comparison baseline | `089a4bffb07c8386b0487bb1c6d7760836f6c4f0` | Implemented behavior and task guides at the comparison revision |
 
 At the source revision, `docs/` contains 125 non-changelog MDX sources and 76 changelog MDX sources, including the changelog overview.
 Navigation defines 300 page entries across OpenClaw (109), Hermes (102), Deep Agents (84), and Pi (5), excluding changelog routes.
@@ -53,24 +53,26 @@ No migration procedure may infer that retained model storage also preserves an a
 
 ## Reader Journeys and Page Ownership
 
-Paths marked **new** are proposed deliverables, not existing guides.
+These destinations define page ownership.
+New guide scaffolds contain supported facts and **TBD** sections where evidence or a verified procedure is missing.
+A scaffold does not satisfy the completion criteria below by its existence alone.
 Keep canonical prose in repository Markdown; select publication tooling in D00.
 
 | Reader task | Canonical destination | Completion criterion |
 |---|---|---|
-| Understand NemoClaw and choose an interface | **new** `docs/overview.md`; root README and docs index link to it | Explain SDK, CLI, OpenTofu, OpenShell, Fabric, and resource ownership in user terms |
-| Check prerequisites and supported configurations | **new** `docs/prerequisites.md` | Distinguish client OS, engine host, GPU/model host, image architecture, and tested combinations |
-| Reach a first working agent interaction | **new** `docs/get-started.md`; retain [build instructions](../build.md) | Build/select a verified bundle and matching image, author YAML, plan, apply, access the native agent, verify a reply, and preview cleanup |
+| Understand NemoClaw and choose an interface | [overview.md](../overview.md); root README and docs index link to it | Explain SDK, CLI, OpenTofu, OpenShell, Fabric, and resource ownership in user terms |
+| Check prerequisites and supported configurations | [prerequisites.md](../prerequisites.md) | Distinguish client OS, engine host, GPU/model host, image architecture, and tested combinations |
+| Reach a first working agent interaction | [get-started.md](../get-started.md); retain [build instructions](../build.md) | Build/select a verified bundle and matching image, author YAML, plan, apply, access the native agent, verify a reply, and preview cleanup |
 | Configure, inspect, and operate a deployment | [usage.md](../usage.md) | Explain one provider/sandbox per document, OpenClaw multi-agent limits, state selection, output, unchanged apply, and export/reapply |
-| Change or recover a deployment | [usage.md](../usage.md); **new** `docs/troubleshooting.md` | Cover refused replacement, drift, failed observations, interrupted apply/destroy, and managed-service recovery |
-| Protect state and move from the previous product | **new** `docs/state.md` and `docs/migration.md` | Identify data locations and lifetimes; provide a rehearsed parallel-deployment and rollback procedure without promising adoption |
+| Change or recover a deployment | [usage.md](../usage.md); [troubleshooting.md](../troubleshooting.md) | Cover refused replacement, drift, failed observations, interrupted apply/destroy, and managed-service recovery |
+| Protect state and move from the previous product | [state.md](../state.md) and [migration.md](../migration.md) | Identify data locations and lifetimes; provide a rehearsed parallel-deployment and rollback procedure without promising adoption |
 | Choose inference and place a managed service | [inference.md](../inference.md), [models.md](../models.md), [remote-service.md](../remote-service.md), [recipes.md](../recipes.md) | Separate external endpoints, managed Ollama, managed vLLM, SSH placement, and optional model recipes |
 | Select and access an agent | [agents.md](../agents.md), [interfaces.md](../interfaces.md) | State each harness's requirements, native access, configuration ownership, sessions, and qualification limits |
-| Configure security and credentials | [sandbox-network.md](../sandbox-network.md); **new** `docs/security.md` | Cover policy, trust, credential storage/access/lifetime/removal, isolation limits, native tokens, and reporting |
-| Look up a command or YAML field | **new** `docs/reference/cli.md`; [configuration.md](../reference/configuration.md) | CLI reference agrees with help; configuration reference remains generated from Rust |
-| Integrate programmatically | [sdk.md](../sdk.md); **new** `docs/provider.md` | Compile SDK examples; explain provider packaging, state ownership, supported entry points, and stability boundaries |
-| Use coding-agent documentation or find project resources | **new** `docs/resources.md`; version-specific starter prompt and routing skill if retained | HTML, Markdown, search, prompts, and skills select the same product version |
-| Understand release changes | **new** `docs/release-notes.md`; preserved previous-release history | State breaking changes, removed workflows, tested configurations, known limits, and migration route |
+| Configure security and credentials | [sandbox-network.md](../sandbox-network.md); [security.md](../security.md) | Cover policy, trust, credential storage/access/lifetime/removal, isolation limits, native tokens, and reporting |
+| Look up a command or YAML field | [reference/cli.md](../reference/cli.md); [configuration.md](../reference/configuration.md) | CLI reference agrees with help; configuration reference remains generated from Rust |
+| Integrate programmatically | [sdk.md](../sdk.md); [provider.md](../provider.md) | Compile SDK examples; explain provider packaging, state ownership, supported entry points, and stability boundaries |
+| Use coding-agent documentation or find project resources | [resources.md](../resources.md); version-specific starter prompt and routing skill if retained | HTML, Markdown, search, prompts, and skills select the same product version |
+| Understand release changes | [release-notes.md](../release-notes.md); preserved previous-release history | State breaking changes, removed workflows, tested configurations, known limits, and migration route |
 
 Keep [design rationale](architecture.md), [test procedures](../testing.md), and [retained evidence](../validation/README.md) distinct from getting-started instructions.
 Link evidence from support claims; do not make users read internal qualification records to discover basic prerequisites.

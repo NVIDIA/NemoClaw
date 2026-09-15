@@ -21,6 +21,11 @@ Follow [schema maintenance](configuration-schema.md) to update its sources and r
 - Retained results and qualification limits belong in [validation/](validation/README.md).
 - Source notices and fixture provenance stay beside their artifacts.
 
+The user-guide structure is scaffolded in the [documentation index](README.md).
+Use **TBD** for a section without enough current implementation evidence or a verified procedure, and name the missing evidence briefly.
+Do not fill it from main's documentation alone or infer product support from parser acceptance.
+Replace a TBD only when the text can link to the implementation, tests, or scoped qualification that supports its claims.
+
 Label historical findings with their revision and scope; do not rewrite retained results to imply that later code was tested.
 
 ## Write the Procedure
