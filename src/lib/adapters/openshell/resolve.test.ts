@@ -203,7 +203,9 @@ describe("Hermes portable OpenShell executable authority", () => {
   it.runIf(process.platform !== "win32")(
     "rejects a real 0775 directory and accepts it after permission repair (#11717)",
     () => {
-      const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-authority-mode-"));
+      const temporaryRoot = fs.realpathSync(
+        fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-authority-mode-")),
+      );
       const binaryDirectory = path.join(temporaryRoot, "bin");
       const executablePath = path.join(binaryDirectory, "openshell");
       fs.mkdirSync(binaryDirectory, { mode: 0o775 });
