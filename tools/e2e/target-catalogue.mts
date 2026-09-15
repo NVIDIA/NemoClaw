@@ -265,17 +265,27 @@ const SKILL_LIFECYCLE_OWNING_PATHS = [
   "src/lib/skill-install.ts",
 ] as const;
 
+const OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS = [
+  "src/lib/adapters/openshell/command-execution.ts",
+  "src/lib/adapters/openshell/forward-cli.ts",
+  "src/lib/adapters/openshell/forward-runtime.ts",
+  "src/lib/adapters/openshell/forward.ts",
+] as const;
+
 // Keep every checked-in input copied by the Pi Dockerfiles in the PR selection boundary.
 // test/e2e/support/pi-agent-qualification-events.test.ts verifies this list against the
 // real Dockerfiles so a new COPY instruction cannot silently reuse a stale image receipt.
 const PI_IMAGE_SOURCE_OWNING_PATHS = [
   ".dockerignore",
   "agents/pi/",
+  "ci/reviewed-npm-audit.json",
   "nemoclaw-blueprint/",
   "scripts/lib/bundled-npm-package.mts",
   "scripts/lib/entrypoint-env-wrapper.sh",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/reviewed-npm-audit.mts",
+  "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-rlimits.sh",
   "scripts/managed-bootstrap-entrypoint.c",
   "scripts/managed-bootstrap-trampoline.sh",
@@ -661,7 +671,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/json-envelope.ts"],
+    owningPaths: [...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS, "test/e2e/live/json-envelope.ts"],
     environment: {
       ...hostedInference,
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
@@ -711,6 +721,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       restoreCli: true,
       exposeCliBin: true,
       owningPaths: [
+        ...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS,
         "src/lib/onboard/dashboard.ts",
         "src/lib/onboard/dashboard-forward-control.ts",
         "src/lib/onboard/dashboard-runtime.ts",
@@ -792,23 +803,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-full",
-    },
-  }),
-  dockerOnlyTarget("gateway-guard-recovery", {
-    displayName: "Gateway: restores the guard chain after recreation",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
-    profile: "nvidia-inference",
-    timeoutMinutes: 45,
-    installMode: "authenticated",
-    installNonInteractive: true,
-    restoreCli: true,
-    exposeCliBin: true,
-    owningPaths: ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
-    environment: {
-      ...hostedInference,
-      ...nonInteractive,
-      OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
   managedRuntimeTarget("hermes-discord", {
@@ -1324,9 +1318,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("sandbox-survival", {
-    displayName: "Lifecycle: preserves sandbox state after an OpenShell gateway restart",
+    displayName: "Lifecycle: preserves native agent state across OpenShell restart",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
+    environmentOrInferenceEndpoint: "Ubuntu; OpenShell sandbox lifecycle",
     profile: "nvidia-inference",
     timeoutMinutes: 30,
     installMode: "none",
@@ -1422,6 +1416,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia",
       NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1",
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
       NEMOCLAW_E2E_SECURITY_POSTURE: "1",

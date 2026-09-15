@@ -609,7 +609,7 @@ describe.concurrent("CLI sandbox status text output", () => {
           "#!/usr/bin/env bash",
           ...(gatewayState === "missing"
             ? [
-                `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'NotFound: sandbox not found'; exit 1; fi`,
+                `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'Error: code: "Some requested entity was not found", message: "sandbox not found"'; exit 1; fi`,
               ]
             : []),
           `if [ "$1" = "sandbox" ] && [ "$2" = "stop" ]; then touch ${JSON.stringify(stoppedState)}; exit 0; fi`,
