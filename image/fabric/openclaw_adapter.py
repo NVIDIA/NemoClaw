@@ -23,6 +23,28 @@ NODE = '/usr/local/bin/node'
 CLI = '/app/openclaw.mjs'
 
 
+def agent_entries(name, inference):
+    agents = inference.get('agents') if inference else None
+    if agents is None:
+        return {name: {}}
+    if not isinstance(agents, list) or not agents or agents[0].get('name') != name:
+        raise ValueError('invalid agent roster')
+    entries = {}
+    for agent in agents:
+        if (not isinstance(agent, dict) or set(agent) - {'name', 'tools'}
+                or not isinstance(agent.get('name'), str)
+                or not re.fullmatch(r'[a-z][a-z0-9-]{0,39}', agent['name'])
+                or agent['name'] in entries
+                or ('tools' in agent and agent['tools'] != {'allow': ['read']})):
+            raise ValueError('invalid agent policy')
+        agent_name = agent['name']
+        entries[agent_name] = {
+            'workspace': '/sandbox/workspace' if agent_name == name else f'/sandbox/workspaces/{agent_name}',
+            **({'tools': {'allow': ['read']}} if 'tools' in agent else {}),
+        }
+    return entries
+
+
 def native_configuration(name, inference=None):
     config = {
         'gateway': {'mode': 'local', 'bind': 'loopback', 'port': 18789,
@@ -37,7 +59,7 @@ def native_configuration(name, inference=None):
         'agents': {'defaults': {'model': {'primary': 'openshell/primary'},
                               'workspace': '/sandbox/workspace', 'sandbox': {'mode': 'off'},
                               'heartbeat': {'every': '0m'}},
-                   'entries': {name: {}}},
+                   'entries': agent_entries(name, inference)},
         'memory': {'search': {'enabled': False}},
         'cron': {'enabled': False},
         'update': {'checkOnStart': False, 'auto': {'enabled': False}},
@@ -83,6 +105,13 @@ def owned_configuration(name, inference=None):
 def configuration_matches(name, inference=None):
     actual = json.loads((ROOT / 'openclaw.json').read_text())
     # Native settings (including channels, pairing and plugins) belong to OpenClaw.
+    if inference is not None and 'agents' in inference:
+        native = native_configuration(name, inference)
+        # Roster and tool settings are deployment-owned when explicitly declared.
+        # Exact comparison rejects extra grants such as alsoAllow, not just missing fields.
+        if (actual.get('tools') != native['tools']
+                or actual.get('agents') != native['agents']):
+            return False
     return contains(actual, owned_configuration(name, inference))
 
 
@@ -212,12 +241,19 @@ class OpenClawRuntime:
     async def _invoke(self, request, context):
         if self.failed or context.runtime_id != self.runtime_id or self.process.returncode is not None:
             raise lifecycle.LifecycleError('openclaw_runtime_unavailable', 'OpenClaw runtime is unavailable; no replay')
-        if not isinstance(request.input, str):
-            raise ValueError('local OpenClaw adapter accepts text input only')
+        name, message = self.name, request.input
+        if isinstance(message, dict) and set(message) == {'agent', 'message'}:
+            name, message = message['agent'], message['message']
+        if (not isinstance(message, str) or not isinstance(name, str)
+                or name not in agent_entries(self.name, self.inference)):
+            raise ValueError('expected text or a declared agent and text message')
+        if not configuration_matches(self.name, self.inference):
+            raise lifecycle.LifecycleError('openclaw_configuration_drift', 'deployment-owned configuration drifted')
+        session_key = f'agent:{name}:fabric-{self.runtime_id}'
         try:
             result = await self.rpc('agent', {
-                'agentId': self.name, 'sessionKey': self.session_key,
-                'message': request.input, 'idempotencyKey': context.invocation_id,
+                'agentId': name, 'sessionKey': session_key,
+                'message': message, 'idempotencyKey': context.invocation_id,
                 'deliver': False, 'timeout': 260,
             })
             if result.get('status') != 'ok':
@@ -227,10 +263,10 @@ class OpenClawRuntime:
                     or any(p.get('isError') for p in native.get('payloads', []))):
                 raise RuntimeError('OpenClaw agent turn aborted or failed')
             response = '\n'.join(p['text'] for p in native.get('payloads', []) if isinstance(p.get('text'), str))
-            history = await self.rpc('chat.history', {'sessionKey': self.session_key, 'limit': 200}, timeout=15)
+            history = await self.rpc('chat.history', {'sessionKey': session_key, 'limit': 200}, timeout=15)
             return AgentRunResult(status=AgentRunStatus.SUCCEEDED, output={
                 'harness': 'openclaw', 'response': response,
-                'session_key': self.session_key, 'gateway_pid': self.process.pid,
+                'session_key': session_key, 'gateway_pid': self.process.pid,
                 'messages': normalize_messages(history.get('messages', [])),
                 'native_result': result,
             })
@@ -242,7 +278,7 @@ class OpenClawRuntime:
             if not isinstance(error, Exception):
                 raise
             return AgentRunResult(status=AgentRunStatus.FAILED,
-                                  output={'harness': 'openclaw', 'session_key': self.session_key},
+                                  output={'harness': 'openclaw', 'session_key': session_key},
                                   error=AgentRunError(code='openclaw_invocation_failed', message=str(error)))
 
     async def stop(self):

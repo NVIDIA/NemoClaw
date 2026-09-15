@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from nemo_fabric_adapter_contract.models import AgentRunStatus
 from nemo_fabric_adapters.common import lifecycle
@@ -30,6 +31,11 @@ class FakeRuntime(OpenClawRuntime):
 
 
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        guard = patch("openclaw_adapter.configuration_matches", return_value=True)
+        guard.start()
+        self.addCleanup(guard.stop)
+
     async def test_uncertain_failure_is_not_replayed(self):
         runtime = FakeRuntime(TimeoutError('lost response'))
         request = SimpleNamespace(input="quotes ' and $(not-a-shell-command)\nnext")
@@ -93,6 +99,69 @@ class NativeConfigurationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 runtime.initialize_configuration()
             self.assertEqual(path.read_bytes(), drifted)
+
+
+
+class AgentPolicyTests(unittest.TestCase):
+    def test_three_agents_retain_independent_policies_and_reject_broadening(self):
+        import copy
+        import json
+        from pathlib import Path
+        import tempfile
+        from unittest.mock import patch
+        import openclaw_adapter as adapter
+        options = {'api': 'openai-completions', 'tuning': {}, 'agents': [
+            {'name': 'primary'}, {'name': 'reader', 'tools': {'allow': ['read']}},
+            {'name': 'reviewer', 'tools': {'allow': ['read']}}]}
+        with tempfile.TemporaryDirectory() as directory, patch.object(adapter, 'ROOT', Path(directory)):
+            runtime = OpenClawRuntime()
+            runtime.name, runtime.home, runtime.inference = 'primary', Path(directory), options
+            runtime.initialize_configuration()
+            path = Path(directory) / 'openclaw.json'
+            original = json.loads(path.read_text())
+            entries = original['agents']['entries']
+            self.assertEqual(set(entries), {'primary', 'reader', 'reviewer'})
+            self.assertNotIn('tools', entries['primary'])
+            self.assertEqual(entries['reader']['tools'], {'allow': ['read']})
+            self.assertNotEqual(entries['reader']['workspace'], entries['reviewer']['workspace'])
+            self.assertTrue(adapter.configuration_matches('primary', options))
+            for change in ('allow', 'alsoAllow', 'removed', 'extra-agent', 'global'):
+                changed = copy.deepcopy(original)
+                tools = changed['agents']['entries']['reader']['tools']
+                if change == 'allow':
+                    tools['allow'].append('exec')
+                elif change == 'alsoAllow':
+                    tools['alsoAllow'] = ['write']
+                elif change == 'removed':
+                    del changed['agents']['entries']['reader']['tools']
+                elif change == 'extra-agent':
+                    changed['agents']['entries']['unexpected'] = {}
+                else:
+                    changed['tools']['alsoAllow'] = ['exec']
+                path.write_text(json.dumps(changed))
+                before = path.read_bytes()
+                self.assertFalse(adapter.configuration_matches('primary', options), change)
+                with self.assertRaises(RuntimeError):
+                    runtime.initialize_configuration()
+                self.assertEqual(path.read_bytes(), before)
+
+class AgentRoutingTests(AdapterTests):
+    async def test_named_agents_use_distinct_sessions_and_unknown_agents_do_not_run(self):
+        runtime = FakeRuntime({'status': 'ok', 'result': {}})
+        runtime.inference = {'api': 'openai-completions', 'tuning': {}, 'agents': [
+            {'name': 'main'}, {'name': 'reader', 'tools': {'allow': ['read']}},
+            {'name': 'reviewer', 'tools': {'allow': ['read']}}]}
+        context = SimpleNamespace(runtime_id='runtime-test', invocation_id='turn-one')
+        for name in ('reader', 'reviewer'):
+            result = await runtime.invoke(SimpleNamespace(input={'agent': name, 'message': 'hello'}), context)
+            self.assertEqual(result.status, AgentRunStatus.SUCCEEDED)
+        calls = [params for method, params in runtime.calls if method == 'agent']
+        self.assertEqual([c['agentId'] for c in calls], ['reader', 'reviewer'])
+        self.assertNotEqual(calls[0]['sessionKey'], calls[1]['sessionKey'])
+        before = len(runtime.calls)
+        with self.assertRaises(ValueError):
+            await runtime.invoke(SimpleNamespace(input={'agent': 'unknown', 'message': 'hello'}), context)
+        self.assertEqual(len(runtime.calls), before)
 
 
 if __name__ == '__main__':
