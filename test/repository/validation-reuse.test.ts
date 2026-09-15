@@ -58,7 +58,10 @@ describe("validation reuse", () => {
   it("runs the compiler when an input changes while its bytes are read", () => {
     const options = check();
     runCachedCommand(options);
-    const change = changeInputDuringRead();
+    const source = path.join(root, "src/example.ts");
+    const stat = fs.statSync(source);
+    fs.utimesSync(source, stat.atime, new Date(stat.mtimeMs + 1_000));
+    const change = changeInputDuringRead(source);
     runCachedCommand(options);
     expect(change).toHaveBeenCalledOnce();
     expect(options.execute).toHaveBeenCalledTimes(2);
@@ -194,9 +197,20 @@ describe("validation reuse", () => {
     expect(runCachedCommand(options)).toBe(0);
     expect(runCachedCommand(options)).toBe(0);
     expect(options.execute).toHaveBeenCalledTimes(1);
-    expect(options.report).toHaveBeenLastCalledWith(
+    expect(options.report).toHaveBeenCalledWith(
       expect.stringContaining("reused successful validation"),
     );
+  });
+
+  it("does not reread unchanged dependencies on warm validation (#11782)", () => {
+    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
+    const dependency = path.join(root, "node_modules/typescript/compiler.js");
+    const observed = observeInputReads(dependency);
+    const options = check();
+    runCachedCommand(options);
+    runCachedCommand(options);
+    expect(observed).toHaveBeenCalledOnce();
+    expect(options.execute).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -255,15 +269,101 @@ describe("validation reuse", () => {
     expect(options.execute).toHaveBeenCalledTimes(3);
   });
 
-  it("reruns when the canonical comparison ref changes", () => {
+  it("reuses identical inputs after the commit and comparison ref change (#11782)", () => {
     const options = check();
     runCachedCommand(options);
     fixtureGit(root, "commit", "--allow-empty", "-m", "test: next");
-    const next = fixtureGit(root, "rev-parse", "HEAD").trim();
-    fixtureGit(root, "checkout", "--detach", "HEAD^");
-    fixtureGit(root, "update-ref", "refs/remotes/origin/main", next);
+    runCachedCommand(options);
+    fixtureGit(root, "update-ref", "refs/remotes/origin/main", "HEAD");
+    runCachedCommand(options);
+    expect(options.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      "inode",
+      (file: string) => {
+        const replacement = `${file}.replacement`;
+        fs.copyFileSync(file, replacement);
+        fs.renameSync(replacement, file);
+      },
+    ],
+    [
+      "modification time",
+      (file: string) => {
+        const stat = fs.statSync(file);
+        fs.utimesSync(file, stat.atime, new Date(stat.mtimeMs + 1_000));
+      },
+    ],
+  ])("rehashes when dependency %s identity changes (#11782)", (_field, mutate) => {
+    const dependency = path.join(root, "node_modules/typescript/compiler.js");
+    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
+    const options = check();
+    runCachedCommand(options);
+    mutate(dependency);
+    const observed = observeInputReads(dependency);
+    runCachedCommand(options);
+    expect(observed).toHaveBeenCalledOnce();
+    expect(options.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["mode", (file: string) => fs.chmodSync(file, 0o600)],
+    [
+      "file type",
+      (file: string) => {
+        fs.rmSync(file);
+        fs.mkdirSync(file);
+      },
+    ],
+  ])("reruns when dependency %s changes (#11782)", (_field, mutate) => {
+    const dependency = path.join(root, "node_modules/typescript/compiler.js");
+    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
+    const options = check();
+    runCachedCommand(options);
+    mutate(dependency);
     runCachedCommand(options);
     expect(options.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["missing", (_index: string) => undefined],
+    ["malformed", (index: string) => writeFixture(root, path.relative(root, index), "broken")],
+    ["symlink", (index: string) => fs.symlinkSync("fixture.json", index)],
+  ])("rehashes inputs when the digest index is %s (#11782)", (_state, prepareIndex) => {
+    const options = check();
+    runCachedCommand(options);
+    const index = path.join(root, ".git/nemoclaw-validation/file-digests-v1.json");
+    fs.rmSync(index);
+    prepareIndex(index);
+    const observed = observeInputReads(path.join(root, "src/example.ts"));
+    runCachedCommand(options);
+    expect(observed).toHaveBeenCalledOnce();
+    expect(options.execute).toHaveBeenCalledOnce();
+  });
+
+  it("prunes stale digest entries after successful validation (#11782)", () => {
+    const options = check();
+    runCachedCommand(options);
+    const index = path.join(root, ".git/nemoclaw-validation/file-digests-v1.json");
+    const contents = JSON.parse(fs.readFileSync(index, "utf8"));
+    contents.entries.push([path.join(root, "stale"), { ...contents.entries[0][1], lastSeen: 0 }]);
+    fs.writeFileSync(index, JSON.stringify(contents));
+    runCachedCommand(options);
+    const updated = JSON.parse(fs.readFileSync(index, "utf8"));
+    expect(updated.entries.some(([file]: [string]) => file === path.join(root, "stale"))).toBe(
+      false,
+    );
+  });
+
+  it("reports fingerprint, compiler, and post-check timings (#11782)", () => {
+    const options = check();
+    runCachedCommand(options);
+    expect(options.report).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /timings discovery=\d+ ms, source\/config=\d+ ms, dependencies=\d+ ms, compiler=\d+ ms, post-check=\d+ ms, total=\d+ ms/,
+      ),
+    );
   });
 
   it("reruns when the receipt is malformed", () => {
