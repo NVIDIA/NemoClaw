@@ -6,10 +6,13 @@ use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, con
 use serde_json::{Value, json};
 
 fn property(schema: &mut Value, field: &str, extra: Value) {
+    let Value::Object(extra) = extra else {
+        panic!("property constraints must be objects");
+    };
     schema["properties"][field]
         .as_object_mut()
         .expect("derived field exists")
-        .extend(extra.as_object().unwrap().clone());
+        .extend(extra);
 }
 fn integer(schema: &mut Value, field: &str, rule: &c::DefaultedInteger) {
     property(
@@ -22,7 +25,7 @@ fn integer(schema: &mut Value, field: &str, rule: &c::DefaultedInteger) {
         }),
     );
 }
-fn optional_string(schema: &mut Value, field: &str, default: &str, constraint: Value) {
+fn optional_string(schema: &mut Value, field: &str, default: &str, constraint: &Value) {
     property(
         schema,
         field,
@@ -78,19 +81,19 @@ pub(super) fn constrain(root: &mut Value) {
         &mut defs["Image"],
         "ref",
         DEFAULT_AGENT_IMAGE,
-        json!({"pattern": c::IMAGE}),
+        &json!({"pattern": c::IMAGE}),
     );
     optional_string(
         &mut defs["Runtime"],
         "provider",
         c::RUNTIME,
-        json!({"enum": c::RUNTIMES}),
+        &json!({"enum": c::RUNTIMES}),
     );
     optional_string(
         &mut defs["Network"],
         "tier",
         c::NETWORK_TIER,
-        json!({"const": c::NETWORK_TIER}),
+        &json!({"const": c::NETWORK_TIER}),
     );
     property(
         &mut defs["Network"],

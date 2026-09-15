@@ -81,9 +81,9 @@ fn specification(kind: &str, encoded: &str) -> Result<Spec, Error> {
     spec.validate()?;
     Ok(spec)
 }
-fn diagnostic(error: Error) -> ObservationError {
+fn diagnostic(error: &Error) -> ObservationError {
     match error {
-        Error::Observation(error) => error,
+        Error::Observation(error) => *error,
         Error::State(message) | Error::Conflict(message) => ObservationError::Backend(message),
         Error::PartialRuntime => ObservationError::Backend(
             "managed container is absent but owned persistent resources remain",
@@ -101,13 +101,13 @@ impl Backend for ManagedBackend {
     ) -> Result<Option<Row>, ObservationError> {
         self.observe(kind, prior, false, removing)
             .await
-            .map_err(diagnostic)
+            .map_err(|error| diagnostic(&error))
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
         match self.observe(kind, desired, true, false).await {
             Ok(Some(row)) => Mutation::complete(row),
             Ok(None) => Mutation::failed(ObservationError::Incomplete),
-            Err(error) => Mutation::failed(diagnostic(error)),
+            Err(error) => Mutation::failed(diagnostic(&error)),
         }
     }
     async fn remove(
@@ -125,7 +125,7 @@ impl Backend for ManagedBackend {
             ));
         }
         let spec = specification(kind, prior.get("spec").ok_or(ObservationError::Incomplete)?)
-            .map_err(diagnostic)?;
+            .map_err(|error| diagnostic(&error))?;
         let id = prior
             .get("id")
             .filter(|id| !id.is_empty())
@@ -136,7 +136,7 @@ impl Backend for ManagedBackend {
         } else {
             engine.replace_runtime(&spec, id).await
         }
-        .map_err(diagnostic)
+        .map_err(|error| diagnostic(&error))
     }
 }
 
@@ -211,11 +211,11 @@ pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationE
     if kind == STORAGE_KIND {
         let spec: Storage =
             serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
-        spec.validate().map_err(diagnostic)?;
+        spec.validate().map_err(|error| diagnostic(&error))?;
         Ok(spec.engine)
     } else {
         Ok(specification(kind, encoded)
-            .map_err(diagnostic)?
+            .map_err(|error| diagnostic(&error))?
             .engine()
             .to_owned())
     }

@@ -20,7 +20,7 @@ pub const CREDENTIAL: &str = "nemoclaw.nvidia.com/credential-env";
 pub const AGENT: &str = "nemoclaw.nvidia.com/agent";
 pub const AGENT_RUNTIME: &str = "nemoclaw.nvidia.com/agent-runtime";
 
-fn remote_error(status: tonic::Status) -> ObservationError {
+fn remote_error(status: &tonic::Status) -> ObservationError {
     match status.code() {
         tonic::Code::Unauthenticated => ObservationError::Authentication,
         tonic::Code::PermissionDenied => ObservationError::Permission,
@@ -36,7 +36,7 @@ fn authoritative<T>(
     match result {
         Ok(response) => Ok(Some(response.into_inner())),
         Err(status) if status.code() == tonic::Code::NotFound => Ok(None),
-        Err(status) => Err(remote_error(status)),
+        Err(status) => Err(remote_error(&status)),
     }
 }
 fn base(

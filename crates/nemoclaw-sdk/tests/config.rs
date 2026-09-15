@@ -244,7 +244,7 @@ fn pi_preserves_yaml_model_ids_and_explicit_custom_metadata() {
         let yaml = document.yaml().unwrap();
         assert_eq!(Document::parse(yaml.as_bytes()).unwrap(), document);
     }
-    let mut catalog = custom.clone();
+    let mut catalog = custom;
     let route = &mut catalog.spec.sandboxes[0].agents[0].inference.routes[0];
     route.overrides.model = "gpt-4o-mini".into();
     route.overrides.pi_model = None;

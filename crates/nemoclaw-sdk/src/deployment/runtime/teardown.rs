@@ -368,7 +368,7 @@ mod tests {
         let mut changed_storage = bindings.clone();
         changed_storage.get_mut(MODEL_STORAGE).unwrap().spec = "{}".into();
         assert!(teardown_expected(&record, &changed_storage, true).is_err());
-        let mut changed_owner = bindings.clone();
+        let mut changed_owner = bindings;
         let binding = changed_owner
             .get_mut("nemoclaw_inference_service.runtime")
             .unwrap();

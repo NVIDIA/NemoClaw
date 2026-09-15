@@ -4,6 +4,17 @@ use super::*;
 use crate::docker::fixture::Fixture;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
+#[test]
+fn environment_accepts_slices_and_preserves_last_assignment_and_equals() {
+    let values = ["A=first".into(), "EMPTY".into(), "A=last=value".into()];
+    assert_eq!(
+        environment(Some(&values[..])),
+        BTreeMap::from([("A", "last=value"), ("EMPTY", "")])
+    );
+    assert!(environment(None).is_empty());
+    assert!(environment(Some(&values[..0])).is_empty());
+}
+
 fn reference() -> (Spec, Value, Value, Value) {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let fixture = &fixtures[1];

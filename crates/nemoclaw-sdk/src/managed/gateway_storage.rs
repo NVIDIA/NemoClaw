@@ -131,7 +131,7 @@ impl Engine {
                         ..Default::default()
                     })
                     .await
-                    .map_err(remote)?;
+                    .map_err(|error| remote(&error))?;
                 volume = self.volume(&spec.volume()).await?;
                 verify_volume(
                     spec,
@@ -261,7 +261,7 @@ impl Engine {
                     initializer(spec, data_path)?,
                 )
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
             if created.id.is_empty() {
                 return Err(ObservationError::Incomplete.into());
             }
@@ -279,7 +279,7 @@ impl Engine {
             self.api
                 .start_container(helper_id, None)
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
         }
         let mut wait = self.api.wait_container(
             helper_id,
@@ -291,7 +291,7 @@ impl Engine {
             .next()
             .await
             .ok_or(ObservationError::Incomplete)?
-            .map_err(remote)?;
+            .map_err(|error| remote(&error))?;
         if status.status_code != 0 || status.error.is_some() {
             return Err(Error::Conflict(
                 "gateway credential initialization failed; container retained",
@@ -334,7 +334,7 @@ impl Engine {
                     config,
                 )
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
             source = self.container(&created.id).await?;
         }
         let source = source.ok_or(ObservationError::Incomplete)?;
@@ -369,6 +369,6 @@ impl Engine {
         self.api
             .remove_container(source_id, None)
             .await
-            .map_err(remote)
+            .map_err(|error| remote(&error))
     }
 }

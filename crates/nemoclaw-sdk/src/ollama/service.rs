@@ -205,7 +205,7 @@ impl Engine {
                 ..Default::default()
             })
             .await
-            .map_err(remote)?;
+            .map_err(|error| remote(&error))?;
         self.observe_ollama_storage(spec, id)
             .await?
             .ok_or(ObservationError::Incomplete.into())
@@ -246,7 +246,7 @@ impl Engine {
                     }),
                 )
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
         }
         Ok(())
     }
@@ -363,7 +363,7 @@ impl Engine {
                         ..Default::default()
                     })
                     .await
-                    .map_err(remote)?;
+                    .map_err(|error| remote(&error))?;
             }
             let volume = self
                 .volume(&spec.volume())
@@ -384,7 +384,7 @@ impl Engine {
                     spec.container()?,
                 )
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
         }
         let observed = self
             .observe_ollama(spec, id)
@@ -399,7 +399,7 @@ impl Engine {
             self.api
                 .start_container(container, None)
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
         }
         self.observe_ollama(spec, &observed.id)
             .await?

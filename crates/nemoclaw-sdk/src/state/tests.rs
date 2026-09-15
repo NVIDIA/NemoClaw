@@ -38,7 +38,7 @@ fn duplicate_unbound_and_multiple_instances_are_rejected() {
     let store = Store::open(dir.path()).unwrap();
     let resource = serde_json::json!({"type":"nemoclaw_workspace","name":"deployment","instances":[{"attributes":{"id":"physical"}}]});
     for resources in [
-        serde_json::json!([resource.clone(), resource.clone()]),
+        serde_json::json!([resource, resource]),
         serde_json::json!([{"type":"nemoclaw_workspace","name":"deployment","instances":[]}]),
         serde_json::json!([{"type":"nemoclaw_workspace","name":"deployment","instances":[{"attributes":{"id":""}}]}]),
     ] {

@@ -54,7 +54,7 @@ fn source_archive_is_reproducible_and_rejects_paths_outside_its_root() {
         ("LICENSE".into(), b.clone()),
     ];
     let first = nemoclaw_build::source_archive(&files, 1234).unwrap();
-    let mut reversed = files.clone();
+    let mut reversed = files;
     reversed.reverse();
     assert_eq!(
         first,

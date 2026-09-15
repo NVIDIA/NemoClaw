@@ -151,8 +151,7 @@ fn digest(value: &str) -> bool {
 }
 impl InlineRecipe {
     pub fn key(&self, service: &Service) -> String {
-        let bytes =
-            serde_json::to_vec(&(service.model.clone(), self)).expect("recipe serialization");
+        let bytes = serde_json::to_vec(&(&service.model, self)).expect("recipe serialization");
         Sha256::digest(bytes)
             .iter()
             .map(|b| format!("{b:02x}"))

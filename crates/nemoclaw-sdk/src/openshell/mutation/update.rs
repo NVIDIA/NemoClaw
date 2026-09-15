@@ -41,7 +41,7 @@ impl OpenShell {
                     workspace: workspace.into(),
                 }))
                 .await
-                .map_err(remote_error)?
+                .map_err(|error| remote_error(&error))?
                 .into_inner()
                 .provider
                 .ok_or(ObservationError::Incomplete)?;
@@ -65,7 +65,7 @@ impl OpenShell {
                     ..Default::default()
                 }))
                 .await
-                .map_err(remote_error)?;
+                .map_err(|error| remote_error(&error))?;
         }
         Ok(())
     }

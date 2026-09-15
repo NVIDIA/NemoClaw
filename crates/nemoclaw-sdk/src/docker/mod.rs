@@ -68,7 +68,7 @@ impl Engine {
         &self.endpoint
     }
     pub async fn info(&self) -> Result<SystemInfo, Error> {
-        let info = self.api.info().await.map_err(remote)?;
+        let info = self.api.info().await.map_err(|error| remote(&error))?;
         if info.id.as_ref().is_none_or(String::is_empty) {
             return Err(ObservationError::Incomplete.into());
         }
@@ -110,7 +110,7 @@ impl Engine {
                         bytes.extend(chunk);
                     }
                     Err(error) if is_missing(&error) && bytes.is_empty() => return Ok(None),
-                    Err(error) => return Err(remote(error)),
+                    Err(error) => return Err(remote(&error)),
                 }
             }
             read_archive(&bytes, limit).map(Some)
@@ -159,7 +159,7 @@ impl Engine {
                 bollard::body_full(bytes.into()),
             )
             .await
-            .map_err(remote)
+            .map_err(|error| remote(&error))
     }
 }
 pub(crate) fn is_missing(error: &bollard::errors::Error) -> bool {
@@ -171,7 +171,7 @@ pub(crate) fn is_missing(error: &bollard::errors::Error) -> bool {
         }
     )
 }
-pub(crate) fn remote(error: bollard::errors::Error) -> Error {
+pub(crate) fn remote(error: &bollard::errors::Error) -> Error {
     match error {
         bollard::errors::Error::DockerResponseServerError {
             status_code: 401, ..
@@ -186,7 +186,7 @@ fn optional<T>(result: Result<T, bollard::errors::Error>) -> Result<Option<T>, E
     match result {
         Ok(value) => Ok(Some(value)),
         Err(error) if is_missing(&error) => Ok(None),
-        Err(error) => Err(remote(error)),
+        Err(error) => Err(remote(&error)),
     }
 }
 fn read_archive(bytes: &[u8], limit: usize) -> Result<Vec<u8>, Error> {

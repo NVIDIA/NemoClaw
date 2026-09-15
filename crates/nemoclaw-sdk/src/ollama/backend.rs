@@ -100,9 +100,9 @@ impl OllamaBackend {
         }))
     }
 }
-fn diagnostic(error: Error) -> ObservationError {
+fn diagnostic(error: &Error) -> ObservationError {
     match error {
-        Error::Observation(error) => error,
+        Error::Observation(error) => *error,
         Error::State(message) | Error::Conflict(message) => ObservationError::Backend(message),
         Error::PartialRuntime => ObservationError::Backend(
             "Ollama process is absent but owned persistent storage remains",
@@ -120,13 +120,13 @@ impl Backend for OllamaBackend {
     ) -> Result<Option<Row>, ObservationError> {
         self.observe(kind, prior, false, removing)
             .await
-            .map_err(diagnostic)
+            .map_err(|error| diagnostic(&error))
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
         match self.observe(kind, desired, true, false).await {
             Ok(Some(row)) => Mutation::complete(row),
             Ok(None) => Mutation::failed(ObservationError::Incomplete),
-            Err(error) => Mutation::failed(diagnostic(error)),
+            Err(error) => Mutation::failed(diagnostic(&error)),
         }
     }
     async fn remove(
@@ -143,7 +143,7 @@ impl Backend for OllamaBackend {
         if kind == "ollama_model" {
             self.observe(kind, prior, false, true)
                 .await
-                .map_err(diagnostic)?;
+                .map_err(|error| diagnostic(&error))?;
             return Ok(());
         }
         if kind != "ollama" {
@@ -167,6 +167,6 @@ impl Backend for OllamaBackend {
         self.engine
             .remove_ollama(&spec, &field("id")?)
             .await
-            .map_err(diagnostic)
+            .map_err(|error| diagnostic(&error))
     }
 }

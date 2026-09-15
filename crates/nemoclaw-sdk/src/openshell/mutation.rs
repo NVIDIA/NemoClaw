@@ -122,7 +122,7 @@ impl OpenShell {
                 ..Default::default()
             }))
             .await
-            .map_err(remote_error)?;
+            .map_err(|error| remote_error(&error))?;
         Ok(())
     }
     async fn delete_bound(&self, kind: &str, want: &Row) -> Result<(), ObservationError> {
@@ -169,7 +169,7 @@ impl OpenShell {
         if let Err(status) = result
             && status.code() != tonic::Code::NotFound
         {
-            return Err(remote_error(status));
+            return Err(remote_error(&status));
         }
         loop {
             let Some(row) = self.observe(kind, workspace, name, true).await? else {

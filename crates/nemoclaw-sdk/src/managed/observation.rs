@@ -129,13 +129,13 @@ fn list(value: &Value) -> Value {
         normalized(value.clone())
     }
 }
-fn environment(values: Option<&Vec<String>>) -> BTreeMap<String, String> {
+fn environment(values: Option<&[String]>) -> BTreeMap<&str, &str> {
     values
         .into_iter()
         .flatten()
         .map(|value| {
             let (key, value) = value.split_once('=').unwrap_or((value, ""));
-            (key.into(), value.into())
+            (key, value)
         })
         .collect()
 }
@@ -143,7 +143,7 @@ pub(crate) fn verify_container(
     spec: &Spec,
     container: &ContainerInspectResponse,
     data_path: &str,
-    image_env: Option<&Vec<String>>,
+    image_env: Option<&[String]>,
     image_id: &str,
 ) -> Result<(), Error> {
     if container.id.as_ref().is_none_or(String::is_empty)
@@ -228,8 +228,8 @@ pub(crate) fn verify_container(
         return Err(Error::Conflict("inference shared memory policy drifted"));
     }
     let mut expected_env = environment(image_env);
-    expected_env.extend(environment(expected.env.as_ref()));
-    if environment(config.env.as_ref()) != expected_env {
+    expected_env.extend(environment(expected.env.as_deref()));
+    if environment(config.env.as_deref()) != expected_env {
         return Err(Error::Conflict("managed runtime environment drifted"));
     }
     let mounts = container
@@ -331,7 +331,7 @@ impl Engine {
                 spec,
                 &container,
                 &volume.mountpoint,
-                image_config.env.as_ref(),
+                image_config.env.as_deref(),
                 image_id,
             )?;
             let container_id = container.id.ok_or(ObservationError::Incomplete)?;

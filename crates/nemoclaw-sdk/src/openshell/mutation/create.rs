@@ -36,7 +36,7 @@ impl OpenShell {
                 labels: labels(want),
             }))
             .await
-            .map_err(remote_error)?
+            .map_err(|error| remote_error(&error))?
             .into_inner();
         let row = base(response.workspace.and_then(|w| w.metadata), name, false)?;
         verify_identity(want, &row)?;
@@ -52,7 +52,7 @@ impl OpenShell {
                 workspace: workspace.into(),
             }))
             .await
-            .map_err(remote_error)?
+            .map_err(|error| remote_error(&error))?
             .into_inner();
         let row = base(response.provider.and_then(|p| p.metadata), name, false)?;
         verify_identity(want, &row)?;
@@ -102,7 +102,7 @@ impl OpenShell {
                 }),
             )
             .await
-            .map_err(remote_error)?
+            .map_err(|error| remote_error(&error))?
             .into_inner();
         let row = base(response.sandbox.and_then(|s| s.metadata), name, false)?;
         verify_identity(want, &row)?;

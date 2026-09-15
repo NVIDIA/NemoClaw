@@ -77,7 +77,7 @@ impl Engine {
                         ..Default::default()
                     })
                     .await
-                    .map_err(remote)?;
+                    .map_err(|error| remote(&error))?;
                 volume = self.volume(&spec.volume()).await?;
             }
             let volume = volume.ok_or(ObservationError::Incomplete)?;
@@ -92,7 +92,7 @@ impl Engine {
                     spec.container(&volume.mountpoint)?,
                 )
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
             if created.id.is_empty() {
                 return Err(ObservationError::Incomplete.into());
             }
@@ -109,7 +109,7 @@ impl Engine {
             self.api
                 .start_container(&observed.container_id, None)
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
         }
         self.observe_runtime(spec, id).await?.ok_or(Error::Conflict(
             "started runtime is unobservable; retain intent",
@@ -173,7 +173,7 @@ impl Engine {
         };
         let mut stream = self.api.create_image(Some(options), None, None);
         while let Some(event) = stream.next().await {
-            let event = event.map_err(remote)?;
+            let event = event.map_err(|error| remote(&error))?;
             if event.error_detail.is_some() {
                 return Err(Error::Conflict(
                     "pinned image pull failed; inspect retained engine state",
@@ -193,7 +193,11 @@ impl Engine {
         {
             return Err(Error::Conflict("managed gateway network is absent"));
         }
-        let networks = self.api.list_networks(None).await.map_err(remote)?;
+        let networks = self
+            .api
+            .list_networks(None)
+            .await
+            .map_err(|error| remote(&error))?;
         let desired = spec
             .network_cidr()
             .parse::<ipnet::Ipv4Net>()
@@ -216,7 +220,10 @@ impl Engine {
             }
         }
         let request:NetworkCreateRequest=serde_json::from_value(json!({"Name":spec.network(),"Driver":"bridge","Labels":spec.labels()?,"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge()}]}})).map_err(|_|Error::State("invalid compiled gateway network"))?;
-        self.api.create_network(request).await.map_err(remote)?;
+        self.api
+            .create_network(request)
+            .await
+            .map_err(|error| remote(&error))?;
         let network = self
             .network(&spec.network())
             .await?
@@ -243,12 +250,12 @@ impl Engine {
                     }),
                 )
                 .await
-                .map_err(remote)?;
+                .map_err(|error| remote(&error))?;
         }
         self.api
             .remove_container(&observed.container_id, None)
             .await
-            .map_err(remote)
+            .map_err(|error| remote(&error))
     }
     pub async fn remove_runtime(&self, spec: &Spec, id: &str) -> Result<(), Error> {
         if self.observe_removal(spec, id).await?.is_none() {

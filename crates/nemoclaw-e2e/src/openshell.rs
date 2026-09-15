@@ -183,7 +183,12 @@ impl tower::Service<http::Request<Body>> for Service {
                 "/openshell.v1.OpenShell/CreateSandbox" => {
                     unary(request, state, create_sandbox).await
                 }
-                "/openshell.v1.OpenShell/GetSandbox" => unary(request, state, get_sandbox).await,
+                "/openshell.v1.OpenShell/GetSandbox" => {
+                    unary(request, state, |state, request| {
+                        get_sandbox(state, &request)
+                    })
+                    .await
+                }
                 "/openshell.v1.OpenShell/DeleteSandbox" => {
                     let delay = {
                         let mut state = state.lock().unwrap();
@@ -191,10 +196,16 @@ impl tower::Service<http::Request<Body>> for Service {
                         state.delete_delay
                     };
                     tokio::time::sleep(delay).await;
-                    unary(request, state, delete_sandbox).await
+                    unary(request, state, |state, request| {
+                        delete_sandbox(state, &request)
+                    })
+                    .await
                 }
                 "/openshell.v1.OpenShell/GetSandboxPolicyStatus" => {
-                    unary(request, state, policy_status).await
+                    unary(request, state, |state, request| {
+                        policy_status(state, &request)
+                    })
+                    .await
                 }
                 "/openshell.inference.v1.Inference/GetInferenceRoute" => {
                     unary(request, state, get_route).await
@@ -203,15 +214,26 @@ impl tower::Service<http::Request<Body>> for Service {
                     unary(request, state, set_route).await
                 }
                 "/openshell.inference.v1.Inference/DeleteInferenceRoute" => {
-                    unary(request, state, delete_route).await
+                    unary(request, state, |state, request| {
+                        delete_route(state, &request)
+                    })
+                    .await
                 }
                 "/openshell.v1.OpenShell/GetWorkspace" => {
-                    unary(request, state, get_workspace).await
+                    unary(request, state, |state, request| {
+                        get_workspace(state, &request)
+                    })
+                    .await
                 }
                 "/openshell.v1.OpenShell/CreateWorkspace" => {
                     unary(request, state, create_workspace).await
                 }
-                "/openshell.v1.OpenShell/GetProvider" => unary(request, state, get_provider).await,
+                "/openshell.v1.OpenShell/GetProvider" => {
+                    unary(request, state, |state, request| {
+                        get_provider(state, &request)
+                    })
+                    .await
+                }
                 "/openshell.v1.OpenShell/CreateProvider" => {
                     unary(request, state, create_provider).await
                 }
@@ -219,7 +241,10 @@ impl tower::Service<http::Request<Body>> for Service {
                     unary(request, state, update_provider).await
                 }
                 "/openshell.v1.OpenShell/DeleteProvider" => {
-                    unary(request, state, delete_provider).await
+                    unary(request, state, |state, request| {
+                        delete_provider(state, &request)
+                    })
+                    .await
                 }
                 _ => http::Response::builder()
                     .status(200)
@@ -234,7 +259,7 @@ impl tower::Service<http::Request<Body>> for Service {
 }
 fn get_workspace(
     state: &mut State,
-    q: p::GetWorkspaceRequest,
+    q: &p::GetWorkspaceRequest,
 ) -> Result<p::GetWorkspaceResponse, Status> {
     state.read("workspace")?;
     Ok(p::GetWorkspaceResponse {
@@ -266,7 +291,7 @@ fn create_workspace(
 }
 fn get_provider(
     state: &mut State,
-    q: p::GetProviderRequest,
+    q: &p::GetProviderRequest,
 ) -> Result<p::ProviderResponse, Status> {
     state.read("provider")?;
     let mut provider = state
@@ -341,7 +366,7 @@ fn update_provider(
 }
 fn delete_provider(
     state: &mut State,
-    q: p::DeleteProviderRequest,
+    q: &p::DeleteProviderRequest,
 ) -> Result<p::DeleteProviderResponse, Status> {
     let deleted = state
         .providers
@@ -408,7 +433,7 @@ fn create_sandbox(
         sandbox: Some(sandbox),
     })
 }
-fn get_sandbox(state: &mut State, q: p::GetSandboxRequest) -> Result<p::SandboxResponse, Status> {
+fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::SandboxResponse, Status> {
     state.read("sandbox")?;
     Ok(p::SandboxResponse {
         sandbox: Some(
@@ -422,7 +447,7 @@ fn get_sandbox(state: &mut State, q: p::GetSandboxRequest) -> Result<p::SandboxR
 }
 fn delete_sandbox(
     state: &mut State,
-    q: p::DeleteSandboxRequest,
+    q: &p::DeleteSandboxRequest,
 ) -> Result<p::DeleteSandboxResponse, Status> {
     let deleted = state
         .sandboxes
@@ -435,7 +460,7 @@ fn delete_sandbox(
 }
 fn policy_status(
     state: &mut State,
-    q: p::GetSandboxPolicyStatusRequest,
+    q: &p::GetSandboxPolicyStatusRequest,
 ) -> Result<p::GetSandboxPolicyStatusResponse, Status> {
     state.read("policy")?;
     let sandbox = state
@@ -490,7 +515,7 @@ fn set_route(
 }
 fn delete_route(
     state: &mut State,
-    q: p::DeleteInferenceRouteRequest,
+    q: &p::DeleteInferenceRouteRequest,
 ) -> Result<p::DeleteInferenceRouteResponse, Status> {
     let deleted = state.routes.remove(&q.workspace).is_some();
     if deleted {

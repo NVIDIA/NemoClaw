@@ -62,7 +62,7 @@ impl Models {
         if let Some(body) = body {
             request = request.body(body);
         }
-        let response = request.send().await.map_err(transport)?;
+        let response = request.send().await.map_err(|error| transport(&error))?;
         match response.status() {
             reqwest::StatusCode::OK => Ok(response),
             reqwest::StatusCode::UNAUTHORIZED => Err(ObservationError::Authentication.into()),
@@ -94,7 +94,7 @@ impl Models {
                 .request(reqwest::Method::GET, "/api/tags", None)
                 .await?;
             let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(transport)? {
+            while let Some(chunk) = response.chunk().await.map_err(|error| transport(&error))? {
                 if bytes.len() + chunk.len() > 1 << 20 {
                     return Err(ObservationError::Incomplete.into());
                 }
@@ -148,7 +148,7 @@ impl Models {
             .await?;
         let mut line = Vec::new();
         let mut complete = false;
-        while let Some(chunk) = response.chunk().await.map_err(transport)? {
+        while let Some(chunk) = response.chunk().await.map_err(|error| transport(&error))? {
             for byte in chunk {
                 if byte == b'\n' {
                     event(&line, &mut complete)?;
@@ -194,8 +194,8 @@ fn event(line: &[u8], complete: &mut bool) -> Result<(), Error> {
     *complete = event.status == "success";
     Ok(())
 }
-fn transport(error: reqwest::Error) -> Error {
-    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+fn transport(error: &reqwest::Error) -> Error {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
     while let Some(cause) = source {
         if cause
             .downcast_ref::<std::io::Error>()

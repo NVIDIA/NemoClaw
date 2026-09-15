@@ -43,7 +43,7 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
         args.windows(2)
             .any(|p| p == ["--served-model-name", "fixture-model"])
     );
-    let mut wrong_hardware = capacity.clone();
+    let mut wrong_hardware = capacity;
     wrong_hardware.gpu = "other GPU".into();
     assert!(nemoclaw_sdk::hardware::check_capacity(&service, &wrong_hardware, true, 0, 0).is_err());
     service.model.revision = "0".repeat(40);

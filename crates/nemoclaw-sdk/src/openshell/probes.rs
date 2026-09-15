@@ -39,7 +39,7 @@ impl OpenShell {
             .grpc()
             .get_gateway_info(self.request(proto::GetGatewayInfoRequest {}))
             .await
-            .map_err(remote_error)?
+            .map_err(|error| remote_error(&error))?
             .into_inner();
         if info.gateway_version != "0.0.116"
             || info.compute_drivers.len() != 1
@@ -63,7 +63,7 @@ impl OpenShell {
                 workspace: value(binding, "workspace").into(),
             }))
             .await
-            .map_err(remote_error)?
+            .map_err(|error| remote_error(&error))?
             .into_inner()
             .sandbox
             .ok_or(ObservationError::Incomplete)?;
@@ -107,11 +107,15 @@ impl OpenShell {
             .grpc()
             .exec_sandbox(request)
             .await
-            .map_err(remote_error)?
+            .map_err(|error| remote_error(&error))?
             .into_inner();
         let mut output = Vec::new();
         let mut exit = None;
-        while let Some(event) = stream.message().await.map_err(remote_error)? {
+        while let Some(event) = stream
+            .message()
+            .await
+            .map_err(|error| remote_error(&error))?
+        {
             if exit.is_some() {
                 return Err(ObservationError::Incomplete.into());
             }
