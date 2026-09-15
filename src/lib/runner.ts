@@ -54,7 +54,10 @@ type SpawnResult = SpawnSyncReturns<string | Buffer>;
 const dockerHost = detectDockerHost();
 if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
-  if (dockerHost.source === "socket") {
+  // A fallback socket replaces the ambient context selector, and a resolved
+  // context has already been reduced to the endpoint it named. In both cases
+  // the selector must not override the endpoint recorded here (#11719).
+  if (dockerHost.source !== "env") {
     delete process.env.DOCKER_CONTEXT;
   }
 }

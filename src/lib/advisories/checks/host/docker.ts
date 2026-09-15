@@ -15,6 +15,12 @@ const INSTALL_DOCKER_COMMANDS: Readonly<Record<PackageManager, string>> = {
   unknown: "Install Docker, then rerun `nemoclaw onboard`.",
 };
 
+/** The endpoint shape every onboarding Docker authority must have. */
+const SUPPORTED_DOCKER_ENDPOINT_REASON =
+  "Onboarding supports only an absolute unix:// Docker socket. " +
+  "The socket path cannot contain a single quote or line break. " +
+  "TCP and SSH endpoints and relative paths are not supported, even when reachable. ";
+
 export function wslDockerBlocksRemainingChecks(host: HostAssessment): boolean {
   return (
     host.isWsl &&
@@ -83,23 +89,43 @@ export const invalidDockerHost: AdvisoryCheck<HostAssessment> = {
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
+  /** Name the variable that actually selected the endpoint: DOCKER_CONTEXT selects one too (#11719). */
   check(host) {
     if (!host.dockerHostInvalid || !host.dockerInstalled) {
       return null;
     }
+    const context = host.dockerContextInvalid;
+    if (context === undefined) {
+      return hostAdvisory(invalidDockerHost, {
+        title: "Fix the DOCKER_HOST endpoint",
+        kind: "manual",
+        reason:
+          "DOCKER_HOST is set to an endpoint onboarding cannot use. " +
+          SUPPORTED_DOCKER_ENDPOINT_REASON +
+          "This is a DOCKER_HOST configuration problem, not a docker-group permission or stopped-daemon issue.",
+        commands: [
+          "unset DOCKER_HOST   # use Docker's default socket",
+          "# or point it at a local socket, for example:",
+          "export DOCKER_HOST=unix:///var/run/docker.sock",
+          "nemoclaw onboard",
+        ],
+      });
+    }
+    // The name is quoted for the shell because it reaches the operator inside a
+    // printed command, and nothing has constrained its shape by this point.
+    const quotedContext = shellSingleQuoted(context);
     return hostAdvisory(invalidDockerHost, {
-      title: "Fix the DOCKER_HOST endpoint",
+      title: "Fix the DOCKER_CONTEXT endpoint",
       kind: "manual",
       reason:
-        "DOCKER_HOST is set to an endpoint onboarding cannot use. " +
-        "Onboarding supports only an absolute unix:// Docker socket. " +
-        "The socket path cannot contain a single quote or line break. " +
-        "TCP and SSH endpoints and relative paths are not supported, even when reachable. " +
-        "This is a DOCKER_HOST configuration problem, not a docker-group permission or stopped-daemon issue.",
+        `DOCKER_CONTEXT selects the Docker context ${quotedContext}, which does not resolve to an endpoint onboarding can use. ` +
+        "Onboarding does not fall back to the default Docker socket here: that would report readiness for a daemon you did not select. " +
+        SUPPORTED_DOCKER_ENDPOINT_REASON +
+        "This is a DOCKER_CONTEXT configuration problem, not a docker-group permission or stopped-daemon issue.",
       commands: [
-        "unset DOCKER_HOST   # use Docker's default socket",
-        "# or point it at a local socket, for example:",
-        "export DOCKER_HOST=unix:///var/run/docker.sock",
+        "unset DOCKER_CONTEXT   # use Docker's default context",
+        `docker context inspect ${quotedContext} --format '{{.Endpoints.docker.Host}}'   # show the selected endpoint`,
+        "# or select a context whose endpoint is an absolute unix:// socket",
         "nemoclaw onboard",
       ],
     });
@@ -175,17 +201,51 @@ export const chooseDockerAuthority: AdvisoryCheck<HostAssessment> = {
   },
 };
 
+export const fixMissingDockerEndpointSocket: AdvisoryCheck<HostAssessment> = {
+  id: "docker_endpoint_socket_missing",
+  phase: "preflight.host",
+  severity: "blocking",
+  resumeSafe: false,
+  /** Name the absent socket instead of a group grant or a daemon restart (#11719). */
+  check(host) {
+    const endpoint = host.dockerEndpointSocketMissing;
+    if (endpoint === undefined || !host.dockerInstalled) return null;
+    const socketPath = shellSingleQuoted(endpoint.slice("unix://".length));
+    return hostAdvisory(fixMissingDockerEndpointSocket, {
+      title: "Fix the selected Docker endpoint",
+      kind: "manual",
+      reason:
+        `The selected Docker endpoint ${endpoint} has no socket at that path. ` +
+        "Nothing can be listening there, so this is not a docker-group permission or stopped-daemon problem, " +
+        "and NemoClaw withholds both of those remedies rather than act on a wrong cause. " +
+        "DOCKER_HOST or DOCKER_CONTEXT selects this endpoint, and the socket must exist before onboarding can use it.",
+      commands: [
+        `ls -l ${socketPath}   # confirm the selected socket is absent`,
+        "unset DOCKER_HOST DOCKER_CONTEXT   # use Docker's default endpoint",
+        "# or point the selector at a socket that exists",
+        "nemoclaw onboard",
+      ],
+    });
+  },
+};
+
 export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   id: "docker_group_permission",
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
-  /** Silent while an authority conflict is observed: group membership is not the diagnosed cause (#10622). */
+  /**
+   * Silent while an authority conflict is observed: group membership is not the
+   * diagnosed cause (#10622). Silent too when the selected endpoint's socket is
+   * absent, where no group can grant access to a path nothing listens on
+   * (#11719).
+   */
   check(host) {
     if (
       host.dockerHostInvalid ||
       host.dockerProbeIssue !== undefined ||
       host.dockerAuthorityConflict !== undefined ||
+      host.dockerEndpointSocketMissing !== undefined ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -218,13 +278,19 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
-  /** Silent while an authority conflict is observed: two engines already answer (#10622). */
+  /**
+   * Silent while an authority conflict is observed: two engines already answer
+   * (#10622). Silent too when an explicitly selected endpoint's socket is
+   * absent, where starting the default daemon creates a different socket
+   * (#11719).
+   */
   check(host) {
     const likelyGroupIssue = host.platform === "linux" && host.dockerServiceActive === true;
     if (
       host.dockerHostInvalid ||
       host.dockerProbeIssue !== undefined ||
       host.dockerAuthorityConflict !== undefined ||
+      host.dockerEndpointSocketMissing !== undefined ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -287,6 +353,7 @@ export const DOCKER_HOST_ADVISORY_CHECKS = Object.freeze([
   invalidDockerHost,
   retryDockerProbe,
   chooseDockerAuthority,
+  fixMissingDockerEndpointSocket,
   addUserToDockerGroup,
   startDocker,
   dockerDesktopCredentialStoreHeadless,

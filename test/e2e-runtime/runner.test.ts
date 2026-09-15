@@ -56,14 +56,18 @@ function requireCall(calls: SpawnCall[], index: number): SpawnCall {
   return call;
 }
 
+/**
+ * Authority detection probes Docker before the runner serves any caller: it
+ * reads the daemon banner, and resolves an ambient `DOCKER_CONTEXT` to the
+ * endpoint that context names (#11719). Neither is a runner command.
+ */
 function withoutDockerAuthorityProbe(calls: SpawnCall[]): SpawnCall[] {
-  return calls.filter(
-    ([command, args]) =>
-      command !== "docker" ||
-      args?.[0] !== "version" ||
-      args?.[1] !== "--format" ||
-      args?.[2] !== "{{json .}}",
-  );
+  return calls.filter(([command, args]) => {
+    const isVersionProbe =
+      args?.[0] === "version" && args?.[1] === "--format" && args?.[2] === "{{json .}}";
+    const isContextProbe = args?.[0] === "context" && args?.[1] === "inspect";
+    return command !== "docker" || !(isVersionProbe || isContextProbe);
+  });
 }
 
 describe("runner helpers", () => {
