@@ -119,6 +119,7 @@ class AgentPolicyTests(unittest.TestCase):
             runtime.initialize_configuration()
             path = Path(directory) / 'openclaw.json'
             original = json.loads(path.read_text())
+            self.assertEqual(original['agents'].get('ownership'), 'explicit')
             entries = original['agents']['entries']
             self.assertEqual(set(entries), {'primary', 'reader', 'reviewer'})
             self.assertNotIn('tools', entries['primary'])

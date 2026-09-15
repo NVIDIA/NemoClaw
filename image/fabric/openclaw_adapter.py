@@ -66,6 +66,9 @@ def native_configuration(name, inference=None):
         'tools': {'profile': 'coding', 'exec': {'host': 'gateway', 'mode': 'full'}},
     }
 
+    if inference is not None and 'agents' in inference:
+        # OpenClaw persists this marker for an explicit roster at gateway startup.
+        config['agents']['ownership'] = 'explicit'
     if inference is not None:
         provider = config['models']['providers']['openshell']
         provider['api'] = inference['api']
