@@ -194,6 +194,30 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     ).resolves.toMatchObject({ kind: "failed", ambiguous: true });
   });
 
+  it("keeps an interrupted connection-refusal result ambiguous", async () => {
+    const error = Object.assign(new Error("interrupted"), { code: "ABORT_ERR" });
+    const capture = vi.fn().mockResolvedValue({
+      status: 1,
+      output: "tcp connect error: Connection refused (os error 61)",
+      error,
+    });
+
+    await expect(
+      createCliOpenShellSandboxLifecycle({ capture }).deleteSandbox(request),
+    ).resolves.toMatchObject({ kind: "failed", ambiguous: true });
+  });
+
+  it("does not trust explicit absence from an unsettled runner result", async () => {
+    const capture = vi.fn().mockResolvedValue({
+      status: null,
+      output: "Error: sandbox 'alpha' not found.",
+    });
+
+    await expect(
+      createCliOpenShellSandboxLifecycle({ capture }).deleteSandbox(request),
+    ).resolves.toMatchObject({ kind: "failed", ambiguous: true });
+  });
+
   it("keeps a signaled runner result ambiguous", async () => {
     const run = vi.fn().mockReturnValue({ status: 1, stdout: "", stderr: "", signal: "SIGTERM" });
 

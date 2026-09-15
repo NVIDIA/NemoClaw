@@ -160,7 +160,8 @@ function targetArgs(
 }
 
 function commandOutput(result: CapturedOpenShellCommandResult): string {
-  return `${result.stderr ?? ""}\n${result.stdout ?? result.output ?? ""}`.trim();
+  const streams = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
+  return streams || result.output.trim();
 }
 
 function successfulCommandOutput(result: CapturedOpenShellCommandResult): string {
@@ -195,7 +196,8 @@ export function classifyCliOpenShellCommandError(
   if (errorCode === "ETIMEDOUT") {
     return { kind: "timeout", message: messages.timeout };
   }
-  if (result.status === 0 && !result.error) return null;
+  const printedError = /^\s*Error:/imu.test(output);
+  if (result.status === 0 && !result.error && !printedError) return null;
   if (isOpenShellSandboxSchemaMismatch(output)) {
     return {
       kind: "schema",
@@ -230,7 +232,7 @@ export function classifyCliOpenShellCommandError(
       message: "OpenShell could not reach the selected gateway.",
     };
   }
-  if (result.status !== 0 || result.error) {
+  if (result.status !== 0 || result.error || printedError) {
     return {
       kind: "command",
       reason: result.status === 2 ? "invalid_request" : "failed",

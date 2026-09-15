@@ -867,8 +867,7 @@ async function deletePortableOpenShellSandbox(
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
     if (result.error.kind === "command" && result.error.reason === "invalid_request") return false;
   }
-  if (result.kind === "accepted") runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
-  else if (result.kind === "absent") {
+  if (result.kind === "absent") {
     runtime.warn(sandboxDeleteAbsentMessage(sandboxName));
     return true;
   }
@@ -879,7 +878,10 @@ async function deletePortableOpenShellSandbox(
       sandboxName,
       target: { kind: "named", gatewayName },
     });
-    if (verified.result.ok && verified.result.value.state === "missing") return true;
+    if (verified.result.ok && verified.result.value.state === "missing") {
+      runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
+      return true;
+    }
     if (attempt < 4) runtime.sleep(200);
   }
   runtime.warn(`OpenShell sandbox '${sandboxName}' did not reach verified absence.`);

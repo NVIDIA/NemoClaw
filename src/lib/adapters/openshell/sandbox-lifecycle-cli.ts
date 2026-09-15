@@ -122,6 +122,15 @@ function isAmbiguousFailure(
 ): boolean {
   const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
   if (code === "ENOENT" || code === "EACCES") return false;
+  if (
+    error.kind === "timeout" ||
+    result.status === null ||
+    code === "ABORT_ERR" ||
+    code === "EPIPE" ||
+    code === "ENOBUFS"
+  ) {
+    return true;
+  }
   const output = outputOf(result);
   if (
     error.kind === "transport" &&
@@ -131,8 +140,7 @@ function isAmbiguousFailure(
   ) {
     return false;
   }
-  if (error.kind === "timeout" || error.kind === "transport" || result.status === null) return true;
-  return code === "ABORT_ERR" || code === "EPIPE" || code === "ENOBUFS";
+  return error.kind === "transport";
 }
 
 export function createCliOpenShellSandboxLifecycle(input: {
@@ -194,6 +202,8 @@ export function createCliOpenShellSandboxLifecycle(input: {
       if (!error) return { kind: "accepted", diagnostic, exitCode: 0 };
       if (
         error.kind === "command" &&
+        captured.status !== null &&
+        !captured.error &&
         isExplicitMissingOpenShellSandboxOutput(output, request.sandboxName)
       ) {
         return { kind: "absent", diagnostic, exitCode: captured.status ?? 1 };
