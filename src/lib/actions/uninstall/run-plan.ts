@@ -3688,8 +3688,32 @@ function recoverAbandonedInterruptedUninstallState(
     );
     return false;
   }
+  const quarantineRoot = `${quarantineBaseRoot}.cleanup-${randomUUID()}`;
+  try {
+    fs.renameSync(recoveryRoot, quarantineRoot);
+  } catch (error) {
+    runtime.warn(
+      `Unable to detach abandoned interrupted-uninstall state at ${recoveryRoot}: ${formatError(error)}. It was preserved for manual recovery.`,
+    );
+    return false;
+  }
+  let quarantineStat: fs.Stats;
+  try {
+    quarantineStat = fs.lstatSync(quarantineRoot);
+  } catch (error) {
+    runtime.warn(
+      `Unable to inspect detached interrupted-uninstall state at ${quarantineRoot}: ${formatError(error)}. Cleanup stopped before recovery or recursive removal.`,
+    );
+    return false;
+  }
+  if (quarantineStat.dev !== stat.dev || quarantineStat.ino !== stat.ino) {
+    runtime.warn(
+      `Abandoned interrupted-uninstall state changed identity while it was detached to ${quarantineRoot}. Cleanup stopped before recovery or recursive removal, and that path was preserved.`,
+    );
+    return false;
+  }
   const presentPreservedEntries = preservedEntries.filter((entry) =>
-    pathEntryExists(path.join(recoveryRoot, entry), runtime),
+    pathEntryExists(path.join(quarantineRoot, entry), runtime),
   );
   if (presentPreservedEntries.length > 0) {
     try {
@@ -3714,7 +3738,7 @@ function recoverAbandonedInterruptedUninstallState(
           .filter((entry) => !preservedTopLevelEntries.has(entry));
         if (unexpectedEntries.length > 0) {
           runtime.warn(
-            `Unable to recover preserved state because newer selected state exists at ${paths.nemoclawStateDir}. Cleanup stopped with abandoned state at ${recoveryRoot}.`,
+            `Unable to recover preserved state because newer selected state exists at ${paths.nemoclawStateDir}. Cleanup stopped with abandoned state at ${quarantineRoot}.`,
           );
           return false;
         }
@@ -3724,17 +3748,17 @@ function recoverAbandonedInterruptedUninstallState(
       assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), paths.nemoclawStateDir);
     } catch (error) {
       runtime.warn(
-        `Unable to prepare selected state for interrupted-uninstall recovery: ${formatError(error)}. Cleanup stopped with abandoned state at ${recoveryRoot}.`,
+        `Unable to prepare selected state for interrupted-uninstall recovery: ${formatError(error)}. Cleanup stopped with abandoned state at ${quarantineRoot}.`,
       );
       return false;
     }
   }
   for (const entry of presentPreservedEntries) {
-    const source = path.join(recoveryRoot, entry);
+    const source = path.join(quarantineRoot, entry);
     const destination = path.join(paths.nemoclawStateDir, entry);
     if (pathEntryExists(destination, runtime)) {
       runtime.warn(
-        `Unable to recover preserved ${entry} because state already exists at ${destination}. Cleanup stopped with abandoned state at ${recoveryRoot}.`,
+        `Unable to recover preserved ${entry} because state already exists at ${destination}. Cleanup stopped with abandoned state at ${quarantineRoot}.`,
       );
       return false;
     }
@@ -3742,7 +3766,7 @@ function recoverAbandonedInterruptedUninstallState(
       fs.renameSync(source, destination);
     } catch (error) {
       runtime.warn(
-        `Unable to recover preserved ${entry}: ${formatError(error)}. Cleanup stopped with abandoned state at ${recoveryRoot}.`,
+        `Unable to recover preserved ${entry}: ${formatError(error)}. Cleanup stopped with abandoned state at ${quarantineRoot}.`,
       );
       return false;
     }
@@ -3751,30 +3775,6 @@ function recoverAbandonedInterruptedUninstallState(
     runtime.log(
       `Recovered preserved state from an interrupted uninstall: ${presentPreservedEntries.join(", ")}`,
     );
-  }
-  const quarantineRoot = `${quarantineBaseRoot}.cleanup-${randomUUID()}`;
-  try {
-    fs.renameSync(recoveryRoot, quarantineRoot);
-  } catch (error) {
-    runtime.warn(
-      `Unable to detach abandoned interrupted-uninstall state at ${recoveryRoot}: ${formatError(error)}. It was preserved for manual recovery.`,
-    );
-    return false;
-  }
-  let quarantineStat: fs.Stats;
-  try {
-    quarantineStat = fs.lstatSync(quarantineRoot);
-  } catch (error) {
-    runtime.warn(
-      `Unable to inspect detached interrupted-uninstall state at ${quarantineRoot}: ${formatError(error)}. Cleanup stopped before recursive removal.`,
-    );
-    return false;
-  }
-  if (quarantineStat.dev !== stat.dev || quarantineStat.ino !== stat.ino) {
-    runtime.warn(
-      `Abandoned interrupted-uninstall state changed identity while it was detached to ${quarantineRoot}. Cleanup stopped before recursive removal, and that path was preserved.`,
-    );
-    return false;
   }
   try {
     runtime.rmSync(quarantineRoot, { force: true, recursive: true });

@@ -386,6 +386,67 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     }
   });
 
+  it("does not inspect a replacement through the abandoned staging pathname", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-recovery-swap-"));
+    const port = 9123;
+    const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
+    const detachedRoot = path.join(tmpHome, `.nemoclaw-uninstall-staging-${String(port)}`);
+    const originalRoot = `${detachedRoot}.original`;
+    let quarantineRoot: string | null = null;
+    const lstatSync = fs.lstatSync.bind(fs);
+    const renameSync = fs.renameSync.bind(fs);
+    const swaps = new Map<string, () => void>([
+      [
+        path.resolve(detachedRoot),
+        () => {
+          renameSync(detachedRoot, originalRoot);
+          fs.mkdirSync(path.join(detachedRoot, "backups"), { mode: 0o700, recursive: true });
+          fs.writeFileSync(path.join(detachedRoot, "backups", "replacement.tar"), "replacement\n");
+        },
+      ],
+    ]);
+    vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
+      const stat = lstatSync(target, options as never);
+      const resolved = path.resolve(String(target));
+      const swap = swaps.get(resolved);
+      swaps.delete(resolved);
+      swap?.();
+      return stat;
+    }) as typeof fs.lstatSync);
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      const destinationPath = String(destination);
+      quarantineRoot =
+        path.resolve(String(source)) === path.resolve(detachedRoot) &&
+        destinationPath.startsWith(`${detachedRoot}.cleanup-`)
+          ? destinationPath
+          : quarantineRoot;
+      return renameSync(source, destination);
+    });
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port, {
+        initialStateRoot: () => detachedRoot,
+        prepareState: (initialStateRoot) => {
+          const backupFile = path.join(initialStateRoot, "backups", "original.tar");
+          fs.mkdirSync(path.dirname(backupFile), { mode: 0o700, recursive: true });
+          fs.writeFileSync(backupFile, "original\n");
+        },
+      });
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(quarantineRoot).not.toBeNull();
+      expect(fs.readFileSync(path.join(originalRoot, "backups", "original.tar"), "utf8")).toBe(
+        "original\n",
+      );
+      expect(
+        fs.readFileSync(path.join(quarantineRoot!, "backups", "replacement.tar"), "utf8"),
+      ).toBe("replacement\n");
+      expect(fs.existsSync(path.join(stateRoot, "backups"))).toBe(false);
+      expect(result.errors.join("\n")).toContain("changed identity");
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
   it("retries cleanup from a UUID quarantine after recursive removal fails", async () => {
     const tmpHome = fs.mkdtempSync(
       path.join(process.cwd(), "nemoclaw-uninstall-quarantine-retry-"),
@@ -448,9 +509,13 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
       expect(result.outcome.exitCode).toBe(1);
       expect(fs.readFileSync(path.join(stateRoot, "new-onboarding-state"), "utf8")).toBe("new\n");
       expect(fs.existsSync(path.join(stateRoot, "backups"))).toBe(false);
-      expect(fs.readFileSync(path.join(detachedRoot, "backups", "workspace.tar"), "utf8")).toBe(
-        "preserved\n",
-      );
+      const quarantineName = fs
+        .readdirSync(tmpHome)
+        .find((entry) => entry.startsWith(`${path.basename(detachedRoot)}.cleanup-`));
+      expect(quarantineName).toBeDefined();
+      expect(
+        fs.readFileSync(path.join(tmpHome, quarantineName!, "backups", "workspace.tar"), "utf8"),
+      ).toBe("preserved\n");
       expect(result.errors.join("\n")).toContain(
         "Unable to recover preserved state because newer selected state exists",
       );
