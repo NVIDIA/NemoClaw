@@ -69,7 +69,7 @@ describe("interactive PTY driver", () => {
     }
   });
 
-  it("waits for terminal output to settle before sending a guarded response", async () => {
+  it("restarts the settling period when output arrives after the trigger", async () => {
     const progress = observedProgress("onboard-interactive-pty settled trigger");
     try {
       const result = await driveInteractiveCommand({
@@ -77,7 +77,7 @@ describe("interactive PTY driver", () => {
         cmd: [
           "python3",
           "-c",
-          "import sys, time\nstarted = time.monotonic()\nprint('EXPECTED_ANSWER', flush=True)\nsys.stdin.read()\nprint(f'ELAPSED={time.monotonic() - started}', flush=True)",
+          "import sys, time\nprint('EXPECTED_ANSWER', flush=True)\ntime.sleep(0.3)\nprint('FINAL_REDRAW', flush=True)\nlast_output = time.monotonic()\nsys.stdin.read()\nprint(f'ELAPSED_AFTER_FINAL_OUTPUT={time.monotonic() - last_output}', flush=True)",
         ],
         env: process.env,
         progress,
@@ -87,7 +87,9 @@ describe("interactive PTY driver", () => {
 
       expect(result.timedOut).toBe(false);
       expect(result.exitCode).toBe(0);
-      const elapsed = Number(result.visibleOutput.match(/ELAPSED=([\d.]+)/)?.[1]);
+      const elapsed = Number(
+        result.visibleOutput.match(/ELAPSED_AFTER_FINAL_OUTPUT=([\d.]+)/)?.[1],
+      );
       expect(elapsed).toBeGreaterThanOrEqual(0.4);
     } finally {
       progress.stop();
