@@ -1708,23 +1708,17 @@ type TempSshConfigRunResult<T> = Readonly<{
   result: T;
   cleanupError?: TempSshConfigCleanupError;
 }>;
+type TempSshConfigOperationFailure = Readonly<{ error: unknown }> | undefined;
 
 function retainedTempSshConfigMessage(error: TempSshConfigCleanupError): string {
   return `${error.message}. Remove that directory before continuing.`;
 }
 
-function runWithTempSshConfigCleanup<T>(
+function finishTempSshConfigRun<T>(
   tempSshConfig: TempSshConfig,
-  operation: () => T,
+  result: T,
+  operationFailure: TempSshConfigOperationFailure,
 ): TempSshConfigRunResult<T> {
-  let result!: T;
-  let operationFailure: Readonly<{ error: unknown }> | undefined;
-  try {
-    result = operation();
-  } catch (error) {
-    operationFailure = { error };
-  }
-
   let cleanupError: TempSshConfigCleanupError | undefined;
   try {
     tempSshConfig.cleanup();
@@ -1743,6 +1737,34 @@ function runWithTempSshConfigCleanup<T>(
   }
   if (operationFailure) throw operationFailure.error;
   return cleanupError ? { result, cleanupError } : { result };
+}
+
+function runWithTempSshConfigCleanup<T>(
+  tempSshConfig: TempSshConfig,
+  operation: () => T,
+): TempSshConfigRunResult<T> {
+  let result!: T;
+  let operationFailure: TempSshConfigOperationFailure;
+  try {
+    result = operation();
+  } catch (error) {
+    operationFailure = { error };
+  }
+  return finishTempSshConfigRun(tempSshConfig, result, operationFailure);
+}
+
+async function runWithTempSshConfigCleanupAsync<T>(
+  tempSshConfig: TempSshConfig,
+  operation: () => Promise<T>,
+): Promise<TempSshConfigRunResult<T>> {
+  let result!: T;
+  let operationFailure: TempSshConfigOperationFailure;
+  try {
+    result = await operation();
+  } catch (error) {
+    operationFailure = { error };
+  }
+  return finishTempSshConfigRun(tempSshConfig, result, operationFailure);
 }
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
@@ -2769,7 +2791,7 @@ async function restoreSandboxStateInternal(
     previousOpenClawImagePluginInstalls !== undefined
       ? freshOpenClawImagePluginInstalls
       : undefined;
-  const sshPhase = runWithTempSshConfigCleanup(tempSshConfig, (): RestoreResult | null => {
+  const sshPhase = await runWithTempSshConfigCleanupAsync(tempSshConfig, async () => {
     const pluginRestorePlan = planOpenClawPluginRestore({
       agentType: manifest.agentType,
       dir,

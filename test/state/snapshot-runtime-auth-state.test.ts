@@ -271,7 +271,7 @@ describe("runtime auth state across snapshot backup/restore (#6852)", () => {
 });
 
 describe("snapshot temporary SSH credential cleanup", () => {
-  it("fails backup and restore with retained-directory guidance (#10947)", () => {
+  it("fails backup and restore with retained-directory guidance (#10947)", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-cleanup-"));
     try {
       const binDir = path.join(fixture, "bin");
@@ -305,7 +305,7 @@ describe("snapshot temporary SSH credential cleanup", () => {
             manifest: { backupComplete: false },
           },
         );
-        expect(sandboxState.restoreSandboxState("alpha", backupPath)).toMatchObject({
+        await expect(sandboxState.restoreSandboxState("alpha", backupPath)).resolves.toMatchObject({
           success: false,
           error: expect.stringContaining("Remove that directory before continuing"),
         });
