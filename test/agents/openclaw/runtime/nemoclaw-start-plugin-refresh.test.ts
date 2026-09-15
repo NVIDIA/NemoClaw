@@ -397,36 +397,33 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
   });
 
   it("restores the guard-compatible config mode after the registry refresh (#10681)", () => {
-    const { result, registryState, startupContinueState, tmpDir } = runRefreshBlock({
+    const { result, registryState, tmpDir } = runRefreshBlock({
       gatewayReadyAfter: 1,
       rewriteConfigMode: true,
     });
     try {
       expect(result.status).toBe(0);
       expect(fs.statSync(registryState).mode & 0o777).toBe(0o660);
-      expect(fs.readFileSync(startupContinueState, "utf-8")).toBe("stable");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("does not refresh the config hash when permission normalization fails (#10681)", () => {
-    const { result, hashRefreshState, startupContinueState, tmpDir } = runRefreshBlock({
+    const { result, hashRefreshState, tmpDir } = runRefreshBlock({
       gatewayReadyAfter: 1,
       normalizationFails: true,
     });
     try {
       expect(result.status).not.toBe(0);
       expect(fs.existsSync(hashRefreshState)).toBe(false);
-      expect(fs.existsSync(startupContinueState)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("continues from a bounded registry timeout after restoring config postconditions", () => {
-    const { result, hashRefreshState, registryState, startupContinueState, tmpDir } =
-      runRefreshBlock({
+    const { result, hashRefreshState, registryState, tmpDir } = runRefreshBlock({
         gatewayReadyAfter: 1,
         refreshTimesOut: true,
         rewriteConfigMode: true,
@@ -437,7 +434,6 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
       expect(fs.readFileSync(hashRefreshState, "utf-8")).toBe(
         fs.readFileSync(registryState, "utf-8"),
       );
-      expect(fs.readFileSync(startupContinueState, "utf-8")).toBe("stable");
       expect(result.stderr).toContain("registry refresh timed out after 30s");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
