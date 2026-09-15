@@ -29,7 +29,11 @@ const PENDING_MANAGED_CONTAINER_DISCOVERY = {
   managedContainerDiscoveryUnavailable: true,
 } as const;
 
-function mockGatewaySandbox(sandboxName: string, agent: "openclaw" | "hermes" = "openclaw"): void {
+function mockGatewaySandbox(
+  sandboxName: string,
+  agent: "openclaw" | "hermes" = "openclaw",
+  openshellDriver = "docker",
+): void {
   const port = agent === "hermes" ? 8642 : 18789;
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
     name: agent,
@@ -45,7 +49,7 @@ function mockGatewaySandbox(sandboxName: string, agent: "openclaw" | "hermes" = 
     name: sandboxName,
     agent,
     dashboardPort: port,
-    openshellDriver: "docker",
+    openshellDriver,
   });
 }
 
@@ -77,6 +81,29 @@ afterEach(() => {
 });
 
 describe("checkAndRecoverSandboxProcesses managed startup", () => {
+  it.each(["kubernetes", "mxc", "unknown-provider"])(
+    "does not invoke the managed controller for the unsupported %s recovery surface",
+    async (openshellDriver) => {
+      const sandboxName = `${openshellDriver}-box`;
+      mockGatewaySandbox(sandboxName, "openclaw", openshellDriver);
+      const requestGatewaySupervisorAction = vi.fn();
+
+      const result = await checkAndRecoverSandboxProcesses(sandboxName, {
+        quiet: true,
+        isSandboxGatewayRunningImpl: async () => false,
+        requestGatewaySupervisorAction,
+      });
+
+      expect(result).toMatchObject({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+      });
+      expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["SUPERVISOR_NOT_RUNNING", false],
     ["SUPERVISOR_DISCOVERY_PENDING", false],
