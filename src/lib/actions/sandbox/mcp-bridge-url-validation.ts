@@ -317,6 +317,27 @@ export async function preflightMcpServerUrlResolvedTarget(
   return { addresses };
 }
 
+export async function inspectMcpRecordedPublicTargetPins(
+  parsed: URL,
+  recordedPins: readonly string[],
+): Promise<McpBridgeRecordedPinStatus> {
+  try {
+    const target = await preflightMcpServerUrlResolvedTarget(parsed);
+    const matches =
+      recordedPins.length === target.addresses.length &&
+      recordedPins.every((address, index) => address === target.addresses[index]);
+    return {
+      state: matches ? "match" : "drift",
+      currentAddresses: target.addresses,
+      ...(!matches ? { detail: "Current public DNS answers differ from the recorded pins." } : {}),
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const unresolved = error instanceof McpBridgeError && error.reasonCode === "unresolved";
+    return { state: unresolved ? "unresolved" : "drift", detail };
+  }
+}
+
 export async function inspectMcpRecordedTargetPins(
   parsed: URL,
   trustedPrivateHost: string,

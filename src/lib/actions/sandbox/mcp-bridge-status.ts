@@ -29,6 +29,7 @@ import type {
 } from "./mcp-bridge-provider-readiness";
 import {
   credentialResolutionWarning,
+  MCP_CONNECT_403_POLICY_DETAIL,
   probeCredentialResolution,
 } from "./mcp-bridge-resolution-probe";
 import {
@@ -40,6 +41,7 @@ import {
 import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
 import { discoverMcpTools, mcpToolDiscoveryPreconditionFailure } from "./mcp-bridge-tool-discovery";
 import {
+  inspectMcpRecordedPublicTargetPins,
   inspectMcpRecordedTargetPins,
   type McpBridgeRecordedPinStatus,
 } from "./mcp-bridge-url-validation";
@@ -324,16 +326,24 @@ export async function statusMcpBridge(
     }
   }
   const privatePinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
+  const publicPinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
   await Promise.all(
     entries.map(async ([name, entry]) => {
-      if (!entry?.trustedPrivateHost || !entry.allowedIps) return;
-      privatePinStatusByServer.set(
+      if (!entry?.allowedIps) return;
+      if (entry.trustedPrivateHost) {
+        privatePinStatusByServer.set(
+          name,
+          await inspectMcpRecordedTargetPins(
+            new URL(entry.url),
+            entry.trustedPrivateHost,
+            entry.allowedIps,
+          ),
+        );
+        return;
+      }
+      publicPinStatusByServer.set(
         name,
-        await inspectMcpRecordedTargetPins(
-          new URL(entry.url),
-          entry.trustedPrivateHost,
-          entry.allowedIps,
-        ),
+        await inspectMcpRecordedPublicTargetPins(new URL(entry.url), entry.allowedIps),
       );
     }),
   );
@@ -389,6 +399,7 @@ export async function statusMcpBridge(
         if (entry.policyConflict) warnings.push(entry.policyConflict);
       }
       const privatePinStatus = privatePinStatusByServer.get(name);
+      const publicPinStatus = publicPinStatusByServer.get(name);
       if (privatePinStatus?.state === "drift") {
         warnings.push(
           "Trusted-private DNS answers differ from the recorded pins. Remove and re-add this server to approve changed pins.",
@@ -396,6 +407,15 @@ export async function statusMcpBridge(
       } else if (privatePinStatus?.state === "unresolved") {
         warnings.push(
           "Trusted-private DNS resolution is unavailable. The recorded policy pins were not changed.",
+        );
+      }
+      if (publicPinStatus?.state === "drift") {
+        warnings.push(
+          "Public DNS answers differ from the recorded pins. Run mcp restart to refresh validated public pins.",
+        );
+      } else if (publicPinStatus?.state === "unresolved") {
+        warnings.push(
+          "Public DNS resolution is unavailable. The recorded policy pins were not changed.",
         );
       }
       const unsafeCredentialMayBeAttached =
@@ -443,8 +463,23 @@ export async function statusMcpBridge(
                     credentialRevision,
                   )
           : undefined;
-      const resolutionWarning = credentialResolution
-        ? credentialResolutionWarning(entry?.env[0], credentialResolution)
+      // A public CONNECT 403 that coincides with recorded-pin drift is a DNS
+      // rotation, not a credential problem; name the concrete fix (#10464).
+      const diagnosedCredentialResolution =
+        credentialResolution?.detail === MCP_CONNECT_403_POLICY_DETAIL &&
+        entry?.allowedIps &&
+        publicPinStatus?.state === "drift" &&
+        publicPinStatus.currentAddresses
+          ? {
+              ...credentialResolution,
+              detail:
+                `OpenShell denied the probe connection (CONNECT 403): current public DNS answers ` +
+                `${publicPinStatus.currentAddresses.join(", ")} do not match recorded pins ` +
+                `${entry.allowedIps.join(", ")}. Run mcp restart to refresh validated public pins.`,
+            }
+          : credentialResolution;
+      const resolutionWarning = diagnosedCredentialResolution
+        ? credentialResolutionWarning(entry?.env[0], diagnosedCredentialResolution)
         : undefined;
       if (resolutionWarning) warnings.push(resolutionWarning);
       const toolDiscovery =
@@ -480,6 +515,19 @@ export async function statusMcpBridge(
               },
             }
           : {}),
+        ...(entry && !entry.trustedPrivateHost && entry.allowedIps && publicPinStatus
+          ? {
+              publicTarget: {
+                host: new URL(entry.url).hostname,
+                recordedPins: [...entry.allowedIps],
+                ...(publicPinStatus.currentAddresses
+                  ? { currentPins: publicPinStatus.currentAddresses }
+                  : {}),
+                state: publicPinStatus.state,
+                ...(publicPinStatus.detail ? { detail: publicPinStatus.detail } : {}),
+              },
+            }
+          : {}),
         env: {
           names: entry?.env ?? [],
           missing: missingEnv,
@@ -503,7 +551,9 @@ export async function statusMcpBridge(
                     : "configured"
                   : "conflict",
           ...(providerDetail ? { detail: providerDetail } : {}),
-          ...(credentialResolution ? { credentialResolution } : {}),
+          ...(diagnosedCredentialResolution
+            ? { credentialResolution: diagnosedCredentialResolution }
+            : {}),
         },
         policy: {
           name: entry?.policyName,

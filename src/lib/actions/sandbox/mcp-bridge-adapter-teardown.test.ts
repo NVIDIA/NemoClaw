@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   inspectExactMcpDestroyProvider: vi.fn(),
   inspectMcpProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
+  preflightMcpEntryTargets: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
   registerAgentAdapterAtCurrentCredentialRevision: vi.fn(),
   restoreExistingMcpBridgeRuntime: vi.fn(),
@@ -41,7 +42,7 @@ vi.mock("./mcp-bridge-provider", () => ({
   detachProvider: vi.fn(),
   getMcpProviderInspectionRuntimeSelection: mocks.getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider: mocks.inspectMcpProvider,
-  preflightMcpEntryTargets: vi.fn(),
+  preflightMcpEntryTargets: mocks.preflightMcpEntryTargets,
   waitForDetachedMcpCredential: vi.fn(),
 }));
 vi.mock("./mcp-bridge-destroy-preflight", () => ({
@@ -53,7 +54,9 @@ vi.mock("./mcp-bridge-destroy-preflight", () => ({
 }));
 vi.mock("./mcp-bridge-policy", () => ({
   assertGeneratedPolicyMutationSafe: vi.fn(),
+  assertMcpBridgePolicyTarget: vi.fn(),
   buildMcpBridgePolicyKey: vi.fn(() => "mcp_bridge_github"),
+  buildMcpBridgePolicyYaml: vi.fn(() => "network_policies:\n  mcp_bridge_github: {}\n"),
   removeGeneratedPolicy: mocks.removeGeneratedPolicy,
 }));
 vi.mock("../../policy", async (importOriginal) => ({
@@ -112,6 +115,9 @@ describe("MCP adapter teardown rollback", () => {
     });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
     mocks.observeMcpCredentialRevision.mockReset().mockResolvedValue("v12");
+    mocks.preflightMcpEntryTargets
+      .mockReset()
+      .mockResolvedValue(new Map([[entry.server, { addresses: ["8.8.8.8"] }]]));
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(async () => {
       throw new Error("forced lifecycle failure after adapter scrub");
     });
