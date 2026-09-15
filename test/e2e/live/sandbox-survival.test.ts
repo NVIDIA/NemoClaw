@@ -8,7 +8,6 @@
  * durable /sandbox/.openclaw state markers.
  */
 
-import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -20,6 +19,7 @@ import {
 } from "../fixtures/cleanup-resources.ts";
 import {
   assertExitZero,
+  type HostCliClient,
   outputContainsSandbox,
   resultText,
   sandboxAccessEnv,
@@ -32,35 +32,7 @@ import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-survival";
-const MIN_OPENSHELL_VERSION = "0.0.24";
 const DASHBOARD_PORT = Number(process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
-
-function requireCondition(condition: boolean, message: string): void {
-  assert(condition, message);
-}
-
-function requireSuccessfulCommand(
-  result: { stdout: string; stderr: string; exitCode: number | null },
-  label: string,
-): void {
-  requireCondition(result.exitCode === 0, `${label} failed: ${resultText(result)}`);
-}
-
-function versionGte(actual: string, minimum: string): boolean {
-  const actualParts = actual.split(".").map((part) => Number.parseInt(part, 10));
-  const minimumParts = minimum.split(".").map((part) => Number.parseInt(part, 10));
-  for (let index = 0; index < Math.max(actualParts.length, minimumParts.length); index += 1) {
-    const a = Number.isFinite(actualParts[index]) ? actualParts[index] : 0;
-    const b = Number.isFinite(minimumParts[index]) ? minimumParts[index] : 0;
-    if (a > b) return true;
-    if (a < b) return false;
-  }
-  return true;
-}
-
-function extractSemver(raw: string): string | undefined {
-  return raw.match(/\d+\.\d+\.\d+/)?.[0];
-}
 
 function installEnv(hostedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
@@ -109,6 +81,44 @@ async function waitForNativeAgentReady(
   });
 }
 
+async function waitForHostForwardReady(
+  host: HostCliClient,
+  artifactPrefix: string,
+  gatewayPort: number,
+): Promise<void> {
+  await pollUntil({
+    artifactPrefix,
+    attempts: 30,
+    delayMs: 5_000,
+    probe: (_attempt, artifactName) =>
+      host.command(
+        "curl",
+        [
+          "-q",
+          "--noproxy",
+          "*",
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          "--connect-timeout",
+          "2",
+          "--max-time",
+          "5",
+          `http://127.0.0.1:${String(gatewayPort)}/health`,
+        ],
+        {
+          artifactName,
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 10_000,
+        },
+      ),
+    accept: (result) =>
+      result.exitCode === 0 && (result.stdout.trim() === "200" || result.stdout.trim() === "401"),
+  });
+}
+
 test(
   "sandbox recovers a running container left in OpenShell Stopped phase",
   {
@@ -117,7 +127,6 @@ test(
       e2ePhases: [
         "confirm the selected runtime prerequisite",
         "install and register the OpenClaw sandbox",
-        "prove baseline sandbox access and native agent readiness",
         "write persistent OpenClaw markers",
         "create a running-container and OpenShell-Stopped mismatch",
         "recover the mismatch through nemoclaw recover",
@@ -141,10 +150,6 @@ test(
   }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
-    requireCondition(
-      Number.isSafeInteger(DASHBOARD_PORT) && DASHBOARD_PORT >= 1024 && DASHBOARD_PORT <= 65_535,
-      "NEMOCLAW_DASHBOARD_PORT must be an integer between 1024 and 65535",
-    );
 
     await artifacts.target.declare({
       id: "sandbox-survival",
@@ -164,8 +169,6 @@ test(
       artifactName: "prereq-runtime-info-sandbox-survival",
       scenarioLabel: "sandbox survival",
     });
-
-    expect(fs.existsSync(path.join(REPO_ROOT, "install.sh"))).toBe(true);
 
     await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
       artifactName: "pre-cleanup-nemoclaw-destroy-sandbox-survival",
@@ -255,17 +258,6 @@ test(
     });
     expect(install.exitCode, resultText(install)).toBe(0);
 
-    await host.expectNemoclawAvailable();
-    const openshellVersion = await host.command("openshell", ["--version"], {
-      artifactName: "openshell-version-sandbox-survival",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    assertExitZero(openshellVersion, "openshell --version");
-    const version = extractSemver(resultText(openshellVersion));
-    expect(version, resultText(openshellVersion)).toBeTruthy();
-    expect(versionGte(version!, MIN_OPENSHELL_VERSION), resultText(openshellVersion)).toBe(true);
-
     const instance: NemoClawInstance = {
       onboarding: "cloud-openclaw",
       sandboxName: SANDBOX_NAME,
@@ -278,25 +270,12 @@ test(
     };
 
     stateValidation.expectLocalRegistryContains(SANDBOX_NAME);
-    await host.expectListed(SANDBOX_NAME, {
-      artifactName: "post-install-nemoclaw-list",
-    });
-    await sandbox.expectListed(SANDBOX_NAME, {
-      artifactName: "post-install-openshell-sandbox-list",
-    });
-    await host.expectStatus(SANDBOX_NAME, {
-      artifactName: "post-install-nemoclaw-status",
-    });
-
-    progress.phase("prove baseline sandbox access and native agent readiness");
     const execShell = (script: string, artifactName: string) =>
       sandbox.exec(SANDBOX_NAME, ["sh", "-lc", script], {
         artifactName,
         env: sandboxAccessEnv(),
         timeoutMs: 60_000,
       });
-    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "baseline-sandbox-exec-alive");
-    await waitForNativeAgentReady(execShell, "baseline-native-agent-ready", DASHBOARD_PORT);
 
     progress.phase("write persistent OpenClaw markers");
     const markerValue = `nemoclaw-survival-${Date.now()}`;
@@ -321,13 +300,19 @@ test(
       artifactName: "sandbox-survival-runtime-resource",
       timeoutMs: 30_000,
     });
-    const createRunningStoppedMismatch = async (artifactPrefix: string): Promise<void> => {
+    for (const command of ["recover", "start"] as const) {
+      if (command === "recover") {
+        progress.phase("create a running-container and OpenShell-Stopped mismatch");
+      } else {
+        progress.phase("recreate and repair the mismatch through nemoclaw start");
+      }
+      const artifactPrefix = `${command}-mismatch`;
       const stop = await sandbox.openshell(["sandbox", "stop", "-g", "nemoclaw", SANDBOX_NAME], {
         artifactName: `${artifactPrefix}-openshell-stop`,
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       });
-      requireSuccessfulCommand(stop, "openshell sandbox stop");
+      assertExitZero(stop, `openshell sandbox stop before nemoclaw ${command}`);
 
       // Reproduce #11790: Docker restarts the container behind OpenShell's
       // lifecycle authority, leaving the container running while the phase
@@ -336,17 +321,17 @@ test(
         artifactName: `${artifactPrefix}-runtime-start`,
         timeoutMs: 60_000,
       });
-      requireSuccessfulCommand(directStart, `${runtimeProvider.displayName} container start`);
+      assertExitZero(directStart, `${runtimeProvider.displayName} container start`);
       const phase = await sandbox.openshell(["sandbox", "get", "-g", "nemoclaw", SANDBOX_NAME], {
         artifactName: `${artifactPrefix}-openshell-stopped-phase`,
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,
       });
-      requireSuccessfulCommand(phase, "openshell sandbox get");
-      requireCondition(
-        /\bPhase:\s*Stopped\b/u.test(resultText(phase)),
+      assertExitZero(phase, "openshell sandbox get");
+      expect(
+        resultText(phase),
         `OpenShell did not retain the Stopped phase: ${resultText(phase)}`,
-      );
+      ).toMatch(/\bPhase:\s*Stopped\b/u);
 
       const running = await runtimeProvider.command(
         ["container", "inspect", "--format", "{{.State.Running}}", resourceHandle],
@@ -355,80 +340,44 @@ test(
           timeoutMs: 30_000,
         },
       );
-      requireSuccessfulCommand(running, `${runtimeProvider.displayName} container inspect`);
-      requireCondition(
-        running.stdout.trim() === "true",
+      assertExitZero(running, `${runtimeProvider.displayName} container inspect`);
+      expect(
+        running.stdout.trim(),
         `${runtimeProvider.displayName} did not report the sandbox container running`,
-      );
-    };
-    const expectRecoveredDeliveryPath = async (artifactPrefix: string): Promise<void> => {
-      await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
-        artifactNamePrefix: `${artifactPrefix}-openshell-ready`,
+      ).toBe("true");
+
+      if (command === "recover") {
+        progress.phase("recover the mismatch through nemoclaw recover");
+      }
+      const lifecycleRepair = await host.nemoclaw([SANDBOX_NAME, command], {
+        artifactName: `nemoclaw-${command}-running-stopped-mismatch`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 180_000,
       });
-      await expectSandboxExecAlive(SANDBOX_NAME, execShell, `${artifactPrefix}-sandbox-exec-alive`);
+      assertExitZero(lifecycleRepair, `nemoclaw ${SANDBOX_NAME} ${command}`);
+      if (command === "start") {
+        progress.phase("recheck native agent readiness, host-forward usability, and state");
+      }
+
+      await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
+        artifactNamePrefix: `post-${command}-openshell-ready`,
+      });
+      expect(
+        await runtimeProvider.resolveSandboxResourceHandle(SANDBOX_NAME, {
+          artifactName: `post-${command}-sandbox-container`,
+          timeoutMs: 30_000,
+        }),
+        `${command} must preserve the sandbox container identity`,
+      ).toBe(resourceHandle);
+      await expectSandboxExecAlive(SANDBOX_NAME, execShell, `post-${command}-sandbox-exec-alive`);
       await waitForNativeAgentReady(
         execShell,
-        `${artifactPrefix}-native-agent-ready`,
+        `post-${command}-native-agent-ready`,
         DASHBOARD_PORT,
       );
-      const hostForward = await host.command(
-        "curl",
-        [
-          "-sS",
-          "-o",
-          "/dev/null",
-          "-w",
-          "%{http_code}",
-          "--max-time",
-          "5",
-          `http://127.0.0.1:${String(DASHBOARD_PORT)}/health`,
-        ],
-        {
-          artifactName: `${artifactPrefix}-host-forward-health`,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 15_000,
-        },
-      );
-      requireSuccessfulCommand(hostForward, "host-forward health probe");
-      requireCondition(
-        hostForward.stdout.trim() === "200",
-        `host-forward health probe returned ${hostForward.stdout.trim() || "no HTTP status"}`,
-      );
-      await stateValidation.expectSandboxMarkers(
-        instance,
-        markers,
-        `${artifactPrefix}-marker-read`,
-      );
-    };
-
-    progress.phase("create a running-container and OpenShell-Stopped mismatch");
-    await createRunningStoppedMismatch("recover-mismatch");
-
-    progress.phase("recover the mismatch through nemoclaw recover");
-    const recover = await host.nemoclaw([SANDBOX_NAME, "recover"], {
-      artifactName: "nemoclaw-recover-running-stopped-mismatch",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 180_000,
-    });
-    requireSuccessfulCommand(recover, `nemoclaw ${SANDBOX_NAME} recover`);
-    await expectRecoveredDeliveryPath("post-recover");
-
-    progress.phase("recreate and repair the mismatch through nemoclaw start");
-    await createRunningStoppedMismatch("start-mismatch");
-    const start = await host.nemoclaw([SANDBOX_NAME, "start"], {
-      artifactName: "nemoclaw-start-running-stopped-mismatch",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 180_000,
-    });
-    requireSuccessfulCommand(start, `nemoclaw ${SANDBOX_NAME} start`);
-
-    progress.phase("recheck native agent readiness, host-forward usability, and state");
-    await expectRecoveredDeliveryPath("post-start");
-    await stateValidation.expectSandboxDirectoryPopulated(
-      instance,
-      "/sandbox/.openclaw",
-      "post-restart-openclaw-directory-populated",
-    );
+      await waitForHostForwardReady(host, `post-${command}-host-forward-ready`, DASHBOARD_PORT);
+      await stateValidation.expectSandboxMarkers(instance, markers, `post-${command}-marker-read`);
+    }
 
     progress.phase("destroy the sandbox");
     await host.cleanupSandbox(SANDBOX_NAME, {

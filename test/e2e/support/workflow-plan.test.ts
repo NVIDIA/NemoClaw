@@ -666,6 +666,20 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each([
+    "src/lib/actions/sandbox/gateway-state.ts",
+    "src/lib/onboard/runtime-provider/docker.ts",
+  ])("selects stopped-phase survival coverage when %s changes", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "sandbox-survival",
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "sandbox-survival",
+    );
+  });
+
   it.each(["src/lib/onboard/dashboard-forward-control.ts", "src/lib/onboard/dashboard-runtime.ts"])(
     "selects both Hermes onboarding scenarios when %s changes",
     (changedFile) => {
