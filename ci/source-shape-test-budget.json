@@ -233,6 +233,11 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "requires the real patched OpenClaw distribution proof before merge",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "keeps package access out of pull request controlled execution",
       "category": "security"
     },

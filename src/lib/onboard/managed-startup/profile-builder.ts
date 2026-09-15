@@ -65,7 +65,7 @@ export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
  * change; otherwise construction fails before a sandbox is launched.
  */
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
-  openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
+  openclaw: "7e0fac21ec21c1fa46bc24eb4b25bb49b014c2895adedf60da1baf3e7a39b227",
   hermes: "795c97be2dcb1921e06328a6d23b1f7389ebb2f6a085fa67b7aaa0f287ce88e0",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
   pi: "6302d387182c596fd67ad18577ecf82107bad6271aeeb5e69714115f91557abb",
@@ -733,8 +733,6 @@ function assertEnvironmentConsistency(
     const directValues: Readonly<Record<string, unknown>> = {
       NEMOCLAW_REASONING: String(profile.tuning.reasoning),
       NEMOCLAW_AGENT_HEARTBEAT_EVERY: config.heartbeatEvery,
-      NEMOCLAW_DISABLE_DEVICE_AUTH: config.deviceAuth.disabled ? "1" : "0",
-      NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: config.deviceAuth.optOutSource,
       NEMOCLAW_WEB_SEARCH_ENABLED: config.webSearch.enabled ? "1" : "0",
       NEMOCLAW_WEB_SEARCH_PROVIDER: config.webSearch.provider,
       NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: config.otel.endpointUrl,
@@ -923,9 +921,6 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
         ) ?? DEFAULT_OPENCLAW_AGENT_TIMEOUT_SECONDS,
       heartbeatEvery: parseHeartbeat(input.environment),
       extraAgents: parseExtraAgents(input.environment),
-      // Managed onboarding currently applies this compatibility opt-out to
-      // every stock OpenClaw image, independently of dashboard exposure.
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       minimalBootstrap: parseZeroOneFlag(input.environment, "NEMOCLAW_MINIMAL_BOOTSTRAP", false),
     };
     tuning = {
