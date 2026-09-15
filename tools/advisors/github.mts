@@ -97,17 +97,18 @@ export async function githubRest<T>(apiPath: string, token: string): Promise<T> 
 export async function githubRestPaginated<T>(
   apiPath: string,
   token: string,
-  limit: number,
+  limit?: number,
 ): Promise<T[]> {
   const results: T[] = [];
-  for (let page = 1; results.length < limit; page += 1) {
+  for (let page = 1; limit === undefined || results.length < limit; page += 1) {
     const separator = apiPath.includes("?") ? "&" : "?";
+    const pageSize = limit === undefined ? 100 : Math.min(100, limit - results.length);
     const items = await githubRest<T[]>(
-      `${apiPath}${separator}per_page=${Math.min(100, limit - results.length)}&page=${page}`,
+      `${apiPath}${separator}per_page=${pageSize}&page=${page}`,
       token,
     );
     results.push(...items);
-    if (items.length < 100) break;
+    if (items.length < pageSize) break;
   }
   return results;
 }

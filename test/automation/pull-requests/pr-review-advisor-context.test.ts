@@ -11,6 +11,7 @@ import {
   collectStaticTestInventory,
 } from "../../../tools/pr-review-advisor/deterministic-context.mts";
 import {
+  collectGitHubReviewContext,
   declaresReplacement,
   extractIssueRefs,
   hasOpenPrReplacement,
@@ -53,6 +54,89 @@ describe("PR review advisor", () => {
     await expect(githubGraphql("token", "query { viewer { login } }", {})).rejects.toThrow(
       "GitHub GraphQL returned errors: rate limit",
     );
+  });
+
+  it("paginates the complete review history and only the selected review comments", async () => {
+    const currentHead = "c".repeat(40);
+    const requests: string[] = [];
+    const olderReviews = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      state: "CHANGES_REQUESTED",
+      commit_id: "a".repeat(40),
+      submitted_at: `2026-09-14T10:${String(index % 60).padStart(2, "0")}:00Z`,
+      author_association: "MEMBER",
+      user: { login: "maintainer", type: "User" },
+      body: `Older review ${index + 1}`,
+    }));
+    const selectedReview = {
+      id: 101,
+      state: "CHANGES_REQUESTED",
+      commit_id: "b".repeat(40),
+      submitted_at: "2026-09-15T10:00:00Z",
+      author_association: "MEMBER",
+      user: { login: "maintainer", type: "User" },
+      body: "Newest frozen contract",
+    };
+    const firstCommentPage = Array.from({ length: 100 }, (_, index) => ({
+      pull_request_review_id: 101,
+      path: `src/file-${index}.ts`,
+      line: index + 1,
+      body: `Comment ${index + 1}`,
+    }));
+    const finalComment = {
+      pull_request_review_id: 101,
+      path: "src/final.ts",
+      line: 101,
+      body: "Final comment",
+    };
+    const responses = new Map<string, unknown>([
+      [
+        "/repos/NVIDIA/NemoClaw/pulls/7542?page=",
+        {
+          number: 7542,
+          title: "Follow-up review",
+          body: "",
+          head: { ref: "feature", sha: currentHead },
+          base: { ref: "main", sha: "d".repeat(40) },
+        },
+      ],
+      ["/repos/NVIDIA/NemoClaw/pulls/7542/reviews?page=1", olderReviews],
+      ["/repos/NVIDIA/NemoClaw/pulls/7542/reviews?page=2", [selectedReview]],
+      ["/repos/NVIDIA/NemoClaw/pulls/7542/reviews/101/comments?page=1", firstCommentPage],
+      ["/repos/NVIDIA/NemoClaw/pulls/7542/reviews/101/comments?page=2", [finalComment]],
+    ]);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const requestUrl = String(input);
+      requests.push(requestUrl);
+      const url = new URL(requestUrl);
+      const responseKey = `${url.pathname}?page=${url.searchParams.get("page") ?? ""}`;
+      return { ok: true, json: async () => responses.get(responseKey) ?? [] } as Response;
+    });
+
+    const context = await collectGitHubReviewContext({
+      GH_TOKEN: "host-token",
+      GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+      PR_NUMBER: "7542",
+      PR_REVIEW_ADVISOR_REVIEWER_LOGIN: "maintainer",
+    });
+
+    expect(context?.followUpReview).toMatchObject({
+      reviewId: 101,
+      reviewedHeadSha: "b".repeat(40),
+      body: "Newest frozen contract",
+    });
+    expect(context?.followUpReview?.inlineComments).toHaveLength(101);
+    expect(context?.followUpReview?.inlineComments.at(-1)).toEqual({
+      path: "src/final.ts",
+      line: 101,
+      body: "Final comment",
+    });
+    expect(requests.some((url) => url.includes("/reviews?per_page=100&page=2"))).toBe(true);
+    expect(requests.some((url) => url.includes("/reviews/101/comments?per_page=100&page=2"))).toBe(
+      true,
+    );
+    expect(requests.some((url) => /pulls\/7542\/comments/u.test(url))).toBe(false);
   });
 
   it("does not fall back when the trusted security rubric is unavailable", () => {
