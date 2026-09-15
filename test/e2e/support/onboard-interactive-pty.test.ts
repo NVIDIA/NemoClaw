@@ -69,6 +69,31 @@ describe("interactive PTY driver", () => {
     }
   });
 
+  it("waits for terminal output to settle before sending a guarded response", async () => {
+    const progress = observedProgress("onboard-interactive-pty settled trigger");
+    try {
+      const result = await driveInteractiveCommand({
+        activityLabel: "command: onboard-interactive-pty-settled-trigger",
+        cmd: [
+          "python3",
+          "-c",
+          "import sys, time\nstarted = time.monotonic()\nprint('EXPECTED_ANSWER', flush=True)\nsys.stdin.read()\nprint(f'ELAPSED={time.monotonic() - started}', flush=True)",
+        ],
+        env: process.env,
+        progress,
+        rules: [{ trigger: "EXPECTED_ANSWER", response: "\u0004", settleMs: 500 }],
+        timeoutMs: 10_000,
+      });
+
+      expect(result.timedOut).toBe(false);
+      expect(result.exitCode).toBe(0);
+      const elapsed = Number(result.visibleOutput.match(/ELAPSED=([\d.]+)/)?.[1]);
+      expect(elapsed).toBeGreaterThanOrEqual(0.4);
+    } finally {
+      progress.stop();
+    }
+  });
+
   it("keeps every scripted response, including a secret, out of the spawned process arguments", async () => {
     spawnMock.mockClear();
     const progress = observedProgress("onboard-interactive-pty argv secrecy");
