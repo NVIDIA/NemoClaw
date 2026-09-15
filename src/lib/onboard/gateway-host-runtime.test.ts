@@ -281,14 +281,9 @@ describe("gateway host runtime ownership", () => {
     const events: string[] = [];
     const desiredEnv = { OPENSHELL_SERVER_PORT: "8080" };
     const getDockerDriverGatewayEnv = vi.fn(() => desiredEnv);
-    const prepare = vi
-      .spyOn(
-        require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env"),
-        "preparePackageManagedDockerDriverGatewayServiceEnv",
-      )
-      .mockImplementation(() => {
-        events.push("prepare-env");
-      });
+    const prepare = vi.fn(() => {
+      events.push("prepare-env");
+    });
     const start = vi
       .spyOn(gatewayService, "startOpenShellGatewayUserService")
       .mockImplementation((options) => {
@@ -305,6 +300,7 @@ describe("gateway host runtime ownership", () => {
         getDockerDriverGatewayEnv,
         hasOpenShellGatewayUserService: () => true,
         preparePackagedGatewayServiceEnvAfterTrustedInstall: undefined,
+        preparePackageManagedGatewayServiceEnv: prepare,
         restartPackagedGatewayAfterTrustedInstall: undefined,
       }),
     );

@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { waitForPort } from "../core/wait";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
+import { preparePackageManagedDockerDriverGatewayServiceEnv } from "./docker-driver-gateway-env";
 import {
   hasOpenShellGatewayUserService,
   startOpenShellGatewayUserService,
@@ -76,6 +77,8 @@ export interface GatewayHostRuntimeDeps {
   preparePackagedGatewayServiceEnvAfterTrustedInstall?(owner: GatewayOwner): void;
   /** Build the complete authenticated Docker-driver environment when no test seam is supplied. */
   getDockerDriverGatewayEnv?(): Record<string, string>;
+  /** Override the package-service environment writer for deterministic tests. */
+  preparePackageManagedGatewayServiceEnv?: typeof preparePackageManagedDockerDriverGatewayServiceEnv;
   /**
    * Read lazily: the onboarding entrypoint rebinds its gateway port at runtime
    * when an authoritative gateway is selected, so a captured value goes stale.
@@ -164,9 +167,10 @@ function prepareTrustedPackagedGatewayServiceEnv(
   if (!deps.getDockerDriverGatewayEnv) {
     throw new Error("OpenShell packaged gateway restart requires its managed service environment.");
   }
-  const gatewayEnv =
-    require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
-  gatewayEnv.preparePackageManagedDockerDriverGatewayServiceEnv(deps.getDockerDriverGatewayEnv());
+  (
+    deps.preparePackageManagedGatewayServiceEnv ??
+    preparePackageManagedDockerDriverGatewayServiceEnv
+  )(deps.getDockerDriverGatewayEnv());
 }
 
 function externalGatewayForwardClientEnv(
