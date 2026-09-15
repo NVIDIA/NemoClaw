@@ -440,8 +440,16 @@ COPY agents/hermes/runtime-boundaries.patch /tmp/hermes-runtime-boundaries.patch
 COPY agents/hermes/secure-dir-skip-chmod.patch /tmp/hermes-secure-dir-skip-chmod.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
+# Keep the active default on 0.20.6 while sealing the only accepted source and
+# registry identity tuples. The 0.21.3 tuple is a compatibility prerequisite,
+# not a runtime selector; selecting it still requires an explicit pin update.
 # hadolint ignore=DL4006
-RUN mkdir -p /opt/hermes \
+RUN case "${HERMES_VERSION}|${HERMES_SEMVER}|${HERMES_TARBALL_SHA256}|${HERMES_NPM_INTEGRITY}" in \
+        'v2026.8.27|0.20.6|e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7|sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==') ;; \
+        'v2026.9.14|0.21.3|47df72ebd3f9c96d806a94541163f7fe7d7ce5b84f85c1d3787e6dfeea1d7834|sha512-LvPt2/1z6hm4pTRJu34F6uAkBVSlSt94QeZp8fMBLFqASU9/wv7iMODSGMzF1WmrpNENXYGMnWN8s9hi/EUM5Q==') ;; \
+        *) echo "ERROR: unreviewed Hermes release identity tuple" >&2; exit 1 ;; \
+    esac \
+    && mkdir -p /opt/hermes \
     && bash /tmp/nemoclaw-download-hermes-source-archive.sh "${HERMES_VERSION}" /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
