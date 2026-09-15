@@ -94,7 +94,9 @@ export function captureRuntimeProviderDestroyIdentity(
       `Sandbox '${sandboxName}' belongs to runtime provider '${recordedProviderId}'.`,
     );
   }
-  return sandbox && captureBySandbox ? captureBySandbox(sandbox, sandboxName) : undefined;
+  return sandbox && captureBySandbox
+    ? captureBySandbox(sandbox, sandboxName)
+    : captureByName?.(sandboxName);
 }
 /** Read the host observation consumed by the pure identity classifier. */
 export function observeDestroyContainerIdentity(
