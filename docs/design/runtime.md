@@ -16,11 +16,17 @@ Keeping those decisions separate lets an ordinary fixture process exercise the s
 
 The [supervisor extraction](https://github.com/NVIDIA/NemoClaw/commit/4fee9768e2) removed its need for a complete DGX Spark service configuration.
 The [module separation](https://github.com/NVIDIA/NemoClaw/commit/8d998e02d2) then assigned artifact preparation, hardware rules, and backend behavior to their respective owners.
-Today, an inline recipe supplies model-specific tools; vLLM is the serving backend; the managed hardware profile remains DGX Spark.
+An inline recipe supplies model-specific tools; vLLM is the serving backend.
+Direct hardware checks use recipe-declared compatibility or the qualified Spark defaults for ordinary models.
+Both paths retain the qualified Spark memory-policy bounds.
 
 For example, changing a recipe's preparation executable should not change how the supervisor terminates a process group.
 Changing a memory threshold should not change the model snapshot's identity.
 These boundaries allow focused tests, but they do not qualify an additional backend or GPU.
+
+Ordinary models and inline recipes resolve their serving settings into one vLLM argument builder.
+It emits selected options directly; the Hugging Face module owns model identity and snapshot resolution.
+The runtime calls backend and hardware functions directly.
 
 ## Why the Watchdog Lives with Inference
 
