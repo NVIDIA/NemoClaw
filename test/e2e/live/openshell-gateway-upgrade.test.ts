@@ -16,6 +16,7 @@ import {
   packReviewedNpmArchive,
   removeReviewedNpmArchive,
 } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import { listBackups, validateRebuildRecoveryManifest } from "../../../src/lib/state/sandbox";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
@@ -34,6 +35,7 @@ import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  captureGatewayUpgradeProbeEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
@@ -359,8 +361,11 @@ async function runInstallerPayload(
   logName: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[] = [],
+  requireBackupEvidence = false,
 ): Promise<ShellProbeResult> {
   const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
+  const backupRoot = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SURVIVOR_SANDBOX);
+  const existingBackupNames = fs.existsSync(backupRoot) ? fs.readdirSync(backupRoot) : [];
   const result = await bash(host, `bash ${quotedInstallerArgs}`, {
     artifactName: `${label.replace(/[^a-z0-9_.-]+/gi, "-")}-installer`,
     captureLimitBytes: 1024 * 1024,
@@ -370,10 +375,36 @@ async function runInstallerPayload(
   });
   artifacts.addRedactionValues(redactionValues);
   await artifacts.writeText(logName, resultText(result));
+  const probesCaptured = await captureGatewayUpgradeProbeEvidence(SURVIVOR_SANDBOX, (name, args) =>
+    bash(host, ["openshell", ...args].map(shellQuote).join(" "), {
+      artifactName: `${label}-sandbox-${name}`,
+      captureLimitBytes: 16 * 1024,
+      env,
+      redactionValues,
+      timeoutMs: 15_000,
+    }),
+  );
+  const backups = listBackups(SURVIVOR_SANDBOX).filter(
+    (backup) => !existingBackupNames.includes(backup.timestamp),
+  );
+  const recoveryComplete =
+    backups.length === 1 &&
+    backups.every(
+      (backup) =>
+        validateRebuildRecoveryManifest(SURVIVOR_SANDBOX, "openclaw", backup).ok &&
+        backup.backupComplete === true &&
+        backup.rebuildPolicyHandoff == null &&
+        !fs.existsSync(path.join(backup.backupPath, ".nemoclaw-rebuild-recovery.json")),
+    );
+  await artifacts.writeJson(`${label}-backup-handoff.json`, {
+    backupCount: backups.length,
+    recoveryComplete,
+  });
+  const evidenceValid = !requireBackupEvidence || (probesCaptured && recoveryComplete);
   expect(
-    result.exitCode,
-    `${label} NemoClaw installer returned an unexpected exit code:\n${resultText(result)}`,
-  ).toBe(0);
+    result.exitCode === 0 && evidenceValid,
+    `${label} NemoClaw installer or required recovery evidence failed:\n${resultText(result)}`,
+  ).toBe(true);
   return result;
 }
 
@@ -505,7 +536,7 @@ async function installCurrentNemoclawUpgrade(
     }),
     ["COMPATIBLE_API_KEY"],
   );
-  const redactionValues = [process.env.GITHUB_TOKEN ?? ""].filter(Boolean);
+  const redactionValues = [GATEWAY_CREDENTIAL, process.env.GITHUB_TOKEN ?? ""].filter(Boolean);
   await runInstallerPayload(
     host,
     `current-${currentRef.slice(0, 12)}`,
@@ -514,6 +545,7 @@ async function installCurrentNemoclawUpgrade(
     "current-install.log",
     currentEnv,
     redactionValues,
+    true,
   );
 
   const openshellVersion = await bash(host, `openshell --version`, {

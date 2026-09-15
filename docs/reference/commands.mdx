@@ -246,6 +246,7 @@ A managed OpenClaw sandbox can also use the verified managed local vLLM configur
 The managed vLLM export runs only on Linux x86_64 and requires its fixed managed serving identity and complete live runtime evidence.
 A managed OpenClaw sandbox can also export the verified local Ollama route on native Linux with the Docker driver.
 The export records the external Ollama daemon port, the NemoClaw-managed authentication proxy port, and the `qwen3.5:9b` model digest.
+It requires the managed proxy credential but never exports that credential or its value.
 It fails unless the live daemon, proxy, model, and sandbox route match the retained configuration.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
@@ -354,7 +355,7 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 
 #### External Component Onboarding
 
-On Linux, NemoClaw can register one experimental external host component during fresh onboarding with a NemoClaw-managed Docker-driver gateway.
+On Linux, OpenClaw and Hermes can register one experimental external host component during fresh onboarding with a NemoClaw-managed Docker-driver gateway.
 Create the declaration before onboarding and use a new explicit sandbox name.
 NemoClaw rejects resume, recreation, reuse, repair, and externally supervised gateways.
 For the declaration, fixed interceptor settings, activation protocol, incomplete-state handling, and credential boundary, refer to [Register an External Component During Onboarding](../deployment/register-external-component).
@@ -480,7 +481,7 @@ Before reserving an inference route, onboarding can release a foreign-session ro
 It preserves the current session's reservation, any row that is no longer route-only, and any row that has gained verified sandbox-create authority.
 Without the lock, it preserves the foreign reservation.
 
-<AgentOnly variant="openclaw">
+<AgentOnly variant="openclaw,hermes">
 
 #### `--apf-interceptor`
 
@@ -1040,6 +1041,8 @@ Immediately before the first mutation in the complete preflight, the producer re
 The 24-hour lifetime does not extend when you launch repeatedly. Exiting the agent with `/exit` does not revoke the lease. If state changes before expiry, NemoClaw fences the old evidence and runs the complete preflight. A successful preflight in that interval keeps the original start and expiry time. After expiry, a successful complete preflight starts a new 24-hour lease only when publication succeeds.
 
 If unsafe or malformed authority history makes the prior lease timeline untrustworthy, NemoClaw durably invalidates the old epoch and starts one conservative 24-hour quarantine. Both wall time and monotonic uptime must span the full quarantine, and publication remains disabled during it. Repeated attempts do not extend the quarantine. After it elapses, the next successful complete preflight can publish a new fixed 24-hour lease. You do not create or refresh this lease manually, and `launch` has no lease-control flags. After lease validation or the automatic fallback that runs the complete preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
+After it dispatches the agent, `launch` releases lifecycle locks before it waits for the interactive session to exit.
+Other lifecycle commands can proceed while the session remains open.
 
 The agent command comes from the sandbox's agent manifest. If the sandbox registry names a non-OpenClaw agent without a readable local agent manifest, `launch` exits before starting an in-sandbox command.
 
@@ -2979,7 +2982,7 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 
 ### `$$nemoclaw <name> rebuild`
 
-Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state. Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
+Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state. Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
 
 If replacement onboarding returns nonzero, rebuild stops before post-create state restoration and retains recovery state.
 
@@ -3573,6 +3576,7 @@ The report works when the registry and runtime are unavailable.
 It contains only the report schema version, sandbox name, agent, saved lifecycle phase, and runtime and agent health values of `not-probed`.
 With `--output`, the archive contains only `portable-lifecycle.json`.
 It excludes raw receipts, credentials, environment data, private paths, and runtime logs.
+It preserves an existing output file if archive creation fails.
 `--quick` produces the same minimal report.
 A malformed selected receipt stops collection before an archive is created.
 While Portable authority remains on the host, NemoClaw blocks non-Portable diagnostic collection.
@@ -3966,13 +3970,6 @@ inference | | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy | |
   address. WSL uses an all-interface forward for Windows-host reachability. Set to `0.0.0.0` to opt
   in to remote bind on other SSH-deployed hosts. |
 </AgentOnly>
-<AgentOnly variant="openclaw">
-  | `NEMOCLAW_GATEWAY_WS_HOST` | *unset* (auto-derived inside the sandbox; loopback elsewhere) |
-  Host used for the in-sandbox `OPENCLAW_GATEWAY_URL`; inside the sandbox it defaults to the primary
-  interface address so `sessions_spawn` sub-agents can dial the gateway through the enforced network
-  path. |
-</AgentOnly>
-
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error. `NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, Bedrock Runtime adapter, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `8081`, `11434`, `11435`, `11436`, `11437`, and `11438`. Port `8081` is reserved for authenticated existing-server attachment and the managed llama.cpp runtime. It cannot be assigned to another configurable NemoClaw service port. Each runtime adapter port must be distinct from the gateway, vLLM, Ollama, Ollama proxy, dashboard allocation range, and other runtime adapter ports. When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another. Only port `8080` uses a NemoClaw-managed Linux systemd user service or macOS Homebrew service. NemoClaw-managed gateways on custom ports run as detached processes and do not change the default gateway service. An externally supervised gateway can use any matching configured port and must be recovered through its declared supervisor. On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different. If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 
 `NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`, but NemoClaw rejects `0.0.0.0` for Docker-driver gateways while gateway JWT auth is active.
