@@ -831,22 +831,32 @@ describe("E2E fixture clients", () => {
     expect(runner.calls).toEqual([]);
   });
 
-  it("sandbox client preserves shell-looking payloads as argv after --", async () => {
+  it("sandbox client preserves exec options and shell-looking payloads after --", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
 
-    await sandbox.exec("assistant", ["sh", "-c", "echo '$TOKEN' && rm -rf /tmp/not-real"]);
+    await sandbox.exec("assistant", ["sh", "-c", "echo '$TOKEN' && rm -rf /tmp/not-real"], {
+      artifactName: "baseline-sandbox-exec-alive",
+      timeoutMs: 60_000,
+    });
 
-    expect(runner.calls[0]?.args).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "assistant",
-      "--",
-      "sh",
-      "-c",
-      "echo '$TOKEN' && rm -rf /tmp/not-real",
-    ]);
+    expect(runner.calls[0]).toEqual({
+      command: "openshell",
+      args: [
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "sh",
+        "-c",
+        "echo '$TOKEN' && rm -rf /tmp/not-real",
+      ],
+      options: {
+        artifactName: "baseline-sandbox-exec-alive",
+        timeoutMs: 60_000,
+      },
+    });
   });
 
   it("sandbox client passes trusted shell scripts through the named sandbox exec form", async () => {
