@@ -31,7 +31,8 @@ The publisher extracts main's documentation and generators at an immutable Git r
 It installs only the [locked docs dependency](../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
 Main's npm application dependencies are not installed.
 The imported installation prompt and agent variants appear only in Latest.
-V1 agent guidance remains in [agents.md](agents.md); an installation prompt remains **TBD** until its procedure is verified.
+V1 runtime guidance remains in [agents.md](agents.md), and [resources](resources.md#give-an-agent-the-documentation-task) provides a version-aware documentation prompt.
+A rehearsed installation prompt remains **TBD** until its procedure is verified.
 
 To refresh Latest, update `fern/main-source.json` to a reviewed main commit, reconcile that revision's theme, components, and redirects in `fern/docs.yml`, and rerun the complete build.
 Before a public release, select the main revision intended for publication; a main branch tip is not automatically its latest published release.
@@ -149,10 +150,24 @@ Main's separate post-merge documentation-authoring bot is not part of this publi
 ## Hosted Outputs and Release Verification
 
 Fern produces the browser site and [Markdown access](https://buildwithfern.com/learn/docs/ai-features/markdown), including page `.md` URLs and `llms.txt`.
-After the first staging publish, verify the rendered overview, a code-heavy guide, a table in the configuration reference, a cross-page heading link, and a source link from that exact revision.
+For a publication candidate, verify the rendered overview, a code-heavy guide, a table in the configuration reference, a cross-page heading link, and a source link from that exact revision.
 Fetch the v1 overview's `.md` URL and version-specific `llms.txt`; confirm they identify v1 and retain its qualification limits.
 The local Fern server does not serve page `.md` previews; use a hosted preview for this check.
-These hosted outputs are **TBD** until checked against a published v1 build.
+
+The [staging build for c7e8e116c8](https://github.com/NVIDIA/NemoClaw/actions/runs/35035121361) was checked on 2026-09-15:
+
+| Hosted output | Observed result |
+|---|---|
+| `/nemoclaw/v1/overview` and main's `/nemoclaw/user-guide/openclaw/home` | HTTP 200 with the expected page titles |
+| `/nemoclaw/v1/overview.md` and `/nemoclaw/v1/get-started.md` | Markdown includes the v1 procedure, qualification TBDs, and revision-pinned source links |
+| `/nemoclaw/v1/reference/configuration.md` | Markdown includes configuration fields and tables, with source links pinned to `c7e8e116c8cb81ed64a0625f5b632398607c1d96` |
+| `/nemoclaw/v1/llms.txt` | Identifies `v1 (Development)` and lists 31 page links under `/nemoclaw/v1/` |
+| Unversioned `/nemoclaw/llms.txt` | Indexes the default main version; use the version-specific index for v1 discovery |
+
+The preview moves with successful publication; repeat these checks for the release candidate.
+The generic header on a v1 Markdown page can link to the unversioned index and advertise MCP.
+Use the version-specific index explicitly; header text alone does not verify MCP availability or version-scoped search.
+Complete rendered-page/legacy-route coverage and public-cutover verification remain **TBD**.
 
 Fern's [docs MCP server](https://buildwithfern.com/learn/docs/ai-features/mcp-server) requires Ask Fern to be enabled for the destination.
 Provisioning, search indexing, MCP access, and evidence that results stay within v1 are **TBD**.

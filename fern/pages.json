@@ -7,7 +7,7 @@
         {"title": "Understand NemoClaw", "source": "docs/overview.md", "slug": "overview"},
         {"title": "Documentation index", "source": "docs/README.md", "slug": "index"},
         {"title": "Check prerequisites", "source": "docs/prerequisites.md", "slug": "prerequisites"},
-        {"title": "Get started with a deployment", "source": "docs/get-started.md", "slug": "get-started"},
+        {"title": "Deploy OpenClaw with existing services", "source": "docs/get-started.md", "slug": "get-started"},
         {"title": "Assess migration", "source": "docs/migration.md", "slug": "migration"},
         {"title": "Release notes", "source": "docs/release-notes.md", "slug": "release-notes"}
       ]

@@ -70,7 +70,7 @@ It retains JSON evidence and the workspace.
 The hosted Fabric runtime must keep its identity throughout native access and reconciliation.
 This test makes a real model request.
 
-Managed inference apply also checks an actual agent reply, including unchanged apply.
+Managed vLLM service apply also checks an actual agent reply, including unchanged apply.
 
 Use the separate `spark_image_change` test filter with the same three DGX Spark paths to qualify an explicit runtime image upgrade.
 The new YAML may differ from retained intent only by its inference image pin.
