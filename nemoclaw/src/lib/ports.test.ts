@@ -57,4 +57,9 @@ describe("parsePort (plugin)", () => {
     process.env[ENV_KEY] = "65535";
     expect(parsePort(ENV_KEY, 18789)).toBe(65535);
   });
+
+  it("rejects a leading-zero port", () => {
+    process.env[ENV_KEY] = "09000";
+    expect(() => parsePort(ENV_KEY, 18789)).toThrow("Invalid port");
+  });
 });
