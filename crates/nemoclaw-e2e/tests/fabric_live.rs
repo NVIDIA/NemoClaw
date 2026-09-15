@@ -95,6 +95,26 @@ fn bindings(directory: &Path) -> (Value, Row) {
     }
     (Value::Object(ids), sandbox.unwrap())
 }
+fn managed_bindings(directory: &Path) -> Value {
+    let path = directory.join("runtime/terraform.tfstate");
+    if !path.exists() {
+        return json!({});
+    }
+    let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let mut result = serde_json::Map::new();
+    for resource in state["resources"].as_array().unwrap() {
+        assert_eq!(resource["instances"].as_array().unwrap().len(), 1);
+        result.insert(
+            format!(
+                "{}.{}",
+                resource["type"].as_str().unwrap(),
+                resource["name"].as_str().unwrap()
+            ),
+            resource["instances"][0]["attributes"].clone(),
+        );
+    }
+    Value::Object(result)
+}
 async fn exec(client: &OpenShell, binding: &Row, command: Vec<String>) -> Vec<u8> {
     let (exit, output) = client
         .exec_bound(binding, command, Row::new(), 360)
@@ -127,7 +147,8 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let provider = &document.spec.inference_providers[0];
     let agent = &document.spec.sandboxes[0].agents[0];
     assert_eq!(document.spec.gateway.management, "external");
-    assert!(provider.service.is_none() && provider.ollama.is_none());
+    // Ollama still combines process and storage and does not support destroy.
+    assert!(provider.ollama.is_none());
     fs::create_dir_all(&directory).unwrap();
     let save = |name: &str, value: &Value| {
         fs::write(
@@ -143,6 +164,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         &serde_json::to_value(deployment.apply(&document, &cancel).await.unwrap()).unwrap(),
     );
     let (before, binding) = bindings(&directory);
+    let managed_before = managed_bindings(&directory);
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     if document.spec.sandboxes[0].network.tier == "isolated" {
         let denial = exec(
@@ -179,7 +201,11 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         .await;
     }
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
-    assert!(unchanged.changes.is_empty() && unchanged.agent_response.is_empty());
+    assert!(unchanged.changes.is_empty());
+    assert_eq!(
+        unchanged.agent_response.is_empty(),
+        provider.service.is_none()
+    );
     save(
         "unchanged-apply.json",
         &serde_json::to_value(unchanged).unwrap(),
@@ -195,6 +221,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
             .is_empty()
     );
     assert_eq!(bindings(&directory).0, before);
+    assert_eq!(managed_bindings(&directory), managed_before);
     assert_eq!(runtime_id(&client, &binding).await, hosted);
     let response = if agent.harness == "openclaw" {
         let setting = exec(
@@ -248,6 +275,6 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     );
     save(
         "proof.json",
-        &json!({"passed":true,"deployment":document.metadata.uid,"harness":agent.harness,"resourceBindings":before,"runtimeId":hosted,"unchangedApply":true,"exportReapply":true,"nativeResponse":true,"hostedRuntimePreserved":true,"destroyed":true}),
+        &json!({"passed":true,"deployment":document.metadata.uid,"harness":agent.harness,"resourceBindings":before,"managedRuntimeBindings":managed_before,"runtimeId":hosted,"unchangedApply":true,"exportReapply":true,"nativeResponse":true,"hostedRuntimePreserved":true,"destroyed":true}),
     );
 }
