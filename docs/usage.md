@@ -5,7 +5,7 @@
 
 Build a [verified native bundle](build.md) and put its `bin` directory on `PATH`.
 Choose a checked-in [example](../examples/), set a fresh deployment UUID and available endpoints, and retain the same state directory for every operation.
-NemoClaw supports one provider and sandbox per document, with [one or more OpenClaw agents](agents.md) sharing a primary route or one agent of another harness.
+NemoClaw supports one inference provider and sandbox per document, with [one or more OpenClaw agents](agents.md) sharing a primary route or one agent of another harness.
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
 Apply creates or changes runtime resources and can download model data and send inference requests.
@@ -49,7 +49,8 @@ Managed DGX Spark declares `inferenceProviders[].service` instead of `endpoint`,
 
 The checked-in [DGX Spark example](../examples/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
 Managed Ollama uses `endpoint` plus `ollama`, an existing Docker network, and a local Unix engine socket.
-Fabric harnesses other than OpenClaw require external gateway and inference.
+Use [`ollamaProxy`](inference.md#use-external-ollama-through-a-managed-proxy) to keep the daemon and installed model external while managing an authenticated proxy.
+Fabric harnesses other than OpenClaw and Hermes require external gateway and inference.
 
 Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
 The caller supplies the referenced environment value.
@@ -63,7 +64,8 @@ The SDK and provider child process need access to referenced credentials during 
 Remove caller-owned environment values and TLS files when no longer needed.
 Destroy removes the owned provider registration, but retained gateway storage remains; revoke upstream credentials separately when retiring them.
 
-Credentialed endpoints require HTTPS.
+Caller-supplied inference credentials require HTTPS.
+The managed Ollama proxy uses its private HTTP endpoint and a deployment-generated bearer key.
 Uncredentialed inference HTTP endpoints must be literal private or loopback addresses; plaintext gateway addresses must be loopback.
 The isolated policy permits inference routing without general network egress.
 
@@ -88,19 +90,22 @@ Paths below are relative to `spec`:
 
 | Object | Ownership when omitted | Accepted declaration |
 |---|---|---|
-| `inferenceProviders[]` | Managed with `service` or `ollama`; external with `endpoint` alone | `management: managed` or `external`, matching that form |
+| `inferenceProviders[]` | Managed with `service` or `ollama`; external with `endpoint`, including `ollamaProxy` | `management: managed` or `external`, matching that form |
 | `inferenceProviders[].service` and `.ollama` | Managed server | `management: managed` |
 | `gateway.storage`, `inferenceProviders[].service.storage`, `.ollama.storage` | Managed storage | `{management: managed}` |
 | `gateway.network`, `inferenceProviders[].service.placement.network` | Managed network, configured by the existing sibling `networkCIDR` | `{management: managed}` |
 | `inferenceProviders[].service.model` | Managed model download and preparation | `management: managed` alongside repository and revision |
 | `inferenceProviders[].ollama.model` | Managed installation of the route's model | `{management: managed}` |
+| `inferenceProviders[].ollamaProxy` | Managed authenticated proxy | `management: managed` |
+| `inferenceProviders[].ollamaProxy.model` | Existing external model installation | `management: external` alongside its digest |
 | `inferenceProviders[].ollama.network` | Existing external network | Network name, or `{management: external, name: NETWORK}` |
 | `sandboxes[].network.proxy` | Existing external HTTP proxy | `management: external` alongside host and port |
 
 External gateways cannot declare managed storage or networks.
 In the Ollama network object, `management` can also be omitted; `name` is required.
 The declarations do not grant permissions, change retention, adopt existing resources, or enable new lifecycle modes.
-External volumes and model installations, managed Ollama networks, and managed HTTP proxies are rejected.
+External model installations are supported through `ollamaProxy.model`.
+External volumes, managed Ollama networks, and managed general-purpose HTTP egress proxies are rejected.
 
 For example, under `inferenceProviders[].ollama`, either network form selects the same existing network:
 

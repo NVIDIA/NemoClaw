@@ -45,6 +45,63 @@ Use a separate deployment when moving from an older image; changing YAML does no
 For incomplete creation, use the retained state to inspect or destroy the owned resources before starting the new deployment.
 See [deployment recovery](usage.md) for the operation workflow.
 
+## Use External Ollama through a Managed Proxy
+
+Use this mode when Ollama and the route's model are already installed on the local Linux Docker host.
+Ollama must listen only on a loopback address.
+NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
+OpenClaw and Hermes can use this proxy with `openai-completions`.
+
+Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](#build-an-image-with-the-configuration-interface).
+Build the proxy image from the repository root:
+
+```sh
+docker build -t nc-ollama-proxy image/ollama-proxy
+docker image inspect nc-ollama-proxy --format '{{index .RepoDigests 0}}'
+```
+
+Use the printed immutable image reference below, choose an available private proxy address reachable by OpenShell, and replace the model digest with the lowercase 64-character value reported by Ollama's `/api/tags` API:
+
+```yaml
+# Under spec.inferenceProviders:
+- name: local
+  provider: openai
+  management: external
+  endpoint: http://127.0.0.1:11434/v1
+  ollamaProxy:
+    management: managed
+    engine: unix:///var/run/docker.sock
+    image: nc-ollama-proxy@sha256:REPLACE_WITH_IMAGE_DIGEST
+    endpoint: http://172.20.0.1:11435/v1
+    model:
+      management: external
+      digest: REPLACE_WITH_MODEL_DIGEST
+```
+
+The provider's `endpoint` identifies the external daemon; `ollamaProxy.endpoint` identifies the managed proxy and supplies the OpenShell route's upstream URL.
+The route's model must name the installed model including its tag, such as `qwen3:4b`.
+The proxy uses the host network and checks that the daemon has no listener on a non-loopback address.
+Do not also declare `service`, `ollama`, or `credential` on this provider.
+All three ownership declarations in this example are optional and preserve these same lifecycle choices when omitted.
+
+The proxy generates a private bearer key in its owned credential volume and reuses it after restart or recreation.
+NemoClaw reads that key through the verified container identity when registering the OpenShell provider.
+The key does not enter YAML, plans, container launch settings, or OpenTofu state, and the proxy never forwards it to Ollama.
+The container's root user and Docker administrators can read its credential volume.
+The private HTTP endpoint relies on its configured host-network reachability; it does not provide TLS.
+
+Authenticated access is limited to the selected model through `/v1/models` and `/v1/chat/completions`, including streaming responses.
+The proxy verifies the model digest before each request and blocks changed or absent models.
+It exposes no model-management API.
+Plan and export also reject changed model digests and preserve prior bindings.
+Restore the pinned external model before retrying, or use a fresh deployment to select a different installation.
+
+Apply can restart an owned, stopped proxy after its external model passes observation.
+A missing or insecure retained key stops startup; it is never regenerated beside initialized storage.
+Destroy removes the proxy and OpenShell registration and retains the credential volume; the external daemon and model remain untouched.
+Reapplying the original configuration reuses that retained key.
+Remove the retained credential volume explicitly when retiring the deployment.
+
 ## Tune OpenClaw's Primary Route
 
 Declare tuning in `agents[].inference.routes[].overrides`:
