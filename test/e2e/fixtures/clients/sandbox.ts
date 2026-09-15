@@ -214,6 +214,16 @@ export class SandboxClient {
     return result;
   }
 
+  async expectAbsent(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    validateSandboxName(name);
+    const result = await this.list({ env: openshellProbeEnv(), ...options });
+    assertExitZero(result, "openshell sandbox list");
+    if (outputContainsSandbox(result, name)) {
+      throw new Error(`openshell sandbox list still included '${name}'.`);
+    }
+    return result;
+  }
+
   /**
    * Disruption helper: simulate the post-pod-recreate /tmp wipe by removing
    * the guard chain files. After this, a sandbox containing a running gateway

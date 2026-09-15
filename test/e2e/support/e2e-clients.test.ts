@@ -802,6 +802,29 @@ describe("E2E fixture clients", () => {
     });
   });
 
+  it("sandbox client proves exact-name absence from OpenShell list output", async () => {
+    const runner = new FakeRunner();
+    runner.stdout = "NAME\nassistant-copy\n";
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await expect(sandbox.expectAbsent("assistant")).resolves.toMatchObject({ exitCode: 0 });
+
+    runner.stdout = "NAME\nassistant\n";
+    await expect(sandbox.expectAbsent("assistant")).rejects.toThrow(
+      "openshell sandbox list still included 'assistant'",
+    );
+  });
+
+  it("sandbox client rejects an inconclusive OpenShell absence probe", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "gateway unavailable" });
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await expect(sandbox.expectAbsent("assistant")).rejects.toThrow(
+      "openshell sandbox list failed: gateway unavailable",
+    );
+  });
+
   it("sandbox client preserves caller-provided probe options", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
