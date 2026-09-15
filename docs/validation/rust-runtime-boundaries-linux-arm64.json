@@ -1,0 +1,178 @@
+{
+  "sourceRevision": "8484cb95cdd194259112ee65e67756e8473e1adf",
+  "bundleVersion": "0.1.0-dev.59b2d051443e4275",
+  "platform": "linux_arm64",
+  "purpose": "Separate shared process supervision, hardware profiles, recipe artifacts and backend launch/readiness without adding crates or changing the desired-state schema.",
+  "localChecks": {
+    "workspaceTestsPassed": 103,
+    "format": "passed",
+    "strictWorkspaceClippy": "passed",
+    "workspaceLog": ".local/runtime-refactor-workspace.log",
+    "postPortabilityFixClippy": ".local/runtime-refactor-portability-clippy.log",
+    "workspaceRevision": "b4a83a6bb217daca7e5bb7b2ae9e0edb0e5b6281"
+  },
+  "packagedImage": {
+    "image": "nc-prototype-qwen38@sha256:2c306114ca9a07f4e38192541d1072770ef168e461696761bda38dd31ae21af2",
+    "legacySymlink": "nemoclaw-runtime",
+    "entrypointChecks": [
+      {
+        "executable": "nemoclaw-runtime",
+        "variable": "NEMOCLAW_RUNTIME_SPEC",
+        "exit": 1,
+        "diagnostic": "invalid pinned runtime specification"
+      },
+      {
+        "executable": "nemoclaw-spark",
+        "variable": "NEMOCLAW_SPARK_SPEC",
+        "exit": 1,
+        "diagnostic": "invalid pinned runtime specification"
+      }
+    ],
+    "supervisor": {
+      "nemoclaw-runtime": "e158471a8a0356d1a6edd1cb5fbdb5c8c5e376df38b9bba08796658c070ae53a",
+      "rust": "1.98.1",
+      "sourceVersion": "0.1.0-dev.59b2d051443e4275",
+      "supervisor-source.tar.gz": "fc87b9ff9e4c4065fd865c78d1a25b2963bab5e67b7e52f2f095ca75fef0d9f5"
+    },
+    "passed": true
+  },
+  "runningProcess": {
+    "containerId": "1d6e7d6a18733a74735deba97de697c24cbcc8f3f67c72f7237041e703def3ca",
+    "configuredEntrypoint": [
+      "/usr/local/bin/nemoclaw-spark"
+    ],
+    "runningExecutable": "/usr/local/bin/nemoclaw-runtime",
+    "sha256": "e158471a8a0356d1a6edd1cb5fbdb5c8c5e376df38b9bba08796658c070ae53a",
+    "restartPolicy": "no",
+    "restartCount": 0
+  },
+  "independentSourceReproduction": {
+    "passed": true,
+    "binarySha256": "e158471a8a0356d1a6edd1cb5fbdb5c8c5e376df38b9bba08796658c070ae53a",
+    "extraction": "/home/cvillela/.codex/worktrees/caa2/NemoClaw-rust/.build/spark/refactor-repro-1y55vzhv",
+    "scope": "Independent offline extraction and native rebuild on the same qualified Linux ARM64 build host"
+  },
+  "legacyImagePlan": {
+    "outcome": "planned",
+    "changes": []
+  },
+  "liveUpgrade": {
+    "after": {
+      "ids": {
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-gateway-data/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/1d6e7d6a18733a74735deba97de697c24cbcc8f3f67c72f7237041e703def3ca/2026-09-14T13:51:33-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-inference-data/2026-09-14T13:51:33-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/d970c4e45931477ee46ba6f0e48fbdc00f0ffdb2b3cca007ec4921c2ba493837/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf/1d21f70ecc378c25eed9c54d4ecc2d119890eee00a93b241aa596d19ff6fc015",
+        "nemoclaw_provider.inference": "6234d45d-cdca-4864-90d3-54decb150f3e",
+        "nemoclaw_route.primary": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5/primary",
+        "nemoclaw_sandbox.agent": "8863bbab-7053-4353-afe9-a24c380a2bc5",
+        "nemoclaw_workspace.deployment": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5"
+      },
+      "receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": {
+          "mtime": "2026-09-14T15:10:25.16088244-07:00",
+          "sha256": "9535d56c00bdd7c6d8d2f334426e28bb19822392b975d9cb9c0601399a0cb3a4"
+        },
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": {
+          "mtime": "2026-09-14T15:11:53.649971949-07:00",
+          "sha256": "eb3b92e37ddef6df9016c5b746dadee8fc07c13681f3edf54526d6e00d634ef8"
+        }
+      }
+    },
+    "apply": {
+      "agentResponse": "FOUR",
+      "changes": [
+        {
+          "actions": [
+            "delete",
+            "create"
+          ],
+          "resource": "nemoclaw_inference_service.runtime"
+        }
+      ],
+      "outcome": "succeeded"
+    },
+    "before": {
+      "ids": {
+        "nemoclaw_gateway_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-gateway-data/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf",
+        "nemoclaw_inference_service.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/c184f029f9fb99ce20411364c58fd5796f62465fea13377283cfe5ecfb4f43d0/2026-09-14T13:51:33-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089",
+        "nemoclaw_inference_storage.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/nc-0179426feb940b73-inference-data/2026-09-14T13:51:33-07:00",
+        "nemoclaw_managed_gateway.runtime": "9003d825-ec2b-414b-a043-d70389061d6d/d970c4e45931477ee46ba6f0e48fbdc00f0ffdb2b3cca007ec4921c2ba493837/2026-09-14T13:10:31-07:00/1c18fe47c94f130a0e2435bb8c658f5dd0555f9565eb562e966ae12c04236089/e020ed9a8f11c833b34149d7323ca5e0591378703343c7990474ee75f5d78cdf/1d21f70ecc378c25eed9c54d4ecc2d119890eee00a93b241aa596d19ff6fc015",
+        "nemoclaw_provider.inference": "6234d45d-cdca-4864-90d3-54decb150f3e",
+        "nemoclaw_route.primary": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5/primary",
+        "nemoclaw_sandbox.agent": "8863bbab-7053-4353-afe9-a24c380a2bc5",
+        "nemoclaw_workspace.deployment": "3dcbc8a1-81ea-4851-9913-d77bdd18dce5"
+      },
+      "receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": {
+          "mtime": "2026-09-14T15:10:25.16088244-07:00",
+          "sha256": "9535d56c00bdd7c6d8d2f334426e28bb19822392b975d9cb9c0601399a0cb3a4"
+        },
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": {
+          "mtime": "2026-09-14T15:11:53.649971949-07:00",
+          "sha256": "eb3b92e37ddef6df9016c5b746dadee8fc07c13681f3edf54526d6e00d634ef8"
+        }
+      }
+    },
+    "deployment": "435d6941-9513-470b-9598-441deda2aff0",
+    "exportReapply": true,
+    "finishedEpoch": 1789430761,
+    "newImage": "nc-prototype-qwen38@sha256:2c306114ca9a07f4e38192541d1072770ef168e461696761bda38dd31ae21af2",
+    "oldImage": "nc-prototype-qwen38@sha256:d4775421c3ed533fef5218aeb87b6c2bcf97804b74c58143e4c052bb60961e35",
+    "passed": true,
+    "plan": {
+      "changes": [
+        {
+          "actions": [
+            "delete",
+            "create"
+          ],
+          "resource": "nemoclaw_inference_service.runtime"
+        }
+      ],
+      "outcome": "planned"
+    }
+  },
+  "liveDurationSeconds": 646.01,
+  "liveLog": ".local/runtime-boundary-live/upgrade.log",
+  "nativeCI": {
+    "run": "https://github.com/NVIDIA/NemoClaw/actions/runs/34910381029",
+    "sourceRevision": "8484cb95cdd194259112ee65e67756e8473e1adf",
+    "results": [
+      {
+        "name": "native (ubuntu-24.04, linux_amd64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (macos-15, darwin_arm64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (ubuntu-24.04-arm, linux_arm64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (windows-2025, windows_amd64)",
+        "status": "in_progress",
+        "conclusion": ""
+      },
+      {
+        "name": "native (macos-15-intel, darwin_amd64)",
+        "status": "in_progress",
+        "conclusion": ""
+      }
+    ]
+  },
+  "limits": [
+    "Only the existing Qwen/Spark/vLLM combination is qualified; fixture-process independence does not qualify another serving backend.",
+    "The legacy SDK Spark facade, container entrypoint and environment contract remain for pinned-image/state compatibility.",
+    "Source reproduction is verified on the same qualified native build host, not across arbitrary C toolchains."
+  ],
+  "findings": [
+    "Native macOS and Windows checks found an import whose cfg did not match its Linux-only consumers; the fix is retained as 8484cb95cd.",
+    "The renamed binary executes through the legacy symlink without changing the container contract."
+  ]
+}

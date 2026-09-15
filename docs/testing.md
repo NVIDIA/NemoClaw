@@ -132,3 +132,24 @@ from retained intent only by its inference image pin. The test requires complete
 artifact receipts, allows an established stopped service, and verifies that plan
 is read-only and apply replaces only that process while preserving all other
 bindings and prepared data. It retains `spark-artifact-validation.json`.
+
+Runtime separation has focused checks:
+
+```sh
+cargo test -p nemoclaw-runtime
+cargo test -p nemoclaw-sdk --test runtime_boundaries
+```
+
+The supervisor tests use an ordinary owned process and validated memory thresholds,
+without a Spark document. They exercise readiness, pressure, failed observations,
+cancellation, and the loading deadline. Cancellation must leave a neighboring
+process alive. The backend HTTP fixture rejects unavailable, unauthorized, and
+redirect responses before accepting readiness. The executable test checks the
+new name and both environment contracts without starting model work.
+
+The recipe test protects the preparation identity and exact pre-refactor vLLM
+launch arguments, and rejects unqualified model/backend/hardware combinations.
+The live image-change test above is the deployment acceptance gate: the new image
+must preserve cached artifacts and independent bindings, return an agent response,
+and produce no changes on subsequent apply and export/reapply. A fixture process
+proves supervisor independence; it does not qualify another real serving backend.

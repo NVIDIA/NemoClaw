@@ -15,9 +15,10 @@ have been removed. Commit bodies retain the test-first implementation decisions.
 | Fabric native harness protocols and native OpenClaw settings | [Ten-harness SDK fixtures](rust-native-platforms.json), [seven native harness fixtures](rust-fabric-adapters-linux-arm64.json), [native OpenClaw](rust-native-openclaw-linux-arm64.json) |
 | Managed Ollama initial apply, no-op, export/reapply | [Real Docker/Ollama lifecycle](rust-ollama-linux-arm64.json) |
 | Deep Agents, Hermes and Fabric OpenClaw native responses, stable hosted runtime, no-op, export/reapply and teardown | [Live Fabric qualification](rust-fabric-live-linux-arm64.json) |
+| Runtime/recipe/backend/hardware separation, renamed executable, image upgrade and offline reproduction | [Runtime boundaries](rust-runtime-boundaries-linux-arm64.json) |
 | Linux ARM64/x64, macOS ARM64/Intel, Windows x64 bundles | [Five native jobs](rust-native-platforms.json); real OpenTofu and production provider execution on each target |
 
-The final local workspace check passed 99 deterministic tests, with 17 explicit
+The parity baseline workspace check passed 99 deterministic tests, with 17 explicit
 integration/live tests excluded from the ordinary run. Formatting and strict
 workspace Clippy passed. The retained platform and live records identify the
 separate execution gates; ignored tests are not counted as passes.

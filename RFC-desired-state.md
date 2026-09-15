@@ -188,3 +188,10 @@ compatibility. The live image-upgrade gate must preserve storage receipts and al
 independent resource identities, then return an actual agent response and an
 unchanged export/reapply. These tests establish separation for this recipe; a
 second real backend remains the next test of how well the modules generalize.
+
+The [refactor acceptance run](docs/validation/rust-runtime-boundaries-linux-arm64.json)
+passed the live image upgrade in 646 seconds. Only the inference process identity
+changed; cached artifact receipts and every independent binding were preserved.
+The agent replied `FOUR`, followed by unchanged apply and export/reapply. An
+independent offline rebuild produced the same runtime executable hash. This
+qualifies the separation against the existing recipe, not another backend.
