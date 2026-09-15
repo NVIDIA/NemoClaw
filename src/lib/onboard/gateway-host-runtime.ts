@@ -152,6 +152,53 @@ export interface GatewayHostRuntime {
   probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
 }
 
+function externalGatewayForwardClientEnv(
+  owner: GatewayOwner,
+  clientProbeEnv: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv | undefined {
+  if (!isExternallySupervised(owner) || !owner.endpoint) return;
+  if (new URL(owner.endpoint).protocol !== "https:") return;
+  if (!owner.stateDir) {
+    throw new Error("Externally supervised HTTPS gateway requires a declared stateDir.");
+  }
+  const localTlsDir = path.join(owner.stateDir, "tls");
+  for (const relativePath of ["ca.crt", "client/tls.crt", "client/tls.key"]) {
+    const filePath = path.join(localTlsDir, relativePath);
+    try {
+      if (!fs.statSync(filePath).isFile()) throw new Error("not a file");
+      fs.accessSync(filePath, fs.constants.R_OK);
+    } catch {
+      throw new Error(
+        `Externally supervised gateway TLS file is missing or unreadable: ${filePath}`,
+      );
+    }
+  }
+  return { ...clientProbeEnv, OPENSHELL_LOCAL_TLS_DIR: localTlsDir };
+}
+
+/** Resolve the endpoint and optional TLS authority for host-side forwarding. */
+export function resolveGatewayForwardRuntimeAuthority(
+  owner: GatewayOwner,
+  clientProbeEnv: NodeJS.ProcessEnv = {},
+): { readonly gatewayEndpoint: string; readonly localTlsDir?: string } {
+  const gatewayEndpoint =
+    isExternallySupervised(owner) && owner.endpoint
+      ? owner.endpoint
+      : (() => {
+          const { getGatewayHttpsEndpoint } =
+            require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
+          return new URL(getGatewayHttpsEndpoint(owner.gatewayPort)).origin;
+        })();
+  const localTlsDir = externalGatewayForwardClientEnv(
+    owner,
+    clientProbeEnv,
+  )?.OPENSHELL_LOCAL_TLS_DIR;
+  return {
+    gatewayEndpoint,
+    ...(localTlsDir ? { localTlsDir } : {}),
+  };
+}
+
 export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayHostRuntime {
   let boundOwner: GatewayOwner | null = null;
 
@@ -434,24 +481,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   }
 
   function getExternalGatewayClientEnv(owner: GatewayOwner): NodeJS.ProcessEnv | undefined {
-    if (!isExternallySupervised(owner) || !owner.endpoint) return;
-    if (new URL(owner.endpoint).protocol !== "https:") return;
-    if (!owner.stateDir) {
-      throw new Error("Externally supervised HTTPS gateway requires a declared stateDir.");
-    }
-    const localTlsDir = path.join(owner.stateDir, "tls");
-    for (const relativePath of ["ca.crt", "client/tls.crt", "client/tls.key"]) {
-      const filePath = path.join(localTlsDir, relativePath);
-      try {
-        if (!fs.statSync(filePath).isFile()) throw new Error("not a file");
-        fs.accessSync(filePath, fs.constants.R_OK);
-      } catch {
-        throw new Error(
-          `Externally supervised gateway TLS file is missing or unreadable: ${filePath}`,
-        );
-      }
-    }
-    return { ...(deps.clientProbeEnv ?? {}), OPENSHELL_LOCAL_TLS_DIR: localTlsDir };
+    return externalGatewayForwardClientEnv(owner, deps.clientProbeEnv);
   }
 
   function prepareExternalGatewayClient(owner: GatewayOwner): void {
@@ -567,22 +597,14 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   }
 
   function gatewayEndpointForOwner(owner: GatewayOwner): string {
-    if (isExternallySupervised(owner) && owner.endpoint) return owner.endpoint;
-    const { getGatewayHttpsEndpoint } =
-      require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
-    return new URL(getGatewayHttpsEndpoint(owner.gatewayPort)).origin;
+    return resolveGatewayForwardRuntimeAuthority(owner, deps.clientProbeEnv).gatewayEndpoint;
   }
 
   function getGatewayForwardRuntimeAuthority(): {
     readonly gatewayEndpoint: string;
     readonly localTlsDir?: string;
   } {
-    const owner = getGatewayOwner();
-    const localTlsDir = getExternalGatewayClientEnv(owner)?.OPENSHELL_LOCAL_TLS_DIR;
-    return {
-      gatewayEndpoint: gatewayEndpointForOwner(owner),
-      ...(localTlsDir ? { localTlsDir } : {}),
-    };
+    return resolveGatewayForwardRuntimeAuthority(getGatewayOwner(), deps.clientProbeEnv);
   }
 
   function getGatewayLocalEndpoint(): string {

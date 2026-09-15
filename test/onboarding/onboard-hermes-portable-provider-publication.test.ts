@@ -53,6 +53,7 @@ function runProviderBoundary(mode: ProviderBoundaryMode): ProviderBoundaryResult
   const script = String.raw`
 const fixtureMocks = require(${onboardScriptMocksPath});
 fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.installForwardServiceReachabilityFixture();
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const runner = require(${modulePath("runner.ts")});

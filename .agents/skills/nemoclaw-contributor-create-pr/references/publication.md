@@ -138,20 +138,8 @@ Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omi
 
 Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
 Keep it draft while automated evaluation or a candidate-owned repair is pending.
-
-Before marking a PR ready, record its number, reviewed `headRefOid`, and expected draft state. Read the
-PR immediately before the write. Continue only when its identity and commit are unchanged, it is still
-draft, and the latest commit completed the shared follow-up cycle with no unresolved candidate-owned
-finding or failure. Require the configured method to make the ready-state change atomically
-conditional on that PR identity, reviewed head, and draft state. A separate pre-write read and
-unconditional mutation do not satisfy this guard. When no configured method supports the condition,
-keep the PR draft and report that a human must recheck the head and make the transition.
-
-When the conditional operation is available, request it once. After a successful or inconclusive
-response, read the PR again. Continue only when the same PR and commit are no longer draft. Treat every
-other result as unknown state, stop, and do not repeat the write. Report the prepared PR number, head,
-and draft state; the observed PR identity and relevant state; every differing field; whether the
-response was successful or inconclusive; and the no-retry recovery boundary.
+Use `prepare_pr_for_human_review` only after the latest PR commit completes the shared follow-up cycle
+with no unresolved candidate-owned finding or failure.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 

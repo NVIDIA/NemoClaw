@@ -34,7 +34,6 @@ import {
   type CaptureOpenShellCommand,
 } from "./sandbox-observer-cli";
 import type {
-  SyncOpenShellSandboxPolicyReader,
   InspectOpenShellSandboxPolicyRequest,
   OpenShellSandboxPolicyRead,
   OpenShellSandboxPolicyReader,
@@ -60,10 +59,6 @@ export { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary };
 type CapturePolicyOptions = Omit<Parameters<CaptureOpenShellCommand>[1], "maxBuffer"> & {
   readonly outputLimitBytes: number;
 };
-type SyncCapturePolicyCommand = (
-  args: string[],
-  options: Parameters<CaptureOpenShellCommand>[1] & { readonly maxBuffer: number },
-) => CapturedOpenShellCommandResult;
 type CapturePolicyCommand = (
   args: string[],
   options: CapturePolicyOptions,
@@ -344,17 +339,3 @@ export const cliOpenShellSandboxPolicyReader = createCliOpenShellSandboxPolicyRe
 export const cliOpenShellSandboxPolicyWriter = createCliOpenShellSandboxPolicyWriter({
   capture: captureSanitizedResolvedOpenshellAsync,
 });
-
-/** Portable lifecycle retains synchronous lock ownership until its consumer migration. */
-export function createSyncCliOpenShellSandboxPolicyReader(
-  deps: PolicyReaderDeps<SyncCapturePolicyCommand>,
-): SyncOpenShellSandboxPolicyReader {
-  return {
-    readSandboxPolicy: (request) => {
-      const { outputLimitBytes, ...options } = captureOptions(request, deps.defaultTimeoutMs);
-      return parsePolicyRead(
-        deps.capture(policyReadArgs(request), { ...options, maxBuffer: outputLimitBytes }),
-      );
-    },
-  };
-}

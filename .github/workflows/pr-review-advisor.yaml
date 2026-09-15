@@ -56,13 +56,14 @@ jobs:
       endsWith(github.event.workflow_run.display_title, ' gate true')))
       }}
     permissions:
+      contents: read
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     outputs:
-      pr_number: ${{ steps.target.outputs.pr_number }}
-      head_sha: ${{ steps.target.outputs.head_sha }}
-      base_sha: ${{ steps.target.outputs.base_sha }}
+      pr_number: ${{ steps.target.outputs.pr_number || steps.manual-target.outputs.pr_number }}
+      head_sha: ${{ steps.target.outputs.head_sha || steps.manual-target.outputs.head_sha }}
+      base_sha: ${{ steps.target.outputs.base_sha || steps.manual-target.outputs.base_sha }}
     steps:
       - name: Resolve checked PR revision
         id: target
@@ -95,9 +96,45 @@ jobs:
           jq -r --arg base_sha "$run_base_sha" \
             '"pr_number=\(.number)\nhead_sha=\(.head.sha)\nbase_sha=\($base_sha)"' \
             <<< "$target" >> "$GITHUB_OUTPUT"
-      - name: Accept manual dispatch
+      - name: Resolve manual review revision
+        id: manual-target
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: echo "A maintainer dispatched the advisor."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_BASE_REF: ${{ inputs.base_ref }}
+          INPUT_HEAD_REF: ${{ inputs.head_ref }}
+          TARGET_BASE: ${{ inputs.target_base }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$TARGET_REPO" || -n "$TARGET_PR" ]]; then
+            [[ -n "$TARGET_REPO" && "$TARGET_PR" =~ ^[1-9][0-9]*$ ]] || {
+              echo "Manual PR analysis requires target_repo and a positive target_pr" >&2
+              exit 1
+            }
+            pull="$(gh api --method GET "repos/$TARGET_REPO/pulls/$TARGET_PR")"
+            jq -e --arg repo "$TARGET_REPO" --arg base "$TARGET_BASE" \
+              '.state == "open" and .base.repo.full_name == $repo and .base.ref == $base' \
+              <<< "$pull" >/dev/null
+            pr_number="$TARGET_PR"
+            head_sha="$(jq -r '.head.sha' <<< "$pull")"
+            base_sha="$(jq -r '.base.sha' <<< "$pull")"
+          else
+            [[ "$INPUT_HEAD_REF" == "HEAD" ]] && head_sha="$WORKFLOW_SHA" || \
+              head_sha="$(gh api --method GET "repos/$GITHUB_REPOSITORY/commits" \
+                -f "sha=${INPUT_HEAD_REF#origin/}" -f per_page=1 --jq '.[0].sha')"
+            base_sha="$(gh api --method GET "repos/$GITHUB_REPOSITORY/commits" \
+              -f "sha=${INPUT_BASE_REF#origin/}" -f per_page=1 --jq '.[0].sha')"
+            pr_number=""
+          fi
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$base_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Manual Advisor refs must resolve to full SHAs" >&2
+            exit 1
+          }
+          printf 'pr_number=%s\nhead_sha=%s\nbase_sha=%s\n' \
+            "$pr_number" "$head_sha" "$base_sha" >> "$GITHUB_OUTPUT"
 
   discover-specialists:
     name: Discover review specialists and collect GitHub context
@@ -167,9 +204,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
+      - name: Install reviewed npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
+
       - name: Install locked runtime
         run: |
           set -euo pipefail
@@ -235,8 +275,8 @@ jobs:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
       TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo || github.repository }}
       PR_NUMBER: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
-      BASE_REF: ${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
-      HEAD_REF: ${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+      BASE_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
+      HEAD_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}
     steps: &advisor-analysis-steps
       - name: Checkout trusted advisor code (workflow revision)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -255,7 +295,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.require-green-checks.outputs.head_sha }}
           path: pr-workdir
           fetch-depth: 0
           persist-credentials: false
@@ -272,9 +312,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
+
+      - name: Install reviewed npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
 
       - name: Load advisor runtime image
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
@@ -290,8 +333,8 @@ jobs:
           TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}
           TARGET_PR: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
           TARGET_BASE: ${{ github.event_name == 'workflow_run' && 'main' || inputs.target_base }}
-          PR_BASE_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || '' }}
-          EXPECTED_HEAD_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}
+          PR_BASE_SHA: ${{ needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.base_sha || '' }}
+          EXPECTED_HEAD_SHA: ${{ needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.head_sha || '' }}
           GIT_LFS_SKIP_SMUDGE: "1"
           TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |
@@ -328,8 +371,8 @@ jobs:
       # Preparation reads the checked-out PR only before the model credential enters the environment.
       - name: Prepare advisor sandbox inputs
         env:
-          BASE_REF: ${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
-          HEAD_REF: ${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          BASE_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
+          HEAD_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}
           PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: ${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" prepare
 
@@ -373,11 +416,63 @@ jobs:
             exit 1
           fi
 
+  advisor-blockers:
+    name: Require no Advisor blockers
+    needs: [require-green-checks, build-advisor-runtime, review-specialists]
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.build-advisor-runtime.result == 'success' && needs.review-specialists.result == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+      EXPECTED_HEAD_SHA: ${{ needs.require-green-checks.outputs.head_sha }}
+      EXPECTED_BASE_SHA: ${{ needs.require-green-checks.outputs.base_sha }}
+    steps:
+      - name: Checkout trusted blocker gate (workflow revision)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node for trusted blocker gate
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ">=22.19.0 <23"
+
+      - name: Download trusted advisor runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-review-advisor-runtime-${{ github.run_id }}
+          path: ${{ runner.temp }}/shared-pr-review-advisor-runtime
+
+      - name: Restore trusted advisor runtime
+        env:
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXPECTED_RUNTIME_SHA: ${{ needs.build-advisor-runtime.outputs.payload-sha }}
+        run: bash "$ADVISOR_DIR/scripts/restore-pr-review-advisor-runtime.sh" "$RUNNER_TEMP/shared-pr-review-advisor-runtime"
+
+      - name: Download specialist reviews
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: pr-review-specialist-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pr-review-specialists
+
+      - name: Require clear specialist evidence
+        env:
+          PR_REVIEW_ADVISOR_ARTIFACTS: ${{ runner.temp }}/pr-review-specialists
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/blocker-gate.mts" --attempt "$GITHUB_RUN_ATTEMPT"
+
   publish:
     name: Publish advisor link
-    needs: [require-green-checks, review-specialists]
+    needs: [require-green-checks, review-specialists, advisor-blockers]
     if: ${{ always() && github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}
-    # Publication is best-effort and must never hide a specialist review failure.
+    # Publication is best-effort and still runs when the blocker gate is red.
     continue-on-error: true
     permissions:
       contents: read
@@ -403,7 +498,10 @@ jobs:
       - name: Setup Node for trusted publisher
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
 
       - name: Post PR review advisor link
         env:
