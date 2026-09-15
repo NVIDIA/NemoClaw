@@ -199,7 +199,10 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(path.join(sourceRoot, "nemoclaw"), 0o700);
     fs.chmodSync(path.join(sourceRoot, "nemoclaw", "src"), 0o700);
     writeFixture(path.join("nemoclaw-blueprint", "blueprint.yaml"));
+    writeFixture(path.join("nemoclaw-blueprint", "private-networks.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"));
+    writeFixture(path.join("nemoclaw-blueprint", "provider-profiles", "okta-runtime-v1.yaml"));
+    writeFixture(path.join("nemoclaw-blueprint", "router", "pool-config.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "scripts", "http-proxy-fix.js"));
     writeFixture(
       path.join(
@@ -341,6 +344,15 @@ describe("sandbox build context staging", () => {
     expect(stagedManifestDirMode & 0o002).toBe(0);
     expect((fs.statSync(stagedManifest).mode & 0o777).toString(8)).toBe("644");
     expect((fs.statSync(stagedPlugin).mode & 0o777).toString(8)).toBe("644");
+    for (const relativePath of [
+      "private-networks.yaml",
+      path.join("provider-profiles", "okta-runtime-v1.yaml"),
+      path.join("router", "pool-config.yaml"),
+    ]) {
+      const stagedPath = path.join(stagedBlueprint, relativePath);
+      expect(fs.readFileSync(stagedPath, "utf8"), relativePath).toBe("fixture\n");
+      expect((fs.statSync(stagedPath).mode & 0o777).toString(8), relativePath).toBe("644");
+    }
   }
 
   function expectStagedOpenClawRuntimeGraphs(buildCtx: string, sourceRoot: string) {

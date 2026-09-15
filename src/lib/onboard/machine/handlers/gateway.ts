@@ -84,6 +84,10 @@ export interface GatewayStateOptions<Gpu> {
       destroyGatewayRuntimeForGpuReuse: () => boolean;
     }): GatewayReuseState;
     isLinuxDockerDriverGatewayEnabled(): boolean;
+    verifyReusableDockerDriverGatewaySandboxReachability(
+      gpu: Gpu,
+      options: { gpuPassthrough: boolean },
+    ): Promise<void>;
     retireLegacyGatewayForDockerDriverUpgrade(): void;
     destroyGatewayRuntimeForGpuReuse(): boolean;
     skippedStepMessage(stepName: string, detail?: string | null, reason?: "resume" | "reuse"): void;
@@ -274,6 +278,9 @@ async function handleGatewayStatePhase<Gpu>({
   });
 
   const canReuseHealthyGateway = gatewayReuseState === "healthy";
+  if (canReuseHealthyGateway && deps.isLinuxDockerDriverGatewayEnabled()) {
+    await deps.verifyReusableDockerDriverGatewaySandboxReachability(gpu, { gpuPassthrough });
+  }
   const resumeGateway =
     resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
   if (resumeGateway) {

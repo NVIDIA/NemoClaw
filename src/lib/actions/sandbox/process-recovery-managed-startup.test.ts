@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as forwardService from "../../adapters/openshell/forward-service";
 import * as openshellResolve from "../../adapters/openshell/resolve";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as wait from "../../core/wait";
+import * as gatewayTeardownAuthority from "../../onboard/gateway-teardown-authority";
 import * as registry from "../../state/registry";
 import * as forwardHealth from "./forward-health";
 import {
@@ -57,6 +58,21 @@ function mockRecoveredForward(_sandboxName: string): void {
     output: "SANDBOX  BIND  PORT  PID  STATUS",
   });
 }
+
+beforeEach(() => {
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

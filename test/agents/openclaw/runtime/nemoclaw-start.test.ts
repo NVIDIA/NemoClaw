@@ -2985,7 +2985,7 @@ describe("Telegram diagnostics (#2766)", () => {
           : 'id() { if [ "${1:-}" = "-u" ]; then printf "0"; elif [ "${1:-}" = "-g" ]; then printf "0"; else command id "$@"; fi; }',
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
         "recover_openclaw_config_if_empty() { :; }",
-        'normalize_mutable_config_perms() { echo "ORDER:normalize"; }',
+        'normalize_mutable_config_perms() { echo "ORDER:normalize"; }; prepare_openclaw_gateway_state() { :; }',
         "apply_model_override() { :; }",
         "reconcile_agent_model_with_provider() { :; }",
         "apply_cors_override() { :; }",

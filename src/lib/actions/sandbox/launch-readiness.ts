@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
+import { parseVersionFromText } from "../../adapters/openshell/client";
 import {
   createCliOpenShellSandboxPolicyReader,
   namedOpenShellGateway,
@@ -88,6 +89,8 @@ export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/tim
 export { createBoundLaunchReadinessDeps };
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
+const LIVE_AGENT_VERSION_MAX_BYTES = 4 * 1_024;
+const LIVE_AGENT_VERSION_TIMEOUT_MS = 10_000;
 
 export type LaunchReadinessPerformanceStage =
   | "storage-read"
@@ -648,6 +651,35 @@ async function validateLivePolicy(
   }
 }
 
+async function resolveOpenClawPairingVersion(
+  sandboxName: string,
+  gatewayName: string,
+  entry: SandboxEntry,
+  agent: AgentDefinition,
+  deps: LaunchReadinessDeps,
+): Promise<string | null> {
+  const recordedVersion = normalizedString(entry.agentVersion);
+  if (recordedVersion) return recordedVersion;
+  if (!normalizedString(entry.fromDockerfile)) return null;
+
+  const commandExecutor = deps.commandExecutor;
+  if (!commandExecutor) return null;
+  try {
+    const observed = await commandExecutor.runBuffered({
+      sandboxName,
+      target: namedOpenShellGateway(gatewayName),
+      command: ["sh", "-lc", agent.versionCommand],
+      timeoutMilliseconds: LIVE_AGENT_VERSION_TIMEOUT_MS,
+      outputLimitBytes: LIVE_AGENT_VERSION_MAX_BYTES,
+    });
+    return observed.outcome.kind === "completed" && observed.outcome.exitCode === 0
+      ? parseVersionFromText(observed.stdout, agent.versionCommand)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 class LaunchReadinessPolicyObservationError extends Error {
   constructor(readonly policyError: OpenShellSandboxError) {
     super(policyError.message);
@@ -814,7 +846,16 @@ async function captureLaunchIdentity(
 
   let session: LaunchReadinessIdentity["session"] = null;
   if (agentName === "openclaw") {
-    const openclawVersion = normalizedString(entry.agentVersion);
+    // A custom Dockerfile intentionally has no managed version in the registry.
+    // Bind its readiness lease to the version observed from the exact live
+    // sandbox without promoting that observation into managed-image provenance.
+    const openclawVersion = await resolveOpenClawPairingVersion(
+      sandboxName,
+      gatewayName,
+      entry,
+      agent,
+      deps,
+    );
     const stateDirectory = normalizedString(agent.config?.dir);
     // Pairing qualification requires a versioned trusted definition. The
     // receipt binds the sandbox's recorded version, including supported stale

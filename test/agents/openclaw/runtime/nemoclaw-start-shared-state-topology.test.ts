@@ -74,9 +74,9 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
   });
 
   it.each([
-    { expected: "1", initial: "caller-disabled", uid: 0 },
-    { expected: "unset", initial: "1", uid: 1000 },
-  ])("derives marker $expected for uid $uid", ({ expected, initial, uid }) => {
+    { initial: "caller-disabled", uid: 0 },
+    { initial: "1", uid: 1000 },
+  ])("keeps the sandbox client marker unset for uid $uid", ({ initial, uid }) => {
     const block = sourceBlock(
       source,
       "# OpenClaw 2026.9.1 enforces owner-only SQLite",
@@ -91,24 +91,21 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
     ]);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(expected);
+    expect(result.stdout.trim()).toBe("unset");
   });
 
-  it.each([
-    { expected: "export NEMOCLAW_OPENCLAW_SHARED_STATE=1", marker: "1" },
-    { expected: "unset NEMOCLAW_OPENCLAW_SHARED_STATE", marker: "" },
-  ])("writes connect-shell command: $expected", ({ expected, marker }) => {
+  it("keeps gateway-only state variables out of connect shells", () => {
     const block = sourceBlock(
       source,
-      '    if [ "${NEMOCLAW_OPENCLAW_SHARED_STATE:-}" = "1" ]; then',
+      "    # Only the gateway launch receives the read-only shared-state marker.",
       '    if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then',
     );
-    const markerCommand = marker
-      ? "export NEMOCLAW_OPENCLAW_SHARED_STATE=1"
-      : "unset NEMOCLAW_OPENCLAW_SHARED_STATE";
-    const result = runBash([markerCommand, block]);
+    const result = runBash([block]);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(expected);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "unset NEMOCLAW_OPENCLAW_SHARED_STATE",
+      "unset NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR",
+    ]);
   });
 });

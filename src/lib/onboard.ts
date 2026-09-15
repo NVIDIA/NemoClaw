@@ -1400,7 +1400,7 @@ const gatewayStart = createGatewayStart({
   isLinuxDockerDriverGatewayEnabled,
   runOpenshell,
   selectNamedGatewayForReuseIfNeeded,
-  startDockerDriverGateway: dockerDriverGatewayStart.startDockerDriverGateway,
+  ...dockerDriverGatewayStart,
   step,
 });
 
@@ -2922,7 +2922,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStateSkipped,
           note,
           startRecordedStep,
-          startGateway,
+          ...gatewayStart,
           recordStepComplete,
           exitProcess: (code) => process.exit(code),
         },

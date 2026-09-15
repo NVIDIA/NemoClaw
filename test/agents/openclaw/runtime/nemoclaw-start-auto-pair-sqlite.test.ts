@@ -288,17 +288,31 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
     );
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
+    const gatewayStateDir = path.join(tmpDir, "gateway-state");
     const identityDir = path.join(stateDir, "identity");
     const devicesDir = path.join(stateDir, "devices");
     const approveLog = path.join(tmpDir, "approve-called");
     const database = createCanonicalSqlitePairingState(stateDir);
+    const gatewayDatabase = createCanonicalSqlitePairingState(gatewayStateDir);
+    const removeClientPending = spawnSync(
+      "python3",
+      [
+        "-c",
+        "import os, sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute('DELETE FROM device_pairing_pending'); c.commit(); os._exit(0)",
+        database,
+      ],
+      { encoding: "utf-8" },
+    );
+    expect(removeClientPending.status, removeClientPending.stderr).toBe(0);
     const databaseBefore = fs.readFileSync(database);
+    const gatewayDatabaseBefore = fs.readFileSync(gatewayDatabase);
     const walProof = spawnSync(
       "python3",
       [
         "-c",
-        "import sqlite3,sys; p=sys.argv[1]; assert sqlite3.connect(f'file:{p}?immutable=1', uri=True).execute(\"SELECT COUNT(*) FROM sqlite_master WHERE name='device_identities'\").fetchone()[0] == 0; assert sqlite3.connect(f'file:{p}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_pairing_pending').fetchone()[0] == 1",
+        "import sqlite3,sys; client,gateway=sys.argv[1:]; assert sqlite3.connect(f'file:{client}?immutable=1', uri=True).execute(\"SELECT COUNT(*) FROM sqlite_master WHERE name='device_identities'\").fetchone()[0] == 0; assert sqlite3.connect(f'file:{client}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_identities').fetchone()[0] == 1; assert sqlite3.connect(f'file:{client}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_pairing_pending').fetchone()[0] == 0; assert sqlite3.connect(f'file:{gateway}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_pairing_pending').fetchone()[0] == 1",
         database,
+        gatewayDatabase,
       ],
       { encoding: "utf-8" },
     );
@@ -325,6 +339,7 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           OPENCLAW_STATE_DIR: stateDir,
+          NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR: gatewayStateDir,
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
@@ -338,7 +353,9 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
       expect(run.stdout).toContain("[auto-pair] approved initial CLI pairing request=request-1");
       expect(fs.existsSync(approveLog)).toBe(true);
       expect(fs.readFileSync(database)).toEqual(databaseBefore);
+      expect(fs.readFileSync(gatewayDatabase)).toEqual(gatewayDatabaseBefore);
       expect(fs.existsSync(`${database}-journal`)).toBe(false);
+      expect(fs.existsSync(`${gatewayDatabase}-journal`)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

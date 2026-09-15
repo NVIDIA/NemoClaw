@@ -527,6 +527,7 @@ OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 _OPENCLAW_STATE_DIR="${_SANDBOX_HOME}/.openclaw"
 _OPENCLAW_CREDENTIALS_DIR="${_OPENCLAW_STATE_DIR}/credentials"
+_OPENCLAW_GATEWAY_STATE_DIR="${_SANDBOX_HOME}/.nemoclaw/openclaw-gateway-state"
 
 # OpenClaw 2026.4.x stores channel pairing requests under
 # resolveOAuthDir(resolveStateDir(...))/<channel>-pairing.json. The gateway
@@ -2556,6 +2557,11 @@ start_auto_pair() {
       # shellcheck source=/dev/null
       builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
     fi
+    if [ "$(id -u)" -eq 0 ]; then
+      export NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR="$_OPENCLAW_GATEWAY_STATE_DIR"
+    else
+      unset NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR
+    fi
     export OPENCLAW_BIN="$OPENCLAW"
     exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
   ) <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
@@ -2761,9 +2767,18 @@ def _state_sqlite_path(state_dir):
 
 
 def _sqlite_initial_pairing_snapshot(sqlite_path, request_id):
-    state_dir = os.path.dirname(os.path.dirname(sqlite_path))
-    records, _database_metadata = read_openclaw_pairing_state(state_dir, timeout=1)
-    return records['identity'], records['pending'].get(request_id)
+    client_state_dir = os.path.dirname(os.path.dirname(sqlite_path))
+    client_records, _database_metadata = read_openclaw_pairing_state(
+        client_state_dir, timeout=1,
+    )
+    gateway_state_dir = os.environ.get('NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR')
+    if gateway_state_dir:
+        gateway_records, _database_metadata = read_openclaw_pairing_state(
+            gateway_state_dir, timeout=1,
+        )
+    else:
+        gateway_records = client_records
+    return client_records['identity'], gateway_records['pending'].get(request_id)
 
 
 def _local_device_identity():
@@ -3587,13 +3602,10 @@ PROXYEOF
       _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
       printf "export %s='%s'\n" "$_openclaw_env_name" "$_escaped_openclaw_env_value"
     done
-    if [ "${NEMOCLAW_OPENCLAW_SHARED_STATE:-}" = "1" ]; then
-      printf 'export NEMOCLAW_OPENCLAW_SHARED_STATE=1\n'
-    else
-      # Old/custom images may still carry the former image-wide marker. Keep
-      # connect shells aligned with the topology selected by PID 1.
-      printf 'unset NEMOCLAW_OPENCLAW_SHARED_STATE\n'
-    fi
+    # Only the gateway launch receives the read-only shared-state marker.
+    # Sandbox commands always use their private client database.
+    printf 'unset NEMOCLAW_OPENCLAW_SHARED_STATE\n'
+    printf 'unset NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR\n'
     if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
       _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"
@@ -5238,6 +5250,7 @@ PYGATEWAYLAUNCH
 }
 
 launch_openclaw_gateway() {
+  local gateway_state_dir="${_OPENCLAW_GATEWAY_STATE_DIR:-/sandbox/.nemoclaw/openclaw-gateway-state}"
   # Drop the gateway marker whenever this supervisor exits -- clean gateway
   # exit (`exit 0` below), a forwarded signal (cleanup_openclaw_on_signal ends
   # in `cleanup_on_signal` -> `exit`), or errexit. This is the #4952 fix: on
@@ -5250,6 +5263,9 @@ launch_openclaw_gateway() {
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
   launch_openclaw_gateway_process truncate gateway \
+    /usr/bin/env \
+    OPENCLAW_STATE_DIR="$gateway_state_dir" \
+    NEMOCLAW_OPENCLAW_SHARED_STATE=1 \
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
@@ -5773,6 +5789,108 @@ prepare_openshell_sqlite_tmpdir() {
   export SQLITE_TMPDIR="$sqlite_tmpdir"
 }
 
+# Direct managed containers run the OpenClaw gateway under the dedicated
+# gateway UID, while commands and the agent-facing CLI run under the sandbox
+# UID. Keep their SQLite roots separate: the sandbox owns its private client
+# identity database, and the gateway owns the authoritative pairing/auth state.
+# The sandbox group receives read-only access to the gateway database solely so
+# the pairing observer can validate one canonical request without becoming a
+# second writer. The sticky, root-owned .nemoclaw parent prevents the sandbox
+# from replacing the gateway-owned directory binding.
+prepare_openclaw_gateway_state() {
+  [ "$(id -u)" -eq 0 ] || return 0
+
+  local gateway_uid sandbox_gid
+  gateway_uid="$(id -u gateway)" || return 1
+  sandbox_gid="$(id -g sandbox)" || return 1
+
+  # Never import the former sandbox-writable authentication database here. It
+  # is not a trustworthy authority boundary. On the first protected start the
+  # gateway creates fresh state and the private sandbox client re-pairs through
+  # the bounded auto-pair flow. Later starts accept only the protected database.
+  python3 -I - "$_OPENCLAW_GATEWAY_STATE_DIR" "$gateway_uid" "$sandbox_gid" <<'PY_GATEWAY_STATE_DIR' || return 1
+import os
+import stat
+import sys
+
+gateway_root = sys.argv[1]
+gateway_uid = int(sys.argv[2])
+sandbox_gid = int(sys.argv[3])
+parent_path = os.path.dirname(gateway_root)
+entry_name = os.path.basename(gateway_root)
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+parent_fd = os.open(parent_path, directory_flags)
+gateway_fd = -1
+state_fd = -1
+try:
+    parent = os.fstat(parent_fd)
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != 0
+        or stat.S_IMODE(parent.st_mode) != 0o1755
+    ):
+        raise OSError("unsafe protected OpenClaw gateway-state parent")
+
+    try:
+        os.mkdir(entry_name, 0o2750, dir_fd=parent_fd)
+        created_gateway_root = True
+    except FileExistsError:
+        created_gateway_root = False
+    gateway_fd = os.open(entry_name, directory_flags, dir_fd=parent_fd)
+    if created_gateway_root:
+        os.fchown(gateway_fd, gateway_uid, sandbox_gid)
+        os.fchmod(gateway_fd, 0o2750)
+    gateway = os.fstat(gateway_fd)
+    if (
+        not stat.S_ISDIR(gateway.st_mode)
+        or gateway.st_uid != gateway_uid
+        or gateway.st_gid != sandbox_gid
+        or stat.S_IMODE(gateway.st_mode) != 0o2750
+    ):
+        raise OSError("unsafe protected OpenClaw gateway-state directory")
+
+    try:
+        os.mkdir("state", 0o2750, dir_fd=gateway_fd)
+        created_state = True
+    except FileExistsError:
+        created_state = False
+    state_fd = os.open("state", directory_flags, dir_fd=gateway_fd)
+    if created_state:
+        os.fchown(state_fd, gateway_uid, sandbox_gid)
+        os.fchmod(state_fd, 0o2750)
+    state = os.fstat(state_fd)
+    if (
+        not stat.S_ISDIR(state.st_mode)
+        or state.st_uid != gateway_uid
+        or state.st_gid != sandbox_gid
+        or stat.S_IMODE(state.st_mode) != 0o2750
+    ):
+        raise OSError("unsafe protected OpenClaw gateway SQLite directory")
+
+    for name in ("openclaw.sqlite", "openclaw.sqlite-wal", "openclaw.sqlite-shm", "openclaw.sqlite-journal"):
+        try:
+            database_file = os.stat(name, dir_fd=state_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if (
+            not stat.S_ISREG(database_file.st_mode)
+            or database_file.st_nlink != 1
+            or database_file.st_uid != gateway_uid
+            or database_file.st_gid != sandbox_gid
+            or stat.S_IMODE(database_file.st_mode) != 0o640
+            or database_file.st_size > 1024 * 1024 * 1024
+        ):
+            raise OSError("unsafe protected OpenClaw gateway SQLite file")
+finally:
+    if state_fd >= 0:
+        os.close(state_fd)
+    if gateway_fd >= 0:
+        os.close(gateway_fd)
+    os.close(parent_fd)
+PY_GATEWAY_STATE_DIR
+}
+
 run_requested_openclaw_post_upgrade_doctor() {
   local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
   local expected="nemoclaw-openclaw-post-upgrade-doctor-v1"
@@ -5824,14 +5942,12 @@ EOF
 # ── Main ─────────────────────────────────────────────────────────
 
 # OpenClaw 2026.9.1 enforces owner-only SQLite and models-file modes on every
-# open. Only the root entrypoint uses NemoClaw's separate sandbox/gateway UIDs;
-# OpenShell starts this entrypoint as the sandbox UID and runs both roles as that
-# same user. Derive the compatibility marker from the real topology instead of
-# an image-wide or caller-supplied environment marker.
-if [ "$(id -u)" -eq 0 ]; then
-  export NEMOCLAW_OPENCLAW_SHARED_STATE=1
-else
-  unset NEMOCLAW_OPENCLAW_SHARED_STATE
+# open. Sandbox-side clients keep those private defaults. The root topology
+# supplies its compatibility marker only to the gateway process after moving
+# authoritative state beneath a gateway-owned directory. OpenShell starts this
+# entrypoint as the sandbox UID and runs both roles as that same user.
+unset NEMOCLAW_OPENCLAW_SHARED_STATE
+if [ "$(id -u)" -ne 0 ]; then
   prepare_openshell_sqlite_tmpdir || exit 1
 fi
 
@@ -6025,6 +6141,7 @@ echo "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" >&2
 # rather than failing the integrity hash for the empty file.
 recover_openclaw_config_if_empty
 normalize_mutable_config_perms
+prepare_openclaw_gateway_state || exit 1
 apply_model_override
 reconcile_agent_model_with_provider
 apply_cors_override

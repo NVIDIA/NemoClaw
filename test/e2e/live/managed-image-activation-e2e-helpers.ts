@@ -22,6 +22,7 @@ import {
   outputContainsSandbox,
   resultText,
   type SandboxClient,
+  type TrustedSandboxShellScript,
   trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -41,6 +42,9 @@ const MODEL = "nemoclaw-managed-activation-model";
 const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS = 60;
+const OPENCLAW_POST_RESTART_READY_TIMEOUT_MS =
+  (OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS + 10) * 1_000;
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
@@ -193,6 +197,34 @@ function agentTurnCommand(agent: ShippedManagedImageAgent, sessionId: string): s
   }
 }
 
+export function managedActivationPostRestartAgentTurnScript(
+  agent: ShippedManagedImageAgent,
+  phase: "before" | "after",
+  command: readonly string[],
+): TrustedSandboxShellScript | null {
+  if (agent !== "openclaw" || phase !== "after") return null;
+
+  return trustedSandboxShellScript(`
+deadline=$(( $(date +%s) + ${OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS} ))
+last_status=000
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  last_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 2 http://127.0.0.1:18789/health || true)"
+  case "$last_status" in
+    200|401) break ;;
+  esac
+  sleep 2
+done
+case "$last_status" in
+  200|401) ;;
+  *)
+    printf 'OpenClaw gateway did not become ready after OpenShell restart (last HTTP status: %s)\n' "$last_status" >&2
+    exit 1
+    ;;
+esac
+exec ${command.map((argument) => shellQuote(argument)).join(" ")}
+`);
+}
+
 function registryDocument(): {
   sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
 } {
@@ -222,16 +254,19 @@ async function runAgentTurn(
   phase: "before" | "after",
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const result = await sandbox.exec(
-    sandboxName,
-    agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`),
-    {
-      artifactName: `${agent}-agent-turn-${phase}-restart`,
-      env,
-      redactionValues: [API_KEY],
-      timeoutMs: AGENT_TIMEOUT_MS,
-    },
-  );
+  const command = agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`);
+  const postRestartScript = managedActivationPostRestartAgentTurnScript(agent, phase, command);
+  const options = {
+    artifactName: `${agent}-agent-turn-${phase}-restart`,
+    env,
+    redactionValues: [API_KEY],
+    timeoutMs:
+      AGENT_TIMEOUT_MS + (postRestartScript === null ? 0 : OPENCLAW_POST_RESTART_READY_TIMEOUT_MS),
+  };
+  const result =
+    postRestartScript === null
+      ? await sandbox.exec(sandboxName, command, options)
+      : await sandbox.execShell(sandboxName, postRestartScript, options);
   expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
     true,
   );

@@ -78,6 +78,10 @@ export interface DockerDriverGatewayStart {
     runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   }): Promise<void>;
+  verifyDockerDriverGatewaySandboxReachability(options: {
+    exitOnFailure: boolean;
+    skipSandboxBridgeReachability: boolean;
+  }): Promise<void>;
 }
 
 export function resolveDockerDriverGatewayRuntimeMarkerEndpoint(
@@ -90,6 +94,22 @@ export function resolveDockerDriverGatewayRuntimeMarkerEndpoint(
 export function createDockerDriverGatewayStart(
   deps: DockerDriverGatewayStartDeps,
 ): DockerDriverGatewayStart {
+  const verifyReachability =
+    deps.verifySandboxBridgeGatewayReachableOrExit ?? verifySandboxBridgeGatewayReachableOrExit;
+
+  async function verifyDockerDriverGatewaySandboxReachability({
+    exitOnFailure,
+    skipSandboxBridgeReachability,
+  }: {
+    exitOnFailure: boolean;
+    skipSandboxBridgeReachability: boolean;
+  }): Promise<void> {
+    await verifyReachability(exitOnFailure, {
+      port: deps.gatewayPort(),
+      skip: skipSandboxBridgeReachability,
+    });
+  }
+
   async function startDockerDriverGateway({
     exitOnFailure = true,
     output,
@@ -121,8 +141,6 @@ export function createDockerDriverGatewayStart(
     ) => deps.runCaptureOpenshell(args, { ...options, ...runtimeOptions });
     const registerDockerDriverGatewayEndpoint = () =>
       deps.registerDockerDriverGatewayEndpoint(runtimeSelection);
-    const verifyReachability =
-      deps.verifySandboxBridgeGatewayReachableOrExit ?? verifySandboxBridgeGatewayReachableOrExit;
     const stateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
       configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
       home: os.homedir(),
@@ -371,5 +389,5 @@ export function createDockerDriverGatewayStart(
     }
   }
 
-  return { startDockerDriverGateway };
+  return { startDockerDriverGateway, verifyDockerDriverGatewaySandboxReachability };
 }

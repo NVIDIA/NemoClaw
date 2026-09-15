@@ -8,14 +8,16 @@
  * NemoClaw's root entrypoint runs the OpenClaw CLI and gateway as separate
  * users in the same group. OpenClaw 2026.9.1 makes shared and per-agent SQLite
  * state part of gateway startup, but hardens those paths to owner-only modes.
- * For that topology, keep generic credential and identity stores owner-only
- * while applying group-shared modes only to the databases. Leave private-store
- * enforcement unchanged, and ignore only the obsolete pinned-version update
- * cache when its migration cannot archive through a root-owned parent.
+ * The root topology keeps the authoritative databases under a gateway-owned
+ * state root and grants the sandbox group read-only access for pairing
+ * observation. Generic credential and identity stores remain owner-only.
+ * Leave private-store enforcement unchanged, and ignore only the obsolete
+ * pinned-version update cache when its migration cannot archive through a
+ * root-owned parent.
  *
- * Remove this patch once upstream supports a group-shared state database for
- * split-user containers without requiring a non-owner to chmod an already
- * correctly configured file.
+ * Remove this patch once upstream supports a gateway-owned state database for
+ * split-user containers without requiring a read-only observer to chmod an
+ * already correctly configured file.
  */
 
 import fs from "node:fs";
@@ -51,8 +53,8 @@ const UPSTREAM_MODE_CONSTANTS = [
 
 const PATCHED_MODE_CONSTANTS = [
   UPSTREAM_MODE_CONSTANTS,
-  `const NEMOCLAW_SHARED_STATE_DIR_MODE = 0o2770; ${MARKER}`,
-  "const NEMOCLAW_SHARED_STATE_FILE_MODE = 0o660;",
+  `const NEMOCLAW_SHARED_STATE_DIR_MODE = 0o2750; ${MARKER}`,
+  "const NEMOCLAW_SHARED_STATE_FILE_MODE = 0o640;",
   GROUP_SHARED_ENV_HELPER,
 ].join("\n");
 
@@ -98,7 +100,10 @@ const PATCHED_CHMOD_HELPER_20260901 = [
 
 const STATE_CHMOD_HELPER_SHAPES = [
   { patched: PATCHED_CHMOD_HELPER, upstream: UPSTREAM_CHMOD_HELPER },
-  { patched: PATCHED_CHMOD_HELPER_20260901, upstream: UPSTREAM_CHMOD_HELPER_20260901 },
+  {
+    patched: PATCHED_CHMOD_HELPER_20260901,
+    upstream: UPSTREAM_CHMOD_HELPER_20260901,
+  },
 ] as const;
 
 const UPSTREAM_PERMISSION_HELPER = [
@@ -181,13 +186,16 @@ const PATCHED_PERMISSION_HELPER_20260901 = [
 
 const STATE_PERMISSION_HELPER_SHAPES = [
   { patched: PATCHED_PERMISSION_HELPER, upstream: UPSTREAM_PERMISSION_HELPER },
-  { patched: PATCHED_PERMISSION_HELPER_20260901, upstream: UPSTREAM_PERMISSION_HELPER_20260901 },
+  {
+    patched: PATCHED_PERMISSION_HELPER_20260901,
+    upstream: UPSTREAM_PERMISSION_HELPER_20260901,
+  },
 ] as const;
 
 const PATCHED_STATE_REQUIRED_PATTERNS = [
   MARKER,
-  "const NEMOCLAW_SHARED_STATE_DIR_MODE = 0o2770;",
-  "const NEMOCLAW_SHARED_STATE_FILE_MODE = 0o660;",
+  "const NEMOCLAW_SHARED_STATE_DIR_MODE = 0o2750;",
+  "const NEMOCLAW_SHARED_STATE_FILE_MODE = 0o640;",
   "function nemoclawUsesGroupSharedState(env) {",
   "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
   "function bestEffortChmodSync(target, mode, skipWhenModeMatches = false) {",
@@ -209,8 +217,8 @@ const UPSTREAM_AGENT_MODE_CONSTANTS = [
 
 const PATCHED_AGENT_MODE_CONSTANTS = [
   UPSTREAM_AGENT_MODE_CONSTANTS,
-  `const NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o2770; ${AGENT_MARKER}`,
-  "const NEMOCLAW_SHARED_AGENT_DB_FILE_MODE = 0o660;",
+  `const NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o2750; ${AGENT_MARKER}`,
+  "const NEMOCLAW_SHARED_AGENT_DB_FILE_MODE = 0o640;",
   GROUP_SHARED_ENV_HELPER,
 ].join("\n");
 
@@ -301,7 +309,10 @@ const PATCHED_AGENT_PERMISSION_HELPER_20260901 = [
 ].join("\n");
 
 const AGENT_PERMISSION_HELPER_SHAPES = [
-  { patched: PATCHED_AGENT_PERMISSION_HELPER, upstream: UPSTREAM_AGENT_PERMISSION_HELPER },
+  {
+    patched: PATCHED_AGENT_PERMISSION_HELPER,
+    upstream: UPSTREAM_AGENT_PERMISSION_HELPER,
+  },
   {
     patched: PATCHED_AGENT_PERMISSION_HELPER_20260901,
     upstream: UPSTREAM_AGENT_PERMISSION_HELPER_20260901,
@@ -310,8 +321,8 @@ const AGENT_PERMISSION_HELPER_SHAPES = [
 
 const PATCHED_AGENT_REQUIRED_PATTERNS = [
   AGENT_MARKER,
-  "const NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o2770;",
-  "const NEMOCLAW_SHARED_AGENT_DB_FILE_MODE = 0o660;",
+  "const NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o2750;",
+  "const NEMOCLAW_SHARED_AGENT_DB_FILE_MODE = 0o640;",
   "function nemoclawUsesGroupSharedState(env) {",
   "const nemoclawGroupSharedState = nemoclawUsesGroupSharedState(options.env);",
   "mode: nemoclawAgentDirMode",
@@ -351,7 +362,10 @@ const PATCHED_MIGRATION_START_20260901 = [
 
 const MIGRATION_START_SHAPES = [
   { patched: PATCHED_MIGRATION_START, upstream: UPSTREAM_MIGRATION_START },
-  { patched: PATCHED_MIGRATION_START_20260901, upstream: UPSTREAM_MIGRATION_START_20260901 },
+  {
+    patched: PATCHED_MIGRATION_START_20260901,
+    upstream: UPSTREAM_MIGRATION_START_20260901,
+  },
 ] as const;
 
 const PATCHED_MIGRATION_REQUIRED_PATTERNS = [
@@ -377,7 +391,7 @@ const PATCHED_MODELS_FILE_MODE_HELPER = [
   GROUP_SHARED_ENV_HELPER,
   `async function ensureModelsFileModeForModelsJson(pathname) { ${MODELS_MARKER}`,
   "\tconst nemoclawGroupSharedState = nemoclawUsesGroupSharedState();",
-  "\tconst nemoclawModelsFileMode = nemoclawGroupSharedState ? 0o660 : 384;",
+  "\tconst nemoclawModelsFileMode = nemoclawGroupSharedState ? 0o640 : 384;",
   "\tif (nemoclawGroupSharedState) try {",
   "\t\tif (((await fs.stat(pathname)).mode & 0o7777) === nemoclawModelsFileMode) return;",
   "\t} catch {}",
@@ -390,7 +404,7 @@ const PATCHED_MODELS_REQUIRED_PATTERNS = [
   "function nemoclawUsesGroupSharedState(env) {",
   "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
   "async function ensureModelsFileModeForModelsJson(pathname) {",
-  "const nemoclawModelsFileMode = nemoclawGroupSharedState ? 0o660 : 384;",
+  "const nemoclawModelsFileMode = nemoclawGroupSharedState ? 0o640 : 384;",
   "((await fs.stat(pathname)).mode & 0o7777) === nemoclawModelsFileMode",
   "await fs.chmod(pathname, nemoclawModelsFileMode).catch(() => {});",
 ] as const;
@@ -432,7 +446,10 @@ function requireExactlyOnce(source: string, needle: string, label: string, file:
 
 function resolveExactlyOneShape(
   source: string,
-  shapes: ReadonlyArray<{ readonly patched: string; readonly upstream: string }>,
+  shapes: ReadonlyArray<{
+    readonly patched: string;
+    readonly upstream: string;
+  }>,
   label: string,
   file: string,
 ) {

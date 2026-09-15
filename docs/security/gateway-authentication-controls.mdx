@@ -62,6 +62,8 @@ Device authentication requires each connecting device to go through a pairing fl
 | Risk if relaxed | Bypassing device identity would allow a client to connect without proving its paired identity. NemoClaw does not emit the retired bypass. |
 | Recommendation | Prefer loopback access or SSH port forwarding and complete the normal pairing flow for every browser or CLI device. |
 
+Direct managed containers keep authoritative gateway authentication state in a gateway-owned, sandbox-readable database. NemoClaw does not import the former sandbox-writable database into that trust boundary; the recognized local client re-pairs through the bounded auto-pair flow on the first protected start.
+
 ## Gateway Bind Address
 
 NemoClaw binds the OpenShell gateway to loopback by default.
@@ -92,10 +94,10 @@ That setting expands access and must remain explicit; use HTTPS or an SSH local 
 
 In that state, NemoClaw does not add audit suppressions, so the Host-header fallback finding remains active.
 
-Review the accepted findings and their recorded reasons:
+Review the active findings, including the Host-header fallback finding described above:
 
 ```bash
-openclaw security audit --json | jq '.suppressedFindings'
+openclaw security audit --json | jq '.findings'
 ```
 
 Remove the underlying risky condition when dashboard compatibility no longer requires it.

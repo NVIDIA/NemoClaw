@@ -383,7 +383,11 @@ async function runContainer(
       "-c",
       script,
     ],
-    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: DOCKER_OPERATION_TIMEOUT_MS },
+    {
+      artifactName,
+      captureLimitBytes: 1024 * 1024,
+      timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+    },
   );
   expect(
     result.exitCode,
@@ -411,7 +415,11 @@ async function runDefaultContainer(
       image,
       ...command,
     ],
-    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: DOCKER_OPERATION_TIMEOUT_MS },
+    {
+      artifactName,
+      captureLimitBytes: 1024 * 1024,
+      timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+    },
   );
   expect(
     result.exitCode,
@@ -549,6 +557,15 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'printf " " >>/sandbox/.openclaw/openclaw.json; printf " " >>/sandbox/.openclaw/.config-hash\'',
         'for directory in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'probe="$1/.nemoclaw-write-probe"; : >"$probe"; rm -f "$probe"\' sh "$directory"; done',
         `/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'original=$(cat /sandbox/.nemoclaw/config.json); printf "{}\n" >/sandbox/.nemoclaw/config.json; printf "%s" "$original" >/sandbox/.nemoclaw/config.json'`,
+        `[ "$(stat -c '%U:%G:%a' /sandbox/.nemoclaw/openclaw-gateway-state)" = "gateway:sandbox:2750" ]`,
+        `[ "$(stat -c '%U:%G:%a' /sandbox/.nemoclaw/openclaw-gateway-state/state)" = "gateway:sandbox:2750" ]`,
+        `/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'umask 0027; printf gateway-auth > /sandbox/.nemoclaw/openclaw-gateway-state/state/openclaw.sqlite; chmod 0640 /sandbox/.nemoclaw/openclaw-gateway-state/state/openclaw.sqlite'`,
+        `/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -r /sandbox/.nemoclaw/openclaw-gateway-state/state/openclaw.sqlite`,
+        `! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf tampered >> /sandbox/.nemoclaw/openclaw-gateway-state/state/openclaw.sqlite'`,
+        `! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f /sandbox/.nemoclaw/openclaw-gateway-state/state/openclaw.sqlite`,
+        `! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- mv /sandbox/.nemoclaw/openclaw-gateway-state /sandbox/.nemoclaw/openclaw-gateway-state-held`,
+        `/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'printf gateway >> /sandbox/.nemoclaw/openclaw-gateway-state/state/openclaw.sqlite'`,
+        `grep -qx gateway-authgateway /sandbox/.nemoclaw/openclaw-gateway-state/state/openclaw.sqlite`,
         'for path in /sandbox/.nemoclaw /sandbox/.nemoclaw/blueprints /usr/local/bin/nemoclaw-gateway-control; do ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -w "$path"; done',
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -x /usr/local/bin/nemoclaw-gateway-control",
       ].join("\n"),

@@ -254,7 +254,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(inheritedRuntimePort.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:18791");
       expect(inheritedRuntimePort.stdout).toContain("PUBLIC_PORT=18791");
       expect(inheritedRuntimePort.stdout).toContain("OPENCLAW_GATEWAY_PORT=18791");
-      expect(inheritedRuntimePort.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18791");
+      expect(inheritedRuntimePort.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
 
       const gatewayStartupIgnoresInheritedClientPort = runScenario("set -- nemoclaw-start", {
         OPENCLAW_GATEWAY_PORT: "18791",

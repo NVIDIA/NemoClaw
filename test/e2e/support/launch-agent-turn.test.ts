@@ -67,6 +67,7 @@ type FixtureMode =
   | "recording-timeout"
   | "restored-canonical-timeout"
   | "supervisor-timeout"
+  | "user-exit-130"
   | "valid";
 
 interface LaunchFixtureInvocation {
@@ -379,7 +380,7 @@ const exitWithStatus = process.exit.bind(process);
   if (mode === "late-extra") append("user", firstInput);
   rl.close();
   if (exitCommand !== "/exit") process.exit(65);
-  process.exit(mode.includes("nonzero") ? 23 : 0);
+  process.exit(mode === "user-exit-130" ? 130 : mode.includes("nonzero") ? 23 : 0);
 })().catch(() => process.exit(66));
 `,
     );
@@ -1299,7 +1300,7 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
-  "propagates a nonzero TUI exit after two structured turns (#9160)",
+  "propagates failures and accepts a submitted /exit status 130 after two turns (#9160, #11105)",
   async ({ expect }) => {
     const { baselineRemoved, result, ttyObserved } = await runLaunchSessionFixture(
       "nonzero",
@@ -1309,6 +1310,8 @@ it.runIf(process.platform === "linux").concurrent(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(23);
+    const userExit = await runLaunchSessionFixture("user-exit-130", "absent");
+    expect(userExit.result.status, userExit.result.stderr).toBe(0);
   },
 );
 
