@@ -78,5 +78,5 @@ The generator selects JSON Schema Draft 2020-12 explicitly, sorts object keys, a
 Schemars and the test validator have fixed versions in [Cargo.toml](../Cargo.toml), with resolved dependencies in [Cargo.lock](../Cargo.lock).
 Review generated changes when updating those dependencies.
 
-The schema's API version identifies the document format; experimental revisions can change its accepted fields without changing that version.
+The schema's API version identifies the document format; accepted fields can change between source revisions without changing that version.
 Use a schema from the same source revision as the SDK or CLI you run.

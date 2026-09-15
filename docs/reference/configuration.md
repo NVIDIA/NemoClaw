@@ -502,7 +502,7 @@ Paths:
 
 ## Spec
 
-This experimental contract requires one inference provider and one sandbox.
+The configuration requires one inference provider and one sandbox.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 

@@ -1335,7 +1335,7 @@
     },
     "Spec": {
       "additionalProperties": false,
-      "description": "This experimental contract requires one inference provider and one sandbox.",
+      "description": "The configuration requires one inference provider and one sandbox.",
       "properties": {
         "gateway": {
           "$ref": "#/$defs/Gateway",

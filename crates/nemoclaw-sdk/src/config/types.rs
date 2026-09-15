@@ -38,7 +38,7 @@ pub struct Metadata {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// This experimental contract requires one inference provider and one sandbox.
+/// The configuration requires one inference provider and one sandbox.
 pub struct Spec {
     #[serde(rename = "gateway")]
     /// OpenShell gateway connection or managed gateway settings.
