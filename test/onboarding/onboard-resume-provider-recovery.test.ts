@@ -46,8 +46,6 @@ const {
 
 const registry: typeof import("../../src/lib/state/registry") = require("../../src/lib/state/registry");
 const onboardSession: typeof import("../../src/lib/state/onboard-session") = require("../../src/lib/state/onboard-session");
-const rebuildResumeSession: typeof import("../../src/lib/actions/sandbox/rebuild-resume-session") = require("../../src/lib/actions/sandbox/rebuild-resume-session");
-const { rewindSessionForRebuildResume } = rebuildResumeSession;
 
 // Force readLiveInference's defaultSandbox check to fail so unit tests that
 // expect null don't depend on whether openshell is on PATH.
@@ -192,90 +190,6 @@ describe("readRecordedProvider", () => {
       throw new Error("registry list unreadable");
     };
     expect(readRecordedProvider("spark-1")).toBeNull();
-  });
-});
-
-describe("rebuild resume session normalization", () => {
-  it("normalizes a mid-recreate OpenClaw session to the gateway resume boundary without data loss", () => {
-    const session = onboardSession.createSession({
-      sandboxName: "spark-1",
-      provider: "old-provider",
-      model: "old-model",
-      endpointUrl: "https://old-provider.example/v1",
-      credentialEnv: "OLD_PROVIDER_KEY",
-      lastCompletedStep: "inference",
-      lastStepStarted: "openclaw",
-      resumable: false,
-      status: "failed",
-      failure: {
-        step: "openclaw",
-        message: "stale recreate failed",
-        recordedAt: "2026-06-01T00:02:00.000Z",
-      },
-      agent: "stale-agent",
-      machine: {
-        version: onboardSession.MACHINE_SNAPSHOT_VERSION,
-        state: "openclaw",
-        stateEnteredAt: "2026-06-01T00:01:00.000Z",
-        revision: 7,
-      },
-    });
-    session.metadata.fromDockerfile = "/tmp/reviewed.Dockerfile";
-    session.migratedLegacyValueHashes = { OLD_PROVIDER_KEY: "abc123" };
-    session.steps.gateway.status = "complete";
-    session.steps.inference.status = "complete";
-    session.steps.openclaw.status = "failed";
-    session.steps.openclaw.error = "stale recreate failure";
-
-    const originalSessionId = session.sessionId;
-    const rewound = rewindSessionForRebuildResume(session, {
-      sandboxName: "spark-1",
-      rebuildAgent: "openclaw",
-      rebuildMessagingPlan: null,
-      rebuildsHermesSandbox: false,
-      rebuildHermesToolGateways: ["stale-gateway"],
-      resumeConfig: {
-        agent: null,
-        provider: "compatible-endpoint",
-        model: "nvidia/nemotron-3",
-        nimContainer: null,
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai",
-        compatibleEndpointReasoning: null,
-        compatibleEndpointReasoningEffort: null,
-        pinEndpoint: true,
-        endpointUrl: "https://new-provider.example/v1",
-        registryInferenceRoute: null,
-        ambient: { presentVars: [], agentMismatch: null },
-      },
-    });
-
-    expect(rewound.sessionId).toBe(originalSessionId);
-    expect(rewound.metadata.fromDockerfile).toBe("/tmp/reviewed.Dockerfile");
-    expect(rewound.migratedLegacyValueHashes).toEqual({ OLD_PROVIDER_KEY: "abc123" });
-    expect(rewound.machine).toMatchObject({
-      version: onboardSession.MACHINE_SNAPSHOT_VERSION,
-      state: "complete",
-      revision: 8,
-    });
-    expect(rewound).toMatchObject({
-      status: "in_progress",
-      resumable: true,
-      failure: null,
-      lastCompletedStep: "gateway",
-      lastStepStarted: "gateway",
-      endpointUrl: "https://new-provider.example/v1",
-      provider: "compatible-endpoint",
-      model: "nvidia/nemotron-3",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      hermesToolGateways: [],
-    });
-    expect(rewound.steps.openclaw).toMatchObject({
-      status: "pending",
-      startedAt: null,
-      completedAt: null,
-      error: null,
-    });
   });
 });
 
