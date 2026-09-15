@@ -144,6 +144,22 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     );
     let (before, binding) = bindings(&directory);
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    if document.spec.sandboxes[0].network.tier == "isolated" {
+        let denial = exec(
+            &client,
+            &binding,
+            ["/opt/fabric/bin/python", "-c", "import urllib.request,urllib.error;\ntry: urllib.request.urlopen('https://example.com',timeout=15)\nexcept urllib.error.URLError as e:\n assert '403' in str(e), str(e)\n print('policy-denied-403')\nelse: raise AssertionError('isolated policy allowed external egress')"]
+                .map(String::from).to_vec(),
+        ).await;
+        assert_eq!(
+            String::from_utf8(denial).unwrap().trim(),
+            "policy-denied-403"
+        );
+        save(
+            "policy-denial.json",
+            &json!({"externalEgressDenied":true,"proxyStatus":403}),
+        );
+    }
     let hosted = runtime_id(&client, &binding).await;
     if agent.harness == "openclaw" {
         exec(

@@ -29,3 +29,10 @@ Paths without a crate prefix refer to `crates/nemoclaw-sdk/src`. Provider paths
 refer to `crates/nemoclaw-provider/src`. Provider refresh and export retain their
 shared typed query path; connection injection must reach the underlying collector
 without introducing direct-refresh shortcuts.
+
+The native rootless Podman proof found that Podman 4.9.3 changes the Docker API
+`/info.ID` between requests to the same service. The existing Docker binding must
+not be reused for managed Podman resources. Qualify a persistent storage/account
+namespace identity before introducing that integration. OpenShell's native driver
+successfully separates the sandbox execution target from the existing Docker
+inference service; see the [live evidence](validation/rust-podman-rootless-linux-arm64.json).

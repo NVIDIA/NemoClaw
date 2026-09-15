@@ -17,7 +17,7 @@ have been removed. Commit bodies retain the test-first implementation decisions.
 | Deep Agents, Hermes and Fabric OpenClaw native responses, stable hosted runtime, no-op, export/reapply and teardown | [Live Fabric qualification](rust-fabric-live-linux-arm64.json) |
 | Runtime/recipe/backend/hardware separation, renamed executable, image upgrade and offline reproduction | [Runtime boundaries](rust-runtime-boundaries-linux-arm64.json) |
 | Config-selected public model, generic runtime, no-op/export, failed startup recovery and watchdog lifecycle | [Selected-model qualification](rust-selected-model-linux-arm64.json) |
-| Engine connection isolation, target identity, typed capacity and inference failure recovery | [Preparatory fixtures and read-only Docker checks](rust-engine-preparation-linux-arm64.json); native Podman proof remains blocked on installation |
+| Engine connection isolation, target identity, typed capacity and inference failure recovery | [Preparatory fixtures and read-only Docker checks](rust-engine-preparation-linux-arm64.json); [rootless Podman proof](rust-podman-rootless-linux-arm64.json) qualifies the external gateway/sandbox path |
 | Linux ARM64/x64, macOS ARM64/Intel, Windows x64 bundles | [Five native jobs](rust-native-platforms.json); real OpenTofu and production provider execution on each target |
 
 The parity baseline workspace check passed 99 deterministic tests, with 17 explicit

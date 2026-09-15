@@ -1,0 +1,178 @@
+{
+  "sourceRevision": "643fc0a466dde522c64841e4d801cb3b359538ff",
+  "date": "2026-09-15",
+  "platform": "linux_arm64",
+  "mode": "Native rootless Podman, uid 1000; not nested or remote",
+  "versions": {
+    "podman": "4.9.3",
+    "openshell": "0.0.116",
+    "openshellSource": "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
+    "kernel": "6.17.0-1014-nvidia",
+    "runtime": "runc version 1.3.4",
+    "network": "netavark 1.4.0"
+  },
+  "bundle": {
+    "Version": "0.1.0-dev.c616019b706f624d",
+    "Rust": "1.98.1",
+    "OpenTofu": "1.12.6",
+    "Files": {
+      "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bin/nemoclaw": "d68a4ab8aed32fa36e855124fda39c02bc6a3b5ca1e8844bbf9df2085d6c12cc",
+      "libexec/tofu": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59",
+      "licenses/OpenTofu-LICENSE": "142b957651baf401646dd7f3d855cb7c4f6f0921d645faa27e7cb540bc33cf4c",
+      "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.c616019b706f624d/linux_arm64/terraform-provider-nemoclaw_v0.1.0-dev.c616019b706f624d": "904c343501ba5f8885c6da15cbfb5fe5177e68193abd3eb8167771788d08edbe"
+    }
+  },
+  "topology": {
+    "gateway": "Native gateway on private bridge 172.30.114.1:17696; loopback TCP relay 127.0.0.1:17697 satisfies SDK plaintext gateway restriction.",
+    "sandbox": "Native Podman driver with dedicated nc-podman-proof network, image volume supervisor and secrets.",
+    "inference": "Existing Docker Qwen3.8 service, unchanged.",
+    "configuration": "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: Apache-2.0\n\napiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nmetadata:\n  name: podman-proof\n  uid: 3cff140a-59cb-46c7-b4fc-a2929aaad819\nspec:\n  gateway:\n    management: external\n    endpoint: http://127.0.0.1:17697\n  inferenceProviders:\n    - name: local\n      provider: openai\n      endpoint: http://172.30.114.1:18888/v1\n  sandboxes:\n    - name: assistant\n      image:\n        ref: docker.io/library/nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd\n      runtime:\n        provider: podman\n      network:\n        tier: isolated\n      agents:\n        - name: main\n          harness: openclaw\n          inference:\n            routes:\n              - name: primary\n                providerRef: local\n                overrides:\n                  model: qwen3.8-flash-next\n"
+  },
+  "pins": {
+    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
+    "gatewayBinarySha256": "0e660428e655e7481f34ba8a4b351554400baf791863d32555c98dddb3f09ae2",
+    "sandbox": "docker.io/library/nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd",
+    "publication": "Loaded existing local Docker archive into Podman; no images published."
+  },
+  "result": {
+    "deployment": "3cff140a-59cb-46c7-b4fc-a2929aaad819",
+    "destroyed": true,
+    "exportReapply": true,
+    "harness": "openclaw",
+    "hostedRuntimePreserved": true,
+    "nativeResponse": true,
+    "passed": true,
+    "resourceBindings": {
+      "nemoclaw_provider.inference": "1ca550fb-88b8-4ab9-89e3-3c7252fda1ee",
+      "nemoclaw_route.primary": "39a75921-0d08-4eb2-9c8c-077024bba889/primary",
+      "nemoclaw_sandbox.agent": "a577a944-5866-4ad1-9d22-66773642a026",
+      "nemoclaw_workspace.deployment": "39a75921-0d08-4eb2-9c8c-077024bba889"
+    },
+    "runtimeId": "runtime-1789441616137-43-2",
+    "unchangedApply": true
+  },
+  "policy": {
+    "externalEgressDenied": true,
+    "proxyStatus": 403
+  },
+  "agentProbe": {
+    "response": "FOUR"
+  },
+  "nativeAgentReply": "FOUR",
+  "discoveries": {
+    "identity": {
+      "observation": "Repeated Docker-compatible /info requests to the same Podman API service return different IDs.",
+      "values": [
+        "9a878c22-c549-4e2c-b43f-054992a83ff9",
+        "8a77500c-cb82-4f49-9904-094271ef3ffa",
+        "ca1f6847-f93e-417a-9584-300ba3006c63"
+      ],
+      "decision": "Qualify persistent namespace identity before managed Podman resources; do not reuse Docker /info.ID."
+    },
+    "deletion": {
+      "observation": "First live destroy exceeded the old 30-second deadline; explicit destroy reconciled confirmed absence.",
+      "decision": "Sandbox deletion uses a bounded 90-second deadline for the native driver 45-second graceful stop. Ordinary requests retain 30 seconds. No automatic retry.",
+      "fixture": "31-second deletion failed before fix; passes after fix with exactly one delete call and retained workspace."
+    }
+  },
+  "validation": {
+    "workspace": {
+      "passed": 118,
+      "failed": 0,
+      "ignored": 30
+    },
+    "format": "passed",
+    "strictClippy": "passed",
+    "slowDeleteFixture": "passed",
+    "liveLifecycle": "passed"
+  },
+  "cleanup": {
+    "containers": [],
+    "volumes": [],
+    "secretListingBytes": 0,
+    "networkRemoved": true,
+    "helperProcessesStopped": true,
+    "originalInference": "1d6e7d6a18733a74735deba97de697c24cbcc8f3f67c72f7237041e703def3ca running",
+    "retained": "Image cache, local logs, gateway database and workspace record. No host driver or kernel changes."
+  },
+  "limits": [
+    "Only native rootless Linux ARM64 external gateway/sandbox path qualified.",
+    "Managed Podman gateway/inference, rootful operation, remote placement and other operating systems remain unqualified.",
+    "This uses the native OpenShell Podman driver, not the SDK Docker adapter."
+  ],
+  "localEvidence": [
+    {
+      "path": ".local/podman-proof/live.log",
+      "sha256": "81e12437d4005b3e74bf7a2a3776e6a70da61acaeb752986453bfdc716531be4"
+    },
+    {
+      "path": ".local/podman-proof/live-fixed.log",
+      "sha256": "48ec7b4efe74f8e572bc502ded677728730bed58aff2f399a1527d3636ef3ff4"
+    },
+    {
+      "path": ".local/podman-proof/delete-red.log",
+      "sha256": "65b077fa431e7722696419ec779556c5c8cf3a305cf13cc46ad6f26a0d167bb6"
+    },
+    {
+      "path": ".local/podman-proof/delete-green-final.log",
+      "sha256": "b19cfc5e9c501873a5204ce08ea85343b63b97c758e8716b2569bfffe0c013e0"
+    },
+    {
+      "path": ".local/podman-proof/final-clippy.log",
+      "sha256": "c2a01399d536fd290abf38e9e0649aa0646b16adfea953bf2c4e9c4d283ad644"
+    },
+    {
+      "path": ".local/podman-proof/final-workspace.log",
+      "sha256": "028d837f30b54476113a35b813be332a2281dd0e4e2d64eb9f994d31b23e907a"
+    },
+    {
+      "path": ".local/podman-proof/build.log",
+      "sha256": "c4677e3a51fcbc5a8e11c5e1f6e7e3be4f7f7776611ae5838a4d68971339779b"
+    },
+    {
+      "path": ".local/podman-proof/gateway.log",
+      "sha256": "64143c6c3a2e1e520d5332fdd181c65d04d40825599c97b6fed6fbfdd83c40a0"
+    },
+    {
+      "path": ".local/podman-proof/docker-compatible-info.json",
+      "sha256": "61d66b0db5ed7f6c0202b1b997683d0d34092402135e8d4501d6bb1c19b38f67"
+    },
+    {
+      "path": ".local/podman-proof/docker-compatible-info-repeat.json",
+      "sha256": "0989b2b0a3f5a12ab5e4c104f373a439fd45ea3d235f283195a9010e3f862da8"
+    },
+    {
+      "path": ".local/podman-proof/docker-compatible-info-third.json",
+      "sha256": "deb10fc36b95da441c1619b471dcba8e3b54545d5025f6649880c378e0bbad1f"
+    },
+    {
+      "path": ".local/podman-proof/state/proof.json",
+      "sha256": "2053dad0e36fe0c4beebadd3d7e248f4428715415836022390bd39f060ee19d5"
+    },
+    {
+      "path": ".local/podman-proof/state/policy-denial.json",
+      "sha256": "9b4dbf79a8a12f5fa19beefea38a816fece95131343a1eb120c0a6fd7de30d2e"
+    },
+    {
+      "path": ".local/podman-proof/state/managed-agent-probe.json",
+      "sha256": "07166a0a1b7ff4420adc515f22a47f2769bde85d893855b71a45599889e16a37"
+    },
+    {
+      "path": ".local/podman-proof/containers-after.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": ".local/podman-proof/volumes-after.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": ".local/podman-proof/secrets-after.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".local/podman-proof/original-inference-after.txt",
+      "sha256": "8d4e59b6b46bf43a1d7b40e551d18221d41b17c46c1add8092e75fc07ac81f4a"
+    }
+  ]
+}

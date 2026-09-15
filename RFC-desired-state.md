@@ -300,7 +300,26 @@ Upstream inspection found a native OpenShell Podman driver in the pinned gateway
 It uses Podman image volumes, secrets and rootless networking rather than merely
 substituting a socket in the Docker driver. Manual qualification must exercise
 that driver and record daemon identity behavior by rootless/rootful namespace.
-The approved host installation is blocked on interactive sudo. The native client
-requests the Podman v5.0.0 API; compatibility with Ubuntu’s 4.9.3 package must be
-measured rather than assumed. Fixture success does not qualify either Podman mode
-or remote managed placement. See the [preparatory validation](docs/validation/rust-engine-preparation-linux-arm64.json).
+The rootless Linux ARM64 proof now exercises the native driver on Podman 4.9.3.
+It accepts the client's v5.0.0 API requests and runs Fabric OpenClaw with inference
+on the existing Docker host. Isolated egress returns a policy denial, while the
+OpenShell inference route returns an actual agent reply. Unchanged apply and
+export/reapply preserve sandbox and hosted-runtime identities.
+
+Two assumptions failed in this proof. Podman's Docker-compatible `/info.ID`
+changes across requests to the same API service, so it cannot back our durable
+execution-target binding. Podman resource support needs a separately qualified,
+persistent namespace identity; do not derive it from a socket, hostname or this
+compatibility field. The fixture identity contract remains valid, but its Docker
+implementation is not a Podman implementation.
+
+The native driver's 45-second graceful stop also exceeds the SDK's old 30-second
+RPC deadline. Sandbox deletion now has a bounded 90-second budget; ordinary reads
+remain bounded at 30 seconds. The failed first deletion retained state, and an
+explicit destroy reconciled confirmed absence. No automatic mutation retry was
+added. The live proof and a delayed-delete fixture protect the correction.
+
+This result covers an external native OpenShell gateway and rootless Podman
+sandboxes on this Linux host. Managed Podman gateway/inference resources, rootful
+operation, remote placement and other operating systems remain unqualified.
+See the [Podman evidence](docs/validation/rust-podman-rootless-linux-arm64.json).
