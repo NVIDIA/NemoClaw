@@ -21,6 +21,7 @@ function makeOwnership(
     getDockerDriverGatewayStateDir: () => STATE_DIR,
     isDockerDriverGatewayProcess: () => true,
     isPidAlive: () => true,
+    platform: "linux",
     readProcessEnvironment: () => ({
       NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
     }),
@@ -90,6 +91,59 @@ describe("docker-driver gateway selected-state ownership", () => {
   it("fails closed when bounded process environment evidence is unavailable", () => {
     const ownership = makeOwnership({
       readProcessEnvironment: () => null,
+    });
+
+    expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);
+  });
+
+  it("proves macOS selected-state ownership from one unambiguous process environment", () => {
+    const processCapture = vi.fn(() => ({
+      stdout: [
+        "/opt/homebrew/opt/openshell/bin/openshell-gateway",
+        `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${gatewayIdForStateDir("/another/state")}`,
+        `OPENSHELL_DB_URL=sqlite:${path.join(STATE_DIR, "openshell.db")}`,
+      ].join(" "),
+      exitCode: 0,
+      timedOut: false,
+    }));
+    const ownership = makeOwnership({
+      platform: "darwin",
+      readProcessEnvironment: () => null,
+      runCaptureEx: processCapture,
+    });
+
+    expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(true);
+    expect(processCapture).toHaveBeenCalledWith(["ps", "eww", "-p", "4242", "-o", "command="]);
+  });
+
+  it.each([
+    ["the process query fails", { stdout: "", exitCode: 1, timedOut: false }],
+    [
+      "the selected-state key is duplicated",
+      {
+        stdout:
+          "/opt/homebrew/bin/openshell-gateway " +
+          `OPENSHELL_DB_URL=sqlite:${path.join(STATE_DIR, "openshell.db")} ` +
+          "OPENSHELL_DB_URL=sqlite:/another/gateway/openshell.db",
+        exitCode: 0,
+        timedOut: false,
+      },
+    ],
+    [
+      "the process query returns multiple records",
+      {
+        stdout:
+          "/opt/homebrew/bin/openshell-gateway OPENSHELL_DB_URL=sqlite:/first\n" +
+          "/opt/homebrew/bin/openshell-gateway OPENSHELL_DB_URL=sqlite:/second\n",
+        exitCode: 0,
+        timedOut: false,
+      },
+    ],
+  ])("fails closed on macOS when %s", (_case, processResult) => {
+    const ownership = makeOwnership({
+      platform: "darwin",
+      readProcessEnvironment: () => null,
+      runCaptureEx: () => processResult,
     });
 
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);

@@ -44,22 +44,46 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
-  async function captureFailedStartRecovery(ownsSelectedState: boolean) {
+  async function captureFailedStartRecovery(
+    ownsSelectedState: boolean,
+    options: { processEnvironmentSource?: "proc" | "ps"; platform?: NodeJS.Platform } = {},
+  ) {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
+    const platform = options.platform ?? "linux";
     const adapters = gatewayAdaptersForTest();
     const lines: string[] = [];
+    const serviceExecutablePath =
+      platform === "darwin"
+        ? "/opt/homebrew/opt/openshell/bin/openshell-gateway"
+        : "/opt/openshell/openshell-gateway";
+    const serviceStopCommand =
+      platform === "darwin"
+        ? "brew services stop openshell"
+        : "systemctl --user stop openshell-gateway";
     const serviceTarget = vi.fn(() => ({
-      executablePath: "/opt/openshell/openshell-gateway",
+      executablePath: serviceExecutablePath,
       pid: 5444,
-      stopCommand: "systemctl --user stop openshell-gateway",
+      stopCommand: serviceStopCommand,
     }));
-    const readProcessEnvironment = vi.fn(() => ({
+    const selectedStateEnvironment = {
       NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: ownsSelectedState
         ? gatewayIdForStateDir(stateDir)
         : "another-gateway",
-    }));
+    };
+    const readProcessEnvironment = vi.fn(() =>
+      options.processEnvironmentSource === "ps" ? null : selectedStateEnvironment,
+    );
     const runCapture = vi.fn(() => "");
+    const runCaptureEx = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? {
+            stdout: `${serviceExecutablePath} NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${selectedStateEnvironment.NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE}`,
+            exitCode: 0,
+            timedOut: false,
+          }
+        : { stdout: "", exitCode: null, timedOut: true },
+    );
     const checkGatewayPortAvailable = vi
       .fn()
       .mockResolvedValueOnce({ ok: true })
@@ -143,6 +167,7 @@ describe("gateway lifecycle late binding", () => {
         isGatewayTcpReady: async () => false,
         isPidAlive: () => true,
         logDockerDriverGatewayRestart: vi.fn(),
+        platform,
         registerDockerDriverGatewayEndpoint: async () => false,
         rememberDockerDriverGatewayPid: vi.fn(),
         readDockerDriverGatewayProcessEnvironment: readProcessEnvironment,
@@ -150,7 +175,7 @@ describe("gateway lifecycle late binding", () => {
         resolveOpenShellSandboxBinary: () => null,
         runner: {
           runCapture,
-          runCaptureEx: () => ({ stdout: "", exitCode: null, timedOut: true }),
+          runCaptureEx,
         },
         runCaptureOpenshell: () => "",
         sleepSeconds: vi.fn(),
@@ -172,6 +197,7 @@ describe("gateway lifecycle late binding", () => {
         output: lines.join("\n"),
         processEnvironmentCalls: readProcessEnvironment.mock.calls,
         runCaptureCalls: runCapture.mock.calls,
+        runCaptureExCalls: runCaptureEx.mock.calls,
         serviceTargetCalls: serviceTarget.mock.calls.length,
       };
     } finally {
@@ -205,6 +231,21 @@ describe("gateway lifecycle late binding", () => {
     expect(result.serviceTargetCalls).toBe(2);
     expect(result.processEnvironmentCalls).toContainEqual([5444]);
     expect(result.runCaptureCalls).toHaveLength(0);
+  });
+
+  it("passes a Homebrew stop command after macOS process state proof (#11720)", async () => {
+    const result = await captureFailedStartRecovery(true, {
+      platform: "darwin",
+      processEnvironmentSource: "ps",
+    });
+
+    expect(result.output).toContain("brew services stop openshell && nemoclaw onboard --resume");
+    expect(result.output).not.toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
+    expect(result.serviceTargetCalls).toBe(2);
+    expect(result.processEnvironmentCalls).toContainEqual([5444]);
+    expect(result.runCaptureExCalls).toContainEqual([
+      ["ps", "eww", "-p", "5444", "-o", "command="],
+    ]);
   });
 
   it("returns a stop command when one stable service owns the selected port and state", async () => {

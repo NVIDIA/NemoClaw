@@ -65,6 +65,7 @@ export interface DockerDriverGatewayStartDeps {
   isGatewayTcpReady: DynamicGatewayHelpers["isGatewayTcpReady"];
   isPidAlive: GatewayRuntimeHelpers["isPidAlive"];
   logDockerDriverGatewayRestart(reason: string): void;
+  platform?: NodeJS.Platform;
   registerDockerDriverGatewayEndpoint(
     runtimeSelection?: OpenShellRuntimeSelection,
   ): Promise<boolean>;
@@ -155,6 +156,7 @@ export function createDockerDriverGatewayStart(
     getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
     isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
     isPidAlive: deps.isPidAlive,
+    platform: deps.platform,
     readProcessEnvironment: deps.readDockerDriverGatewayProcessEnvironment,
     resolveOpenShellGatewayBinary: deps.resolveOpenShellGatewayBinary,
     runCaptureEx: deps.runner.runCaptureEx,
