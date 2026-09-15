@@ -346,6 +346,7 @@ describe("CLI OpenShell sandbox observer", () => {
       ignoreError: true,
       killProcessTreeOnTimeout: true,
       killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: 9_000,
     });

@@ -81,6 +81,7 @@ export type RunSandboxCommand = (
     ignoreError: true;
     killProcessTreeOnTimeout: true;
     killSignal: "SIGKILL";
+    stdio: ["ignore", "pipe", "pipe"];
     suppressOutput: true;
     timeout: number;
   },
@@ -265,7 +266,9 @@ export function isExplicitMissingOpenShellSandboxOutput(
   const structured = clean.replace(/\n\s*│\s*/g, " ");
   const exactStructuredNotFound =
     /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu;
-  if (exactStructuredNotFound.test(structured)) return true;
+  const exactStatusNotFound =
+    /^(?:error:\s*)?(?:×\s*)?status:\s*["']?Not(?:\s+)?Found["']?\s*,\s*message:\s*["']sandbox not found["']$/iu;
+  if (exactStructuredNotFound.test(structured) || exactStatusNotFound.test(structured)) return true;
 
   const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
@@ -300,6 +303,7 @@ function captureOpenShellCommandFromRunner(run: RunSandboxCommand): CaptureOpenS
       ignoreError: true,
       killProcessTreeOnTimeout: true,
       killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: options.timeout,
     });

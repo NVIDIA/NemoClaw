@@ -102,6 +102,7 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     "Error: sandbox 'alpha' not found.",
     "No such sandbox alpha",
     "Error: status: NotFound, sandbox 'alpha' not found",
+    'Error: status: Not Found, message: "sandbox not found"',
     'Error: code: "Some requested entity was not found", message: "sandbox not found"',
   ])("returns only explicit target absence for %s", async (output) => {
     const capture = vi.fn().mockResolvedValue({ status: 1, output });
