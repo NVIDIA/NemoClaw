@@ -27,6 +27,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoManagedRuntime } from "../registry/matrix.ts";
 import { stripTerminalControl } from "../support/issue-4434-tui-capture.ts";
@@ -41,7 +42,10 @@ import {
   precreateIssue6194Capture,
   readIssue6194Capture,
 } from "./issue-6194-tui-expect.ts";
-import { verifyNemoClawRefFidelity } from "./openclaw-tui-ref-fidelity.ts";
+import {
+  resolveExpectedOpenClawVersion,
+  verifyNemoClawRefFidelity,
+} from "./openclaw-tui-ref-fidelity.ts";
 import {
   classifyIssue2603Run,
   type Issue2603AttemptOutcome,
@@ -58,12 +62,12 @@ import {
 const ENVIRONMENT = ubuntuRepoManagedRuntime("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-oc-tui-corr";
-// OpenClaw 2026.7.1 is the post-fix regression-guard version for #2603 + #3145.
-// Historical buggy builds were older; this live guard asserts the fixed
-// protocol/history contract stays stable on the pinned OpenClaw version.
-// Override via env so future pin bumps do not require a code edit.
-const EXPECTED_OPENCLAW_VERSION =
-  process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION ?? "2026.7.1";
+// Historical buggy builds were older; this live guard follows the exact
+// manifest pin unless a deliberate E2E override is supplied.
+const EXPECTED_OPENCLAW_VERSION = resolveExpectedOpenClawVersion({
+  override: process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION,
+  manifestVersion: loadAgent("openclaw").expectedVersion,
+});
 
 const LIVE_SCRIPT_NAME = "openclaw-issue2603-chat-correlation.cjs";
 const SANDBOX_GATEWAY_PORT = 18789;

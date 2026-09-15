@@ -138,6 +138,7 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         "export HOME=/root",
         `STEP_DOWN_PREFIX_GATEWAY=(${JSON.stringify(stepDown)})`,
         `OPENCLAW=${JSON.stringify(gateway)}`,
+        `_OPENCLAW_GATEWAY_STATE_DIR=${JSON.stringify(path.join(root, "gateway-state"))}`,
         "_DASHBOARD_PORT=18789",
         "arm_openclaw_gateway_supervisor_cleanup() { :; }",
         "mark_in_container_gateway() { :; }",

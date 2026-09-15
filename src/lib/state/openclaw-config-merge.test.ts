@@ -172,7 +172,7 @@ describe("mergeOpenClawRestoredConfig", () => {
   });
 
   it("keeps the rebuilt gateway section — including the reload pin — over the backup's (#4710)", () => {
-    // gateway.reload.mode="hot" is what keeps the in-sandbox gateway from
+    // gateway.reload.mode="off" is what keeps the in-sandbox gateway from
     // SIGUSR1-restarting itself out from under the nemoclaw-start respawn
     // loop. A backup taken before the pin existed (or carrying a different
     // mode) must not reintroduce restart-mode reloads on restore.
@@ -184,12 +184,12 @@ describe("mergeOpenClawRestoredConfig", () => {
           controlUi: { allowInsecureAuth: true },
         },
       },
-      { gateway: { auth: { token: "fresh-token" }, reload: { mode: "hot" } } },
+      { gateway: { auth: { token: "fresh-token" }, reload: { mode: "off" } } },
     ) as { gateway: unknown };
 
     expect(merged.gateway).toEqual({
       auth: { token: "fresh-token" },
-      reload: { mode: "hot" },
+      reload: { mode: "off" },
     });
   });
 

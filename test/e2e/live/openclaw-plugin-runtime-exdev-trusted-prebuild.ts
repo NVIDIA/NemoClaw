@@ -53,7 +53,7 @@ export const crossDevicePluginInstall = trustedSandboxShellScript(`set -eu
 source_device=$(stat -c '%d' ${TRUSTED_PLUGIN_FIXTURE_MOUNT_DIR})
 target_device=$(stat -c '%d' /sandbox/.openclaw/extensions)
 printf 'source_device=%s target_device=%s\n' "$source_device" "$target_device"
-HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_MOUNT_DIR} --force
+HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_MOUNT_DIR} --force --accept-capabilities
 (cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash)`);
 
 export function normalizeSandboxStdoutFrames(output: string): string {
@@ -142,7 +142,7 @@ COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
 
 USER sandbox
 RUN --mount=type=bind,from=weather-plugin-builder,source=/opt/weather-runtime-dist,target=${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist,ro \
-    HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
+    HOME=/sandbox openclaw plugins install --force --accept-capabilities ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
     && HOME=/sandbox openclaw plugins enable weather
 
 # Enabling the plugin changes openclaw.json after the managed runtime hashes it.

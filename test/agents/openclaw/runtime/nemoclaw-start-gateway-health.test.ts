@@ -1016,7 +1016,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     expect(openclaw).toContain("marker=present");
     expect(openclaw).not.toContain("marker=absent");
     expect(openclaw).toContain(
-      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+      "state=/sandbox/.nemoclaw/openclaw-gateway-state oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
     );
     const gatewayPid = result.stdout.match(/GATEWAY_PID=(\d+)/)?.[1];
     expect(gatewayPid).toBeTruthy();

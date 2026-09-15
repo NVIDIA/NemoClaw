@@ -91,7 +91,6 @@ function openClawProfile(): ManagedStartupProfile {
         defaults: { subagents: { maxSpawnDepth: 3 } },
         main: { tools: { profile: "minimal", allow: ["read"], deny: ["exec"] } },
       },
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       minimalBootstrap: true,
     },
     inference: {
@@ -313,8 +312,6 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_AGENT_TIMEOUT: "900",
       NEMOCLAW_CONTEXT_WINDOW: "131072",
       NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
-      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
-      NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: expect.any(String),
       NEMOCLAW_INFERENCE_API: "openai-responses",
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",

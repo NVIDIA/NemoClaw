@@ -14,7 +14,9 @@ import {
 } from "../../adapters/openshell/sandbox-observer";
 import {
   buildOpenShellRuntimeSelectionEnv,
+  captureOpenshell,
   type OpenShellRuntimeSelection,
+  withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
@@ -263,6 +265,137 @@ export async function executeSandboxExecCommand(
       ...(runtimeEnv ? { runtimeEnv } : {}),
     },
   );
+}
+
+const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER = "/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor";
+const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-v1";
+const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 5 * 60_000;
+const OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS = 3 * 60_000;
+const OPENCLAW_DOCTOR_RESTART_ATTEMPTS = 2;
+
+export type OpenClawPostRestoreDoctorResult =
+  | { ok: true }
+  | { ok: false; stage: "mark" | "restart"; detail: string };
+
+interface OpenClawPostRestoreDoctorDeps {
+  captureOpenshell: typeof captureOpenshell;
+  executeSandboxExecCommand: typeof executeSandboxExecCommand;
+  now: () => number;
+  sleep: typeof sleepSeconds;
+}
+
+const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
+  captureOpenshell,
+  executeSandboxExecCommand,
+  now: Date.now,
+  sleep: sleepSeconds,
+};
+
+export function buildOpenClawPostUpgradeDoctorMarkerCommand(): string {
+  const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
+  const content = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  return [
+    'dir="/sandbox/.openclaw"',
+    '[ -d "$dir" ] && [ ! -L "$dir" ] || exit 10',
+    'tmp="$(mktemp "$dir/.nemoclaw-post-upgrade-doctor.XXXXXX")" || exit 11',
+    "trap 'rm -f -- \"$tmp\"' EXIT",
+    'chmod 600 "$tmp"',
+    `printf '%s\\n' ${content} >"$tmp"`,
+    `mv -f -- "$tmp" ${marker}`,
+    "trap - EXIT",
+  ].join("; ");
+}
+
+function buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName: string): string {
+  const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
+  const healthUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
+  return [
+    `[ ! -e ${marker} ] && [ ! -L ${marker} ] || exit 20`,
+    `code="$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${healthUrl} 2>/dev/null || true)"`,
+    'case "$code" in 200|401) exit 0 ;; *) exit 21 ;; esac',
+  ].join("; ");
+}
+
+/**
+ * OpenClaw 2026.9.1 requires exclusive gateway/state lifecycle coordinators
+ * for doctor repairs. Persist a narrow one-shot request, restart the sandbox
+ * through its pinned OpenShell owner, and accept success only after startup
+ * consumed the request and the replacement gateway serves health again.
+ */
+export async function runOpenClawPostRestoreDoctor(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  const markerResult = await deps.executeSandboxExecCommand(
+    sandboxName,
+    buildOpenClawPostUpgradeDoctorMarkerCommand(),
+    30_000,
+    {
+      localDockerFallbackPolicy: "never",
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    },
+  );
+  if (!markerResult || markerResult.status !== 0) {
+    return {
+      ok: false,
+      stage: "mark",
+      detail: "could not persist the one-shot post-upgrade doctor request",
+    };
+  }
+
+  const lifecycleOptions = withSelectedOpenShellCommandOptions(
+    {
+      ignoreError: true,
+      includeStderr: true,
+      killProcessTreeOnTimeout: true,
+      killSignal: "SIGKILL" as const,
+      timeout: OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS,
+    },
+    runtimeSelection,
+  );
+  const completionProbe = buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName);
+  for (let attempt = 1; attempt <= OPENCLAW_DOCTOR_RESTART_ATTEMPTS; attempt += 1) {
+    // A lifecycle command can return nonzero after its mutation committed.
+    // Reconcile both results through the marker-plus-health postcondition. If
+    // OpenShell leaves the replacement sandbox unready, one bounded stop/start
+    // retry replays the still-present one-shot request instead of stranding the
+    // rebuild on a transient lifecycle transition.
+    deps.captureOpenshell(["sandbox", "stop", sandboxName], lifecycleOptions);
+    deps.captureOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
+
+    const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+    const completed = await waitUntilAsync(
+      async () => {
+        const remainingMs = reconciliationDeadlineMs - deps.now();
+        if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+        const result = await deps.executeSandboxExecCommand(
+          sandboxName,
+          completionProbe,
+          Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
+          {
+            localDockerFallbackPolicy: "never",
+            ...(runtimeSelection ? { runtimeSelection } : {}),
+          },
+        );
+        return result?.status === 0;
+      },
+      {
+        deadlineMs: reconciliationDeadlineMs,
+        initialIntervalMs: 3_000,
+        maxIntervalMs: 3_000,
+        backoffFactor: 1,
+        now: deps.now,
+        sleep: async (milliseconds) => await deps.sleep(milliseconds / 1000),
+      },
+    );
+    if (completed) return { ok: true };
+  }
+  return {
+    ok: false,
+    stage: "restart",
+    detail: "the sandbox did not consume its doctor request and return a healthy gateway",
+  };
 }
 
 function executeGatewaySupervisorActionPinned(

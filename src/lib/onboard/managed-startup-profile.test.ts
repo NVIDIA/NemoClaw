@@ -96,7 +96,6 @@ const OPENCLAW_PROFILE = {
       defaults: { subagents: { maxSpawnDepth: 3 } },
       main: { tools: { profile: "coding" } },
     },
-    deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
     minimalBootstrap: true,
   },
   inference: {
@@ -342,7 +341,6 @@ describe("managed startup profile", () => {
         agentTimeoutSeconds: 900,
         heartbeatEvery: "30m",
         minimalBootstrap: true,
-        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       },
       inference: {
         api: "openai-responses",
@@ -1041,7 +1039,7 @@ describe("managed startup profile", () => {
     ).toThrow(/not supported/);
   });
 
-  it("enforces resolved OpenClaw dashboard exposure and device-auth semantics", () => {
+  it("enforces resolved OpenClaw dashboard exposure and rejects retired device-auth state", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
@@ -1056,7 +1054,7 @@ describe("managed startup profile", () => {
           deviceAuth: { disabled: false, optOutSource: "operator" },
         },
       }),
-    ).toThrow(/requires device auth to be disabled/);
+    ).toThrow(/agentConfig contains unsupported fields/);
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,

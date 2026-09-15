@@ -13,7 +13,6 @@ import {
 } from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
-import { executeSandboxExecCommand } from "./process-recovery";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import {
   refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -42,6 +41,7 @@ import {
   finalizePendingMessagingRemovalsAfterRestore,
   reapplyMessagingManifestAfterOpenClawDoctor,
 } from "./rebuild-messaging-phase";
+import { runOpenClawPostRestoreDoctor } from "./process-recovery";
 import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
 
 export {
@@ -57,8 +57,6 @@ function probeRebuiltAgentVersion(
 ): ReturnType<typeof sandboxVersion.checkAgentVersion> {
   return sandboxVersion.checkAgentVersion(sandboxName, { forceProbe: true });
 }
-
-const OPENCLAW_DOCTOR_TIMEOUT_MS = 5 * 60_000;
 
 export function printHermesCronRestoreRecoveryCommand(
   sandboxName: string,
@@ -231,26 +229,11 @@ export async function runRebuildPostRestorePhase(
   };
 
   if (targetAgentName === "openclaw") {
-    log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
-    const doctorResult = await executeSandboxExecCommand(
-      sandboxName,
-      "openclaw doctor --fix",
-      OPENCLAW_DOCTOR_TIMEOUT_MS,
-      {
-        localDockerFallbackPolicy: "never",
-        ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
-      },
-    );
-    log(`doctor --fix: exit=${doctorResult?.status ?? "unverified"}`);
-    if (doctorResult === null) {
-      console.log(`  ${D}Post-upgrade structure repair completion was not verified${R}`);
-      bail("OpenClaw post-upgrade structure repair completion was not verified after rebuild.");
-      return;
-    }
-    if (doctorResult.status !== 0) {
-      console.log(
-        `  ${D}Post-upgrade structure repair failed (doctor returned ${doctorResult.status})${R}`,
-      );
+    log("Restarting OpenClaw once for exclusive post-upgrade structure repair");
+    const doctorResult = await runOpenClawPostRestoreDoctor(sandboxName, mcpRuntimeSelection);
+    log(`Post-upgrade doctor restart: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
+    if (!doctorResult.ok) {
+      console.log(`  ${D}Post-upgrade structure repair failed during sandbox restart${R}`);
       bail("OpenClaw post-upgrade structure repair failed during rebuild.");
       return;
     }

@@ -229,14 +229,14 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(result.stderr).toContain("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
   });
 
-  it("sets dangerouslyDisableDeviceAuth to false for loopback URL", () => {
+  it("omits the retired device-auth bypass for loopback URL", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
   it("treats loopback-looking URL userinfo before a remote host as remote", () => {
     const config = buildConfigDirect({ CHAT_UI_URL: "http://127.0.0.1:18789@evil.example" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://evil.example");
     expect(config.gateway.controlUi.allowedOrigins).not.toContain(
       "http://127.0.0.1:18789@evil.example",
@@ -245,23 +245,23 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("treats localhost userinfo before a remote host as remote", () => {
     const config = buildConfigDirect({ CHAT_UI_URL: "http://localhost@evil.example" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://evil.example");
   });
 
-  it("sets dangerouslyDisableDeviceAuth to true when env var is '1'", () => {
+  it("does not restore the retired device-auth bypass when the legacy env var is '1'", () => {
     const config = runConfigScript({ NEMOCLAW_DISABLE_DEVICE_AUTH: "1" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("sets allowInsecureAuth to true for http scheme", () => {
+  it("omits the retired allowInsecureAuth key for http scheme", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
-    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
   });
 
-  it("sets allowInsecureAuth to false for https scheme", () => {
+  it("omits the retired allowInsecureAuth key for https scheme", () => {
     const config = runConfigScript({ CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789" });
-    expect(config.gateway.controlUi.allowInsecureAuth).toBe(false);
+    expect(config.gateway.controlUi.allowInsecureAuth).toBeUndefined();
   });
 
   it("falls back to text input when NEMOCLAW_INFERENCE_INPUTS is empty", () => {
@@ -326,7 +326,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("normalizes schemeless CHAT_UI_URL values before parsing", () => {
     const config = buildConfigDirect({ CHAT_UI_URL: "remote.example:18790" });
     expect(config.gateway.port).toBe(18790);
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://remote.example:18790");
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://remote.example");
   });
@@ -458,11 +458,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
     });
 
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
-      source: "npm",
-      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
-    });
+    expect(config.plugins?.installs).toBeUndefined();
     expect(config.plugins?.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
     );
@@ -485,7 +481,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
-  it("preserves existing plugin install registry entries without enabling WeChat", () => {
+  it("drops legacy plugin install records without enabling WeChat", () => {
     const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const installEntry = {
@@ -499,7 +495,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
     const config = runConfigScript({});
 
-    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+    expect(config.plugins?.installs).toBeUndefined();
     expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
@@ -1718,57 +1714,57 @@ describe("generate-openclaw-config.mts: config generation", () => {
   });
 });
 
-describe("generate-openclaw-config.mts: non-loopback auto-disable device auth", () => {
-  it("auto-disables device auth for Brev Launchable URL", () => {
+describe("generate-openclaw-config.mts: retired device-auth bypass", () => {
+  it("omits the retired bypass for a Brev Launchable URL", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("auto-disables device auth for any non-loopback URL", () => {
+  it("omits the retired bypass for any non-loopback URL", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "http://my-server.local:18789",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("keeps device auth enabled for 127.0.0.1", () => {
+  it("omits the retired bypass for 127.0.0.1", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("keeps device auth enabled for localhost", () => {
+  it("omits the retired bypass for localhost", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://localhost:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("keeps device auth enabled for IPv6 loopback", () => {
+  it("omits the retired bypass for IPv6 loopback", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://[::1]:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("honors explicit env var override on loopback URL", () => {
+  it("does not emit the retired bypass for an explicit legacy opt-out", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "http://127.0.0.1:18789",
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 
-  it("URL trumps env var — cannot re-enable device auth for non-loopback", () => {
+  it("does not emit the retired bypass for a non-loopback legacy input", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
       NEMOCLAW_DISABLE_DEVICE_AUTH: "0",
     });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
   });
 });
 
 describe("generate-openclaw-config.mts: empty-string env vars fall back to defaults", () => {
   it("treats empty CHAT_UI_URL as unset and uses the loopback default", () => {
     const config = runConfigScript({ CHAT_UI_URL: "" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
   });
 

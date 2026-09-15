@@ -168,11 +168,9 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     expect(config.agents.defaults.compaction).toEqual({
       mode: "safeguard",
       timeoutSeconds: 120,
-      maxHistoryShare: 0.35,
       recentTurnsPreserve: 1,
       qualityGuard: { enabled: true, maxRetries: 0 },
       notifyUser: true,
-      truncateAfterCompaction: true,
     });
   });
 
@@ -186,11 +184,9 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     ).toEqual({
       mode: "safeguard",
       timeoutSeconds: 120,
-      maxHistoryShare: 0.35,
       recentTurnsPreserve: 1,
       qualityGuard: { enabled: true, maxRetries: 0 },
       notifyUser: true,
-      truncateAfterCompaction: true,
     });
   });
 

@@ -122,8 +122,6 @@ export const MANAGED_STARTUP_HERMES_TOOL_GATEWAYS = [
 export type ManagedStartupHermesToolGateway = (typeof MANAGED_STARTUP_HERMES_TOOL_GATEWAYS)[number];
 export type ManagedStartupInputModality = "text" | "image";
 export type ManagedStartupWebSearchProvider = "brave" | "tavily";
-export type ManagedStartupDeviceAuthOptOutSource = "operator" | "managed-onboard";
-
 export const MANAGED_STARTUP_AGENTS = [
   "openclaw",
   "hermes",
@@ -289,11 +287,6 @@ export interface ManagedStartupOpenClawOtel {
   readonly sampleRate: number;
 }
 
-export interface ManagedStartupDeviceAuth {
-  readonly disabled: boolean;
-  readonly optOutSource: ManagedStartupDeviceAuthOptOutSource;
-}
-
 export interface ManagedStartupOpenClawConfig {
   readonly agent: "openclaw";
   readonly webSearch: ManagedStartupWebSearch;
@@ -301,7 +294,6 @@ export interface ManagedStartupOpenClawConfig {
   readonly agentTimeoutSeconds: number;
   readonly heartbeatEvery: string | null;
   readonly extraAgents: ManagedStartupExtraAgents;
-  readonly deviceAuth: ManagedStartupDeviceAuth;
   readonly minimalBootstrap: boolean;
 }
 
@@ -525,8 +517,6 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_AGENT_TIMEOUT", "agentConfig.agentTimeoutSeconds"),
     affordance("NEMOCLAW_AGENT_HEARTBEAT_EVERY", "agentConfig.heartbeatEvery"),
     affordance("NEMOCLAW_EXTRA_AGENTS_JSON_B64", "agentConfig.extraAgents"),
-    affordance("NEMOCLAW_DISABLE_DEVICE_AUTH", "agentConfig.deviceAuth.disabled"),
-    affordance("NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE", "agentConfig.deviceAuth.optOutSource"),
     affordance("NEMOCLAW_WEB_SEARCH_ENABLED", "agentConfig.webSearch.enabled"),
     affordance("NEMOCLAW_WEB_SEARCH_PROVIDER", "agentConfig.webSearch.provider"),
     affordance("NEMOCLAW_OPENCLAW_OTEL", "agentConfig.otel.enabled"),
@@ -959,7 +949,6 @@ const OPENCLAW_CONFIG_KEYS = new Set([
   "agentTimeoutSeconds",
   "heartbeatEvery",
   "extraAgents",
-  "deviceAuth",
   "minimalBootstrap",
 ]);
 const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch"]);
@@ -968,7 +957,6 @@ const PI_CONFIG_KEYS = new Set(["agent"]);
 const PI_DASHBOARD_KEYS = new Set(["agent", "mode"]);
 const WEB_SEARCH_KEYS = new Set(["enabled", "provider"]);
 const OTEL_KEYS = new Set(["enabled", "endpointUrl", "serviceName", "sampleRate"]);
-const DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
 const EXTRA_AGENTS_KEYS = new Set(["agents", "defaults", "main"]);
 const MANAGED_STARTUP_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
 const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES);
@@ -1756,19 +1744,6 @@ function validateExtraAgents(value: unknown): ManagedStartupExtraAgents {
   };
 }
 
-function validateDeviceAuth(value: unknown): ManagedStartupDeviceAuth {
-  const deviceAuth = requireRecord(value, "agentConfig.deviceAuth");
-  rejectUnknownKeys(deviceAuth, DEVICE_AUTH_KEYS, "agentConfig.deviceAuth");
-  return {
-    disabled: requireBoolean(deviceAuth.disabled, "agentConfig.deviceAuth.disabled"),
-    optOutSource: requireStringEnum<ManagedStartupDeviceAuthOptOutSource>(
-      deviceAuth.optOutSource,
-      new Set(["operator", "managed-onboard"]),
-      "agentConfig.deviceAuth.optOutSource",
-    ),
-  };
-}
-
 function validateAgentConfig(
   value: unknown,
   expectedAgent: ManagedStartupAgent,
@@ -1804,7 +1779,6 @@ function validateAgentConfig(
       ),
       heartbeatEvery,
       extraAgents: validateExtraAgents(config.extraAgents),
-      deviceAuth: validateDeviceAuth(config.deviceAuth),
       minimalBootstrap: requireBoolean(config.minimalBootstrap, "agentConfig.minimalBootstrap"),
     };
   }
@@ -2182,14 +2156,6 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
 
   const agentConfig = validateAgentConfig(profile.agentConfig, agent);
   const dashboard = validateDashboard(profile.dashboard, agent);
-  if (
-    agentConfig.agent === "openclaw" &&
-    dashboard.agent === "openclaw" &&
-    dashboard.mode === "remote" &&
-    !agentConfig.deviceAuth.disabled
-  ) {
-    invalid("remote OpenClaw dashboard exposure requires device auth to be disabled");
-  }
 
   return {
     schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,

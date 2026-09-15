@@ -73,7 +73,10 @@ function writeChatSendFixture(dist: string): string {
   return fixture;
 }
 
-function writeChatSend20260610Fixture(dist: string): string {
+function writeChatSend20260610Fixture(
+  dist: string,
+  runStartShape: "legacy" | "dispatch" = "legacy",
+): string {
   const fixture = path.join(dist, "chat-fixture.js");
   fs.writeFileSync(
     fixture,
@@ -84,11 +87,21 @@ function writeChatSend20260610Fixture(dist: string): string {
       '    const sessionKey = "issue2603";',
       '    const agentId = "main";',
       "    let agentRunStarted = false;",
+      ...(runStartShape === "dispatch" ? ["    let replyDispatchRun;"] : []),
       "    const replyOptions = {",
       "      runId: clientRunId,",
-      "      onAgentRunStart: (runId) => {",
-      "        agentRunStarted = true;",
-      "        emitServerTiming('agent-run-started');",
+      ...(runStartShape === "dispatch"
+        ? [
+            "      onAgentRunStart: (runId, _identity, options) => {",
+            "        replyDispatchRun = options;",
+            "        agentRunStarted = replyDispatch.captureAgentTranscriptStart();",
+            "        emitServerTiming('agent-run-started');",
+          ]
+        : [
+            "      onAgentRunStart: (runId) => {",
+            "        agentRunStarted = true;",
+            "        emitServerTiming('agent-run-started');",
+          ]),
       "      }",
       "    };",
       "    void replyOptions;",
@@ -390,6 +403,31 @@ function writeFollowupRunner20260610Fixture(dist: string): string {
       "    });",
       "    return runId;",
       "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return fixture;
+}
+
+function writeFollowupRunner20260901Fixture(dist: string): string {
+  const fixture = path.join(dist, "agent-runner.fixture.js");
+  fs.writeFileSync(
+    fixture,
+    [
+      "async function admitFollowupTurn(params) {",
+      "  const activeEntry = params.defaults.sessionEntry;",
+      "  const queued = params.queued;",
+      "  const currentInboundContext = params.defaults.opts?.isHeartbeat === true ? queued.currentInboundContext : refreshActiveGoalContext(queued.currentInboundContext, activeEntry);",
+      "  const turn = {",
+      "    runId: crypto.randomUUID(),",
+      "    queued: { ...queued, currentInboundContext },",
+      "    currentInboundContext",
+      "  };",
+      '  return { kind: "admitted", turn };',
+      "}",
+      "function createFollowupRunner(defaults) {",
+      "  return async (queued) => admitFollowupTurn({ queued, defaults });",
       "}",
       "",
     ].join("\n"),
@@ -933,6 +971,51 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(audit.stdout).toContain("embedded-agent retry runtime:");
       expect(audit.stdout).toContain("retry-user-persistence: already-applied");
       expect(audit.stdout).toContain("7 recognizers · 7 OK · 0 missing");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("recognizes the 2026.9.1 chat dispatch and admitted followup turn shapes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-691-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    const chatFixture = writeChatSend20260610Fixture(dist, "dispatch");
+    const followupFixture = writeFollowupRunner20260901Fixture(dist);
+    writeGetReply20260610Fixture(dist);
+
+    try {
+      const patch = runPatch(dist);
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+
+      const patchedChat = fs.readFileSync(chatFixture, "utf-8");
+      expect(patchedChat).toContain("replyDispatchRun = options;");
+      expect(patchedChat).toContain(
+        "context.addChatRun(runId, { sessionKey, clientRunId }); // nemoclaw: correlate chat.send run ids (#2603, #3145)",
+      );
+      expect(patchedChat).toContain(
+        "agentRunStarted = replyDispatch.captureAgentTranscriptStart();",
+      );
+
+      const patchedFollowup = fs.readFileSync(followupFixture, "utf-8");
+      expect(patchedFollowup).toContain(
+        "runId: queued.runId ?? params.defaults.opts?.runId ?? crypto.randomUUID(), // nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)",
+      );
+
+      const rerun = runPatch(dist);
+      expect(rerun.status, `${rerun.stdout}${rerun.stderr}`).toBe(0);
+      expect(
+        fs.readFileSync(chatFixture, "utf-8").match(/nemoclaw: correlate chat\.send run ids/g),
+      ).toHaveLength(1);
+      expect(
+        fs
+          .readFileSync(followupFixture, "utf-8")
+          .match(/nemoclaw: preserve chat\.send run ids in followup queue/g),
+      ).toHaveLength(1);
+
+      const audit = runPatchAudit(dist);
+      expect(audit.status, `${audit.stdout}${audit.stderr}`).toBe(0);
+      expect(audit.stdout).toContain("6 recognizers · 6 OK · 0 missing");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

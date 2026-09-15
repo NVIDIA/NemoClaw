@@ -63,6 +63,7 @@ it("restores sandbox as the generated Dockerfile's final user (#9844)", () => {
   });
 
   expect(dockerfile).toContain("FROM ${BASE_IMAGE} AS nemoclaw-runtime");
+  expect(dockerfile).toContain("openclaw plugins install --force --accept-capabilities");
   expect(dockerfile.trimEnd()).toMatch(/USER sandbox$/);
 });
 
@@ -430,7 +431,7 @@ describe("trusted EXDEV immutable image handoff", () => {
       targetDevice: null,
     });
     expect(String(crossDevicePluginInstall)).toContain(
-      `openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_MOUNT_DIR} --force`,
+      `openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_MOUNT_DIR} --force --accept-capabilities`,
     );
     expect(String(crossDevicePluginInstall)).not.toMatch(/EXDEV guard|rm -rf|cp -R|tmpfs/);
   });

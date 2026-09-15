@@ -197,7 +197,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
         'printf "OPENCLAW_STATE_DIR=%s\\n" "$OPENCLAW_STATE_DIR"',
         'printf "OPENCLAW_CONFIG_PATH=%s\\n" "$OPENCLAW_CONFIG_PATH"',
         'printf "OPENCLAW_OAUTH_DIR=%s\\n" "$OPENCLAW_OAUTH_DIR"',
-        'printf "CMD=%s\\n" "${NEMOCLAW_CMD[*]}"',
+        'printf "CMD=%s\\n" "${NEMOCLAW_CMD[*]-}"',
       ].join("\n");
       fs.writeFileSync(scriptPath, script, { mode: 0o700 });
       return spawnSync("bash", [scriptPath], {
@@ -246,6 +246,27 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials");
       expect(bakedCustomPort.stdout).toContain("CMD=openclaw agent");
+
+      const inheritedRuntimePort = runScenario("set -- nemoclaw-start openclaw agent", {
+        OPENCLAW_GATEWAY_PORT: "18791",
+      });
+      expect(inheritedRuntimePort.status, inheritedRuntimePort.stderr).toBe(0);
+      expect(inheritedRuntimePort.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:18791");
+      expect(inheritedRuntimePort.stdout).toContain("PUBLIC_PORT=18791");
+      expect(inheritedRuntimePort.stdout).toContain("OPENCLAW_GATEWAY_PORT=18791");
+      expect(inheritedRuntimePort.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
+
+      const gatewayStartupIgnoresInheritedClientPort = runScenario("set -- nemoclaw-start", {
+        OPENCLAW_GATEWAY_PORT: "18791",
+      });
+      expect(
+        gatewayStartupIgnoresInheritedClientPort.status,
+        gatewayStartupIgnoresInheritedClientPort.stderr,
+      ).toBe(0);
+      expect(gatewayStartupIgnoresInheritedClientPort.stdout).toContain("PUBLIC_PORT=18789");
+      expect(gatewayStartupIgnoresInheritedClientPort.stdout).toContain(
+        "OPENCLAW_GATEWAY_PORT=18789",
+      );
 
       const baked = runScenario("set -- nemoclaw-start openclaw agent", {
         CHAT_UI_URL: "https://baked.example.test/ui",

@@ -12,10 +12,8 @@
 # Optional env:
 #   NVIDIA_INFERENCE_API_KEY                API key for NVIDIA-hosted inference
 #   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
-#   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth.
-#                                  Also auto-disabled when CHAT_UI_URL is non-loopback.
-#                                 (development/headless). Has no runtime effect — openclaw.json
-#                                 is baked at image build and verified by hash at startup.
+#   NEMOCLAW_DISABLE_DEVICE_AUTH  Retired compatibility build input. OpenClaw 2026.9.1
+#                                 requires pairing, and NemoClaw emits no bypass key.
 #   NEMOCLAW_MODEL_OVERRIDE       Override the primary model at startup without rebuilding
 #                                 the sandbox image. Must match the model configured on
 #                                 the gateway via `openshell inference set`.
@@ -288,6 +286,7 @@ GATEWAY_WATCHDOG_KILL_FILE="${_NEMOCLAW_GATEWAY_WATCHDOG_KILL_FILE:-/tmp/nemocla
 # production containers always use the strict `/proc` identity.
 GATEWAY_PID_START_IDENTITY=""
 AUTO_PAIR_PID_START_IDENTITY=""
+PAIRING_OBSERVER_PID_START_IDENTITY=""
 GATEWAY_LOG_TAIL_PID_START_IDENTITY=""
 GATEWAY_LOG_PERSIST_PID_START_IDENTITY=""
 PLUGIN_REFRESH_PID_START_IDENTITY=""
@@ -446,8 +445,52 @@ emit_startup_error() {
   fi
 }
 
-# Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
+_read_configured_gateway_port() {
+  local node_bin config_path="/sandbox/.openclaw/openclaw.json"
+  node_bin="$(command -v node 2>/dev/null)" || return 1
+  "$node_bin" - "$config_path" <<'NODEPORT'
+const fs = require("fs");
+const path = process.argv[2];
+
+function parseConfig(text) {
+  try {
+    return JSON.parse(text);
+  } catch (jsonError) {
+    try {
+      return require("/opt/nemoclaw/node_modules/json5").parse(text);
+    } catch {
+      throw jsonError;
+    }
+  }
+}
+
+try {
+  const port = parseConfig(fs.readFileSync(path, "utf8"))?.gateway?.port;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) process.exit(1);
+  process.stdout.write(String(port));
+} catch {
+  process.exit(1);
+}
+NODEPORT
+}
+
+# Validate the selected dashboard port (same behavior as ports.js: fail fast).
 _DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
+_DASHBOARD_PORT_SOURCE="NEMOCLAW_DASHBOARD_PORT"
+# OpenShell exec sessions inherit the live gateway port from the runtime shell
+# environment, but do not replay the sandbox-create-only NEMOCLAW_DASHBOARD_PORT.
+# Preserve an inherited port for one-shot commands. Direct OpenShell exec does
+# not always import the runtime shell environment, so fall back to the port in
+# the already-running gateway's config before using the baked default.
+if [ -z "$_DASHBOARD_PORT_RAW" ] && [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
+  if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
+    _DASHBOARD_PORT_RAW="$OPENCLAW_GATEWAY_PORT"
+    _DASHBOARD_PORT_SOURCE="OPENCLAW_GATEWAY_PORT"
+  elif _CONFIGURED_GATEWAY_PORT="$(_read_configured_gateway_port)"; then
+    _DASHBOARD_PORT_RAW="$_CONFIGURED_GATEWAY_PORT"
+    _DASHBOARD_PORT_SOURCE="openclaw.json gateway.port"
+  fi
+fi
 if [ -z "$_DASHBOARD_PORT_RAW" ]; then
   if _CHAT_UI_PORT="$(_chat_ui_url_port)"; then
     _DASHBOARD_PORT="$_CHAT_UI_PORT"
@@ -466,7 +509,7 @@ else
     _DASHBOARD_PORT_VALID=0
   fi
   if [ "$_DASHBOARD_PORT_VALID" -ne 1 ]; then
-    emit_startup_error "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535"
+    emit_startup_error "[SECURITY] Invalid ${_DASHBOARD_PORT_SOURCE}='${_DASHBOARD_PORT_RAW}' — must be an integer between 1024 and 65535"
     exit 1
   fi
 fi
@@ -489,6 +532,8 @@ OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 _OPENCLAW_STATE_DIR="${_SANDBOX_HOME}/.openclaw"
 _OPENCLAW_CREDENTIALS_DIR="${_OPENCLAW_STATE_DIR}/credentials"
+_OPENCLAW_GATEWAY_STATE_DIR="${_SANDBOX_HOME}/.nemoclaw/openclaw-gateway-state"
+_OPENCLAW_PAIRING_OBSERVER_DIR="${_SANDBOX_HOME}/.nemoclaw/openclaw-pairing-observer"
 
 # OpenClaw 2026.4.x stores channel pairing requests under
 # resolveOAuthDir(resolveStateDir(...))/<channel>-pairing.json. The gateway
@@ -632,7 +677,7 @@ PY_CLASSIFY_MUTABLE_CONFIG
   fi
 }
 
-# OpenClaw 2026.7.1 requires its startup migration checkpoint to complete
+# OpenClaw 2026.9.1 requires its startup migration checkpoint to complete
 # without warnings before the gateway reports readiness. Older NemoClaw images
 # persisted update-check.json as update polling and notification cache. Empty
 # placeholders fail JSON parsing, while nonempty files cannot be archived by
@@ -2277,11 +2322,13 @@ try {
   const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
   const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
   auth.token = tokenUrlSafe(32);
-  const meta = cfg.meta && typeof cfg.meta === "object" ? cfg.meta : (cfg.meta = {});
-  // Record OpenClaw's configuration-write metadata. Without this field,
-  // OpenClaw 2026.7 can classify the authenticated configuration as overwritten
-  // and restore the tokenless build-time backup before gateway authentication resolves.
-  meta.lastTouchedAt = new Date().toISOString();
+  // OpenClaw 2026.9.1 rejects the legacy timestamp key. Scrub it defensively
+  // while retaining supported metadata such as `lastTouchedVersion`.
+  const meta = cfg.meta;
+  if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+    delete meta.lastTouchedAt;
+    if (Object.keys(meta).length === 0) delete cfg.meta;
+  }
 
   const dirPath = pathModule.dirname(path);
   let fd;
@@ -2497,6 +2544,242 @@ start_persistent_gateway_log_mirror() {
   fi
 }
 
+start_initial_pairing_observer() {
+  [ "$(id -u)" -eq 0 ] || return 0
+
+  local gateway_uid sandbox_gid
+  gateway_uid="$(id -u gateway)" || return 1
+  sandbox_gid="$(id -g sandbox)" || return 1
+
+  # The gateway database contains durable device credentials and remains
+  # owner-only. This bounded gateway-user helper publishes only the fields
+  # needed to validate the first pairing-only CLI request into a separate,
+  # read-only resource for the sandbox watcher.
+  (
+    exec nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" python3 -I - \
+      "$_OPENCLAW_GATEWAY_STATE_DIR" \
+      "$_OPENCLAW_PAIRING_OBSERVER_DIR" \
+      "$gateway_uid" \
+      "$sandbox_gid"
+  ) <<'PYPAIRINGOBSERVER' >>/tmp/auto-pair.log 2>&1 &
+import importlib.util
+import json
+import os
+import re
+import sqlite3
+import stat
+import sys
+import time
+
+STATE_DIR, OBSERVER_DIR, EXPECTED_UID_TEXT, SANDBOX_GID_TEXT = sys.argv[1:]
+EXPECTED_UID = int(EXPECTED_UID_TEXT)
+SANDBOX_GID = int(SANDBOX_GID_TEXT)
+PAIRING_STATE_FILE = '/usr/local/lib/nemoclaw/openclaw_pairing_state.py'
+OBSERVER_FILE = 'pending.json'
+MAX_OBSERVER_BYTES = 256 * 1024
+MAX_PENDING_REQUESTS = 64
+REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
+
+
+def env_seconds(name, default):
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Match the auto-pair watcher's bootstrap window. The observer exits early
+# once a request has appeared and then disappeared, but must remain available
+# while the watcher is still waiting for the first request to be created.
+DEADLINE = time.monotonic() + env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
+
+
+def load_pairing_state_reader():
+    helper = os.stat(PAIRING_STATE_FILE, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(helper.st_mode)
+        or helper.st_nlink != 1
+        or helper.st_uid != 0
+        or helper.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise RuntimeError('pairing-state helper is not trusted')
+    spec = importlib.util.spec_from_file_location(
+        'nemoclaw_gateway_pairing_state', PAIRING_STATE_FILE,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError('pairing-state helper could not be loaded')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.read_openclaw_pairing_state
+
+
+def bounded_string(value, maximum):
+    return value if isinstance(value, str) and 0 < len(value) <= maximum else None
+
+
+def bounded_string_list(value):
+    if not isinstance(value, list) or not 1 <= len(value) <= 16:
+        return None
+    result = []
+    for item in value:
+        normalized = bounded_string(item, 128)
+        if normalized is None:
+            return None
+        result.append(normalized)
+    return result
+
+
+def sanitized_initial_requests(records):
+    pending = records.get('pending') if isinstance(records, dict) else None
+    if not isinstance(pending, dict) or len(pending) > MAX_PENDING_REQUESTS:
+        raise ValueError('invalid pending pairing map')
+    sanitized = {}
+    for map_key, request in pending.items():
+        if not isinstance(map_key, str) or not isinstance(request, dict):
+            continue
+        request_id = bounded_string(request.get('requestId'), 128)
+        device_id = bounded_string(request.get('deviceId'), 128)
+        public_key = bounded_string(request.get('publicKey'), 1024)
+        client_id = bounded_string(request.get('clientId'), 64)
+        client_mode = bounded_string(request.get('clientMode'), 64)
+        role = bounded_string(request.get('role'), 64)
+        roles = bounded_string_list(request.get('roles'))
+        scopes = bounded_string_list(request.get('scopes'))
+        if (
+            request_id != map_key
+            or not REQUEST_ID_RE.fullmatch(map_key)
+            or device_id is None
+            or public_key is None
+            or client_id != 'cli'
+            or client_mode != 'cli'
+            or role != 'operator'
+            or roles != ['operator']
+            or scopes != ['operator.pairing']
+        ):
+            continue
+        sanitized[map_key] = {
+            'requestId': request_id,
+            'deviceId': device_id,
+            'publicKey': public_key,
+            'clientId': client_id,
+            'clientMode': client_mode,
+            'role': role,
+            'roles': roles,
+            'scopes': scopes,
+        }
+    return sanitized
+
+
+def open_observer_directory():
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
+    descriptor = os.open(OBSERVER_DIR, flags)
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != EXPECTED_UID
+        or metadata.st_gid != SANDBOX_GID
+        or stat.S_IMODE(metadata.st_mode) != 0o2750
+    ):
+        os.close(descriptor)
+        raise OSError('unsafe pairing-observer directory')
+    return descriptor
+
+
+def publish_snapshot(directory_fd, pending):
+    document = json.dumps(
+        {'schemaVersion': 1, 'pending': pending},
+        separators=(',', ':'),
+        sort_keys=True,
+    ).encode('utf-8')
+    if not 0 < len(document) <= MAX_OBSERVER_BYTES:
+        raise ValueError('pairing-observer snapshot exceeds its bound')
+    temporary = f'.pending.{os.getpid()}.{os.urandom(8).hex()}.tmp'
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0),
+            0o640,
+            dir_fd=directory_fd,
+        )
+        os.fchown(descriptor, EXPECTED_UID, SANDBOX_GID)
+        os.fchmod(descriptor, 0o640)
+        remaining = document
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError('pairing-observer write made no progress')
+            remaining = remaining[written:]
+        os.fsync(descriptor)
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != EXPECTED_UID
+            or metadata.st_gid != SANDBOX_GID
+            or stat.S_IMODE(metadata.st_mode) != 0o640
+            or metadata.st_size != len(document)
+        ):
+            raise OSError('unsafe pairing-observer snapshot')
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(
+            temporary,
+            OBSERVER_FILE,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+
+
+reader = load_pairing_state_reader()
+observer_fd = open_observer_directory()
+last_document = None
+observed_request_ids = set()
+print('[pairing-observer] started', flush=True)
+try:
+    while time.monotonic() < DEADLINE:
+        try:
+            records, _database_metadata = reader(STATE_DIR, timeout=0.25)
+            pending = sanitized_initial_requests(records)
+            encoded = json.dumps(pending, separators=(',', ':'), sort_keys=True)
+            if encoded != last_document:
+                publish_snapshot(observer_fd, pending)
+                last_document = encoded
+            current_ids = set(pending)
+            observed_request_ids.update(current_ids)
+            if observed_request_ids and not current_ids:
+                break
+        except (FileNotFoundError, OSError, ValueError, sqlite3.Error):
+            pass
+        time.sleep(0.1)
+finally:
+    try:
+        publish_snapshot(observer_fd, {})
+    finally:
+        os.close(observer_fd)
+print('[pairing-observer] stopped', flush=True)
+PYPAIRINGOBSERVER
+  PAIRING_OBSERVER_PID=$!
+  if ! capture_openclaw_pid_start_identity \
+    "$PAIRING_OBSERVER_PID" PAIRING_OBSERVER_PID_START_IDENTITY; then
+    echo "[gateway] could not capture pairing-observer process identity" >&2
+    return 1
+  fi
+  echo "[gateway] initial pairing observer launched (pid $PAIRING_OBSERVER_PID)" >&2
+}
+
 start_auto_pair() {
   # Run auto-pair as sandbox user (it talks to the gateway via CLI)
   # SECURITY: Pass resolved openclaw path to prevent PATH hijacking
@@ -2504,9 +2787,11 @@ start_auto_pair() {
   # the sandbox user). When root, step down via STEP_DOWN_PREFIX_SANDBOX
   # which uses setpriv to drop load-bearing caps from the bounding set
   # atomically with reuid (issue #3280 follow-up).
-  local run_prefix=()
+  local run_prefix=() gateway_uid=""
   if [ "$(id -u)" -eq 0 ]; then
+    start_initial_pairing_observer || return 1
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
+    gateway_uid="$(id -u gateway)" || return 1
   fi
   # Source the trusted runtime environment in this child so the first
   # `devices list` uses OpenClaw's native loopback and shared gateway auth.
@@ -2515,6 +2800,15 @@ start_auto_pair() {
     if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
       # shellcheck source=/dev/null
       builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
+    fi
+    if [ "$(id -u)" -eq 0 ]; then
+      unset NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR
+      export NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_DIR="$_OPENCLAW_PAIRING_OBSERVER_DIR"
+      export NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_UID="$gateway_uid"
+    else
+      unset NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR
+      unset NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_DIR
+      unset NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_UID
     fi
     export OPENCLAW_BIN="$OPENCLAW"
     exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
@@ -2526,6 +2820,7 @@ import binascii
 import hashlib
 import os
 import re
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -2586,20 +2881,28 @@ def report_unhandled_watcher_exception(exc_type, _exc_value, _traceback):
 sys.excepthook = report_unhandled_watcher_exception
 
 APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
+PAIRING_STATE_FILE = os.path.join(
+    os.path.dirname(APPROVAL_POLICY_FILE), 'openclaw_pairing_state.py',
+)
 
 
-def load_approval_policy(path):
+def load_trusted_helper(path, module_name, label):
     helper_stat = os.stat(path)
     mode = helper_stat.st_mode
     if mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise RuntimeError('approval policy helper is writable by group or other')
+        raise RuntimeError(f'{label} helper is writable by group or other')
     if helper_stat.st_uid == os.geteuid() and mode & stat.S_IWUSR:
-        raise RuntimeError('approval policy helper is writable by the current user')
-    spec = importlib.util.spec_from_file_location('openclaw_device_approval_policy', path)
+        raise RuntimeError(f'{label} helper is writable by the current user')
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError('approval policy helper could not be loaded')
+        raise RuntimeError(f'{label} helper could not be loaded')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def load_approval_policy(path):
+    module = load_trusted_helper(path, 'openclaw_device_approval_policy', 'approval policy')
     return (
         module.approval_request_decision,
         module.gateway_approval_env,
@@ -2608,6 +2911,16 @@ def load_approval_policy(path):
 
 
 approval_request_decision, gateway_approval_env, policy_allowed_scopes = load_approval_policy(APPROVAL_POLICY_FILE)
+pairing_state_reader = None
+
+
+def read_openclaw_pairing_state(*args, **kwargs):
+    global pairing_state_reader
+    if pairing_state_reader is None:
+        pairing_state_reader = load_trusted_helper(
+            PAIRING_STATE_FILE, 'openclaw_pairing_state', 'pairing state',
+        ).read_openclaw_pairing_state
+    return pairing_state_reader(*args, **kwargs)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -2697,9 +3010,99 @@ def _identity_public_key(identity):
     return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
 
 
+def _state_sqlite_path(state_dir):
+    return os.path.join(state_dir, 'state', 'openclaw.sqlite')
+
+
+def _read_initial_pairing_observer(observer_dir, request_id):
+    expected_uid_text = os.environ.get('NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_UID', '')
+    if not expected_uid_text.isascii() or not expected_uid_text.isdecimal():
+        raise RuntimeError('pairing observer owner is invalid')
+    expected_uid = int(expected_uid_text)
+    if not os.path.isabs(observer_dir):
+        raise RuntimeError('pairing observer path is not absolute')
+    directory_fd = -1
+    snapshot_fd = -1
+    try:
+        directory_fd = os.open(
+            observer_dir,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        directory = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(directory.st_mode)
+            or directory.st_uid != expected_uid
+            or directory.st_gid != os.getegid()
+            or stat.S_IMODE(directory.st_mode) != 0o2750
+        ):
+            raise OSError('unsafe pairing observer directory')
+        snapshot_fd = os.open(
+            'pending.json',
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+            dir_fd=directory_fd,
+        )
+        snapshot = os.fstat(snapshot_fd)
+        if (
+            not stat.S_ISREG(snapshot.st_mode)
+            or snapshot.st_nlink != 1
+            or snapshot.st_uid != expected_uid
+            or snapshot.st_gid != os.getegid()
+            or stat.S_IMODE(snapshot.st_mode) != 0o640
+            or not 0 < snapshot.st_size <= 256 * 1024
+        ):
+            raise OSError('unsafe pairing observer snapshot')
+        chunks = []
+        remaining = snapshot.st_size
+        while remaining:
+            chunk = os.read(snapshot_fd, min(remaining, 64 * 1024))
+            if not chunk:
+                raise OSError('pairing observer snapshot was truncated')
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(snapshot_fd, 1):
+            raise OSError('pairing observer snapshot exceeded its bound')
+        document = json.loads(b''.join(chunks).decode('utf-8'))
+        if (
+            not isinstance(document, dict)
+            or set(document) != {'schemaVersion', 'pending'}
+            or document.get('schemaVersion') != 1
+            or not isinstance(document.get('pending'), dict)
+            or len(document['pending']) > 64
+        ):
+            raise ValueError('pairing observer snapshot is invalid')
+        return document['pending'].get(request_id)
+    finally:
+        if snapshot_fd >= 0:
+            os.close(snapshot_fd)
+        if directory_fd >= 0:
+            os.close(directory_fd)
+
+
+def _sqlite_initial_pairing_snapshot(sqlite_path, request_id):
+    client_state_dir = os.path.dirname(os.path.dirname(sqlite_path))
+    client_records, _database_metadata = read_openclaw_pairing_state(
+        client_state_dir, timeout=1,
+    )
+    observer_dir = os.environ.get('NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_DIR')
+    if observer_dir:
+        request = _read_initial_pairing_observer(observer_dir, request_id)
+    else:
+        request = client_records['pending'].get(request_id)
+    return client_records['identity'], request
+
+
 def _local_device_identity():
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
-    identity = _read_json_object(os.path.join(state_dir, 'identity', 'device.json'))
+    sqlite_path = _state_sqlite_path(state_dir)
+    if os.path.lexists(sqlite_path):
+        records, _database_metadata = read_openclaw_pairing_state(state_dir, timeout=1)
+        identity = records['identity']
+    else:
+        identity = _read_json_object(os.path.join(state_dir, 'identity', 'device.json'))
+        # Never accept legacy identity state once the canonical database has
+        # appeared. This closes the existence-check/read race fail-closed.
+        if os.path.lexists(sqlite_path):
+            raise RuntimeError('SQLite state appeared while reading legacy device identity')
     device_id = str(identity.get('deviceId', '') or '').strip()
     public_key = _identity_public_key(identity)
     public_key_raw = base64.urlsafe_b64decode(public_key + '=' * (-len(public_key) % 4))
@@ -2717,7 +3120,7 @@ def is_local_cli_request(request):
         return False
     try:
         device_id, public_key = _local_device_identity()
-    except (OSError, ValueError, RuntimeError, binascii.Error):
+    except (OSError, ValueError, RuntimeError, binascii.Error, sqlite3.Error):
         return False
     return (
         request.get('deviceId') == device_id
@@ -2744,17 +3147,23 @@ def initial_cli_request_is_allowlisted(request_id):
     # exposes that bootstrap/list API and NemoClaw no longer supports gated
     # list behavior for first-run CLI pairing.
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    sqlite_path = _state_sqlite_path(state_dir)
     pending_path = os.path.join(state_dir, 'devices', 'pending.json')
     identity_path = os.path.join(state_dir, 'identity', 'device.json')
     try:
-        pending = _read_json_object(pending_path)
-        identity = _read_json_object(identity_path)
-        request = pending.get(request_id)
+        if os.path.lexists(sqlite_path):
+            identity, request = _sqlite_initial_pairing_snapshot(sqlite_path, request_id)
+        else:
+            pending = _read_json_object(pending_path)
+            identity = _read_json_object(identity_path)
+            if os.path.lexists(sqlite_path):
+                raise RuntimeError('SQLite state appeared while reading legacy pairing state')
+            request = pending.get(request_id)
         if not isinstance(request, dict):
             return False
-        # The map key is the authoritative request id. Reject a record whose
-        # embedded requestId is missing or disagrees with its key, so a
-        # malformed/tampered pending.json cannot approve a mismatched request.
+        # The stored primary key is the authoritative request id. Reject a
+        # record whose embedded requestId is missing or disagrees with it, so
+        # malformed/tampered pending state cannot approve a mismatched request.
         # (PR #6330 review, cv item 3.)
         if str(request.get('requestId', '') or '').strip() != str(request_id).strip():
             return False
@@ -2807,7 +3216,7 @@ def initial_cli_request_is_allowlisted(request_id):
         if scopes != {'operator.pairing'}:
             return False
         return approval_request_decision(request)['allowed'] is True
-    except (OSError, ValueError, RuntimeError, binascii.Error) as err:
+    except (OSError, ValueError, RuntimeError, binascii.Error, sqlite3.Error) as err:
         print(f'[auto-pair] initial CLI pairing validation skipped request={request_id}: {brief_child_error("", str(err))}')
         return False
 
@@ -2938,8 +3347,14 @@ def exact_string_set(value, expected):
 def canonical_cli_baseline_settled(paired, pending):
     try:
         local_device_id, local_public_key = _local_device_identity()
-    except (OSError, ValueError, RuntimeError, binascii.Error):
+    except (OSError, ValueError, RuntimeError, binascii.Error, sqlite3.Error):
         return False
+    baseline_request_scopes = {'operator.pairing', 'operator.write'}
+    baseline_token_scopes = {'operator.pairing', 'operator.read', 'operator.write'}
+    admin_request_scopes = {'operator.admin', 'operator.pairing', 'operator.write'}
+    admin_token_scopes = {
+        'operator.admin', 'operator.pairing', 'operator.read', 'operator.write',
+    }
     candidates = [
         device for device in paired
         if isinstance(device, dict)
@@ -2949,13 +3364,29 @@ def canonical_cli_baseline_settled(paired, pending):
         and device.get('clientMode') == 'cli'
         and device.get('role') == 'operator'
         and exact_string_set(device.get('roles'), {'operator'})
-        and exact_string_set(device.get('scopes'), {'operator.pairing', 'operator.write'})
-        and exact_string_set(device.get('approvedScopes'), {'operator.pairing', 'operator.write'})
+        and (
+            (
+                exact_string_set(device.get('scopes'), baseline_request_scopes)
+                and exact_string_set(device.get('approvedScopes'), baseline_request_scopes)
+            )
+            or (
+                # An explicit admin approval can persist across a rebuild.
+                # Recognizing its exact settled shape only controls polling;
+                # the watcher still never approves operator.admin requests.
+                exact_string_set(device.get('scopes'), admin_request_scopes)
+                and exact_string_set(device.get('approvedScopes'), admin_request_scopes)
+            )
+        )
     ]
     if len(candidates) != 1:
         return False
     device = candidates[0]
     device_id = str(device.get('deviceId', '') or '').strip()
+    expected_token_scopes = (
+        admin_token_scopes
+        if exact_string_set(device.get('scopes'), admin_request_scopes)
+        else baseline_token_scopes
+    )
     tokens = device.get('tokens')
     operator = tokens.get('operator') if isinstance(tokens, dict) and set(tokens) == {'operator'} else None
     if (
@@ -2963,10 +3394,7 @@ def canonical_cli_baseline_settled(paired, pending):
         or not isinstance(operator, dict)
         or operator.get('role') != 'operator'
         or operator.get('revokedAtMs') is not None
-        or not exact_string_set(
-            operator.get('scopes'),
-            {'operator.pairing', 'operator.read', 'operator.write'},
-        )
+        or not exact_string_set(operator.get('scopes'), expected_token_scopes)
     ):
         return False
     return not any(
@@ -2987,7 +3415,7 @@ def list_failure_reason(rc, out, err):
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
 # runtime environment, so its first list call resolves the live gateway through
 # local loopback and retains the shared token plus a private child marker. The
-# reviewed 2026.7.1 dist patch uses that marker to retain CLI identity before a
+# reviewed 2026.9.1 dist patch uses that marker to retain CLI identity before a
 # stored device credential exists. Once OpenClaw issues that credential, later
 # list calls drop the gateway env triplet and use the reviewed settlement marker
 # to select pairing-only stored-device auth. Approval calls keep their separate
@@ -3484,13 +3912,12 @@ PROXYEOF
       _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
       printf "export %s='%s'\n" "$_openclaw_env_name" "$_escaped_openclaw_env_value"
     done
-    if [ "${NEMOCLAW_OPENCLAW_SHARED_STATE:-}" = "1" ]; then
-      printf 'export NEMOCLAW_OPENCLAW_SHARED_STATE=1\n'
-    else
-      # Old/custom images may still carry the former image-wide marker. Keep
-      # connect shells aligned with the topology selected by PID 1.
-      printf 'unset NEMOCLAW_OPENCLAW_SHARED_STATE\n'
-    fi
+    # Only the gateway launch receives the split-state compatibility marker.
+    # Sandbox commands always use their private client database.
+    printf 'unset NEMOCLAW_OPENCLAW_SHARED_STATE\n'
+    printf 'unset NEMOCLAW_OPENCLAW_GATEWAY_STATE_DIR\n'
+    printf 'unset NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_DIR\n'
+    printf 'unset NEMOCLAW_OPENCLAW_PAIRING_OBSERVER_UID\n'
     if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
       _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"
@@ -3576,7 +4003,7 @@ openclaw() {
   local _nemoclaw_guard_request_handled=0 _nemoclaw_guard_request_status=0
   # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
   # so OpenClaw resolves the local loopback gateway and device token. The
-  # reviewed 2026.7.1 compatibility patch then performs bounded same-device
+  # reviewed 2026.9.1 compatibility patch then performs bounded same-device
   # scope upgrades in the gateway's canonical locked pairing writer. This
   # wrapper never reads or writes pending.json/paired.json.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
@@ -5135,6 +5562,7 @@ PYGATEWAYLAUNCH
 }
 
 launch_openclaw_gateway() {
+  local gateway_state_dir="${_OPENCLAW_GATEWAY_STATE_DIR:-/sandbox/.nemoclaw/openclaw-gateway-state}"
   # Drop the gateway marker whenever this supervisor exits -- clean gateway
   # exit (`exit 0` below), a forwarded signal (cleanup_openclaw_on_signal ends
   # in `cleanup_on_signal` -> `exit`), or errexit. This is the #4952 fix: on
@@ -5147,6 +5575,9 @@ launch_openclaw_gateway() {
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
   launch_openclaw_gateway_process truncate gateway \
+    /usr/bin/env \
+    OPENCLAW_STATE_DIR="$gateway_state_dir" \
+    NEMOCLAW_OPENCLAW_SHARED_STATE=1 \
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
@@ -5204,6 +5635,9 @@ refresh_openclaw_supervised_child_pids() {
   openclaw_supervised_aux_pid_is_live \
     "${AUTO_PAIR_PID:-}" "${AUTO_PAIR_PID_START_IDENTITY:-}" \
     && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
+  openclaw_supervised_aux_pid_is_live \
+    "${PAIRING_OBSERVER_PID:-}" "${PAIRING_OBSERVER_PID_START_IDENTITY:-}" \
+    && SANDBOX_CHILD_PIDS+=("$PAIRING_OBSERVER_PID")
   openclaw_supervised_aux_pid_is_live \
     "${GATEWAY_LOG_TAIL_PID:-}" "${GATEWAY_LOG_TAIL_PID_START_IDENTITY:-}" \
     && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
@@ -5649,17 +6083,251 @@ handle_openclaw_gateway_control_request() {
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
 
+# OpenShell confines newly-created SQLite temporary files more narrowly than
+# ordinary container execution. FTS5 schema initialization otherwise falls
+# back to a denied host temporary directory and reports the misleading error
+# "unable to open database file". Keep only SQLite's temporary files inside
+# the agent-owned OpenClaw state tree; do not redirect unrelated process temp
+# files.
+prepare_openshell_sqlite_tmpdir() {
+  local sqlite_tmpdir="/sandbox/.openclaw/tmp"
+  if [ -L "$sqlite_tmpdir" ] || { [ -e "$sqlite_tmpdir" ] && [ ! -d "$sqlite_tmpdir" ]; }; then
+    echo "[SECURITY] Refusing unsafe OpenClaw SQLite temporary directory: $sqlite_tmpdir" >&2
+    return 1
+  fi
+  mkdir -p "$sqlite_tmpdir" || return 1
+  if [ "$(stat -c '%u' "$sqlite_tmpdir" 2>/dev/null)" != "$(id -u)" ]; then
+    echo "[SECURITY] OpenClaw SQLite temporary directory is not owned by the runtime user: $sqlite_tmpdir" >&2
+    return 1
+  fi
+  chmod 700 "$sqlite_tmpdir" || return 1
+  export SQLITE_TMPDIR="$sqlite_tmpdir"
+}
+
+# Direct managed containers run the OpenClaw gateway under the dedicated
+# gateway UID, while commands and the agent-facing CLI run under the sandbox
+# UID. Keep their SQLite roots separate: the sandbox owns its private client
+# identity database, and the gateway owns the authoritative pairing/auth state.
+# That database and every SQLite sidecar stay gateway-owner-only. A separate
+# gateway-written, credential-free pairing observer resource exposes only the
+# bounded fields needed to validate the first CLI request. The sticky,
+# root-owned .nemoclaw parent prevents the sandbox from replacing either
+# gateway-owned directory binding.
+prepare_openclaw_gateway_state() {
+  [ "$(id -u)" -eq 0 ] || return 0
+
+  local gateway_uid gateway_gid sandbox_gid
+  gateway_uid="$(id -u gateway)" || return 1
+  gateway_gid="$(id -g gateway)" || return 1
+  sandbox_gid="$(id -g sandbox)" || return 1
+
+  # Never import the former sandbox-writable authentication database here. It
+  # is not a trustworthy authority boundary. On the first protected start the
+  # gateway creates fresh state and the private sandbox client re-pairs through
+  # the bounded auto-pair flow. Later starts accept only the protected database.
+  python3 -I - \
+    "$_OPENCLAW_GATEWAY_STATE_DIR" \
+    "$_OPENCLAW_PAIRING_OBSERVER_DIR" \
+    "$gateway_uid" \
+    "$gateway_gid" \
+    "$sandbox_gid" <<'PY_GATEWAY_STATE_DIR' || return 1
+import os
+import stat
+import sys
+
+gateway_root = sys.argv[1]
+observer_root = sys.argv[2]
+gateway_uid = int(sys.argv[3])
+gateway_gid = int(sys.argv[4])
+sandbox_gid = int(sys.argv[5])
+parent_path = os.path.dirname(gateway_root)
+entry_name = os.path.basename(gateway_root)
+observer_entry_name = os.path.basename(observer_root)
+if os.path.dirname(observer_root) != parent_path or observer_entry_name == entry_name:
+    raise OSError("unsafe protected OpenClaw pairing-observer path")
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+
+
+def prepare_directory(parent_descriptor, name, uid, gid, mode, prior_gids, prior_modes, label):
+    try:
+        os.mkdir(name, mode, dir_fd=parent_descriptor)
+        created = True
+    except FileExistsError:
+        created = False
+    descriptor = os.open(name, directory_flags, dir_fd=parent_descriptor)
+    try:
+        metadata = os.fstat(descriptor)
+        if created:
+            os.fchown(descriptor, uid, gid)
+            os.fchmod(descriptor, mode)
+        elif (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != uid
+            or metadata.st_gid not in prior_gids
+            or stat.S_IMODE(metadata.st_mode) not in prior_modes
+            or metadata.st_mode & 0o022
+        ):
+            raise OSError(f"unsafe {label}")
+        else:
+            # Tighten the former gateway:sandbox 2750 layout before changing
+            # its group so an interrupted migration always fails closed.
+            os.fchmod(descriptor, mode)
+            os.fchown(descriptor, uid, gid)
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != uid
+            or metadata.st_gid != gid
+            or stat.S_IMODE(metadata.st_mode) != mode
+        ):
+            raise OSError(f"unsafe {label}")
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+parent_fd = os.open(parent_path, directory_flags)
+gateway_fd = -1
+state_fd = -1
+observer_fd = -1
+try:
+    parent = os.fstat(parent_fd)
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != 0
+        or stat.S_IMODE(parent.st_mode) != 0o1755
+    ):
+        raise OSError("unsafe protected OpenClaw gateway-state parent")
+
+    gateway_fd = prepare_directory(
+        parent_fd,
+        entry_name,
+        gateway_uid,
+        gateway_gid,
+        0o700,
+        {gateway_gid, sandbox_gid},
+        {0o700, 0o2750},
+        "protected OpenClaw gateway-state directory",
+    )
+    state_fd = prepare_directory(
+        gateway_fd,
+        "state",
+        gateway_uid,
+        gateway_gid,
+        0o700,
+        {gateway_gid, sandbox_gid},
+        {0o700, 0o2750},
+        "protected OpenClaw gateway SQLite directory",
+    )
+
+    for name in ("openclaw.sqlite", "openclaw.sqlite-wal", "openclaw.sqlite-shm", "openclaw.sqlite-journal"):
+        try:
+            database_fd = os.open(name, file_flags, dir_fd=state_fd)
+        except FileNotFoundError:
+            continue
+        try:
+            database_file = os.fstat(database_fd)
+            if (
+                not stat.S_ISREG(database_file.st_mode)
+                or database_file.st_nlink != 1
+                or database_file.st_uid != gateway_uid
+                or database_file.st_gid not in {gateway_gid, sandbox_gid}
+                or stat.S_IMODE(database_file.st_mode) not in {0o600, 0o640}
+                or database_file.st_size > 1024 * 1024 * 1024
+            ):
+                raise OSError("unsafe protected OpenClaw gateway SQLite file")
+            os.fchmod(database_fd, 0o600)
+            os.fchown(database_fd, gateway_uid, gateway_gid)
+            database_file = os.fstat(database_fd)
+            if (
+                database_file.st_uid != gateway_uid
+                or database_file.st_gid != gateway_gid
+                or stat.S_IMODE(database_file.st_mode) != 0o600
+            ):
+                raise OSError("unsafe protected OpenClaw gateway SQLite file")
+        finally:
+            os.close(database_fd)
+
+    observer_fd = prepare_directory(
+        parent_fd,
+        observer_entry_name,
+        gateway_uid,
+        sandbox_gid,
+        0o2750,
+        {sandbox_gid},
+        {0o2750},
+        "protected OpenClaw pairing-observer directory",
+    )
+finally:
+    if observer_fd >= 0:
+        os.close(observer_fd)
+    if state_fd >= 0:
+        os.close(state_fd)
+    if gateway_fd >= 0:
+        os.close(gateway_fd)
+    os.close(parent_fd)
+PY_GATEWAY_STATE_DIR
+}
+
+run_requested_openclaw_post_upgrade_doctor() {
+  local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
+  local expected="nemoclaw-openclaw-post-upgrade-doctor-v1"
+  local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
+
+  if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+    return 0
+  fi
+  if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+    echo "[SECURITY] Refusing unsafe post-upgrade doctor marker" >&2
+    return 1
+  fi
+  marker_metadata="$(stat -c '%u %a %h' "$marker" 2>/dev/null)" || return 1
+  read -r marker_owner marker_mode marker_links <<EOF
+$marker_metadata
+EOF
+  if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
+    || [ "$marker_mode" != "600" ] \
+    || [ "$marker_links" != "1" ]; then
+    echo "[SECURITY] Refusing untrusted post-upgrade doctor marker" >&2
+    return 1
+  fi
+  {
+    IFS= read -r marker_value || return 1
+    if IFS= read -r extra || [ -n "$extra" ]; then
+      return 1
+    fi
+  } <"$marker" || return 1
+  [ "$marker_value" = "$expected" ] || {
+    echo "[SECURITY] Refusing invalid post-upgrade doctor marker" >&2
+    return 1
+  }
+
+  echo "[setup] running requested OpenClaw post-upgrade doctor before gateway launch" >&2
+  if [ "$(id -u)" -eq 0 ]; then
+    "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" \
+      "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
+  else
+    "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
+  fi
+  # Doctor may restore OpenClaw's owner-only defaults. Reapply NemoClaw's
+  # topology-aware mutable modes before the root topology launches its
+  # separate gateway user, and keep the request retryable if that fails.
+  normalize_mutable_config_perms || return 1
+  rm -f -- "$marker" || return 1
+  echo "[setup] OpenClaw post-upgrade doctor completed" >&2
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
-# OpenClaw 2026.7.1 enforces owner-only SQLite and models-file modes on every
-# open. Only the root entrypoint uses NemoClaw's separate sandbox/gateway UIDs;
-# OpenShell starts this entrypoint as the sandbox UID and runs both roles as that
-# same user. Derive the compatibility marker from the real topology instead of
-# an image-wide or caller-supplied environment marker.
-if [ "$(id -u)" -eq 0 ]; then
-  export NEMOCLAW_OPENCLAW_SHARED_STATE=1
-else
-  unset NEMOCLAW_OPENCLAW_SHARED_STATE
+# OpenClaw 2026.9.1 enforces owner-only SQLite and models-file modes on every
+# open. Sandbox-side clients keep those private defaults. The root topology
+# supplies its compatibility marker only to the gateway process after moving
+# authoritative state beneath a gateway-owned directory. OpenShell starts this
+# entrypoint as the sandbox UID and runs both roles as that same user.
+unset NEMOCLAW_OPENCLAW_SHARED_STATE
+if [ "$(id -u)" -ne 0 ]; then
+  prepare_openshell_sqlite_tmpdir || exit 1
 fi
 
 # Begin the root PID 1 readiness lease before any startup path reads or mutates
@@ -5727,6 +6395,7 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 
   configure_messaging_channels
+  run_requested_openclaw_post_upgrade_doctor || exit 1
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
   write_openclaw_config_baseline
@@ -5851,10 +6520,12 @@ echo "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" >&2
 # rather than failing the integrity hash for the empty file.
 recover_openclaw_config_if_empty
 normalize_mutable_config_perms
+prepare_openclaw_gateway_state || exit 1
 apply_model_override
 reconcile_agent_model_with_provider
 apply_cors_override
 configure_messaging_channels
+run_requested_openclaw_post_upgrade_doctor || exit 1
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash
 prepare_gateway_token_for_current_command
