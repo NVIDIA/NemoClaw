@@ -101,15 +101,13 @@ function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
 async function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: string) {
   const selected = getSandboxEntryInference(entry);
   const observer = createCliOpenShellInferenceRouteObserver((args, options) =>
-    args.includes("-g") || args.includes("--gateway")
-      ? captureSanitizedResolvedOpenshell(args, {
-          ignoreError: true,
-          includeStderr: true,
-          includeStreams: true,
-          maxBuffer: CAPTURE_MAX_BYTES,
-          timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
-        })
-      : { status: 1, output: "" },
+    captureSanitizedResolvedOpenshell(args, {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: CAPTURE_MAX_BYTES,
+      timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
+    }),
   );
   const result = await observer.observeInferenceRoute({
     target: namedOpenShellGateway(gatewayName),
