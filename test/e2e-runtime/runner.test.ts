@@ -1301,6 +1301,5 @@ describe("regression guards", () => {
       expect(runtimeVersion).toBeDefined();
       expect(runtimeVersion).toBe(baseVersion);
     });
-
   });
 });
