@@ -328,6 +328,7 @@ function stateOf(value: boolean | undefined): ReadinessState {
   return value === undefined ? "unknown" : value ? "present" : "absent";
 }
 
+/** Project every host capability as unknown when collection cannot produce usable evidence. */
 function unknownProjection(evidenceIds: readonly string[]): {
   observations: ReadinessObservation[];
   capabilities: ReadinessCapability[];
@@ -337,6 +338,9 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.os.platform",
     "host.os.architecture",
     "host.os.wsl",
+    "host.os.distribution",
+    "host.os.version",
+    "host.os.pretty_name",
     "host.session.headless",
     "host.docker.installed",
     "host.docker.reachable",
@@ -409,6 +413,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
   };
 }
 
+/** Convert a bounded host snapshot into stable observations, capabilities, and findings. */
 export function projectHostReadiness(
   snapshot: Readonly<HostObservationSnapshot>,
   options: CreateHostReadinessReportOptions,
@@ -472,6 +477,9 @@ export function projectHostReadiness(
       observation("host.os.platform", host.platform),
       observation("host.os.architecture", host.architecture),
       observation("host.os.wsl", host.isWsl),
+      observation("host.os.distribution", host.platformIdentity?.osId),
+      observation("host.os.version", host.platformIdentity?.osVersionId),
+      observation("host.os.pretty_name", host.platformIdentity?.osPrettyName),
       observation("host.session.headless", host.isHeadlessLikely),
       observation("host.docker.installed", host.dockerInstalled),
       observation(
@@ -602,6 +610,29 @@ export function projectHostReadiness(
       capability("host.gpu.cdi_healthy", cdiApplies ? stateOf(cdiHealthy) : "present"),
     ];
     findings = [...platform.findings];
+    if (host.platform === "linux") {
+      const osId = host.platformIdentity?.osId;
+      const osVersionId = host.platformIdentity?.osVersionId;
+      if (!osId || !osVersionId) {
+        findings.push(
+          finding(
+            "host.os.release_inconclusive",
+            "warning",
+            "The host operating-system distribution and version could not be identified from /etc/os-release.",
+            [],
+          ),
+        );
+      } else if (osId !== "ubuntu" || osVersionId !== "24.04") {
+        findings.push(
+          finding(
+            "host.os.release_unqualified",
+            "warning",
+            "The detected host operating-system release has not been qualified for host-level onboarding.",
+            [],
+          ),
+        );
+      }
+    }
     if (!host.dockerInstalled)
       findings.push(
         finding("host.docker.unavailable", "blocking", "Docker is not installed.", [

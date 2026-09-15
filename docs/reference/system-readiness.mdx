@@ -370,6 +370,8 @@ They reject an exit-zero response that contains empty or error-only daemon data.
 ## Understand the Read-Only Boundary
 
 `host probe` observes the host and does not run remediation.
+
+On Linux and WSL, the report reads the bounded `ID`, `VERSION_ID`, and `PRETTY_NAME` fields from `/etc/os-release` into `host.os.distribution`, `host.os.version`, and `host.os.pretty_name`. Ubuntu 24.04 is the host-level qualified release. Another distribution or release produces the `host.os.release_unqualified` warning, while missing or malformed release evidence produces `host.os.release_inconclusive`. These warnings do not claim that the host is unusable; they identify a release outside the tested host-level onboarding boundary before installation changes the system.
 Repeated runs do not change filesystem, service, Docker image or container, gateway, provider, credential, policy, or sandbox state.
 Read-only child processes receive a replacement environment containing only system variables, the selected OpenShell gateway, its validated local TLS directory when present, and a supported local Unix Docker socket when configured.
 Ambient provider, OpenShell, sandbox, and gateway credentials are not forwarded to those children.
