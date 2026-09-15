@@ -21,18 +21,21 @@ function git(root: string, args: string[]): string {
   return result.stdout;
 }
 
+/** Stable filesystem identity. Any content or metadata change alters at least one field. */
+function fileIdentity(stat: fs.Stats): string {
+  return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+}
+
 function readStableFile(file: string, expected: fs.Stats): Buffer {
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-  const identity = (stat: fs.Stats) =>
-    [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
   try {
     const opened = fs.fstatSync(descriptor);
-    if (!opened.isFile() || identity(opened) !== identity(expected))
+    if (!opened.isFile() || fileIdentity(opened) !== fileIdentity(expected))
       throw new Error("Validation input changed before reading");
     const bytes = fs.readFileSync(descriptor);
     if (
-      identity(fs.fstatSync(descriptor)) !== identity(opened) ||
-      identity(fs.lstatSync(file)) !== identity(opened)
+      fileIdentity(fs.fstatSync(descriptor)) !== fileIdentity(opened) ||
+      fileIdentity(fs.lstatSync(file)) !== fileIdentity(opened)
     )
       throw new Error("Validation input changed while reading");
     return bytes;
@@ -41,10 +44,97 @@ function readStableFile(file: string, expected: fs.Stats): Buffer {
   }
 }
 
-function hashPaths(root: string, files: readonly string[], excludeCaches = false): string {
+const DIGEST_INDEX_VERSION = 1;
+// A checkout holds roughly 40,000 compiler inputs. The bound leaves room for branch
+// churn without letting the index grow without limit.
+const DIGEST_INDEX_MAX_ENTRIES = 100_000;
+const DIGEST_INDEX_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Content digest of one regular file, reused only while its filesystem identity is unchanged. */
+export type FileDigestIndex = {
+  digest: (file: string, stat: fs.Stats) => string;
+  persist: () => void;
+};
+
+function readFileDigest(file: string, stat: fs.Stats): string {
+  return createHash("sha256").update(readStableFile(file, stat)).digest("hex");
+}
+
+/**
+ * Remember content digests against canonical path and stable filesystem identity so an
+ * unchanged dependency tree is not reread. A digest is reused only while every identity
+ * field still matches; any change reopens and rereads the file through
+ * {@link readStableFile}, which keeps the no-follow open and the before, during, and
+ * after identity checks.
+ */
+export function createFileDigestIndex(indexPath: string): FileDigestIndex {
+  type Entry = [identity: string, digest: string, seen: number];
+  const entries = new Map<string, Entry>();
+  const now = Date.now();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(indexPath, "utf8")) as {
+      version?: number;
+      entries?: Record<string, Entry>;
+    };
+    if (parsed.version === DIGEST_INDEX_VERSION && parsed.entries)
+      for (const [file, entry] of Object.entries(parsed.entries))
+        if (
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          typeof entry[1] === "string" &&
+          typeof entry[2] === "number" &&
+          now - entry[2] <= DIGEST_INDEX_MAX_AGE_MS
+        )
+          entries.set(file, [entry[0], entry[1], entry[2]]);
+  } catch {
+    /* A missing or malformed index only costs a reread. */
+  }
+  return {
+    digest(file, stat) {
+      const identity = fileIdentity(stat);
+      const existing = entries.get(file);
+      if (existing && existing[0] === identity) {
+        existing[2] = Date.now();
+        return existing[1];
+      }
+      const digest = readFileDigest(file, stat);
+      entries.set(file, [identity, digest, Date.now()]);
+      return digest;
+    },
+    persist() {
+      // Keep the index bounded by retaining only the most recently observed entries.
+      // Checks run as separate processes against one index. The rename is atomic, so a
+      // concurrent writer costs the other process only its newest entries, which the
+      // next run records again.
+      const retained = [...entries.entries()]
+        .sort(([, left], [, right]) => right[2] - left[2])
+        .slice(0, DIGEST_INDEX_MAX_ENTRIES);
+      const temporary = `${indexPath}.${process.pid}.tmp`;
+      fs.mkdirSync(path.dirname(indexPath), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(
+        temporary,
+        JSON.stringify({
+          version: DIGEST_INDEX_VERSION,
+          entries: Object.fromEntries(retained),
+        }),
+        { mode: 0o600 },
+      );
+      fs.renameSync(temporary, indexPath);
+    },
+  };
+}
+
+function hashPaths(
+  root: string,
+  files: readonly string[],
+  excludeCaches = false,
+  index?: FileDigestIndex,
+): string {
   const hash = createHash("sha256");
   const canonicalRoot = fs.realpathSync(root);
   const activeLinks = new Set<string>();
+  const digest = (file: string, stat: fs.Stats) =>
+    index ? index.digest(file, stat) : readFileDigest(file, stat);
   function visit(file: string): void {
     if (excludeCaches && (path.basename(file) === ".cache" || file.endsWith(".tsbuildinfo")))
       return;
@@ -64,8 +154,7 @@ function hashPaths(root: string, files: readonly string[], excludeCaches = false
       // Hash the destination too; a stable executable symlink is not tool identity.
       const resolved = fs.realpathSync(absolute);
       const target = fs.lstatSync(resolved);
-      if (target.isFile())
-        hash.update(String(target.mode)).update(readStableFile(resolved, target));
+      if (target.isFile()) hash.update(String(target.mode)).update(digest(resolved, target));
       else {
         const relative = path.relative(canonicalRoot, resolved);
         if (relative.startsWith("..") || path.isAbsolute(relative) || activeLinks.has(resolved))
@@ -76,7 +165,7 @@ function hashPaths(root: string, files: readonly string[], excludeCaches = false
       }
     } else if (stat.isDirectory()) {
       for (const entry of fs.readdirSync(absolute).sort()) visit(path.join(file, entry));
-    } else if (stat.isFile()) hash.update(readStableFile(absolute, stat));
+    } else if (stat.isFile()) hash.update(digest(absolute, stat));
     else throw new Error("Unsupported validation input");
     hash.update("\0");
   }
@@ -120,17 +209,21 @@ export function validationEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   );
 }
 
+export type FingerprintTimings = { discoveryMs: number; hashingMs: number };
+
 export function validationFingerprint(
   root: string,
   command: readonly string[],
   env: NodeJS.ProcessEnv,
   outputPaths: readonly string[] = ["dist", "nemoclaw/dist", "nemoclaw/runner-dist"],
+  options: { index?: FileDigestIndex; timings?: FingerprintTimings } = {},
 ): { inputs: string; outputs: string } {
+  const { index, timings } = options;
+  const discoveryStarted = performance.now();
   const canonicalRoot = fs.realpathSync(root);
   const files = git(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
     .split("\0")
     .filter(Boolean);
-  const refs = git(root, ["rev-parse", "HEAD", "origin/main"]);
   const npmCli = windowsNpmCli(root, command[0], env);
   const executable = npmCli ?? command[0];
   const resolved = path.isAbsolute(executable)
@@ -180,33 +273,43 @@ export function validationFingerprint(
   const otherFiles = files.filter(
     (file) => !sourceTrees.some((tree) => file === tree || file.startsWith(`${tree}/`)),
   );
+  if (timings) timings.discoveryMs += performance.now() - discoveryStarted;
+  const hashingStarted = performance.now();
+  // The compared refs are deliberately absent: the fingerprint already covers the
+  // content of every compiler input, so a commit or an `origin/main` update that
+  // leaves those bytes identical keeps the result valid (#11782).
   const inputs = createHash("sha256")
     .update(
       JSON.stringify({
         root: canonicalRoot,
         command,
         env,
-        refs,
         outputPaths,
         platform: process.platform,
         arch: process.arch,
       }),
     )
     .update(
-      hashPaths(root, [
-        ...otherFiles,
-        ...sourceTrees,
-        process.execPath,
-        resolved,
-        ...(npmCli ? [path.resolve(npmCli, "../..")] : []),
-        ".npmrc",
-        "nemoclaw/.npmrc",
-        ...npmInputs,
-      ]),
+      hashPaths(
+        root,
+        [
+          ...otherFiles,
+          ...sourceTrees,
+          process.execPath,
+          resolved,
+          ...(npmCli ? [path.resolve(npmCli, "../..")] : []),
+          ".npmrc",
+          "nemoclaw/.npmrc",
+          ...npmInputs,
+        ],
+        false,
+        index,
+      ),
     )
-    .update(hashPaths(root, ["node_modules", "nemoclaw/node_modules"], true))
+    .update(hashPaths(root, ["node_modules", "nemoclaw/node_modules"], true, index))
     .digest("hex");
-  const outputs = hashPaths(root, outputPaths);
+  const outputs = hashPaths(root, outputPaths, false, index);
+  if (timings) timings.hashingMs += performance.now() - hashingStarted;
   return { inputs, outputs };
 }
 
@@ -241,13 +344,35 @@ export function runCachedCommand(options: CachedCommandOptions): number {
       ([key, value]) => /^npm_config_(?:node_options|script_shell)$/i.test(key) && value,
     ) &&
     !/--(?:require|import|loader|experimental-loader)\b|(?:^|\s)-r/.test(env.NODE_OPTIONS ?? "");
+  const timings: FingerprintTimings = { discoveryMs: 0, hashingMs: 0 };
+  const verifyTimings: FingerprintTimings = { discoveryMs: 0, hashingMs: 0 };
+  const index = cacheable
+    ? createFileDigestIndex(path.join(cacheDirectory, "digests.json"))
+    : undefined;
+  const persistIndex = () => {
+    try {
+      index?.persist();
+    } catch {
+      /* A validation result stays valid when its digest index cannot be written. */
+    }
+  };
+  const elapsed = () => Math.round(performance.now() - started);
+  // The four reported stages do not overlap: discovery and hashing describe the
+  // pre-check fingerprint, verification the post-check one.
+  const breakdown = (commandMs: number) =>
+    [
+      `discovery ${Math.round(timings.discoveryMs)} ms`,
+      `hashing ${Math.round(timings.hashingMs)} ms`,
+      `command ${Math.round(commandMs)} ms`,
+      `verification ${Math.round(verifyTimings.discoveryMs + verifyTimings.hashingMs)} ms`,
+    ].join(", ");
   let before: ReturnType<typeof validationFingerprint> | undefined;
   try {
-    if (cacheable) before = validationFingerprint(root, command, env, options.outputPaths);
+    if (cacheable)
+      before = validationFingerprint(root, command, env, options.outputPaths, { index, timings });
     if (before && fs.readFileSync(receipt, "utf8") === JSON.stringify(before)) {
-      report(
-        `${label}: reused successful validation (${Math.round(performance.now() - started)} ms)`,
-      );
+      persistIndex();
+      report(`${label}: reused successful validation (${elapsed()} ms; ${breakdown(0)})`);
       return 0;
     }
   } catch {
@@ -258,12 +383,17 @@ export function runCachedCommand(options: CachedCommandOptions): number {
   } catch {
     before = undefined;
   }
+  const commandStarted = performance.now();
   const status = options.execute
     ? options.execute(env)
     : executeValidationCommand(root, command, env);
+  const commandMs = performance.now() - commandStarted;
   if (status === 0 && before) {
     try {
-      const after = validationFingerprint(root, command, env, options.outputPaths);
+      const after = validationFingerprint(root, command, env, options.outputPaths, {
+        index,
+        timings: verifyTimings,
+      });
       if (
         before.inputs === after.inputs &&
         git(root, ["status", "--porcelain", "--untracked-files=all"]).length === 0
@@ -277,8 +407,9 @@ export function runCachedCommand(options: CachedCommandOptions): number {
       /* A successful check remains valid even when it cannot be cached. */
     }
   }
+  persistIndex();
   report(
-    `${label}: ${status === 0 ? "passed" : "failed"} (${Math.round(performance.now() - started)} ms)`,
+    `${label}: ${status === 0 ? "passed" : "failed"} (${elapsed()} ms; ${breakdown(commandMs)})`,
   );
   return status;
 }
