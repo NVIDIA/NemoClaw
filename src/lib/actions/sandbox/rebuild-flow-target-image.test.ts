@@ -424,7 +424,11 @@ describe("rebuildSandbox flow: target image", () => {
     try {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
-        sandboxEntry: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+        sandboxEntry: {
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        },
         sessionSandboxName: "some-other-sandbox",
         runOpenshell: (args) =>
           args[0] === "provider" && args[1] === "get"
