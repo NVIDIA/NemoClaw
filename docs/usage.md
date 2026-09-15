@@ -84,8 +84,17 @@ Destroy validates both saved resource graphs before deletion and removes
 OpenShell workloads before its gateway. Repeating completed destroy has no
 changes. An interrupted destroy resumes from its recorded graph boundary; other
 operations refuse unfinished teardown. Reapply the original configuration to
-recreate workloads using retained storage. Managed Ollama destroy is explicitly
-unsupported because its service and storage still share one resource.
+recreate workloads using retained storage. Managed Ollama retains an independent
+model-volume binding while deleting its container and releasing the model
+installation binding. Model files are not deleted. For an older deployment,
+apply its original YAML once to establish the storage binding before destroy.
+
+When Ollama is stopped, plan previews only service recovery and explicitly defers
+model inventory and the complete deployment plan. Apply repairs the verified
+service, waits for its API, and then obtains a fresh full plan. Failed inventory
+still stops normal planning and export; it never becomes confirmed model absence.
+Destroy verifies the container and storage without requiring model inventory,
+because it retains all model data.
 
 The local lock excludes other NemoClaw operations on the same state directory,
 not other gateway clients. OpenShell deletes by name without an ID/version

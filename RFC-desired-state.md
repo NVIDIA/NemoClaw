@@ -114,13 +114,32 @@ inputs omitted by Cargo vendoring, and the build must use that exact vendor
 layout to avoid dependency-path differences. Source
 packaging and dependency maintenance count toward the architecture's cost.
 
-The Go Ollama boundary combines a container and model volume, with a separate
-model resource. A stopped parent prevents authoritative model inventory, which
-can block repair planning. Destroy remains unsupported for that combined resource.
-The Rust SDK/provider bundle now passes plan, initial apply, export/reapply,
-no-op, and failed-inventory tests with one container creation and one model pull.
-Parity preserves the explicit destroy limitation; splitting it requires a separate
-recovery and storage-retention contract.
+The Ollama recovery experiment changed the inherited Go resource boundary.
+`nemoclaw_ollama_storage.models` now tracks persistent storage independently;
+the existing service and model addresses remain unchanged. Existing deployments
+must apply once to establish the independently verified storage binding before
+destroy. Storage still uses the original labels and configuration digest, so
+this change does not establish image or network migration semantics.
+
+A stopped Ollama process cannot provide authoritative model inventory. Plan
+therefore produces a checked service-recovery plan and explicitly defers the
+remaining graph. Apply executes that saved targeted plan, preserving pending
+intent, then obtains a fresh complete plan after an active API readiness check.
+Only startup connection refusal is polled, within the existing 30-second budget;
+authentication, transport and partial-inventory failures stop the operation.
+No refresh is disabled and no stale inventory is substituted. The ordinary
+provider refresh and export remain strict when the service is stopped.
+
+Destroy retains the volume resource and its data, releases the model installation
+binding, and removes the verified container after dependent OpenShell resources.
+Its model-binding check verifies the parent and storage rather than asserting
+current model inventory: no model bytes are deleted. A missing container is
+confirmed only after checking the bound engine and retained storage identity.
+A lost deletion response leaves state for explicit reconciliation. The fixture
+also checks volume replacement and engine failure before any deletion, and
+reapply after destroy keeps model data without another pull. This is deterministic
+Docker/HTTP/OpenShell fixture qualification with the real provider and OpenTofu;
+it does not establish a new live Ollama hardware qualification.
 
 Managed apply also exposed a Rust async allocation cost that the release CLI
 hid: composing several debug-build SDK calls overflowed a normal executor

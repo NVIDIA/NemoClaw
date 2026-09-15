@@ -108,3 +108,44 @@ async fn rejected_inventory_is_failure_even_for_http_not_found() {
         task.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn readiness_waits_for_connection_refused_startup_but_never_retries_inventory_failures() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let client = Models::new(&format!("http://{address}/v1")).unwrap();
+    assert!(matches!(
+        client.read("fixture:latest").await,
+        Err(Error::OllamaStarting)
+    ));
+    let task = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let listener = TcpListener::bind(address).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            request.push(socket.read_u8().await.unwrap());
+        }
+        assert!(request.starts_with(b"GET /api/tags "));
+        let body = r#"{"models":[]}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    client.ready("fixture:latest").await.unwrap();
+    task.await.unwrap();
+    for (status, body) in [(401, "{}"), (503, "{}"), (200, "{}")] {
+        let (client, requests, task) = server(vec![(status, body.into())]).await;
+        assert!(client.ready("fixture:latest").await.is_err());
+        task.await.unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+}

@@ -6,7 +6,6 @@ use crate::{
     backend::{Backend, Mutation, Row},
     docker::Engine,
 };
-use std::time::Duration;
 
 /// Shared provider and export observations for an explicitly configured engine.
 pub struct OllamaBackend {
@@ -89,18 +88,7 @@ impl OllamaBackend {
         }
         let models = Models::new(&endpoint)?;
         let model = if apply {
-            let ready = async {
-                loop {
-                    match models.read(&name).await {
-                        Ok(_) => return Ok(()),
-                        Err(Error::OllamaStarting) => {
-                            tokio::time::sleep(Duration::from_millis(200)).await
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-            };
-            tokio::time::timeout(Duration::from_secs(30), ready).await.map_err(|_| Error::Conflict("Ollama inventory did not become available; model installation was not attempted"))??;
+            models.ready(&name).await?;
             Some(models.ensure(&name).await?)
         } else {
             models.read(&name).await?

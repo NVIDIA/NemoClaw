@@ -147,7 +147,8 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let provider = &document.spec.inference_providers[0];
     let agent = &document.spec.sandboxes[0].agents[0];
     assert_eq!(document.spec.gateway.management, "external");
-    // Ollama still combines process and storage and does not support destroy.
+    // Ollama recovery/destroy is fixture-qualified separately; this live target
+    // has not qualified its complete agent lifecycle.
     assert!(provider.ollama.is_none());
     fs::create_dir_all(&directory).unwrap();
     let save = |name: &str, value: &Value| {

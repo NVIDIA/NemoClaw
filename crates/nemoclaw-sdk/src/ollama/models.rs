@@ -70,6 +70,24 @@ impl Models {
             _ => Err(Error::Observation(ObservationError::Query)),
         }
     }
+    /// Active startup probe after a verified parent start. Only connection refusal
+    /// is retried, for at most 30 seconds; inventory and authentication failures
+    /// stop immediately. No model mutations occur here.
+    pub async fn ready(&self, name: &str) -> Result<(), Error> {
+        let ready = async {
+            loop {
+                match self.read(name).await {
+                    Ok(_) => return Ok(()),
+                    Err(Error::OllamaStarting) => {
+                        tokio::time::sleep(Duration::from_millis(200)).await
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), ready).await
+            .map_err(|_| Error::Conflict("Ollama inventory did not become available; model installation was not attempted"))?
+    }
     pub async fn read(&self, name: &str) -> Result<Option<Model>, Error> {
         let work = async {
             let mut response = self

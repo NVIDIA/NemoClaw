@@ -161,6 +161,26 @@ impl Deployment {
             cancel,
         )
         .await?;
+        let ready = async {
+            let service = self
+                .engines
+                .resolve(&config.engine)?
+                .bound_ollama(&observed.id, &document.spec.inference_providers[0].endpoint)
+                .await?;
+            if !service.running {
+                return Err(Error::Conflict(
+                    "Ollama stopped during recovery; explicit apply required",
+                ));
+            }
+            crate::ollama::Models::new(&document.spec.inference_providers[0].endpoint)?
+                .ready(
+                    &document.spec.sandboxes[0].agents[0].inference.routes[0]
+                        .overrides
+                        .model,
+                )
+                .await
+        };
+        tokio::select! { () = cancel.cancelled() => return Err(Error::Cancelled), result = ready => result? }
         Ok((changes, false))
     }
     pub(super) async fn export_ollama(

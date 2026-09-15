@@ -128,7 +128,10 @@ read-only test creates resources or establishes live agent inference. Retained
 volume evidence is in `validation/rust-storage-linux-arm64.json`.
 
 Managed Ollama's deterministic bundle test uses local Docker and model HTTP
-fixtures, not live containers or model downloads:
+fixtures, not live containers or model downloads. It covers stopped-service
+recovery, failed startup, legacy storage-binding upgrade, failed observation,
+volume replacement, lost deletion responses, and destroy/reapply without another
+model pull:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
