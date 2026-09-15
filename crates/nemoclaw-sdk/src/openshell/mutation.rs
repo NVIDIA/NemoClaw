@@ -179,13 +179,28 @@ impl Backend for OpenShell {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        self.observe(
-            kind,
-            value(prior, "workspace"),
-            value(prior, "name"),
-            removing,
-        )
-        .await
+        let observed = self
+            .observe(
+                kind,
+                value(prior, "workspace"),
+                value(prior, "name"),
+                removing,
+            )
+            .await?;
+        if kind == "sandbox"
+            && !removing
+            && let Some(row) = &observed
+            && inference_settings(&row["inference_json"], &row["agent_runtime"])?
+                .is_some_and(|settings| !settings.agents.is_empty())
+        {
+            verify_identity(prior, row)?;
+            // Refresh verifies native policy. Creation readback retains identity while
+            // the separate SDK readiness stage waits for the agent to start.
+            self.agent_configuration(row)
+                .await
+                .map_err(|_| ObservationError::Query)?;
+        }
+        Ok(observed)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
         let fields: &[&str] = match kind {

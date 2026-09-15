@@ -363,3 +363,79 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
         .spec = Some(spec);
     assert!(client.remove("sandbox", sandbox, true).await.is_ok());
 }
+
+#[tokio::test]
+async fn agent_roster_refresh_verifies_native_policy_without_mutation() {
+    let fixture = Fixture::start().await;
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let primary = document.spec.sandboxes[0].agents[0].clone();
+    for name in ["reader", "reviewer"] {
+        let mut agent = primary.clone();
+        agent.name = name.into();
+        agent.tools = Some(nemoclaw_sdk::config::AgentTools {
+            allow: [nemoclaw_sdk::config::AllowedTool::Read],
+        });
+        document.spec.sandboxes[0].agents.push(agent);
+    }
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|k| (k.into(), format!("{k}-generation")))
+        .into();
+    let targets = targets(&document, &generations).unwrap();
+    let mut rows = Vec::new();
+    // Native startup can lag behind sandbox creation; SDK readiness waits separately.
+    fixture.state.lock().unwrap().exec_exit = 2;
+    for target in &targets {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error().is_none(), "{:?}", result.error());
+        rows.push(result.into_parts().0.unwrap());
+    }
+    fixture.state.lock().unwrap().exec_exit = 0;
+    let effects = fixture.state.lock().unwrap().effects;
+    client
+        .read("sandbox", &rows[3], false)
+        .await
+        .unwrap()
+        .unwrap();
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.effects, effects);
+        assert!(
+            state
+                .exec_calls
+                .iter()
+                .any(|c| c.iter().any(|a| a == "--inference"))
+        );
+    }
+    fixture.state.lock().unwrap().exec_exit = 2;
+    assert!(client.read("sandbox", &rows[3], false).await.is_err());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // An unavailable runtime cannot establish its tool restrictions either.
+    let key = format!(
+        "{}/{}",
+        document.workspace(),
+        document.spec.sandboxes[0].name
+    );
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .status
+        .as_mut()
+        .unwrap()
+        .phase = openshell_core::proto::SandboxPhase::Stopped as i32;
+    assert!(client.read("sandbox", &rows[3], false).await.is_err());
+    // Broken native configuration must not prevent deliberate teardown.
+    assert!(
+        client
+            .read("sandbox", &rows[3], true)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}

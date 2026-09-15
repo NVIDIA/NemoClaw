@@ -27,6 +27,23 @@ async fn inference_settings_sdk_apply_export_reapply_and_drift() {
     lifecycle(include_str!("../../../examples/hermes-auth.yaml")).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn multiple_agents_cli_export_reapply_and_policy_drift() {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    let primary = document.spec.sandboxes[0].agents[0].clone();
+    for name in ["reader", "reviewer", "auditor"] {
+        let mut agent = primary.clone();
+        agent.name = name.into();
+        agent.tools = Some(nemoclaw_sdk::config::AgentTools {
+            allow: [nemoclaw_sdk::config::AllowedTool::Read],
+        });
+        document.spec.sandboxes[0].agents.push(agent);
+    }
+    lifecycle(&document.yaml().unwrap()).await;
+}
+
 async fn lifecycle(input: &str) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
@@ -100,6 +117,22 @@ async fn lifecycle(input: &str) {
             .is_empty()
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    if document.spec.sandboxes[0].agents.len() > 1 {
+        let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+        let mut broadened = document.clone();
+        broadened.spec.sandboxes[0].agents[1].tools = None;
+        assert!(deployment.plan(&broadened, &cancel).await.is_err());
+        fixture.state.lock().unwrap().exec_exit = 2;
+        assert!(deployment.plan(&document, &cancel).await.is_err());
+        assert!(deployment.export(&cancel).await.is_err());
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        assert_eq!(
+            fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            state
+        );
+        fixture.state.lock().unwrap().exec_exit = 0;
+        assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    }
     if document.spec.inference_providers[0].api.is_some()
         || document.spec.sandboxes[0].agents[0].auth.is_some()
     {

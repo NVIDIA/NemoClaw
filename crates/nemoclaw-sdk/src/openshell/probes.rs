@@ -204,6 +204,19 @@ impl OpenShell {
         }
         Ok(())
     }
+    pub(super) async fn agent_configuration(&self, binding: &Row) -> Result<(), Error> {
+        if self
+            .bound_sandbox(binding)
+            .await?
+            .status
+            .ok_or(ObservationError::Incomplete)?
+            .phase
+            != proto::SandboxPhase::Ready as i32
+        {
+            return Err(ObservationError::Incomplete.into());
+        }
+        self.configuration(binding).await
+    }
     pub async fn configuration(&self, binding: &Row) -> Result<(), Error> {
         let (command, environment) = self.configuration_command(binding)?;
         let (exit, _) = self.exec_bound(binding, command, environment, 20).await?;
