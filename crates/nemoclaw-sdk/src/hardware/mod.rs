@@ -162,5 +162,6 @@ pub mod linux;
 pub mod nvidia;
 
 mod observation;
+#[cfg(unix)]
 pub(crate) use observation::LocalHost;
 pub use observation::{HostObservation, HostObserver};
