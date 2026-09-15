@@ -32,6 +32,7 @@ Require every trusted specialist, a successful matching workflow, and the proven
 The ledger does not authenticate itself; bind its candidate and specialist to the shared context and GitHub artifact envelope.
 
 The workflow's `Require no Advisor blockers` job validates every specialist ledger and E2E receipt.
+It binds that evidence to the head and base SHAs resolved by the trusted workflow gate.
 It fails when any P0/P1 finding or unresolved E2E recommendation remains, or when the evidence is incomplete or malformed.
 The publication job still posts the run link after a blocker failure so the contributor can inspect the evidence.
 

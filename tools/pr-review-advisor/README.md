@@ -27,7 +27,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 7. After every specialist completes successfully, a trusted aggregate job validates all exact-attempt finding ledgers and E2E receipts. It fails the workflow for any P0/P1 finding, unresolved E2E recommendation, or incomplete or malformed evidence.
 8. One publisher attempts to post a sticky comment that links to the workflow run, including after the aggregate job fails. A failed specialist suppresses publication.
 
-`Require no Advisor blockers` is the review-request signal. Request human review only when that job is green for the latest PR commit. It is not merge authorization, and contributors must still inspect the specialist reports.
+For a PR-bound run, `Require no Advisor blockers` is the review-request signal. Request human review only when that job is green for the latest PR commit. It is not merge authorization, and contributors must still inspect the specialist reports.
 
 `investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
 
@@ -50,7 +50,11 @@ check contexts remain advisory and are ignored by the merge-readiness gate.
 
 On automatic runs, the gate accepts a successful `CI / Pull Request` run whose name ends in
 `gate true`. It uses the source repository, branch, and commit to resolve one open PR through the
-GitHub API. Manual dispatch does not require CI-run evidence.
+GitHub API. Manual dispatch does not require CI-run evidence. A PR-targeted dispatch requires both
+`target_repo` and a positive `target_pr`, resolves the open PR's head and base SHAs through the
+GitHub API, and requires its base branch to match `target_base`. A ref-targeted dispatch resolves
+`head_ref` and `base_ref` to full SHAs in `NVIDIA/NemoClaw`. The blocker gate rejects missing or
+mismatched expected SHAs.
 
 ## Author and agent follow-up
 
