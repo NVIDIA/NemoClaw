@@ -194,11 +194,6 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         sha256: "32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f",
       },
     ],
-    sourceIdentity: {
-      commitSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
-      releaseTag: "v0.0.116",
-      runtimeVersion: "0.0.116",
-    },
     supervisor: {
       image: "ghcr.io/nvidia/openshell/supervisor",
       manifestDigest: "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
@@ -557,6 +552,11 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         sha256: "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d",
       },
     ],
+    sourceIdentity: {
+      commitSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
+      releaseTag: "v0.0.116",
+      runtimeVersion: "0.0.116",
+    },
     supervisor: {
       image: "ghcr.io/nvidia/openshell/supervisor",
       manifestDigest: "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
