@@ -10,7 +10,6 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
-import { sanitizeReadinessText } from "../../readiness/sanitize";
 import { containerPathsOverlap } from "../host-mount/path-overlap";
 import {
   PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
@@ -561,18 +560,9 @@ function captureWhileWatcherHeld(
   return result as ContainerEngineCommandResult;
 }
 
-function requireZero(
-  result: ContainerEngineCommandResult,
-  action: string,
-  includeSanitizedStderr = false,
-): void {
+function requireZero(result: ContainerEngineCommandResult, action: string): void {
   if (result.status === 0) return;
-  const processError = sanitizeReadinessText(
-    ((includeSanitizedStderr ? result.stderr : "") || result.error?.message || "")
-      .replace(/\s+/gu, " ")
-      .trim(),
-    400,
-  );
+  const processError = result.error?.message.trim().slice(0, 400);
   failure(
     `${action} failed with status ${String(result.status)}${processError ? `: ${processError}` : "."}`,
   );
@@ -607,13 +597,6 @@ function sameMap(
   right: Readonly<Record<string, string>>,
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function containsExactEntries(
-  observed: Readonly<Record<string, string>>,
-  expected: Readonly<Record<string, string>>,
-): boolean {
-  return Object.entries(expected).every(([key, value]) => observed[key] === value);
 }
 
 function volumeExists(authority: PodmanBootstrapReplacementAuthority, volumeName: string): boolean {
@@ -763,20 +746,14 @@ function inspectExactContainer(
           mountpoint: stateVolumeAuthority.mountpoint,
         })
       : null;
-  const expectedLabels = exactStringMap(expected.labels, "Expected Podman labels");
-  const identityMismatches = [
-    ...(actualRuntimeId === runtimeId ? [] : ["runtime ID"]),
-    ...(name === expected.name ? [] : ["name"]),
-    ...(actualImageContentId === expected.imageContentId ? [] : ["image content ID"]),
-    ...(expected.running === undefined || state.Running === expected.running
-      ? []
-      : ["running state"]),
-    ...(containsExactEntries(labels, expectedLabels) ? [] : ["required labels"]),
-  ];
-  if (identityMismatches.length > 0) {
-    return failure(
-      `Podman bootstrap container identity or state changed after it was pinned (${identityMismatches.join(", ")}).`,
-    );
+  if (
+    actualRuntimeId !== runtimeId ||
+    name !== expected.name ||
+    actualImageContentId !== expected.imageContentId ||
+    (expected.running !== undefined && state.Running !== expected.running) ||
+    !sameMap(labels, exactStringMap(expected.labels, "Expected Podman labels"))
+  ) {
+    return failure("Podman bootstrap container identity or state changed after it was pinned.");
   }
   if (
     (expected.entrypointArgv && !sameArray(entrypointArgv, expected.entrypointArgv)) ||
@@ -1104,7 +1081,6 @@ export function stopExactPodmanBootstrapOriginal(
   input: StopExactPodmanBootstrapOriginalInput,
 ): PodmanBootstrapPreparedReplacement {
   assertAuthority(input);
-  input.watcherLease.assertStillStopped();
   const journal = requireJournalPhase(input.journalStore.load(input.prepared.bootstrapIdentity), [
     "replacement-created",
   ]);
@@ -1118,7 +1094,7 @@ export function stopExactPodmanBootstrapOriginal(
   ) {
     failure("Podman bootstrap prepared replacement does not match the durable journal.");
   }
-  const original = inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload));
+  inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, true));
   const stateVolume = inspectStableStateVolume(
     input,
     stateVolumeExpectationFromJournal(journal, input.heldWorkload),
@@ -1132,21 +1108,12 @@ export function stopExactPodmanBootstrapOriginal(
       stateVolume,
     ),
   );
-  if (original.running) {
-    const stop = captureWhileWatcherHeld(
-      input,
-      ["container", "stop", journal.originalRuntimeId],
-      STOP_TIMEOUT_MS,
-    );
-    requireZero(stop, "Podman bootstrap original-container stop");
-  }
-  inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
-  const cleanup = captureWhileWatcherHeld(
+  const stop = captureWhileWatcherHeld(
     input,
-    ["container", "cleanup", journal.originalRuntimeId],
+    ["container", "stop", journal.originalRuntimeId],
     STOP_TIMEOUT_MS,
   );
-  requireZero(cleanup, "Podman bootstrap original-container network cleanup", true);
+  requireZero(stop, "Podman bootstrap original-container stop");
   inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
   inspectStableContainer(
     input,

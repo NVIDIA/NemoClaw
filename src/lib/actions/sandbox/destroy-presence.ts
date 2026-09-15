@@ -11,10 +11,7 @@ import {
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { sanitizeReadinessText } from "../../readiness/sanitize";
 import type { SandboxEntry } from "../../state/registry";
-import type {
-  RuntimeProviderBundle,
-  RuntimeProviderDestroyIdentityReceipt,
-} from "../../onboard/runtime-provider/contract";
+import type { RuntimeProviderDestroyIdentityReceipt } from "../../onboard/runtime-provider/contract";
 import { type DockerSandboxIdentityObservation } from "../../adapters/docker/inspect";
 import {
   registeredRuntimeProviderSupportsContainerEngineOperation,
@@ -74,30 +71,6 @@ export type DestroyContainerIdentityProof = {
   identities?: readonly SandboxNameLabeledContainer[];
   providerIdentity?: RuntimeProviderDestroyIdentityReceipt;
 };
-
-/** Capture provider identity through a finalized row or pre-registration name lookup. */
-export function captureRuntimeProviderDestroyIdentity(
-  provider: RuntimeProviderBundle,
-  sandbox: SandboxEntry | null | undefined,
-  sandboxName: string,
-  captureBySandbox?: (
-    sandbox: SandboxEntry,
-    sandboxName: string,
-  ) => RuntimeProviderDestroyIdentityReceipt,
-  captureByName?: (sandboxName: string) => RuntimeProviderDestroyIdentityReceipt,
-): RuntimeProviderDestroyIdentityReceipt | undefined {
-  const recordedProviderId = sandbox?.openshellDriver?.trim();
-  if (!recordedProviderId) return captureByName?.(sandboxName);
-  const recordedProvider = resolveRegisteredRuntimeProvider(recordedProviderId);
-  if (recordedProvider?.identity.id !== provider.identity.id) {
-    throw new Error(
-      `Sandbox '${sandboxName}' belongs to runtime provider '${recordedProviderId}'.`,
-    );
-  }
-  return sandbox && captureBySandbox
-    ? captureBySandbox(sandbox, sandboxName)
-    : captureByName?.(sandboxName);
-}
 /** Read the host observation consumed by the pure identity classifier. */
 export function observeDestroyContainerIdentity(
   sandboxName: string,
@@ -279,13 +252,22 @@ export function assertUnambiguousDestroyContainerIdentity(
   const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
   if (providerOwnsIdentity) {
     try {
-      const providerIdentity = captureRuntimeProviderDestroyIdentity(
-        provider,
-        deps.sandbox,
-        sandboxName,
-        captureProviderIdentity,
-        captureProviderIdentityByName,
-      );
+      const recordedSandboxProviderId = deps.sandbox?.openshellDriver?.trim();
+      const recordedSandboxProvider = recordedSandboxProviderId
+        ? resolveRegisteredRuntimeProvider(recordedSandboxProviderId)
+        : null;
+      if (
+        recordedSandboxProviderId &&
+        recordedSandboxProvider?.identity.id !== provider.identity.id
+      ) {
+        throw new Error(
+          `Sandbox '${sandboxName}' belongs to runtime provider '${recordedSandboxProviderId}'.`,
+        );
+      }
+      const providerIdentity =
+        deps.sandbox && recordedSandboxProvider && captureProviderIdentity
+          ? captureProviderIdentity(deps.sandbox, sandboxName)
+          : captureProviderIdentityByName?.(sandboxName);
       return providerIdentity
         ? { identities: undefined, providerIdentity }
         : { identities: undefined };

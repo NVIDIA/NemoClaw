@@ -34,7 +34,6 @@ import { redact, redactFull } from "../../security/redact";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
 import {
-  captureRuntimeProviderDestroyIdentity,
   classifyDestroyContainerIdentity,
   isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
@@ -293,16 +292,10 @@ export async function executeSandboxDestroy({
         }
         try {
           const captureBySandbox = identityProvider.cleanup.captureDestroyIdentity;
-          const actual = captureRuntimeProviderDestroyIdentity(
-            identityProvider,
-            sandbox,
-            sandboxName,
-            captureBySandbox
-              ? (registeredSandbox, name) =>
-                  captureBySandbox({ sandbox: registeredSandbox, sandboxName: name })
-              : undefined,
-            identityProvider.cleanup.captureDestroyIdentityByName,
-          );
+          const actual =
+            sandbox?.openshellDriver?.trim() && captureBySandbox
+              ? captureBySandbox({ sandbox, sandboxName })
+              : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
           if (!actual) {
             return {
               status: "probe-failed",

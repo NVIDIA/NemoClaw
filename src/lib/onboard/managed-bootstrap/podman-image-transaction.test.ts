@@ -137,7 +137,6 @@ interface HarnessOptions {
   readonly journal?: PodmanBootstrapJournal | null;
   readonly startsRunning?: boolean;
   readonly startsRunningAfterStart?: boolean;
-  readonly startResult?: Partial<ContainerEngineCommandResult>;
 }
 
 function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
@@ -185,7 +184,7 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
     });
   const start = (): ContainerEngineCommandResult => {
     running = options.startsRunningAfterStart ?? true;
-    return result({ stdout: RUNTIME_ID, ...options.startResult });
+    return result({ stdout: RUNTIME_ID });
   };
   const stageEnvelope = (archive: Buffer | undefined): ContainerEngineCommandResult => {
     expect(archive).toBeInstanceOf(Buffer);
@@ -486,19 +485,6 @@ describe("Podman image-owned bootstrap transaction", () => {
       "not stably stopped",
     );
     expect(fake.commands.some((command) => command[1] === "cp")).toBe(false);
-  });
-
-  it("reports bounded sanitized Podman stderr when replacement start fails", () => {
-    const fake = harness("openclaw", {
-      startResult: {
-        status: 125,
-        stderr: "Error: mounting state volume failed for TOKEN=not-for-diagnostics\nsecond line",
-      },
-    });
-
-    expect(() => startPodmanBootstrapImageTransaction(startInput("openclaw", fake))).toThrow(
-      "exact replacement start returned status 125: Error: mounting state volume failed for TOKEN=<REDACTED> second line",
-    );
   });
 
   it("reports the bounded Podman exit state when a replacement does not stay running", () => {

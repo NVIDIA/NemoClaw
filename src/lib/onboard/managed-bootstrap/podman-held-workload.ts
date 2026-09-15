@@ -11,8 +11,10 @@ import {
 } from "../docker-startup-command-env";
 import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./adapter";
 
-// Bind Podman identity to the labels and default-workspace name that the pinned
-// OpenShell release emits.
+// Transitional #11255 compatibility: delete this held-workload boundary when
+// the basic onboarder no longer stages a replacement before native launch.
+// Until then, bind Podman identity to the exact contract emitted by the pinned
+// OpenShell release.
 export const PODMAN_MANAGED_LABEL = "openshell.managed";
 export const PODMAN_OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const PODMAN_OPENSHELL_MANAGED_BY_VALUE = "openshell";

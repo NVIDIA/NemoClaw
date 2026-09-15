@@ -6,9 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
 import { SANDBOX_PROVIDER_SUFFIXES } from "../../onboard/sandbox-provider-cleanup";
-import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { assertUnambiguousDestroyContainerIdentity, cleanupSandboxServices } from "./destroy";
-import { captureRuntimeProviderDestroyIdentity } from "./destroy-presence";
 
 const SANDBOX = "mybox";
 const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
@@ -265,30 +263,6 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     ).toEqual({ identity: undefined, providerIdentity });
     expect(captureProviderIdentity).toHaveBeenCalledWith(sandbox, "destroytest");
     expect(classify).not.toHaveBeenCalled();
-  });
-
-  it("falls back to provider-owned name lookup when sandbox capture is unavailable", () => {
-    const providerIdentity = {
-      schemaVersion: 1 as const,
-      providerId: "podman",
-      resourceHandle: "a".repeat(64),
-      ownershipSha256: "b".repeat(64),
-    };
-    const captureProviderIdentityByName = vi.fn(() => providerIdentity);
-    const sandbox = { name: "destroytest", agent: "openclaw" as const, openshellDriver: "podman" };
-    const provider = resolveRegisteredRuntimeProvider("podman");
-    expect(provider).toBeDefined();
-
-    expect(
-      captureRuntimeProviderDestroyIdentity(
-        provider!,
-        sandbox,
-        "destroytest",
-        undefined,
-        captureProviderIdentityByName,
-      ),
-    ).toEqual(providerIdentity);
-    expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
   });
 
   it("refuses when the Docker probe cannot prove identity", () => {
