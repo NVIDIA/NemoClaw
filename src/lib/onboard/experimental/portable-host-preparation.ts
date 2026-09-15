@@ -21,6 +21,7 @@ import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   isPortableExperimentalProfile,
   parseDockerNetworkIpamEntries,
+  PORTABLE_ARCHITECTURE,
   PORTABLE_DOCKER_NETWORK_NAME,
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
@@ -776,7 +777,7 @@ export function preparePortableExperimentalHost(
     throw new Error("The portable experimental profile requires Linux.");
   }
   const architecture = deps.architecture ?? process.arch;
-  if (architecture !== "x64") {
+  if (architecture !== PORTABLE_ARCHITECTURE.host) {
     throw new Error(
       `The portable experimental profile requires Linux x86_64 (amd64); detected Linux ${architecture}.`,
     );
