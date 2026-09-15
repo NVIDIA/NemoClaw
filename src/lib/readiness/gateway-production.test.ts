@@ -1110,6 +1110,26 @@ esac
     expect(detail).not.toContain("sudo kill");
   });
 
+  it("does not present a service stop as proof the port was released (#11720)", () => {
+    const owners = describeGatewayPortOwners(
+      { pids: [], unverifiedPids: [200] },
+      () => "openshell-gateway",
+    );
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "occupied",
+      owners,
+    );
+
+    expect(detail).toContain("If a service manager owns that process");
+    expect(detail).toContain("recheck the port");
+    expect(detail).toContain(
+      "a service that is already inactive reports success without releasing",
+    );
+    expect(detail).not.toContain("Stop that process through its service manager,");
+  });
+
   it("recommends releasing a verified gateway environment without a process stop command (#9118)", () => {
     const owners = describeGatewayPortOwners(
       { pids: [100], unverifiedPids: [] },
