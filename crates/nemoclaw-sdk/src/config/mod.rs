@@ -3,9 +3,11 @@
 
 mod agent_inference;
 pub(crate) mod constraints;
+mod execution;
 mod inference;
 mod interfaces;
 pub use agent_inference::*;
+pub use execution::*;
 pub use interfaces::*;
 mod management;
 pub use management::*;

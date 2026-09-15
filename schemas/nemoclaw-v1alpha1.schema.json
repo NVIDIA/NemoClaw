@@ -21,6 +21,20 @@
         {
           "if": {
             "required": [
+              "execution"
+            ]
+          },
+          "then": {
+            "properties": {
+              "harness": {
+                "const": "openclaw"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
               "interfaces"
             ]
           },
@@ -66,6 +80,10 @@
         "auth": {
           "$ref": "#/$defs/AgentAuth",
           "description": "Hermes API-key authentication through the routed provider. The provider must declare a credential reference."
+        },
+        "execution": {
+          "$ref": "#/$defs/AgentExecution",
+          "description": "OpenClaw timeout and heartbeat defaults. Declare only on the first agent in a shared sandbox."
         },
         "harness": {
           "description": "Agent harness. Harnesses other than openclaw require external gateway and inference services.",
@@ -126,6 +144,27 @@
         "method",
         "providerRef"
       ],
+      "type": "object"
+    },
+    "AgentExecution": {
+      "additionalProperties": false,
+      "description": "OpenClaw execution defaults shared by the sandbox. Declare only on the first agent; other agents use the same native defaults.",
+      "minProperties": 1,
+      "properties": {
+        "heartbeatEvery": {
+          "description": "Heartbeat duration in seconds, minutes, or hours, such as 30m. Zero disables heartbeat. Omission leaves native defaults; an explicit interval uses an isolated heartbeat session.",
+          "maxLength": 256,
+          "pattern": "^[0-9]+[smh]$(?![\\s\\S])",
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "description": "Agent-turn timeout in seconds. Omission selects 600; readiness and health checks use separate budgets.",
+          "format": "uint32",
+          "maximum": 1000000000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "AgentInterfaces": {
@@ -1981,9 +2020,19 @@
         "agents": {
           "description": "One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent.",
           "items": {
-            "$ref": "#/$defs/Agent"
+            "$ref": "#/$defs/Agent",
+            "not": {
+              "required": [
+                "execution"
+              ]
+            }
           },
           "minItems": 1,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/Agent"
+            }
+          ],
           "type": "array"
         },
         "image": {

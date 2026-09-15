@@ -65,6 +65,22 @@ async fn tool_disclosure_cli_export_reapply_and_drift() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn execution_settings_cli_export_reapply_and_drift() {
+    for heartbeat in [None, Some("0m"), Some("30m")] {
+        let mut document =
+            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
+                .unwrap();
+        document.spec.sandboxes[0].agents[0].execution =
+            Some(nemoclaw_sdk::config::AgentExecution {
+                timeout_seconds: Some(900),
+                heartbeat_every: heartbeat.map(String::from),
+            });
+        lifecycle(&document.yaml().unwrap()).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift() {
     lifecycle(include_str!("../../../examples/openclaw-dashboard.yaml")).await;
 }
@@ -203,6 +219,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     }
     if document.spec.inference_providers[0].api.is_some()
         || document.spec.sandboxes[0].agents[0].auth.is_some()
+        || document.spec.sandboxes[0].agents[0].execution.is_some()
     {
         let key = format!(
             "{}/{}",
@@ -226,15 +243,19 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
                 .any(|cmd| cmd.ends_with(&["--inference".into(), original.clone()]))
         );
         let mut changed = document.clone();
-        changed.spec.inference_providers[0].api = Some(
-            if document.spec.inference_providers[0].api
-                == Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions)
-            {
-                nemoclaw_sdk::config::InferenceApi::OpenaiResponses
-            } else {
-                nemoclaw_sdk::config::InferenceApi::OpenaiCompletions
-            },
-        );
+        if let Some(execution) = &mut changed.spec.sandboxes[0].agents[0].execution {
+            execution.timeout_seconds = Some(1200);
+        } else {
+            changed.spec.inference_providers[0].api = Some(
+                if document.spec.inference_providers[0].api
+                    == Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions)
+                {
+                    nemoclaw_sdk::config::InferenceApi::OpenaiResponses
+                } else {
+                    nemoclaw_sdk::config::InferenceApi::OpenaiCompletions
+                },
+            );
+        }
         assert!(deployment.plan(&changed, &cancel).await.is_err());
         fixture
             .state

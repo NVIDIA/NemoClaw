@@ -76,7 +76,15 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"minItems": 1, "maxItems": 1}),
         );
     }
-    property(&mut defs["Sandbox"], "agents", json!({"minItems": 1}));
+    property(
+        &mut defs["Sandbox"],
+        "agents",
+        json!({
+            "minItems": 1,
+            "prefixItems": [{"$ref": "#/$defs/Agent"}],
+            "items": {"$ref": "#/$defs/Agent", "not": {"required": ["execution"]}}
+        }),
+    );
     defs["Sandbox"]["allOf"] = json!([{
         "if": {"properties": {"agents": {"minItems": 2}}, "required": ["agents"]},
         "then": {"properties": {"agents": {"items": {"properties": {"harness": {"const": "openclaw"}}}}}}
@@ -228,6 +236,14 @@ pub(super) fn constrain(root: &mut Value) {
         json!({"not":{"minimum":8642,"maximum":8652}}),
     );
     defs["OpenClawDashboard"]["minProperties"] = json!(1);
+    defs["AgentExecution"]["minProperties"] = json!(1);
+    // JSON Schema's dollar anchor also matches before a trailing newline.
+    property(
+        &mut defs["AgentExecution"],
+        "heartbeatEvery",
+        json!({"pattern":"^[0-9]+[smh]$(?![\\s\\S])"}),
+    );
+    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["execution"]},"then":{"properties":{"harness":{"const":"openclaw"}}}}));
     defs["HermesInterfaces"]["minProperties"] = json!(1);
     for field in ["port", "internalPort"] {
         property(

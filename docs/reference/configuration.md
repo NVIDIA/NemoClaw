@@ -55,6 +55,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `auth` | [AgentAuth](#agentauth) | No | — | Hermes API-key authentication through the routed provider. The provider must declare a credential reference. |
+| `execution` | [AgentExecution](#agentexecution) | No | — | OpenClaw timeout and heartbeat defaults. Declare only on the first agent in a shared sandbox. |
 | `harness` | string | Yes | — | Agent harness. Harnesses other than openclaw require external gateway and inference services. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
 | `inference` | [Inference](#inference) | Yes | — | Primary inference route for this agent. |
 | `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access, declared only on the first agent in a sandbox. |
@@ -75,6 +76,21 @@ Paths:
 |---|---|---|---|---|
 | `method` | [AuthMethod](#authmethod) | Yes | — | API-key authentication. Interactive login is not supported. |
 | `providerRef` | string | Yes | — | Must equal the primary route's providerRef. Secret values stay in OpenShell. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## AgentExecution
+
+OpenClaw execution defaults shared by the sandbox. Declare only on the first agent; other agents use the same native defaults.
+
+Guide: [Agent runtimes](../agents.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].execution`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `heartbeatEvery` | string | No | — | Heartbeat duration in seconds, minutes, or hours, such as 30m. Zero disables heartbeat. Omission leaves native defaults; an explicit interval uses an isolated heartbeat session. Constraints: pattern `^[0-9]+[smh]$(?![\s\S])`; maximum characters 256. |
+| `timeoutSeconds` | integer | No | — | Agent-turn timeout in seconds. Omission selects 600; readiness and health checks use separate budgets. Constraints: minimum 1; maximum 1000000000. |
 
 ## AgentInterfaces
 

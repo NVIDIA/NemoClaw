@@ -254,6 +254,13 @@ impl Document {
                 )?;
                 interfaces.validate(&agent.harness)?;
             }
+            if let Some(execution) = &agent.execution {
+                require(
+                    agent.name == sandbox.agents[0].name,
+                    "execution defaults belong to the first agent in a shared sandbox",
+                )?;
+                execution.validate(&agent.harness)?;
+            }
             if let Some(auth) = &agent.auth {
                 require(
                     agent.harness == "hermes"

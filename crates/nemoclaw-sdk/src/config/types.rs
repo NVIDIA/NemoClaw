@@ -258,6 +258,10 @@ pub struct Network {
 #[serde(default, deny_unknown_fields)]
 /// One Fabric harness and its inference route.
 pub struct Agent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentExecution")]
+    /// OpenClaw timeout and heartbeat defaults. Declare only on the first agent in a shared sandbox.
+    pub execution: Option<super::AgentExecution>,
     #[serde(rename = "name")]
     /// Lowercase agent name.
     pub name: String,
