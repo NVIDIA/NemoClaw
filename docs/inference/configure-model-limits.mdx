@@ -83,8 +83,13 @@ Setting `NEMOCLAW_CONTEXT_WINDOW` does not raise the model's native context wind
 When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw can use a context length reported by the selected local server.
 Local Ollama reports the loaded model's runtime context length.
 Local vLLM and OpenAI-compatible endpoints can report `max_model_len` through `/v1/models`.
+Local llama.cpp reports the selected model's served context window as `meta.n_ctx` through the authenticated `/v1/models` response.
+NemoClaw does not use the training limit in `meta.n_ctx_train` because the server can use a smaller context window.
+NemoClaw does not adopt `meta.n_ctx` when it is missing, malformed, or outside its accepted range.
+For local llama.cpp, NemoClaw warns before it ignores an invalid `NEMOCLAW_CONTEXT_WINDOW`.
+It uses a valid detected value instead or leaves the value unset.
 
-Set `NEMOCLAW_CONTEXT_WINDOW` when you need to override the detected value.
+Set a valid `NEMOCLAW_CONTEXT_WINDOW` when you need to override the detected value.
 
 </AgentOnly>
 

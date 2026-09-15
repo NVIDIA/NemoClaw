@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureHostCommand } from "../../actions/sandbox/doctor-host-command";
+import {
+  captureHostCommand,
+  captureOpenShellHostCommand,
+} from "../../actions/sandbox/doctor-host-command";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import {
   DEFAULT_GATEWAY_BIND_ADDRESS,
@@ -30,7 +33,8 @@ import {
   requalifyPortableAgentSandboxAuthority,
   stopPortableAgentSandboxLifecycle,
 } from "../experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { resolveHermesPortableLifecycleLockOptions } from "../experimental/portable-lifecycle-lock";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
@@ -68,6 +72,12 @@ type DockerRemoveImage = (
 ) => { status: number | null };
 
 export interface DockerRuntimeProviderDependencies {
+  readonly captureSandboxLifecycle: (
+    action: "start" | "stop",
+    sandboxName: string,
+    gatewayName: string,
+    environment: NodeJS.ProcessEnv,
+  ) => ReturnType<typeof captureOpenShellHostCommand>;
   readonly captureHostCommand: (
     command: string,
     args: string[],
@@ -85,7 +95,7 @@ export interface DockerRuntimeProviderDependencies {
   readonly stopContainer: DockerStop;
   readonly stopPortableSandbox: typeof stopPortableAgentSandboxLifecycle;
   readonly unpauseContainer: DockerUnpause;
-  readonly withLifecycleLockSync: typeof withMcpLifecycleLockSync;
+  readonly withLifecycleLock: typeof withMcpLifecycleLock;
 }
 
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
@@ -111,8 +121,19 @@ function dockerGatewayUsesHostGatewayRoute(): boolean {
   return /Docker Desktop|com\.docker\.desktop\./iu.test(info);
 }
 
-function runDockerGatewayCommand(args: readonly string[], timeoutMs: number) {
+function runDockerGatewayCommand(
+  args: readonly string[],
+  timeoutMs: number,
+  options?: { maxOutputBytes: number; environment?: Record<string, string> },
+) {
   const result = dockerRun([...args], {
+    ...(options
+      ? {
+          maxBuffer: options.maxOutputBytes,
+          killSignal: "SIGKILL" as const,
+          env: options.environment,
+        }
+      : {}),
     timeout: timeoutMs,
     ignoreError: true,
     suppressOutput: true,
@@ -219,6 +240,14 @@ function resolveDependencies(
   overrides: Partial<DockerRuntimeProviderDependencies> = {},
 ): DockerRuntimeProviderDependencies {
   return {
+    captureSandboxLifecycle:
+      overrides.captureSandboxLifecycle ??
+      ((action, sandboxName, gatewayName, environment) =>
+        captureOpenShellHostCommand(
+          ["sandbox", action, "-g", gatewayName, sandboxName],
+          environment,
+          DOCKER_OPERATION_TIMEOUT_MS,
+        )),
     captureHostCommand:
       overrides.captureHostCommand ??
       ((command, args, timeout) => captureHostCommand(command, args, timeout)),
@@ -242,7 +271,7 @@ function resolveDependencies(
     stopPortableSandbox: overrides.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle,
     unpauseContainer:
       overrides.unpauseContainer ?? ((name, options) => loadDockerUnpause()(name, options)),
-    withLifecycleLockSync: overrides.withLifecycleLockSync ?? withMcpLifecycleLockSync,
+    withLifecycleLock: overrides.withLifecycleLock ?? withMcpLifecycleLock,
   };
 }
 
@@ -291,27 +320,45 @@ function isAtRestStatus(status: string): boolean {
   return AT_REST_STATUS_PREFIXES.some((prefix) => status.startsWith(prefix));
 }
 
-function startDockerSandbox(
+function isGpuBackupSibling(name: string): boolean {
+  return /-nemoclaw-gpu-backup-\d+$/u.test(name);
+}
+
+async function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleResult {
-  return deps.withLifecycleLockSync(input.sandboxName, () =>
-    startDockerSandboxUnlocked(input, deps),
+): Promise<RuntimeProviderLifecycleResult> {
+  return deps.withLifecycleLock(
+    input.sandboxName,
+    () => startDockerSandboxUnlocked(input, deps),
+    dockerLifecycleLockOptions(input, deps),
   );
 }
 
-function startDockerSandboxUnlocked(
+function dockerLifecycleLockOptions(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleResult {
+): { readonly stateDir: string } | undefined {
+  if (input.sandbox.agent !== "hermes") return undefined;
+  return resolveHermesPortableLifecycleLockOptions(
+    input.sandboxName,
+    input.environment,
+    deps.hasPortableLifecycleReceipt,
+  );
+}
+
+async function startDockerSandboxUnlocked(
+  input: RuntimeProviderLifecycleInput,
+  deps: DockerRuntimeProviderDependencies,
+): Promise<RuntimeProviderLifecycleResult> {
   try {
     if (input.sandbox.agent === "hermes") {
-      deps.requalifyPortableSandbox(input.sandboxName, {
+      await deps.requalifyPortableSandbox(input.sandboxName, {
         env: input.environment,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       });
     }
-    const portable = deps.recoverPortableSandbox(
+    const portable = await deps.recoverPortableSandbox(
       input.sandboxName,
       {
         agent: input.sandbox.agent,
@@ -323,7 +370,7 @@ function startDockerSandboxUnlocked(
       {
         env: input.environment,
         log: input.log,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       },
     );
     if (portable.kind !== "not-installed") {
@@ -353,6 +400,29 @@ function startDockerSandboxUnlocked(
     return { exitCode: 0 };
   }
 
+  if (
+    containers.some((container) => isAtRestStatus(container.status)) &&
+    !containers.some((container) => isGpuBackupSibling(container.name))
+  ) {
+    const result = deps.captureSandboxLifecycle(
+      "start",
+      input.sandboxName,
+      input.sandbox.gatewayName ?? "nemoclaw",
+      input.environment,
+    );
+    if (result.status !== 0 || result.error) {
+      const detail = oneLine(result.output || result.error?.message || "unknown failure");
+      return {
+        exitCode: 1,
+        message:
+          `  OpenShell could not start sandbox '${input.sandboxName}'` +
+          ` (exit ${String(result.status ?? "unknown")}): ${detail}.`,
+      };
+    }
+    input.log(`  Sandbox '${input.sandboxName}' started through OpenShell.`);
+    return { exitCode: 0 };
+  }
+
   // Docker health is an image-level signal, not the lifecycle authority for
   // `start`. Once the container is running, verifyStarted performs the
   // provider-owned OpenShell, managed gateway, and host-forward recovery.
@@ -376,23 +446,25 @@ function startDockerSandboxUnlocked(
   return { exitCode: 0 };
 }
 
-function stopDockerSandbox(
+async function stopDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleStopOutcome {
-  return deps.withLifecycleLockSync(input.sandboxName, () =>
-    stopDockerSandboxUnlocked(input, hooks, deps),
+): Promise<RuntimeProviderLifecycleStopOutcome> {
+  return deps.withLifecycleLock(
+    input.sandboxName,
+    () => stopDockerSandboxUnlocked(input, hooks, deps),
+    dockerLifecycleLockOptions(input, deps),
   );
 }
 
-function stopDockerSandboxUnlocked(
+async function stopDockerSandboxUnlocked(
   input: RuntimeProviderLifecycleInput,
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleStopOutcome {
+): Promise<RuntimeProviderLifecycleStopOutcome> {
   try {
-    const portable = deps.stopPortableSandbox(
+    const portable = await deps.stopPortableSandbox(
       input.sandboxName,
       {
         agent: input.sandbox.agent,
@@ -405,7 +477,7 @@ function stopDockerSandboxUnlocked(
       {
         env: input.environment,
         log: input.log,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       },
     );
     if (portable.kind === "already-stopped") {
@@ -453,23 +525,44 @@ function stopDockerSandboxUnlocked(
   if (stoppable.length === 0) return { exitCode: 0, state: "already-stopped" };
 
   hooks.beforeStop();
+  const emergency = stoppable.filter(
+    (container) => container.status.startsWith("Restarting") || isGpuBackupSibling(container.name),
+  );
+  const authoritative = stoppable.filter((container) => !emergency.includes(container));
   const failures: string[] = [];
-  for (const container of stoppable) {
-    input.log(`  Stopping container '${container.name}'…`);
-    const result = deps.stopContainer(container.name, {
+  for (const container of emergency) {
+    const stopped = deps.stopContainer(container.name, {
       ignoreError: true,
       timeout: DOCKER_OPERATION_TIMEOUT_MS,
     });
-    if (result.status !== 0) {
-      failures.push(`${container.name} (exit ${result.status ?? "unknown"})`);
+    if (stopped.status !== 0) {
+      failures.push(`${container.name} (exit ${stopped.status ?? "unknown"})`);
     }
   }
-  if (failures.length > 0) {
+  if (authoritative.length === 0) {
+    return failures.length === 0
+      ? { exitCode: 0, state: "stopped" }
+      : { exitCode: 1, message: `  docker stop failed for: ${failures.join(", ")}.` };
+  }
+  const result = deps.captureSandboxLifecycle(
+    "stop",
+    input.sandboxName,
+    input.sandbox.gatewayName ?? "nemoclaw",
+    input.environment,
+  );
+  if (result.status !== 0 || result.error) {
+    const detail = oneLine(result.output || result.error?.message || "unknown failure");
     return {
       exitCode: 1,
-      message: `  docker stop failed for: ${failures.join(", ")}.`,
+      message:
+        `  OpenShell could not stop sandbox '${input.sandboxName}'` +
+        ` (exit ${String(result.status ?? "unknown")}): ${detail}.`,
     };
   }
+  if (failures.length > 0) {
+    return { exitCode: 1, message: `  docker stop failed for: ${failures.join(", ")}.` };
+  }
+  input.log(`  Sandbox '${input.sandboxName}' stopped through OpenShell.`);
   return { exitCode: 0, state: "stopped" };
 }
 

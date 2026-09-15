@@ -15,6 +15,7 @@
 
 import { spawnSync } from "node:child_process";
 import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
+import { resolveOpenshell } from "../adapters/openshell/resolve";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { createOpenshellSandboxIdReader } from "../adapters/openshell/sandbox-identity";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
@@ -202,7 +203,7 @@ function querySshProcesses(runCommand: typeof spawnSync = spawnSync): string | n
  * Uses `ps` on the host.
  */
 export function createSystemDeps(
-  openshellBinary: string,
+  openshellBinary: string | null = resolveOpenshell(),
   options: {
     readonly runtimeSelection?: OpenShellRuntimeSelection;
     readonly spawnSync?: typeof spawnSync;
@@ -214,17 +215,21 @@ export function createSystemDeps(
     : undefined;
   return {
     getSshProcesses: () => querySshProcesses(runCommand),
-    resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
-      const selectedArgs = options.runtimeSelection
-        ? [args[0]!, args[1]!, "-g", options.runtimeSelection.gatewayName, ...args.slice(2)]
-        : args;
-      const result = runCommand(binary, selectedArgs, {
-        encoding: "utf-8",
-        ...(selectedEnv ? { env: selectedEnv } : {}),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 5000,
-      });
-      return { status: result.status, stdout: result.stdout || "" };
-    }),
+    ...(openshellBinary
+      ? {
+          resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
+            const selectedArgs = options.runtimeSelection
+              ? [args[0]!, args[1]!, "-g", options.runtimeSelection.gatewayName, ...args.slice(2)]
+              : args;
+            const result = runCommand(binary, selectedArgs, {
+              encoding: "utf-8",
+              ...(selectedEnv ? { env: selectedEnv } : {}),
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 5000,
+            });
+            return { status: result.status, stdout: result.stdout || "" };
+          }),
+        }
+      : {}),
   };
 }

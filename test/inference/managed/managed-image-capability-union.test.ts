@@ -19,7 +19,10 @@ import {
   installManagedImageCapabilityUnion,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../../src/lib/messaging/channels/built-ins.ts";
-import type { ChannelManifest, MessagingAgentId } from "../../../src/lib/messaging/manifest/types.ts";
+import type {
+  ChannelManifest,
+  MessagingAgentId,
+} from "../../../src/lib/messaging/manifest/types.ts";
 
 function renderedIds(
   manifest: ChannelManifest,

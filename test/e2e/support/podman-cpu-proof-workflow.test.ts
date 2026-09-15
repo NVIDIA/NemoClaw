@@ -48,20 +48,9 @@ function proofJob(): WorkflowJob {
   return job!;
 }
 
-function delegationJob(): WorkflowJob {
-  const job = workflow().jobs["portable-cpu-delegation"];
-  expect(job).toBeDefined();
-  return job!;
-}
-
 function namedStep(name: string): WorkflowStep {
   const step = proofJob().steps?.find((candidate) => candidate.name === name);
   expect(step, `missing Podman CPU proof step '${name}'`).toBeDefined();
-  return step!;
-}
-function namedDelegationStep(name: string): WorkflowStep {
-  const step = delegationJob().steps?.find((candidate) => candidate.name === name);
-  expect(step, `missing CPU delegation proof step '${name}'`).toBeDefined();
   return step!;
 }
 type RecordedCommand = {
@@ -772,29 +761,29 @@ describe("native Podman CPU proof workflow", () => {
       expect(() => portableCpuDelegationProofCli(["cleanup", "extra"], fixture)).toThrow(
         /Expected exactly one mode/u,
       );
-      const rejected = spawnSync(
-        process.execPath,
-        ["--no-warnings", scriptPath, "unknown"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const rejected = spawnSync(process.execPath, ["--no-warnings", scriptPath, "unknown"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(rejected.status).toBe(1);
       expect(rejected.stderr).toContain("Expected exactly one mode");
-      const cleaned = spawnSync(
-        process.execPath,
-        ["--no-warnings", scriptPath, "cleanup"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const cleaned = spawnSync(process.execPath, ["--no-warnings", scriptPath, "cleanup"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(cleaned.status).toBe(0);
       fs.writeFileSync(
         path.join(bin, "sudo"),
         "#!/usr/bin/env node\nprocess.kill(process.pid, 'SIGTERM');\n",
         { mode: 0o755 },
       );
-      const signaled = spawnSync(
-        process.execPath,
-        ["--no-warnings", scriptPath, "cleanup"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const signaled = spawnSync(process.execPath, ["--no-warnings", scriptPath, "cleanup"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(signaled.status).toBe(1);
       expect(signaled.stderr).toContain("sudo terminated by SIGTERM");
     });

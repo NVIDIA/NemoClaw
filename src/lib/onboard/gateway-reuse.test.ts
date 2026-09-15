@@ -115,9 +115,7 @@ describe("gateway reuse snapshot", () => {
     vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "1");
     vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
-    const runCaptureOpenshell = vi.fn(
-      (_args: string[], _options?: Record<string, unknown>) => "",
-    );
+    const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
     const helpers = createGatewayReuseHelpers({
       gatewayName: "nemoclaw",
       runCaptureOpenshell,

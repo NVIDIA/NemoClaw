@@ -25,11 +25,7 @@ export function inspectLocalImageMetadata(imageRef: string): LocalImageMetadata 
   }
 }
 
-function isExactSameRepositoryDigestRef(
-  imageName: string,
-  digest: string,
-  ref: string,
-): boolean {
+function isExactSameRepositoryDigestRef(imageName: string, digest: string, ref: string): boolean {
   return /^sha256:[0-9a-f]{64}$/u.test(digest) && ref === `${imageName}@${digest}`;
 }
 
@@ -183,7 +179,13 @@ export function reuseSandboxBaseImageResolutionHint(
     addTraceEvent("nemoclaw.sandbox_base_image.cache_stale", { reason: validation.reason });
     return null;
   }
-  if (options.validateImage && !options.validateImage(hint.ref)) {
+  if (
+    options.validateImage &&
+    !options.validateImage(hint.ref, {
+      source: hint.source,
+      ...(hint.pinnedRemoteRef ? { pinnedRemoteRef: hint.pinnedRemoteRef } : {}),
+    })
+  ) {
     addTraceEvent("nemoclaw.sandbox_base_image.cache_stale", {
       reason: "custom_validation_failed",
     });

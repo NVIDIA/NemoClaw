@@ -307,6 +307,12 @@ export function createPodmanContainerEngine(
       executableProof.assertMetadataAuthority();
     }
   };
+  let allowedEnvironmentNames: string[] = [];
+  if (options.operation === "host-local-inference") {
+    allowedEnvironmentNames = ["NGC_API_KEY", "NIM_NGC_API_KEY", "OLLAMA_CONTEXT_LENGTH"];
+  } else if (options.operation === "managed-bootstrap") {
+    allowedEnvironmentNames = ["CONTAINERS_CONF", "CONTAINERS_STORAGE_CONF"];
+  }
   const engine = createContainerEngineCommand({
     operation: options.operation,
     engineId: "podman",
@@ -315,12 +321,7 @@ export function createPodmanContainerEngine(
     endpointAuthorityId,
     executable,
     endpointArgs: ["--url", `unix://${options.socketAuthority.socketPath}`],
-    allowedEnvironmentNames:
-      options.operation === "host-local-inference"
-        ? ["NGC_API_KEY", "NIM_NGC_API_KEY", "OLLAMA_CONTEXT_LENGTH"]
-        : options.operation === "managed-bootstrap"
-          ? ["CONTAINERS_CONF", "CONTAINERS_STORAGE_CONF"]
-          : [],
+    allowedEnvironmentNames,
     commandEnvironment: options.commandEnvironment,
     capture: options.capture,
     guard: (phase) => {

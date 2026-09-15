@@ -240,7 +240,7 @@ export default async function run_independent_documentation_writer_review(input:
   const receiptResult = value("Result", "docs-updated|no-docs-needed|blocked");
   const verdict = value("Verdict", "PASS|BLOCKED");
   const reviewedCommit = value("Reviewed commit", "[0-9a-f]{40}");
-  const receiptAgentsBlobSha = value("AGENTS\.md blob", "[0-9a-f]{40}");
+  const receiptAgentsBlobSha = value("AGENTS.md blob", "[0-9a-f]{40}");
   if (!receiptResult)
     throw new Error(
       "Independent reviewer did not return a recognized Documentation Writer Review result. Output tail:\n" +

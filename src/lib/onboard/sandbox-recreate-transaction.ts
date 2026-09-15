@@ -202,7 +202,6 @@ const ROUTE_RESERVATION_FIELDS: readonly (keyof SandboxEntry)[] = [
 // The source fingerprint still binds every sandbox, gateway, lifecycle, agent,
 // and workload ownership field.
 const RECEIPT_BOUND_PROJECTION_FIELDS: readonly (keyof SandboxEntry)[] = [
-  "mcp",
   // `messaging` is a rehydrated projection, not durable sandbox identity: the
   // channel commands own it (`channels add|stop|start|remove` rewrite the plan
   // workflow label, disabledChannels, and the derived per-channel active,
@@ -1404,11 +1403,9 @@ export function createSandboxRecreateRuntime(
   }
   const openingSessionId = openingSession.sessionId;
   let currentTransaction = transaction;
-  let phase: CheckpointSandboxRecreatePhase = transaction.phase;
   const advance = (next: CheckpointSandboxRecreatePhase): void => {
     sessionStore.updateSession((current) => {
       currentTransaction = advanceSandboxRecreateTransaction(current, transaction.id, next);
-      phase = currentTransaction.phase;
       return current;
     });
   };
@@ -1467,7 +1464,6 @@ export function createSandboxRecreateRuntime(
         observe: () => observe(sandboxName, transaction.gatewayName),
       });
       currentTransaction = begun.transaction;
-      phase = currentTransaction.phase;
       return begun.sourcePresence;
     },
     confirmDeleted: () => {
@@ -1551,7 +1547,6 @@ export function createSandboxRecreateRuntime(
           `Cannot verify sandbox '${sandboxName}' identity in its recreate journal after the write.`,
         );
       }
-      phase = storedTransaction.phase;
       targetLiveIdentityFingerprint = storedTransaction.targetLiveIdentityFingerprint;
       return {
         lifecycleGeneration: storedTransaction.targetGeneration,

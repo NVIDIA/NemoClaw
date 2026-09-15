@@ -48,6 +48,12 @@ function bundleMcpRuntimeFixture(): string {
     '\t\t\t\t\t\tlogWarn(`bundle-mcp: starting server "${serverName}".`);',
     "\t\t\t\t\t\ttry {",
     '\t\t\t\t\t\t\tconst client = new Client({ name: "openclaw-bundle-mcp" });',
+    "\t\t\t\t\t\t\tconst capabilities = { tools: {} };",
+    "\t\t\t\t\t\t\tconst listedTools = await listAllToolsBestEffort({",
+    "\t\t\t\t\t\t\t\tclient: session.client,",
+    "\t\t\t\t\t\t\t\ttimeoutMs: getCatalogListTimeoutMs(rawServer, resolved.requestTimeoutMs),",
+    "\t\t\t\t\t\t\t\tsuppressUnsupported: Boolean(!capabilities.tools && (capabilities.resources || capabilities.prompts))",
+    "\t\t\t\t\t\t\t});",
     "\t\t\t\t\t\t\treturn {",
     "\t\t\t\t\t\t\t\tserverName,",
     "\t\t\t\t\t\t\t\tserverEntry,",
@@ -171,6 +177,8 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     expect(patched).toContain("attempt: async (resolved) => {");
     expect(patched).toContain("resolveTransport: () => resolveMcpTransport(serverName, rawServer)");
     expect(patched).toContain("[NEMOCLAW_MCP_START_FAILURE]: {");
+    expect(patched).toContain("returned an empty initial tool list; retrying once");
+    expect(patched).toContain("listedTools = await listAllToolsBestEffort({");
     expect(patched).toContain(
       "if (activeLeases === 0 && nemoClawCatalogHasStartDiagnostics(catalog)) catalog = null;",
     );
@@ -242,22 +250,16 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     const { dist, tmp } = writeFixtureDist();
     created.push(tmp);
 
-    const applied = spawnSync(
-      process.execPath,
-      [PATCH_SCRIPT, dist],
-      {
-        encoding: "utf-8",
-      },
-    );
+    const applied = spawnSync(process.execPath, [PATCH_SCRIPT, dist], {
+      encoding: "utf-8",
+    });
     expect(applied.status).toBe(0);
     expect(applied.stdout).toContain("MCP startup recovery patched");
     expect(applied.stdout).toContain("openclaw 2026.7.1");
 
-    const audited = spawnSync(
-      process.execPath,
-      [PATCH_SCRIPT, "--audit", dist],
-      { encoding: "utf-8" },
-    );
+    const audited = spawnSync(process.execPath, [PATCH_SCRIPT, "--audit", dist], {
+      encoding: "utf-8",
+    });
     expect(audited.status).toBe(0);
     expect(audited.stdout).toContain("MCP startup recovery audit ok");
   });
@@ -338,7 +340,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
   ] as Array<[string, unknown]>)(
     "classifies %s as a retryable transport startup failure",
     (label, error) => {
-    const helper = loadInjectedHelper([]);
+      const helper = loadInjectedHelper([]);
       expect(helper.nemoClawIsTransientMcpStartFailure(error), label).toBe(true);
     },
   );

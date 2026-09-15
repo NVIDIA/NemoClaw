@@ -125,6 +125,40 @@ describe("buildSandboxRuntimeEnvArgs", () => {
     expect(envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
   });
 
+  it.each([
+    [{ name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } }, true],
+    [null, true],
+    [{ name: "hermes", configPaths: { dir: "/sandbox/.hermes" } }, false],
+    [{ name: "langchain-deepagents-code", configPaths: { dir: "/sandbox/.deepagents" } }, false],
+  ] as const)("forwards an explicit gateway URL only to OpenClaw [%s]", (agent, expected) => {
+    const url = "wss://gateway.example.test:443/operator";
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: agent as any,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: { OPENCLAW_GATEWAY_URL: `  ${url}  ` },
+    }).envArgs;
+
+    expect(envArgs.includes(`OPENCLAW_GATEWAY_URL=${url}`)).toBe(expected);
+  });
+
+  it("keeps the native OpenClaw gateway URL absent from sandbox creation by default", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: {},
+    }).envArgs;
+
+    expect(envArgs.some((entry) => entry.startsWith("OPENCLAW_GATEWAY_URL="))).toBe(false);
+  });
+
   it("forwards only the literal OpenClaw MCP shadow diagnostic opt-in", () => {
     const base = {
       chatUiUrl: "",

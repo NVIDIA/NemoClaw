@@ -189,9 +189,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     } as Session;
     const compareAndSwapSession = vi.fn(
       (matches: (current: Session) => boolean, mutator: (current: Session) => Session | void) => {
-        return matches(reusedNameSession)
-          ? (mutator(reusedNameSession), "updated")
-          : "mismatch";
+        return matches(reusedNameSession) ? (mutator(reusedNameSession), "updated") : "mismatch";
       },
     );
     const { deps } = createDeps({

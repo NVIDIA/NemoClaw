@@ -99,24 +99,24 @@ describe("public route/display separation", () => {
     { verb: "get", args: ["--raw"] },
     { verb: "list", args: [] },
     { verb: "remove", args: ["github", "--yes"] },
-  ])("routes canonical and legacy policy $verb spellings to the same command (#7178)", ({
-    verb,
-    args,
-  }) => {
-    const commandId = `sandbox:policy:${verb}`;
-    const expectedArgs = ["alpha", ...args];
-    expect(sandboxRouteTokens(commandId)).toEqual(["policy", verb]);
-    expectNative(
-      translatePublicSandboxArgv("alpha", "policy", [verb, ...args]),
-      commandId,
-      expectedArgs,
-    );
-    expectNative(
-      translatePublicSandboxArgv("alpha", `policy-${verb}`, args),
-      commandId,
-      expectedArgs,
-    );
-  });
+  ])(
+    "routes canonical and legacy policy $verb spellings to the same command (#7178)",
+    ({ verb, args }) => {
+      const commandId = `sandbox:policy:${verb}`;
+      const expectedArgs = ["alpha", ...args];
+      expect(sandboxRouteTokens(commandId)).toEqual(["policy", verb]);
+      expectNative(
+        translatePublicSandboxArgv("alpha", "policy", [verb, ...args]),
+        commandId,
+        expectedArgs,
+      );
+      expectNative(
+        translatePublicSandboxArgv("alpha", `policy-${verb}`, args),
+        commandId,
+        expectedArgs,
+      );
+    },
+  );
 
   it("routes new policy subcommands only through their canonical two-token spelling (#7178)", () => {
     expectNative(

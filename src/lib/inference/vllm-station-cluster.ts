@@ -1462,28 +1462,26 @@ function buildStaticPlan(
     );
   }
 
-  const rails = matches.map(
-    (match, index): DualStationPlanRail => ({
-      index,
-      subnet: match.subnet,
-      local: {
-        rdmaDevice: match.localRail.rdmaDevice,
-        netdev: match.localRail.netdev,
-        macAddress: match.localRail.macAddress,
-        uverbsDevice: match.localRail.uverbsDevice,
-        pciAddress: match.localRail.pciAddress,
-        address: match.localAddress.address,
-      },
-      peer: {
-        rdmaDevice: match.peerRail.rdmaDevice,
-        netdev: match.peerRail.netdev,
-        macAddress: match.peerRail.macAddress,
-        uverbsDevice: match.peerRail.uverbsDevice,
-        pciAddress: match.peerRail.pciAddress,
-        address: match.peerAddress.address,
-      },
-    }),
-  );
+  const rails = matches.map((match, index): DualStationPlanRail => ({
+    index,
+    subnet: match.subnet,
+    local: {
+      rdmaDevice: match.localRail.rdmaDevice,
+      netdev: match.localRail.netdev,
+      macAddress: match.localRail.macAddress,
+      uverbsDevice: match.localRail.uverbsDevice,
+      pciAddress: match.localRail.pciAddress,
+      address: match.localAddress.address,
+    },
+    peer: {
+      rdmaDevice: match.peerRail.rdmaDevice,
+      netdev: match.peerRail.netdev,
+      macAddress: match.peerRail.macAddress,
+      uverbsDevice: match.peerRail.uverbsDevice,
+      pciAddress: match.peerRail.pciAddress,
+      address: match.peerAddress.address,
+    },
+  }));
 
   return {
     plan: {
@@ -1536,15 +1534,15 @@ function connectivityMatches(
     const check = byKey.get(`${request.netdev}|${request.sourceAddress}|${request.peerAddress}`);
     return Boolean(
       check &&
-        check.routeDevice === request.netdev &&
-        check.routeSource === request.sourceAddress &&
-        check.routeGateway === null &&
-        check.routeScope.toLowerCase() === "link" &&
-        check.peerMac === request.expectedPeerMac &&
-        /^(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP)(?:,(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP))*$/i.test(
-          check.peerNeighborState,
-        ) &&
-        check.jumboPing,
+      check.routeDevice === request.netdev &&
+      check.routeSource === request.sourceAddress &&
+      check.routeGateway === null &&
+      check.routeScope.toLowerCase() === "link" &&
+      check.peerMac === request.expectedPeerMac &&
+      /^(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP)(?:,(?:REACHABLE|STALE|DELAY|PROBE|PERMANENT|NOARP))*$/i.test(
+        check.peerNeighborState,
+      ) &&
+      check.jumboPing,
     );
   });
 }

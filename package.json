@@ -15,6 +15,7 @@
   },
   "bin": {
     "nemoclaw": "./bin/nemoclaw.js",
+    "nemoclaw-acp": "./dist/lib/acp/main.js",
     "nemoclaw-blueprint-runner": "./dist/lib/blueprint-runner.js",
     "nemohermes": "./bin/nemohermes.js",
     "nemo-deepagents": "./bin/nemoclaw.js"
@@ -59,19 +60,19 @@
     "test:titles:check": "tsx scripts/checks/test-title-style.mts",
     "bench": "tsx scripts/bench/run.mts",
     "check": "npx prek run --all-files --stage pre-commit && npx prek run --all-files --stage manual",
-    "validate:pr": "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-commit && npx commitlint --from origin/main --to HEAD && npx prek run --from-ref origin/main --to-ref HEAD --stage pre-push",
+    "validate:pr": "tsx scripts/checks/validate-pr.mts",
     "check:diff": "npm run validate:pr",
     "checks:repository": "tsx scripts/checks/run.mts",
     "checks": "node -e \"console.error('npm run checks runs only narrow repository checks. Use npm run validate:pr for routine PR validation or npm run checks:repository for the narrow runner.')\" && npm run checks:repository",
-    "lint": "oxlint . .dsh/tools && oxlint --config oxlint.type-aware.config.ts nemoclaw/src && npm run format:check && npm run checks:repository",
-    "lint:fix": "oxlint --fix . .dsh/tools && oxlint --config oxlint.type-aware.config.ts nemoclaw/src && npm run format && npm run checks:repository",
+    "lint": "oxlint --ignore-pattern 'src/lib/adapters/**' --ignore-pattern 'nemoclaw/src/**' . && oxlint --type-aware nemoclaw/src src/lib/adapters && npm run format:check && npm run checks:repository",
+    "lint:fix": "oxlint --fix --ignore-pattern 'src/lib/adapters/**' --ignore-pattern 'nemoclaw/src/**' . && oxlint --fix --type-aware nemoclaw/src src/lib/adapters && npm run format && npm run checks:repository",
     "lint:ts": "cd nemoclaw && npm run check",
-    "format": "bash tools/lint/format-added-files.sh --write",
-    "format:check": "bash tools/lint/format-added-files.sh --check",
+    "format": "oxfmt --write '**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}'",
+    "format:check": "oxfmt --check '**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}'",
     "format:ts": "cd nemoclaw && npm run format",
     "check:installer-hash": "bash scripts/check-installer-hash.sh",
     "typecheck": "tsc -p jsconfig.json",
-    "build:policy-boundary": "tsc -p nemoclaw/tsconfig.shared.json",
+    "build:policy-boundary": "tsc --build nemoclaw/tsconfig.shared.json",
     "catalog:compile": "tsx src/lib/inference/serving/generate-catalog.ts",
     "catalog:check": "tsx src/lib/inference/serving/generate-catalog.ts --check",
     "config-schema:generate": "npm run build:policy-boundary && tsx scripts/config/generate-nemoclaw-config-schema.mts",
@@ -114,7 +115,7 @@
     "js-yaml": "^4.3.2",
     "p-retry": "^4.6.2",
     "qrcode-terminal": "^0.12.0",
-    "smol-toml": "1.7.0",
+    "smol-toml": "1.8.0",
     "typebox": "1.1.38",
     "undici": "8.10.0",
     "yaml": "2.8.3"
@@ -123,7 +124,7 @@
     "@bufbuild/protobuf": "2.12.1",
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-node": "2.1.2",
-    "@nvidia/openshell-sdk": "0.0.106"
+    "@nvidia/openshell-sdk": "0.0.116"
   },
   "bundleDependencies": [
     "p-retry"

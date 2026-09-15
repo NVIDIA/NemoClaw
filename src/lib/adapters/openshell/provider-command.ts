@@ -31,10 +31,9 @@ export function setProviderCommandRuntimeHooksForTest(hooks: ProviderCommandRunt
 }
 
 export function parseCliOpenShellProviderNames(output: unknown): string[] | null {
-  const text =
-    typeof output === "string" || Buffer.isBuffer(output)
-      ? output.toString()
-      : String(output ?? "");
+  if (output === null || output === undefined) return [];
+  if (typeof output !== "string" && !Buffer.isBuffer(output)) return null;
+  const text = output.toString();
   const names = text
     .split(/\r?\n/u)
     .map((name) => name.trim())

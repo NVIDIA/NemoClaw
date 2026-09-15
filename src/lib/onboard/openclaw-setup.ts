@@ -72,12 +72,7 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
     webSearchConfig: WebSearchSelection,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void> {
-    await deps.syncNemoClawConfigInSandbox(
-      sandboxName,
-      provider,
-      model,
-      revalidateSandboxIdentity,
-    );
+    await deps.syncNemoClawConfigInSandbox(sandboxName, provider, model, revalidateSandboxIdentity);
     await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidateSandboxIdentity);
   };
 }

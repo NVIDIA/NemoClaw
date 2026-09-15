@@ -17,7 +17,7 @@ const registry = requireForTest(
 ) as typeof import("../../../src/lib/state/registry");
 
 describe("OpenShell policy read boundaries", () => {
-  it("queries the sandbox's recorded gateway when matching diagnostic presets", () => {
+  it("queries the sandbox's recorded gateway when matching diagnostic presets", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-diagnostic-"));
     const fakeOpenshell = path.join(tmpDir, "openshell");
     const argsFile = path.join(tmpDir, "args.txt");
@@ -38,7 +38,7 @@ describe("OpenShell policy read boundaries", () => {
       gatewayPort: 9090,
     });
     try {
-      expect(policies.getGatewayPresets("my-assistant")).toEqual([]);
+      expect(await policies.getGatewayPresets("my-assistant")).toEqual([]);
       const calls = fs.readFileSync(argsFile, "utf-8").trim().split("\n");
       expect(calls).toContain("policy get -g nemoclaw-9090 --full my-assistant");
       expect(calls).toContain("policy get -g nemoclaw-9090 --base my-assistant");

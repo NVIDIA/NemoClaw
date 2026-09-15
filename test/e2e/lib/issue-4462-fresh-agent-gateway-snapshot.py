@@ -5,20 +5,14 @@ import base64
 import binascii
 import hashlib
 import json
-import re
 import sys
 import time
 from pathlib import Path
 
-minimum_gateway_runs = int(sys.argv[1])
-output_mode = sys.argv[2] if len(sys.argv) > 2 else "snapshot"
-if output_mode not in {"snapshot", "gateway-runs"}:
-    raise SystemExit(f"unsupported output mode: {output_mode}")
-timeout_seconds = float(sys.argv[3]) if len(sys.argv) > 3 else 30
+timeout_seconds = float(sys.argv[1]) if len(sys.argv) > 1 else 30
 if timeout_seconds <= 0:
     raise SystemExit("observation timeout must be positive")
-root = Path(sys.argv[4]) if len(sys.argv) > 4 else Path("/sandbox/.openclaw")
-gateway_log = Path(sys.argv[5]) if len(sys.argv) > 5 else Path("/tmp/gateway.log")
+root = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("/sandbox/.openclaw")
 observation_deadline = time.monotonic() + timeout_seconds
 
 
@@ -52,27 +46,6 @@ def identity_public_key(value):
     if len(der) != len(prefix) + 32 or not der.startswith(prefix):
         return ""
     return base64.urlsafe_b64encode(der[len(prefix) :]).decode("ascii").rstrip("=")
-
-
-def gateway_completed_runs():
-    try:
-        value = gateway_log.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        return 0
-    return len(re.findall(r"\[agent\] run \S+ ended with stopReason=", value))
-
-
-def wait_for_gateway_runs():
-    runs = gateway_completed_runs()
-    while runs < minimum_gateway_runs and time.monotonic() < observation_deadline:
-        time.sleep(0.1)
-        runs = gateway_completed_runs()
-    return runs
-
-
-if output_mode == "gateway-runs":
-    print(json.dumps({"gatewayCompletedRuns": wait_for_gateway_runs()}, sort_keys=True))
-    raise SystemExit(0)
 
 
 identity = load_map(root / "identity" / "device.json")
@@ -148,7 +121,6 @@ active = [
     and norm(token.get("role")) == "operator"
     and not token.get("revokedAtMs")
 ]
-runs = wait_for_gateway_runs()
 print(
     json.dumps(
         {
@@ -171,7 +143,6 @@ print(
             "deviceScopes": sorted(
                 {norm(scope) for scope in (device.get("scopes") or []) if norm(scope)}
             ),
-            "gatewayCompletedRuns": runs,
             "matchingPairedCount": len(matching),
             "pairedCliCount": len(paired_cli),
             "pendingCount": len(pending),

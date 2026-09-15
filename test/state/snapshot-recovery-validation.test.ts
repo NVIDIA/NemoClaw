@@ -136,14 +136,14 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     });
   });
 
-  it("rejects a marked manifest without explicit image-plugin provenance", () => {
+  it("rejects a marked manifest without explicit image-plugin provenance", async () => {
     const manifest = writeBackup("alpha", "2026-07-01T06-50-42-045Z", {
       reconcileOpenClawImagePluginProvenance: true,
     });
 
     expect(sandboxState.getLatestBackup("alpha")).toBeNull();
     expect(
-      sandboxState.restoreRecreatedSandboxState("alpha", String(manifest.backupPath), {
+      await sandboxState.restoreRecreatedSandboxState("alpha", String(manifest.backupPath), {
         targetAgentType: "openclaw",
         freshOpenClawImagePluginInstalls: [],
       }),

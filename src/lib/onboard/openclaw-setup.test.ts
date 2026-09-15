@@ -58,9 +58,9 @@ describe("OpenClaw sandbox setup", () => {
       reconcileWebSearch,
     });
 
-    await expect(
-      configureOpenclawSandbox("spark-box", "model", "provider", null),
-    ).rejects.toThrow("config sync failed");
+    await expect(configureOpenclawSandbox("spark-box", "model", "provider", null)).rejects.toThrow(
+      "config sync failed",
+    );
 
     expect(reconcileWebSearch).not.toHaveBeenCalled();
   });

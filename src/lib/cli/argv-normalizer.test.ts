@@ -25,24 +25,22 @@ describe("normalizeArgv", () => {
   });
 
   it("normalizes internal dump commands", () => {
-    expect(
-      normalizeArgv(["--dump-commands"], normalizerOptions),
-    ).toEqual({ kind: "dumpCommands" });
-    expect(
-      normalizeArgv(["--dump-command-flags"], normalizerOptions),
-    ).toEqual({ kind: "dumpCommandFlags" });
+    expect(normalizeArgv(["--dump-commands"], normalizerOptions)).toEqual({ kind: "dumpCommands" });
+    expect(normalizeArgv(["--dump-command-flags"], normalizerOptions)).toEqual({
+      kind: "dumpCommandFlags",
+    });
   });
 
   it("normalizes global commands", () => {
-    expect(
-      normalizeArgv(["list", "--json"], normalizerOptions),
-    ).toEqual({ kind: "global", command: "list", args: ["--json"] });
+    expect(normalizeArgv(["list", "--json"], normalizerOptions)).toEqual({
+      kind: "global",
+      command: "list",
+      args: ["--json"],
+    });
   });
 
   it("normalizes explicit sandbox actions", () => {
-    expect(
-      normalizeArgv(["alpha", "status"], normalizerOptions),
-    ).toEqual({
+    expect(normalizeArgv(["alpha", "status"], normalizerOptions)).toEqual({
       kind: "sandbox",
       sandboxName: "alpha",
       action: "status",
@@ -52,18 +50,14 @@ describe("normalizeArgv", () => {
   });
 
   it("normalizes bare and implicit connect invocations", () => {
-    expect(
-      normalizeArgv(["alpha"], normalizerOptions),
-    ).toEqual({
+    expect(normalizeArgv(["alpha"], normalizerOptions)).toEqual({
       kind: "sandbox",
       sandboxName: "alpha",
       action: "connect",
       actionArgs: [],
       connectHelpRequested: false,
     });
-    expect(
-      normalizeArgv(["alpha", "--probe-only"], normalizerOptions),
-    ).toEqual({
+    expect(normalizeArgv(["alpha", "--probe-only"], normalizerOptions)).toEqual({
       kind: "sandbox",
       sandboxName: "alpha",
       action: "connect",
@@ -73,18 +67,14 @@ describe("normalizeArgv", () => {
   });
 
   it("tracks connect help requests", () => {
-    expect(
-      normalizeArgv(["alpha", "connect", "--help"], normalizerOptions),
-    ).toMatchObject({
+    expect(normalizeArgv(["alpha", "connect", "--help"], normalizerOptions)).toMatchObject({
       kind: "sandbox",
       sandboxName: "alpha",
       action: "connect",
       actionArgs: ["--help"],
       connectHelpRequested: true,
     });
-    expect(
-      normalizeArgv(["alpha", "--help"], normalizerOptions),
-    ).toMatchObject({
+    expect(normalizeArgv(["alpha", "--help"], normalizerOptions)).toMatchObject({
       kind: "sandbox",
       sandboxName: "alpha",
       action: "connect",

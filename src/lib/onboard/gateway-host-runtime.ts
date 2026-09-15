@@ -15,9 +15,13 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { waitForPort } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
-import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
+import {
+  hasOpenShellGatewayUserService,
+  startOpenShellGatewayUserService,
+} from "./docker-driver-gateway-service";
 import { isDefaultGatewayPort } from "./gateway-binding";
 import {
   isDockerDriverGatewayHttpReady,
@@ -46,10 +50,25 @@ import type { PortProbeResult } from "./preflight";
 /** `systemctl is-active` is a local query; anything slower than this is wedged. */
 const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
 
+function restartTrustedPackagedGateway(owner: GatewayOwner): void {
+  const result = startOpenShellGatewayUserService();
+  if (!result.attempted || !result.started) {
+    const detail = result.reason ? `: ${result.reason}` : "";
+    throw new Error(`OpenShell packaged gateway restart after install failed${detail}`);
+  }
+  // Type=simple can be active before binding. The caller still validates
+  // gateway ownership and protocol readiness after the port becomes reachable.
+  if (!waitForPort(owner.gatewayPort, 30)) {
+    throw new Error("OpenShell packaged gateway did not bind its port after install.");
+  }
+}
+
 export interface GatewayHostRuntimeDeps {
   applyOverlayfsAutoFix(clusterImage: string): string | null;
   checkGatewayPortAvailable(): Promise<PortProbeResult>;
   hasOpenShellGatewayUserService?: typeof hasOpenShellGatewayUserService;
+  /** Restart the trusted packaged service after its binaries are replaced in place. */
+  restartPackagedGatewayAfterTrustedInstall?(owner: GatewayOwner): void;
   /**
    * Read lazily: the onboarding entrypoint rebinds its gateway port at runtime
    * when an authoritative gateway is selected, so a captured value goes stale.
@@ -112,6 +131,11 @@ export interface GatewayHostRuntime {
     persistOwner?: (owner: GatewayOwner) => void,
   ): GatewayOwner;
   bindGatewayOwner(owner: GatewayOwner): void;
+  /** Exact endpoint and optional client TLS bundle for a direct host forward. */
+  getGatewayForwardRuntimeAuthority(): {
+    readonly gatewayEndpoint: string;
+    readonly localTlsDir?: string;
+  };
   /** Local endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
   getGatewayOwner(): GatewayOwner;
@@ -126,6 +150,53 @@ export interface GatewayHostRuntime {
     attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
   };
   probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
+}
+
+function externalGatewayForwardClientEnv(
+  owner: GatewayOwner,
+  clientProbeEnv: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv | undefined {
+  if (!isExternallySupervised(owner) || !owner.endpoint) return;
+  if (new URL(owner.endpoint).protocol !== "https:") return;
+  if (!owner.stateDir) {
+    throw new Error("Externally supervised HTTPS gateway requires a declared stateDir.");
+  }
+  const localTlsDir = path.join(owner.stateDir, "tls");
+  for (const relativePath of ["ca.crt", "client/tls.crt", "client/tls.key"]) {
+    const filePath = path.join(localTlsDir, relativePath);
+    try {
+      if (!fs.statSync(filePath).isFile()) throw new Error("not a file");
+      fs.accessSync(filePath, fs.constants.R_OK);
+    } catch {
+      throw new Error(
+        `Externally supervised gateway TLS file is missing or unreadable: ${filePath}`,
+      );
+    }
+  }
+  return { ...clientProbeEnv, OPENSHELL_LOCAL_TLS_DIR: localTlsDir };
+}
+
+/** Resolve the endpoint and optional TLS authority for host-side forwarding. */
+export function resolveGatewayForwardRuntimeAuthority(
+  owner: GatewayOwner,
+  clientProbeEnv: NodeJS.ProcessEnv = {},
+): { readonly gatewayEndpoint: string; readonly localTlsDir?: string } {
+  const gatewayEndpoint =
+    isExternallySupervised(owner) && owner.endpoint
+      ? owner.endpoint
+      : (() => {
+          const { getGatewayHttpsEndpoint } =
+            require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
+          return new URL(getGatewayHttpsEndpoint(owner.gatewayPort)).origin;
+        })();
+  const localTlsDir = externalGatewayForwardClientEnv(
+    owner,
+    clientProbeEnv,
+  )?.OPENSHELL_LOCAL_TLS_DIR;
+  return {
+    gatewayEndpoint,
+    ...(localTlsDir ? { localTlsDir } : {}),
+  };
 }
 
 export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayHostRuntime {
@@ -194,21 +265,29 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       );
     }
     const resolved = resolveCurrentGatewayOwner(boundOwner.gatewayName, boundOwner.gatewayPort);
-    if (sameGatewayOwner(boundOwner, resolved)) return boundOwner;
-    const expectedPackagedOwner = { ...boundOwner, source: "packaged-service" as const };
-    if (
-      boundOwner.mode !== "nemoclaw-managed" ||
-      boundOwner.source !== "standalone" ||
-      !sameGatewayOwner(expectedPackagedOwner, resolved)
-    ) {
-      throw new Error(
-        "Gateway lifecycle authority changed during this run " +
-          `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
-          "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
-      );
+    if (!sameGatewayOwner(boundOwner, resolved)) {
+      const expectedPackagedOwner = { ...boundOwner, source: "packaged-service" as const };
+      if (
+        boundOwner.mode !== "nemoclaw-managed" ||
+        boundOwner.source !== "standalone" ||
+        !sameGatewayOwner(expectedPackagedOwner, resolved)
+      ) {
+        throw new Error(
+          "Gateway lifecycle authority changed during this run " +
+            `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
+            "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
+        );
+      }
+      persistOwner?.(resolved);
+      boundOwner = resolved;
     }
-    persistOwner?.(resolved);
-    boundOwner = resolved;
+
+    // Replacing a packaged binary does not replace the already-running process.
+    // Restart only the owner that was independently resolved as NemoClaw's
+    // trusted packaged service; standalone and declared supervisors stay untouched.
+    if (boundOwner.mode === "nemoclaw-managed" && boundOwner.source === "packaged-service") {
+      (deps.restartPackagedGatewayAfterTrustedInstall ?? restartTrustedPackagedGateway)(boundOwner);
+    }
     return boundOwner;
   }
 
@@ -402,24 +481,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   }
 
   function getExternalGatewayClientEnv(owner: GatewayOwner): NodeJS.ProcessEnv | undefined {
-    if (!isExternallySupervised(owner) || !owner.endpoint) return;
-    if (new URL(owner.endpoint).protocol !== "https:") return;
-    if (!owner.stateDir) {
-      throw new Error("Externally supervised HTTPS gateway requires a declared stateDir.");
-    }
-    const localTlsDir = path.join(owner.stateDir, "tls");
-    for (const relativePath of ["ca.crt", "client/tls.crt", "client/tls.key"]) {
-      const filePath = path.join(localTlsDir, relativePath);
-      try {
-        if (!fs.statSync(filePath).isFile()) throw new Error("not a file");
-        fs.accessSync(filePath, fs.constants.R_OK);
-      } catch {
-        throw new Error(
-          `Externally supervised gateway TLS file is missing or unreadable: ${filePath}`,
-        );
-      }
-    }
-    return { ...(deps.clientProbeEnv ?? {}), OPENSHELL_LOCAL_TLS_DIR: localTlsDir };
+    return externalGatewayForwardClientEnv(owner, deps.clientProbeEnv);
   }
 
   function prepareExternalGatewayClient(owner: GatewayOwner): void {
@@ -534,12 +596,19 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     boundOwner = owner;
   }
 
+  function gatewayEndpointForOwner(owner: GatewayOwner): string {
+    return resolveGatewayForwardRuntimeAuthority(owner, deps.clientProbeEnv).gatewayEndpoint;
+  }
+
+  function getGatewayForwardRuntimeAuthority(): {
+    readonly gatewayEndpoint: string;
+    readonly localTlsDir?: string;
+  } {
+    return resolveGatewayForwardRuntimeAuthority(getGatewayOwner(), deps.clientProbeEnv);
+  }
+
   function getGatewayLocalEndpoint(): string {
-    const owner = getGatewayOwner();
-    if (isExternallySupervised(owner) && owner.endpoint) return owner.endpoint;
-    const { getGatewayHttpsEndpoint } =
-      require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
-    return getGatewayHttpsEndpoint(deps.gatewayPort());
+    return gatewayEndpointForOwner(getGatewayOwner());
   }
 
   function getGatewayStartEnv(): Record<string, string> {
@@ -571,6 +640,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     assertGatewayStartAllowed,
     attachGateway,
     bindGatewayOwner,
+    getGatewayForwardRuntimeAuthority,
     getGatewayLocalEndpoint,
     getGatewayOwner,
     getGatewayStartEnv,

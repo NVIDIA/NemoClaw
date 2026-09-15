@@ -23,6 +23,7 @@ import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
@@ -264,17 +265,27 @@ const SKILL_LIFECYCLE_OWNING_PATHS = [
   "src/lib/skill-install.ts",
 ] as const;
 
+const OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS = [
+  "src/lib/adapters/openshell/command-execution.ts",
+  "src/lib/adapters/openshell/forward-cli.ts",
+  "src/lib/adapters/openshell/forward-runtime.ts",
+  "src/lib/adapters/openshell/forward.ts",
+] as const;
+
 // Keep every checked-in input copied by the Pi Dockerfiles in the PR selection boundary.
 // test/e2e/support/pi-agent-qualification-events.test.ts verifies this list against the
 // real Dockerfiles so a new COPY instruction cannot silently reuse a stale image receipt.
 const PI_IMAGE_SOURCE_OWNING_PATHS = [
   ".dockerignore",
   "agents/pi/",
+  "ci/reviewed-npm-audit.json",
   "nemoclaw-blueprint/",
   "scripts/lib/bundled-npm-package.mts",
   "scripts/lib/entrypoint-env-wrapper.sh",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/reviewed-npm-audit.mts",
+  "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-rlimits.sh",
   "scripts/managed-bootstrap-entrypoint.c",
   "scripts/managed-bootstrap-trampoline.sh",
@@ -482,6 +493,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["test/e2e/live/brave-search-helpers.ts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -659,7 +671,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/json-envelope.ts"],
+    owningPaths: [...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS, "test/e2e/live/json-envelope.ts"],
     environment: {
       ...hostedInference,
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
@@ -694,6 +706,36 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     environment: nonInteractive,
   }),
+  ...(["double-onboard", "onboard-resume"] as const).map((scenario) =>
+    dockerOnlyTarget(`${scenario}-hermes`, {
+      targetId: scenario,
+      shard: "hermes",
+      displayName: `Onboarding: Hermes ${scenario === "double-onboard" ? "reuses" : "resumes"} its sandbox and forwards`,
+      agentRuntime: "hermes",
+      environmentOrInferenceEndpoint: "Ubuntu Docker host; local onboarding fixtures",
+      profile: "standard",
+      hostPreparation: "hermes-swap",
+      testFile: `test/e2e/live/${scenario}.test.ts`,
+      timeoutMinutes: scenario === "double-onboard" ? 90 : ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+      installMode: "credential-free",
+      restoreCli: true,
+      exposeCliBin: true,
+      owningPaths: [
+        ...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS,
+        "src/lib/onboard/dashboard.ts",
+        "src/lib/onboard/dashboard-forward-control.ts",
+        "src/lib/onboard/dashboard-runtime.ts",
+        "src/lib/onboard/agent-dashboard-forward.ts",
+        "src/lib/onboard/sandbox-reuse.ts",
+      ],
+      environment: {
+        ...nonInteractive,
+        NEMOCLAW_AGENT: "hermes",
+        NEMOCLAW_HERMES_API_PORT: "8643",
+        NEMOCLAW_SANDBOX_NAME: "e2e-hermes-resume",
+      },
+    }),
+  ),
   managedRuntimeTarget("gpu-double-onboard", {
     displayName: "Onboarding: preserves Ollama authentication after GPU re-onboarding",
     agentRuntime: "openclaw",
@@ -722,7 +764,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/hermes-cli-adapter-live.ts"],
+    owningPaths: [
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/hermes-cli-adapter-live.ts",
+      "src/lib/inference/ollama/proxy.ts",
+      "src/lib/inference/ollama/proxy-observation.ts",
+      "scripts/ollama-auth-proxy.mts",
+      "src/lib/adapters/config/live-export-source.ts",
+      "src/lib/domain/config/verify-ollama-serving.ts",
+      "src/lib/config/model.ts",
+      "src/lib/config/schema.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_MODEL: "qwen3.5:9b",
@@ -751,23 +803,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-full",
-    },
-  }),
-  dockerOnlyTarget("gateway-guard-recovery", {
-    displayName: "Gateway: restores the guard chain after recreation",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
-    profile: "nvidia-inference",
-    timeoutMinutes: 45,
-    installMode: "authenticated",
-    installNonInteractive: true,
-    restoreCli: true,
-    exposeCliBin: true,
-    owningPaths: ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
-    environment: {
-      ...hostedInference,
-      ...nonInteractive,
-      OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
   managedRuntimeTarget("hermes-discord", {
@@ -1033,7 +1068,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+    owningPaths: [
+      "test/helpers/openshell-gateway-start-output.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+    ],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },
   }),
   managedRuntimeTarget("openclaw-discord-pairing", {
@@ -1225,7 +1263,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
-    owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+    owningPaths: [...HERMES_ACP_E2E_OWNING_PATHS, "test/e2e/live/rebuild-hermes-cron-restore.ts"],
     timeoutMinutes: 90,
     installMode: "credential-free",
     installNonInteractive: true,
@@ -1280,9 +1318,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("sandbox-survival", {
-    displayName: "Lifecycle: preserves sandbox state after an OpenShell gateway restart",
+    displayName: "Lifecycle: preserves native agent state across OpenShell restart",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
+    environmentOrInferenceEndpoint: "Ubuntu; OpenShell sandbox lifecycle",
     profile: "nvidia-inference",
     timeoutMinutes: 30,
     installMode: "none",
@@ -1364,12 +1402,21 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       ...SKILL_LIFECYCLE_OWNING_PATHS,
       "agents/hermes/manifest.yaml",
+      "schemas/nemoclaw-config-v1.schema.json",
+      "src/commands/config/export.ts",
+      "src/lib/actions/config/",
+      "src/lib/adapters/config/",
+      "src/lib/adapters/fs/config-export-file.ts",
+      "src/lib/config/",
+      "src/lib/domain/config/",
+      "test/e2e/fixtures/hermes-config-export-live.ts",
       "test/e2e/live/hermes-skill-lifecycle.ts",
     ],
     environment: {
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia",
       NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1",
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
       NEMOCLAW_E2E_SECURITY_POSTURE: "1",

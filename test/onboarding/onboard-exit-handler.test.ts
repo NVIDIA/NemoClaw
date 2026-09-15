@@ -281,26 +281,28 @@ onboard({
     testTimeout(30_000),
   );
 
-  it("resumes clean validation exits while cleanup failures and unexpected exits stay terminal (#9732)", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const scriptPath = path.join(tmpDir, "onboard-exit-registration.cjs");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const flowSlicesPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
-    );
-    const sessionPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
-    );
-    const validationPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "inference-selection-validation.ts"),
-    );
-    const resultPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
-    );
+  it(
+    "resumes clean validation exits while cleanup failures and unexpected exits stay terminal (#9732)",
+    () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const scriptPath = path.join(tmpDir, "onboard-exit-registration.cjs");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const flowSlicesPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
+      );
+      const sessionPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+      );
+      const validationPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "inference-selection-validation.ts"),
+      );
+      const resultPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
+      );
 
-    fs.writeFileSync(
-      scriptPath,
-      `
+      fs.writeFileSync(
+        scriptPath,
+        `
 const flowSlices = require(${flowSlicesPath});
 const onboardSession = require(${sessionPath});
 const validation = require(${validationPath});
@@ -403,98 +405,100 @@ const { onboard } = require(${onboardPath});
   process.exitCode = 1;
 });
 `,
-    );
+      );
 
-    const runOnboard = (
-      home: string,
-      exitKind: "unexpected" | "validation" | "validation-cleanup-failure" | "resume",
-    ) =>
-      spawnSync(process.execPath, [scriptPath, ...(exitKind === "resume" ? ["--resume"] : [])], {
-        cwd: repoRoot,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          HOME: home,
-          PATH: ONBOARD_FIXTURE_PATH,
-          TMPDIR: tmpDir,
-          NEMOCLAW_TEST_EXIT_KIND: exitKind,
-          NEMOCLAW_TEST_NO_SLEEP: "1",
-        },
-        timeout: 60_000,
-      });
+      const runOnboard = (
+        home: string,
+        exitKind: "unexpected" | "validation" | "validation-cleanup-failure" | "resume",
+      ) =>
+        spawnSync(process.execPath, [scriptPath, ...(exitKind === "resume" ? ["--resume"] : [])], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            PATH: ONBOARD_FIXTURE_PATH,
+            TMPDIR: tmpDir,
+            NEMOCLAW_TEST_EXIT_KIND: exitKind,
+            NEMOCLAW_TEST_NO_SLEEP: "1",
+          },
+          timeout: 60_000,
+        });
 
-    const result = runOnboard(tmpDir, "unexpected");
+      const result = runOnboard(tmpDir, "unexpected");
 
-    expect(result.status, result.stderr).toBe(0);
-    const lastLine = result.stdout.trim().split(/\n/).at(-1) ?? "";
-    const payload = JSON.parse(lastLine) as {
-      loaded: ReturnType<typeof onboardSession.createSession>;
-      exitListeners: number;
-    };
-    expect(payload.exitListeners).toBeGreaterThanOrEqual(2);
-    expect(payload.loaded.steps.preflight.status).toBe("failed");
-    expect(payload.loaded.status).toBe("failed");
-    expect(payload.loaded.failure?.step).toBe("preflight");
-    expect(payload.loaded.failure?.message).toBe("Onboarding exited before the step completed.");
-    expect(payload.loaded.machine.state).toBe("failed");
-
-    const validationHome = path.join(tmpDir, "validation-home");
-    fs.mkdirSync(validationHome);
-    const validationResult = runOnboard(validationHome, "validation");
-
-    expect(validationResult.status, validationResult.stderr).toBe(1);
-    const validationLastLine = validationResult.stdout.trim().split(/\n/).at(-1) ?? "";
-    const validationPayload = JSON.parse(validationLastLine) as {
-      loaded: ReturnType<typeof onboardSession.createSession>;
-      exitListeners: number;
-    };
-    expect(validationPayload.exitListeners).toBeGreaterThanOrEqual(2);
-    expect(validationPayload.loaded.steps.preflight.status).toBe("in_progress");
-    expect(validationPayload.loaded.status).toBe("in_progress");
-    expect(validationPayload.loaded.failure).toBeNull();
-    expect(validationPayload.loaded.machine.state).toBe("init");
-    expect(validationPayload.loaded.checkpoint).not.toBeNull();
-    expect(validationPayload.loaded.checkpoint?.machineState).toBe("init");
-
-    const cleanupFailureHome = path.join(tmpDir, "validation-cleanup-failure-home");
-    fs.mkdirSync(cleanupFailureHome);
-    const cleanupFailureResult = runOnboard(cleanupFailureHome, "validation-cleanup-failure");
-
-    expect(cleanupFailureResult.status, cleanupFailureResult.stderr).toBe(1);
-    const cleanupFailureLastLine = cleanupFailureResult.stdout.trim().split(/\n/).at(-1) ?? "";
-    const cleanupFailurePayload = JSON.parse(cleanupFailureLastLine) as {
-      loaded: ReturnType<typeof onboardSession.createSession>;
-      exitListeners: number;
-    };
-    expect(cleanupFailurePayload.exitListeners).toBeGreaterThanOrEqual(2);
-    expect(cleanupFailurePayload.loaded.steps.preflight.status).toBe("failed");
-    expect(cleanupFailurePayload.loaded.status).toBe("failed");
-    expect(cleanupFailurePayload.loaded.failure?.step).toBe("preflight");
-    expect(cleanupFailurePayload.loaded.machine.state).toBe("failed");
-
-    const resumeResult = runOnboard(validationHome, "resume");
-
-    expect(resumeResult.status, resumeResult.stderr).toBe(0);
-    const resumeLastLine = resumeResult.stdout.trim().split(/\n/).at(-1) ?? "";
-    const resumePayload = JSON.parse(resumeLastLine) as {
-      loaded: ReturnType<typeof onboardSession.createSession>;
-      resumeEvidence: {
-        requested: boolean;
-        sessionId: string;
-        startingMachineState: string;
-        continuedMachineState: string;
+      expect(result.status, result.stderr).toBe(0);
+      const lastLine = result.stdout.trim().split(/\n/).at(-1) ?? "";
+      const payload = JSON.parse(lastLine) as {
+        loaded: ReturnType<typeof onboardSession.createSession>;
+        exitListeners: number;
       };
-      exitListeners: number;
-    };
-    expect(resumePayload.exitListeners).toBeGreaterThanOrEqual(2);
-    expect(resumePayload.resumeEvidence.requested).toBe(true);
-    expect(resumePayload.resumeEvidence.sessionId).toBe(validationPayload.loaded.sessionId);
-    expect(resumePayload.resumeEvidence.startingMachineState).toBe("init");
-    expect(resumePayload.resumeEvidence.continuedMachineState).toBe("preflight");
-    expect(resumePayload.loaded.status).toBe("in_progress");
-    expect(resumePayload.loaded.failure).toBeNull();
-    expect(resumePayload.loaded.machine.state).toBe("preflight");
-  }, testTimeout(30_000));
+      expect(payload.exitListeners).toBeGreaterThanOrEqual(2);
+      expect(payload.loaded.steps.preflight.status).toBe("failed");
+      expect(payload.loaded.status).toBe("failed");
+      expect(payload.loaded.failure?.step).toBe("preflight");
+      expect(payload.loaded.failure?.message).toBe("Onboarding exited before the step completed.");
+      expect(payload.loaded.machine.state).toBe("failed");
+
+      const validationHome = path.join(tmpDir, "validation-home");
+      fs.mkdirSync(validationHome);
+      const validationResult = runOnboard(validationHome, "validation");
+
+      expect(validationResult.status, validationResult.stderr).toBe(1);
+      const validationLastLine = validationResult.stdout.trim().split(/\n/).at(-1) ?? "";
+      const validationPayload = JSON.parse(validationLastLine) as {
+        loaded: ReturnType<typeof onboardSession.createSession>;
+        exitListeners: number;
+      };
+      expect(validationPayload.exitListeners).toBeGreaterThanOrEqual(2);
+      expect(validationPayload.loaded.steps.preflight.status).toBe("in_progress");
+      expect(validationPayload.loaded.status).toBe("in_progress");
+      expect(validationPayload.loaded.failure).toBeNull();
+      expect(validationPayload.loaded.machine.state).toBe("init");
+      expect(validationPayload.loaded.checkpoint).not.toBeNull();
+      expect(validationPayload.loaded.checkpoint?.machineState).toBe("init");
+
+      const cleanupFailureHome = path.join(tmpDir, "validation-cleanup-failure-home");
+      fs.mkdirSync(cleanupFailureHome);
+      const cleanupFailureResult = runOnboard(cleanupFailureHome, "validation-cleanup-failure");
+
+      expect(cleanupFailureResult.status, cleanupFailureResult.stderr).toBe(1);
+      const cleanupFailureLastLine = cleanupFailureResult.stdout.trim().split(/\n/).at(-1) ?? "";
+      const cleanupFailurePayload = JSON.parse(cleanupFailureLastLine) as {
+        loaded: ReturnType<typeof onboardSession.createSession>;
+        exitListeners: number;
+      };
+      expect(cleanupFailurePayload.exitListeners).toBeGreaterThanOrEqual(2);
+      expect(cleanupFailurePayload.loaded.steps.preflight.status).toBe("failed");
+      expect(cleanupFailurePayload.loaded.status).toBe("failed");
+      expect(cleanupFailurePayload.loaded.failure?.step).toBe("preflight");
+      expect(cleanupFailurePayload.loaded.machine.state).toBe("failed");
+
+      const resumeResult = runOnboard(validationHome, "resume");
+
+      expect(resumeResult.status, resumeResult.stderr).toBe(0);
+      const resumeLastLine = resumeResult.stdout.trim().split(/\n/).at(-1) ?? "";
+      const resumePayload = JSON.parse(resumeLastLine) as {
+        loaded: ReturnType<typeof onboardSession.createSession>;
+        resumeEvidence: {
+          requested: boolean;
+          sessionId: string;
+          startingMachineState: string;
+          continuedMachineState: string;
+        };
+        exitListeners: number;
+      };
+      expect(resumePayload.exitListeners).toBeGreaterThanOrEqual(2);
+      expect(resumePayload.resumeEvidence.requested).toBe(true);
+      expect(resumePayload.resumeEvidence.sessionId).toBe(validationPayload.loaded.sessionId);
+      expect(resumePayload.resumeEvidence.startingMachineState).toBe("init");
+      expect(resumePayload.resumeEvidence.continuedMachineState).toBe("preflight");
+      expect(resumePayload.loaded.status).toBe("in_progress");
+      expect(resumePayload.loaded.failure).toBeNull();
+      expect(resumePayload.loaded.machine.state).toBe("preflight");
+    },
+    testTimeout(30_000),
+  );
 
   it("onboard() preserves a resumable session after a normal incomplete result (#9048)", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");

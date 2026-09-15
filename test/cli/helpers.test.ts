@@ -14,7 +14,7 @@ import {
   sourceLoaderNodeOptions,
 } from "../helpers/source-loader-options";
 import { testTimeoutOptions } from "../helpers/timeouts";
-import { runWithEnv } from "./helpers";
+import { runCliScriptAsync, runWithEnv } from "./helpers";
 
 const tempDirs = new Set<string>();
 
@@ -231,6 +231,23 @@ describe("source-loader Node options", () => {
     } finally {
       mkdtemp.mockRestore();
     }
+  });
+
+  it("rejects an async CLI run when implicit HOME cleanup fails", async () => {
+    const cleanupError = new Error("cleanup failed");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-cleanup-error-"));
+    tempDirs.add(directory);
+    const script = path.join(directory, "exit.cjs");
+    fs.writeFileSync(script, "");
+
+    await expect(
+      runCliScriptAsync(script, "", {
+        removeImplicitHome: (home) => {
+          fs.rmSync(home, { force: true, recursive: true });
+          throw cleanupError;
+        },
+      }),
+    ).rejects.toBe(cleanupError);
   });
 
   it("quotes preload paths that contain spaces for Node (#6245)", () => {

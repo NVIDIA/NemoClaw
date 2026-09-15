@@ -302,11 +302,7 @@ function requireCompleteManagedImageCatalog(
       );
     }
     try {
-      const contract = parseManagedImageContractV1(
-        candidate,
-        agent,
-        cohortPlatform ?? undefined,
-      );
+      const contract = parseManagedImageContractV1(candidate, agent, cohortPlatform ?? undefined);
       cohortPlatform ??= contract.platform;
       if (
         expectedRevision === null &&

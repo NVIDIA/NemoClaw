@@ -58,7 +58,7 @@ const HOST_NO_PROXY_INPUTS = ["NO_PROXY", "no_proxy"] as const;
 
 export interface ManagedStartupOnboardProfileInput {
   readonly agentName: string;
-  readonly inference: ManagedStartupResolvedInferenceInput;
+  readonly inference: ManagedStartupResolvedInferenceInput | null;
   readonly chatUiUrl: string;
   readonly effectiveDashboardPort: number;
   readonly manageDashboard: boolean;

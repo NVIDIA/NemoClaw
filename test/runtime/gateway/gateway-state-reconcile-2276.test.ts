@@ -21,7 +21,7 @@ import { testTimeout } from "../../helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(60_000);
 const SANDBOX_NAME = "my-assistant";
-const OPENSHELL_FIXTURE_VERSION = "0.0.106";
+const OPENSHELL_FIXTURE_VERSION = "0.0.116";
 
 // Output fixtures that mirror real OpenShell CLI output.
 const gatewayInfoNemoclaw = (gatewayName: string, port: number) =>
@@ -179,6 +179,11 @@ if (args[0] === "provider" && args[1] === "get") {
   process.exit(0);
 }
 
+if (args.includes("forward") && args.includes("list")) {
+  process.stderr.write("No active forwards.\\n");
+  process.exit(0);
+}
+
 // forward stop/start, provider delete, logs, etc. — no-op success
 process.exit(0);
 `;
@@ -273,7 +278,7 @@ if (a[0] === "inspect") {
   const responses = new Map([
     ["{{.State.Running}}", "true\\n"],
     ["{{json .NetworkSettings.Ports}}", JSON.stringify({[gatewayPort + "/tcp"]:[{HostPort:gatewayPort}]}) + "\\n"],
-    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.0.106\\n"],
+    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.0.116\\n"],
   ]);
   if (target !== expectedTarget || !responses.has(format)) process.exit(64);
   process.stdout.write(responses.get(format));
@@ -315,6 +320,19 @@ beforeEach(() => {
   fs.mkdirSync(registryDir, { recursive: true });
   fs.writeFileSync(installerInvocationsFile, "");
   fs.writeFileSync(dockerInvocationsFile, "");
+  // Image freshness has its own tests; this process fixture represents unchanged inputs.
+  fs.writeFileSync(
+    path.join(homeLocalBin, "git"),
+    `#!${process.execPath}
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args.includes("diff") && args.includes("--quiet")) process.exit(0);
+const result = spawnSync("/usr/bin/git", args, { env: process.env, stdio: "inherit" });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     path.join(homeLocalBin, "bash"),
     `#!${process.execPath}

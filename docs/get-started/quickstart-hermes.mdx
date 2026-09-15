@@ -151,7 +151,7 @@ Use these details when your first-run path needs more control.
     nemohermes my-hermes gateway restart
     ```
 
-    Hermes receives revision-scoped `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
+    Hermes receives OpenShell credential-handle `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
     OpenShell decodes the Langfuse Basic-auth header, replaces both placeholders only for `cloud.langfuse.com:443`, and re-encodes the header before forwarding it.
     The managed Hermes plugin rejects a Langfuse base URL that is not absolute HTTPS before it constructs the authenticated client.
     Do not put raw keys or copied `HERMES_LANGFUSE_PUBLIC_KEY` and `HERMES_LANGFUSE_SECRET_KEY` placeholders in `~/.hermes/.env`.
@@ -214,6 +214,9 @@ Use these details when your first-run path needs more control.
     Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
     Choose how the remote client reaches the host forwards.
     If a reverse proxy or tunnel already reaches the loopback dashboard forward, set `CHAT_UI_URL` to its externally reachable HTTPS origin before onboarding.
+    Do not include credentials in the URL.
+    Hostname validation does not authenticate clients of your reverse proxy or tunnel.
+    Protect that ingress before exposing the dashboard.
 
     ```bash
     export NEMOCLAW_AGENT=hermes

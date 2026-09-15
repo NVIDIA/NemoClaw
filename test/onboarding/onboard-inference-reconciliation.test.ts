@@ -606,21 +606,10 @@ const { onboard } = require(${onboardPath});
           overrides: { applyLocalInferenceRoute },
         });
         await harness.setupInference("test-box", "meta-llama", "vllm-local");
-        const profileCommandIndex = harness.commands.findIndex(
-          (entry) => entry.command === "provider profile -g nemoclaw export openai --output json",
-        );
-        const providerCommandIndex = harness.commands.findIndex((entry) =>
-          entry.command.includes("provider create"),
-        );
         const providerCommand = harness.commands.find((entry) =>
           entry.command.includes("provider create"),
         );
         assert.ok(providerCommand, "expected local vLLM provider create command");
-        assert.ok(profileCommandIndex >= 0, "expected OpenAI profile validation");
-        assert.ok(
-          profileCommandIndex < providerCommandIndex,
-          "OpenAI profile validation must precede local vLLM registration",
-        );
         assert.match(providerCommand.command, /--credential NEMOCLAW_VLLM_LOCAL_TOKEN/);
         assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
         assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
@@ -663,23 +652,11 @@ const { onboard } = require(${onboardPath});
       warn.mockRestore();
     }
     assert.deepEqual(proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
-    const profileCommandIndex = harness.commands.findIndex(
-      (entry) => entry.command === "provider profile -g nemoclaw export openai --output json",
-    );
-    const providerCommandIndex = harness.commands.findIndex(
-      (entry) =>
-        entry.command.includes("provider create") && entry.command.includes("ollama-local"),
-    );
     const providerCommand = harness.commands.find(
       (entry) =>
         entry.command.includes("provider create") && entry.command.includes("ollama-local"),
     );
     assert.ok(providerCommand, "expected ollama-local provider create command");
-    assert.ok(profileCommandIndex >= 0, "expected OpenAI profile validation");
-    assert.ok(
-      profileCommandIndex < providerCommandIndex,
-      "OpenAI profile validation must precede Ollama registration",
-    );
     assert.match(providerCommand.command, /--credential NEMOCLAW_OLLAMA_PROXY_TOKEN/);
     assert.equal(providerCommand.env?.NEMOCLAW_OLLAMA_PROXY_TOKEN, "proxy-token");
     assert.doesNotMatch(providerCommand.command, /proxy-token/);
@@ -950,12 +927,11 @@ console.log(JSON.stringify({
       );
 
       const commands = harness.commands;
-      assert.equal(commands.length, 4);
-      assert.equal(commands[0].command, "provider profile -g nemoclaw export openai --output json");
-      assert.match(commands[1].command, /^provider get -g nemoclaw /);
-      assert.match(commands[2].command, /^provider update -g nemoclaw openai-api/);
-      assert.doesNotMatch(commands[2].command, /--type/);
-      assert.match(commands[3].command, /^inference set -g nemoclaw --no-verify/);
+      assert.equal(commands.length, 3);
+      assert.match(commands[0].command, /^provider get -g nemoclaw /);
+      assert.match(commands[1].command, /^provider update -g nemoclaw openai-api/);
+      assert.doesNotMatch(commands[1].command, /--type/);
+      assert.match(commands[2].command, /^inference set -g nemoclaw --no-verify/);
     });
   });
   it("re-prompts for credentials when openshell inference set fails with authorization errors", async () => {

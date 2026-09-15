@@ -417,7 +417,13 @@ test(
     expect(personalProfiles.exitCode, resultText(personalProfiles)).toBe(0);
     const restart = await host.command(
       "bash",
-      ["-ec", '"$1" "$2" stop; "$1" "$2" start', "pi-sandbox-restart", host.commandPath, SANDBOX_NAME],
+      [
+        "-ec",
+        '"$1" "$2" stop; "$1" "$2" start',
+        "pi-sandbox-restart",
+        host.commandPath,
+        SANDBOX_NAME,
+      ],
       { artifactName: "pi-sandbox-stop-start", env, timeoutMs: 6 * 60_000 },
     );
     expect(restart.exitCode, resultText(restart)).toBe(0);

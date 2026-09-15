@@ -38,192 +38,192 @@ function assertStatusNotOffline(output: string, context: string): void {
 test(
   "device auth health probes treat 401 as live instead of offline (#2342)",
   {
-  timeout: LIVE_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "start authenticated inference fixture",
-      "onboard device-auth OpenClaw sandbox",
-      "verify sandbox and forwarded dashboard health",
-      "recover stopped OpenClaw gateway",
-    ],
-  },
+    timeout: LIVE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "start authenticated inference fixture",
+        "onboard device-auth OpenClaw sandbox",
+        "verify sandbox and forwarded dashboard health",
+        "recover stopped OpenClaw gateway",
+      ],
+    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
-  const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
-  // The sandbox cannot reach runner loopback, so expose the fixture through
-  // OpenShell's host bridge while keeping readiness checks local to the runner.
-  const inference = await startFakeOpenAiCompatibleServer({
-    apiKey: INFERENCE_API_KEY,
-    host: "0.0.0.0",
-    model: INFERENCE_MODEL,
-    progress,
-    publicHost: "host.openshell.internal",
-    requireAuth: true,
-  });
-  cleanup.trackDisposable("close device-auth compatible inference fixture", async () => {
-    await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
-    await inference.close();
-  });
-  const inferenceConfig = {
-    apiKey: INFERENCE_API_KEY,
-    endpointUrl: inference.baseUrl,
-    model: INFERENCE_MODEL,
-  };
+    const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
+    // The sandbox cannot reach runner loopback, so expose the fixture through
+    // OpenShell's host bridge while keeping readiness checks local to the runner.
+    const inference = await startFakeOpenAiCompatibleServer({
+      apiKey: INFERENCE_API_KEY,
+      host: "0.0.0.0",
+      model: INFERENCE_MODEL,
+      progress,
+      publicHost: "host.openshell.internal",
+      requireAuth: true,
+    });
+    cleanup.trackDisposable("close device-auth compatible inference fixture", async () => {
+      await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
+      await inference.close();
+    });
+    const inferenceConfig = {
+      apiKey: INFERENCE_API_KEY,
+      endpointUrl: inference.baseUrl,
+      model: INFERENCE_MODEL,
+    };
 
-  await artifacts.target.declare({
-    id: "device-auth-health",
-    boundary: "install.sh + OpenShell sandbox exec + NemoClaw status + host curl",
-    sandboxName: SANDBOX_NAME,
-    dashboardPort: DASHBOARD_PORT,
-    contracts: [
-      "onboard succeeds with device auth enabled",
-      "the onboarded inference route authenticates to the fixture endpoint",
-      "/health is reachable from inside the sandbox",
-      "the authenticated dashboard root may return 401 without being treated as offline",
-      "nemoclaw status reports the gateway as live, not Health Offline",
-      "status remains non-offline after a gateway kill/recovery attempt",
-    ],
-  });
+    await artifacts.target.declare({
+      id: "device-auth-health",
+      boundary: "install.sh + OpenShell sandbox exec + NemoClaw status + host curl",
+      sandboxName: SANDBOX_NAME,
+      dashboardPort: DASHBOARD_PORT,
+      contracts: [
+        "onboard succeeds with device auth enabled",
+        "the onboarded inference route authenticates to the fixture endpoint",
+        "/health is reachable from inside the sandbox",
+        "the authenticated dashboard root may return 401 without being treated as offline",
+        "nemoclaw status reports the gateway as live, not Health Offline",
+        "status remains non-offline after a gateway kill/recovery attempt",
+      ],
+    });
 
     await runtimeProvider.requireAvailable({
-    artifactName: "phase-0-runtime-info",
+      artifactName: "phase-0-runtime-info",
       scenarioLabel: "device auth health",
-  });
+    });
 
-  const cleanupEnv = commandEnv();
-  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-    sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "cleanup-openshell-delete-device-auth-health",
+    const cleanupEnv = commandEnv();
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-delete-device-auth-health",
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-nemoclaw-destroy-device-auth-health",
       env: cleanupEnv,
+      timeoutMs: 120_000,
+    });
+    await cleanupDeviceAuthSandbox(host, sandbox);
+
+    progress.phase("onboard device-auth OpenClaw sandbox");
+    const install = await installDeviceAuthSandbox(host, inferenceConfig, installLog);
+    expect(install.exitCode, resultText(install)).toBe(0);
+
+    // Ignore incidental onboarding traffic. The fixture appends its ledger row
+    // before responding, so this awaited POST is the publication barrier for the
+    // requests sliced from this offset.
+    const authenticatedRequestOffset = inference.requests().length;
+    const authenticatedProbe = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(
+          JSON.stringify({
+            model: INFERENCE_MODEL,
+            messages: [{ role: "user", content: "reply with OK" }],
+            max_tokens: 8,
+          }),
+        )} >/dev/null`,
+      ),
+      {
+        artifactName: "phase-1-explicit-authenticated-inference-post",
+        env: commandEnv(),
+        timeoutMs: 90_000,
+      },
+    );
+    const authenticatedRequests = inference.requests().slice(authenticatedRequestOffset);
+    const authenticatedArtifact = "phase-1-explicit-authenticated-inference-requests.json";
+    const authenticatedPhase = "onboard device-auth OpenClaw sandbox";
+    const authenticatedRequestEvidence = authenticatedRequests
+      .slice(0, 20)
+      .map(({ auth, method, model, path }) => ({ auth, method, model, path }));
+    await artifacts.writeJson(authenticatedArtifact, {
+      phase: authenticatedPhase,
+      requestCount: authenticatedRequests.length,
+      requests: authenticatedRequestEvidence,
+      truncated: authenticatedRequests.length > authenticatedRequestEvidence.length,
+    });
+    expect(
+      authenticatedProbe.exitCode,
+      `${authenticatedPhase}: explicit authenticated inference failed; see ${authenticatedArtifact}`,
+    ).toBe(0);
+    expect(
+      authenticatedRequests,
+      `${authenticatedPhase}: explicit verification probe did not reach the authenticated fixture; see ${authenticatedArtifact}`,
+    ).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        method: "POST",
+        model: INFERENCE_MODEL,
+        path: "/v1/chat/completions",
+      }),
+    );
+
+    await host.expectListed(SANDBOX_NAME, {
+      artifactName: "phase-1-nemoclaw-list-device-auth-health",
+      env: commandEnv(),
       timeoutMs: 60_000,
-    }),
-  );
-  cleanup.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-nemoclaw-destroy-device-auth-health",
-    env: cleanupEnv,
-    timeoutMs: 120_000,
-  });
-  await cleanupDeviceAuthSandbox(host, sandbox);
+    });
 
-  progress.phase("onboard device-auth OpenClaw sandbox");
-  const install = await installDeviceAuthSandbox(host, inferenceConfig, installLog);
-  expect(install.exitCode, resultText(install)).toBe(0);
+    progress.phase("verify sandbox and forwarded dashboard health");
+    const health = await httpCodeFromSandbox(sandbox, "/health", "phase-2-sandbox-health-code");
+    expect(health.exitCode, resultText(health)).toBe(0);
+    expect(health.stdout.trim()).toBe("200");
 
-  // Ignore incidental onboarding traffic. The fixture appends its ledger row
-  // before responding, so this awaited POST is the publication barrier for the
-  // requests sliced from this offset.
-  const authenticatedRequestOffset = inference.requests().length;
-  const authenticatedProbe = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(
-        JSON.stringify({
-          model: INFERENCE_MODEL,
-          messages: [{ role: "user", content: "reply with OK" }],
-          max_tokens: 8,
-        }),
-      )} >/dev/null`,
-    ),
-    {
-      artifactName: "phase-1-explicit-authenticated-inference-post",
+    const root = await httpCodeFromSandbox(sandbox, "/", "phase-2-sandbox-root-code");
+    expect(root.exitCode, resultText(root)).toBe(0);
+    expect(["200", "401"], `dashboard root returned ${root.stdout.trim()}`).toContain(
+      root.stdout.trim(),
+    );
+
+    const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
+      artifactName: "phase-3-nemoclaw-status-device-auth-health",
       env: commandEnv(),
-      timeoutMs: 90_000,
-    },
-  );
-  const authenticatedRequests = inference.requests().slice(authenticatedRequestOffset);
-  const authenticatedArtifact = "phase-1-explicit-authenticated-inference-requests.json";
-  const authenticatedPhase = "onboard device-auth OpenClaw sandbox";
-  const authenticatedRequestEvidence = authenticatedRequests
-    .slice(0, 20)
-    .map(({ auth, method, model, path }) => ({ auth, method, model, path }));
-  await artifacts.writeJson(authenticatedArtifact, {
-    phase: authenticatedPhase,
-    requestCount: authenticatedRequests.length,
-    requests: authenticatedRequestEvidence,
-    truncated: authenticatedRequests.length > authenticatedRequestEvidence.length,
-  });
-  expect(
-    authenticatedProbe.exitCode,
-    `${authenticatedPhase}: explicit authenticated inference failed; see ${authenticatedArtifact}`,
-  ).toBe(0);
-  expect(
-    authenticatedRequests,
-    `${authenticatedPhase}: explicit verification probe did not reach the authenticated fixture; see ${authenticatedArtifact}`,
-  ).toContainEqual(
-    expect.objectContaining({
-      auth: "ok",
-      method: "POST",
-      model: INFERENCE_MODEL,
-      path: "/v1/chat/completions",
-    }),
-  );
+      timeoutMs: 120_000,
+    });
+    expect(status.exitCode, resultText(status)).toBe(0);
+    assertStatusNotOffline(resultText(status), "initial status");
+    expect(resultText(status)).toMatch(/running|online|healthy|OpenClaw|Ready/i);
 
-  await host.expectListed(SANDBOX_NAME, {
-    artifactName: "phase-1-nemoclaw-list-device-auth-health",
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
+    const hostHealth = await host.command(
+      "curl",
+      [
+        "-so",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        "5",
+        `http://127.0.0.1:${DASHBOARD_PORT}/health`,
+      ],
+      {
+        artifactName: "phase-4-host-health-code",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    await maybeWriteHostHealthExpectation(hostHealth, (codes, message, actual) =>
+      expect(codes, message).toContain(actual),
+    );
 
-  progress.phase("verify sandbox and forwarded dashboard health");
-  const health = await httpCodeFromSandbox(sandbox, "/health", "phase-2-sandbox-health-code");
-  expect(health.exitCode, resultText(health)).toBe(0);
-  expect(health.stdout.trim()).toBe("200");
+    progress.phase("recover stopped OpenClaw gateway");
+    await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
+      {
+        artifactName: "phase-5-kill-gateway-process",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
 
-  const root = await httpCodeFromSandbox(sandbox, "/", "phase-2-sandbox-root-code");
-  expect(root.exitCode, resultText(root)).toBe(0);
-  expect(["200", "401"], `dashboard root returned ${root.stdout.trim()}`).toContain(
-    root.stdout.trim(),
-  );
-
-  const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
-    artifactName: "phase-3-nemoclaw-status-device-auth-health",
-    env: commandEnv(),
-    timeoutMs: 120_000,
-  });
-  expect(status.exitCode, resultText(status)).toBe(0);
-  assertStatusNotOffline(resultText(status), "initial status");
-  expect(resultText(status)).toMatch(/running|online|healthy|OpenClaw|Ready/i);
-
-  const hostHealth = await host.command(
-    "curl",
-    [
-      "-so",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--max-time",
-      "5",
-      `http://127.0.0.1:${DASHBOARD_PORT}/health`,
-    ],
-    {
-      artifactName: "phase-4-host-health-code",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  await maybeWriteHostHealthExpectation(hostHealth, (codes, message, actual) =>
-    expect(codes, message).toContain(actual),
-  );
-
-  progress.phase("recover stopped OpenClaw gateway");
-  await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
-    {
-      artifactName: "phase-5-kill-gateway-process",
+    const recoveryStatus = await host.nemoclaw([SANDBOX_NAME, "status"], {
+      artifactName: "phase-5-nemoclaw-status-after-gateway-kill",
       env: commandEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  await new Promise((resolve) => setTimeout(resolve, 3_000));
-
-  const recoveryStatus = await host.nemoclaw([SANDBOX_NAME, "status"], {
-    artifactName: "phase-5-nemoclaw-status-after-gateway-kill",
-    env: commandEnv(),
-    timeoutMs: 120_000,
-  });
-  expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
-  assertStatusNotOffline(resultText(recoveryStatus), "recovery status");
-  await waitForRecoveryArtifact(artifacts, sandbox);
+      timeoutMs: 120_000,
+    });
+    expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
+    assertStatusNotOffline(resultText(recoveryStatus), "recovery status");
+    await waitForRecoveryArtifact(artifacts, sandbox);
   },
 );

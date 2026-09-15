@@ -272,7 +272,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   vi.spyOn(policy, "getGatewayPresets").mockReturnValue(
     options.gatewayPresets === undefined ? ["npm", "telegram"] : options.gatewayPresets,
   );
-  const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue(
+  const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue(
     options.versionCheck ?? {
       sandboxVersion: "0.1.0",
       expectedVersion: "0.2.0",

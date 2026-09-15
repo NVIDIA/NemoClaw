@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as registry from "../../state/registry";
-import type { SandboxForwardHealth } from "./forward-health";
+import type { SandboxForwardHealth } from "./forward-recovery";
 
 export type HermesDashboardRecoveryConfig = {
   publicPort: number;
@@ -31,17 +31,20 @@ export function getHermesDashboardRecoveryConfig(
   };
 }
 
-export function ensureHermesDashboardPortForwardIfEnabled(
+export async function ensureHermesDashboardPortForwardIfEnabled(
   sandboxName: string,
   deps: {
     getRecoveryConfig?: RecoveryConfigReader;
-    isPortForwardHealthy(sandboxName: string, port: number): SandboxForwardHealth;
-    ensurePortForward(sandboxName: string, port: number): boolean;
+    isPortForwardHealthy(
+      sandboxName: string,
+      port: number,
+    ): SandboxForwardHealth | Promise<SandboxForwardHealth>;
+    ensurePortForward(sandboxName: string, port: number): boolean | Promise<boolean>;
   },
-): boolean | null {
+): Promise<boolean | null> {
   const dashboard = (deps.getRecoveryConfig ?? getHermesDashboardRecoveryConfig)(sandboxName);
   if (dashboard === null) return null;
-  const forwardHealth = deps.isPortForwardHealthy(sandboxName, dashboard.publicPort);
+  const forwardHealth = await deps.isPortForwardHealthy(sandboxName, dashboard.publicPort);
   if (forwardHealth === true) return true;
   return deps.ensurePortForward(sandboxName, dashboard.publicPort);
 }
