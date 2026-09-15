@@ -23,6 +23,7 @@ tf-provider = { git = "https://github.com/aneoconsulting/tf-provider", rev = "d4
 tempfile = "3"
 serde-saphyr = "1.2"
 sha2 = "0.11"
+sha1 = "0.11"
 regex = "1"
 url = "2"
 ipnet = "2"

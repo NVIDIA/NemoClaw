@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod hub;
 #[cfg(test)]
 mod tests;
 
@@ -423,4 +424,23 @@ fn record(path: &Path, marker: &Path, want: &File) -> Result<VerifiedFile, Error
     };
     save_json(marker, &verified)?;
     Ok(verified)
+}
+
+/// Create only real directories under the owned storage root.
+pub fn directory(root: &Path, relative: &str) -> Result<PathBuf, Error> {
+    let manifest = Manifest {
+        repository: "internal/model".into(),
+        revision: "0".repeat(40),
+        files: vec![File {
+            name: format!("{relative}/marker"),
+            size: 1,
+            sha256: "0".repeat(64),
+        }],
+    };
+    manifest.validate()?;
+    let path = safe_path(root, &manifest.files[0].name, true)?;
+    Ok(path
+        .parent()
+        .ok_or(failure("invalid model directory"))?
+        .to_path_buf())
 }

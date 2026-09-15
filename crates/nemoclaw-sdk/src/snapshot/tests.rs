@@ -19,7 +19,7 @@ fn manifest(data: &[u8]) -> Manifest {
         }],
     }
 }
-async fn server(
+pub(super) async fn server(
     responses: Vec<String>,
 ) -> (Client, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
