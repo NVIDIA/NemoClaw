@@ -307,6 +307,22 @@ describe("validation reuse", () => {
     expect(options.execute).toHaveBeenCalledOnce();
   });
 
+  it("rehashes when only dependency change time differs (#11782)", () => {
+    const dependency = path.join(root, "node_modules/typescript/compiler.js");
+    writeFixture(root, "node_modules/typescript/compiler.js", "compiler bytes\n");
+    const options = check();
+    runCachedCommand(options);
+    const indexPath = path.join(root, ".git/nemoclaw-validation/file-digests-v1.json");
+    const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    const entry = index.entries.find(([file]: [string]) => file === fs.realpathSync(dependency))[1];
+    entry.identity.ctimeMs -= 1;
+    fs.writeFileSync(indexPath, JSON.stringify(index));
+    const observed = observeInputReads(dependency);
+    runCachedCommand(options);
+    expect(observed).toHaveBeenCalledOnce();
+    expect(options.execute).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["mode", (file: string) => fs.chmodSync(file, 0o600)],
     [
