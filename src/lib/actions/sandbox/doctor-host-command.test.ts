@@ -21,20 +21,28 @@ describe("captureHostCommand", () => {
 });
 
 describe("captureOpenShellHostCommand", () => {
-  it("resolves the admitted executable and forwards the lifecycle environment", () => {
+  it("resolves from the source environment without forwarding provider credentials", () => {
     const environment = {
-      ...process.env,
+      HOME: "/test-home",
+      PATH: "/test-bin",
       NEMOCLAW_OPENSHELL_BIN: process.execPath,
-      NEMOCLAW_LIFECYCLE_CAPTURE_PROBE: "captured",
+      NVIDIA_INFERENCE_API_KEY: "provider-secret",
+      XDG_CONFIG_HOME: "/test-home/.config",
     };
 
     expect(
       captureOpenShellHostCommand(
-        ["-e", "process.stdout.write(process.env.NEMOCLAW_LIFECYCLE_CAPTURE_PROBE ?? '')"],
+        [
+          "-e",
+          "process.stdout.write(JSON.stringify({home:process.env.HOME,path:process.env.PATH,config:process.env.XDG_CONFIG_HOME,provider:process.env.NVIDIA_INFERENCE_API_KEY,resolver:process.env.NEMOCLAW_OPENSHELL_BIN}))",
+        ],
         environment,
         5_000,
       ),
-    ).toMatchObject({ status: 0, output: "captured" });
+    ).toMatchObject({
+      status: 0,
+      output: '{"home":"/test-home","path":"/test-bin","config":"/test-home/.config"}',
+    });
   });
 
   it("fails closed when no absolute executable can be resolved", () => {

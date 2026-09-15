@@ -514,7 +514,7 @@ describe("Docker provider start with a running container", () => {
     expect(captureSandboxLifecycle).not.toHaveBeenCalled();
   });
 
-  it("keeps the GPU backup sibling exclusion for a Stopped phase", async () => {
+  it("starts a running Stopped sandbox even when a GPU backup sibling exists", async () => {
     const { captureSandboxLifecycle, provider } = startWithPhase("Stopped", {
       findLabeledSandboxContainers: () => [
         runningContainer,
@@ -525,7 +525,12 @@ describe("Docker provider start with a running container", () => {
     expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
       exitCode: 0,
     });
-    expect(captureSandboxLifecycle).not.toHaveBeenCalled();
+    expect(captureSandboxLifecycle).toHaveBeenCalledWith(
+      "start",
+      "alpha",
+      "nemoclaw",
+      expect.any(Object),
+    );
   });
 
   it("fails closed when OpenShell cannot start the Stopped sandbox", async () => {

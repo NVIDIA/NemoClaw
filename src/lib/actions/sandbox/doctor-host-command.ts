@@ -4,7 +4,10 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-import { resolveOpenshellBinaryOrNull } from "../../adapters/openshell/resolve-shared";
+import {
+  buildOpenShellSubprocessEnv,
+  resolveOpenshellBinaryOrNull,
+} from "../../adapters/openshell/resolve-shared";
 import { parseSandboxPhase, sandboxPhaseNeedsLifecycleStart } from "../../state/gateway";
 import { ROOT } from "../../state/paths";
 
@@ -62,7 +65,12 @@ export function captureOpenShellHostCommand(
     const error = new Error("OpenShell is unavailable");
     return { status: 1, output: error.message, error };
   }
-  const result = captureHostCommand(executable, args, timeout, environment);
+  const result = captureHostCommand(
+    executable,
+    args,
+    timeout,
+    buildOpenShellSubprocessEnv(environment),
+  );
   return {
     status: result.status,
     output: `${result.stdout}${result.stderr}`.trim(),

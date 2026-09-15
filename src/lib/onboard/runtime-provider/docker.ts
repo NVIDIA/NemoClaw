@@ -433,10 +433,8 @@ async function startDockerSandboxUnlocked(
       input.sandbox.gatewayName ?? "nemoclaw",
       input.environment,
     );
-  if (
-    (containerAtRest || stoppedPhaseWithRunningContainer) &&
-    !containers.some((container) => isGpuBackupSibling(container.name))
-  ) {
+  const hasGpuBackupSibling = containers.some((container) => isGpuBackupSibling(container.name));
+  if (stoppedPhaseWithRunningContainer || (containerAtRest && !hasGpuBackupSibling)) {
     if (stoppedPhaseWithRunningContainer) {
       input.log(
         `  Sandbox '${input.sandboxName}' is still stopped while its container runs; starting it through OpenShell.`,
