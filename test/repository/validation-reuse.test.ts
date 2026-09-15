@@ -58,6 +58,10 @@ describe("validation reuse", () => {
   it("runs the compiler when an input changes while its bytes are read", () => {
     const options = check();
     runCachedCommand(options);
+    // A cached digest is reused without reading, so change the recorded identity
+    // to require the reread this guarantee applies to.
+    const stale = new Date(Date.now() - 60_000);
+    fs.utimesSync(path.join(root, "src/example.ts"), stale, stale);
     const change = changeInputDuringRead();
     runCachedCommand(options);
     expect(change).toHaveBeenCalledOnce();
@@ -255,13 +259,51 @@ describe("validation reuse", () => {
     expect(options.execute).toHaveBeenCalledTimes(3);
   });
 
-  it("reruns when the canonical comparison ref changes", () => {
+  it("reuses a successful result when the canonical comparison ref changes", () => {
     const options = check();
     runCachedCommand(options);
     fixtureGit(root, "commit", "--allow-empty", "-m", "test: next");
     const next = fixtureGit(root, "rev-parse", "HEAD").trim();
     fixtureGit(root, "checkout", "--detach", "HEAD^");
     fixtureGit(root, "update-ref", "refs/remotes/origin/main", next);
+    runCachedCommand(options);
+    expect(options.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses a successful result after a new commit leaves the inputs identical", () => {
+    const options = check();
+    runCachedCommand(options);
+    fixtureGit(root, "commit", "--allow-empty", "-m", "test: next");
+    runCachedCommand(options);
+    expect(options.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses a recorded digest instead of rereading an unchanged dependency", () => {
+    const dependency = "node_modules/typescript/compiler.js";
+    writeFixture(root, dependency, "module.exports = {};\n");
+    const options = check();
+    runCachedCommand(options);
+    const observed = observeInputReads(path.join(root, dependency));
+    runCachedCommand(options);
+    expect(observed).not.toHaveBeenCalled();
+    expect(options.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("rereads an input whose timestamps changed, then reuses its identical bytes", () => {
+    const options = check();
+    runCachedCommand(options);
+    const file = path.join(root, "src/example.ts");
+    fs.utimesSync(file, new Date(0), new Date(0));
+    const observed = observeInputReads(file);
+    runCachedCommand(options);
+    expect(observed).toHaveBeenCalledOnce();
+    expect(options.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("reruns when a tracked input keeps its bytes but changes mode", () => {
+    const options = check();
+    runCachedCommand(options);
+    fs.chmodSync(path.join(root, "src/example.ts"), 0o600);
     runCachedCommand(options);
     expect(options.execute).toHaveBeenCalledTimes(2);
   });
