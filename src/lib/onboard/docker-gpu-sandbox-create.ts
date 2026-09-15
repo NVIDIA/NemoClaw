@@ -299,13 +299,12 @@ export function createDockerGpuSandboxCreatePatch(
 
   const reportPatchErrorAndExit = async (): Promise<void> => {
     if (!patchError) return;
+    const failure = patchError instanceof Error ? patchError : new Error(String(patchError));
     const rollbackError = await rollbackAfterFailure();
     if (rollbackError) {
-      patchError = new Error(
-        `${patchError instanceof Error ? patchError.message : String(patchError)}; managed startup rollback failed: ${rollbackError.message}`,
-      );
+      attachRollbackError(failure, rollbackError);
     }
-    onPatchFailureExit(options.sandboxName, patchError, {
+    onPatchFailureExit(options.sandboxName, failure, {
       runCaptureOpenshell: options.deps.runCaptureOpenshell,
       dockerCapture: options.deps.dockerCapture,
       additionalSummaryLines: routeAdapter.additionalSummaryLines,
