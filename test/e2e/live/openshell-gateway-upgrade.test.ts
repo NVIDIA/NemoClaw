@@ -579,17 +579,10 @@ runLinuxOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: preserves a usable sandbox and workspace state (#10517)",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "clear the prior gateway and start compatible inference",
-        "install pinned legacy NemoClaw and its sandbox",
-        "verify the legacy agent and write workspace state",
-        "upgrade to the current OpenShell gateway",
-        "verify the upgraded agent and preserved workspace state",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
+    progress.phase("clear the prior gateway and start compatible inference");
+
     await artifacts.writeJson("live-upgrade-target.json", {
       id: "openshell-gateway-upgrade",
       runner: "vitest",

@@ -71,17 +71,10 @@ test(
   "installs managed llama.cpp, routes a real agent turn, and destroys its runtime (#8144, #9888)",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "validate exact source and NVIDIA GPU host",
-        "run the declarative managed llama.cpp installer",
-        "verify full GPU offload",
-        "verify authenticated host and sandbox inference",
-        "verify OpenClaw agent inference and owned cleanup",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
+    progress.phase("validate exact source and NVIDIA GPU host");
+
     await artifacts.target.declare({
       id: TARGET_ID,
       boundary:

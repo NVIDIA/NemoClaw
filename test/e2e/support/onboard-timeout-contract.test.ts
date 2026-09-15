@@ -24,7 +24,7 @@ import {
 import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
 
@@ -193,12 +193,12 @@ describe("onboard final-handoff timeout contract", () => {
 
   it("rejects a live workflow that ignores its typed job timeout", () => {
     const workflow = readWorkflow() as {
-      jobs: { live: { "timeout-minutes"?: unknown } };
+      jobs: { live: { with: { timeout_minutes?: unknown } } };
     };
     const error = "live job timeout must come from the typed target matrix";
 
     expect(validateE2eWorkflow(workflow)).not.toContain(error);
-    workflow.jobs.live["timeout-minutes"] = 45;
+    workflow.jobs.live.with.timeout_minutes = 45;
     expect(validateE2eWorkflow(workflow)).toContain(error);
   });
 

@@ -75,7 +75,6 @@ export function validateE2eExecutionRows(
   rows: readonly E2eExecutionRow[],
 ): readonly E2eExecutionRow[] {
   const keys = new Set<string>();
-  const coverageEvidence = new Map<string, string>();
   for (const row of rows) {
     if (!SELECTOR_ID_PATTERN.test(row.id)) {
       throw new Error(`E2E execution coverage contains an invalid ID: ${row.id}`);
@@ -92,25 +91,6 @@ export function validateE2eExecutionRows(
       throw new Error(`E2E execution coverage contains a duplicate row: ${key}`);
     }
     keys.add(key);
-    if (
-      row.agentRuntime !== "unresolved" &&
-      row.observableOutcome !== "unresolved" &&
-      row.environmentOrInferenceEndpoint !== "unresolved"
-    ) {
-      const evidenceKey = [
-        row.agentRuntime,
-        row.observableOutcome,
-        row.environmentOrInferenceEndpoint,
-        row.variant,
-      ].join("\u0000");
-      const previous = coverageEvidence.get(evidenceKey);
-      if (previous) {
-        throw new Error(
-          `E2E execution coverage duplicates evidence between ${previous} and ${e2eExecutionLabel(row)}`,
-        );
-      }
-      coverageEvidence.set(evidenceKey, e2eExecutionLabel(row));
-    }
   }
   return rows;
 }

@@ -19,16 +19,16 @@ const progressInstances: TestProgress[] = [];
 
 function trackedProgress(
   scenario: string,
-  phasePlan: readonly string[],
+  initialPhase: string,
   options: TestProgressOptions = {},
 ): TestProgress {
-  const progress = startTestProgress(scenario, phasePlan, options);
+  const progress = startTestProgress(scenario, initialPhase, options);
   progressInstances.push(progress);
   return progress;
 }
 
 function observedProgress(): TestProgress {
-  return trackedProgress("observed child support", ["run observed child", "verify observation"], {
+  return trackedProgress("observed child support", "run observed child", {
     logLine: () => undefined,
   });
 }
@@ -43,7 +43,7 @@ function waitForClose(
 }
 
 function lifecycleLines(lines: readonly string[]): string[] {
-  return lines.filter((line) => line.includes("child lifecycle"));
+  return lines.map((line) => JSON.parse(line)).filter((entry) => entry.event === "child");
 }
 
 describe("observed E2E child process", () => {
@@ -56,22 +56,18 @@ describe("observed E2E child process", () => {
     const lines: string[] = [];
     const timers: Array<() => void> = [];
     let clockMs = 0;
-    const progress = trackedProgress(
-      "observed child support",
-      ["run observed child", "verify observation"],
-      {
-        clearTimer: () => undefined,
-        logLine: (line) => lines.push(line),
-        now: () => clockMs,
-        setTimer: (callback, delayMs) => {
-          timers.push(() => {
-            clockMs += delayMs;
-            callback();
-          });
-          return {};
-        },
+    const progress = trackedProgress("observed child support", "run observed child", {
+      clearTimer: () => undefined,
+      logLine: (line) => lines.push(line),
+      now: () => clockMs,
+      setTimer: (callback, delayMs) => {
+        timers.push(() => {
+          clockMs += delayMs;
+          callback();
+        });
+        return {};
       },
-    );
+    });
     const child = spawnObservedChild(
       process.execPath,
       ["-e", `process.stdout.write(${JSON.stringify(secret)}); process.stderr.write("err")`],
@@ -84,7 +80,7 @@ describe("observed E2E child process", () => {
 
     await expect(waitForClose(child)).resolves.toEqual({ code: 0, signal: null });
     timers[0]?.();
-    expect(lines.at(-1)).toContain("no active command");
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({ event: "stall", activeCommands: [] });
     progress.stop();
     const phase = progress.summary().phases[0];
     expect(phase?.outputEvents).toBe(2);
@@ -97,13 +93,9 @@ describe("observed E2E child process", () => {
     ["exited-nonzero", "process.exit(7)"],
   ] as const)("classifies a child that terminates as %s", async (outcome, script) => {
     const lines: string[] = [];
-    const progress = trackedProgress(
-      "observed child classification",
-      ["run classified child", "verify child classification"],
-      {
-        logLine: (line) => lines.push(line),
-      },
-    );
+    const progress = trackedProgress("observed child classification", "run classified child", {
+      logLine: (line) => lines.push(line),
+    });
     const child = spawnObservedChild(process.execPath, ["-e", script], {
       activityLabel: "command: classified-child",
       progress,
@@ -112,21 +104,17 @@ describe("observed E2E child process", () => {
 
     await waitForClose(child);
     expect(lifecycleLines(lines)).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining(`child lifecycle 1: ${outcome}`),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome }),
     ]);
   });
 
   test("keeps a post-launch process error distinct from a spawn failure", async () => {
     const secret = "POST_LAUNCH_ERROR_SECRET";
     const lines: string[] = [];
-    const progress = trackedProgress(
-      "observed child post-launch error",
-      ["start launched child", "verify launched child outcome"],
-      {
-        logLine: (line) => lines.push(line),
-      },
-    );
+    const progress = trackedProgress("observed child post-launch error", "start launched child", {
+      logLine: (line) => lines.push(line),
+    });
     const child = spawnObservedChild(
       process.execPath,
       ["-e", "setTimeout(() => process.exit(0), 100)"],
@@ -142,8 +130,8 @@ describe("observed E2E child process", () => {
     await waitForClose(child);
     const checkpoints = lifecycleLines(lines);
     expect(checkpoints).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining("child lifecycle 1: exited-zero"),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome: "exited-zero" }),
     ]);
     expect(checkpoints.join("\n")).not.toContain(secret);
     expect(checkpoints.join("\n")).not.toContain("spawn-failed");
@@ -153,7 +141,7 @@ describe("observed E2E child process", () => {
     const lines: string[] = [];
     const progress = trackedProgress(
       "observed child signal classification",
-      ["start signal-bound child", "verify signal classification"],
+      "start signal-bound child",
       {
         logLine: (line) => lines.push(line),
       },
@@ -173,21 +161,17 @@ describe("observed E2E child process", () => {
     await waitForClose(child);
     const checkpoints = lifecycleLines(lines);
     expect(checkpoints).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining("child lifecycle 1: signaled"),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome: "signaled" }),
     ]);
     expect(checkpoints.join("\n")).not.toContain("SIGTERM");
   });
 
   test("records one launch failure only after the failed child closes", async () => {
     const lines: string[] = [];
-    const progress = trackedProgress(
-      "observed child launch failure",
-      ["start unavailable child", "verify launch failure"],
-      {
-        logLine: (line) => lines.push(line),
-      },
-    );
+    const progress = trackedProgress("observed child launch failure", "start unavailable child", {
+      logLine: (line) => lines.push(line),
+    });
     const child = spawnObservedChild("nemoclaw-observed-child-missing-binary", [], {
       activityLabel: "command: unavailable-child",
       progress,
@@ -198,11 +182,13 @@ describe("observed E2E child process", () => {
       child.once("close", () => resolve());
     });
 
-    expect(lifecycleLines(lines)).toEqual([expect.stringContaining("child lifecycle 1: started")]);
+    expect(lifecycleLines(lines)).toEqual([
+      expect.objectContaining({ child: 1, outcome: "started" }),
+    ]);
     await closed;
     expect(lifecycleLines(lines)).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining("child lifecycle 1: spawn-failed"),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome: "spawn-failed" }),
     ]);
   });
 
@@ -213,7 +199,7 @@ describe("observed E2E child process", () => {
     try {
       const progress = trackedProgress(
         "observed child content boundary",
-        ["run secret-bearing child", "verify content-free lifecycle"],
+        "run secret-bearing child",
         {
           logLine: (line) => lines.push(line),
         },
@@ -245,10 +231,10 @@ describe("observed E2E child process", () => {
       const checkpoints = lifecycleLines(lines);
       expect(checkpoints).toHaveLength(4);
       expect(checkpoints).toEqual([
-        expect.stringContaining("child lifecycle 1: started"),
-        expect.stringContaining("child lifecycle 1: closed-unknown"),
-        expect.stringContaining("child lifecycle 2: started"),
-        expect.stringContaining("child lifecycle 2: exited-zero"),
+        expect.objectContaining({ child: 1, outcome: "started" }),
+        expect.objectContaining({ child: 1, outcome: "closed-unknown" }),
+        expect.objectContaining({ child: 2, outcome: "started" }),
+        expect.objectContaining({ child: 2, outcome: "exited-zero" }),
       ]);
       expect(checkpoints.join("\n")).not.toContain(secret);
       expect(checkpoints.join("\n")).not.toMatch(/\bpid\b|command:/iu);
@@ -261,7 +247,7 @@ describe("observed E2E child process", () => {
     const lines: string[] = [];
     const progress = trackedProgress(
       "observed child interrupted runner",
-      ["start interrupted child", "verify interruption evidence"],
+      "start interrupted child",
       {
         logLine: (line) => lines.push(line),
       },
@@ -270,13 +256,15 @@ describe("observed E2E child process", () => {
     progress.beginChildLifecycle();
     progress.stop("failed");
 
-    expect(lifecycleLines(lines)).toEqual([expect.stringContaining("child lifecycle 1: started")]);
+    expect(lifecycleLines(lines)).toEqual([
+      expect.objectContaining({ child: 1, outcome: "started" }),
+    ]);
   });
 
   test("keeps process execution independent from rejected lifecycle logging", async () => {
     const progress = trackedProgress(
       "observed child logging failure",
-      ["run child with failed logger", "verify child completion"],
+      "run child with failed logger",
       {
         logLine: () => {
           throw new Error("diagnostic logger failed");
@@ -306,22 +294,18 @@ describe("observed E2E child process", () => {
     const lines: string[] = [];
     const timers: Array<() => void> = [];
     let clockMs = 0;
-    const progress = trackedProgress(
-      "observed child support",
-      ["run observed child", "verify observation"],
-      {
-        clearTimer: () => undefined,
-        logLine: (line) => lines.push(line),
-        now: () => clockMs,
-        setTimer: (callback, delayMs) => {
-          timers.push(() => {
-            clockMs += delayMs;
-            callback();
-          });
-          return {};
-        },
+    const progress = trackedProgress("observed child support", "run observed child", {
+      clearTimer: () => undefined,
+      logLine: (line) => lines.push(line),
+      now: () => clockMs,
+      setTimer: (callback, delayMs) => {
+        timers.push(() => {
+          clockMs += delayMs;
+          callback();
+        });
+        return {};
       },
-    );
+    });
     expect(() =>
       spawnObservedChild("bad\0command", [], {
         activityLabel: "command: invalid-spawn",
@@ -330,10 +314,10 @@ describe("observed E2E child process", () => {
       }),
     ).toThrow();
     timers[0]?.();
-    expect(lines.at(-1)).toContain("no active command");
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({ event: "stall", activeCommands: [] });
     expect(lifecycleLines(lines)).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining("child lifecycle 1: spawn-failed"),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome: "spawn-failed" }),
     ]);
   });
 

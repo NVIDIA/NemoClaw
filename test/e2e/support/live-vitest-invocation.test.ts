@@ -224,7 +224,9 @@ describe("runLiveVitestCommand (#6961)", () => {
       return result;
     };
 
-    expect(runLiveVitestCommand(validArgs, spawn)).toBe(expected);
+    const env = { PATH: "/fixture/bin", NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "0" };
+    expect(runLiveVitestCommand(validArgs, spawn, env)).toBe(expected);
+    expect(env.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("0");
     expect(spawned).toEqual([
       "npx",
       [
@@ -237,7 +239,7 @@ describe("runLiveVitestCommand (#6961)", () => {
         "--reporter=default",
         `--reporter=${RISK_SIGNAL_REPORTER}`,
       ],
-      { stdio: "inherit" },
+      { stdio: "inherit", env: { PATH: "/fixture/bin", NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1" } },
     ]);
   });
 

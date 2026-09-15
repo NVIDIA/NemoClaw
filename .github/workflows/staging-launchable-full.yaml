@@ -92,6 +92,7 @@ jobs:
       - name: Verify staging Launchable remote execution readiness
         timeout-minutes: 75
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
@@ -100,18 +101,19 @@ jobs:
           NEMOCLAW_IMAGE_DISPATCH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
           NEMOCLAW_RUN_LIVE_E2E: "1"
           PATH: /usr/local/bin:/usr/bin:/bin
-        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/issue-9880-staging-launchable.test.ts --silent=false --reporter=default
+        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/issue-9880-staging-launchable.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Verify workflow-owned workspace cleanup
         if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
         timeout-minutes: 15
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
           HOME: ${{ runner.temp }}/staging-launchable-full-home
           NEMOCLAW_RUN_LIVE_E2E: "1"
           PATH: /usr/local/bin:/usr/bin:/bin
-        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/brev-workspace-cleanup.test.ts --silent=false --reporter=default
+        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/brev-workspace-cleanup.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Remove Brev credentials
         if: always()

@@ -39,16 +39,10 @@ test(
   "device auth health probes treat 401 as live instead of offline (#2342)",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "start authenticated inference fixture",
-        "onboard device-auth OpenClaw sandbox",
-        "verify sandbox and forwarded dashboard health",
-        "recover stopped OpenClaw gateway",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("start authenticated inference fixture");
+
     const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
     // The sandbox cannot reach runner loopback, so expose the fixture through
     // OpenShell's host bridge while keeping readiness checks local to the runner.

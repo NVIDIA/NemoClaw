@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { isLifecycleProfile } from "../fixtures/phases/lifecycle-profile.ts";
 
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
@@ -19,21 +20,28 @@ const SUPPORTED_ENVIRONMENT: TargetEnvironment = {
 
 function syntheticTarget(environment: TargetEnvironment = SUPPORTED_ENVIRONMENT): TargetDefinition {
   return target("synthetic-target")
-    .manifest("synthetic/manifest.yaml")
     .environment(environment)
     .expectedState("synthetic-ready")
-    .suites(["synthetic-smoke", "synthetic-security"])
     .build();
 }
 
 describe("live target registry discovery support", () => {
-  it("accepts a fully wired synthetic target and forwards its pending suites", () => {
+  it.each(["post-reboot-recovery", "dcode-rebuild-invalid-credential"])(
+    "accepts the lifecycle fixture profile %s during target discovery",
+    (lifecycle) => {
+      expect(isLifecycleProfile(lifecycle)).toBe(true);
+      expect(
+        liveTargetSupport(syntheticTarget({ ...SUPPORTED_ENVIRONMENT, lifecycle })).supported,
+      ).toBe(true);
+    },
+  );
+
+  it("accepts a fully wired synthetic target", () => {
     const registered = syntheticTarget();
 
     expect(liveTargetSupport(registered)).toEqual({
       supported: true,
       reasons: [],
-      pendingRuntimeSuites: registered.suiteIds,
     });
   });
 
@@ -81,18 +89,11 @@ describe("live target registry discovery support", () => {
     });
   });
 
-  it("reports a missing-environment declaration without resolving a runner (#9167)", () => {
+  it("rejects a missing-environment declaration before reporting execution coverage", () => {
     const declaration = target("synthetic-no-environment").expectedState("synthetic-ready").build();
-
-    expect(liveTargetInventoryEntry(declaration)).toEqual({
-      id: declaration.id,
-      agentRuntime: "unresolved",
-      observableOutcome: "unresolved",
-      environmentOrInferenceEndpoint: "unresolved",
-      unresolvedReason: "This typed registry declaration has no executable owner",
-      supported: false,
-      supportReasons: ["missing environment"],
-    });
+    expect(() => liveTargetInventoryEntry(declaration)).toThrow(
+      "E2E target synthetic-no-environment is not executable: missing environment",
+    );
   });
 
   it("compiles a run plan from synthetic target behavior", () => {
@@ -100,9 +101,7 @@ describe("live target registry discovery support", () => {
 
     expect(buildLiveTargetRunPlan(registered)).toEqual({
       targetId: registered.id,
-      manifestPath: registered.manifestPath,
       expectedStateId: registered.expectedStateId,
-      suiteIds: registered.suiteIds,
       phases: ["environment", "onboarding", "state-validation"],
     });
     const deepAgents = { ...SUPPORTED_ENVIRONMENT, onboarding: "cloud-langchain-deepagents-code" };

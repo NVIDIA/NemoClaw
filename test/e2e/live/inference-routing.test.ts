@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN } from "../../../src/lib/inference/https-pin-runtime.ts";
+import { REGISTRY_FILE, type SandboxEntry } from "../../../src/lib/state/registry.ts";
 import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
@@ -39,6 +41,7 @@ import {
   runNemoclawCli,
   runRawCommand,
   TRANSPORT_CLASSIFICATION_PATTERN,
+  writeFakeOpenShellForBlueprintFailClosed,
 } from "./inference-routing-helpers.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server.ts";
@@ -50,16 +53,10 @@ test(
   "TC-INF-06 invalid API key fails with credential classification and cleanup",
   {
     timeout: 5 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm live inference prerequisites",
-        "clear the invalid-key sandbox",
-        "attempt onboard with an invalid NVIDIA credential",
-        "confirm credential failure and no sandbox residue",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm live inference prerequisites");
+
     await requireLivePrerequisites(host, runtimeProvider);
     const sandboxName = inferenceSandboxName("e2e-badkey");
     cleanup.add(`remove inference-routing invalid-key residue for ${sandboxName}`, () =>
@@ -102,16 +99,10 @@ test(
   "TC-INF-07 unreachable endpoint fails with transport classification and cleanup",
   {
     timeout: 5 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm live inference prerequisites",
-        "clear the unreachable-endpoint sandbox",
-        "attempt onboard against the unreachable endpoint",
-        "confirm transport failure and no sandbox residue",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm live inference prerequisites");
+
     await requireLivePrerequisites(host, runtimeProvider);
     const sandboxName = inferenceSandboxName("e2e-unreach");
     cleanup.add(`remove inference-routing unreachable residue for ${sandboxName}`, () =>
@@ -153,6 +144,98 @@ test(
     expect(TRANSPORT_CLASSIFICATION_PATTERN.test(raw), redacted).toBe(true);
     expect(hasRawNodeStackTrace(raw), redacted).toBe(false);
     await expectNoActiveSandbox(host, sandboxName);
+  },
+);
+
+test(
+  "TC-INF-10 DNS-backed HTTPS blueprint endpoint fails closed before OpenShell runtime handoff",
+  {
+    timeout: 5 * 60_000,
+  },
+  async ({ artifacts, cleanup, progress }) => {
+    progress.phase("prepare the DNS-backed endpoint blueprint");
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-https-dns-fail-closed-"));
+    const workdir = path.join(root, "blueprint");
+    const fakeBinDir = path.join(root, "bin");
+    const home = path.join(root, "home");
+    fs.mkdirSync(workdir, { recursive: true });
+    fs.mkdirSync(fakeBinDir, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    cleanup.add(`remove HTTPS DNS fail-closed temp root ${root}`, () => {
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+    const commandLogPath = writeFakeOpenShellForBlueprintFailClosed(fakeBinDir);
+    fs.writeFileSync(
+      path.join(workdir, "blueprint.yaml"),
+      [
+        'version: "1.0"',
+        "components:",
+        "  sandbox:",
+        "    image: openclaw",
+        "    name: e2e-https-dns-fail-closed",
+        "  inference:",
+        "    profiles:",
+        "      default:",
+        "        provider_type: openai",
+        "        provider_name: default",
+        "        endpoint: https://rebinding.example.test/v1",
+        "        model: e2e-model",
+        "        credential_env: E2E_API_KEY",
+        "",
+      ].join("\n"),
+    );
+    await artifacts.target.declare({
+      id: "https-dns-backed-endpoint-fail-closed",
+      issue: 4684,
+      contract: [
+        "DNS-backed HTTPS endpoint validation fails closed before handing config to OpenShell",
+        "OpenShell sandbox/provider commands are not invoked for unsupported DNS-backed HTTPS endpoints",
+        "The real runtime namespace is not given a host-loopback pin proxy URL as a partial fix",
+      ],
+    });
+    const runnerScript = `
+import dns from "node:dns";
+const originalLookup = dns.promises.lookup;
+dns.promises.lookup = ((hostname, options) => hostname === "rebinding.example.test"
+  ? Promise.resolve([{ address: "93.184.216.34", family: 4 }])
+  : originalLookup.call(dns.promises, hostname, options));
+const { main } = await import(${JSON.stringify(path.join(REPO_ROOT, "nemoclaw/src/blueprint/runner.ts"))});
+await main(["apply"]);
+`;
+
+    progress.phase("apply the blueprint with controlled DNS resolution");
+    const result = await runRawCommand(
+      process.execPath,
+      [
+        path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs"),
+        "--input-type=module",
+        "--eval",
+        runnerScript,
+      ],
+      {
+        artifactName: "tc-inf-10-blueprint-https-dns-fail-closed",
+        artifacts,
+        cwd: workdir,
+        env: {
+          HOME: home,
+          PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+          E2E_API_KEY: "e2e-fake-key",
+        },
+        progress,
+        redactionValues: ["e2e-fake-key"],
+        timeoutMs: 60_000,
+      },
+    );
+    const raw = resultText(result);
+    const openshellLog = fs.existsSync(commandLogPath)
+      ? fs.readFileSync(commandLogPath, "utf8")
+      : "";
+    await artifacts.writeText("tc-inf-10-openshell-commands.jsonl", openshellLog);
+    progress.phase("confirm rejection before OpenShell handoff");
+    expectOnboardFailure(result, "TC-INF-10 DNS-backed HTTPS fail-closed blueprint apply");
+    expect(raw).toMatch(/DNS-backed HTTPS endpoint/);
+    expect(openshellLog).toBe("");
   },
 );
 
@@ -219,19 +302,6 @@ type RuntimeIdentityE2EContext = Pick<
 
 const RUNTIME_IDENTITY_E2E_OPTIONS = {
   timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "confirm live runtime identity prerequisites",
-      "onboard a real OpenShell sandbox",
-      "start the public OAuth issuer and protected resource",
-      "apply and attach the runtime identity through OpenShell",
-      "prove inference remains live after identity attachment",
-      "call the protected resource with the injected bearer",
-      "reject unreviewed credential delivery before bearer substitution",
-      "rotate the credential behind its placeholder",
-      "verify refused unsafe rollback preserves live resources",
-    ],
-  },
 } as const;
 
 async function runRuntimeIdentityE2EScenario(
@@ -496,18 +566,51 @@ async function runRuntimeIdentityE2EScenario(
     id: scenario.targetId,
     issue: 6871,
     contract: [
+      "plan exposes only the provider-neutral, non-secret identity binding",
       "the blueprint runner imports the profile, creates and attaches the provider through real OpenShell",
       "apply preserves the already-active provider and model route before attaching identity",
       "OpenShell exchanges the refresh token at a public HTTPS OAuth endpoint",
       `credential delivery is restricted to GET ${scenario.reviewedResourcePath}`,
       "a sandbox request carries only an opaque placeholder and the protected resource receives the minted bearer",
-      "credential rotation updates the bearer resolved from the existing placeholder",
-      "apply output contains no OAuth secret material",
-      "unsafe rollback preserves the reused sandbox and provider",
+      "a second refresh uses the rotated refresh token, and a later child launch receives a new placeholder whose request carries the new bearer",
+      "status, persisted state, command artifacts, and request ledgers contain no OAuth secret material",
+      "rollback detaches and deletes the owned provider while preserving the reused sandbox",
     ],
     openshellBoundary: "real gateway, provider refresh, attachment, sandbox exec, L7 injection",
     oauthBoundary: "public DNS and publicly trusted TLS through trycloudflare.com",
   });
+  progress.phase("plan the non-secret runtime identity reference");
+  const plan = await runRawCommand(
+    process.execPath,
+    [
+      tsxPath,
+      "--input-type=module",
+      "--eval",
+      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["plan"]);`,
+    ],
+    {
+      artifactName: `${artifactPrefix}-runtime-identity-plan`,
+      artifacts,
+      cwd: workdir,
+      env: runnerEnv,
+      progress,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  const planText = resultText(plan);
+  expect(plan.exitCode, planText).toBe(0);
+  expect(planText).toContain(`"provider_type": "${providerType}"`);
+  expect(planText).toContain(`"provider_name": "${providerName}"`);
+  expect(planText).toContain(`"credential_key": "${credentialKey}"`);
+  for (const forbidden of [
+    scenario.clientIdEnvironmentName,
+    scenario.refreshTokenEnvironmentName,
+    scenario.clientSecretEnvironmentName,
+    ...redactionValues,
+  ]) {
+    expect(planText).not.toContain(forbidden);
+  }
   progress.phase("apply and attach the runtime identity through OpenShell");
   const apply = await runRawCommand(
     process.execPath,
@@ -530,8 +633,61 @@ async function runRuntimeIdentityE2EScenario(
   const applyText = resultText(apply);
   expect(apply.exitCode, applyText).toBe(0);
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
+  const attachedProviders = await sandbox.openshell(["sandbox", "provider", "list", sandboxName], {
+    artifactName: `${artifactPrefix}-attached-providers`,
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(attachedProviders.exitCode, resultText(attachedProviders)).toBe(0);
+  expect(resultText(attachedProviders)).toContain(providerName);
+  expect(oauth.tokenRequests()).toEqual([
+    {
+      method: "POST",
+      path: scenario.tokenPath,
+      grantTypeOk: true,
+      clientIdOk: true,
+      refreshTokenOk: true,
+      clientSecretOk: true,
+      issuedVersion: 1,
+    },
+  ]);
   const runId = /^RUN_ID:(\S+)$/m.exec(apply.stdout)?.[1];
   expect(runId).toMatch(/^nc-[A-Za-z0-9-]+$/);
+  const stateDir = path.join(os.homedir(), ".nemoclaw", "state", "runs", runId!);
+  const persistedPlan = fs.readFileSync(path.join(stateDir, "plan.json"), "utf8");
+  const parsedPersistedPlan = JSON.parse(persistedPlan) as {
+    inference_provider_created_by_apply?: boolean;
+    identity?: Record<string, unknown>;
+  };
+  expect(parsedPersistedPlan.identity).toMatchObject({
+    provider_type: providerType,
+    provider_name: providerName,
+    credential_key: credentialKey,
+    provider_created: true,
+    attachment_created: true,
+  });
+  expect(parsedPersistedPlan).toMatchObject({
+    sandbox_created_by_apply: false,
+    inference_provider_created_by_apply: false,
+  });
+  for (const forbidden of [
+    scenario.clientIdEnvironmentName,
+    scenario.refreshTokenEnvironmentName,
+    scenario.clientSecretEnvironmentName,
+    ...redactionValues,
+  ]) {
+    expect(persistedPlan).not.toContain(forbidden);
+  }
+  const refreshStatus = await sandbox.openshell(
+    ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
+    {
+      artifactName: `${artifactPrefix}-provider-refresh-status-v1`,
+      env: openshellEnv,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(refreshStatus.exitCode, resultText(refreshStatus)).toBe(0);
+  expect(resultText(refreshStatus)).toMatch(/refreshed/i);
   progress.phase("prove inference remains live after identity attachment");
   const inferenceRequestOffset = inference.requests().length;
   await expectOpenAiChatThroughSandbox(
@@ -541,7 +697,15 @@ async function runRuntimeIdentityE2EScenario(
     [inferenceKey],
     `${artifactPrefix}-inference-after-identity-attach`,
   );
-  expect(inference.requests().length).toBeGreaterThan(inferenceRequestOffset);
+  expect(inference.requests().slice(inferenceRequestOffset)).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      hostHeader: "host.openshell.internal:8000",
+      method: "POST",
+      model,
+      path: "/v1/chat/completions",
+    }),
+  );
   progress.phase("call the protected resource with the injected bearer");
   let placeholder = "";
   let placeholderProbeAttempt = 0;
@@ -606,6 +770,14 @@ async function runRuntimeIdentityE2EScenario(
       });
   };
   await expectProtectedResourceVersion(placeholder, 1, `${artifactPrefix}-protected-resource-v1`);
+  expect(oauth.resourceRequests()).toEqual([
+    {
+      method: "GET",
+      path: scenario.resourcePath,
+      auth: "ok",
+      accessTokenVersion: 1,
+    },
+  ]);
   progress.phase("reject unreviewed credential delivery before bearer substitution");
   const admittedRequestCount = oauth.resourceRequests().length;
   const deniedResource = await sandbox.exec(
@@ -627,7 +799,7 @@ async function runRuntimeIdentityE2EScenario(
   );
   expect(deniedResource.exitCode, resultText(deniedResource)).not.toBe(0);
   expect(oauth.resourceRequests()).toHaveLength(admittedRequestCount);
-  progress.phase("rotate the credential behind its placeholder");
+  progress.phase("rotate the credential and resolve its stable placeholder");
   const rotate = await sandbox.openshell(
     ["provider", "refresh", "rotate", providerName, "--credential-key", credentialKey],
     {
@@ -637,15 +809,73 @@ async function runRuntimeIdentityE2EScenario(
     },
   );
   expect(rotate.exitCode, resultText(rotate)).toBe(0);
+  expect(oauth.tokenRequests()).toHaveLength(2);
+  expect(oauth.tokenRequests()[1]).toEqual({
+    method: "POST",
+    path: scenario.tokenPath,
+    grantTypeOk: true,
+    clientIdOk: true,
+    refreshTokenOk: true,
+    clientSecretOk: true,
+    issuedVersion: 2,
+  });
+  const placeholderAfter = await sandbox.exec(sandboxName, ["/usr/bin/printenv", credentialKey], {
+    artifactName: `${artifactPrefix}-placeholder-after-rotation`,
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(placeholderAfter.exitCode, resultText(placeholderAfter)).toBe(0);
+  const placeholderAfterRotation = placeholderAfter.stdout.trim();
+  // OpenShell keeps refresh-managed handles stable while endpoint authorization remains unchanged.
+  expect(placeholderAfterRotation).toBe(placeholder);
   await expectProtectedResourceVersion(placeholder, 2, `${artifactPrefix}-protected-resource-v2`);
-  progress.phase("verify refused unsafe rollback preserves live resources");
+  const rotationRequests = oauth.resourceRequests().slice(admittedRequestCount);
+  // The proxy can retain version 1 until its refresh poll observes version 2.
+  for (const request of rotationRequests.slice(0, -1)) {
+    expect(request).toEqual({
+      method: "GET",
+      path: scenario.resourcePath,
+      auth: "invalid",
+      accessTokenVersion: 1,
+    });
+  }
+  expect(rotationRequests.at(-1)).toEqual({
+    method: "GET",
+    path: scenario.resourcePath,
+    auth: "ok",
+    accessTokenVersion: 2,
+  });
+  progress.phase("verify secret-safe status and refused unsafe rollback");
+  const status = await runRawCommand(
+    process.execPath,
+    [
+      tsxPath,
+      "--input-type=module",
+      "--eval",
+      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["status", "--run-id", ${JSON.stringify(runId)}]);`,
+    ],
+    {
+      artifactName: `${artifactPrefix}-runtime-identity-status`,
+      artifacts,
+      cwd: workdir,
+      env: runnerEnv,
+      progress,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  const statusText = resultText(status);
+  expect(status.exitCode, statusText).toBe(0);
+  expect(statusText).toContain(`"run_id": "${runId}"`);
+  expect(statusText).toContain(`"provider_name": "${providerName}"`);
+  for (const secret of redactionValues) expect(statusText).not.toContain(secret);
   const rollback = await runRawCommand(
     process.execPath,
     [
       tsxPath,
       "--input-type=module",
       "--eval",
-      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["rollback", "--run-id", ${JSON.stringify(runId!)}]);`,
+      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["rollback", "--run-id", ${JSON.stringify(runId)}]);`,
     ],
     {
       artifactName: `${artifactPrefix}-runtime-identity-rollback`,
@@ -658,6 +888,9 @@ async function runRuntimeIdentityE2EScenario(
     },
   );
   expect(rollback.exitCode, resultText(rollback)).not.toBe(0);
+  expect(resultText(rollback)).toContain("mutable sandbox and provider names");
+  expect(fs.existsSync(path.join(stateDir, "rolled_back"))).toBe(false);
+  expect(fs.readFileSync(path.join(stateDir, "plan.json"), "utf8")).toBe(persistedPlan);
   const providerAfterRollback = await sandbox.openshell(["provider", "get", providerName], {
     artifactName: `${artifactPrefix}-provider-after-rollback`,
     env: openshellEnv,
@@ -716,19 +949,13 @@ test
 );
 
 test(
-  "TC-INF-09 local compatible endpoint routes through inference.local (#5744)",
+  "TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm compatible-endpoint prerequisites",
-        "start the local compatible endpoint",
-        "onboard to the compatible endpoint",
-        "request sandbox chat through inference.local",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm compatible-endpoint prerequisites");
+
     const model = "nemoclaw-e2e-compatible";
     const apiKey = "sk-compatible-TEST-NOT-A-REAL-VALUE";
     await requireLivePrerequisites(host, runtimeProvider);
@@ -763,18 +990,20 @@ test(
     await artifacts.target.declare({
       id: "inference-routing-compatible-endpoint",
       contract: [
-        "a custom OpenAI-compatible endpoint onboards",
+        "Deep Agents Code custom OpenAI-compatible endpoint onboards",
         "sandbox inference.local routes chat to compatible endpoint",
+        "dcode returns the compatible endpoint response through the rewritten gateway route",
       ],
       endpointUrl: fake.baseUrl,
       model,
     });
-    progress.phase("onboard to the compatible endpoint");
+    progress.phase("onboard Deep Agents Code to the endpoint");
     const onboard = await onboardSandbox(
       artifacts,
       sandboxName,
       {
         COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
         NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PREFERRED_API: "openai-completions",
@@ -786,6 +1015,26 @@ test(
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     );
     expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
+    progress.phase("inspect the compatible provider route");
+    const provider = await sandbox.openshell(
+      ["provider", "get", "-g", "nemoclaw", "compatible-endpoint"],
+      {
+        artifactName: "tc-inf-09-provider-get-compatible-endpoint",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const providerText = resultText(provider).replace(/\u001b\[[0-9;]*m/g, "");
+    expect(provider.exitCode, providerText).toBe(0);
+    expect(providerText).toContain("Type: openai");
+    expect(providerText).toContain("Credential keys: COMPATIBLE_API_KEY");
+    expect(providerText).toContain("Config keys: OPENAI_BASE_URL");
+    expect(fake.requests()).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        hostHeader: "localhost:8000",
+      }),
+    );
     progress.phase("request sandbox chat through inference.local");
     const sandboxRequestOffset = fake.requests().length;
     await expectOpenAiChatThroughSandbox(
@@ -795,17 +1044,41 @@ test(
       [apiKey],
       "compatible-endpoint-inference-local-chat",
     );
-    expect(
-      fake
-        .requests()
-        .slice(sandboxRequestOffset)
-        .some(
-          (request) =>
-            request.auth === "ok" &&
-            request.method === "POST" &&
-            request.path === "/v1/chat/completions",
-        ),
-    ).toBe(true);
+    expect(fake.requests().slice(sandboxRequestOffset)).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        hostHeader: "host.openshell.internal:8000",
+        method: "POST",
+        model,
+        path: "/v1/chat/completions",
+      }),
+    );
+    progress.phase("request a dcode completion through the route");
+    const dcodeRequestOffset = fake.requests().length;
+    const dcode = await runNemoclawCli(
+      [sandboxName, "exec", "--", "dcode", "-n", "Reply with exactly one word: PONG"],
+      {
+        artifactName: "tc-inf-09-dcode-compatible-endpoint",
+        artifacts,
+        env: buildAvailabilityProbeEnv(),
+        progress,
+        redactionValues: [apiKey],
+        timeoutMs: 3 * 60_000,
+      },
+    );
+    const dcodeText = redactedResultText(dcode);
+    expect(dcode.timedOut, `TC-INF-09 dcode timed out\n${dcodeText}`).toBe(false);
+    expect(dcode.exitCode, `TC-INF-09 dcode failed\n${dcodeText}`).toBe(0);
+    expect(dcodeText).toMatch(/\bPONG\b/);
+    expect(fake.requests().slice(dcodeRequestOffset)).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        hostHeader: "host.openshell.internal:8000",
+        method: "POST",
+        model,
+        path: "/v1/chat/completions",
+      }),
+    );
   },
 );
 
@@ -813,19 +1086,10 @@ test(
   "TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm live inference prerequisites",
-        "clear the HTTPS pin sandbox",
-        "start the public HTTPS compatible endpoint",
-        "onboard with the placeholder endpoint",
-        "switch to the DNS-backed HTTPS endpoint",
-        "verify pinned route isolation and DNS rebinding",
-        "verify private redirect rejection",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm live inference prerequisites");
+
     progress.phase("confirm live inference prerequisites");
     await requireLivePrerequisites(host, runtimeProvider);
     const model = "nemoclaw-e2e-https-pin";
@@ -870,6 +1134,8 @@ test(
       issue: 6141,
       contract: [
         "inference set routes a DNS-backed HTTPS endpoint through the local pinning adapter",
+        "the real upstream hostname is never persisted to the NemoClaw sandbox registry",
+        "credential-bearing query and userinfo endpoints are rejected without changing host state",
         "OpenShell's own policy view never references the real upstream hostname",
         "a real chat completion round-trips through the pinned TLS connection to the public endpoint",
         "a DNS rebind of the upstream hostname after inference set does not redirect adapter traffic",
@@ -922,6 +1188,47 @@ test(
       apiKey,
     ]);
     expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint placeholder onboard");
+    progress.phase("reject credential-bearing endpoint state");
+    const userinfoEndpoint = new URL(endpointUrl);
+    userinfoEndpoint.username = "e2e-user";
+    userinfoEndpoint.password = apiKey;
+    for (const [shape, credentialEndpoint] of [
+      ["userinfo", userinfoEndpoint.toString()],
+      ["query", `${endpointUrl}?api_key=${encodeURIComponent(apiKey)}`],
+    ] as const) {
+      const rejected = await runNemoclawCli(
+        [
+          "inference",
+          "set",
+          "--provider",
+          "compatible-endpoint",
+          "--model",
+          model,
+          "--sandbox",
+          sandboxName,
+          "--endpoint-url",
+          credentialEndpoint,
+          "--credential-env",
+          "COMPATIBLE_API_KEY",
+          "--inference-api",
+          "openai-completions",
+        ],
+        {
+          artifactName: `tc-inf-11-reject-${shape}-endpoint`,
+          artifacts,
+          env: { ...buildAvailabilityProbeEnv(), COMPATIBLE_API_KEY: apiKey },
+          progress,
+          redactionValues: [apiKey],
+          timeoutMs: 60_000,
+        },
+      );
+      const rejectedText = redactedResultText(rejected);
+      expect(rejected.exitCode, rejectedText).not.toBe(0);
+      expect(rejectedText).toContain("without userinfo, query, or fragment components");
+      const unchangedRegistry = fs.readFileSync(REGISTRY_FILE, "utf8");
+      expect(unchangedRegistry).not.toContain(apiKey);
+      expect(unchangedRegistry).not.toContain(endpointHostname);
+    }
     progress.phase("switch to the DNS-backed HTTPS endpoint");
     const inferenceSet = await runNemoclawCli(
       [
@@ -953,6 +1260,31 @@ test(
       inferenceSet.exitCode,
       `TC-INF-11 inference set https-pin endpoint failed\n${redactedResultText(inferenceSet)}`,
     ).toBe(0);
+    // The real hostname must never reach the NemoClaw sandbox registry on
+    // disk: only the local adapter's host.openshell.internal route is
+    // persisted (#6141 requirement: hostname hidden from the runtime
+    // boundary; credential-bearing URL state is never persisted in plaintext).
+    const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+      sandboxes?: Record<string, SandboxEntry>;
+    };
+    const registryEntry = registry.sandboxes?.[sandboxName];
+    expect(registryEntry?.endpointUrl ?? "").toContain(
+      `${HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN}/route/`,
+    );
+    expect(registryEntry?.endpointUrl ?? "").not.toContain(endpointHostname);
+    const provider = await sandbox.openshell(
+      ["provider", "get", "-g", "nemoclaw", "compatible-endpoint"],
+      {
+        artifactName: "tc-inf-11-provider-get-compatible-endpoint",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const providerText = resultText(provider).replace(/\u001b\[[0-9;]*m/g, "");
+    expect(provider.exitCode, providerText).toBe(0);
+    expect(providerText).toContain("Type: openai");
+    expect(providerText).toContain("Credential keys: COMPATIBLE_API_KEY");
+    expect(providerText).toContain("Config keys: OPENAI_BASE_URL");
     progress.phase("verify pinned route isolation and DNS rebinding");
     // OpenShell's own network-policy view is a second, independent witness:
     // it must never learn the real upstream hostname either, only the local
@@ -998,6 +1330,13 @@ test(
         { interval: 5_000, timeout: 11_000 },
       )
       .toBe(true);
+    expect(fake.requests().slice(sandboxRequestOffset)).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        method: "POST",
+        path: "/v1/chat/completions",
+      }),
+    );
     // The assertions above only prove the *initial* `inference set` reached
     // the real target. They do not prove the adapter is resistant to a DNS
     // record changing after the route is already pinned -- the exact
@@ -1026,17 +1365,13 @@ test(
       [apiKey],
       "https-pin-endpoint-dns-rebinding-chat",
     );
-    expect(
-      fake
-        .requests()
-        .slice(rebindRequestOffset)
-        .some(
-          (request) =>
-            request.auth === "ok" &&
-            request.method === "POST" &&
-            request.path === "/v1/chat/completions",
-        ),
-    ).toBe(true);
+    expect(fake.requests().slice(rebindRequestOffset)).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        method: "POST",
+        path: "/v1/chat/completions",
+      }),
+    );
     await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
     progress.phase("verify private redirect rejection");
     const privateTargetRequestOffset = placeholder.requests().length;

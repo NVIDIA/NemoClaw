@@ -371,19 +371,10 @@ test(
   "channels add/remove telegram updates registry, gateway, policy, and sandbox state",
   {
     ...testTimeoutOptions(TEST_TIMEOUT_MS),
-    meta: {
-      e2ePhases: [
-        "prepare clean channel lifecycle sandbox",
-        "onboard OpenClaw without Telegram",
-        "verify baseline channel absence",
-        "add Telegram and rebuild sandbox",
-        "validate active Telegram integration",
-        "remove Telegram and rebuild sandbox",
-        "validate Telegram removal",
-      ],
-    },
   },
   async ({ artifacts, cleanup, environment, host, lifecycle, onboard, progress, sandbox }) => {
+    progress.phase("prepare clean channel lifecycle sandbox");
+
     if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
       throw new Error(
         `channels-add-remove live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,

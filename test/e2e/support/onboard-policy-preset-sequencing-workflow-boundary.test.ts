@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   catalogueTarget,
   validateE2eTargetCatalogue,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 
 // #6042: onboard-policy-preset-sequencing.test.ts drives the real

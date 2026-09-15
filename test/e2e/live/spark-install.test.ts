@@ -72,15 +72,10 @@ liveTest(
   "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm Linux Docker and installer requirements",
-        "install NemoClaw through the selected distribution path",
-        "confirm the installed CLI commands are usable",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
+    progress.phase("confirm Linux Docker and installer requirements");
+
     await artifacts.target.declare({
       id: "spark-install",
       sandboxName: SANDBOX_NAME,

@@ -30,7 +30,6 @@ import { isExactOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 
 type QualificationProgress = ChildProcessProgress & {
-  hasReached(label: string): boolean;
   phase(label: string): void;
 };
 
@@ -2334,13 +2333,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       throw new Error("Windows MXC OpenClaw startup preconditions failed before forwarding");
     }
 
-    if (
-      !progress.hasReached(
-        "forward authenticated traffic and require the exact mock-backed chat reply",
-      )
-    ) {
-      progress.phase("forward authenticated traffic and require the exact mock-backed chat reply");
-    }
+    progress.phase("forward authenticated traffic and require the exact mock-backed chat reply");
     assertExactFileIdentity(
       inputs.openShell.cliPath,
       inputs.expected.openShellCliSha256,
@@ -2449,11 +2442,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       throw new Error("forwarded OpenClaw chat did not return the exact CHAT_OK payload");
     }
 
-    if (
-      !progress.hasReached("delete the sandbox and verify registry plus OpenClaw process cleanup")
-    ) {
-      progress.phase("delete the sandbox and verify registry plus OpenClaw process cleanup");
-    }
+    progress.phase("delete the sandbox and verify registry plus OpenClaw process cleanup");
     const remove = await runOpenShellCommand(
       ["sandbox", "delete", sandboxName],
       "command: windows-mxc-sandbox-delete",

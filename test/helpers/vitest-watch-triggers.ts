@@ -329,10 +329,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)test\/e2e\/manifests\/[^/]+\.yaml$/,
-    testsToRun: runTests("test/e2e/support/e2e-manifests.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
     testsToRun: runTests(
       ...E2E_WORKFLOW_CONTRACTS,

@@ -4,14 +4,13 @@
 import { test } from "../fixtures/e2e-test.ts";
 import { removePersistedWorkspace } from "./brev-workspace-cleanup.ts";
 
-test(
-  "removes a persisted workflow-owned Brev workspace",
-  {
-    meta: {
-      e2ePhases: ["load the workflow ownership receipt", "remove the owned Brev workspace"],
-    },
-  },
-  async ({ artifacts, host, progress, secrets }) => {
-    await removePersistedWorkspace({ artifacts, host, progress, secrets });
-  },
-);
+test("removes a persisted workflow-owned Brev workspace", async ({
+  artifacts,
+  host,
+  progress,
+  secrets,
+}) => {
+  progress.phase("load the workflow ownership receipt");
+
+  await removePersistedWorkspace({ artifacts, host, progress, secrets });
+});

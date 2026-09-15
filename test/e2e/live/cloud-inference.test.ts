@@ -321,17 +321,10 @@ test(
   "cloud inference: inference.local chat and OpenClaw skill filesystem validate",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "verify cloud inference prerequisites",
-        "install hosted-inference OpenClaw sandbox",
-        "exercise managed inference.local chat",
-        "scan sandbox agent state for credentials",
-        "validate repo and sandbox skill layouts",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("verify cloud inference prerequisites");
+
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 

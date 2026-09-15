@@ -110,18 +110,10 @@ test(
   "Jetson onboarding disables sandbox GPU access (#7610)",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "detect Jetson hardware",
-        "clear previous Jetson runtime state",
-        "confirm nvmap and NVIDIA Docker runtime",
-        "install NemoClaw with sandbox GPU access disabled",
-        "confirm sandbox GPU access is disabled",
-        "confirm the sandbox excludes /dev/nvmap",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+    progress.phase("detect Jetson hardware");
+
     await artifacts.target.declare({
       id: "jetson-nvmap-gpu",
       issue: 7610,

@@ -906,16 +906,12 @@ function validateCredentialWindowJob(
     E2E_JOB: "1",
     E2E_GATEWAY_RUNTIMES: "docker,podman",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
-    E2E_AGENT_RUNTIME: "openclaw",
-    E2E_OBSERVABLE_OUTCOME:
-      "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs",
-    E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
-      "Ubuntu managed runtime host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1",
     NEMOCLAW_GATEWAY_RUNTIME: MATRIX_RUNTIME_PROVIDER_EXPRESSION,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
   };
@@ -1071,7 +1067,10 @@ export function validateMcpOpenShellWorkflowBoundary(
   const workflowText = fs.readFileSync(workflowPath, "utf8");
   const workflow = asRecord(YAML.parse(workflowText));
   const jobs = asRecord(workflow.jobs);
-  const canonicalDockerAuth = namedStep(asRecord(jobs.live), "Authenticate to Docker Hub");
+  const canonicalDockerAuth = namedStep(
+    asRecord(jobs["openshell-gateway-auth-contract"]),
+    "Authenticate to Docker Hub",
+  );
   const inputs = asRecord(asRecord(asRecord(workflow.on).workflow_dispatch).inputs);
   const globalEnv = asRecord(workflow.env);
 

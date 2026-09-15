@@ -30,19 +30,10 @@ test(
   "Kimi-compatible endpoint config enables plugin wiring and managed inference route",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "select the Kimi endpoint mode and credentials",
-        "confirm the selected runtime and clear the Kimi sandbox",
-        "onboard the Kimi-compatible endpoint",
-        "inspect the generated Kimi OpenClaw configuration",
-        "probe the managed inference models route",
-        "exercise the Kimi tool-call trajectory",
-        "confirm Kimi upstream traffic",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("select the Kimi endpoint mode and credentials");
+
     const mode = resolveKimiInferenceMode();
     const apiKey =
       mode === "public-nvidia"

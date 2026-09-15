@@ -7,7 +7,7 @@ import {
   catalogueTarget,
   E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 
 describe("inference-switch catalogue boundary", () => {
   it.each([{ scenario: "OpenClaw" }, { scenario: "Hermes" }])(

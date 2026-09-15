@@ -356,17 +356,10 @@ test(
   "concurrent gateway ports: onboards two sandboxes on isolated gateways and dashboards",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "validate multi-gateway prerequisites",
-        "onboard sandbox on default gateway",
-        "onboard sandbox on alternate gateway",
-        "verify isolated gateways and dashboard forwards",
-        "uninstall alternate gateway without disrupting default",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+    progress.phase("validate multi-gateway prerequisites");
+
     expect(
       fs.existsSync(CLI_DIST_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",

@@ -133,7 +133,7 @@ describe("E2E fixture clients", () => {
     "keeps the configured host command's input open only when requested ($stdin)",
     async ({ stdin, expectedTimeout, expectedOutput }) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-host-stdin-"));
-      const progress = startTestProgress("host stdin", ["run configured command", "verify input"], {
+      const progress = startTestProgress("host stdin", "run configured command", {
         logLine: () => undefined,
       });
       try {

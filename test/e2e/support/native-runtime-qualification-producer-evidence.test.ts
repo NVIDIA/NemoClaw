@@ -369,6 +369,21 @@ describe("native runtime qualification producer evidence", () => {
     ).toThrow("receipt files are invalid");
   });
 
+  it("emits no qualification evidence when the execution receipt is missing", () => {
+    const value = fixture();
+    fs.rmSync(value.executionPath);
+
+    expect(() =>
+      writeNativeRuntimeQualificationProducerEvidence(
+        value.row,
+        value.installerDirectory,
+        value.executionPath,
+        value.evidenceDirectory,
+      ),
+    ).toThrow("receipt files are invalid");
+    expect(fs.existsSync(value.evidenceDirectory)).toBe(false);
+  });
+
   it("rejects a symbolic link used as the execution receipt", () => {
     const value = fixture();
     const target = path.join(value.root, "linked-execution.json");

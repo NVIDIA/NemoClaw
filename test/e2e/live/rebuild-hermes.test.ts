@@ -72,7 +72,6 @@ import {
   verifyRebuildHermesOldBaseFixture,
 } from "./rebuild-hermes-old-base-fixture.ts";
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
-import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
 import { prepareHermesRebuildSwap } from "./rebuild-hermes-swap.ts";
 import { REBUILD_HERMES_STATE } from "./rebuild-hermes-state-fixture.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
@@ -513,9 +512,10 @@ test(
     : "rebuild-hermes: rebuild resolves the pinned base and recovers a stranded cron drain (#7806, #10903)",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: { e2ePhases: REBUILD_HERMES_PHASES },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+    progress.phase("confirm Docker and prepare Hermes rebuild resources");
+
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const redactionValues = [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
     const expectedVersion = expectedHermesVersion();

@@ -15,15 +15,11 @@ test(
     timeout: REMOTE_EXECUTION_READINESS_TEST_TIMEOUT_MS,
     meta: {
       e2eCleanupTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS,
-      e2ePhases: [
-        "resolve the latest staging handoff",
-        "create the staging workspace",
-        "prove remote execution readiness",
-        "record remote execution readiness",
-      ],
     },
   },
   async ({ artifacts, cleanup, host, progress, secrets }) => {
+    progress.phase("resolve the latest staging handoff");
+
     const brevLaunchable = new BrevLaunchableFixture({ artifacts, host, secrets });
     const launchableId = secrets.required("BREV_LAUNCHABLE_ID");
     const name = `staging-full-${randomUUID().slice(0, 8)}`;

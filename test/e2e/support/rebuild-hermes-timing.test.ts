@@ -31,11 +31,7 @@ function timelineHarness() {
 describe("Hermes rebuild timing timeline", () => {
   it("records each completed phase and closes the in-flight phase on snapshot", () => {
     const { options, state } = timelineHarness();
-    const progress = startTestProgress(
-      "rebuild-hermes",
-      ["prepare Hermes rebuild timing", "run NemoClaw Hermes rebuild"],
-      options,
-    );
+    const progress = startTestProgress("rebuild-hermes", "prepare Hermes rebuild timing", options);
 
     state.clockMs = 4_000;
     progress.phase("run NemoClaw Hermes rebuild");
@@ -54,7 +50,7 @@ describe("Hermes rebuild timing timeline", () => {
     const { options, state } = timelineHarness();
     const progress = startTestProgress(
       "rebuild-hermes",
-      ["validate rebuilt Hermes sandbox", "record rebuild timing evidence"],
+      "validate rebuilt Hermes sandbox",
       options,
     );
 
@@ -79,7 +75,7 @@ describe("Hermes rebuild timing timeline", () => {
     };
     const progress = startTestProgress(
       "rebuild-hermes",
-      ["validate rebuilt Hermes sandbox", "record rebuild timing evidence"],
+      "validate rebuilt Hermes sandbox",
       options,
     );
 

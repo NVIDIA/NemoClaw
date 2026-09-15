@@ -35,17 +35,10 @@ runDashboardRemoteBindTest(
   "clean-host remote bind keeps audit risks active and binds all interfaces",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "validate dashboard prerequisites",
-        "install and onboard dashboard sandbox",
-        "stop sandbox and restart dashboard with remote binding",
-        "verify all-interface dashboard forward",
-        "audit exposed dashboard controls",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("validate dashboard prerequisites");
+
     const sandboxName = SANDBOX_NAME;
     const dashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
     const remoteHost = remoteHostCandidate();

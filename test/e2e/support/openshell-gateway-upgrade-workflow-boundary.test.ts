@@ -10,7 +10,7 @@ import {
   catalogueTarget,
   E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";

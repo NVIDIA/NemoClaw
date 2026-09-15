@@ -17,20 +17,6 @@ const cloudOpenclawReady: ExpectedState = {
   credentials: { expected: "present" },
 };
 
-const cloudOpenclawCustomPoliciesReady: ExpectedState = {
-  ...cloudOpenclawReady,
-  id: "cloud-openclaw-custom-policies-ready",
-};
-
-const cloudHermesReady: ExpectedState = {
-  id: "cloud-hermes-ready",
-  cli: { installed: true },
-  gateway: { expected: "present", health: "healthy" },
-  sandbox: { expected: "present", status: "running", agent: "hermes" },
-  inference: { expected: "available", provider: "nvidia" },
-  credentials: { expected: "present" },
-};
-
 // Deep Agents Code is a terminal-agent runtime, not an OpenClaw dashboard
 // runtime. The P0-E parity target is sandbox policy/egress behavior, so the
 // live typed target must not require a host dashboard forward on 18789 before
@@ -42,45 +28,6 @@ const cloudDeepAgentsCodeReady: ExpectedState = {
   sandbox: { expected: "present", status: "running", agent: "langchain-deepagents-code" },
   inference: { expected: "available", provider: "nvidia" },
   credentials: { expected: "present" },
-};
-
-const localOllamaOpenclawReady: ExpectedState = {
-  id: "local-ollama-openclaw-ready",
-  cli: { installed: true },
-  gateway: { expected: "present", health: "healthy" },
-  sandbox: { expected: "present", status: "running", agent: "openclaw" },
-  inference: { expected: "available", provider: "ollama" },
-  credentials: { expected: "present" },
-};
-
-const macosCliReadyDockerOptional: ExpectedState = {
-  id: "macos-cli-ready-docker-optional",
-  cli: { installed: true },
-  gateway: { expected: "optional", health: "optional" },
-  sandbox: { expected: "optional", status: "optional", agent: "openclaw" },
-  inference: { expected: "optional", provider: "nvidia" },
-  credentials: { expected: "optional" },
-};
-
-const preflightFailureNoSandbox: ExpectedState = {
-  id: "preflight-failure-no-sandbox",
-  cli: { installed: true },
-  gateway: { expected: "absent" },
-  sandbox: { expected: "absent" },
-};
-
-const onboardingFailureInvalidNvidiaKey: ExpectedState = {
-  id: "onboarding-failure-invalid-nvidia-key",
-  cli: { installed: true },
-  gateway: { expected: "absent" },
-  sandbox: { expected: "absent" },
-};
-
-const onboardingFailureGatewayPortConflict: ExpectedState = {
-  id: "onboarding-failure-gateway-port-conflict",
-  cli: { installed: true },
-  gateway: { expected: "absent" },
-  sandbox: { expected: "absent" },
 };
 
 const onboardingFailurePolicyPresetsRequired: ExpectedState = {
@@ -113,14 +60,7 @@ const postRebootRecoveryReady: ExpectedState = {
 
 const REGISTRY: readonly ExpectedState[] = [
   cloudOpenclawReady,
-  cloudOpenclawCustomPoliciesReady,
-  cloudHermesReady,
   cloudDeepAgentsCodeReady,
-  localOllamaOpenclawReady,
-  macosCliReadyDockerOptional,
-  preflightFailureNoSandbox,
-  onboardingFailureInvalidNvidiaKey,
-  onboardingFailureGatewayPortConflict,
   onboardingFailurePolicyPresetsRequired,
   postRebootRecoveryReady,
 ];
@@ -131,10 +71,6 @@ const BY_ID: ReadonlyMap<string, ExpectedState> = new Map(
 
 export function listExpectedStates(): readonly ExpectedState[] {
   return REGISTRY;
-}
-
-export function getExpectedState(id: string): ExpectedState | undefined {
-  return BY_ID.get(id);
 }
 
 export function requireExpectedState(id: string): ExpectedState {

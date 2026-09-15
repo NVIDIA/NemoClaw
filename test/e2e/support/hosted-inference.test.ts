@@ -646,11 +646,9 @@ printf '{"data":[]}'
 
   it("serves fake OpenAI-compatible chat and responses contracts", async () => {
     const progressLines: string[] = [];
-    const progress = startTestProgress(
-      "fake compatible server support",
-      ["serve compatible API", "verify compatible API"],
-      { logLine: (line) => progressLines.push(line) },
-    );
+    const progress = startTestProgress("fake compatible server support", "serve compatible API", {
+      logLine: (line) => progressLines.push(line),
+    });
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: "fake-compatible-key",
       chatContent: "CHAT_OK",
@@ -756,10 +754,16 @@ printf '{"data":[]}'
     } finally {
       await fake.close();
     }
-    expect(progressLines).toEqual(
+    expect(progressLines.map((line) => JSON.parse(line))).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("event: fake OpenAI-compatible server started"),
-        expect.stringContaining("event: fake OpenAI-compatible server stopped"),
+        expect.objectContaining({
+          event: "message",
+          message: "fake OpenAI-compatible server started",
+        }),
+        expect.objectContaining({
+          event: "message",
+          message: "fake OpenAI-compatible server stopped",
+        }),
       ]),
     );
   });

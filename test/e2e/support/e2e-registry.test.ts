@@ -6,11 +6,46 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { target } from "../registry/builder.ts";
-import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
+import { validateE2eExecutionRows } from "../../../tools/e2e/execution-coverage.mts";
+import {
+  buildExecutionInventory,
+  listTargets,
+  type E2eInventoryTarget,
+  reconcileWorkflowExecutionDiscovery,
+  sharedTarget,
+} from "../../../tools/e2e/target-inventory.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
 const TSX = path.join(REPO_ROOT, "node_modules/.bin/tsx");
+
+const WORKFLOW_FIXTURE: Extract<E2eInventoryTarget, { route: "workflow" }> = {
+  id: "proof",
+  route: "workflow",
+  definition: {
+    id: "proof",
+    workflow: ".github/workflows/e2e.yaml",
+    targetId: "proof",
+    defaultEnabled: true,
+    gatewayRuntimes: ["docker"],
+    testFiles: ["test/e2e/live/proof.test.ts"],
+    owningPaths: [],
+    coverage: [
+      {
+        gatewayRuntimes: ["docker"],
+        row: {
+          id: "proof",
+          variant: "",
+          source: "retained-workflow",
+          agentRuntime: "none",
+          observableOutcome: "The proof completes",
+          environmentOrInferenceEndpoint: "Linux Docker host",
+          unresolvedReason: "",
+        },
+      },
+    ],
+  },
+};
 
 function runTargetCli(args: string[]) {
   return spawnSync(TSX, [RUN_TARGETS, ...args], {
@@ -20,20 +55,195 @@ function runTargetCli(args: string[]) {
   });
 }
 
-describe("deterministic target registry", () => {
-  it("should reject duplicate target IDs", () => {
-    const first = target("duplicate-id")
-      .manifest("test/e2e/manifests/openclaw-nvidia.yaml")
-      .build();
-    const second = target("duplicate-id").manifest("test/e2e/manifests/hermes-nvidia.yaml").build();
+const EXTERNAL_WORKFLOW_FIXTURE: Extract<E2eInventoryTarget, { route: "external-workflow" }> = {
+  id: "external-proof",
+  route: "external-workflow",
+  definition: {
+    id: "external-proof",
+    workflow: ".github/workflows/proof.yaml",
+    job: "prove",
+    tests: [{ file: "test/e2e-runtime/proof.test.ts", project: "integration" }],
+  },
+};
 
-    expect(() => buildTargetRegistry([first, second])).toThrow(/duplicate-id/);
+const MANUAL_FIXTURE: Extract<E2eInventoryTarget, { route: "manual" }> = {
+  id: "manual-proof",
+  route: "manual",
+  definition: {
+    id: "manual-proof",
+    tests: [{ file: "test/e2e/live/manual-proof.test.ts", project: "e2e-live" }],
+    instructions: "test/e2e/README.md#manual-proof",
+  },
+};
+
+describe("deterministic target registry", () => {
+  it("distinguishes execution identities even when their descriptions match", () => {
+    const first = WORKFLOW_FIXTURE.definition.coverage[0]!.row;
+    const second = { ...first, id: "another-proof" };
+    expect(validateE2eExecutionRows([first, second])).toEqual([first, second]);
+    expect(() => validateE2eExecutionRows([first, first])).toThrow("duplicate row");
+  });
+
+  it("rejects a manual declaration without an executable test file", () => {
+    const entry = MANUAL_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([
+        {
+          ...entry,
+          definition: { ...entry.definition, tests: [] },
+        },
+      ]),
+    ).toThrow("requires test files");
+  });
+
+  it("retains the workflow owner and Vitest project of an external test", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect([...buildExecutionInventory([entry]).values()]).toEqual([entry]);
+  });
+
+  it.each([
+    { workflow: "../outside.yaml", job: "prove" },
+    { workflow: ".github/workflows/proof.yaml", job: "" },
+  ])("rejects an external target without a repository workflow job: %j", (owner) => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, ...owner } }]),
+    ).toThrow("requires a workflow job owner");
+  });
+
+  it.each(["../dispatch.mts", "/tmp/dispatch.mts", "tools/../dispatch.mts"])(
+    "rejects a delegated entry point outside repository scripts: %s",
+    (entrypoint) => {
+      const entry = EXTERNAL_WORKFLOW_FIXTURE;
+      expect(() =>
+        buildExecutionInventory([{ ...entry, definition: { ...entry.definition, entrypoint } }]),
+      ).toThrow("invalid script entry point");
+      const workflowEntry = WORKFLOW_FIXTURE;
+      expect(() =>
+        buildExecutionInventory([
+          { ...workflowEntry, definition: { ...workflowEntry.definition, entrypoint } },
+        ]),
+      ).toThrow("invalid script entry point");
+    },
+  );
+
+  it("requires an executable script when a workflow route has no Vitest files", () => {
+    const entry = {
+      ...WORKFLOW_FIXTURE,
+      definition: { ...WORKFLOW_FIXTURE.definition, testFiles: [] },
+    };
+    expect(() => buildExecutionInventory([entry])).toThrow(
+      "requires a test file or script entry point",
+    );
+    const scripted = {
+      ...entry,
+      definition: { ...entry.definition, entrypoint: "tools/e2e/launchable.sh" },
+    };
+    expect([...buildExecutionInventory([scripted]).values()]).toEqual([scripted]);
+  });
+
+  it("rejects an external target without tests", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, tests: [] } }]),
+    ).toThrow("requires test files");
+  });
+
+  it("rejects an external test path outside the test directory", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([
+        {
+          ...entry,
+          definition: {
+            ...entry.definition,
+            tests: [{ file: "../outside.test.ts", project: "integration" }],
+          },
+        },
+      ]),
+    ).toThrow("has an invalid test path");
+  });
+
+  it("should reject duplicate target IDs", () => {
+    const first = target("duplicate-id").build();
+    const second = target("duplicate-id").build();
+
+    expect(() =>
+      buildExecutionInventory(
+        [first, second].map((definition) => ({
+          id: definition.id,
+          route: "typed" as const,
+          definition,
+        })),
+      ),
+    ).toThrow(/duplicate-id/);
+  });
+
+  it("rejects a typed target that reuses a shared target ID", () => {
+    const shared = sharedTarget("vllm-docker-storage");
+    const typed = target(shared.id).build();
+    expect(() =>
+      buildExecutionInventory([
+        { id: shared.id, route: "shared", definition: shared },
+        { id: typed.id, route: "typed", definition: typed },
+      ]),
+    ).toThrow("Duplicate target IDs: vllm-docker-storage");
+  });
+
+  it("rejects coverage attached to another workflow target", () => {
+    const entry = WORKFLOW_FIXTURE;
+    const definition = {
+      ...entry.definition,
+      coverage: entry.definition.coverage.map((coverage) => ({
+        ...coverage,
+        row: { ...coverage.row, id: "another-job" },
+      })),
+    };
+    expect(() => buildExecutionInventory([{ ...entry, definition }])).toThrow(
+      "Workflow coverage identity differs from target",
+    );
+  });
+
+  it("rejects a workflow target without execution coverage", () => {
+    const entry = WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, coverage: [] } }]),
+    ).toThrow("requires execution coverage");
+  });
+
+  it("rejects an undisposed workflow job and a missing registered job", () => {
+    expect(
+      reconcileWorkflowExecutionDiscovery(
+        { workflowJobs: ["unexpected"], liveTestToJobs: new Map() },
+        { workflowJobs: ["required"], liveTestToJobs: new Map() },
+      ),
+    ).toEqual([
+      "Discovered workflow job unexpected has no inventory disposition",
+      "Registered workflow job required is missing",
+    ]);
+  });
+
+  it("rejects a workflow that dispatches a registered test through another job", () => {
+    expect(
+      reconcileWorkflowExecutionDiscovery(
+        {
+          workflowJobs: ["owner"],
+          liveTestToJobs: new Map([["test/e2e/live/proof.test.ts", ["other"]]]),
+        },
+        {
+          workflowJobs: ["owner"],
+          liveTestToJobs: new Map([["test/e2e/live/proof.test.ts", ["owner"]]]),
+        },
+      ),
+    ).toEqual(["Workflow test route differs from the inventory: test/e2e/live/proof.test.ts"]);
   });
 
   it("should reject target IDs that are unsafe for workflow regex filters and artifact paths", () => {
-    const unsafe = target("bad.id").manifest("test/e2e/manifests/openclaw-nvidia.yaml").build();
+    const unsafe = target("bad.id").build();
 
-    expect(() => buildTargetRegistry([unsafe])).toThrow(/not safe for workflow regex filters/);
+    expect(() =>
+      buildExecutionInventory([{ id: unsafe.id, route: "typed", definition: unsafe }]),
+    ).toThrow(/not safe for workflow regex filters/);
 
     const result = runTargetCli(["--emit-live-matrix", "--targets", "../escape"]);
     expect(result.status).not.toBe(0);

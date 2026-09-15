@@ -266,19 +266,10 @@ test(
   "qualifies the protected Pi candidate through Docker and managed inference",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "validate the exact Pi candidate receipt",
-        "onboard Pi without a Dockerfile build",
-        "run headless and interactive Pi tasks",
-        "rebuild Pi and preserve session state",
-        "recover Pi after sandbox and gateway restarts",
-        "prove Pi policy and credential boundaries",
-        "destroy Pi and publish bounded evidence",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, inference, lifecycle, progress, sandbox }) => {
+    progress.phase("validate the exact Pi candidate receipt");
+
     const platform = qualificationPlatform(
       process.arch,
       process.env.NEMOCLAW_PI_QUALIFICATION_PLATFORM,

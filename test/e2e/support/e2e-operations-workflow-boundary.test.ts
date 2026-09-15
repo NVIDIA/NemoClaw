@@ -19,8 +19,6 @@ import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
 ) => (...args: unknown[]) => Promise<unknown>;
-const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
-  "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -38,22 +36,6 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     workflow.jobs["relevant-e2e"].steps![0]!.with!["sparse-checkout-cone-mode"] = coneMode;
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
       "relevant-e2e must check out only the trusted evaluator",
-    );
-  });
-  it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
-    upload.with!.path = String(upload.with!.path)
-      .split("\n")
-      .map((line) =>
-        line.trim() === COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH
-          ? `${COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH}.backup`
-          : line,
-      )
-      .join("\n");
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "live E2E must upload cold-onboard performance evidence",
     );
   });
   it("requires the scorecard to wait for every reporting dependency", () => {

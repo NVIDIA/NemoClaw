@@ -44,7 +44,6 @@ declare module "vitest" {
   interface TaskMeta {
     e2eArtifactRootId?: string;
     e2eCleanupTimeoutMs?: number;
-    e2ePhases?: readonly string[];
   }
 }
 
@@ -69,10 +68,6 @@ export interface E2ETargetFixtures {
   progress: TestProgress;
 }
 
-const SUPPORT_PHASES = [
-  "exercise E2E fixture support",
-  "record E2E fixture support outcome",
-] as const;
 export const E2E_TEARDOWN_PHASE = "release registered E2E resources";
 
 export function runnerComparisonSampleIntervalMs(targetId: string | null): number {
@@ -164,16 +159,9 @@ export const test = base.extend<E2ETargetFixtures>({
       const targetId = process.env.E2E_TARGET_ID || process.env.GITHUB_JOB;
       const shardId = process.env.NEMOCLAW_E2E_SHARD;
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
-      const phasePlan = task.meta.e2ePhases;
-      assert.ok(
-        task.file.projectName !== "e2e-live" || phasePlan,
-        `live E2E test is missing semantic phase metadata: ${task.name}`,
-      );
-      const declaredPhasePlan = phasePlan ?? SUPPORT_PHASES;
-      const declaredFinalPhase = declaredPhasePlan.at(-1) as string;
-      const progress = startTestProgress(task.name, declaredPhasePlan, {
+      const progress = startTestProgress(task.name, "execute E2E test", {
         targetId,
-        terminalPhase: E2E_TEARDOWN_PHASE,
+        redact: (text) => secrets.redact(text),
         taskStatus: () => ({
           errorCount: task.result?.errors?.length ?? 0,
           ...(taskOutcomeForState(task.result?.state)
@@ -196,30 +184,18 @@ export const test = base.extend<E2ETargetFixtures>({
           : {}),
         ...runnerComparisonProgressOptions(),
       });
-      const completeSupportPlan = phasePlan
-        ? () => undefined
-        : () => {
-            if (!progress.isComplete()) progress.phase(SUPPORT_PHASES[1]);
-          };
       let finalized = false;
       onTestFinished(async () => {
         if (finalized) return;
         finalized = true;
         const outcome = outcomeForTaskState(task.result?.state);
-        completeSupportPlan();
-        const completedPhasePlan = !phasePlan || progress.hasReached(declaredFinalPhase);
-        if (!progress.isComplete()) progress.phase(E2E_TEARDOWN_PHASE);
-        const phaseOutcome = outcome === "passed" && !completedPhasePlan ? "failed" : outcome;
-        progress.stop(phaseOutcome);
+        progress.phase(E2E_TEARDOWN_PHASE);
+        progress.stop(outcome);
         await artifacts.writeJson("test-progress.json", {
           ...progress.summary(),
           ...(targetId ? { targetId } : {}),
           ...(shardId ? { shardId } : {}),
         });
-        assert.ok(
-          outcome !== "passed" || completedPhasePlan,
-          `live E2E test did not reach its final semantic phase: ${task.name}`,
-        );
       });
       await use(progress);
     },

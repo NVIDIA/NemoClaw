@@ -6,19 +6,23 @@ import path from "node:path";
 
 // These modules resolve relative to the trusted advisor implementation, not
 // the analyzed PR worktree. PR-provided TypeScript is never imported.
-import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
+import {
+  workflowExecutionSelection,
+  getTarget,
+  listTargets,
+  reconcileSharedTargetDiscovery,
+} from "../e2e/target-inventory.mts";
 import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
 import {
   credentialFreeTestProjectForFile,
   credentialFreeTestRowFromModule,
-  SHARED_E2E_JOB_ID,
   type CredentialFreeTestProject,
 } from "../e2e/credential-free-tests.mts";
 import {
   catalogueRecommendationSelectorIds,
   E2E_TARGET_CATALOGUE,
   isPrAdvisorSelectableCatalogueTarget,
-} from "../e2e/target-catalogue.mts";
+} from "../e2e/target-inventory.mts";
 import { containsCommandShapedE2eText } from "./e2e-text.mts";
 import { enumValue, recordItems, stringOrUndefined } from "./json.mts";
 import { buildRiskPlan, isPrE2ePlanningJob, type RiskPlan } from "./risk-plan.mts";
@@ -34,7 +38,6 @@ const FREE_STANDING_LIVE_FILE_PATTERN = /^test\/e2e\/live\/[^/]+\.ts$/;
 const ALLOWED_WORKFLOWS = new Set<string>([E2E_WORKFLOW]);
 const TARGET_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CONFIDENCES = ["low", "medium", "high"] as const;
-let trustedE2eWorkflowText: string | undefined;
 let trustedCredentialFreeTests: readonly E2eChangedCredentialFreeTest[] | undefined;
 const MODEL_COVERAGE_IDENTITY_FIELDS = ["workflow", "job", "script", "cost", "runner"] as const;
 const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
@@ -162,9 +165,8 @@ function catalogueRecommendationJobs(): E2eWorkflowJob[] {
 }
 
 export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInventory {
-  const workflowText = readTrustedE2eWorkflowText();
-  const credentialFreeTests = discoverTrustedCredentialFreeTests();
-  const candidateJobIds = new Set(extractAllowedE2eJobIds(workflowText, credentialFreeTests));
+  discoverTrustedCredentialFreeTests();
+  const candidateJobIds = new Set(trustedRecommendationJobIds());
   const allJobIds = [
     ...new Set([...candidateJobIds, ...E2E_TARGET_CATALOGUE.map(({ targetId }) => targetId)]),
   ].sort();
@@ -390,32 +392,18 @@ function readE2eWorkflowText(): string | undefined {
   }
 }
 
-function readTrustedE2eWorkflowText(): string {
-  trustedE2eWorkflowText ??= fs.readFileSync(
-    path.join(TRUSTED_REPO_ROOT, E2E_WORKFLOW_PATH),
-    "utf8",
-  );
-  return trustedE2eWorkflowText;
-}
-
 function buildE2eTargetNormalizationContext(
   e2eWorkflowText = readE2eWorkflowText(),
   changedFiles: readonly string[] = [],
   changedFileSources?: Readonly<Record<string, string | null>>,
 ): E2eTargetNormalizationContext {
-  const trustedWorkflowText = readTrustedE2eWorkflowText();
   const trustedCredentialFreeTests = discoverTrustedCredentialFreeTests();
   const allowedJobIds = new Set([
-    ...extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
+    ...trustedRecommendationJobIds(),
     ...catalogueRecommendationSelectorIds(),
   ]);
-  // The analyzed workflow is untrusted input. It may explain why a changed test has
-  // no trusted selector, but it must never introduce one absent from the trusted
-  // workflow or catalogue.
-  const freeStandingJobs = [
-    ...extractFreeStandingE2eJobs(trustedWorkflowText),
-    ...catalogueRecommendationJobs(),
-  ]
+  // Candidate workflow text can explain missing wiring but cannot authorize a selector.
+  const freeStandingJobs = [...workflowRecommendationJobs(), ...catalogueRecommendationJobs()]
     .filter((job) => allowedJobIds.has(job.id))
     .sort((left, right) => left.id.localeCompare(right.id));
   const liveTestToJobs = new Map<string, string[]>();
@@ -469,7 +457,7 @@ function changedCredentialFreeTestRow(
 }
 function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
   if (trustedCredentialFreeTests) return [...trustedCredentialFreeTests];
-  const rows: E2eChangedCredentialFreeTest[] = [];
+  const rows: (E2eChangedCredentialFreeTest & { project: CredentialFreeTestProject })[] = [];
   const testRoot = path.join(TRUSTED_REPO_ROOT, "test");
   const pending = [testRoot];
   while (pending.length > 0) {
@@ -486,26 +474,37 @@ function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
       const project = credentialFreeTestProjectForFile(file);
       if (!project) continue;
       const row = changedCredentialFreeTestRow(file, project, fs.readFileSync(absolute, "utf8"));
-      if (row) rows.push(row);
+      if (row) rows.push({ ...row, project });
     }
   }
-  trustedCredentialFreeTests = rows.sort((left, right) => left.id.localeCompare(right.id));
+  trustedCredentialFreeTests = reconcileSharedTargetDiscovery(rows).map(({ id, file }) => ({
+    id,
+    file,
+  }));
   return [...trustedCredentialFreeTests];
 }
 
-function extractAllowedE2eJobIds(
-  workflowText: string,
-  credentialFreeTests: readonly E2eChangedCredentialFreeTest[],
-): string[] {
-  const jobs = e2eWorkflowJobs(workflowText);
-  const allowed = jobs
-    .filter(({ body }) => /^\s{6}E2E_JOB:\s*["']1["']\s*$/mu.test(body))
-    .map(({ id }) => id);
-  if (jobs.some(({ id }) => id === SHARED_E2E_JOB_ID)) {
-    allowed.push(...credentialFreeTests.map(({ id }) => id));
-  }
-  allowed.push(...catalogueRecommendationSelectorIds());
-  return [...new Set(allowed)].sort();
+function trustedRecommendationJobIds(): string[] {
+  const inventory = workflowExecutionSelection();
+  return [
+    ...new Set([
+      ...inventory.allowedJobs,
+      ...inventory.workflowJobs,
+      ...catalogueRecommendationSelectorIds(),
+    ]),
+  ].sort();
+}
+
+function workflowRecommendationJobs(): E2eWorkflowJob[] {
+  const inventory = workflowExecutionSelection();
+  return inventory.workflowJobs
+    .map((id) => ({
+      id,
+      liveTestFiles: [...inventory.liveTestToJobs]
+        .filter(([, jobs]) => jobs.includes(id))
+        .map(([file]) => file),
+    }))
+    .filter((job) => job.liveTestFiles.length > 0);
 }
 
 function changedSource(
@@ -526,41 +525,6 @@ function addMapValue(map: Map<string, string[]>, key: string, value: string): vo
   const values = map.get(key) ?? [];
   if (!values.includes(value)) values.push(value);
   map.set(key, values);
-}
-
-export function extractFreeStandingE2eJobs(workflowText: string): E2eWorkflowJob[] {
-  const jobs: E2eWorkflowJob[] = [];
-  for (const { id, body } of e2eWorkflowJobs(workflowText)) {
-    const legacySelector = body.includes("inputs.jobs") && body.includes(`,${id},`);
-    const plannedSelector = new RegExp(
-      `contains\\s*\\(\\s*fromJSON\\s*\\(\\s*needs[.]generate-matrix[.]outputs[.]selected_jobs\\s*\\)\\s*,\\s*(['"])${id}\\1\\s*\\)`,
-      "u",
-    ).test(body);
-    if (!legacySelector && !plannedSelector) continue;
-    const liveTestFiles = uniqueStrings(
-      [...body.matchAll(/test\/e2e\/live\/[A-Za-z0-9._-]+\.test\.ts/g)].map((item) => item[0]),
-    ).filter((file) => file !== REGISTRY_LIVE_ENTRYPOINT);
-    if (liveTestFiles.length > 0) jobs.push({ id, liveTestFiles });
-  }
-  return jobs.sort((left, right) => left.id.localeCompare(right.id));
-}
-
-function e2eWorkflowJobs(workflowText: string): Array<{ id: string; body: string }> {
-  const jobsBlockStart = workflowText.search(/^jobs:\s*$/m);
-  if (jobsBlockStart === -1) return [];
-  const lines = workflowText.slice(jobsBlockStart).split(/\r?\n/);
-  const jobs: Array<{ id: string; body: string }> = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(/^  ([A-Za-z0-9_-]+):\s*$/);
-    if (!match?.[1]) continue;
-    const bodyLines: string[] = [];
-    for (let bodyIndex = index + 1; bodyIndex < lines.length; bodyIndex += 1) {
-      if (/^  [A-Za-z0-9_-]+:\s*$/.test(lines[bodyIndex])) break;
-      bodyLines.push(lines[bodyIndex]);
-    }
-    jobs.push({ id: match[1], body: bodyLines.join("\n") });
-  }
-  return jobs;
 }
 
 function findUnwiredFreeStandingLiveTests(

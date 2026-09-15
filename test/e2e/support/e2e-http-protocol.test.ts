@@ -16,20 +16,22 @@ describe("fake provider HTTP protocol", () => {
     let body = "";
     const server = http.createServer(async (req, res) => {
       body = await readRequestBody(req);
-      writeJsonResponse(res, 201, { ok: true });
+      writeJsonResponse(res, 201, { text: "café" });
     });
     const port = await listenServer(server, 0, "127.0.0.1");
     try {
-      const response = await fetch(`http://127.0.0.1:${port}`, { method: "POST", body: "payload" });
+      const response = await fetch(`http://127.0.0.1:${port}`, { method: "POST", body: "entrée" });
       expect(response.status).toBe(201);
-      expect(await response.json()).toEqual({ ok: true });
-      expect(body).toBe("payload");
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.headers.get("content-length")).toBe("16");
+      expect(await response.json()).toEqual({ text: "café" });
+      expect(body).toBe("entrée");
     } finally {
       await closeServer(server);
     }
   });
 
-  it("writes named and data-only SSE events with a done marker", async () => {
+  it.each([false, true])("writes SSE event boundaries with done=%s", async (done) => {
     const server = http.createServer((_req, res) =>
       writeSseEvents(
         res,
@@ -37,7 +39,7 @@ describe("fake provider HTTP protocol", () => {
           ["message", { text: "one" }],
           [undefined, { text: "two" }],
         ],
-        true,
+        done,
       ),
     );
     const port = await listenServer(server, 0, "127.0.0.1");
@@ -45,8 +47,12 @@ describe("fake provider HTTP protocol", () => {
       const response = await fetch(`http://127.0.0.1:${port}`);
       const text = await response.text();
       expect(response.headers.get("content-type")).toBe("text/event-stream");
-      expect(text).toContain('event: message\ndata: {"text":"one"}');
-      expect(text).toContain("data: [DONE]");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-cache");
+      expect(text).toBe(
+        'event: message\ndata: {"text":"one"}\n\ndata: {"text":"two"}\n\n' +
+          (done ? "data: [DONE]\n\n" : ""),
+      );
     } finally {
       await closeServer(server);
     }

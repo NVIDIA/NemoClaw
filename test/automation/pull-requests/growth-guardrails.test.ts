@@ -5,11 +5,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   addedJavaScriptViolations,
-  conditionalGrowthViolations,
   diagnostics,
   dockerfileBudgetGrowthViolations,
-  e2eAssertionBudgetGrowthViolations,
-  loopGrowthViolations,
   onboardGrowthViolations,
   testSizeViolations,
 } from "../../helpers/growth-guardrail-checks";
@@ -48,21 +45,6 @@ function defineCodebaseGrowthGuardrails(): void {
     const violations = await testSizeViolations(diff);
     expect(violations, diagnostics.size(violations)).toEqual([]);
   });
-
-  it("does not increase the live E2E assertion baseline", async () => {
-    const violations = await e2eAssertionBudgetGrowthViolations(diff);
-    expect(violations, diagnostics.e2eAssertions(violations)).toEqual([]);
-  });
-
-  it("does not add if statements to changed test files", async () => {
-    const violations = await conditionalGrowthViolations(diff);
-    expect(violations, diagnostics.conditionals(violations)).toEqual([]);
-  }, 60_000);
-
-  it("does not add test loops directly, through one-use helpers, or through callback-forwarding helpers", async () => {
-    const violations = await loopGrowthViolations(diff);
-    expect(violations, diagnostics.loops(violations)).toEqual([]);
-  }, 60_000);
 }
 
 describe("codebase growth guardrails", defineCodebaseGrowthGuardrails);

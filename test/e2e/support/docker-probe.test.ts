@@ -140,7 +140,7 @@ describe("DockerProbe secret hygiene", () => {
     }) as unknown as ChildProcess;
     const progress = startTestProgress(
       "DockerProbe real-branch output limit",
-      ["run noisy Docker command", "verify safe artifacts"],
+      "run noisy Docker command",
       {
         clearTimer: () => undefined,
         logLine: () => undefined,

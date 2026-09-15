@@ -589,12 +589,14 @@ function collectDeclarativeImports(imports: readonly ImportBinding[]): Map<strin
 
 const RAW_CONFIG_ACCESSORS: Readonly<Record<string, readonly string[]>> = {
   "test/helpers/e2e-workflow-contract": ["readWorkflow", "readYaml"],
-  "test/e2e/registry/registry": ["getTarget", "listTargets", "requireTargets"],
-  "test/e2e/registry/expected-states": [
-    "getExpectedState",
-    "listExpectedStates",
-    "requireExpectedState",
+  "tools/e2e/target-inventory": [
+    "getTarget",
+    "listTargets",
+    "requireTargets",
+    "listExecutionTargets",
+    "workflowExecutionSelection",
   ],
+  "test/e2e/registry/expected-states": ["listExpectedStates", "requireExpectedState"],
 };
 
 function collectRawConfigAccessors(imports: readonly ImportBinding[]): Map<string, SourceFunction> {

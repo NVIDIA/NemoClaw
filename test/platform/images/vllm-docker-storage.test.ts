@@ -20,13 +20,6 @@ import { test } from "../../e2e/fixtures/workflow-e2e-test.ts";
 const TARGET_ID = "vllm-docker-storage";
 const DOCKER_HOST = "unix:///run/docker.sock";
 const INSTALL_SUBPROCESS_TIMEOUT_MS = 15_000;
-const VLLM_STORAGE_PHASES = [
-  "inspect Docker storage prerequisites",
-  "exercise the managed vLLM storage gate",
-  "verify Docker and filesystem capacity evidence",
-  "record release-candidate storage evidence",
-  "release vLLM storage fixtures",
-] as const;
 const RUN_REAL_DOCKER =
   process.env.E2E_TARGET_ID === TARGET_ID ||
   process.env.NEMOCLAW_RUN_VLLM_STORAGE_DOCKER_E2E === "1";
@@ -166,8 +159,10 @@ function writeEvidence(evidence: Record<string, unknown>): void {
 
 realDockerTest(
   "allows non-interactive express managed vLLM past the real /run/docker.sock storage gate (#7039)",
-  { timeout: 30_000, meta: { e2ePhases: VLLM_STORAGE_PHASES } },
+  { timeout: 30_000 },
   ({ progress }) => {
+    progress.phase("inspect Docker storage prerequisites");
+
     expect(process.platform, "this release acceptance requires a native Linux host").toBe("linux");
     expect(
       fs.statSync("/run/docker.sock").isSocket(),

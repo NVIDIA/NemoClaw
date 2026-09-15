@@ -133,18 +133,6 @@ test(
   "state-backup-restore: rejects linked memory before restoring regular state (#8006, #10636)",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and the workspace backup script",
-        "onboard the source sandbox",
-        "write workspace and memory markers",
-        "reject a backup that contains a nested symbolic link",
-        "capture and inspect the host backup",
-        "destroy and re-onboard the sandbox",
-        "restore the backup into the fresh sandbox",
-        "validate restored workspace and memory",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -159,6 +147,8 @@ test(
     skip,
     stateValidation,
   }) => {
+    progress.phase("confirm the selected runtime and the workspace backup script");
+
     assertTestOwnedSandboxName();
     secrets.required("NVIDIA_INFERENCE_API_KEY");
     await runtimeProvider.requireAvailable({

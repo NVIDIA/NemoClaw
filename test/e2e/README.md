@@ -4,6 +4,19 @@
 # NemoClaw E2E CI
 
 Direct E2E coverage runs through Vitest.
+The live Vitest invocation helper requires at least one executed test.
+An empty or all-skipped selection fails, including explicit manual invocations through that helper.
+The main workflow sets the same requirement for direct shared, credential-window, and protected-image Vitest commands.
+
+Fake inference providers share JSON responses, SSE event framing, and server shutdown through
+`fixtures/http-protocol.ts`. Provider request handling and lifecycle decisions stay with each provider.
+Slack and Discord share frame encoding and decoding through `lib/websocket-frames.mts`.
+Each provider owns its handshake ordering, authentication, messages, and connection state.
+
+The managed-image OpenClaw security probe creates and restores snapshots through packaged
+`commands/migration-state.js`. It checks credential removal and rejects a symlinked restore destination.
+Snapshot listing and retention use `blueprint/snapshot-management.js`.
+The legacy `blueprint/snapshot.js` entry point is removed. Migration-state rejects symlinked snapshot parents before reservation.
 
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
@@ -394,7 +407,7 @@ It then changes the fixture's recorded sandbox fingerprint and requires export t
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
 The exported effective policy comes from the SDK configuration response and is compared with the
 independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
-The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
+The target checks these exports:
 
 - Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
 - Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
@@ -406,10 +419,47 @@ After canonical hosted-inference onboarding, it invokes `config export` through 
 and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
 the Hermes agent type, immutable managed image, hosted route, effective policy, and omission of
 credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
-launchers to fail without publishing a file before restoring the registry. The assertion budget is
-unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
+launchers to fail without publishing a file before restoring the registry. The scenario verifies the export failure before restoring the registry.
 
-`tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
+`tools/e2e/target-inventory.mts` owns target identity and lookup for reusable-profile, shared, typed-driver, specialized workflow, external workflow, and manual executions.
+Typed scenario definitions remain beside the live driver. The inventory rejects duplicate IDs across these routes.
+The semantic-phase check compares live files with every inventory route before collection.
+It rejects unregistered live files and registrations whose live file is missing.
+List all registered routes, including workflow owners, Vitest projects, and manual instructions:
+
+```bash
+npx tsx test/e2e/registry/run.ts --list-inventory
+```
+
+External workflow routes retain scheduling, prerequisites, artifact identity, and cleanup in their owning jobs.
+Their inventory IDs do not select jobs in the main E2E workflow or the typed driver.
+The inventory also records live packaged-image checks in the `integration` project.
+The registration check scans direct live test calls across workflow files and checks registered packaged-image consumers.
+It matches paths within runner commands, including continued lines and literal test-path variables.
+Comments, printed commands, and filenames in other steps do not establish a test call.
+It rejects missing workflow jobs, missing test files, and test calls without an inventory route.
+Delegated routes name their script entry point; the check verifies that the owning job still calls it.
+Workflow routes without Vitest files must name a script entry point, including both staging Brev Launchable routes.
+Direct external workflow test commands also require execution, including packaged-image checks and the WSL guest command.
+The Podman CPU proof commands require the risk-signal reporter, including execution under the dedicated proof user.
+The staging full-suite script requires the guest risk-signal reporter; an empty or entirely skipped suite fails before the success marker.
+These static checks do not certify remote execution or replace environment-gated collection checks.
+Manual entries link to their owning instructions. Keep prerequisites in those instructions and executable checks in the tests.
+Listing a manual qualification does not schedule it or establish product support.
+Jetson dispatch retains its opt-in and trusted-controller checks.
+The bootstrap test body resides in `bootstrap-install-smoke.test.ts`.
+The `launchable-smoke`, `sandbox-rlimits-connect`, and
+`common-egress-agent-openclaw-personal-stock-price` selectors are retired and fail selection,
+including requests mixed with active selectors.
+Their replacement tests remain in the ordinary test projects.
+The `hermes-dashboard` selector is retired; use `hermes-e2e`.
+
+Coverage descriptions and agent/environment labels belong to the execution inventory.
+Workflow YAML retains execution parameters, matrix variants, credentials, dependencies, and artifact controls.
+The workflow check reconciles job and test routes; it does not reconstruct coverage descriptions from YAML.
+
+`tools/e2e/target-catalogue.mts` runs the selected profile or typed target; it does not register targets.
+Each profile target shares one execution shape.
 Each entry owns these target properties:
 
 - Stable catalogue ID, target ID, shard, and Vitest file.
@@ -471,6 +521,9 @@ The live assertions require `web_fetch` for one fixed public reference, reject `
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
+The typed `live` matrix uses the same workflow, with its existing image dependencies and inference credential guard.
+Typed executions skip the catalogue SDK archive installation and select one registered target in `registry-targets.test.ts`.
+They retain their trace sanitization, raw trace cleanup, and explicit artifact allowlist.
 Each target selects its runner through the catalogue.
 The reusable workflow validates the catalogue plan before candidate checkout.
 It derives the artifact path and upload name from the target ID, shard, and reviewed layout.
@@ -480,7 +533,8 @@ The reusable workflow installs those packages through the pinned host-dependency
 An optional `selector` limits execution to matching tests in the target's declared Vitest file.
 A host package or selector alone does not require a dedicated workflow job.
 When a target selects non-interactive installation, the reusable workflow sets `NEMOCLAW_NON_INTERACTIVE=1` for its OpenShell install step.
-The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for every target.
+The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for catalogue targets.
+Typed targets retain the caller's `checkout_sha` value, which is empty when no alternate checkout is requested.
 TUI exact-ref checks use this shared value instead of a target-specific checkout variable.
 On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carries that commit to the risk-signal reporter; it remains empty on main push runs.
 The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
@@ -579,10 +633,12 @@ evidence boundary visible in Vitest and GitHub Actions.
 
 Keep coverage metadata with the execution owner:
 
-- Catalogue targets declare it in `tools/e2e/target-catalogue.mts`.
+- Catalogue targets declare it in `tools/e2e/target-inventory.mts`.
 - Executable typed targets declare it in `test/e2e/registry/definitions/baseline.ts`.
-- Shared credential-free tests declare it in `tools/e2e/credential-free-tests.mts`.
-- Retained workflow jobs and staging Brev declare it in `.github/workflows/e2e.yaml`.
+- Shared credential-free tests declare it in `tools/e2e/target-inventory.mts`.
+  Module-tag discovery must match each registered file and Vitest project.
+- Retained workflow jobs and staging Brev declare it in `tools/e2e/target-definitions/workflows.mts`.
+  The planner and advisor read these definitions through the inventory.
 
 Single workflow jobs use the `E2E_AGENT_RUNTIME`, `E2E_OBSERVABLE_OUTCOME`,
 `E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT`, and optional `E2E_UNRESOLVED_REASON`
@@ -591,13 +647,12 @@ snake-case include entries and use `coverage_variant` when one job contributes
 multiple rows. `tools/e2e/workflow-plan.mts` composes and validates these sources.
 Do not add a separate hand-maintained execution list.
 
-The default coverage matrix excludes explicit-only jobs and inert typed-registry declarations.
-The rendered report lists those categories separately and inventories every typed declaration,
-including declarations that have no executable matrix cell.
-Explicit-only rows keep their coverage dimensions but do not join the default release matrix.
-Inert declarations report unresolved coverage fields and the missing executable ownership.
-
-The inert declarations are combinatorial gaps, not supported matrix cells. #8285 owns the decision on the inert cross-runtime foundation. #8286 owns executable-only registry cleanup after that decision. Do not schedule other Cartesian-product cells without an accepted supported combination. This migration removes no execution, so it requires no duplicate-to-retained-evidence mapping. A documented gap does not schedule a new combination or change release judgment.
+The default coverage matrix excludes explicit-only jobs.
+The rendered report lists those executions separately with their prerequisites.
+The typed registry contains only executable targets. Unsupported declarations fail matrix generation
+and live collection; removed or unknown explicit target IDs fail with the available choices.
+Keep proposed combinations in owned issues instead of registering empty skipped tests.
+Issue #11407 owns the remaining inventory consolidation and compatibility retirement.
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
@@ -609,6 +664,8 @@ rebuilding its locked image:
 ```bash
 scripts/test-launch-readiness-lease.sh <openclaw-sandbox>
 ```
+
+The helper fails if the selected acceptance test does not execute.
 
 Run this helper on Linux after the sandbox's final durable home and state
 volume is mounted and after final policy and network provisioning is complete.
@@ -782,9 +839,7 @@ $receipt = Get-Content "C:\path\to\receipt.json" -Raw | ConvertFrom-Json
 & $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox delete $receipt.cleanup.retainedSandboxName
 ```
 
-The retired `hermes-dashboard` selector remains a compatibility alias for
-`hermes-e2e` in both selector inputs. Reports use the canonical
-`hermes-e2e` name. That lane always enables dashboard coverage while preserving
+The `hermes-e2e` lane always enables dashboard coverage while preserving
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
@@ -1416,25 +1471,20 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-Every `e2e-live` test and every credential-free integration test selected by
-the shared E2E workflow planner declares an ordered semantic phase plan in
-`meta.e2ePhases` and uses its automatic progress fixture. Normal E2E output
-identifies the workflow target and test scenario, then shows immediate phase
-start and completion lines with both phase and total elapsed time. A transition
-looks like:
+Live and workflow-selected integration tests use automatic progress reporting.
+Calls to `progress.phase(label)` record the activity that execution reaches;
+tests do not declare phase plans. Output includes target and scenario identity,
+activity start and completion, elapsed milliseconds, and outcome as JSON lines. For example:
 
-```text
-[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 2/4] completed: onboard the sandbox — passed in 2m 14s (total 2m 21s)
-[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 3/4] started: verify hosted inference (total 2m 21s; phase 0s)
+```json
+{"kind":"e2e-progress","target":"cloud-onboard","scenario":"onboards a hosted sandbox","event":"complete","activity":"onboard the sandbox","elapsedMs":141000,"activityElapsedMs":134000,"outcome":"passed","durationMs":134000}
 ```
 
-For `e2e-live`, the stateful fixture appends `release registered E2E resources`
-after the test-declared plan, so the displayed phase count includes that
-terminal phase. Registered cleanup duration, failures, and stall diagnostics
-are attributed there. Workflow-selected integration tests instead declare and
-enter their own final release phase. Soft assertion failures remain attributed
-to the semantic phase in which they occurred rather than being reassigned to
-resource release.
+The stateful fixture enters `release registered E2E resources` during teardown.
+Registered cleanup duration, failures, and stalls are attributed there.
+Workflow-selected integration tests own their resource cleanup.
+Soft assertion failures remain attributed to the activity where they occurred.
+Progress labels do not prove that an operation succeeded; tests must assert its result.
 
 If one phase remains active for five minutes, a content-free diagnostic adds
 the target/scenario identity, total and phase duration, age of the last child

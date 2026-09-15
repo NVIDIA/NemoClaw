@@ -11,7 +11,6 @@ import {
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const STOCK_JOBS = [
-  "live",
   "mcp-bridge",
   "openshell-credential-generation-window",
   "mcp-bridge-dev",
@@ -22,6 +21,7 @@ const STOCK_JOBS = [
 ] as const;
 
 const CATALOGUE_JOBS = [
+  "live",
   "catalogue-standard",
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",

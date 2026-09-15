@@ -209,18 +209,6 @@ test.skipIf(process.platform !== "linux")(
   "shields-retirement-upgrade: released Shields posture rebuilds with data intact and no affordance",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "clear prior fixture state",
-        "install the released Shields CLI and create a real sandbox",
-        "write durable user data and create the released recovery backup",
-        "raise and prove Shields are up",
-        "detect legacy posture and fail closed before mutation",
-        "recover through the production managed sandbox upgrade",
-        "verify user data runtime usability and legacy-state retirement",
-        "prove the candidate exposes no Shields affordance",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
     progress.phase("clear prior fixture state");

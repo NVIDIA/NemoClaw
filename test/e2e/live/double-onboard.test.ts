@@ -368,19 +368,6 @@ test(
   "double-onboard: reuses gateway, preserves sibling sandbox, and replaces stale registry",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "validate double-onboard lifecycle prerequisites",
-        "onboard first sandbox",
-        "re-onboard same sandbox on existing gateway",
-        "recreate same sandbox on existing gateway",
-        "onboard sibling sandbox with isolated dashboard",
-        "stop sibling sandbox without disturbing the first forward",
-        "replace sandbox after stale registry refusal",
-        "validate gateway-stop lifecycle guidance",
-        "remove double-onboard resources",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -393,6 +380,8 @@ test(
     sandbox,
     skip,
   }) => {
+    progress.phase("validate double-onboard lifecycle prerequisites");
+
     expect(
       fs.existsSync(CLI_DIST_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",

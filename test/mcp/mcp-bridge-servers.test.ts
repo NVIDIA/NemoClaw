@@ -28,13 +28,9 @@ import { shouldRetryMcpDiscoveryAfterRestart } from "../e2e/live/mcp-bridge-tool
 const servers: StartedHttpServer[] = [];
 function progressProbe() {
   const lines: string[] = [];
-  const progress = startTestProgress(
-    "MCP tunnel support",
-    ["start MCP tunnel", "verify MCP tunnel"],
-    {
-      logLine: (line) => lines.push(line),
-    },
-  );
+  const progress = startTestProgress("MCP tunnel support", "start MCP tunnel", {
+    logLine: (line) => lines.push(line),
+  });
   return { lines, progress };
 }
 type CompatibleToolCallResponse = {
@@ -289,10 +285,11 @@ describe("authenticated MCP live fixtures", () => {
       expect(fs.readFileSync(curlCount, "utf8")).toBe("6");
       expect(cleanupName).toBe("stop unit MCP fixture cloudflared quick tunnel");
       expect(cleanupProcess).toBeTypeOf("function");
-      expect(observation.lines).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining("event: cloudflared quick tunnel attempt 1 started"),
-        ]),
+      expect(observation.lines.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          event: "message",
+          message: "cloudflared quick tunnel attempt 1 started",
+        }),
       );
       progress.stop();
       expect(progress.summary().phases[0]?.outputEvents).toBeGreaterThan(0);

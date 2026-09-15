@@ -69,19 +69,10 @@ test(
   "Hermes inference set updates route/config and preserves live runtime",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "prepare clean Hermes inference sandbox",
-        "install baseline Hermes runtime",
-        "switch Hermes inference provider",
-        "validate switched route and mutable config",
-        "exercise inference.local and Hermes API",
-        "run Hermes CLI adapter forms against switched provider",
-        "prove split provider/model credential resolution",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("prepare clean Hermes inference sandbox");
+
     await artifacts.target.declare({
       id: "hermes-inference-switch",
       boundary:

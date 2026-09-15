@@ -14,8 +14,7 @@ import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
-import { listTargets } from "../registry/registry.ts";
-import { liveTargetSupport } from "../registry/runtime-support.ts";
+import { listTargets } from "../../../tools/e2e/target-inventory.mts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const COLLECTION_ENV = [
@@ -68,10 +67,7 @@ function buildLiveTestEnv(
 
 function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">) {
   const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-test-list-"));
-  const progress = startTestProgress("nested live E2E collection", [
-    "collect live tests",
-    "clean collector artifacts",
-  ]);
+  const progress = startTestProgress("nested live E2E collection", "collect live tests");
   const probe = new ShellProbe({
     artifacts: new ArtifactSink(artifactRoot),
     progress,
@@ -121,21 +117,6 @@ function linesForFile(lines: readonly string[], file: string): string[] {
   return lines.filter((line) => line.startsWith(`[e2e-live] test/e2e/live/${file} >`));
 }
 
-/**
- * A registered target ID. `wired: true` selects one the live fixtures support;
- * `wired: false` selects a declared placeholder the live matrix skips.
- */
-function declaredTargetId({ wired }: { wired: boolean }): string {
-  const match = listTargets().find(
-    (registered) => liveTargetSupport(registered).supported === wired,
-  );
-  return match?.id ?? missingDeclaredTarget(wired);
-}
-
-function missingDeclaredTarget(wired: boolean): never {
-  throw new Error(`registry declares no ${wired ? "wired" : "not wired"} target`);
-}
-
 describe("live E2E target gating", () => {
   it("strips ambient credentials from nested collector environments", () => {
     const env = buildLiveTestEnv(
@@ -165,62 +146,23 @@ describe("live E2E target gating", () => {
     });
   });
 
-  it(
-    "keeps the formatted bootstrap entry point valid through real Vitest collection",
-    testTimeoutOptions(35_000),
-    () => {
-      const formatted = spawnSync(
-        process.execPath,
-        [
-          path.join(REPO_ROOT, "node_modules", "oxfmt", "bin", "oxfmt"),
-          "--check",
-          path.join(LIVE_E2E_ROOT, "bootstrap-install-smoke.test.ts"),
-        ],
-        { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
-      );
-      expect(formatted.status, formatted.stderr || formatted.stdout).toBe(0);
-    },
-  );
-
   it.concurrent(
-    "collects the bootstrap install test through the trusted-main legacy path",
-    collectorTimeoutOptions(3),
+    "collects the bootstrap install contract through its current entry point",
+    collectorTimeoutOptions(),
     async (context) => {
       const listLiveTests = liveTestLister(context);
-      const legacy = await listLiveTests({
-        enabled: true,
-        env: { E2E_TARGET_ID: "launchable-smoke" },
-        files: ["launchable-smoke.test.ts"],
-      });
-
-      context.expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
-      context
-        .expect(linesForFile(legacy.lines, "launchable-smoke.test.ts"))
-        .toEqual([
-          "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
-        ]);
-
-      const renamed = await listLiveTests({
+      const collected = await listLiveTests({
         enabled: true,
         env: { E2E_TARGET_ID: "bootstrap-install-smoke" },
         files: ["bootstrap-install-smoke.test.ts"],
       });
 
-      context.expect(renamed.status, renamed.stderr || renamed.stdout).toBe(0);
+      context.expect(collected.status, collected.stderr || collected.stdout).toBe(0);
       context
-        .expect(linesForFile(renamed.lines, "bootstrap-install-smoke.test.ts"))
+        .expect(linesForFile(collected.lines, "bootstrap-install-smoke.test.ts"))
         .toEqual([
           "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
         ]);
-
-      const inactive = await listLiveTests({
-        enabled: true,
-        env: { E2E_TARGET_ID: "launchable-smoke" },
-        files: ["bootstrap-install-smoke.test.ts"],
-      });
-
-      context.expect(inactive.status, inactive.stderr || inactive.stdout).toBe(0);
-      context.expect(linesForFile(inactive.lines, "bootstrap-install-smoke.test.ts")).toEqual([]);
     },
   );
 
@@ -347,24 +289,22 @@ describe("live E2E target gating", () => {
     },
   );
 
-  it.concurrent.for([{ wired: true }, { wired: false }])(
-    "collects registry targets when wired is $wired for a declared TARGET_ID (#8286)",
-    collectorTimeoutOptions(),
-    async ({ wired }, context) => {
+  it.concurrent(
+    "collects executable registry targets and rejects a removed placeholder",
+    collectorTimeoutOptions(2),
+    async (context) => {
       const listLiveTests = liveTestLister(context);
       const file = "registry-targets.test.ts";
-
-      // The check rejects only ids the registry does not declare, so a wired id
-      // and a declared placeholder both still collect. Collecting at least one
-      // test proves the file was evaluated rather than skipped outright.
-      const result = await listLiveTests({
+      const result = await listLiveTests({ enabled: true, files: [file] });
+      context.expect(result.status, result.stderr || result.stdout).toBe(0);
+      context.expect(linesForFile(result.lines, file)).toHaveLength(listTargets().length);
+      const removed = await listLiveTests({
         enabled: true,
-        env: { TARGET_ID: declaredTargetId({ wired }) },
+        env: { TARGET_ID: "ubuntu-repo-cloud-hermes" },
         files: [file],
       });
-
-      context.expect(result.status, result.stderr || result.stdout).toBe(0);
-      context.expect(linesForFile(result.lines, file).length).toBeGreaterThan(0);
+      context.expect(removed.status).not.toBe(0);
+      context.expect(removed.stderr).toContain("Unknown target 'ubuntu-repo-cloud-hermes'");
     },
   );
 

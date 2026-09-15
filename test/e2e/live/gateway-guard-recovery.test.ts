@@ -282,19 +282,6 @@ function reportReadinessRetry(progress: TestProgress, attempt: number): false {
 
 test(
   "gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)",
-  {
-    meta: {
-      e2ePhases: [
-        "onboard guarded OpenClaw sandbox",
-        "verify initial gateway guard chain",
-        "wipe guard chain and gateway tree",
-        "recover gateway through connect probe",
-        "validate recovered guard and stable PID",
-        "restart sandbox through OpenShell with persisted startup command",
-        "recover managed supervisor and inference",
-      ],
-    },
-  },
   async ({
     artifacts,
     environment,
@@ -306,6 +293,8 @@ test(
     secrets,
     cleanup,
   }) => {
+    progress.phase("onboard guarded OpenClaw sandbox");
+
     secrets.required("NVIDIA_INFERENCE_API_KEY");
 
     await artifacts.target.declare({

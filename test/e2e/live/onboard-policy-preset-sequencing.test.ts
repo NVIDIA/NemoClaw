@@ -55,16 +55,10 @@ test(
   "interactive onboard wizard reaches Policy presets in step order (#6042)",
   {
     timeout: ONBOARD_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "start the local compatible-endpoint fake server",
-        "drive the interactive onboard wizard through a real PTY",
-        "confirm every ordered onboarding step appears in order",
-        "confirm Policy presets is reached before completion",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider }) => {
+    progress.phase("start the local compatible-endpoint fake server");
+
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-provider-info",
       scenarioLabel: "onboard policy preset sequencing",

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import { selectorsForCanonicalE2eId } from "./selector-aliases.mts";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -20,12 +19,8 @@ export const TRUSTED_HERMES_SWAP_STEP_ID = "trusted_hermes_swap";
 
 const TRUSTED_HERMES_SWAP_IF =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))";
-const TRUSTED_HERMES_E2E_SELECTION = `(${selectorsForCanonicalE2eId("hermes-e2e")
-  .flatMap((selector) => [
-    `contains(format(',{0},', inputs.jobs), ',${selector},')`,
-    `contains(format(',{0},', inputs.targets), ',${selector},')`,
-  ])
-  .join(" || ")})`;
+const TRUSTED_HERMES_E2E_SELECTION =
+  "(contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,'))";
 const TRUSTED_HERMES_E2E_ELIGIBILITY = `(github.event_name == 'push' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && ${TRUSTED_HERMES_E2E_SELECTION}))`;
 const TRUSTED_HERMES_SWAP_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_HERMES_SWAP_ENV = {

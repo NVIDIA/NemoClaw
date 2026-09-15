@@ -102,17 +102,10 @@ test(
   "skill-agent: installed sandbox skill is read by a real OpenClaw agent turn",
   {
     timeout: testTimeout(30 * 60_000),
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and skill tooling",
-        "onboard the OpenClaw skill sandbox",
-        "install and confirm the skill fixture",
-        "ask the agent to consume the skill",
-        "record the verified skill behavior",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm the selected runtime and skill tooling");
+
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",

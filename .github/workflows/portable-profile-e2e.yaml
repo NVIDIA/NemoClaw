@@ -239,13 +239,14 @@ jobs:
 
       - name: Exercise portable profile in the rootless environment
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-profile
           E2E_TARGET_ID: portable-profile
           NEMOCLAW_RUN_LIVE_E2E: "1"
         run: >-
           npx vitest run --project e2e-live
           test/e2e/live/portable-profile-rootless-linux.test.ts
-          --silent=false --reporter=default
+          --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload portable profile E2E artifacts
         if: always()

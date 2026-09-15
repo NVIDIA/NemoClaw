@@ -11,16 +11,10 @@ test(
   "exact all-agent managed images retain GPU, Ollama, NIM, vLLM, rollback, and cleanup (#7744)",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "qualify all managed agents with GPU-backed Ollama",
-        "qualify all managed agents with GPU-backed vLLM",
-        "qualify all managed agents with GPU-backed NVIDIA NIM",
-        "prove all-agent managed bootstrap rollback and exact cleanup",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, secrets }) => {
+    progress.phase("qualify all managed agents with GPU-backed Ollama");
+
     await artifacts.target.declare({
       id: "managed-image-protected-runtime",
       boundary:

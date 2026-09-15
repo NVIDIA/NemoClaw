@@ -50,15 +50,32 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "snapshot-home-"));
 process.env.HOME = home;
 const state = path.join(home, ".openclaw");
 fs.mkdirSync(state, { recursive: true });
-fs.writeFileSync(path.join(state, "openclaw.json"), '{"fixture":true}\n');
-const { createSnapshot, listSnapshots, rollbackFromSnapshot } = await import("/opt/nemoclaw/dist/blueprint/snapshot.js");
-const snapshot = createSnapshot();
+const config = path.join(state, "openclaw.json");
+delete process.env.OPENCLAW_STATE_DIR;
+delete process.env.OPENCLAW_CONFIG_PATH;
+fs.writeFileSync(config, JSON.stringify({ fixture: true, apiKey: "snapshot-fixture-secret" }));
+const { createSnapshotBundle, detectHostOpenClaw, restoreSnapshotToHost } = await import("/opt/nemoclaw/dist/commands/migration-state.js");
+const { listSnapshots } = await import("/opt/nemoclaw/dist/blueprint/snapshot-management.js");
+const logger = { debug() {}, info() {}, warn() {}, error() {} };
+const snapshot = createSnapshotBundle(detectHostOpenClaw(process.env), logger, { persist: true });
 if (!snapshot || listSnapshots().length !== 1) throw new Error("packaged snapshot creation failed");
-fs.writeFileSync(path.join(state, "openclaw.json"), '{"corrupted":true}\n');
-if (!rollbackFromSnapshot(snapshot)) throw new Error("packaged snapshot rollback failed");
-if (JSON.parse(fs.readFileSync(path.join(state, "openclaw.json"), "utf8")).fixture !== true) {
-  throw new Error("snapshot content was not restored");
+const captured = fs.readFileSync(path.join(snapshot.snapshotDir, "openclaw", "openclaw.json"), "utf8");
+if (captured.includes("snapshot-fixture-secret")) throw new Error("snapshot retained a credential");
+fs.writeFileSync(config, '{"corrupted":true}\n');
+if (!restoreSnapshotToHost(snapshot.snapshotDir, logger)) throw new Error("packaged snapshot rollback failed");
+const restored = fs.readFileSync(config, "utf8");
+if (JSON.parse(restored).fixture !== true || restored.includes("snapshot-fixture-secret")) {
+  throw new Error("snapshot content was not restored with credentials removed");
 }
+const outside = fs.mkdtempSync(path.join(os.tmpdir(), "snapshot-outside-"));
+fs.writeFileSync(path.join(outside, "marker"), "unchanged");
+fs.rmSync(state, { recursive: true });
+fs.symlinkSync(outside, state);
+if (restoreSnapshotToHost(snapshot.snapshotDir, logger)) throw new Error("snapshot restored through a symlink");
+if (fs.readFileSync(path.join(outside, "marker"), "utf8") !== "unchanged" || fs.existsSync(path.join(outside, "openclaw.json"))) {
+  throw new Error("snapshot changed the symlink destination");
+}
+
 `;
 
 const NORMALIZER_HANDOFF_RACE_PROBE = String.raw`from pathlib import Path
@@ -434,17 +451,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
   "enforces the OpenClaw managed-image sandbox boundary",
   {
     timeout: MANAGED_IMAGE_SECURITY_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "verify final image identities and runtime tools",
-        "verify cross-user process and filesystem isolation",
-        "verify packaged configuration repair and refusal",
-        "verify post-stepdown capability boundary",
-        "record managed-image security evidence",
-      ],
-    },
   },
   async ({ artifacts, host, progress }) => {
+    progress.phase("verify final image identities and runtime tools");
+
     const image = openclawProtectedImage();
 
     progress.phase("verify final image identities and runtime tools");

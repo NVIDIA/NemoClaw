@@ -342,7 +342,7 @@ describe("E2E risk signal reporter", () => {
     expect(stderr).not.toHaveBeenCalled();
   });
 
-  it("preserves explicit unsupported registry skips outside catalogue execution (#9022)", () => {
+  it("keeps optional skipped runs successful when execution is not required", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     process.exitCode = undefined;
     const reporter = new E2eRiskSignalReporter();

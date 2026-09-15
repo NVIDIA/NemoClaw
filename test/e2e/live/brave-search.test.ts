@@ -32,20 +32,10 @@ test(
   "Brave search exports stable configuration, performs real searches, and survives disabled-search reuse (#2687, #10404, #10904)",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "check Brave search prerequisites",
-        "onboard Brave-enabled OpenClaw sandbox",
-        "export stable Brave configuration and verify secret isolation",
-        "run Brave-backed OpenClaw search",
-        "assert sandbox shell cannot read the real Brave key",
-        "query Brave API through credential resolver",
-        "re-onboard the existing sandbox with web search disabled",
-        "verify reused runtime identity and retained Brave egress",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("check Brave search prerequisites");
+
     const braveKey = secrets.required("BRAVE_API_KEY");
     const inferenceKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const redactionValues = [braveKey, inferenceKey];

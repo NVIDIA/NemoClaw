@@ -140,20 +140,6 @@ const HERMES_PORTABLE_E2E_BUILD_SETTINGS = {
   toolDisclosure: "direct",
 } as const;
 const OPENSHELL_SETTLEMENT_DELAYS_MS = Array.from({ length: 120 }, () => 250);
-const PORTABLE_PROFILE_E2E_PHASES = [
-  "select the Podman-reported runtime socket",
-  "prepare the rootless container runtime",
-  "verify immutable non-force network removal",
-  "build and publish the sandbox image",
-  "prepare the staged Hermes build context",
-  "build and publish the staged Hermes image",
-  "verify Hermes accepts the configured external Host",
-  "start the pinned Podman gateway",
-  "verify distinct same-network routes",
-  "upgrade the historical receipt through public start and verify its lifecycle",
-  "prove post-recovery stop settlement",
-  "record portable environment completion",
-] as const;
 
 function run(command: string, args: readonly string[]): string {
   const result = spawnSync(command, [...args], {
@@ -1400,10 +1386,11 @@ async function main(progress: TestProgress): Promise<void> {
 test(
   "portable profile rootless environment completes authenticated routes and enforces the configured Hermes dashboard Host",
   {
-    meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
     timeout: 900_000,
   },
   async ({ progress }) => {
+    progress.phase("select the Podman-reported runtime socket");
+
     await main(progress);
   },
 );

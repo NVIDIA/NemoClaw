@@ -64,6 +64,16 @@ function withTemporaryDirectory<T>(action: (directory: string) => Promise<T>): P
 }
 
 describe("weekly E2E unit-test gap analysis", () => {
+  it.each([
+    '[e2e target="target" scenario="scenario"] [phase 1] completed: build — failed in 1m',
+    '{"kind":"e2e-progress","event":"complete","activity":"build","outcome":"failed"}',
+  ])("does not treat progress as a cause of failure: %s", (progressLine) => {
+    expect(
+      extractJobSignatures(`job\tstep\t${progressLine}\njob\tstep\tError: build input missing\n`),
+    ).toEqual([{ job: "job", signature: "Error: build input missing" }]);
+    expect(extractJobSignatures(`job\tstep\t${progressLine}\n`)).toEqual([]);
+  });
+
   it("redacts volatile identifiers, paths, URLs, sandboxes, and durations", () => {
     const signature = normalizeFailureSignature(
       "Error: sandbox e2e-sbx-a at /home/runner/work/NemoClaw failed after 180000ms for 1234567890abcdef1234567890abcdef12345678 via https://example.test/path?token=secret",

@@ -15,7 +15,11 @@ import {
   runtimeExecutionId,
 } from "../../../tools/e2e/gateway-runtime.mts";
 
-import { listTargets, requireTargets } from "./registry.ts";
+import {
+  listExecutionTargets,
+  listTargets,
+  requireTargets,
+} from "../../../tools/e2e/target-inventory.mts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
 import {
   liveTargetExecutionCoverage,
@@ -27,6 +31,7 @@ import type { TargetDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
+  listInventory: boolean;
   emitLiveMatrix: boolean;
   targets: string[];
 }
@@ -48,20 +53,23 @@ export interface LiveTargetMatrixEntry extends LiveTargetInventoryEntry {
   runtime: string;
   onboarding: string;
   expectedStateId: string;
-  suites: string[];
   requiredSecrets: string[];
-  pendingRuntimeSuites: string[];
   timeout_minutes: number;
 }
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     list: false,
+    listInventory: false,
     emitLiveMatrix: false,
     targets: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === "--list-inventory") {
+      args.listInventory = true;
+      continue;
+    }
     if (arg === "--list") {
       args.list = true;
       continue;
@@ -73,12 +81,23 @@ function parseArgs(argv: string[]): Args {
     if (arg === "--targets") {
       const value = argv[i + 1];
       if (!value) {
-        throw new Error("--targets requires a comma-separated value");
+        throw new Error(
+          `--targets requires a comma-separated value. Available targets: ${listTargets()
+            .map((target) => target.id)
+            .join(", ")}`,
+        );
       }
       args.targets = value
         .split(",")
         .map((id) => id.trim())
         .filter(Boolean);
+      if (args.targets.length === 0) {
+        throw new Error(
+          `--targets requires at least one target ID. Available targets: ${listTargets()
+            .map((target) => target.id)
+            .join(", ")}`,
+        );
+      }
       i += 1;
       continue;
     }
@@ -112,9 +131,7 @@ function liveMatrixEntry(
     runtime: target.environment?.runtime ?? "unknown",
     onboarding: target.environment?.onboarding ?? "unknown",
     expectedStateId: target.expectedStateId ?? "",
-    suites: target.suiteIds ?? [],
     requiredSecrets: target.requiredSecrets ?? [],
-    pendingRuntimeSuites: support.pendingRuntimeSuites,
     timeout_minutes: liveTargetTimeoutContract(target.environment?.lifecycle).targetTimeoutMinutes,
   };
 }
@@ -131,10 +148,6 @@ export function liveTargetInventoryEntry(
   };
 }
 
-export function buildLiveTargetInventory(): LiveTargetInventoryEntry[] {
-  return listTargets().map((target) => liveTargetInventoryEntry(target));
-}
-
 export function liveTargetGatewayRuntimes(target: TargetDefinition): E2eGatewayRuntimeSupport {
   return target.gatewayRuntimes ?? ["docker"];
 }
@@ -143,21 +156,14 @@ export function buildLiveTargetMatrix(
   ids: string[] = [],
   gatewayRuntimes: readonly E2eGatewayRuntime[] = ["docker"],
 ): LiveTargetMatrixEntry[] {
-  if (ids.length === 0) {
-    return listTargets().flatMap((target) => {
-      const support = liveTargetSupport(target);
-      return support.supported
-        ? e2eRuntimeProviders(liveTargetGatewayRuntimes(target), gatewayRuntimes).map(
-            (runtimeProvider) => liveMatrixEntry(target, support, runtimeProvider),
-          )
-        : [];
-    });
-  }
-  return requireTargets(ids).flatMap((target) =>
-    e2eRuntimeProviders(liveTargetGatewayRuntimes(target), gatewayRuntimes).map((runtimeProvider) =>
-      liveMatrixEntry(target, liveTargetSupport(target), runtimeProvider),
-    ),
-  );
+  const targets = ids.length === 0 ? listTargets() : requireTargets(ids);
+  return targets.flatMap((target) => {
+    const support = liveTargetSupport(target);
+    liveTargetExecutionCoverage(target, support);
+    return e2eRuntimeProviders(liveTargetGatewayRuntimes(target), gatewayRuntimes).map(
+      (runtimeProvider) => liveMatrixEntry(target, support, runtimeProvider),
+    );
+  });
 }
 
 function emitLiveMatrix(ids: string[]) {
@@ -169,6 +175,10 @@ function emitLiveMatrix(ids: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.listInventory) {
+    process.stdout.write(`${JSON.stringify(listExecutionTargets(), null, 2)}\n`);
+    return;
+  }
   if (args.list) {
     printList();
     return;

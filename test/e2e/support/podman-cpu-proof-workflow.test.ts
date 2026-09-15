@@ -378,6 +378,15 @@ describe("native Podman CPU proof workflow", () => {
       const proofStates = fixture.runner.calls
         .flatMap((call) => call.argv)
         .filter((argument) => argument.startsWith("E2E_CPU_DELEGATION_STATE="));
+      const proofCalls = fixture.runner.calls.filter((call) =>
+        call.argv.includes("./node_modules/.bin/vitest"),
+      );
+      const requiredExecution = expect.arrayContaining([
+        "NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1",
+        "--reporter=default",
+        "--reporter=test/e2e/risk-signal-reporter.ts",
+      ]);
+      expect(proofCalls.map((call) => call.argv)).toEqual([requiredExecution, requiredExecution]);
       expect(proofStates).toEqual([
         "E2E_CPU_DELEGATION_STATE=missing",
         "E2E_CPU_DELEGATION_STATE=delegated",

@@ -6,8 +6,7 @@
 // provider names mirror the existing NemoClaw provider contract. This module
 // is compiled to generated .cjs/.d.cts files by build:cli before both the
 // plugin and root CLI are built.
-// consumers: The ESM plugin runner (nemoclaw/src/blueprint/runner.ts) and
-// migration snapshot (nemoclaw/src/blueprint/snapshot.ts) import the generated
+// consumers: The ESM plugin runner (nemoclaw/src/blueprint/runner.ts) imports the generated
 // .cjs directly; the root CLI re-exports the sandbox constants through
 // src/lib/name-validation.ts (mirroring src/lib/adapters/openshell/policy-boundary.ts). Keeping one
 // sandbox definition prevents the leading-char drift already observed between

@@ -311,10 +311,6 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-scorecard.test.ts",
       "test/e2e/support/sanitize-trace-timing.test.ts",
     ]);
-    expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yaml")).toEqual([
-      "test/e2e/support/e2e-manifests.test.ts",
-    ]);
-    expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yml")).toEqual([]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual([
       ...E2E_WORKFLOW_CONTRACTS,
       "test/e2e/support/openshell-sdk-install.test.ts",

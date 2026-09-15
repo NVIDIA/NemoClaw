@@ -26,11 +26,9 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 const supportProgressInstances: TestProgress[] = [];
 
 function supportProgress(): TestProgress {
-  const progress = startTestProgress(
-    "ShellProbe support",
-    ["run support command", "verify support result"],
-    { logLine: () => undefined },
-  );
+  const progress = startTestProgress("ShellProbe support", "run support command", {
+    logLine: () => undefined,
+  });
   supportProgressInstances.push(progress);
   return progress;
 }

@@ -31,6 +31,33 @@ import type {
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
 
+import type { ExpectedState } from "../registry/types.ts";
+
+const localOllamaOpenclawReady: ExpectedState = {
+  id: "local-ollama-openclaw-ready",
+  cli: { installed: true },
+  gateway: { expected: "present", health: "healthy" },
+  sandbox: { expected: "present", status: "running", agent: "openclaw" },
+  inference: { expected: "available", provider: "ollama" },
+  credentials: { expected: "present" },
+};
+
+const macosCliReadyDockerOptional: ExpectedState = {
+  id: "macos-cli-ready-docker-optional",
+  cli: { installed: true },
+  gateway: { expected: "optional", health: "optional" },
+  sandbox: { expected: "optional", status: "optional", agent: "openclaw" },
+  inference: { expected: "optional", provider: "nvidia" },
+  credentials: { expected: "optional" },
+};
+
+const preflightFailureNoSandbox: ExpectedState = {
+  id: "preflight-failure-no-sandbox",
+  cli: { installed: true },
+  gateway: { expected: "absent" },
+  sandbox: { expected: "absent" },
+};
+
 interface RunnerCall {
   command: string;
   args: string[];
@@ -223,7 +250,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc\n"));
 
     const result = await fixture(runner).from(
-      "local-ollama-openclaw-ready",
+      localOllamaOpenclawReady,
       instance({
         provider: "ollama",
         providerEnv: "local",
@@ -288,7 +315,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "other-sandbox\n"));
 
     const result = await fixture(runner).from(
-      "preflight-failure-no-sandbox",
+      preflightFailureNoSandbox,
       instance({
         onboarding: "cloud-openclaw-no-docker",
         sandboxName: "e2e-no-docker",
@@ -319,7 +346,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(0, "gateway healthy\n"));
 
-    await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
+    await expect(fixture(runner).from(preflightFailureNoSandbox, instance())).rejects.toThrow(
       /expected gateway to be absent/,
     );
   });
@@ -330,7 +357,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(1, "gateway status unavailable\n"));
     runner.enqueue(shellResult(0, "ok\n"));
 
-    await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
+    await expect(fixture(runner).from(preflightFailureNoSandbox, instance())).rejects.toThrow(
       /health responded healthy/,
     );
     expect(runner.calls.map((call) => call.args)).toEqual([
@@ -347,7 +374,7 @@ describe("state-validation phase fixture", () => {
 
     await expect(
       fixture(runner).from(
-        "preflight-failure-no-sandbox",
+        preflightFailureNoSandbox,
         instance({
           gatewayUrl: "http://10.0.0.1:18789",
         }),
@@ -362,7 +389,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc\n"));
 
-    await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
+    await expect(fixture(runner).from(preflightFailureNoSandbox, instance())).rejects.toThrow(
       /nemoclaw listed it/,
     );
   });
@@ -375,7 +402,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
     runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc\n"));
 
-    await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
+    await expect(fixture(runner).from(preflightFailureNoSandbox, instance())).rejects.toThrow(
       /OpenShell listed it/,
     );
   });
@@ -388,7 +415,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
     runner.enqueueError(new Error("spawn openshell ENOENT"));
 
-    const result = await fixture(runner).from("preflight-failure-no-sandbox", instance());
+    const result = await fixture(runner).from(preflightFailureNoSandbox, instance());
 
     const sandboxAbsent = result.probes.find((probe) => probe.id === "sandbox-absent");
     expect(sandboxAbsent?.results).toHaveLength(1);
@@ -409,7 +436,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
     runner.enqueueError(new Error("openshell permission denied"));
 
-    await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
+    await expect(fixture(runner).from(preflightFailureNoSandbox, instance())).rejects.toThrow(
       /could not verify OpenShell sandbox absence/,
     );
   });
@@ -422,7 +449,7 @@ describe("state-validation phase fixture", () => {
     runner.enqueue(shellResult(0, "NAME\ne2e-cloud-oc-old\n"));
     runner.enqueue(shellResult(0, "NAME\nold-e2e-cloud-oc\n"));
 
-    const result = await fixture(runner).from("preflight-failure-no-sandbox", instance());
+    const result = await fixture(runner).from(preflightFailureNoSandbox, instance());
 
     expect(result.probes.map((probe) => probe.id)).toEqual([
       "cli-installed",
@@ -442,7 +469,7 @@ describe("state-validation phase fixture", () => {
       runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
       runner.enqueue(shellResult(0, "other-sandbox\n"));
 
-      await fixture(runner).from("preflight-failure-no-sandbox", instance());
+      await fixture(runner).from(preflightFailureNoSandbox, instance());
 
       runner.calls.slice(1).forEach((call) => {
         expect(call.options?.env).toEqual(expect.objectContaining({ PATH: expect.any(String) }));
@@ -470,7 +497,7 @@ describe("state-validation phase fixture", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
 
-    const result = await fixture(runner).from("macos-cli-ready-docker-optional");
+    const result = await fixture(runner).from(macosCliReadyDockerOptional);
 
     expect(result.probes.map((probe) => probe.id)).toEqual(["cli-installed"]);
     expect(runner.calls.map((call) => call.args)).toEqual([["--version"]]);
@@ -519,7 +546,7 @@ describe("state-validation phase fixture", () => {
       runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
       const fx = fixture(runner, {}, new ArtifactSink(tmp));
 
-      await fx.from("macos-cli-ready-docker-optional");
+      await fx.from(macosCliReadyDockerOptional);
 
       expect(readJson(path.join(tmp, "state-validation.result.json"))).toMatchObject({
         phase: "state-validation",

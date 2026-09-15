@@ -596,11 +596,9 @@ describe("MCP bridge transient classification", () => {
 
   it("redacts every MCP fixture credential from a restart-command failure artifact", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-restart-redaction-"));
-    const progress = startTestProgress(
-      "MCP restart redaction",
-      ["run failing MCP restart", "inspect redacted failure artifacts"],
-      { logLine: () => undefined },
-    );
+    const progress = startTestProgress("MCP restart redaction", "run failing MCP restart", {
+      logLine: () => undefined,
+    });
     try {
       const leakedValues = [
         ...Object.values(MCP_BRIDGE_TEST_CREDENTIALS),

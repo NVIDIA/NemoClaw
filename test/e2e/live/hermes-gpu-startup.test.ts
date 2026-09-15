@@ -331,17 +331,10 @@ test(
   `hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches stable Ready state`,
   {
     timeout: testTimeout(LIVE_TIMEOUT_MS),
-    meta: {
-      e2ePhases: [
-        "prepare clean Hermes GPU runner",
-        "install Hermes sandbox on selected GPU route",
-        "validate GPU startup and supervisor proof",
-        "exercise authenticated GPU inference route",
-        "remove Hermes GPU resources",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("prepare clean Hermes GPU runner");
+
     await artifacts.target.declare({
       id: "hermes-gpu-startup",
       boundary: "install.sh --non-interactive --fresh + Hermes GPU-supervised startup",

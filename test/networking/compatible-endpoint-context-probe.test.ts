@@ -24,11 +24,9 @@ const MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4";
 let progress: TestProgress | null = null;
 
 function testProgress(): TestProgress {
-  progress ??= startTestProgress(
-    "compatible endpoint support",
-    ["serve compatible endpoint", "verify compatible endpoint"],
-    { targetId: "compatible-endpoint-context-probe" },
-  );
+  progress ??= startTestProgress("compatible endpoint support", "serve compatible endpoint", {
+    targetId: "compatible-endpoint-context-probe",
+  });
   return progress;
 }
 

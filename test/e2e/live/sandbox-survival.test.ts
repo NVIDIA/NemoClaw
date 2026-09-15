@@ -187,17 +187,6 @@ test(
   "sandbox survives gateway restart with registry, state, SSH, and live inference intact",
   {
     timeout: testTimeout(30 * 60_000),
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and inference prerequisites",
-        "install and register the OpenClaw sandbox",
-        "prove baseline sandbox access and inference",
-        "write persistent OpenClaw markers",
-        "restart the gateway and reconnect the sandbox",
-        "recheck state and inference after restart",
-        "destroy the sandbox and confirm registry removal",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -213,6 +202,8 @@ test(
     skip,
     stateValidation,
   }) => {
+    progress.phase("confirm the selected runtime and inference prerequisites");
+
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 

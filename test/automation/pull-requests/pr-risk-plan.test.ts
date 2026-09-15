@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { focusedE2eJobsForChangedFiles } from "../../../tools/e2e/target-inventory.mts";
+import { buildE2eWorkflowPlan, selectedWorkflowJobs } from "../../../tools/e2e/workflow-plan.mts";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -17,11 +19,8 @@ import {
 import {
   catalogueTargetsForChangedFiles,
   E2E_TARGET_CATALOGUE,
-} from "../../../tools/e2e/target-catalogue.mts";
-import {
-  focusedE2eJobsForChangedFiles,
-  readFreeStandingJobsInventory,
-} from "../../../tools/e2e/workflow-boundary.mts";
+} from "../../../tools/e2e/target-inventory.mts";
+
 import { classifyTestDepth } from "../../../tools/pr-review-advisor/deterministic-context.mts";
 
 const HEAD_SHA = "a".repeat(40);
@@ -1105,15 +1104,14 @@ describe("deterministic PR risk plan", () => {
     expect(result.suggestedTests.join("\n")).toContain("`src/lib/state/registry.ts`");
   });
 
-  it("keeps every risk-plan job wired into the canonical E2E workflow", () => {
-    const allowedJobs = new Set([
-      ...readFreeStandingJobsInventory().allowedJobs,
-      ...E2E_TARGET_CATALOGUE.flatMap(({ id, targetId }) => [id, targetId]),
-    ]);
-    const configuredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
-
-    expect([...configuredJobs].filter((job) => !allowedJobs.has(job))).toEqual([]);
-  });
+  it.each([...new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs))])(
+    "plans executable workflow jobs for risk selector %s",
+    (job) => {
+      const plan = buildE2eWorkflowPlan({ jobs: job });
+      expect(selectedWorkflowJobs(plan).length).toBeGreaterThan(0);
+      expect(plan.testMatrix).toEqual([]);
+    },
+  );
 });
 
 describe("Brev Launchable recommendations", () => {

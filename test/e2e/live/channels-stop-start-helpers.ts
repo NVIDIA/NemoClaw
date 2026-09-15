@@ -1040,6 +1040,7 @@ export async function runChannelsStopStartTarget({
 }: import("../fixtures/e2e-test.ts").E2ETargetFixtures & {
   skip: (note?: string) => never;
 }): Promise<void> {
+  progress.phase("prepare channel lifecycle sandbox");
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const tokens = phase6Tokens(AGENT);
   const env = phase6Env({

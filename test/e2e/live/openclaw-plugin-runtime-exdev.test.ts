@@ -298,19 +298,10 @@ test(
   "the current-lifecycle custom plugin survives restart and recreation across filesystems (#6108, #11547)",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm Docker CLI and clear the current plugin sandbox",
-        "clone and prepare the current plugin fixture",
-        "install and validate current OpenShell",
-        "build and onboard plugin v1",
-        "install a distinct plugin payload across filesystems",
-        "restart the gateway and confirm the installed payload",
-        "recreate the sandbox with plugin v2",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+    progress.phase("confirm Docker CLI and clear the current plugin sandbox");
+
     await artifacts.target.declare({
       id: "openclaw-plugin-runtime-exdev",
       boundary: "fresh-openclaw-sandbox-exec",

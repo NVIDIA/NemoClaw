@@ -21,14 +21,13 @@ Direct E2E implementations now live in Vitest. The former
 
 | Task | Source |
 | --- | --- |
-| Live target IDs and metadata | `test/e2e/registry/registry.ts`, `test/e2e/registry/definitions/baseline.ts` |
+| Live target IDs and metadata | `tools/e2e/target-inventory.mts`; typed scenario data in `test/e2e/registry/definitions/baseline.ts`; specialized definitions in `tools/e2e/target-definitions/workflows.mts` |
 | GitHub Actions matrix emission | `test/e2e/registry/run.ts --emit-live-matrix` |
 | Live target execution | `test/e2e/live/registry-targets.test.ts` |
 | Homogeneous target catalogue and execution | [Catalogue Targets](../README.md#catalogue-targets) |
 | Main-push and manual selection | `tools/e2e/workflow-plan.mts` |
 | Phase fixtures and clients | `test/e2e/fixtures/` |
 | Expected-state probes | `test/e2e/registry/expected-states.ts` |
-| Product-facing setup/onboarding state | `test/e2e/manifests/*.yaml` |
 | Migration status and retirement decisions | GitHub issues and pull requests |
 
 ## Target Model
@@ -51,10 +50,10 @@ Live execution happens through shared fixtures:
 - `stateValidation` probes host-observable expected state.
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
-- The automatic `progress` fixture reports the ordered semantic phase plan for
+- The automatic `progress` fixture records the activities reached by
   each `e2e-live` case. Normal output contains the target/scenario identity,
   immediate phase starts and completions, and phase plus total durations. The
-  harness appends `release registered E2E resources` to cover registered
+  harness enters `release registered E2E resources` to cover registered
   cleanup. After five minutes in one phase, a content-free stall diagnostic
   adds child-output age, current redacted command or cleanup activity, and
   runner resources; it repeats every ten minutes while the phase remains
@@ -66,8 +65,8 @@ Live execution happens through shared fixtures:
 The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
 
-`suiteIds` remain metadata for reporting and migration planning. They do not
-dispatch shell validation suites.
+Typed targets declare their environment, expected state, lifecycle, and required
+secrets. The live Vitest test executes those contracts through fixtures.
 
 ## Selecting One Target
 
@@ -93,11 +92,10 @@ protects the registry-target catalogue when collection includes
 `npm run test:e2e-phases:check` include that file, but a collection command that
 omits it does not run this guard.
 
-A declared target that is not wired for live fixtures still collects. The
-typed-registry matrix reports it as skipped with its `[not wired]` reason and
-exits 0. That exit-0 skip is specific to the typed-registry matrix; the
-catalogue path sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` and exits nonzero
-when its selection runs no tests.
+The shared execution command sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` for
+typed and catalogue targets. An empty or entirely skipped selection exits
+nonzero. Collection can report unsupported runtime prerequisites without
+executing a target; collection alone does not certify live execution.
 
 ## Run Live E2E Locally
 
@@ -221,26 +219,21 @@ phase with its duration and outcome. Push and ordinary manual workflows
 publish the current run's table in the GitHub Actions scorecard summary. The
 summary reads the target identity from `E2E_TARGET_ID`, falling back to the
 Actions `GITHUB_JOB`, and reads `NEMOCLAW_E2E_SHARD` when set. It retains
-overall start, finish, and duration, and records each declared or harness-owned
-phase's start, finish, duration, outcome, child-output event count, and
-last-output timestamp. Use several recent workflow artifact directories to
+overall start, finish, and duration. Each observed activity records its start,
+finish, duration, outcome, child-output event count, and last-output timestamp. Use several recent workflow artifact directories to
 distinguish a consistently expensive test from a variable one.
 
-Normal phase output repeats the workflow target and test scenario because a
-long-running Actions step may not expose Vitest's final report yet. It reports
-the current position and semantic label, total and phase elapsed time, and the
-outcome when that phase ends:
+Console logs are JSON lines with target, scenario, activity, elapsed milliseconds, and an event.
+Completion records include the outcome and duration. Fields are redacted before JSON encoding. For example:
 
-```text
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 1/4] started: provision a clean sandbox (total 0s; phase 0s)
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 1/4] completed: provision a clean sandbox — passed in 48s (total 48s)
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 2/4] still running: exercise token rotation (total 5m 48s; phase 5m; child output 12s ago; activity command: credential-rotation; ...)
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 4/4] event: cleanup started: destroy sandbox e2e-token-rotation (total 6m; phase 0s)
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 4/4] completed: release registered E2E resources — passed in 6s (total 6m 6s)
+```json
+{"kind":"e2e-progress","target":"token-rotation","scenario":"rotates a live sandbox credential","event":"complete","activity":"exercise token rotation","elapsedMs":348000,"activityElapsedMs":300000,"outcome":"passed","durationMs":300000}
 ```
 
-The `still running` line first appears after five minutes in the same phase and
-then every ten minutes. Shell probes update child-output liveness and redacted
+A `stall` event first appears after five minutes in the same activity, then every ten minutes.
+It adds `outputAgeMs`, `activeCommands`, and `resources` in bytes and load average.
+`resources` is null if sampling fails; `outputAgeMs` is null before the first child output.
+Shell probes update child-output liveness and redacted
 command activity automatically, but that detail remains hidden until the stall
 threshold. Automatic child-output observation forwards only the event timestamp
 and stream name, never the output contents.
@@ -251,57 +244,39 @@ credentials, or tokens.
 For the stateful live fixture, the harness-owned final phase captures registered
 cleanup duration, failures, and stalls; each registry entry reports a redacted
 start/outcome event and is shown as the active cleanup operation in a stall
-heartbeat. Workflow-selected integration tests declare their own final release
-phase. Soft assertion failures are recorded against the semantic phase where
+heartbeat. Workflow-selected integration tests record their own resource cleanup. Soft assertion failures are recorded against the semantic phase where
 they occurred, while successful resource release retains its own `passed`
 outcome.
 
-Every `e2e-live` test and every credential-free integration test selected by
-the shared E2E planner must declare two to twelve behavior-specific phases and
-transition through them in order. For example:
+Live and workflow-selected tests receive automatic progress and outcome reporting.
+Use `progress.phase(label)` to identify an activity before executing it. There is
+no declared sequence, phase-count limit, or required final label. Repeated and
+conditional activities are recorded in execution order; unvisited activities do
+not produce synthetic skipped entries. For example:
 
 ```typescript
-const PHASES = [
-  "provision a clean sandbox",
-  "exercise token rotation",
-  "verify the rotated credential",
-] as const;
-
-test(
-  "rotates a live sandbox credential",
-  { meta: { e2ePhases: PHASES } },
-  async ({ progress }) => {
-    await provisionSandbox();
-    progress.phase("exercise token rotation");
-    await rotateCredential();
-    progress.phase("verify the rotated credential");
-    await verifyCredential();
-  },
-);
+test("rotates a live sandbox credential", async ({ progress }) => {
+  progress.phase("provision a clean sandbox");
+  await provisionSandbox();
+  progress.phase("exercise token rotation");
+  await rotateCredential();
+  progress.phase("verify the rotated credential");
+  await verifyCredential();
+});
 ```
 
-Use phases for meaningful scenario boundaries, not individual commands. Labels
-must be unique within the plan; generic labels such as `setup`, `execute`,
-`verify`, and `test body` are rejected. Pass each phase label as a string
-literal so the collection-only checker can validate the transition without
-executing the test body; variables and array lookups are rejected. A phase
-transition may skip optional intermediate phases, which are recorded with a
-`skipped` outcome, but it cannot move backward or select an undeclared label.
-When a module has multiple tests, including tests with the same phase plan,
-keep each literal transition inside its owning test callback so the checker can
-attribute it to that case. A helper may own the operational boundary by
-accepting a callback that performs the transition.
-Completed phases use `passed`, `failed`, or `skipped` outcomes. A passing path
-must enter the final declared phase before returning, or fixture teardown fails
-the test. In `e2e-live`, do not declare or enter
-`release registered E2E resources`; the stateful harness appends and enters it
-automatically after the test's phase plan. Workflow-selected integration tests
-own and enter their final release phase.
-`npm run test:e2e-phases:check` collects every `e2e-live` module plus the
-workflow-selected integration modules from the authoritative shared-job plan.
-It rejects missing or invalid plans without executing test bodies. Live modules
-must import `fixtures/e2e-test.ts`; selected integration modules must import
-`fixtures/workflow-e2e-test.ts` and declare their final release phase explicitly.
+Labels must be bounded, nonempty, and free of control characters. Keep labels
+useful for diagnosis and exclude credentials and child output. Resource
+comparisons can use stable activity labels without maintaining a second list.
+Qualification tests must assert required outcomes and publish their owning
+qualification evidence; progress labels alone do not establish qualification.
+Completed activities record `passed`, `failed`, or `skipped` from the test outcome.
+The live fixture records registered cleanup as `release registered E2E resources`.
+
+`npm run test:e2e-phases:check` retains its existing command name. It collects live
+and workflow-selected integration tests, rejects zero-test modules, checks workflow
+consumers, and requires the appropriate shared fixture. It does not validate phase
+plans or execute test bodies.
 The same check audits direct child-process boundaries reachable through shared
 E2E helpers. Prefer `ShellProbe`; a long-lived process that cannot use it must
 live in an explicitly audited progress-aware boundary, close its activity on
@@ -312,24 +287,17 @@ only in redacted artifacts.
 
 Audited subprocess helpers require the fixture-provided frozen, canonical
 `progress` capability. Forward that object unchanged instead of copying
-it or constructing a look-alike or no-op adapter. A module-private brand,
-runtime registry, frozen-object check, type system, and semantic checker enforce
-this boundary.
+it or constructing a look-alike or no-op adapter. The private registry rejects
+copies; freezing prevents callers from replacing the monitor methods.
 
 Progress callbacks are diagnostic-only: callback failures must not change
 command execution, test outcomes, or registered resource release.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
-When you add or make a non-comment source change to a live E2E test or a
-`test/e2e/live/` helper, update `test/e2e/mock-parity.json`. List each changed
-helper under `liveSources` for its owning live test. If the entry has mapped
-fast tests, make a non-comment source change to at least one mapped fast test
-in the same PR. Use
-`liveOnlyReason` only when no fast test can reproduce the contract. The PR and
-`main` CLI coverage shards enforce this changed-file policy alongside the
-`e2e-support` project without requiring an immediate backfill of untouched
-tests.
+When live E2E behavior changes, run the affected fast tests and add regression evidence
+for behavior they do not already protect. Existing tests can provide that evidence without
+a test-file edit. Use live execution when the changed behavior requires a real boundary.
 
 ## Repository Layout
 
@@ -338,8 +306,6 @@ test/e2e/
   docs/                  # Fixture guide, migration notes, retirement record
   fixtures/              # Vitest fixtures, clients, redaction, artifacts, cleanup
   live/                  # Opt-in live E2E target tests
-  manifests/             # Product-facing NemoClawInstance desired state
-  mock-parity.json        # Changed live-test to fast-test parity decisions
   registry/              # Typed registry, matrix helpers, expected states
   support/               # Fast fixture/support and metadata tests
 ```

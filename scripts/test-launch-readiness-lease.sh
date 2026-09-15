@@ -21,5 +21,5 @@ npm run clean:cli
 npm run build:cli
 NEMOCLAW_RUN_LIVE_E2E=1 \
   NEMOCLAW_ACCEPTANCE_SANDBOX="$1" \
-  npx vitest run --project e2e-live \
-  test/e2e/live/launch-readiness-lease-acceptance.test.ts
+  npx tsx tools/e2e/live-vitest-invocation.mts run \
+  --test-path test/e2e/live/launch-readiness-lease-acceptance.test.ts

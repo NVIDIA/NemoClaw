@@ -63,16 +63,6 @@ const BASE_IMAGE =
 const ACTIVATION_POLICY = path.join(REPO_ROOT, "test/e2e/live/podman-cpu-lifecycle-policy.yaml");
 const GATEWAY_PORT = 18_080;
 const SUPERVISOR_IMAGE = OPENSHELL_V0116_QUALIFICATION.supervisorImage;
-const E2E_PHASES = [
-  "consume exact candidate prerequisites",
-  "pin the exact rootless Podman endpoint",
-  "qualify the Podman 5 host contract",
-  "prove cold activation and warm API readiness",
-  "start the pinned OpenShell Podman gateway",
-  "activate registered-agent identities through the pinned OpenShell CLI",
-  "exercise exact-container stop and start",
-  "record successful final at-rest state",
-] as const;
 
 type SupportedLifecycle = Extract<RuntimeProviderLifecycleSurface, { supported: true }>;
 
@@ -108,10 +98,11 @@ function supportedLifecycle(bundle: RuntimeProviderBundle): SupportedLifecycle {
 test(
   "activates pinned OpenShell sandboxes and preserves registered-agent Podman CPU identity",
   {
-    meta: { e2ePhases: E2E_PHASES },
     timeout: 360_000,
   },
   async ({ progress, shellProbe }) => {
+    progress.phase("consume exact candidate prerequisites");
+
     progress.phase("consume exact candidate prerequisites");
     expect(candidateAuthority()).toMatchObject({
       candidateId: "podman-cpu-lifecycle",

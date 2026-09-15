@@ -20,7 +20,7 @@ import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "../live/onboard-interactive-pty.ts";
 
 function observedProgress(scenario: string): TestProgress {
-  return startTestProgress(scenario, ["drive the child", "observe its result"], {
+  return startTestProgress(scenario, "drive the child", {
     logLine: () => undefined,
   });
 }

@@ -300,7 +300,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
       "live managed-image revision",
-      (value) => (value.jobs.live.env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+      (value) => (value.jobs.live.with!.managed_image_revision = "${{ github.sha }}"),
     ],
     [
       "catalogue managed-image revision",
@@ -347,29 +347,8 @@ describe("base-image publication workflow boundary (#7372)", () => {
     [
       "live mutable base",
       (value) => {
-        value.jobs.live.env!.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF =
+        value.jobs.live.with!.dcode_base_ref =
           "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest";
-      },
-    ],
-    [
-      "live base evidence ordering",
-      (value) => {
-        const steps = value.jobs.live.steps!;
-        const evidence = steps.find(
-          (step) => step.name === "Record immutable Deep Agents Code base evidence",
-        )!;
-        steps.splice(steps.indexOf(evidence), 1);
-        steps.push(evidence);
-      },
-    ],
-    [
-      "live base evidence upload",
-      (value) => {
-        const upload = value.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
-        upload.with!.path = String(upload.with!.path).replace(
-          "e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json\n",
-          "",
-        );
       },
     ],
   ];

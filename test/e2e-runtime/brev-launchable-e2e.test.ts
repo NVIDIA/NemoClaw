@@ -30,6 +30,18 @@ function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("rejects a skipped guest suite and still removes its instance", () => {
+    const { env, workDir } = fixture({ realCommandEvidence: true, e2eSkipped: true });
+    const result = run(env);
+    expect(result.status).not.toBe(0);
+    const log = fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8");
+    expect(log).toContain("Live E2E selection ran no tests");
+    expect(log).not.toContain("NEMOCLAW_FULL_E2E_PASSED");
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
   it("preserves multiline output through the delayed readiness log fixture", () => {
     const { bin, env, workDir } = fixture({ delayWorkspaceSshLog: true });
     const laneLog = path.join(workDir, "lane.log");

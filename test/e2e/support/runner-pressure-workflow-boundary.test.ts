@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { runCatalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -20,9 +21,67 @@ vi.mock("../../../tools/e2e/live-vitest-invocation.mts", () => ({
 import {
   catalogueTarget,
   E2E_TARGET_CATALOGUE,
-  runCatalogueTarget,
+  listTargets,
   validateE2eTargetCatalogue,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
+
+describe("typed target execution through the standard profile", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("rejects a known catalogue target paired with another target's test", async () => {
+    await expect(
+      runCatalogueTarget("rebuild-hermes", "test/e2e/live/full-e2e.test.ts"),
+    ).rejects.toThrow("does not own test file");
+    expect(mocks.runLiveVitestCommand).not.toHaveBeenCalled();
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it.each(listTargets().map(({ id }) => id))(
+    "selects only %s and returns the live test failure",
+    async (id) => {
+      vi.stubEnv("TARGET_ID", undefined);
+      vi.stubEnv("E2E_TARGET_ID", undefined);
+      vi.stubEnv("NEMOCLAW_CLI_BIN", undefined);
+      vi.stubEnv("NEMOCLAW_E2E_USE_HOSTED_INFERENCE", undefined);
+      mocks.runLiveVitestCommand.mockImplementation(async () => {
+        expect(process.env).toMatchObject({
+          TARGET_ID: id,
+          E2E_TARGET_ID: id,
+          NEMOCLAW_CLI_BIN: path.join(process.cwd(), "bin", "nemoclaw.js"),
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        });
+        return 17;
+      });
+      await expect(runCatalogueTarget(id, "test/e2e/live/registry-targets.test.ts")).resolves.toBe(
+        17,
+      );
+      expect(mocks.runLiveVitestCommand).toHaveBeenCalledWith([
+        "run",
+        "--test-path",
+        "test/e2e/live/registry-targets.test.ts",
+        "--selector",
+        `^${id}:`,
+      ]);
+      expect(mocks.spawnSync).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["", "test/e2e/live/registry-targets.test.ts"],
+    ["unknown-target", "test/e2e/live/registry-targets.test.ts"],
+    ["rebuild-hermes", "test/e2e/live/registry-targets.test.ts"],
+    ["ubuntu-repo-cloud-openclaw", "test/e2e/live/rebuild-hermes.test.ts"],
+  ])("rejects target %s with an invalid execution route", async (id, file) => {
+    vi.stubEnv("TARGET_ID", "unchanged");
+    await expect(runCatalogueTarget(id, file)).rejects.toThrow();
+    expect(process.env.TARGET_ID).toBe("unchanged");
+    expect(mocks.runLiveVitestCommand).not.toHaveBeenCalled();
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+  });
+});
 
 describe("runner-pressure catalogue boundary", () => {
   afterEach(() => {
@@ -63,7 +122,6 @@ describe("runner-pressure catalogue boundary", () => {
         "E2E_TERMINAL_CLASSIFICATION_FILE",
         "E2E_TEST_OUTCOME_FILE",
         "NEMOCLAW_CLI_BIN",
-        "NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST",
       ];
       environmentNames.forEach((name) => {
         vi.stubEnv(name, process.env[name] ?? "");
@@ -79,7 +137,6 @@ describe("runner-pressure catalogue boundary", () => {
           "--test-path",
           target.testFile,
         ]);
-        expect(process.env.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
         expect(mocks.spawnSync.mock.calls.map((call) => call[1].at(-1))).toEqual([
           "snapshot",
           "initialize-evidence",

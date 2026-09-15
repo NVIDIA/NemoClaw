@@ -38,18 +38,10 @@ test(
   "OpenClaw Discord pairing request is shared with connect-shell approval",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "load Discord credentials and clear pairing state",
-        "install the Discord-enabled OpenClaw sandbox",
-        "inspect Discord bridge and OpenClaw configuration",
-        "route Discord Gateway traffic through the managed policy",
-        "issue a Discord pairing request",
-        "approve the Discord code through connect-shell",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("load Discord credentials and clear pairing state");
+
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const env = pairingEnv({
       sandboxName: SANDBOX_NAME,

@@ -9,6 +9,8 @@ type E2eWorkflow = {
   jobs: Record<
     string,
     {
+      with: Record<string, unknown>;
+      secrets: Record<string, string>;
       steps: Array<{
         env?: Record<string, string>;
         id?: string;
@@ -21,6 +23,17 @@ type E2eWorkflow = {
 };
 
 describe("trusted E2E planning boundary", () => {
+  it("rejects widening the typed target credential scope", () => {
+    const workflow = readWorkflow() as E2eWorkflow;
+    workflow.jobs.live!.with.github_token = true;
+    workflow.jobs.live!.secrets.BRAVE_API_KEY = "${{ secrets.BRAVE_API_KEY }}";
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "live job must preserve typed input github_token",
+        "live job must pass only Docker Hub and inference credentials",
+      ]),
+    );
+  });
   it.each([
     ["ref", "${{ inputs.checkout_sha }}"],
     ["repository", "${{ inputs.checkout_repository }}"],
@@ -59,12 +72,11 @@ describe("trusted E2E planning boundary", () => {
 
   it("rejects an inference credential exposed to an unauthorized PR candidate", () => {
     const workflow = readWorkflow() as E2eWorkflow;
-    const run = workflow.jobs.live!.steps.find((step) => step.name === "Run live E2E tests")!;
-    const validationError =
-      "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main run or an authorized NVIDIA-owned PR dispatch";
+    const secrets = workflow.jobs.live!.secrets;
+    const validationError = "live job must preserve the guarded inference credential";
 
     expect(validateE2eWorkflow(workflow)).not.toContain(validationError);
-    run.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    secrets.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
 
     expect(validateE2eWorkflow(workflow)).toContain(validationError);
   });

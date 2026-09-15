@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { sharedTarget, reconcileSharedTargetDiscovery } from "./target-inventory.mts";
+
 import { moduleTagDeclarations, stripModuleTagDeclarations } from "./module-tags.mts";
 import { type E2eExecutionMetadata, validateE2eExecutionMetadata } from "./execution-coverage.mts";
 import {
@@ -54,31 +56,15 @@ const E2E_LIVE_CREDENTIAL_FREE_TEST_PATTERN =
 const INTEGRATION_CREDENTIAL_FREE_TEST_PATTERN =
   /^test\/(?!e2e\/)(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.(?:js|ts)$/;
 const SUPPORTED_PROJECTS = new Set<CredentialFreeTestProject>(["e2e-live", "integration"]);
-const CREDENTIAL_FREE_TEST_COVERAGE = {
-  "onboard-managed-image-buildless-e2e": {
-    agentRuntime: "none",
-    observableOutcome: "Buildless onboarding selects exact managed images for every agent",
-    environmentOrInferenceEndpoint: "Mocked integration environment; no inference endpoint",
-    unresolvedReason: "",
-    gatewayRuntimes: ["docker"],
-  },
-  "vllm-docker-storage": {
-    agentRuntime: "none",
-    observableOutcome: "vLLM storage gate accepts and rejects the intended host states",
-    environmentOrInferenceEndpoint: "Native Linux Docker host; no inference endpoint",
-    unresolvedReason: "",
-    gatewayRuntimes: ["docker"],
-  },
-} as const satisfies Readonly<
-  Record<string, E2eExecutionMetadata & { gatewayRuntimes: E2eGatewayRuntimeSupport }>
->;
-
 export function credentialFreeTestCoverage(id: string): E2eExecutionMetadata {
-  if (!Object.hasOwn(CREDENTIAL_FREE_TEST_COVERAGE, id)) {
-    throw new Error(`Credential-free test ${id} requires execution coverage metadata`);
-  }
-  const { gatewayRuntimes: _gatewayRuntimes, ...metadata } =
-    CREDENTIAL_FREE_TEST_COVERAGE[id as keyof typeof CREDENTIAL_FREE_TEST_COVERAGE];
+  const { agentRuntime, observableOutcome, environmentOrInferenceEndpoint, unresolvedReason } =
+    sharedTarget(id);
+  const metadata = {
+    agentRuntime,
+    observableOutcome,
+    environmentOrInferenceEndpoint,
+    unresolvedReason,
+  };
   return validateE2eExecutionMetadata(metadata, `Credential-free test ${id}`);
 }
 
@@ -90,11 +76,7 @@ export function credentialFreeTestSupportsGatewayRuntime(
 }
 
 export function credentialFreeTestGatewayRuntimes(id: string): E2eGatewayRuntimeSupport {
-  if (!Object.hasOwn(CREDENTIAL_FREE_TEST_COVERAGE, id)) {
-    throw new Error(`Credential-free test ${id} requires execution coverage metadata`);
-  }
-  return CREDENTIAL_FREE_TEST_COVERAGE[id as keyof typeof CREDENTIAL_FREE_TEST_COVERAGE]
-    .gatewayRuntimes;
+  return sharedTarget(id).gatewayRuntimes;
 }
 
 export function credentialFreeTestProjectForFile(
@@ -281,7 +263,9 @@ export function discoverCredentialFreeTests(
   const resolvedRoot = fs.realpathSync(repoRoot);
   const cached = discoveryCache.get(resolvedRoot);
   if (cached) return cached.map((row) => ({ ...row }));
-  const rows = discoverCredentialFreeTestRows(listVitestCredentialFreeTestModules(resolvedRoot));
+  const rows = reconcileSharedTargetDiscovery(
+    discoverCredentialFreeTestRows(listVitestCredentialFreeTestModules(resolvedRoot)),
+  );
   discoveryCache.set(resolvedRoot, rows);
   return rows.map((row) => ({ ...row }));
 }
@@ -291,9 +275,7 @@ export function credentialFreeTestMatrix(
   gatewayRuntimes: readonly E2eGatewayRuntime[],
 ): CredentialFreeTestMatrixRow[] {
   return rows.flatMap((row) => {
-    const support =
-      CREDENTIAL_FREE_TEST_COVERAGE[row.id as keyof typeof CREDENTIAL_FREE_TEST_COVERAGE]
-        .gatewayRuntimes;
+    const support = sharedTarget(row.id).gatewayRuntimes;
     return e2eRuntimeProviders(support, gatewayRuntimes).map((runtimeProvider) => ({
       ...row,
       execution_id: runtimeExecutionId(row.id, "", runtimeProvider),
