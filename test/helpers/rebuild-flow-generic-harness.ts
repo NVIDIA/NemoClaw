@@ -758,7 +758,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       }
       if (argv[0] === "provider" && argv[1] === "list") {
         const provider = String(currentSandboxEntry.provider ?? "compatible-endpoint");
-        const output = JSON.stringify([{ name: provider }]);
+        const credentialEnv =
+          "credentialEnv" in currentSandboxEntry &&
+          typeof currentSandboxEntry.credentialEnv === "string"
+            ? currentSandboxEntry.credentialEnv
+            : "COMPATIBLE_API_KEY";
+        const output = JSON.stringify([
+          { name: provider, credential_keys: credentialEnv ? [credentialEnv] : [] },
+        ]);
         return { status: 0, output, stdout: output, stderr: "" };
       }
       return argv[0] === "provider" && argv[1] === "get"
