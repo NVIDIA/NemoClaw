@@ -4,20 +4,6 @@
 use crate::{Error, config::Service};
 pub(crate) mod validation;
 pub(crate) mod vllm;
-#[derive(Clone, Copy, Debug)]
-pub enum Backend {
-    Vllm,
-}
-impl Backend {
-    pub fn arguments(
-        self,
-        service: &Service,
-        model_directory: &str,
-        total: u64,
-    ) -> Result<Vec<String>, Error> {
-        vllm::arguments(service, model_directory, total)
-    }
-}
 impl Service {
     pub fn gpu_bytes(&self) -> Result<u64, Error> {
         self.validate()?;
@@ -30,7 +16,7 @@ impl Service {
         download_remaining: u64,
         preparation_remaining: u64,
     ) -> Result<(), Error> {
-        crate::hardware::Profile::SparkV1.check_capacity(
+        crate::hardware::check_capacity(
             self,
             capacity,
             starting,
@@ -40,7 +26,7 @@ impl Service {
     }
     pub fn arguments(&self, model_directory: &str, total: u64) -> Result<Vec<String>, Error> {
         self.validate()?;
-        Backend::Vllm.arguments(self, model_directory, total)
+        vllm::arguments(self, model_directory, total)
     }
 }
 

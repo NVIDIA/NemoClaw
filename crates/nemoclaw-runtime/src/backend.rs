@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use crate::recipe::PreparedModel;
-use nemoclaw_sdk::{Error, backends::Backend, config::Service};
+use nemoclaw_sdk::{Error, config::Service};
 use process_wrap::tokio::CommandWrap;
 use std::{process::Stdio, time::Duration};
 /// Backend-owned probe location. The shared supervisor owns the loading deadline.
@@ -9,36 +9,30 @@ pub(crate) struct Readiness {
     url: String,
 }
 pub(crate) fn launch(
-    backend: Backend,
     service: &Service,
     prepared: &PreparedModel,
     total_memory: u64,
 ) -> Result<(CommandWrap, Readiness), Error> {
-    match backend {
-        Backend::Vllm => {
-            let arguments = backend.arguments(
-                service,
-                prepared
-                    .model
-                    .to_str()
-                    .ok_or(Error::State("invalid model storage path"))?,
-                total_memory,
-            )?;
-            let command = CommandWrap::with_new("python3", |cmd| {
-                cmd.args(arguments)
-                    .envs(&prepared.environment)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit());
-            });
-            Ok((
-                command,
-                Readiness {
-                    url: format!("http://127.0.0.1:{}/health", service.serving.port),
-                },
-            ))
-        }
-    }
+    let arguments = service.arguments(
+        prepared
+            .model
+            .to_str()
+            .ok_or(Error::State("invalid model storage path"))?,
+        total_memory,
+    )?;
+    let command = CommandWrap::with_new("python3", |cmd| {
+        cmd.args(arguments)
+            .envs(&prepared.environment)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+    });
+    Ok((
+        command,
+        Readiness {
+            url: format!("http://127.0.0.1:{}/health", service.serving.port),
+        },
+    ))
 }
 pub(crate) async fn wait_ready(
     readiness: Readiness,

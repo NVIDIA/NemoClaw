@@ -43,7 +43,7 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
             "serving settings are unsupported by the generic vLLM backend",
         ));
     }
-    crate::hardware::Profile::SparkV1.validate_memory(&service.memory)?;
+    crate::hardware::validate_memory(&service.memory)?;
     if service.recipe.is_some() {
         return Ok(());
     }

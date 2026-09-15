@@ -122,40 +122,10 @@ impl Watchdog {
     }
 }
 
+mod capacity;
 mod spark;
-/// Qualified hardware profiles. Adding a host does not require a new crate.
-#[derive(Clone, Copy, Debug)]
-pub enum Profile {
-    SparkV1,
-}
-impl Profile {
-    pub(crate) fn validate_memory(
-        self,
-        memory: &crate::config::Memory,
-    ) -> Result<(), crate::config::ConfigError> {
-        match self {
-            Self::SparkV1 => spark::validate_memory(memory),
-        }
-    }
-    pub fn check_capacity(
-        self,
-        service: &Service,
-        capacity: &Capacity,
-        starting: bool,
-        download_remaining: u64,
-        preparation_remaining: u64,
-    ) -> Result<(), Error> {
-        match self {
-            Self::SparkV1 => spark::check_capacity(
-                service,
-                capacity,
-                starting,
-                download_remaining,
-                preparation_remaining,
-            ),
-        }
-    }
-}
+pub use capacity::check_capacity;
+pub(crate) use spark::validate_memory;
 
 #[cfg(target_os = "linux")]
 pub mod linux;

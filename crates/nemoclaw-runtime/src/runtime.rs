@@ -58,14 +58,8 @@ async fn run_owned(
             "memory protection tripped by operator; explicit apply required",
         ));
     }
-    let profile = nemoclaw_sdk::hardware::Profile::SparkV1;
-    let capacity = crate::hardware::before_start(profile, spec, cancel).await?;
-    let (mut command, readiness) = crate::backend::launch(
-        nemoclaw_sdk::backends::Backend::Vllm,
-        spec,
-        &prepared,
-        capacity.total,
-    )?;
+    let capacity = crate::hardware::before_start(spec, cancel).await?;
+    let (mut command, readiness) = crate::backend::launch(spec, &prepared, capacity.total)?;
     command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
     let mut child = command
         .spawn()
@@ -83,11 +77,7 @@ async fn run_owned(
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
-            if samples_tx
-                .send(crate::hardware::memory(profile))
-                .await
-                .is_err()
-            {
+            if samples_tx.send(crate::hardware::memory()).await.is_err() {
                 break;
             }
         }

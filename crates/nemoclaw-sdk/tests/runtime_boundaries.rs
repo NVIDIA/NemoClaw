@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     config::Document,
-    hardware::Profile,
     hardware::{Capacity, GIB},
 };
 fn service() -> nemoclaw_sdk::config::Service {
@@ -27,15 +26,14 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
         disk_free: 200 * GIB,
         ..Default::default()
     };
-    Profile::SparkV1
-        .check_capacity(
-            &service,
-            &capacity,
-            true,
-            recipe.snapshot.as_ref().unwrap().bytes().unwrap(),
-            recipe.resources.prepared_bytes,
-        )
-        .unwrap();
+    nemoclaw_sdk::hardware::check_capacity(
+        &service,
+        &capacity,
+        true,
+        recipe.snapshot.as_ref().unwrap().bytes().unwrap(),
+        recipe.resources.prepared_bytes,
+    )
+    .unwrap();
     let args = service.arguments("/data/model", capacity.total).unwrap();
     assert!(
         args.windows(2)
@@ -47,14 +45,35 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
     );
     let mut wrong_hardware = capacity.clone();
     wrong_hardware.gpu = "other GPU".into();
-    assert!(
-        Profile::SparkV1
-            .check_capacity(&service, &wrong_hardware, true, 0, 0)
-            .is_err()
-    );
+    assert!(nemoclaw_sdk::hardware::check_capacity(&service, &wrong_hardware, true, 0, 0).is_err());
     service.model.revision = "0".repeat(40);
     assert!(service.validate().is_err());
     service = self::service();
     service.backend = "llama.cpp".into();
+    assert!(service.validate().is_err());
+}
+
+#[test]
+fn declared_compatibility_does_not_bypass_capacity_or_memory_policy() {
+    let mut service = service();
+    let recipe = service.recipe.as_mut().unwrap();
+    recipe.compatibility.architecture = "amd64".into();
+    recipe.compatibility.gpu = "fixture GPU".into();
+    let mut capacity = Capacity {
+        architecture: "amd64".into(),
+        gpu: "fixture GPU".into(),
+        driver_major: 580,
+        total: 121 * GIB,
+        available: 116 * GIB,
+        disk_free: 200 * GIB,
+        ..Default::default()
+    };
+    nemoclaw_sdk::hardware::check_capacity(&service, &capacity, true, 0, 0).unwrap();
+    capacity.available = 0;
+    assert!(nemoclaw_sdk::hardware::check_capacity(&service, &capacity, true, 0, 0).is_err());
+    capacity.available = 116 * GIB;
+    capacity.disk_free = 0;
+    assert!(nemoclaw_sdk::hardware::check_capacity(&service, &capacity, true, 0, 0).is_err());
+    service.memory.host_reserve_gib = 0;
     assert!(service.validate().is_err());
 }

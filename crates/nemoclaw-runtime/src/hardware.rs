@@ -3,29 +3,17 @@
 use nemoclaw_sdk::{
     CancellationToken, Error,
     config::Service,
-    hardware::{Capacity, GIB, Profile},
+    hardware::{Capacity, GIB},
 };
 use std::time::Duration;
-pub(crate) fn memory(profile: Profile) -> Result<Capacity, Error> {
-    match profile {
-        Profile::SparkV1 => nemoclaw_sdk::hardware::linux::memory(),
-    }
+pub(crate) fn memory() -> Result<Capacity, Error> {
+    nemoclaw_sdk::hardware::linux::memory()
 }
 pub(crate) async fn before_start(
-    profile: Profile,
     spec: &Service,
     cancel: &CancellationToken,
 ) -> Result<Capacity, Error> {
-    match profile {
-        Profile::SparkV1 => before_spark_start(profile, spec, cancel).await,
-    }
-}
-async fn before_spark_start(
-    profile: Profile,
-    spec: &Service,
-    cancel: &CancellationToken,
-) -> Result<Capacity, Error> {
-    let capacity = memory(profile)?;
+    let capacity = memory()?;
     if capacity.available
         < spec.gpu_bytes()?
             + spec
