@@ -1,0 +1,74 @@
+{
+  "sourceRevision": "114311b630188358f0bad079cbe82f7e961da309",
+  "qualification": "Deterministic Docker API, Ollama HTTP and OpenShell fixtures with the real Rust provider and OpenTofu; no live containers or model downloads.",
+  "platform": "linux_arm64",
+  "bundleVersion": "0.1.0-dev.f44f8988bbfcf7b4",
+  "rust": "1.98.1",
+  "opentofu": "1.12.6",
+  "bundleManifestSha256": "48b88e1aef0a737491a5a8aecf1f259c0d7bf88669063df08f005dc58372ba90",
+  "validation": {
+    "workspace": {
+      "passed": 146,
+      "failed": 0,
+      "ignored": 35
+    },
+    "format": "passed",
+    "strictClippy": "passed",
+    "explicitOllamaBundleTest": {
+      "passed": 1,
+      "seconds": 39.23
+    }
+  },
+  "contracts": [
+    "Initial apply, unchanged apply and export/reapply preserve identities with one initial model pull.",
+    "Legacy service/model state gains independent storage binding on apply without recreating the container or pulling models; destroy refuses before this upgrade.",
+    "Stopped-service plan makes no runtime mutation and explicitly defers model inventory and the complete deployment plan.",
+    "Failed startup retains container and volume identities; explicit recovery starts the same container without another model pull.",
+    "API startup polls only connection refusal with the existing 30-second budget; authentication, transport and incomplete inventory fail.",
+    "Ordinary failed model inventory stops plan/apply/export without changing Terraform state.",
+    "Engine observation failure and replaced volume identity stop destroy before any container deletion.",
+    "Destroy retains tracked model storage, releases model installation bindings without model API calls, and deletes only the verified container.",
+    "Lost successful delete response is reconciled by explicit destroy after confirmed container absence, without another deletion.",
+    "Reapply after destroy creates a new container on unchanged retained storage and reuses the existing model without another pull."
+  ],
+  "observationBoundaries": "Existing Ollama observations remain direct Docker/Ollama API reads shared by provider and export. New retained storage observation uses the same Docker adapter. OpenShell osquery-backed refresh/export is unchanged. Startup readiness is an active direct probe.",
+  "limits": [
+    "No new live Ollama hardware qualification or native agent response in this slice.",
+    "Image/network changes remain subject to existing immutable configuration checks; retained storage keeps legacy specification labels.",
+    "Plan while Ollama is stopped is explicitly incomplete until service recovery permits full fresh inventory."
+  ],
+  "logs": [
+    {
+      "path": ".local/ollama-red.log",
+      "sha256": "8248f5d9570f6c1adf8919a83930feb73951c644d3d845dc70f9560c07a7971d"
+    },
+    {
+      "path": ".local/ollama-readiness-red.log",
+      "sha256": "2e6328aeda9c30dba81023d69b85b0af1535d27447879ac143090837631282e5"
+    },
+    {
+      "path": ".local/ollama-bundle-red.log",
+      "sha256": "0605a5fcb43137b627f0da5978cb13a501952c1e6e8a655cce4bfde1741184a6"
+    },
+    {
+      "path": ".local/ollama-sdk.log",
+      "sha256": "445ca6e0661ef1a2616f8f60096cfac4489ed28a00349b60594ec444de640a97"
+    },
+    {
+      "path": ".local/ollama-build-final.log",
+      "sha256": "35e9b3741d0385d7ffa6e00a1075fe940696e8f9b2d25bcc8bb99111891a207e"
+    },
+    {
+      "path": ".local/ollama-bundle-final.log",
+      "sha256": "979f5dc97a54e747f74252e1a8f9dc96e679130f358f8e52bf7c69b01e8ff023"
+    },
+    {
+      "path": ".local/ollama-clippy-final.log",
+      "sha256": "d19750dee0083284f73fbaf7f97967952185613367390bbc9056e5c6d538b110"
+    },
+    {
+      "path": ".local/ollama-workspace-final.log",
+      "sha256": "3943faf1a1f26983c05aa38e50943c53854f2199505d118615069aa91b132c5e"
+    }
+  ]
+}
