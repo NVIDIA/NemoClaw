@@ -6,6 +6,38 @@
 Identify the client host, sandbox engine, and inference host before building a deployment.
 They can have different requirements; a working client binary does not qualify the runtime or GPU host.
 
+## Identify Each Host
+
+| Role | Must be available there |
+|---|---|
+| Client running NemoClaw | Matching native bundle, writable deployment state directory, referenced credentials/TLS files, and access to the gateway and selected engine |
+| Image build host | The image recipe's toolchain and architecture; the documented Fabric build uses Linux ARM64 |
+| Sandbox engine host | OpenShell's configured compute daemon and the selected immutable agent image |
+| Inference host | A reachable compatible endpoint, or the tools, image, model storage, and capacity required by the selected managed service |
+
+One machine can fill several roles.
+An image built on one daemon is not automatically available on another, and loopback addresses refer to the host or network namespace making the connection.
+For remote model placement, use the [SSH service guide](remote-service.md); SSH access does not provide an inference tunnel.
+
+## Before the First Deployment
+
+The [first-deployment guide](get-started.md) uses OpenClaw with an existing OpenShell gateway and external inference endpoint.
+Prepare these inputs before running apply:
+
+- An OpenShell **0.0.116** gateway with the Docker compute driver and permission to create a deployment workspace and sandbox.
+- Its client-reachable endpoint and any bearer credential or mTLS files required by the gateway operator.
+- An inference endpoint reachable from OpenShell, its request API, an exact model ID, and any provider credential.
+- An OpenClaw image built from this checkout and available by immutable digest on the sandbox compute daemon.
+- An authenticated OpenShell **0.0.116** CLI for native access, configured for the same gateway and the deployment's workspace.
+- A fresh deployment UUID, a separate state directory, and resources you control.
+
+The [gateway check](../crates/nemoclaw-sdk/src/openshell/probes.rs) verifies the version and compute driver.
+Use [inference API selection](inference.md) to match the endpoint to the agent.
+A successful connection or listed model does not establish that the model can complete an agent turn.
+
+Provisioning an external gateway and configuring OpenShell CLI access from a clean host: **TBD** — the current guide requires operator-provided services and access.
+End-to-end rehearsal of this first-deployment procedure on the current revision: **TBD**.
+
 ## Client and Build Tools
 
 Use the versions in [the build guide](build.md) and [versions.json](../versions.json).

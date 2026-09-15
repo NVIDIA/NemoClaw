@@ -5,7 +5,7 @@
 
 NemoClaw manages agent deployments from desired-state YAML.
 You declare the gateway, inference provider, sandbox, and agents, then use the CLI or Rust SDK to plan, apply, export, and destroy that deployment.
-Start with [prerequisites](prerequisites.md) and the [first-deployment outline](get-started.md).
+Start with [prerequisites](prerequisites.md) and [deploy OpenClaw with existing services](get-started.md).
 
 ## Choose an Interface
 
@@ -26,6 +26,25 @@ OpenTofu executes the resource graph and keeps resource state; the provider call
 OpenShell owns sandbox isolation and inference routing.
 Fabric hosts the native agent process inside the sandbox.
 
+```mermaid
+flowchart TD
+    YAML[Desired-state YAML] --> CLI[NemoClaw CLI]
+    CLI --> SDK[Rust SDK]
+    App[Your application] --> SDK
+    SDK --> State[Retained deployment intent]
+    SDK --> Tofu[Bundled OpenTofu and provider]
+    Tofu --> Gateway[OpenShell gateway]
+    Tofu --> Service[Managed inference service]
+    Gateway --> Sandbox[Sandbox running Fabric and the native agent]
+    Sandbox --> Route[OpenShell inference route]
+    Route --> Service
+    Route --> External[External inference endpoint]
+```
+
+Choose one inference service path for a deployment.
+The gateway may also be managed or external.
+The diagram separates deployment operations from the agent's requests: the CLI can exit while the agent and managed services keep running.
+
 Each document contains one inference provider and one sandbox.
 OpenClaw can declare multiple agents sharing the primary inference route; other harnesses require one agent.
 Use the [agent guide](agents.md) for accepted harnesses and the [inference guide](inference.md) for their API restrictions.
@@ -33,6 +52,17 @@ Use the [agent guide](agents.md) for accepted harnesses and the [inference guide
 Managed resources follow NemoClaw's lifecycle and retention rules.
 External resources remain under their operator's control, although a deployment can still send requests to them.
 Read [resource ownership](usage.md#resource-ownership) before selecting a management mode.
+
+## Choose Your Next Task
+
+| Goal | Start here |
+|---|---|
+| Deploy an OpenClaw agent using an existing gateway and inference endpoint | [First deployment](get-started.md) |
+| Choose an API, endpoint, or managed model service | [Inference](inference.md), [models](models.md) |
+| Select a harness or open its native interface | [Agents](agents.md), [interfaces](interfaces.md) |
+| Change a deployment or recover a failed operation | [Use desired state](usage.md#updates-and-recovery), [troubleshooting](troubleshooting.md) |
+| Preserve data or evaluate a move from the earlier product | [State](state.md), [migration](migration.md) |
+| Embed deployment operations in a Rust program | [SDK](sdk.md) |
 
 ## Plan for Change and Recovery
 

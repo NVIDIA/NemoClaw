@@ -14,7 +14,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 |---|---|
 | Understand the product and choose an interface | [NemoClaw overview](overview.md) |
 | Check client, runtime, and model-host requirements | [Prerequisites](prerequisites.md) |
-| Follow the first-deployment outline | [Get started](get-started.md) |
+| Deploy OpenClaw with existing gateway and inference services | [Get started](get-started.md) |
 | Assess a move from an earlier version | [Migration](migration.md) |
 | Find release information and qualification gaps | [Release notes](release-notes.md) |
 
