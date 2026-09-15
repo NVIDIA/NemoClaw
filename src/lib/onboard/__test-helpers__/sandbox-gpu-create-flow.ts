@@ -249,6 +249,12 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
       clientConfigForwarded: true,
     },
     {
+      title: "the caller selects a non-default DOCKER_CONTEXT while the sandbox env carries a host",
+      callerSelection: { DOCKER_CONTEXT: "qa-explicit-host" },
+      sandboxSelection: { DOCKER_HOST: "unix:///managed-gateway/docker.sock" },
+      clientConfigForwarded: true,
+    },
+    {
       title: "an explicit remote Docker host is selected",
       callerSelection: { DOCKER_HOST: remoteDockerHost },
       sandboxSelection: { DOCKER_HOST: remoteDockerHost },

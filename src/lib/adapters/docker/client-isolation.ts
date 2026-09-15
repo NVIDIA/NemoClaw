@@ -68,7 +68,10 @@ export function dockerClientSelectionEnv(
   for (const [key, value] of Object.entries(subprocessEnv)) {
     if (value !== undefined) extra[key] = value;
   }
-  return buildDockerSubprocessEnv(hostEnv, extra.DOCKER_HOST ?? hostEnv.DOCKER_HOST, extra);
+  const dockerContext = extra.DOCKER_CONTEXT ?? hostEnv.DOCKER_CONTEXT;
+  const dockerHost =
+    dockerContext === undefined ? (extra.DOCKER_HOST ?? hostEnv.DOCKER_HOST) : undefined;
+  return buildDockerSubprocessEnv(hostEnv, dockerHost, extra);
 }
 
 /** Restrict the host Docker build to environment values used by Docker itself. */
