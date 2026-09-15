@@ -563,7 +563,7 @@ flowSlices.runFinalOnboardFlowSequence = async ({ context, phases }) => {
     await finalizationPhase.run(context);
 
     const dashboardOutput = [];
-    require(${dashboardUrlCommandPath}).runDashboardUrlCommand(
+    await require(${dashboardUrlCommandPath}).runDashboardUrlCommand(
       "fsm-sandbox",
       { quiet: true },
       {

@@ -858,9 +858,14 @@ exit 1
       scriptPath,
       `
 const { isOpenclawReady } = require(${onboardPath});
-console.log(JSON.stringify({
-  ready: isOpenclawReady("my-assistant"),
-}));
+(async () => {
+  console.log(JSON.stringify({
+    ready: await isOpenclawReady("my-assistant"),
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 `,
     );
 
