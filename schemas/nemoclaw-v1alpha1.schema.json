@@ -1,0 +1,1774 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0. Generated from the SDK; do not edit.",
+  "$defs": {
+    "Agent": {
+      "additionalProperties": false,
+      "properties": {
+        "harness": {
+          "enum": [
+            "deepagents",
+            "hermes",
+            "openclaw",
+            "claude",
+            "codex",
+            "mini-swe-agent",
+            "nooa",
+            "nooa-bench",
+            "remote-agent",
+            "pi"
+          ],
+          "type": "string"
+        },
+        "inference": {
+          "$ref": "#/$defs/Inference"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "harness",
+        "inference"
+      ],
+      "type": "object"
+    },
+    "Compatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "architecture": {
+          "enum": [
+            "arm64",
+            "amd64"
+          ],
+          "type": "string"
+        },
+        "gpu": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "imageLabels": {
+          "additionalProperties": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "properties": {
+            "org.nemoclaw.recipe.protocol": {
+              "const": "v1"
+            }
+          },
+          "propertyNames": {
+            "pattern": "^org\\.nemoclaw\\."
+          },
+          "required": [
+            "org.nemoclaw.recipe.protocol"
+          ],
+          "type": "object"
+        },
+        "minDriverMajor": {
+          "format": "uint64",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "minHostMemoryGiB": {
+          "format": "uint64",
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "architecture",
+        "gpu",
+        "minDriverMajor",
+        "minHostMemoryGiB",
+        "imageLabels"
+      ],
+      "type": "object"
+    },
+    "Compilation": {
+      "additionalProperties": false,
+      "properties": {
+        "captureSizes": {
+          "items": {
+            "maximum": 65536,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        },
+        "cudagraphMode": {
+          "enum": [
+            "NONE",
+            "FULL_DECODE_ONLY"
+          ],
+          "type": "string"
+        },
+        "mode": {
+          "format": "uint8",
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mode",
+        "cudagraphMode",
+        "captureSizes"
+      ],
+      "type": "object"
+    },
+    "Credential": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "type": "object"
+    },
+    "File": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "Gateway": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "endpoint": {
+            "pattern": "^http:"
+          }
+        },
+        "required": [
+          "endpoint"
+        ]
+      },
+      "oneOf": [
+        {
+          "allOf": [
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "credential"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tls"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "properties": {
+            "endpoint": {
+              "anyOf": [
+                {
+                  "const": ""
+                },
+                {
+                  "pattern": "^http://127\\.0\\.0\\.1:[0-9]+/?$"
+                }
+              ],
+              "default": "http://127.0.0.1:17681"
+            },
+            "engine": {
+              "default": "unix:///var/run/docker.sock",
+              "enum": [
+                "",
+                "unix:///var/run/docker.sock"
+              ]
+            },
+            "image": {
+              "default": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
+              "enum": [
+                "",
+                "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792"
+              ]
+            },
+            "management": {
+              "const": "managed"
+            },
+            "networkCIDR": {
+              "anyOf": [
+                {
+                  "const": ""
+                },
+                {
+                  "pattern": "/24$"
+                }
+              ]
+            }
+          },
+          "title": "Managed gateway"
+        },
+        {
+          "properties": {
+            "endpoint": {
+              "pattern": "^https?://"
+            },
+            "engine": {
+              "const": ""
+            },
+            "image": {
+              "const": ""
+            },
+            "management": {
+              "const": "external"
+            },
+            "networkCIDR": {
+              "const": ""
+            }
+          },
+          "required": [
+            "endpoint"
+          ],
+          "title": "External gateway"
+        }
+      ],
+      "properties": {
+        "credential": {
+          "$ref": "#/$defs/Credential"
+        },
+        "endpoint": {
+          "type": "string",
+          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects http://127.0.0.1:17681."
+        },
+        "engine": {
+          "type": "string",
+          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects unix:///var/run/docker.sock."
+        },
+        "image": {
+          "type": "string",
+          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792."
+        },
+        "management": {
+          "enum": [
+            "managed",
+            "external"
+          ],
+          "type": "string"
+        },
+        "networkCIDR": {
+          "type": "string",
+          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
+        },
+        "tls": {
+          "$ref": "#/$defs/TLS"
+        }
+      },
+      "required": [
+        "management"
+      ],
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "credential"
+              ]
+            },
+            {
+              "required": [
+                "tls"
+              ]
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Image": {
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
+            }
+          ],
+          "default": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd",
+          "type": "string",
+          "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+        }
+      },
+      "type": "object"
+    },
+    "Inference": {
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "items": {
+            "$ref": "#/$defs/Route"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "routes"
+      ],
+      "type": "object"
+    },
+    "InferenceProvider": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "endpoint": {
+                "pattern": "^http:"
+              }
+            },
+            "required": [
+              "endpoint"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "credential"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "ollama"
+            ]
+          },
+          "then": {
+            "allOf": [
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "credential"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ],
+            "properties": {
+              "endpoint": {
+                "pattern": "^http://.+:[0-9]+/v1$"
+              }
+            }
+          }
+        }
+      ],
+      "else": {
+        "properties": {
+          "endpoint": {
+            "pattern": "^https?://"
+          }
+        },
+        "required": [
+          "endpoint"
+        ]
+      },
+      "if": {
+        "required": [
+          "service"
+        ]
+      },
+      "properties": {
+        "credential": {
+          "$ref": "#/$defs/Credential"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "ollama": {
+          "$ref": "#/$defs/ManagedOllama"
+        },
+        "provider": {
+          "enum": [
+            "openai",
+            "anthropic"
+          ],
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/Service"
+        }
+      },
+      "required": [
+        "name",
+        "provider"
+      ],
+      "then": {
+        "allOf": [
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "credential"
+                  ]
+                },
+                {
+                  "required": [
+                    "ollama"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "endpoint": {
+            "const": ""
+          }
+        }
+      },
+      "type": "object"
+    },
+    "InlineRecipe": {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "const": "nemoclaw.nvidia.com/recipe/v1",
+          "type": "string"
+        },
+        "compatibility": {
+          "$ref": "#/$defs/Compatibility"
+        },
+        "licenses": {
+          "items": {
+            "pattern": "^/",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "preparation": {
+          "$ref": "#/$defs/Tool"
+        },
+        "resources": {
+          "$ref": "#/$defs/Resources"
+        },
+        "reuse": {
+          "$ref": "#/$defs/Reuse"
+        },
+        "serving": {
+          "$ref": "#/$defs/Settings"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/Manifest"
+        },
+        "sourceNotices": {
+          "items": {
+            "pattern": "^/",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "verification": {
+          "$ref": "#/$defs/Tool"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "compatibility",
+        "preparation",
+        "verification",
+        "resources",
+        "serving",
+        "licenses",
+        "sourceNotices"
+      ],
+      "type": "object"
+    },
+    "ManagedOllama": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "pattern": "^unix:///",
+          "type": "string"
+        },
+        "image": {
+          "pattern": "^ollama/ollama@sha256:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "network": {
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "image",
+        "network"
+      ],
+      "type": "object"
+    },
+    "Manifest": {
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "items": {
+            "$ref": "#/$defs/File"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "repository": {
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^[a-f0-9]{40}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "revision",
+        "files"
+      ],
+      "type": "object"
+    },
+    "Memory": {
+      "additionalProperties": false,
+      "properties": {
+        "consecutiveSamples": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 5,
+              "minimum": 1
+            }
+          ],
+          "default": 5,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "freeGateGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 24,
+              "minimum": 6
+            }
+          ],
+          "default": 12,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "gpuMemoryGiB": {
+          "format": "int64",
+          "maximum": 96,
+          "minimum": 0,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without a recipe, the backend uses 16 GiB. With a recipe, resources.gpuMemoryBytes supplies the budget."
+        },
+        "hostReserveGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 64,
+              "minimum": 28
+            }
+          ],
+          "default": 32,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "kvCacheGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 12,
+              "minimum": 4
+            }
+          ],
+          "default": 8,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "minAvailableGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 16,
+              "minimum": 6
+            }
+          ],
+          "default": 8,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "minFreeGiB": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 8,
+              "minimum": 2
+            }
+          ],
+          "default": 3,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        }
+      },
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "uid": {
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "uid"
+      ],
+      "type": "object"
+    },
+    "Model": {
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^[a-f0-9]{40}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "Network": {
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "const": "isolated"
+            }
+          ],
+          "default": "isolated",
+          "type": "string",
+          "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+        }
+      },
+      "type": "object"
+    },
+    "Overrides": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$",
+          "type": "string"
+        },
+        "piModel": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "Resources": {
+      "additionalProperties": false,
+      "properties": {
+        "gpuMemoryBytes": {
+          "format": "uint64",
+          "maximum": 4398046511104,
+          "minimum": 4294967296,
+          "type": "integer"
+        },
+        "preparationMemoryGiB": {
+          "format": "uint64",
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "preparedBytes": {
+          "format": "uint64",
+          "maximum": 1099511627776,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "startupHeadroomGiB": {
+          "format": "uint64",
+          "maximum": 4096,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "preparedBytes",
+        "preparationMemoryGiB",
+        "gpuMemoryBytes",
+        "startupHeadroomGiB"
+      ],
+      "type": "object"
+    },
+    "Reuse": {
+      "additionalProperties": false,
+      "description": "Explicit cache import, verified by the new recipe before it is accepted.",
+      "properties": {
+        "preparationKey": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "snapshotDirectory": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshotDirectory",
+        "preparationKey"
+      ],
+      "type": "object"
+    },
+    "Route": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "primary",
+          "type": "string"
+        },
+        "overrides": {
+          "$ref": "#/$defs/Overrides"
+        },
+        "providerRef": {
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "providerRef",
+        "overrides"
+      ],
+      "type": "object"
+    },
+    "Runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "enum": [
+                "docker",
+                "podman"
+              ]
+            }
+          ],
+          "default": "docker",
+          "type": "string",
+          "x-nemoclaw-default-rule": "Omitted or empty selects the default."
+        }
+      },
+      "type": "object"
+    },
+    "Sandbox": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/Agent"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
+        },
+        "image": {
+          "$ref": "#/$defs/Image"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "network": {
+          "$ref": "#/$defs/Network"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Runtime"
+        }
+      },
+      "required": [
+        "name",
+        "agents"
+      ],
+      "type": "object"
+    },
+    "Service": {
+      "additionalProperties": false,
+      "dependentRequired": {
+        "placement": [
+          "publication"
+        ],
+        "publication": [
+          "placement"
+        ]
+      },
+      "else": {
+        "properties": {
+          "serving": {
+            "properties": {
+              "speculativeTokens": {
+                "const": 0
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "required": [
+          "recipe"
+        ]
+      },
+      "properties": {
+        "backend": {
+          "const": "vllm",
+          "type": "string"
+        },
+        "image": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "memory": {
+          "$ref": "#/$defs/Memory"
+        },
+        "model": {
+          "$ref": "#/$defs/Model"
+        },
+        "placement": {
+          "$ref": "#/$defs/ServicePlacement"
+        },
+        "publication": {
+          "$ref": "#/$defs/ServicePublication"
+        },
+        "recipe": {
+          "$ref": "#/$defs/InlineRecipe"
+        },
+        "serving": {
+          "$ref": "#/$defs/Serving"
+        }
+      },
+      "required": [
+        "backend",
+        "image",
+        "model"
+      ],
+      "then": {
+        "properties": {
+          "memory": {
+            "properties": {
+              "gpuMemoryGiB": {
+                "const": 0
+              }
+            }
+          }
+        }
+      },
+      "type": "object"
+    },
+    "ServicePlacement": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "pattern": "^ssh://",
+          "type": "string"
+        },
+        "networkCidr": {
+          "pattern": "/24$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "networkCidr"
+      ],
+      "type": "object"
+    },
+    "ServicePublication": {
+      "additionalProperties": false,
+      "properties": {
+        "bindAddress": {
+          "type": "string"
+        },
+        "endpoint": {
+          "pattern": "^http://.+:[0-9]+/v1$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint",
+        "bindAddress"
+      ],
+      "type": "object"
+    },
+    "Serving": {
+      "additionalProperties": false,
+      "properties": {
+        "batchTokens": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 2048,
+              "minimum": 512
+            }
+          ],
+          "default": 1024,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "contextTokens": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65536,
+              "minimum": 8192
+            }
+          ],
+          "default": 32768,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "maxSequences": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 2,
+              "minimum": 1
+            }
+          ],
+          "default": 1,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "port": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65535,
+              "minimum": 1024
+            }
+          ],
+          "default": 18888,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "reasoningParser": {
+          "default": "",
+          "enum": [
+            "",
+            "qwen3",
+            "deepseek_r1"
+          ],
+          "type": "string"
+        },
+        "speculativeTokens": {
+          "default": 0,
+          "format": "int64",
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "startupTimeoutSeconds": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 3600,
+              "minimum": 60
+            }
+          ],
+          "default": 1800,
+          "format": "int64",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "toolParser": {
+          "default": "",
+          "enum": [
+            "",
+            "hermes",
+            "qwen3_coder",
+            "llama3_json",
+            "mistral"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Settings": {
+      "additionalProperties": false,
+      "properties": {
+        "chunkedPrefill": {
+          "default": false,
+          "type": "boolean"
+        },
+        "compilation": {
+          "$ref": "#/$defs/Compilation"
+        },
+        "environment": {
+          "additionalProperties": {
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          },
+          "default": {},
+          "propertyNames": {
+            "pattern": "^VLLM_[A-Z0-9_]*$"
+          },
+          "type": "object"
+        },
+        "kvCacheDtype": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$"
+            }
+          ],
+          "default": "",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "lazyLoading": {
+          "default": false,
+          "type": "boolean"
+        },
+        "mambaCacheDtype": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$"
+            }
+          ],
+          "default": "",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "modelName": {
+          "maxLength": 256,
+          "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$",
+          "type": "string"
+        },
+        "preparedEnvironment": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "propertyNames": {
+            "pattern": "^VLLM_[A-Z0-9_]*$"
+          },
+          "type": "object"
+        },
+        "reasoningParser": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$"
+            }
+          ],
+          "default": "",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "toolParser": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$"
+            }
+          ],
+          "default": "",
+          "maxLength": 256,
+          "type": "string"
+        }
+      },
+      "required": [
+        "modelName"
+      ],
+      "type": "object"
+    },
+    "Spec": {
+      "additionalProperties": false,
+      "properties": {
+        "gateway": {
+          "$ref": "#/$defs/Gateway"
+        },
+        "inferenceProviders": {
+          "items": {
+            "$ref": "#/$defs/InferenceProvider"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
+        },
+        "sandboxes": {
+          "items": {
+            "$ref": "#/$defs/Sandbox"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "gateway",
+        "inferenceProviders",
+        "sandboxes"
+      ],
+      "type": "object"
+    },
+    "TLS": {
+      "additionalProperties": false,
+      "properties": {
+        "ca": {
+          "$ref": "#/$defs/Credential"
+        },
+        "certificate": {
+          "$ref": "#/$defs/Credential"
+        },
+        "key": {
+          "$ref": "#/$defs/Credential"
+        }
+      },
+      "required": [
+        "ca",
+        "certificate",
+        "key"
+      ],
+      "type": "object"
+    },
+    "Tool": {
+      "additionalProperties": false,
+      "properties": {
+        "executable": {
+          "maxLength": 4096,
+          "pattern": "^/",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "executable",
+        "sha256"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:nemoclaw:config:v1alpha1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "management": {
+                    "const": "managed"
+                  }
+                },
+                "required": [
+                  "management"
+                ]
+              }
+            },
+            "required": [
+              "gateway"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "runtime": {
+                      "properties": {
+                        "provider": {
+                          "enum": [
+                            "",
+                            "docker"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "inferenceProviders": {
+                    "items": {
+                      "properties": {
+                        "service": {}
+                      },
+                      "required": [
+                        "service"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "inferenceProviders"
+                ]
+              }
+            },
+            "required": [
+              "spec"
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "spec": {
+                    "properties": {
+                      "gateway": {
+                        "properties": {
+                          "management": {
+                            "const": "external"
+                          }
+                        },
+                        "required": [
+                          "management"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "gateway"
+                    ]
+                  }
+                },
+                "required": [
+                  "spec"
+                ]
+              },
+              {
+                "properties": {
+                  "spec": {
+                    "properties": {
+                      "sandboxes": {
+                        "items": {
+                          "properties": {
+                            "runtime": {
+                              "properties": {
+                                "provider": {
+                                  "const": "podman"
+                                }
+                              },
+                              "required": [
+                                "provider"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "runtime"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "sandboxes"
+                    ]
+                  }
+                },
+                "required": [
+                  "spec"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "inferenceProviders": {
+                "items": {
+                  "properties": {
+                    "service": {
+                      "required": [
+                        "placement"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "service"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "inferenceProviders"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "agents": {
+                      "items": {
+                        "properties": {
+                          "harness": {
+                            "not": {
+                              "const": "openclaw"
+                            }
+                          }
+                        },
+                        "required": [
+                          "harness"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "agents"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "sandboxes"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "gateway": {
+                    "properties": {
+                      "management": {
+                        "const": "external"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "inferenceProviders": {
+                    "items": {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "service"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "ollama"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "else": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "inferenceProviders": {
+                "items": {
+                  "properties": {
+                    "provider": {
+                      "const": "openai"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "agents": {
+                      "items": {
+                        "properties": {
+                          "harness": {
+                            "const": "claude"
+                          }
+                        },
+                        "required": [
+                          "harness"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "agents"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "sandboxes"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "inferenceProviders": {
+                "items": {
+                  "properties": {
+                    "provider": {
+                      "const": "anthropic"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "agents": {
+                      "items": {
+                        "properties": {
+                          "harness": {
+                            "not": {
+                              "const": "pi"
+                            }
+                          }
+                        },
+                        "required": [
+                          "harness"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "agents"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "sandboxes"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "agents": {
+                      "items": {
+                        "properties": {
+                          "inference": {
+                            "properties": {
+                              "routes": {
+                                "items": {
+                                  "properties": {
+                                    "overrides": {
+                                      "not": {
+                                        "anyOf": [
+                                          {
+                                            "required": [
+                                              "piModel"
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "inferenceProviders": {
+                "items": {
+                  "properties": {
+                    "ollama": {}
+                  },
+                  "required": [
+                    "ollama"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "inferenceProviders"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "agents": {
+                      "items": {
+                        "properties": {
+                          "inference": {
+                            "properties": {
+                              "routes": {
+                                "items": {
+                                  "properties": {
+                                    "overrides": {
+                                      "properties": {
+                                        "model": {
+                                          "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "nemoclaw.nvidia.com/v1alpha1",
+      "type": "string"
+    },
+    "kind": {
+      "const": "NemoClawConfig",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/Spec"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "NemoClaw configuration (v1alpha1)",
+  "type": "object",
+  "x-nemoclaw-parser-checks": [
+    "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
+    "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
+    "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
+    "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
+    "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
+  ]
+}

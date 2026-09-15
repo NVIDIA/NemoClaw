@@ -21,6 +21,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Generate the configuration schema, or check checked-in output for drift.
+    Schema {
+        #[arg(long)]
+        check: bool,
+    },
     Bundle {
         #[arg(long)]
         platform: Option<String>,
@@ -217,6 +222,9 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Action::Schema { check } = cli.command {
+        return nemoclaw_build::schema::generate(Path::new("."), check).map_err(Into::into);
+    }
     let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
     let version = cargo().arg("--version").output()?;
     if !version.status.success()
@@ -233,6 +241,9 @@ async fn main() -> Result<()> {
         return Err("build requires the pinned Protocol Buffers compiler".into());
     }
     match cli.command {
+        Action::Schema { .. } => {
+            unreachable!("schema generation returned before build tool checks")
+        }
         Action::Bundle { platform } => {
             bundle(&pins, &platform.unwrap_or(bundle::platform()?)).await
         }

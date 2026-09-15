@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use sha2::{Digest, Sha256};
 use std::io::{Cursor, Read};
+pub mod schema;
 pub fn source_version(files: &[(String, Vec<u8>)]) -> String {
     let mut files: Vec<_> = files.iter().collect();
     files.sort_by(|a, b| a.0.cmp(&b.0));

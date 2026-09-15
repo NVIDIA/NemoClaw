@@ -74,6 +74,11 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo build --locked --workspace --all-targets
           cargo test --locked --workspace
+      - name: Check generated configuration schema
+        run: |
+          suffix=""
+          if [ "$TEST_PLATFORM" = windows_amd64 ]; then suffix=.exe; fi
+          "./target/debug/nemoclaw-build$suffix" schema --check
       - name: Build and verify native bundle
         run: |
           suffix=""

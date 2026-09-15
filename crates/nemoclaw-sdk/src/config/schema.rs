@@ -3,6 +3,8 @@
 //! Authored YAML represented as JSON, before Document::defaults runs.
 mod validation;
 
+pub const SCHEMA_PATH: &str = "schemas/nemoclaw-v1alpha1.schema.json";
+
 pub fn input_schema() -> serde_json::Value {
     let settings = schemars::generate::SchemaSettings::draft2020_12();
     let mut schema = serde_json::to_value(
@@ -13,6 +15,12 @@ pub fn input_schema() -> serde_json::Value {
     .unwrap();
     remove_serde_defaults(&mut schema);
     validation::constrain(&mut schema);
+    schema["$id"] = serde_json::json!("urn:nemoclaw:config:v1alpha1");
+    schema["title"] = serde_json::json!("NemoClaw configuration (v1alpha1)");
+    schema["$comment"] = serde_json::json!(
+        "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0. Generated from the SDK; do not edit."
+    );
+    schema.sort_all_objects();
     schema
 }
 
