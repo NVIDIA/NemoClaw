@@ -78,7 +78,7 @@ check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
   local brev_installer="${REPO_ROOT}/scripts/brev-launchable-ci-cpu.sh"
   local supervisor_runtime="${REPO_ROOT}/src/lib/onboard/docker-driver-gateway-runtime.ts"
-  local release_base workspace manifests spec manifest expected actual source asset pinned upstream formula_asset
+  local workspace manifests spec manifest manifest_base expected actual source asset pinned upstream formula_asset
   local matches formula_expected formula_matches formula_url
   local pin_records parser_error parser_errors record_type parsed_version release_version record_extra
   local selected_release_version="" release_versions="" version_pin_records
@@ -122,16 +122,28 @@ check_openshell_release_assets() {
     fi
     case "$record_type" in
       manifest)
-        [[ "$source" == "OpenShell release" ]] || {
-          echo "  STALE: trusted parser returned an invalid OpenShell manifest record."
-          return 1
-        }
+        case "${parsed_version}:${source}" in
+          "${parsed_version}:https://github.com/NVIDIA/OpenShell/releases/download/v${parsed_version}" | \
+          "0.0.117:https://github.com/NVIDIA/OpenShell/releases/download/dev") ;;
+          *)
+            echo "  STALE: trusted parser returned an invalid OpenShell manifest record."
+            return 1
+            ;;
+        esac
         ;;
       formula)
-        if [[ "$asset" != "openshell.rb" || "$source" != "https://github.com/NVIDIA/OpenShell/releases/download/v${parsed_version}/${asset}" ]]; then
+        if [[ "$asset" != "openshell.rb" ]]; then
           echo "  STALE: trusted parser returned an invalid OpenShell formula record."
           return 1
         fi
+        case "${parsed_version}:${source}" in
+          "${parsed_version}:https://github.com/NVIDIA/OpenShell/releases/download/v${parsed_version}/${asset}" | \
+          "0.0.117:https://github.com/NVIDIA/OpenShell/releases/download/dev/${asset}") ;;
+          *)
+            echo "  STALE: trusted parser returned an invalid OpenShell formula source."
+            return 1
+            ;;
+        esac
         ;;
       pin)
         case "$source" in
@@ -182,7 +194,7 @@ check_openshell_release_assets() {
       [[ "$parsed_version" == "$release_version" ]] || continue
       case "$record_type" in
         manifest)
-          manifest_specs+=("${asset}:${pinned}")
+          manifest_specs+=("${source}|${asset}|${pinned}")
           ;;
         formula)
           formula_matches=$((formula_matches + 1))
@@ -215,12 +227,13 @@ check_openshell_release_assets() {
       return 1
     fi
 
-    release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${release_version}"
     echo "Checking OpenShell v${release_version} release assets..."
     for spec in "${manifest_specs[@]}"; do
-      manifest="${spec%%:*}"
-      expected="${spec#*:}"
-      if ! fetch_file "${release_base}/${manifest}" "${workspace}/${release_version}-${manifest}"; then
+      manifest_base="${spec%%|*}"
+      spec="${spec#*|}"
+      manifest="${spec%%|*}"
+      expected="${spec#*|}"
+      if ! fetch_file "${manifest_base}/${manifest}" "${workspace}/${release_version}-${manifest}"; then
         echo "  STALE: unable to download ${manifest}."
         failures=$((failures + 1))
         continue
