@@ -275,10 +275,6 @@ vi.mock("../../credentials/store", () => ({
   saveCredential: vi.fn(),
 }));
 
-vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
-}));
-
 vi.mock("../../inference/nim", () => ({
   stopNimContainer: stopNimContainerMock,
   stopNimContainerByName: stopNimContainerByNameMock,
