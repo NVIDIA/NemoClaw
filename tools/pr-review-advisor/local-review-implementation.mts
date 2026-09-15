@@ -578,7 +578,7 @@ async function runRequestedPullRequestReview(
       throw new Error(
         `Could not collect complete GitHub review context${context?.fetchError ? `: ${context.fetchError}` : ""}`,
       );
-    // lgtm[js/file-access-to-http] The bounded GitHub response is intentionally serialized as
+    // lgtm[js/http-to-file-access] The bounded GitHub response is intentionally serialized as
     // read-only Advisor context into this process-owned, mode-0600 temporary file.
     fs.writeFileSync(contextPath, serializePreparedGitHubContext(context), {
       flag: "wx",
