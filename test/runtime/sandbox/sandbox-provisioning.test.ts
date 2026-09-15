@@ -744,7 +744,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
 });
 
 describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
-  it("keeps root in the sandbox group for capability-dropped lifecycle guards", () => {
+  it("keeps direct-root config transactions in the sandbox group", () => {
     const base = runOpenclawUserSetupBlock();
     const fallback = runOpenclawStaleGroupFallback();
     try {

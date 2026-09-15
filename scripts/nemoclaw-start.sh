@@ -167,7 +167,7 @@ record_portable_openclaw_gateway_startup_timing() {
 }
 
 _START_LOG="/tmp/nemoclaw-start.log"
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$EUID" -eq 0 ]; then
   _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 root:root
 else
   _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 "" best-effort
@@ -195,8 +195,8 @@ fi
 # shellcheck source=scripts/lib/gateway-supervisor.sh
 source "$_GATEWAY_SUPERVISOR"
 
-# Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before the capsh
-# drop and the setpriv step-down, so the caps are inherited and unraisable.
+# Harden RLIMITs (nproc #809 + nofile #4527) before privilege step-down.
+# Hard limits are inherited and unraisable by descendants.
 harden_resource_limits
 
 # PATH was already locked down at the top of this script (before the
@@ -241,8 +241,12 @@ else
   install -d -m 700 /tmp/.gnupg
 fi
 
-# ── Drop unnecessary Linux capabilities (shared) ────────────────
-drop_capabilities /usr/local/bin/nemoclaw-start "$@"
+# OpenShell 0.0.116 starts managed workloads as the non-root image user and
+# owns their capability enforcement. Retain the compatibility drop only for a
+# direct container runtime that explicitly overrides the image user to root.
+if [ "$(id -u)" -eq 0 ]; then
+  drop_capabilities /usr/local/bin/nemoclaw-start "$@"
+fi
 
 NEMOCLAW_CMD=("$@")
 
