@@ -97,6 +97,14 @@ describe("docker-driver gateway selected-state ownership", () => {
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);
   });
 
+  it("fails closed when the legacy process scan times out", () => {
+    const ownership = makeOwnership({
+      runCaptureEx: () => ({ stdout: "", exitCode: null, timedOut: true }),
+    });
+
+    expect(ownership.isLegacyDockerDriverGatewayStateInUse()).toBe(true);
+  });
+
   it.each([
     {
       label: "legacy default namespace with the exact database path",
