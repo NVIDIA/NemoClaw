@@ -34,17 +34,33 @@ tools:
 ```
 
 Only this allowlist is supported; empty lists, other tools, wildcards, and additional grant fields are rejected.
-Omitting `tools` preserves native tool behavior.
+Omitting `tools` selects progressive discovery without restricting tools.
 This policy restricts the agent's tools, not filesystem access for other processes in the shared sandbox.
 Each agent has a distinct session and workspace; those directories are not separate security boundaries.
+
+An unrestricted agent can select tool disclosure instead of an allowlist:
+
+```yaml
+tools:
+  disclosure: direct
+```
+
+`progressive` uses structured tool search with a default limit of 8 and a maximum of 20 results.
+`direct` disables tool search and exposes permitted tools directly.
+Disclosure changes tool presentation, not permissions; progressive search and calls retain the read-only allowlist.
+The `allow` and `disclosure` forms are mutually exclusive.
+OpenClaw configures disclosure once per gateway, so unrestricted agents in a sandbox must select the same mode.
+An unrestricted agent that omits `tools` selects progressive; read-only agents use the shared mode without selecting it.
+If every agent is read-only, the shared mode is progressive.
+Conflicting modes are rejected before deployment.
 
 With multiple agents or an explicit tool policy, NemoClaw owns the native agent roster, agent defaults, and tool configuration.
 Startup, refresh, and export reject conflicting native settings without overwriting them.
 Unrelated channels, pairing, and plugin settings remain native configuration.
-Changing the declared roster or tool policy changes the sandbox launch specification; it is not an in-place permission update.
+Changing the declared roster, tool policy, or disclosure mode changes the sandbox launch specification; it is not an in-place permission update.
 
 Build the updated OpenClaw image using the [runtime build procedure](#runtime-lifecycle) and put its printed immutable digest in `image.ref`.
-Earlier images do not implement this agent-roster interface.
+Earlier images do not implement the agent-roster and disclosure interface.
 Changing YAML alone does not update an existing image or migrate retained native configuration.
 
 See [agent interfaces](interfaces.md) for authenticated OpenClaw dashboard access.
