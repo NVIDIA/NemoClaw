@@ -7,12 +7,8 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
-import * as forwardService from "../../adapters/openshell/forward-service";
-import * as openshellResolve from "../../adapters/openshell/resolve";
-import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as wait from "../../core/wait";
-import * as gatewayTeardownAuthority from "../../onboard/gateway-teardown-authority";
 import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provider/podman";
 import {
   PODMAN_MANAGED_LABEL,
@@ -27,11 +23,24 @@ import {
 import * as runtimeProviderSelection from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 import * as privilegedExec from "../../sandbox/privileged-exec";
-import * as forwardHealth from "./forward-health";
 import {
-  checkAndRecoverSandboxProcesses,
+  checkAndRecoverSandboxProcesses as checkAndRecoverSandboxProcessesImpl,
   waitForManagedGatewaySupervisor,
 } from "./process-recovery";
+
+const forwardAdapter = vi.hoisted(() => ({
+  observeForwards: vi.fn(async ({ forwards }) =>
+    forwards.map((forward: object) => ({ state: "owned" as const, forward })),
+  ),
+  startForward: vi.fn(async ({ forward }) => ({ state: "reused" as const, forward })),
+  retireLegacyForward: vi.fn(),
+  verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
+}));
+
+vi.mock("../../adapters/openshell/forward-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/forward-runtime")>()),
+  createOpenShellForwardAdapterForAuthority: () => forwardAdapter,
+}));
 
 const ACCEPTED_MANAGED_RECOVERY = {
   status: 0,
@@ -128,25 +137,16 @@ function mockGatewaySandbox(
   });
 }
 
-function mockRecoveredForward(_sandboxName: string): void {
-  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation(
-    ({ gatewayName, gatewayPort }) => ({
-      gatewayName,
-      gatewayPort,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    }),
-  );
-  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-  vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
-  vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
-  vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-    status: 0,
-    output: "SANDBOX  BIND  PORT  PID  STATUS",
+function mockRecoveredForward(_sandboxName: string): void {}
+
+function checkAndRecoverSandboxProcesses(
+  sandboxName: string,
+  options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
+) {
+  return checkAndRecoverSandboxProcessesImpl(sandboxName, {
+    ensureSandboxPortForwardImpl: async () => true,
+    withLifecycleLock: async (_name, operation) => await operation(),
+    ...options,
   });
 }
 
@@ -161,15 +161,18 @@ async function runRealPodmanProviderRecovery(
   const requestGatewaySupervisorAction = vi.fn();
   const waitForRecoveredSandboxGatewayImpl = vi.fn(async () => true);
   const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(async () => true);
+  const ensureSandboxPortForwardImpl = vi.fn(async () => true);
   const result = await checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
     isSandboxGatewayRunningImpl: async () => false,
     requestGatewaySupervisorAction,
+    ensureSandboxPortForwardImpl,
     waitForRecoveredSandboxGatewayImpl,
     waitForRecreatedSandboxOpenShellReadyImpl,
   });
   return {
     capture,
+    ensureSandboxPortForwardImpl,
     requestGatewaySupervisorAction,
     result,
     waitForRecoveredSandboxGatewayImpl,
@@ -399,8 +402,10 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     } as never);
     const requestGatewaySupervisorAction = vi.fn();
     const waitForRecoveredSandboxGatewayImpl = vi.fn(async () => true);
+    const ensureSandboxPortForwardImpl = vi.fn(async () => true);
 
     const result = await checkAndRecoverSandboxProcesses(sandboxName, {
+      ensureSandboxPortForwardImpl,
       quiet: true,
       isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction,
@@ -416,7 +421,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     });
     expect(recover).toHaveBeenCalledWith(expect.objectContaining({ name: sandboxName }));
     expect(waitForRecoveredSandboxGatewayImpl).not.toHaveBeenCalled();
-    expect(forwardHealth.isLocalForwardReachable).not.toHaveBeenCalled();
+    expect(ensureSandboxPortForwardImpl).not.toHaveBeenCalled();
     expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
   });
 
@@ -442,7 +447,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(recovery.requestGatewaySupervisorAction).not.toHaveBeenCalled();
     expect(recovery.waitForRecoveredSandboxGatewayImpl).toHaveBeenCalledOnce();
     expect(recovery.waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledOnce();
-    expect(forwardHealth.isLocalForwardReachable).toHaveBeenCalled();
+    expect(recovery.ensureSandboxPortForwardImpl).toHaveBeenCalledOnce();
   });
 
   it("stops before readiness and forwards when the real Podman provider fails", async () => {
@@ -468,7 +473,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(recovery.requestGatewaySupervisorAction).not.toHaveBeenCalled();
     expect(recovery.waitForRecoveredSandboxGatewayImpl).not.toHaveBeenCalled();
     expect(recovery.waitForRecreatedSandboxOpenShellReadyImpl).not.toHaveBeenCalled();
-    expect(forwardHealth.isLocalForwardReachable).not.toHaveBeenCalled();
+    expect(recovery.ensureSandboxPortForwardImpl).not.toHaveBeenCalled();
   });
 
   it("does not dispatch host-local Podman recovery for an explicitly selected runtime", async () => {
