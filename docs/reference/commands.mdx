@@ -1429,7 +1429,7 @@ Host-side config, inference, gateway recovery, snapshot, policy, channel, and sa
 
 Repair a stopped in-sandbox gateway and re-establish host-side forwards without opening an SSH session. Use this after a sandbox crash or whenever `$$nemoclaw <name> status` reports that the sandbox container or agent gateway is not running.
 
-For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness. It leaves a running or paused container unchanged. If Docker cannot start the container, `recover` continues to the readiness check and reports the resulting failure.
+For a stopped, non-paused Docker-driver container, `recover` starts the sandbox through OpenShell before it waits for readiness. If the container already runs while OpenShell reports `Stopped`, `recover` still starts the sandbox through OpenShell to repair the phase. It leaves paused containers and running sandboxes in other phases unchanged. If OpenShell cannot start a stopped container, recovery starts the container directly when needed, then continues to the readiness check and reports the resulting failure.
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
@@ -1635,7 +1635,7 @@ A `pending` or `configuring` receipt instead directs you to resume Portable onbo
 
 </AgentOnly>
 
-Starting an already-running sandbox skips the container start and still runs the gateway and forward health checks. A paused container is unpaused. If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
+When the container runs and OpenShell reports `Stopped`, `start` starts the sandbox through OpenShell to repair the phase. A running sandbox in another phase skips the container start and still runs the gateway and forward health checks. A paused container is unpaused. If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
 <AgentOnly variant="openclaw,hermes">
   Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox
@@ -3062,7 +3062,7 @@ $$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--ye
 | Flag | Description |
 | --- | --- |
 | `--yes`, `-y` | Skip the confirmation prompt. |
-| `--force` | Skip the confirmation prompt. It does not bypass an unavailable MCP source or allow rebuild to continue when a manifest-declared state directory or state file cannot be fully backed up. |
+| `--force` | Skip the confirmation prompt. It does not bypass an unavailable MCP source or allow rebuild to continue when a manifest-declared state directory or state file cannot be fully backed up, when the selected remote provider (other than Hermes Provider) no longer exposes the recorded credential key, when that credential is expired, or when its expiration metadata cannot be verified. A present credential key without an expiration entry is treated as non-expiring. |
 | `--retire-recovery <transaction-id>` | Retire the exact rebuild-recovery transaction after the recorded sandbox is confirmed deleted and required data recovery is complete. Requires `--yes`; it removes only the transaction-bound policy handoff and recovery marker, preserves the remaining backup, and does not start a rebuild. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
@@ -3101,6 +3101,9 @@ Restore OpenShell connectivity and confirm the sandbox's live state before you r
 Keep the printed backup path for recovery.
 Before deletion, rebuild records a replacement journal that binds the operation to the recorded gateway, source identity, and target settings.
 Rerunning the same rebuild continues from the recorded boundary or accepts the proven replacement instead of deleting it again.
+An older recovery marker can lack an MCP handoff, as can an interruption before NemoClaw records the handoff.
+NemoClaw reads MCP state again only when the source still exists and the matching journal remains in the `planned` or `deleting` phase.
+If either check fails, the retry stops without another delete attempt.
 A mount-free journal written before host-mount identity binding remains resumable.
 An older journal that used host mounts fails closed because it cannot prove the original host source identity, even when the visible mount settings are unchanged.
 Preserve the sandbox, onboarding session, printed backup, exact error, and `Journaled replacement` diagnostic.
@@ -3122,7 +3125,7 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-After restore, the command restores Deep Agents manifest-defined state, regenerates `/sandbox/.deepagents/config.toml`, and writes the agent-native `/sandbox/.deepagents/.mcp.json` from the bounded source handoff while preserving unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded `inference.local` route is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. If those checks fail after backup, NemoClaw restores the previous MCP state and keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+After restore, the command restores Deep Agents manifest-defined state, regenerates `/sandbox/.deepagents/config.toml`, and writes the agent-native `/sandbox/.deepagents/.mcp.json` from the bounded source handoff while preserving unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded `inference.local` route is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
 
 </AgentOnly>
 
@@ -4307,6 +4310,12 @@ Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` to run the official `https://ollama.co
 ### Experimental NemoCUA
 
 Keep `NEMOCLAW_CUA_ENABLED=1` set whenever NemoClaw uses the experimental `nemocua` agent, including discovery, launch, agent commands, sandbox creation, and rebuild.
+
+<Warning title="Host-local Ollama is not supported">
+NemoCUA does not currently support host-local inference.
+Do not set `NEMOCLAW_PROVIDER=ollama` when onboarding a `nemocua` sandbox; that combination exits with `Unsupported host-local inference application 'nemocua'`.
+Choose a non-host-local inference provider instead.
+</Warning>
 
 | Variable | Format | Effect |
 | --- | --- | --- |
