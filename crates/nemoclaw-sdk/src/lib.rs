@@ -129,3 +129,4 @@ pub mod hardware;
 
 pub mod backends;
 pub mod recipes;
+pub mod voice;
