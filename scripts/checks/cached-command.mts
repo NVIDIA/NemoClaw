@@ -56,6 +56,7 @@ export type FileDigestIndex = {
   persist: () => void;
 };
 
+/** Content digest of one regular file, read through the identity-checked open. */
 function readFileDigest(file: string, stat: fs.Stats): string {
   return createHash("sha256").update(readStableFile(file, stat)).digest("hex");
 }
@@ -124,6 +125,13 @@ export function createFileDigestIndex(indexPath: string): FileDigestIndex {
   };
 }
 
+/**
+ * Hash the given paths, walking directories and hashing symbolic-link destinations.
+ *
+ * Every entry contributes its path and mode. A regular file contributes its content
+ * digest, taken from `index` when one is supplied and that file's recorded identity
+ * still matches, and read otherwise. Without an `index` every file is read.
+ */
 function hashPaths(
   root: string,
   files: readonly string[],
@@ -209,8 +217,20 @@ export function validationEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   );
 }
 
+/** Milliseconds spent locating validation inputs and hashing them. Callers accumulate. */
 export type FingerprintTimings = { discoveryMs: number; hashingMs: number };
 
+/**
+ * Identity of one compiler check: its inputs and its generated outputs.
+ *
+ * `inputs` covers the command, environment, platform, architecture, and the content of
+ * every repository input, resolved executable, npm configuration, and dependency tree.
+ * The compared Git refs are deliberately absent, so a commit or `origin/main` update
+ * that leaves those bytes identical keeps a recorded result valid.
+ *
+ * Supply `options.index` to reuse recorded digests for unchanged files, and
+ * `options.timings` to accumulate the discovery and hashing cost.
+ */
 export function validationFingerprint(
   root: string,
   command: readonly string[],
@@ -275,9 +295,6 @@ export function validationFingerprint(
   );
   if (timings) timings.discoveryMs += performance.now() - discoveryStarted;
   const hashingStarted = performance.now();
-  // The compared refs are deliberately absent: the fingerprint already covers the
-  // content of every compiler input, so a commit or an `origin/main` update that
-  // leaves those bytes identical keeps the result valid (#11782).
   const inputs = createHash("sha256")
     .update(
       JSON.stringify({
