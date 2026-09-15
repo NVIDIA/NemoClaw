@@ -1026,7 +1026,17 @@ test(
       [apiKey],
       "https-pin-endpoint-dns-rebinding-chat",
     );
-    expect(fake.requests().length).toBeGreaterThan(rebindRequestOffset);
+    expect(
+      fake
+        .requests()
+        .slice(rebindRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions",
+        ),
+    ).toBe(true);
     await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
     progress.phase("verify private redirect rejection");
     const privateTargetRequestOffset = placeholder.requests().length;
