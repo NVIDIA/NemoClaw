@@ -103,11 +103,16 @@ fn check_path(root: &Path, name: &str) -> Result<(), Error> {
         return Err(invalid());
     }
     let mut path = root.to_path_buf();
-    let parts: Vec<_> = name.split('/').collect();
-    for (i, part) in parts.iter().enumerate() {
+    let mut parts = name.split('/').peekable();
+    while let Some(part) = parts.next() {
         path.push(part);
         let m = fs::symlink_metadata(&path).map_err(|_| invalid())?;
-        if (i + 1 == parts.len() && !m.is_file()) || (i + 1 < parts.len() && !m.is_dir()) {
+        let expected_type = if parts.peek().is_none() {
+            m.is_file()
+        } else {
+            m.is_dir()
+        };
+        if !expected_type {
             return Err(invalid());
         }
     }

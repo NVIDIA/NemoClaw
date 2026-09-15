@@ -142,8 +142,9 @@ fn safe_path(root: &Path, relative: &str, create: bool) -> Result<PathBuf, Error
     if !fs::symlink_metadata(&directory).is_ok_and(|m| m.is_dir()) {
         return Err(failure("snapshot root is not a directory"));
     }
-    let parts: Vec<_> = relative.split('/').collect();
-    for part in &parts[..parts.len() - 1] {
+    let mut parts = relative.split('/');
+    let file = parts.next_back().unwrap_or(relative);
+    for part in parts {
         directory.push(part);
         if create && !directory.exists() {
             fs::create_dir(&directory).map_err(|_| failure("cannot create snapshot directory"))?;
@@ -152,7 +153,7 @@ fn safe_path(root: &Path, relative: &str, create: bool) -> Result<PathBuf, Error
             return Err(failure("snapshot ancestor is not a directory"));
         }
     }
-    Ok(directory.join(parts[parts.len() - 1]))
+    Ok(directory.join(file))
 }
 pub fn observe(directory: &Path, manifest: &Manifest) -> Result<Receipt, Error> {
     manifest.validate()?;

@@ -17,20 +17,7 @@ pub async fn query(query: &str) -> Result<String, Error> {
 }
 #[cfg(any(unix, test))]
 pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Error> {
-    let lines: Vec<_> = gpu.trim().lines().collect();
-    if lines.len() != 1 {
-        return Err(Error::State("Spark requires exactly one observable GPU"));
-    }
-    let fields: Vec<_> = lines[0].split(',').map(str::trim).collect();
-    if fields.len() != 2 || fields[0].is_empty() {
-        return Err(Error::State("GPU inventory is incomplete"));
-    }
-    let major = fields[1]
-        .split('.')
-        .next()
-        .unwrap_or("")
-        .parse::<u32>()
-        .map_err(|_| Error::State("driver version is unobservable"))?;
+    let (name, major) = single_gpu(gpu.trim().lines())?;
     let mut seen = std::collections::BTreeSet::new();
     for line in processes.trim().lines() {
         let pid = line
@@ -41,11 +28,50 @@ pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Err
             return Err(Error::State("GPU process inventory is ambiguous"));
         }
     }
-    Ok((fields[0].into(), major, seen.len()))
+    Ok((name, major, seen.len()))
+}
+#[cfg(any(unix, test))]
+fn single_gpu<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<(String, u32), Error> {
+    let Some(line) = lines.next() else {
+        return Err(Error::State("Spark requires exactly one observable GPU"));
+    };
+    if lines.next().is_some() {
+        return Err(Error::State("Spark requires exactly one observable GPU"));
+    }
+    let mut fields = line.split(',').map(str::trim);
+    let (Some(name), Some(version), None) = (fields.next(), fields.next(), fields.next()) else {
+        return Err(Error::State("GPU inventory is incomplete"));
+    };
+    if name.is_empty() {
+        return Err(Error::State("GPU inventory is incomplete"));
+    }
+    let major = version
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .parse::<u32>()
+        .map_err(|_| Error::State("driver version is unobservable"))?;
+    Ok((name.into(), major))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gpu_parser_rejects_extra_lines_without_consuming_the_rest() {
+        let lines = ["NVIDIA GB10, 580", "NVIDIA GB10, 580"]
+            .into_iter()
+            .chain(std::iter::from_fn(|| panic!("read past the second GPU")));
+        assert!(single_gpu(lines).is_err());
+        assert_eq!(
+            single_gpu(std::iter::once(" NVIDIA GB10 , 580.142 ")).unwrap(),
+            ("NVIDIA GB10".into(), 580)
+        );
+        for line in ["", "NVIDIA GB10", ", 580", "NVIDIA GB10, 580, extra"] {
+            assert!(single_gpu(std::iter::once(line)).is_err());
+        }
+        assert!(single_gpu(std::iter::empty()).is_err());
+    }
+
     #[test]
     fn gpu_inventory_requires_one_gpu_and_complete_process_metadata() {
         assert_eq!(
