@@ -34,7 +34,21 @@ pub(crate) fn verify_labels(
     }
     Ok(())
 }
-pub(crate) fn verify_volume(spec: &Spec, volume: &Volume) -> Result<(), Error> {
+pub(crate) fn verify_volume(
+    spec: &Spec,
+    volume: &Volume,
+    data_root: Option<&str>,
+) -> Result<(), Error> {
+    let canonical = |path: &str| {
+        path.starts_with('/')
+            && path
+                .split('/')
+                .skip(1)
+                .all(|part| !matches!(part, "" | "." | ".."))
+    };
+    let root = data_root
+        .filter(|root| canonical(root))
+        .ok_or(ObservationError::Incomplete)?;
     verify_labels(
         &[
             (OWNER_LABEL.into(), spec.owner.clone()),
@@ -47,7 +61,8 @@ pub(crate) fn verify_volume(spec: &Spec, volume: &Volume) -> Result<(), Error> {
         || volume.created_at.as_ref().is_none_or(String::is_empty)
         || volume.driver != "local"
         || !volume.options.is_empty()
-        || !volume.mountpoint.starts_with("/var/lib/docker/volumes/")
+        || !canonical(&volume.mountpoint)
+        || !volume.mountpoint.starts_with(&format!("{root}/volumes/"))
         || !volume.mountpoint.ends_with("/_data")
     {
         return Err(Error::Conflict(
@@ -279,7 +294,7 @@ impl Engine {
             }
             if container.is_none() && (volume.is_some() || network.is_some()) {
                 if let Some(volume) = &volume {
-                    verify_volume(spec, volume)?;
+                    verify_volume(spec, volume, info.docker_root_dir.as_deref())?;
                 }
                 if let Some(network) = &network {
                     verify_network(spec, network)?;
@@ -295,7 +310,7 @@ impl Engine {
             let container = container.ok_or(ObservationError::Incomplete)?;
             let volume = volume.ok_or(ObservationError::Incomplete)?;
             let network = network.ok_or(ObservationError::Incomplete)?;
-            verify_volume(spec, &volume)?;
+            verify_volume(spec, &volume, info.docker_root_dir.as_deref())?;
             verify_network(spec, &network)?;
             let image = self
                 .image(

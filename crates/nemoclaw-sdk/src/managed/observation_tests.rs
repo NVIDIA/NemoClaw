@@ -27,7 +27,10 @@ async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_par
         assert_eq!(request.method, "GET", "observation mutated Docker");
         let state = shared.lock().unwrap();
         let (code, value) = if request.path == "/info" {
-            (200, json!({"ID":"engine"}))
+            (
+                200,
+                json!({"ID":"engine","DockerRootDir":"/var/lib/docker"}),
+            )
         } else if request.path.starts_with("/containers/") {
             state
                 .0
@@ -213,4 +216,23 @@ async fn capacity_requires_measurements_from_the_selected_execution_target() {
             assert!(matches!(error, Error::Conflict(_)));
         }
     }
+}
+
+#[test]
+fn owned_volume_accepts_an_isolated_daemon_data_root() {
+    let (spec, _, mut volume, _) = reference();
+    volume["Mountpoint"] = json!("/srv/nemoclaw-proof/docker/volumes/fixture/_data");
+    let volume = serde_json::from_value(volume).unwrap();
+    verify_volume(&spec, &volume, Some("/srv/nemoclaw-proof/docker")).unwrap();
+    for root in [
+        None,
+        Some("/var/lib/docker"),
+        Some("relative"),
+        Some("/srv/../docker"),
+    ] {
+        assert!(verify_volume(&spec, &volume, root).is_err());
+    }
+    let mut drifted: Volume = volume;
+    drifted.mountpoint = "/srv/nemoclaw-proof/docker/volumes/../foreign/_data".into();
+    assert!(verify_volume(&spec, &drifted, Some("/srv/nemoclaw-proof/docker")).is_err());
 }

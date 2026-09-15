@@ -29,7 +29,10 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
         );
         let state = shared.lock().unwrap();
         let (code, value) = if request.path == "/info" {
-            (200, json!({"ID":"engine"}))
+            (
+                200,
+                json!({"ID":"engine","DockerRootDir":"/var/lib/docker"}),
+            )
         } else if request.path.contains("/archive?") {
             if state.3 {
                 return Some((403, br#"{"message":"denied"}"#.to_vec()));

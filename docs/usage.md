@@ -104,6 +104,8 @@ with your hosts. Publication currently requires a private IPv4 address, the
 service's port and `/v1` path. It uses HTTP without model credentials. The remote
 host must meet the existing Linux ARM64 Spark hardware profile and have Docker,
 Python 3 and `nvidia-smi`. Configure SSH authentication and host trust beforehand.
+Managed volume observation uses that daemon's reported data root, including a
+non-default root; it never substitutes the client host's storage path.
 Load the pinned runtime image into the selected Docker daemon; the example's
 experiment image has not been published. Load the sandbox image into Podman.
 

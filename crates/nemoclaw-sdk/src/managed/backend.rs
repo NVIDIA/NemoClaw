@@ -156,7 +156,10 @@ mod tests {
                 "observation or rejection mutated Docker"
             );
             let (code, body) = if request.path == "/info" {
-                (200, json!({"ID":"engine"}))
+                (
+                    200,
+                    json!({"ID":"engine","DockerRootDir":"/var/lib/docker"}),
+                )
             } else {
                 state.lock().unwrap().clone()
             };

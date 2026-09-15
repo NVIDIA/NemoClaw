@@ -94,7 +94,7 @@ impl Engine {
         let network = self.network(&spec.network()).await?;
         let helper = self.container(&format!("{}-initialize", spec.name)).await?;
         if let Some(volume) = &volume {
-            verify_volume(spec, volume)?;
+            verify_volume(spec, volume, info.docker_root_dir.as_deref())?;
         }
         if let Some(network) = &network {
             verify_network(spec, network)?;
@@ -133,7 +133,11 @@ impl Engine {
                     .await
                     .map_err(remote)?;
                 volume = self.volume(&spec.volume()).await?;
-                verify_volume(spec, volume.as_ref().ok_or(ObservationError::Incomplete)?)?;
+                verify_volume(
+                    spec,
+                    volume.as_ref().ok_or(ObservationError::Incomplete)?,
+                    info.docker_root_dir.as_deref(),
+                )?;
             }
         }
         let data_path = &volume

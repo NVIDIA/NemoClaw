@@ -81,7 +81,7 @@ impl Engine {
                 volume = self.volume(&spec.volume()).await?;
             }
             let volume = volume.ok_or(ObservationError::Incomplete)?;
-            verify_volume(spec, &volume)?;
+            verify_volume(spec, &volume, self.info().await?.docker_root_dir.as_deref())?;
             let created = self
                 .api
                 .create_container(

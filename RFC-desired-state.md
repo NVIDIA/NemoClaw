@@ -366,3 +366,11 @@ A separate-host GPU apply and an agent reply across that host boundary remain
 required before claiming live remote deployment qualification. The example
 requires preloaded pinned runtime images and a private routable IPv4 interface;
 the current managed model hardware profile remains Linux ARM64 DGX Spark.
+
+Preparing a second Docker daemon exposed a storage observation assumption before
+live startup: volume verification hard-coded /var/lib/docker. It now checks the
+selected daemon's reported DockerRootDir and rejects missing roots, traversal,
+and volume paths outside that root. Ownership labels, generation, volume
+configuration and durable daemon/container identities remain required. The
+remote lifecycle fixture uses a non-default root to exercise this through the
+CLI and provider; a fixture result does not qualify the two-daemon live setup.
