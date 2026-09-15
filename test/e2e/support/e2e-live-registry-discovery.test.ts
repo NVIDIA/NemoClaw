@@ -53,6 +53,14 @@ describe("live target registry discovery", () => {
 
   // source-shape-contract: compatibility -- Executable registry metadata must still compile into the phase plan consumed by the live runner
   it("compiles a run plan from executable target behavior", () => {
+    const unsupportedEnvironment = {
+      ...listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw")!.environment,
+      lifecycle: "dcode-rebuild-invalid-credential",
+    };
+    expect(() => buildTargetRegistry([syntheticTarget(unsupportedEnvironment)])).toThrow(
+      "environment tuple 'platform=ubuntu-local, install=repo-current, runtime=managed-runtime-running, onboarding=cloud-openclaw, lifecycle=dcode-rebuild-invalid-credential' has no live fixture",
+    );
+
     const target = listTargets().find(
       (entry) => entry.id === "ubuntu-repo-cloud-langchain-deepagents-code",
     )!;

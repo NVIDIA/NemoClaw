@@ -6,33 +6,65 @@ import {
   type E2eExecutionMetadata,
   validateE2eExecutionMetadata,
 } from "../../../tools/e2e/execution-coverage.mts";
-import type { TargetDefinition } from "./types.ts";
+import type { TargetDefinition, TargetEnvironment } from "./types.ts";
 
-const EXECUTABLE_PLATFORMS = new Set(["ubuntu-local"]);
-const EXECUTABLE_INSTALLS = new Set(["repo-current"]);
-const EXECUTABLE_RUNTIMES = new Set(["docker-running", "managed-runtime-running"]);
-const EXECUTABLE_ONBOARDING = new Set([
-  "cloud-openclaw",
-  "cloud-openclaw-policy-custom-missing-presets",
-  "cloud-langchain-deepagents-code",
-]);
-const EXECUTABLE_LIFECYCLES = new Set(["post-reboot-recovery", "dcode-rebuild-invalid-credential"]);
+const EXECUTABLE_ROUTES: readonly TargetEnvironment[] = [
+  {
+    platform: "ubuntu-local",
+    install: "repo-current",
+    runtime: "managed-runtime-running",
+    onboarding: "cloud-openclaw",
+  },
+  {
+    platform: "ubuntu-local",
+    install: "repo-current",
+    runtime: "managed-runtime-running",
+    onboarding: "cloud-langchain-deepagents-code",
+    lifecycle: "dcode-rebuild-invalid-credential",
+  },
+  {
+    platform: "ubuntu-local",
+    install: "repo-current",
+    runtime: "docker-running",
+    onboarding: "cloud-openclaw",
+    lifecycle: "post-reboot-recovery",
+  },
+  {
+    platform: "ubuntu-local",
+    install: "repo-current",
+    runtime: "managed-runtime-running",
+    onboarding: "cloud-openclaw-policy-custom-missing-presets",
+  },
+];
+
+const EXECUTION_ROUTE_DIMENSIONS = [
+  "platform",
+  "install",
+  "runtime",
+  "onboarding",
+  "lifecycle",
+] as const;
 
 function missingExecutionRoute(target: TargetDefinition): string[] {
   const { environment } = target;
   const missing: string[] = [];
-  for (const [dimension, value, executable] of [
-    ["platform", environment.platform, EXECUTABLE_PLATFORMS],
-    ["install", environment.install, EXECUTABLE_INSTALLS],
-    ["runtime", environment.runtime, EXECUTABLE_RUNTIMES],
-    ["onboarding", environment.onboarding, EXECUTABLE_ONBOARDING],
-  ] as const) {
-    if (!executable.has(value)) {
+  for (const dimension of EXECUTION_ROUTE_DIMENSIONS) {
+    const value = environment[dimension];
+    if (value === undefined) continue;
+    const executable = EXECUTABLE_ROUTES.some((route) => route[dimension] === value);
+    if (!executable) {
       missing.push(`${dimension} '${value}' has no live fixture`);
     }
   }
-  if (environment.lifecycle && !EXECUTABLE_LIFECYCLES.has(environment.lifecycle)) {
-    missing.push(`lifecycle '${environment.lifecycle}' has no live fixture`);
+
+  const completeRouteExists = EXECUTABLE_ROUTES.some((route) =>
+    EXECUTION_ROUTE_DIMENSIONS.every((dimension) => route[dimension] === environment[dimension]),
+  );
+  if (missing.length === 0 && !completeRouteExists) {
+    const route = EXECUTION_ROUTE_DIMENSIONS.map(
+      (dimension) => `${dimension}=${environment[dimension] ?? "none"}`,
+    ).join(", ");
+    missing.push(`environment tuple '${route}' has no live fixture`);
   }
   return missing;
 }
