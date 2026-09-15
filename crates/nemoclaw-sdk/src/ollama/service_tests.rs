@@ -12,6 +12,7 @@ struct State {
     fail_read: bool,
     creates: usize,
     starts: usize,
+    deletes: usize,
 }
 #[tokio::test]
 async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_failure() {
@@ -43,6 +44,7 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
                 if std::mem::take(&mut state.lost_create) {return None;} (201,json!({"Id":"container","Warnings":[]}))
             },
             ("POST","/containers/container/start")=>{state.starts+=1;state.container.as_mut().unwrap()["State"]["Running"]=json!(true);(204,json!({}))},
+            ("DELETE",p) if p.starts_with("/containers/container?")=>{state.deletes+=1;state.container=None;(204,json!({}))},
             _=>panic!("unexpected engine effect {} {}",request.method,request.path),
         };Some((code,serde_json::to_vec(&value).unwrap()))
     }).await;
@@ -78,7 +80,7 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
         backend.read("ollama", &row, false).await.unwrap(),
         Some(row.clone())
     );
-    assert!(backend.remove("ollama", &row, true).await.is_err());
+
     state.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(false);
     let model = [
         ("id".into(), format!("{}/model", established.id)),
@@ -99,11 +101,21 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
     assert!(failed.state.is_none());
     assert!(engine.ensure_ollama(&spec, &established.id).await.is_err());
     state.lock().unwrap().fail_read = false;
+    let volume_before = state.lock().unwrap().volume.clone();
+    assert!(backend.remove("ollama", &row, false).await.is_err());
+    backend.remove("ollama", &row, true).await.unwrap();
+    assert!(state.lock().unwrap().container.is_none());
+    assert_eq!(state.lock().unwrap().volume, volume_before);
+    assert_eq!(state.lock().unwrap().deletes, 1);
+    assert_eq!(backend.read("ollama", &row, true).await.unwrap(), None);
+    // Explicit post-destroy apply can reuse the retained volume.
+    let restored = engine.ensure_ollama(&spec, "").await.unwrap();
+    assert_eq!(restored.id, established.id);
     state.lock().unwrap().volume.as_mut().unwrap()["CreatedAt"] = json!("replaced");
     assert!(engine.ensure_ollama(&spec, &established.id).await.is_err());
     state.lock().unwrap().container = None;
     assert!(engine.ensure_ollama(&spec, &established.id).await.is_err());
     let state = state.lock().unwrap();
-    assert_eq!(state.creates, 1);
-    assert_eq!(state.starts, 1);
+    assert_eq!(state.creates, 2);
+    assert_eq!(state.starts, 2);
 }

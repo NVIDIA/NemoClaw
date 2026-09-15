@@ -7,7 +7,7 @@ use crate::{
 };
 use bollard::{
     models::{ContainerCreateBody, ContainerInspectResponse, Volume, VolumeCreateRequest},
-    query_parameters::CreateContainerOptions,
+    query_parameters::{CreateContainerOptions, RemoveContainerOptions},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -161,6 +161,95 @@ impl ServiceSpec {
     }
 }
 impl Engine {
+    /// Observe storage independently of whether its service is running or present.
+    pub async fn observe_ollama_storage(
+        &self,
+        spec: &ServiceSpec,
+        id: &str,
+    ) -> Result<Option<String>, Error> {
+        spec.validate()?;
+        let info = self.info().await?;
+        let Some(volume) = self.volume(&spec.volume()).await? else {
+            if !id.is_empty() {
+                return Err(Error::Conflict(
+                    "bound Ollama storage is absent; recreation forbidden",
+                ));
+            }
+            return Ok(None);
+        };
+        spec.verify_volume(&volume)?;
+        let physical = format!(
+            "{}/{}/{}",
+            info.id.unwrap(),
+            spec.volume(),
+            volume.created_at.unwrap()
+        );
+        if !id.is_empty() && id != physical {
+            return Err(ObservationError::BindingMismatch.into());
+        }
+        Ok(Some(physical))
+    }
+    pub async fn ensure_ollama_storage(
+        &self,
+        spec: &ServiceSpec,
+        id: &str,
+    ) -> Result<String, Error> {
+        if let Some(id) = self.observe_ollama_storage(spec, id).await? {
+            return Ok(id);
+        }
+        self.api
+            .create_volume(VolumeCreateRequest {
+                name: Some(spec.volume()),
+                driver: Some("local".into()),
+                labels: Some(spec.labels()?),
+                ..Default::default()
+            })
+            .await
+            .map_err(remote)?;
+        self.observe_ollama_storage(spec, id)
+            .await?
+            .ok_or(ObservationError::Incomplete.into())
+    }
+    pub async fn observe_ollama_removal(
+        &self,
+        spec: &ServiceSpec,
+        id: &str,
+    ) -> Result<Option<Service>, Error> {
+        let parts: Vec<_> = id.split('/').collect();
+        if parts.len() != 3 || parts.iter().any(|p| p.is_empty()) {
+            return Err(ObservationError::Incomplete.into());
+        }
+        self.observe_ollama_storage(
+            spec,
+            &format!("{}/{}/{}", parts[0], spec.volume(), parts[2]),
+        )
+        .await?;
+        if self.container(&spec.name).await?.is_none() {
+            return Ok(None);
+        }
+        self.observe_ollama(spec, id).await
+    }
+    pub async fn remove_ollama(&self, spec: &ServiceSpec, id: &str) -> Result<(), Error> {
+        if let Some(service) = self.observe_ollama_removal(spec, id).await? {
+            let container = service
+                .id
+                .split('/')
+                .nth(1)
+                .ok_or(ObservationError::Incomplete)?;
+            self.api
+                .remove_container(
+                    container,
+                    Some(RemoveContainerOptions {
+                        force: true,
+                        v: false,
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .map_err(remote)?;
+        }
+        Ok(())
+    }
     pub async fn observe_ollama(
         &self,
         spec: &ServiceSpec,

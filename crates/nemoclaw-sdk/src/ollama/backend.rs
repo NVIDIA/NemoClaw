@@ -17,9 +17,15 @@ impl OllamaBackend {
         Self { engine }
     }
     pub fn supports(kind: &str) -> bool {
-        matches!(kind, "ollama" | "ollama_model")
+        matches!(kind, "ollama" | "ollama_model" | "ollama_storage")
     }
-    async fn observe(&self, kind: &str, row: &Row, apply: bool) -> Result<Option<Row>, Error> {
+    async fn observe(
+        &self,
+        kind: &str,
+        row: &Row,
+        apply: bool,
+        removing: bool,
+    ) -> Result<Option<Row>, Error> {
         let field = |name: &str| {
             row.get(name)
                 .filter(|v| !v.is_empty())
@@ -27,7 +33,7 @@ impl OllamaBackend {
                 .ok_or(ObservationError::Incomplete)
         };
         let mut result = row.clone();
-        if kind == "ollama" {
+        if matches!(kind, "ollama" | "ollama_storage") {
             let spec = ServiceSpec {
                 name: field("name")?,
                 owner: field("owner")?,
@@ -37,7 +43,20 @@ impl OllamaBackend {
                 bind_address: field("bind_address")?,
             };
             let id = row.get("id").map(String::as_str).unwrap_or("");
-            let service = if apply {
+            if kind == "ollama_storage" {
+                let storage = if apply {
+                    Some(self.engine.ensure_ollama_storage(&spec, id).await?)
+                } else {
+                    self.engine.observe_ollama_storage(&spec, id).await?
+                };
+                return Ok(storage.map(|id| {
+                    result.insert("id".into(), id);
+                    result
+                }));
+            }
+            let service = if removing {
+                self.engine.observe_ollama_removal(&spec, id).await?
+            } else if apply {
                 if field("running")? != "true" {
                     return Err(Error::Conflict("this slice declares Ollama running"));
                 }
@@ -58,6 +77,11 @@ impl OllamaBackend {
         let endpoint = field("endpoint")?;
         let name = field("model")?;
         let service = self.engine.bound_ollama(&service_id, &endpoint).await?;
+        if removing {
+            // Destroy releases the model installation binding, never model bytes.
+            // Verify the bound parent and storage without requiring its inference API.
+            return Ok(Some(result));
+        }
         if !service.running {
             return Err(Error::Conflict(
                 "Ollama service is stopped; model inventory is unknown; no model mutation is authorized",
@@ -104,20 +128,57 @@ impl Backend for OllamaBackend {
         &self,
         kind: &str,
         prior: &Row,
-        _: bool,
+        removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        self.observe(kind, prior, false).await.map_err(diagnostic)
+        self.observe(kind, prior, false, removing)
+            .await
+            .map_err(diagnostic)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        match self.observe(kind, desired, true).await {
+        match self.observe(kind, desired, true, false).await {
             Ok(Some(row)) => Mutation::complete(row),
             Ok(None) => Mutation::failed(ObservationError::Incomplete),
             Err(error) => Mutation::failed(diagnostic(error)),
         }
     }
-    async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
-        Err(ObservationError::Backend(
-            "managed Ollama deletion is not supported; persistent data is retained",
-        ))
+    async fn remove(
+        &self,
+        kind: &str,
+        prior: &Row,
+        destroying: bool,
+    ) -> Result<(), ObservationError> {
+        if !destroying || kind == "ollama_storage" {
+            return Err(ObservationError::Backend(
+                "Ollama storage is retained; service deletion requires explicit destroy",
+            ));
+        }
+        if kind == "ollama_model" {
+            self.observe(kind, prior, false, true)
+                .await
+                .map_err(diagnostic)?;
+            return Ok(());
+        }
+        if kind != "ollama" {
+            return Err(ObservationError::Incomplete);
+        }
+        let field = |key: &str| {
+            prior
+                .get(key)
+                .filter(|v| !v.is_empty())
+                .cloned()
+                .ok_or(ObservationError::Incomplete)
+        };
+        let spec = ServiceSpec {
+            name: field("name")?,
+            owner: field("owner")?,
+            generation: field("generation")?,
+            image: field("image")?,
+            network: field("network")?,
+            bind_address: field("bind_address")?,
+        };
+        self.engine
+            .remove_ollama(&spec, &field("id")?)
+            .await
+            .map_err(diagnostic)
     }
 }
