@@ -103,11 +103,14 @@ impl Spec {
         }
         self.gateway.bridge()
     }
-    pub fn runtime_service(&self) -> Service {
-        let mut service = self.service.clone().expect("validated service");
+    pub fn runtime_service(&self) -> Result<Service, Error> {
+        self.validate_runtime()?;
+        let mut service = self.service.clone().ok_or(Error::Conflict(
+            "runtime specification has no inference service",
+        ))?;
         service.placement = None;
         service.publication = None;
-        service
+        Ok(service)
     }
     pub fn json(&self) -> Result<String, Error> {
         self.validate()?;
@@ -167,12 +170,15 @@ impl Spec {
             host["NetworkMode"] = json!("host");
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":"/var/run/docker.sock","Target":"/var/run/docker.sock"}]);
         } else {
-            let service = self.service.as_ref().expect("validated service");
+            let service = self.service.as_ref().ok_or(Error::Conflict(
+                "runtime specification has no inference service",
+            ))?;
             config["Entrypoint"] = json!(["/usr/local/bin/nemoclaw-runtime"]);
             config["Cmd"] = json!([]);
             config["Env"] = json!([format!(
                 "NEMOCLAW_RUNTIME_SPEC={}",
-                serde_json::to_string(&self.runtime_service()).expect("service JSON")
+                serde_json::to_string(&self.runtime_service()?)
+                    .map_err(|_| Error::State("cannot serialize runtime service"))?
             )]);
             host["NetworkMode"] = json!(self.network());
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":"/data"}]);

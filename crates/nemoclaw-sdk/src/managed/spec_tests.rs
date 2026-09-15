@@ -2,6 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 #[test]
+fn runtime_service_handles_a_gateway_without_panicking() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    assert!(spec.service.is_none());
+    assert!(matches!(spec.runtime_service(), Err(Error::Conflict(_))));
+}
+
+#[test]
+fn runtime_service_rejects_invalid_specs_and_preserves_valid_service_fields() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let mut spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
+    let mut expected = spec.service.clone().unwrap();
+    expected.placement = None;
+    expected.publication = None;
+    assert_eq!(spec.runtime_service().unwrap(), expected);
+    spec.service = None;
+    assert!(spec.runtime_service().is_err());
+    spec.service = Some(expected);
+    spec.generation.clear();
+    assert!(spec.runtime_service().is_err());
+}
+
+#[test]
 fn runtime_specs_preserve_ownership_and_explicit_launch_contracts() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();

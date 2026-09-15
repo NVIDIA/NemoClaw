@@ -25,13 +25,15 @@ impl Document {
         let provider = &self.spec.inference_providers[0];
         let endpoint = match &provider.service {
             None => provider.endpoint.clone(),
-            Some(service) if service.publication.is_some() => {
-                service.publication.as_ref().unwrap().endpoint.clone()
-            }
-            Some(service) => format!(
-                "http://{}:{}/v1",
-                self.spec.gateway.bridge(),
-                service.serving.port
+            Some(service) => service.publication.as_ref().map_or_else(
+                || {
+                    format!(
+                        "http://{}:{}/v1",
+                        self.spec.gateway.bridge(),
+                        service.serving.port
+                    )
+                },
+                |publication| publication.endpoint.clone(),
             ),
         };
         InferenceConnection {
