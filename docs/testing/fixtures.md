@@ -114,3 +114,42 @@ The command prints an evidence directory under `.local/fabric-<harness>-<uuid>` 
 It retains logs, request bodies, and `proof.json`; it removes only its named container, including after failure.
 Inspect that directory on failure and rerun after correcting the fixture or image.
 These tests do not qualify model quality, live upstream authentication, or inference through a real OpenShell gateway.
+
+## OpenClaw Agent Tool Policies
+
+Build the updated OpenClaw image using the [agent runtime procedure](../agents.md#runtime-lifecycle).
+From the repository root, run the adapter tests and the pinned native tool factory in disposable containers:
+
+```sh
+docker run --rm --network none --pull=never \
+  -v "$PWD/image/fabric:/work:ro" -w /work \
+  --entrypoint /opt/fabric/bin/python nc-prototype-fabric:openclaw \
+  -m unittest test_openclaw_adapter test_inference
+
+docker run --rm --network none --pull=never -e PYTHONPATH=/work \
+  -v "$PWD/image/fabric:/work:ro" -w /work \
+  --entrypoint /usr/local/bin/node nc-prototype-fabric:openclaw \
+  /work/test_openclaw_tools.mjs
+
+docker run --rm --network none --pull=never \
+  -e NEMOCLAW_TEST_NATIVE_TOOLS=1 -e PYTHONPATH=/work \
+  -v "$PWD/image/fabric:/work:ro" -w /work \
+  --entrypoint /opt/fabric/bin/python nc-prototype-fabric:openclaw \
+  -m unittest test_openclaw_tools_gateway
+```
+
+The adapter tests cover named sessions and rejection of changed native permissions.
+The gateway test starts and restarts the pinned native gateway, then verifies that broadened permissions fail its configuration check.
+The native factory test executes a file read and checks that restricted agents receive no write, exec, delegation, or tool-search tools, while the unrestricted agent retains coding tools.
+It does not invoke a model or establish filesystem isolation between agents.
+The read fixture exists only in the disposable container.
+
+With a freshly built native bundle, run the SDK/CLI lifecycle fixture:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-e2e --test deployment multiple_agents_cli_export_reapply_and_policy_drift -- --ignored
+```
+
+It checks four-agent export/reapply and failed policy observation without mutation or lost state.
+The local OpenShell fixture simulates the runtime observation result; native enforcement is covered separately by the tool factory test.

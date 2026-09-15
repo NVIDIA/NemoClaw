@@ -17,6 +17,36 @@ Other harnesses currently require external gateway and inference services.
 The strict schema rejects unsupported combinations.
 See [inference configuration](inference.md) for API selection, OpenClaw route tuning, and Hermes authentication.
 
+## Multiple OpenClaw Agents and Tool Restrictions
+
+A sandbox accepts one or more uniquely named OpenClaw agents.
+All agents currently share identical inference settings and the sandbox's single primary route.
+Other harnesses still require one agent.
+The first declared agent receives plain-text Fabric invocations.
+Native OpenClaw commands can select any declared agent by name.
+The local Fabric adapter also accepts an input object with `agent` and `message` fields; it rejects undeclared names before invocation.
+
+Declare a read-only tool policy on any OpenClaw agent:
+
+```yaml
+tools:
+  allow: [read]
+```
+
+Only this allowlist is supported; empty lists, other tools, wildcards, and additional grant fields are rejected.
+Omitting `tools` preserves native tool behavior.
+This policy restricts the agent's tools, not filesystem access for other processes in the shared sandbox.
+Each agent has a distinct session and workspace; those directories are not separate security boundaries.
+
+With multiple agents or an explicit tool policy, NemoClaw owns the native agent roster, agent defaults, and tool configuration.
+Startup, refresh, and export reject conflicting native settings without overwriting them.
+Unrelated channels, pairing, and plugin settings remain native configuration.
+Changing the declared roster or tool policy changes the sandbox launch specification; it is not an in-place permission update.
+
+Build the updated OpenClaw image using the [runtime build procedure](#runtime-lifecycle) and put its printed immutable digest in `image.ref`.
+Earlier images do not implement this agent-roster interface.
+Changing YAML alone does not update an existing image or migrate retained native configuration.
+
 ## Pi Model Selection
 
 Pi receives the model ID from `inference.routes[].overrides.model`.
@@ -93,7 +123,7 @@ Put that immutable digest in the sandbox's `image.ref`.
 It does not publish an image.
 See [the source notice](../image/NOTICE.md).
 
-Fabric's local OpenClaw adapter owns one native gateway and session.
+Fabric's local OpenClaw adapter owns one native gateway with a session for each declared agent.
 An uncertain invocation result stops that runtime and is never replayed automatically.
 Agent configuration readiness does not invoke the model.
 
