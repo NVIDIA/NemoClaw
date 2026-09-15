@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const publication = vi.hoisted(() => ({
   createVerifiedCommit: vi.fn(),
@@ -56,6 +59,11 @@ const selection = {
 const state = { pull: { state: "open" } };
 const reviews: unknown[] = [];
 const commitSha = "e".repeat(40);
+let fixtureDirectory: string;
+
+function fixturePath(...segments: string[]): string {
+  return path.join(fixtureDirectory, ...segments);
+}
 
 function authorization(): RepairPublicationAuthorization {
   return {
@@ -72,16 +80,21 @@ function authorization(): RepairPublicationAuthorization {
 }
 
 beforeEach(() => {
+  fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-publish-"));
   vi.clearAllMocks();
   contract.parseSelection.mockReturnValue(selection);
   contract.parseValidationReceipt.mockReturnValue({ changedPaths: [] });
   contract.validateRepairPatch.mockReturnValue({
     candidateTreeSha: "f".repeat(40),
-    repository: "/tmp/candidate.git",
+    repository: fixturePath("candidate.git"),
   });
   contract.readJson.mockReturnValue({});
   publication.createVerifiedCommit.mockResolvedValue(commitSha);
   publication.updateVerifiedRef.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  fs.rmSync(fixtureDirectory, { recursive: true, force: true });
 });
 
 describe("PR Review Advisor repair publisher", () => {
@@ -89,11 +102,11 @@ describe("PR Review Advisor repair publisher", () => {
     await expect(
       prepareAdvisorRepair({
         request: vi.fn(),
-        sourceRepository: "/tmp/source",
-        selectionPath: "/tmp/selection/selection.json",
-        patchPath: "/tmp/validated/repair.patch",
-        receiptPath: "/tmp/validated/validation.json",
-        workDirectory: "/tmp/work",
+        sourceRepository: fixturePath("source"),
+        selectionPath: fixturePath("selection", "selection.json"),
+        patchPath: fixturePath("validated", "repair.patch"),
+        receiptPath: fixturePath("validated", "validation.json"),
+        workDirectory: fixturePath("work"),
       }),
     ).resolves.toBe(commitSha);
 
@@ -115,7 +128,7 @@ describe("PR Review Advisor repair publisher", () => {
         commitSha,
         graphql,
         request,
-        selectionPath: "/tmp/selection.json",
+        selectionPath: fixturePath("selection.json"),
         state,
         reviews,
         workflowRunId: 123,
@@ -138,7 +151,7 @@ describe("PR Review Advisor repair publisher", () => {
         commitSha,
         graphql: vi.fn(),
         request,
-        selectionPath: "/tmp/selection.json",
+        selectionPath: fixturePath("selection.json"),
         state: { pull: { state: "closed" } },
         reviews,
         workflowRunId: 123,
@@ -152,7 +165,7 @@ describe("PR Review Advisor repair publisher", () => {
   it("binds approval and publishes the verified commit with the exact source compare-and-swap (#10791)", async () => {
     const bound = authorizePreparedAdvisorRepair({
       commitSha,
-      selectionPath: "/tmp/selection.json",
+      selectionPath: fixturePath("selection.json"),
       state,
       reviews,
       workflowRunId: 123,
@@ -169,7 +182,7 @@ describe("PR Review Advisor repair publisher", () => {
       commitSha,
       graphql: vi.fn(),
       request,
-      selectionPath: "/tmp/selection.json",
+      selectionPath: fixturePath("selection.json"),
       state,
       reviews,
       workflowRunId: 123,
