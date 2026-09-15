@@ -372,6 +372,35 @@ describe("validation reuse", () => {
     );
   });
 
+  it("merges a concurrent digest-index publication (#11782)", () => {
+    const options = check();
+    runCachedCommand(options);
+    const directory = path.join(root, ".git/nemoclaw-validation");
+    const indexPath = path.join(directory, "file-digests-v1.json");
+    const receiptPath = path.join(directory, "fixture.json");
+    const concurrentPath = path.join(root, "concurrent-input");
+    const concurrentIndex = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    concurrentIndex.entries.push([
+      concurrentPath,
+      { ...concurrentIndex.entries[0][1], lastSeen: Date.now() },
+    ]);
+    const read = fs.readFileSync;
+    const publish = vi.fn(() => fs.writeFileSync(indexPath, JSON.stringify(concurrentIndex)));
+    vi.spyOn(fs, "readFileSync").mockImplementation(
+      (...args: Parameters<typeof fs.readFileSync>) => {
+        const result = read(...args);
+        const _publication =
+          args[0] === receiptPath && publish.mock.calls.length === 0 ? publish() : undefined;
+        return result;
+      },
+    );
+    runCachedCommand(options);
+    const updated = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    expect(publish).toHaveBeenCalledOnce();
+    expect(updated.entries.some(([file]: [string]) => file === concurrentPath)).toBe(true);
+    expect(options.execute).toHaveBeenCalledOnce();
+  });
+
   it("reports fingerprint, compiler, and post-check timings (#11782)", () => {
     const options = check();
     runCachedCommand(options);

@@ -152,22 +152,42 @@ function loadDigestIndex(file: string): DigestIndex {
 }
 
 function saveDigestIndex(file: string, entries: DigestIndex, now: number): void {
-  const retained = [...entries.entries()]
-    .filter(([, entry]) => now - entry.lastSeen <= DIGEST_INDEX_MAX_AGE_MS)
-    .sort((left, right) => right[1].lastSeen - left[1].lastSeen)
-    .slice(0, MAX_DIGEST_INDEX_ENTRIES);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const temporary = `${file}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(
-      temporary,
-      JSON.stringify({ version: DIGEST_INDEX_VERSION, entries: retained }),
-      { mode: 0o600 },
-    );
-    fs.renameSync(temporary, file);
-  } finally {
-    fs.rmSync(temporary, { force: true });
+  const merged = new Map(entries);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (const [filePath, entry] of loadDigestIndex(file)) {
+      const current = merged.get(filePath);
+      if (!current || entry.lastSeen > current.lastSeen) merged.set(filePath, entry);
+    }
+    const retained = [...merged.entries()]
+      .filter(([, entry]) => now - entry.lastSeen <= DIGEST_INDEX_MAX_AGE_MS)
+      .sort((left, right) => right[1].lastSeen - left[1].lastSeen)
+      .slice(0, MAX_DIGEST_INDEX_ENTRIES);
+    const temporary = `${file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(
+        temporary,
+        JSON.stringify({ version: DIGEST_INDEX_VERSION, entries: retained }),
+        { mode: 0o600 },
+      );
+      fs.renameSync(temporary, file);
+    } finally {
+      fs.rmSync(temporary, { force: true });
+    }
+    const published = loadDigestIndex(file);
+    if (
+      retained.every(([filePath, entry]) => {
+        const observed = published.get(filePath);
+        return (
+          observed?.digest === entry.digest &&
+          observed.lastSeen === entry.lastSeen &&
+          sameIdentity(observed.identity, entry.identity)
+        );
+      })
+    )
+      return;
   }
+  throw new Error("Concurrent digest-index publication did not stabilize");
 }
 
 function digestFile(file: string, expected: fs.Stats, index?: DigestIndex): string {
