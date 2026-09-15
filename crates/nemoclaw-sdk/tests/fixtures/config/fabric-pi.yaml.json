@@ -1,5 +1,5 @@
 {
-  "digest": "79c861c103c2dcaf032a6b9cc865ae3edb1d9fae4cf4cf8976e37d1fe634bde7",
+  "digest": "b0ad6dd711911c3945f574a7340aa18faf8f486f8ec2205b4f9bc0371b7bd76a",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -23,7 +23,7 @@
         {
           "name": "assistant",
           "image": {
-            "ref": "nc-prototype-fabric@sha256:69a045d358a5ef73cb4e448aa9555c2d198272445a39e80981145c4acffc4e1b"
+            "ref": "nc-fabric-pi@sha256:756d503e26b4bcdf8bbf815a614eca92855c7afed4f888e4a389d2a31c9a8ba6"
           },
           "runtime": {
             "provider": "docker"
@@ -41,7 +41,16 @@
                     "name": "primary",
                     "providerRef": "local",
                     "overrides": {
-                      "model": "gpt-4o"
+                      "model": "qwen3:4b",
+                      "piModel": {
+                        "api": "openai-completions",
+                        "contextTokens": 8192,
+                        "maxOutputTokens": 2048,
+                        "reasoning": false,
+                        "input": [
+                          "text"
+                        ]
+                      }
                     }
                   }
                 ]

@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Replace the fixture endpoint with a service serving gpt-4o through Responses.
-# The pinned Pi recipe rejects other model IDs. See docs/agents.md.
+# Set the endpoint and model for your service. Custom models need piModel metadata.
+# See docs/agents.md for catalog models and protocol requirements.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -19,7 +19,7 @@ spec:
   sandboxes:
     - name: assistant
       image:
-        ref: nc-prototype-fabric@sha256:69a045d358a5ef73cb4e448aa9555c2d198272445a39e80981145c4acffc4e1b
+        ref: nc-fabric-pi@sha256:756d503e26b4bcdf8bbf815a614eca92855c7afed4f888e4a389d2a31c9a8ba6
       runtime:
         provider: docker
       network:
@@ -32,4 +32,10 @@ spec:
               - name: primary
                 providerRef: local
                 overrides:
-                  model: gpt-4o
+                  model: qwen3:4b
+                  piModel:
+                    api: openai-completions
+                    contextTokens: 8192
+                    maxOutputTokens: 2048
+                    reasoning: false
+                    input: [text]

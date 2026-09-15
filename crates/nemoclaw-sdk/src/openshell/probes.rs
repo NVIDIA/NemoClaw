@@ -146,7 +146,55 @@ impl OpenShell {
         if harness != "deepagents" {
             command.push(harness.into());
         }
+        if harness == "pi" {
+            command.push(
+                binding
+                    .get("pi_model_config")
+                    .filter(|value| !value.is_empty())
+                    .ok_or(Error::Conflict(
+                        "Pi configuration requires the declared route model",
+                    ))?
+                    .clone(),
+            );
+        }
         Ok((command, Row::new()))
+    }
+    pub async fn configure_pi(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
+        tokio::time::timeout(Duration::from_secs(120), async {
+            loop {
+                let phase = self
+                    .bound_sandbox(binding)
+                    .await?
+                    .status
+                    .ok_or(ObservationError::Incomplete)?
+                    .phase;
+                if phase == proto::SandboxPhase::Ready as i32 {
+                    return Ok::<(), Error>(());
+                }
+                if matches!(
+                    proto::SandboxPhase::try_from(phase),
+                    Ok(proto::SandboxPhase::Error
+                        | proto::SandboxPhase::Deleting
+                        | proto::SandboxPhase::Stopped)
+                ) {
+                    return Err(Error::Conflict(
+                        "Pi sandbox is unavailable; resources retained",
+                    ));
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        })
+        .await
+        .map_err(|_| Error::Conflict("Pi sandbox startup timed out; resources retained"))??;
+        let (mut command, environment) = self.configuration_command(binding)?;
+        command[2] = if prepare { "prepare" } else { "configure" }.into();
+        let (exit, _) = self.exec_bound(binding, command, environment, 120).await?;
+        if exit != 0 {
+            return Err(Error::Conflict(
+                "Pi model configuration failed; check model ID and piModel metadata; resources retained",
+            ));
+        }
+        Ok(())
     }
     pub async fn configuration(&self, binding: &Row) -> Result<(), Error> {
         let (command, environment) = self.configuration_command(binding)?;
@@ -188,9 +236,33 @@ impl OpenShell {
         }
     }
     pub async fn inference_ready(&self, binding: &Row) -> Result<(), Error> {
+        if value(binding, "agent_runtime") == "fabric-pi" {
+            let model = binding
+                .get("pi_model_config")
+                .ok_or(Error::Conflict("Pi requires the declared route model"))?;
+            let (exit, _) = self
+                .exec_bound(
+                    binding,
+                    vec![
+                        "node".into(),
+                        "/opt/fabric-source/adapters/typescript/pi/dist/pi-probe.js".into(),
+                        model.clone(),
+                    ],
+                    Row::new(),
+                    90,
+                )
+                .await?;
+            return if exit == 0 {
+                Ok(())
+            } else {
+                Err(Error::Conflict(
+                    "Pi inference through the configured model failed; resources retained",
+                ))
+            };
+        }
         let script = match value(binding, "agent_runtime") {
             "fabric-claude" => ANTHROPIC_PROBE,
-            "fabric-codex" | "fabric-pi" => RESPONSES_PROBE,
+            "fabric-codex" => RESPONSES_PROBE,
             _ => INFERENCE_PROBE,
         };
         let (exit, _) = self

@@ -66,9 +66,14 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     document.spec.gateway.endpoint = fixture.endpoint.clone();
     document.spec.sandboxes[0].agents[0].harness = harness.into();
     if harness == "pi" {
-        document.spec.sandboxes[0].agents[0].inference.routes[0]
-            .overrides
-            .model = "gpt-4o".into();
+        let pi = Document::parse(
+            include_str!("../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
+        )
+        .unwrap();
+        document.spec.sandboxes[0].agents[0].inference.routes[0].overrides =
+            pi.spec.sandboxes[0].agents[0].inference.routes[0]
+                .overrides
+                .clone();
     }
     if harness == "claude" {
         document.spec.inference_providers[0].provider = "anthropic".into();
@@ -108,6 +113,43 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
                 .iter()
                 .any(|arg| arg == "invoke" || arg == "--message"))
     );
+    if harness == "pi" {
+        let mut changed_model = document.clone();
+        changed_model.spec.sandboxes[0].agents[0].inference.routes[0]
+            .overrides
+            .model = "another-custom-model".into();
+        let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
+        assert!(
+            planned
+                .changes
+                .iter()
+                .any(|change| change.resource == "fabric_runtime.main")
+        );
+        let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
+        assert!(applied.changes.iter().all(|change| {
+            !change
+                .actions
+                .iter()
+                .any(|action| action == "delete" || action == "create")
+        }));
+        assert_eq!(deployment.export(&cancel).await.unwrap(), changed_model);
+        let calls = fixture.state.lock().unwrap().exec_calls.clone();
+        let configured = calls
+            .iter()
+            .rev()
+            .find(|command| command.get(2).is_some_and(|arg| arg == "configure"))
+            .unwrap();
+        let model: serde_json::Value = serde_json::from_str(configured.last().unwrap()).unwrap();
+        assert_eq!(model["model"], "another-custom-model");
+        assert!(
+            calls
+                .iter()
+                .any(|command| command.get(2).is_some_and(|arg| arg == "prepare"))
+        );
+        deployment.apply(&document, &cancel).await.unwrap();
+    }
+    let effects = fixture.state.lock().unwrap().effects;
+    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let mut changed = document.clone();
     changed.spec.sandboxes[0].agents[0].harness = if harness == "deepagents" {
         "hermes"

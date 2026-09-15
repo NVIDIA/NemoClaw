@@ -13,14 +13,53 @@ or `pi`. OpenClaw supports external services, managed OpenShell gateways, and
 managed Spark or Ollama inference. Other harnesses currently require external
 gateway and inference services. The strict schema rejects unsupported combinations.
 
-The pinned Pi recipe requires the route model `gpt-4o` and an OpenAI Responses
-endpoint serving that model. Its Fabric adapter resolves models from Pi's catalog
-and does not expose custom-model metadata. NemoClaw rejects other route model IDs,
-including model changes on existing Pi deployments, before applying them. This
-keeps Pi's context limits and capabilities consistent with the configured model.
-Earlier configurations could route a different model behind Pi's GPT-4o profile;
-that substitution is no longer accepted. Retained fixture evidence establishes
-protocol behavior, not compatibility with those substituted models.
+## Pi model selection
+
+Pi receives the model ID from `inference.routes[].overrides.model`. There is no
+catalog-model substitution. For a model in Pi's OpenAI catalog, omit `piModel`
+to use that model's catalog metadata. For a custom model, supply its protocol,
+context limit, output limit, reasoning support, and accepted inputs explicitly:
+
+```yaml
+overrides:
+  model: qwen3:4b
+  piModel:
+    api: openai-completions
+    contextTokens: 8192
+    maxOutputTokens: 2048
+    reasoning: false
+    input: [text]
+```
+
+Set these values to match your endpoint. `api` accepts `openai-completions` or
+`openai-responses`. `input` accepts `text` and `image`. Explicit metadata also
+overrides catalog metadata when your endpoint has different limits. Custom
+metadata disables Pi's cost estimates; it does not imply free inference.
+A model outside the catalog without `piModel` fails startup with resources
+retained. Correct the metadata and apply again.
+
+Apply configures Pi after creating the route. A model or metadata change stops
+Pi before the route changes and starts a new Pi runtime in the existing sandbox.
+Unchanged apply preserves the runtime. Pi's in-memory conversation does not
+survive a runtime restart. Export and readiness compare the hosted configuration
+with the declared model. After a sandbox process restart, apply again to start
+Pi against the current route.
+
+Build the updated Pi image and use its printed digest; old Pi images do not
+implement this configuration interface. Existing sandbox images are immutable,
+so use a separate deployment to move from an old image. The
+[Pi example](../examples/fabric-pi.yaml) includes explicit custom-model metadata.
+
+```sh
+python3 image/fabric/build.py --harness pi
+python3 tools/fabric-adapter-experiment.py --harness pi
+python3 tools/fabric-adapter-experiment.py --harness pi --pi-catalog
+```
+
+Both tests use offline protocol fixtures and real Pi processes. They check
+request model IDs, unchanged apply, model changes, and shutdown.
+
+## Runtime lifecycle
 
 Fabric is the only runtime integration, so agents have no `type` field. Remove
 `type: fabric` from older YAML. The strict schema rejects the obsolete field.

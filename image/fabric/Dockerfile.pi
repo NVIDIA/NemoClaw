@@ -13,7 +13,7 @@ RUN /opt/fabric/bin/pip install --no-index --find-links=/opt/wheels --require-ha
 COPY pi-source /opt/fabric-source
 RUN cd /opt/fabric-source/adapter-contract/typescript && npm ci --no-audit --no-fund && npm run build \
     && cd /opt/fabric-source/adapters/typescript && npm ci --no-audit --no-fund && npm run build
-COPY fabric.py /opt/nemoclaw/fabric.py
+COPY fabric.py pi_host.py /opt/nemoclaw/
 COPY provenance.json /opt/nemoclaw/provenance.json
 USER node
 HEALTHCHECK NONE

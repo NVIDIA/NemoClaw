@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from patch_pi import patch_pi
 import platform
 import shutil
 import subprocess
@@ -33,7 +34,10 @@ def run(*args, **kwargs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--harness", choices=HARNESSES, default="deepagents")
-    harness = parser.parse_args().harness
+    parser.add_argument("--tag", help="Local output image tag")
+    args = parser.parse_args()
+    harness = args.harness
+    image_tag = args.tag or f"nc-prototype-fabric:{harness}"
     BUILD = ROOT / (".build/fabric" if harness == "deepagents" else f".build/fabric-{harness}")
     if platform.system() != "Linux" or platform.machine() != "aarch64":
         raise SystemExit("This first image recipe is qualified only for native Linux ARM64")
@@ -79,8 +83,10 @@ def main():
         for name in ("openclaw_adapter.py", "openclaw.fabric-adapter.json"):
             shutil.copyfile(ROOT / "image/fabric" / name, BUILD / name)
     if harness == "pi":
+        shutil.copyfile(ROOT / "image/fabric/pi_host.py", BUILD / "pi_host.py")
         for package in ("adapter-contract/typescript", "adapters/typescript"):
             shutil.copytree(source / package, BUILD / "pi-source" / package, dirs_exist_ok=True)
+        patch_pi(BUILD / "pi-source")
     if harness == "hermes":
         archive = BUILD / "hermes-source.tar.gz"
         if not archive.exists():
@@ -99,11 +105,15 @@ def main():
            if harness == "openclaw" else {}),
         **({"hermes_revision": HERMES_REVISION, "hermes_source_sha256": HERMES_HASH}
            if harness == "hermes" else {}),
+        **({"local_pi_model_sources": {
+            name: hashlib.sha256((ROOT / "image/fabric" / name).read_bytes()).hexdigest()
+            for name in ("patch_pi.py", "pi-model.ts", "pi-probe.ts", "pi_host.py", "fabric.py")}}
+           if harness == "pi" else {}),
         "requirements_sha256": hashlib.sha256(lock.encode()).hexdigest(),
     }, indent=2) + "\n")
-    (BUILD / ".dockerignore").write_text("*\n!Dockerfile\n!pi-source/\n!pi-source/**\n!wheels/\n!wheels/**\n!requirements.txt\n!fabric.py\n!provenance.json\n!openclaw_adapter.py\n!openclaw.fabric-adapter.json\n!hermes-agent-" + HERMES_REVISION + "/\n!hermes-agent-" + HERMES_REVISION + "/**\n")
-    run("docker", "build", "-t", f"nc-prototype-fabric:{harness}", str(BUILD))
-    run("docker", "image", "inspect", f"nc-prototype-fabric:{harness}", "--format", "{{index .RepoDigests 0}}")
+    (BUILD / ".dockerignore").write_text("*\n!Dockerfile\n!pi-source/\n!pi-source/**\n!wheels/\n!wheels/**\n!requirements.txt\n!fabric.py\n!pi_host.py\n!provenance.json\n!openclaw_adapter.py\n!openclaw.fabric-adapter.json\n!hermes-agent-" + HERMES_REVISION + "/\n!hermes-agent-" + HERMES_REVISION + "/**\n")
+    run("docker", "build", "-t", image_tag, str(BUILD))
+    run("docker", "image", "inspect", image_tag, "--format", "{{index .RepoDigests 0}}")
 
 
 if __name__ == "__main__":

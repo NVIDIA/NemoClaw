@@ -25,7 +25,7 @@
         "lifecycle": {
           "prevent_destroy": true
         },
-        "model": "gpt-4o",
+        "model": "qwen3:4b",
         "name": "primary",
         "owner": "c4a639f3-2bd3-42ba-8f5d-658d7913b0f9",
         "provider_name": "${nemoclaw_provider.inference.name}",
@@ -40,7 +40,7 @@
           "nemoclaw_route.primary"
         ],
         "generation": "sandbox-generation",
-        "image": "nc-prototype-fabric@sha256:69a045d358a5ef73cb4e448aa9555c2d198272445a39e80981145c4acffc4e1b",
+        "image": "nc-fabric-pi@sha256:756d503e26b4bcdf8bbf815a614eca92855c7afed4f888e4a389d2a31c9a8ba6",
         "lifecycle": {
           "prevent_destroy": true
         },
