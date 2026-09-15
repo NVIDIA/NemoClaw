@@ -2001,7 +2001,6 @@ export function createPodmanManagedBootstrapAdapter(
             }
           : {}),
       });
-      current.watcherLease.resumeForObservationAndProve();
       current.imageTransaction = startPodmanBootstrapImageTransaction({
         engine: options.engine,
         journalStore,
@@ -2049,6 +2048,7 @@ export function createPodmanManagedBootstrapAdapter(
         transaction: current.imageTransaction,
         timeoutSecs,
       });
+      current.watcherLease.resumeForObservationAndProve();
       const runCaptureOpenshell = options.runCaptureOpenshell;
       if (!runCaptureOpenshell) {
         throw new Error("Managed bootstrap Podman requires OpenShell observation authority.");
@@ -2089,14 +2089,15 @@ export function createPodmanManagedBootstrapAdapter(
         });
         current.watcherLease.resumeAndProve();
         transactions.delete(input.handle.bootstrapIdentity);
+        const heldWorkloadRemoved = !runtimeExists(options.engine, receipt.originalRuntimeId);
         return Object.freeze({
           schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
           sandbox: input.handle.sandbox,
           bootstrapIdentity: input.handle.bootstrapIdentity,
           outcome: "rolled-back",
-          restoredRuntimeId: receipt.originalRuntimeId,
+          restoredRuntimeId: heldWorkloadRemoved ? null : receipt.originalRuntimeId,
           restoredSpecHash: input.snapshot?.specHash ?? null,
-          heldWorkloadRemoved: !runtimeExists(options.engine, receipt.originalRuntimeId),
+          heldWorkloadRemoved,
           alreadyRolledBack: false,
           finalizedAt: new Date().toISOString(),
         });
