@@ -206,3 +206,6 @@ pub(crate) fn archive(files: &[(&str, &[u8], u32)]) -> Result<Vec<u8>, Error> {
 
 #[cfg(all(test, unix))]
 pub(crate) mod fixture;
+
+#[cfg(all(test, unix))]
+mod two_engines;
