@@ -56,6 +56,7 @@ describe("gateway lifecycle late binding", () => {
     const readProcessEnvironment = vi.fn(() => ({
       NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(stateDir),
     }));
+    const runCapture = vi.fn(() => "");
     const checkGatewayPortAvailable = vi
       .fn()
       .mockResolvedValueOnce({ ok: true })
@@ -145,7 +146,7 @@ describe("gateway lifecycle late binding", () => {
         resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
         resolveOpenShellSandboxBinary: () => null,
         runner: {
-          runCapture: () => "",
+          runCapture,
           runCaptureEx: () => ({ stdout: "5444\n", exitCode: 0, timedOut: false }),
         },
         runCaptureOpenshell: () => "",
@@ -169,6 +170,7 @@ describe("gateway lifecycle late binding", () => {
       expect(lines.join("\n")).not.toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
       expect(serviceTarget).toHaveBeenCalledTimes(2);
       expect(readProcessEnvironment).toHaveBeenCalledWith(5444);
+      expect(runCapture).not.toHaveBeenCalled();
     } finally {
       spawnSpy.mockRestore();
       prepareSpy.mockRestore();
