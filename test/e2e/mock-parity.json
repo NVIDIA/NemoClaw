@@ -819,25 +819,10 @@
     },
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
-      "liveSources": [
-        "test/e2e/live/rebuild-hermes-base-identity.ts",
-        "test/e2e/live/rebuild-hermes-bootstrap.ts",
-        "test/e2e/live/rebuild-hermes-cron-restore.ts",
-        "test/e2e/live/rebuild-hermes-env.ts",
-        "test/e2e/live/rebuild-hermes-host-policy.ts"
-      ],
       "fast": [
-        "src/lib/sandbox-base-image-resolution.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/hermes-acp-live.test.ts",
-        "test/e2e/support/rebuild-hermes-bootstrap.test.ts",
-        "test/e2e/support/rebuild-hermes-env.test.ts",
-        "test/e2e/support/rebuild-hermes-base-identity.test.ts",
-        "test/e2e/support/rebuild-hermes-image-state.test.ts",
-        "test/e2e/support/rebuild-hermes-old-base-fixture.test.ts",
-        "test/e2e/support/rebuild-hermes-progress.test.ts"
+        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {

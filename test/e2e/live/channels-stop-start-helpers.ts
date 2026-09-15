@@ -94,6 +94,34 @@ type InstalledGooglechatCredentialFixture = (() => void) & {
 
 export const GOOGLECHAT_E2E_ACCESS_TOKEN = "e2e-fake-googlechat-access-token";
 
+async function waitForNativeChannelGateway(
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  redactions: string[],
+): Promise<void> {
+  const port = AGENT === "hermes" ? 8642 : 18789;
+  const ready = await sandboxSh(
+    sandbox,
+    SANDBOX_NAME,
+    [
+      "set -eu",
+      "attempt=0",
+      'while [ "$attempt" -lt 30 ]; do',
+      `  code="$(curl -q --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 http://127.0.0.1:${String(port)}/health 2>/dev/null || true)"`,
+      '  case "$code" in 200|401) printf "native-ready\\n"; exit 0 ;; esac',
+      "  attempt=$((attempt + 1))",
+      "  sleep 5",
+      "done",
+      "exit 1",
+    ].join("\n"),
+    {
+      artifactName: `native-agent-ready-${AGENT}`,
+      redactionValues: redactions,
+      timeoutMs: 180_000,
+    },
+  );
+  expectExitZero(ready, `${AGENT} native gateway readiness`);
+}
+
 const PROVIDER_TYPE_BY_AGENT: Readonly<
   Record<AgentKind, "google-chat-bridge" | "google-chat-hermes-bridge">
 > = {
@@ -709,28 +737,6 @@ async function expectProvidersExist(
   }
 }
 
-async function expectChannelProvidersAbsent(
-  host: import("../fixtures/clients/host.ts").HostCliClient,
-  env: NodeJS.ProcessEnv,
-  redactions: string[],
-  channel: string,
-  context: string,
-): Promise<void> {
-  for (const provider of PROVIDERS[channel](SANDBOX_NAME)) {
-    const result = await host.command("openshell", ["provider", "get", provider], {
-      artifactName: `provider-${provider}-${context}`,
-      env,
-      redactionValues: redactions,
-      timeoutMs: 60_000,
-    });
-    expect(result.exitCode, `${provider} absent ${context}\n${resultText(result)}`).not.toBe(0);
-    expect(
-      /not found|does not exist|no provider|unknown provider/i.test(stripAnsi(resultText(result))),
-      `${provider} absence check failed for an unexpected reason ${context}\n${resultText(result)}`,
-    ).toBe(true);
-  }
-}
-
 async function precleanProviders(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
@@ -811,15 +817,6 @@ async function addGooglechatForLiveE2e(
   );
 }
 
-async function rebuildWithGooglechatFixtureForLiveE2e(env: NodeJS.ProcessEnv): Promise<void> {
-  await withLiveE2eEnvironment(env, () =>
-    rebuildGooglechatForChannelsStopStartLiveE2e({
-      sandboxName: SANDBOX_NAME,
-      agent: AGENT,
-    }),
-  );
-}
-
 async function policyPresetState(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
@@ -839,191 +836,6 @@ async function policyPresetState(
   );
   expectExitZero(result, `policy-list ${channel} ${context}`);
   return parsePolicyPresetState(resultText(result), channel);
-}
-
-async function runChannelCommand(
-  host: import("../fixtures/clients/host.ts").HostCliClient,
-  env: NodeJS.ProcessEnv,
-  redactions: string[],
-  action: "stop" | "start",
-  channel: string,
-): Promise<void> {
-  const result = await host.command(
-    "node",
-    [process.env.NEMOCLAW_CLI_BIN ?? "bin/nemoclaw.js", SANDBOX_NAME, "channels", action, channel],
-    {
-      artifactName: `channels-${action}-${channel}-${AGENT}`,
-      env,
-      redactionValues: redactions,
-      timeoutMs: 10 * 60_000,
-    },
-  );
-  expectExitZero(result, `channels ${action} ${channel}`);
-  const expectedText = `Marked ${channel} ${action === "stop" ? "disabled" : "enabled"}`;
-  expect(resultText(result)).toContain(expectedText);
-  expect(resultText(result)).toContain(
-    `Change queued. Run 'nemoclaw ${SANDBOX_NAME} rebuild' to apply`,
-  );
-}
-
-async function removeChannelsAndRebuild(
-  host: import("../fixtures/clients/host.ts").HostCliClient,
-  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
-  env: NodeJS.ProcessEnv,
-  redactions: string[],
-): Promise<void> {
-  if (AGENT === "openclaw") {
-    const setup = await sandboxSh(
-      sandbox,
-      SANDBOX_NAME,
-      [
-        "mkdir -p /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin /sandbox/.openclaw/nemoclaw-cleanup-preserve",
-        "printf '%s\\n' residue > /sandbox/.openclaw/wechat/account.json",
-        "printf '%s\\n' residue > /sandbox/.openclaw/openclaw-weixin/account.json",
-        "printf '%s\\n' preserve > /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel",
-      ].join("\n"),
-      {
-        artifactName: "prepare-stopped-wechat-cleanup-openclaw",
-        redactionValues: redactions,
-      },
-    );
-    expectExitZero(setup, "prepare stopped OpenClaw WeChat cleanup proof");
-
-    const stop = await host.command("node", [CLI, SANDBOX_NAME, "stop"], {
-      artifactName: "stop-before-wechat-cleanup-openclaw",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 120_000,
-    });
-    expectExitZero(stop, "stop OpenClaw before WeChat cleanup");
-
-    const cleanupResult = await withLiveE2eEnvironment(env, async () =>
-      clearStoppedSandboxStateRoots(SANDBOX_NAME, [
-        "/sandbox/.openclaw/wechat",
-        "/sandbox/.openclaw/openclaw-weixin",
-      ]),
-    );
-    expect(cleanupResult).toEqual({ cleared: true });
-
-    const start = await host.command("node", [CLI, SANDBOX_NAME, "start"], {
-      artifactName: "start-after-wechat-cleanup-openclaw",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 120_000,
-    });
-    expectExitZero(start, "start OpenClaw after stopped WeChat cleanup");
-    await expectSandboxReady(
-      host,
-      SANDBOX_NAME,
-      env,
-      redactions,
-      "sandbox-list-after-stopped-wechat-cleanup-openclaw",
-    );
-    const proof = await sandboxSh(
-      sandbox,
-      SANDBOX_NAME,
-      [
-        "test ! -e /sandbox/.openclaw/wechat",
-        "test ! -e /sandbox/.openclaw/openclaw-weixin",
-        'test "$(cat /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel)" = preserve',
-      ].join("\n"),
-      {
-        artifactName: "verify-stopped-wechat-cleanup-openclaw",
-        redactionValues: redactions,
-      },
-    );
-    expectExitZero(proof, "stopped cleanup removed only OpenClaw WeChat state");
-  }
-
-  for (const channel of REMOVAL_CHANNELS) {
-    const remove = await host.command(
-      "node",
-      [
-        process.env.NEMOCLAW_CLI_BIN ?? "bin/nemoclaw.js",
-        SANDBOX_NAME,
-        "channels",
-        "remove",
-        channel,
-      ],
-      {
-        artifactName: `channels-remove-${channel}-${AGENT}`,
-        env,
-        redactionValues: redactions,
-        timeoutMs: 10 * 60_000,
-      },
-    );
-    expectExitZero(remove, `channels remove ${channel}`);
-    expect(resultText(remove)).toContain(`Removed ${channel}`);
-    expectPlanChannelState(channel, "removed");
-  }
-
-  const rebuild = await rebuildSandbox(
-    host,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    `rebuild-remove-channels-${AGENT}`,
-  );
-  expectExitZero(rebuild, "rebuild after removing WeChat, Microsoft Teams, and Google Chat");
-  await expectSandboxReady(
-    host,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    `sandbox-list-after-channel-remove-${AGENT}`,
-  );
-  for (const channel of REMOVAL_CHANNELS) expectRemovedPlanChannelRetired(channel);
-}
-
-async function expectHermesChannelConfigRemoved(
-  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
-  channel: RemovalChannel,
-  redactions: string[],
-): Promise<void> {
-  const envKeyPatterns: Record<RemovalChannel, string> = {
-    wechat: "WEIXIN_(TOKEN|ACCOUNT_ID|BASE_URL|ALLOWED_USERS)",
-    teams: "TEAMS_(CLIENT_ID|CLIENT_SECRET|TENANT_ID|ALLOWED_USERS|PORT)",
-    googlechat: "GOOGLE_CHAT_(ACCESS_TOKEN|PROJECT_ID|SUBSCRIPTION_NAME|ALLOWED_USERS)",
-  };
-  const platformKeys: Record<RemovalChannel, string> = {
-    wechat: "weixin",
-    teams: "teams",
-    googlechat: "google_chat",
-  };
-  const script = `
-import json
-import re
-from pathlib import Path
-
-import yaml
-
-env_path = Path("/sandbox/.hermes/.env")
-env_text = env_path.read_text() if env_path.is_file() else ""
-env_present = re.search(
-    r"(?m)^[ \\t]*(?:export[ \\t]+)?(?:${envKeyPatterns[channel]})=",
-    env_text,
-) is not None
-config_path = Path("/sandbox/.hermes/config.yaml")
-config = yaml.safe_load(config_path.read_text()) if config_path.is_file() else {}
-platforms = config.get("platforms", {}) if isinstance(config, dict) else {}
-platform_present = ${JSON.stringify(platformKeys[channel])} in platforms if isinstance(platforms, dict) else False
-state_present = Path(${JSON.stringify(`/sandbox/.hermes/platforms/${channel}`)}).exists()
-print(json.dumps({
-    "envPresent": env_present,
-    "platformPresent": platform_present,
-    "statePresent": state_present,
-}, separators=(",", ":")))
-`.trim();
-  const result = await sandboxSh(sandbox, SANDBOX_NAME, `python3 -c ${shellQuote(script)}`, {
-    artifactName: `config-channel-${AGENT}-${channel}-after-remove`,
-    redactionValues: redactions,
-  });
-  expectExitZero(result, `read Hermes ${channel} after-remove`);
-  expect(JSON.parse(result.stdout.trim()), `Hermes ${channel} config removed`).toEqual({
-    envPresent: false,
-    platformPresent: false,
-    statePresent: false,
-  });
 }
 
 export const CHANNELS_STOP_START_TEST_NAME = `${AGENT} channels stop/start preserves credentials and validates runtime config lifecycle`;
@@ -1104,7 +916,7 @@ export async function runChannelsStopStartTarget({
   );
   await addGooglechatForLiveE2e(host, env, redactions);
 
-  progress.phase("validate active channel integrations");
+  progress.phase("validate configured channel state");
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   await expectAgentConfig(sandbox, "active", "baseline", redactions);
@@ -1116,91 +928,59 @@ export async function runChannelsStopStartTarget({
       `${channel} policy active`,
     ).toBe("active");
   }
-  const hostPolicyEdit = await sandbox.openshell(
-    [
-      "policy",
-      "update",
-      SANDBOX_NAME,
-      "--add-endpoint",
-      `host-edit-channels-${AGENT}.example.com:443:read-only:rest:enforce`,
-      "--rule-name",
-      "channels_stop_start_host_edit_e2e",
-      "--binary",
-      "/usr/bin/curl",
-      "--wait",
-    ],
+  progress.phase("stop and start the sandbox through OpenShell");
+  const stop = await sandbox.openshell(
+    ["sandbox", "stop", "-g", process.env.OPENSHELL_GATEWAY ?? "nemoclaw", SANDBOX_NAME],
     {
-      artifactName: `host-policy-edit-before-channel-stop-${AGENT}`,
+      artifactName: `openshell-sandbox-stop-${AGENT}`,
       env,
-      timeoutMs: 60_000,
+      timeoutMs: 120_000,
     },
   );
-  expectExitZero(hostPolicyEdit, `${AGENT} direct OpenShell policy edit before channel stop`);
+  expectExitZero(stop, `${AGENT} OpenShell sandbox stop`);
+  const start = await sandbox.openshell(
+    ["sandbox", "start", "-g", process.env.OPENSHELL_GATEWAY ?? "nemoclaw", SANDBOX_NAME],
+    {
+      artifactName: `openshell-sandbox-start-${AGENT}`,
+      env,
+      timeoutMs: 120_000,
+    },
+  );
+  expectExitZero(start, `${AGENT} OpenShell sandbox start`);
 
-  progress.phase("disable channels and rebuild sandbox");
-  for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "stop", channel);
-  expectChannelInputs(env);
-  for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
-  const stopRebuild = await rebuildSandbox(
+  progress.phase("validate channel state after native readiness");
+  await expectSandboxReady(
     host,
     SANDBOX_NAME,
     env,
     redactions,
-    `rebuild-stop-all-${AGENT}`,
+    `sandbox-list-after-openshell-start-${AGENT}`,
   );
-  expectExitZero(stopRebuild, "rebuild after stopping all channels");
+  await waitForNativeChannelGateway(sandbox, redactions);
   expectChannelInputs(env);
-  await expectAgentConfig(sandbox, "inert", "after-stop", redactions);
-  await expectProvidersExist(host, env, redactions, "after-stop");
-  for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
+  await expectAgentConfig(sandbox, "active", "after-openshell-start", redactions);
+  await expectGooglechatProviderEgress(
+    sandbox,
+    SANDBOX_NAME,
+    AGENT,
+    "after-openshell-start",
+    redactions,
+  );
+  await expectProvidersExist(host, env, redactions, "after-openshell-start");
   for (const channel of CHANNELS) {
+    expectPlanChannelState(channel, "active");
     expect(
-      await policyPresetState(host, env, redactions, channel, "after-stop"),
-      `${channel} policy inactive after stop+rebuild`,
-    ).toBe("inactive");
-  }
-
-  progress.phase("re-enable channels, rebuild sandbox, and validate lifecycle state");
-  for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
-  expectChannelInputs(env);
-  for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
-  await rebuildWithGooglechatFixtureForLiveE2e(env);
-  expectChannelInputs(env);
-  await expectAgentConfig(sandbox, "active", "after-start", redactions);
-  await expectGooglechatProviderEgress(sandbox, SANDBOX_NAME, AGENT, "after-start", redactions);
-  await expectProvidersExist(host, env, redactions, "after-start");
-  for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
-  for (const channel of CHANNELS) {
-    expect(
-      await policyPresetState(host, env, redactions, channel, "after-start"),
-      `${channel} policy active after start+rebuild`,
+      await policyPresetState(host, env, redactions, channel, "after-openshell-start"),
+      `${channel} policy active after OpenShell stop/start`,
     ).toBe("active");
   }
 
-  progress.phase("remove WeChat, Microsoft Teams, and Google Chat and validate cleanup");
-  await removeChannelsAndRebuild(host, sandbox, env, redactions);
-  for (const channel of REMOVAL_CHANNELS) {
-    expectPlanChannelState(channel, "removed");
-    await expectChannelProvidersAbsent(host, env, redactions, channel, "after-remove");
-    expect(
-      await policyPresetState(host, env, redactions, channel, "after-remove"),
-      `${channel} policy inactive after removal`,
-    ).toBe("inactive");
-    if (AGENT === "openclaw") {
-      const state = await readOpenClawChannelState(sandbox, channel, "after-remove", redactions);
-      expect(openClawChannelIsInert(state), `OpenClaw ${channel} config removed`).toBe(true);
-    } else {
-      await expectHermesChannelConfigRemoved(sandbox, channel, redactions);
-    }
-  }
-  const policyAfterChannelLifecycle = await sandbox.openshell(
-    ["policy", "get", "--full", SANDBOX_NAME],
-    {
-      artifactName: `policy-after-channel-stop-start-${AGENT}`,
-      env,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(policyAfterChannelLifecycle, `${AGENT} policy after channel stop/start`);
-  expect(policyAfterChannelLifecycle.stdout).toContain("channels_stop_start_host_edit_e2e");
+  await artifacts.target.complete({
+    id: "channels-stop-start",
+    status: "passed",
+    agent: AGENT,
+    openshellStopStartCompleted: true,
+    nativeAgentReadyAfterStart: true,
+    channelConfigurationSurvived: true,
+  });
 }

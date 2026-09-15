@@ -201,7 +201,9 @@ export function reconcileCredentialEnvAtOpenShell(
   if (existing === undefined) return { changed: false };
 
   const runtimeAliasRender = readHermesRuntimeAliasRender(plan, options.runOpenshell);
-  const contents = applyEnvLines(plan, existing, [...render, ...runtimeAliasRender]);
+  const contents = applyEnvLines(plan, existing, [...render, ...runtimeAliasRender], [], {
+    preserveResolverCredentialLines: true,
+  });
   if (contents === existing) return { changed: false };
   writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
   return { changed: true, target };
@@ -529,6 +531,7 @@ function applyEnvLines(
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
   additionalLines: readonly string[] = [],
+  options: { readonly preserveResolverCredentialLines?: boolean } = {},
 ): string {
   const desired = new Map<string, string>();
   const rawDesiredLines: string[] = [];
@@ -548,6 +551,12 @@ function applyEnvLines(
     desired.set(key, line);
   }
   const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
+  if (options.preserveResolverCredentialLines) {
+    for (const line of (existing ?? "").split(/\n/u)) {
+      const key = readEnvLineKey(line);
+      if (key && stale.has(key) && isOpenShellResolverEnvLine(line)) stale.delete(key);
+    }
+  }
 
   const written = new Set<string>();
   const output = (existing ?? "")
@@ -567,6 +576,25 @@ function applyEnvLines(
   }
   output.push(...rawDesiredLines);
   return output.length > 0 ? `${output.join("\n")}\n` : "";
+}
+
+function isOpenShellResolverEnvLine(line: string): boolean {
+  const assignment = line.trim().replace(/^export\s+/u, "");
+  const separator = assignment.indexOf("=");
+  if (separator < 1) return false;
+  const rawValue = assignment.slice(separator + 1).trim();
+  const value =
+    rawValue.length >= 2 &&
+    ((rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+      (rawValue.startsWith("'") && rawValue.endsWith("'")))
+      ? rawValue.slice(1, -1)
+      : rawValue;
+  return (
+    value.startsWith("openshell:resolve:env:") ||
+    /^(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]{0,127}$/u.test(
+      value,
+    )
+  );
 }
 
 function applyHookBuildFileOutputs(

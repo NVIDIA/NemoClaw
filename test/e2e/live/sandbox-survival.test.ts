@@ -330,9 +330,10 @@ test(
     );
 
     progress.phase("destroy the sandbox");
-    await host.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "final-destroy-sandbox-survival",
-      timeoutMs: 15 * 60_000,
+    await sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "final-openshell-delete-sandbox-survival",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 120_000,
     });
     const postDestroyList = await sandbox.list({
       artifactName: "post-destroy-openshell-sandbox-list",

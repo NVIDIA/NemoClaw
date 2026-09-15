@@ -192,7 +192,7 @@ describe("MessagingSetupApplier credential env cleanup", () => {
     expect(files[HERMES_ENV_PATH] ?? "").toContain("OPERATOR_OWNED=keep-me");
   });
 
-  it("repairs a legacy managed-image env file and reports that a reload is needed", async () => {
+  it("preserves an existing OpenShell credential placeholder without forcing a reload", async () => {
     const plan = await buildHermesTelegramPlan();
     const { files, writes, runOpenshell } = sandboxFiles({
       [HERMES_ENV_PATH]: [
@@ -206,9 +206,29 @@ describe("MessagingSetupApplier credential env cleanup", () => {
       runOpenshell,
     });
 
+    expect(result).toEqual({ changed: false });
+    expect(writes).toEqual([]);
+    expect(files[HERMES_ENV_PATH] ?? "").toContain(
+      "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    );
+    expect(files[HERMES_ENV_PATH] ?? "").toContain("OPERATOR_OWNED=keep-me");
+  });
+
+  it("removes a raw legacy credential and reports that a reload is needed", async () => {
+    const plan = await buildHermesTelegramPlan();
+    const { files, writes, runOpenshell } = sandboxFiles({
+      [HERMES_ENV_PATH]: ["TELEGRAM_BOT_TOKEN=raw-legacy-token", "OPERATOR_OWNED=keep-me", ""].join(
+        "\n",
+      ),
+    });
+
+    const result = MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, {
+      runOpenshell,
+    });
+
     expect(result).toEqual({ changed: true, target: HERMES_ENV_PATH });
     expect(writes).toEqual([HERMES_ENV_PATH]);
-    expect(files[HERMES_ENV_PATH] ?? "").not.toContain("TELEGRAM_BOT_TOKEN=");
+    expect(files[HERMES_ENV_PATH] ?? "").not.toContain("raw-legacy-token");
     expect(files[HERMES_ENV_PATH] ?? "").toContain("OPERATOR_OWNED=keep-me");
   });
 
@@ -278,7 +298,9 @@ describe("MessagingSetupApplier credential env cleanup", () => {
 
     expect(result).toEqual({ changed: true, target: HERMES_ENV_PATH });
     expect(writes).toEqual([HERMES_ENV_PATH]);
-    expect(files[HERMES_ENV_PATH]).not.toContain("WEIXIN_TOKEN=");
+    expect(files[HERMES_ENV_PATH]).toContain(
+      "WEIXIN_TOKEN=openshell:resolve:env:v6_WECHAT_BOT_TOKEN",
+    );
     expect(files[HERMES_ENV_PATH]).not.toContain("raw-secret-value");
   });
 });

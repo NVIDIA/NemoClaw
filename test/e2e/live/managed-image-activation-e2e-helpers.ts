@@ -398,16 +398,16 @@ function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
-function enterRecoveryPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
+function enterGatewayRestartPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
   switch (agent) {
     case "openclaw":
-      progress.phase("restart and recover OpenClaw");
+      progress.phase("restart OpenShell gateway and recheck OpenClaw");
       return;
     case "hermes":
-      progress.phase("restart and recover Hermes");
+      progress.phase("restart OpenShell gateway and recheck Hermes");
       return;
     case "langchain-deepagents-code":
-      progress.phase("restart and recover Deep Agents Code");
+      progress.phase("restart OpenShell gateway and recheck Deep Agents Code");
       return;
   }
 }
@@ -572,7 +572,7 @@ async function qualifyAgent(
   );
   expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
 
-  enterRecoveryPhase(progress, agent);
+  enterGatewayRestartPhase(progress, agent);
   await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName });
   await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
   await lifecycle.assertSandboxReadyAfterGatewayRestart(sandboxName, {
@@ -596,12 +596,11 @@ async function qualifyAgent(
   await runAgentTurn(sandbox, agent, sandboxName, "after", env);
 
   enterCleanupPhase(progress, agent);
-  const destroy = await host.nemoclaw([sandboxName, "destroy", "--yes", "--no-cleanup-gateway"], {
-    artifactName: `managed-activation-destroy-${agent}`,
+  await sandbox.cleanupSandbox(sandboxName, {
+    artifactName: `managed-activation-openshell-delete-${agent}`,
     env,
-    timeoutMs: 5 * 60_000,
+    timeoutMs: 120_000,
   });
-  expect(destroy.exitCode, resultText(destroy)).toBe(0);
   await verifyExactCleanup(host, sandbox, sandboxName, env);
 }
 
@@ -677,7 +676,14 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       revision: contract.source.revision,
       cohort: contract.source.cohort,
     })),
-    lifecycle: ["onboard", "agent-turn", "gateway-restart", "reconcile", "agent-turn", "destroy"],
+    lifecycle: [
+      "onboard",
+      "agent-turn",
+      "openshell-gateway-restart",
+      "native-readiness",
+      "agent-turn",
+      "openshell-delete",
+    ],
   });
   await artifacts.target.complete({
     id: "managed-image-activation",
