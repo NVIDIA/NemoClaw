@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it, vi } from "vitest";
 import YAML from "yaml";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
@@ -14,6 +15,7 @@ import {
   type SupervisedProcessOwner,
   type SupervisedProcessResult,
 } from "../../helpers/supervised-process.ts";
+import { packUniquePackageSources, parseNpmPackArchives } from "./openshell-sdk-pack-archives.ts";
 
 const profile = YAML.parse(
   fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
@@ -115,32 +117,34 @@ async function writePackageArchives(
     );
     return { dependencies, name, source, version };
   });
-  const packed = JSON.parse(
-    (
-      await runSuccessfulProcess(
-        "npm",
-        [
-          "pack",
-          ...sources.map(({ source }) => source),
-          "--pack-destination",
-          root,
-          "--json",
-          "--offline",
-          "--ignore-scripts",
-        ],
-        {
-          cwd: root,
-          env: {
-            PATH: process.env.PATH,
-            HOME: root,
-            NPM_CONFIG_CACHE: path.join(root, "pack-cache"),
+  const packed = await packUniquePackageSources(sources, async (batch) =>
+    parseNpmPackArchives(
+      (
+        await runSuccessfulProcess(
+          "npm",
+          [
+            "pack",
+            ...batch.map(({ source }) => source),
+            "--pack-destination",
+            root,
+            "--json",
+            "--offline",
+            "--ignore-scripts",
+          ],
+          {
+            cwd: root,
+            env: {
+              PATH: process.env.PATH,
+              HOME: root,
+              NPM_CONFIG_CACHE: path.join(root, "pack-cache"),
+            },
+            owner,
+            timeoutMs: 30_000,
           },
-          owner,
-          timeoutMs: 30_000,
-        },
-      )
-    ).stdout,
-  ) as Array<{ filename: string; name: string; version: string }>;
+        )
+      ).stdout,
+    ),
+  );
   return sources.map(({ dependencies, name, version }) => {
     const filename = packed.find(
       (archive) => archive.name === name && archive.version === version,
@@ -177,6 +181,39 @@ fs.writeFileSync(directory + "/index.js", process.env.SDK_SOURCE);
 `;
 
 describe.concurrent("catalogue OpenShell SDK installation", () => {
+  it.for([
+    {
+      name: "npm 11 array metadata",
+      output: JSON.stringify([
+        { filename: "fixture-transport-1.0.0.tgz", name: "fixture-transport", version: "1.0.0" },
+      ]),
+    },
+    {
+      name: "npm 12 keyed metadata",
+      output: JSON.stringify({
+        "fixture-transport@1.0.0": {
+          filename: "fixture-transport-1.0.0.tgz",
+          name: "fixture-transport",
+          version: "1.0.0",
+        },
+      }),
+    },
+  ])("reads $name from npm pack", ({ output }, context) => {
+    context
+      .expect(parseNpmPackArchives(output))
+      .toEqual([
+        { filename: "fixture-transport-1.0.0.tgz", name: "fixture-transport", version: "1.0.0" },
+      ]);
+  });
+
+  it("rejects npm pack metadata without an archive filename", (context) => {
+    context
+      .expect(() =>
+        parseNpmPackArchives(JSON.stringify([{ name: "fixture-transport", version: "1.0.0" }])),
+      )
+      .toThrow("npm pack --json returned invalid package metadata");
+  });
+
   it("reaps helper descendants after the process-group leader exits", async (context) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-process-tree-"));
     const pidFile = path.join(root, "descendant.pid");
@@ -241,6 +278,11 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           context,
         );
         const selectedSdk = lockedSdkVersion === "1.0.0" ? sdk : previousSdk;
+        const selectedSdkArchive = path.join(
+          root,
+          "openshell-sdk",
+          lockedSdkVersion === "1.0.0" ? "sdk.tgz" : "previous-sdk.tgz",
+        );
         const workspace = path.join(root, "workspace");
         fs.mkdirSync(workspace);
         const manifest = JSON.stringify({
@@ -259,9 +301,20 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           requires: true,
           packages: {
             "": JSON.parse(manifest),
-            "node_modules/@nvidia/openshell-sdk": { ...selectedSdk.lock, optional: true },
-            "node_modules/fixture-transport": { ...transport.lock, optional: true },
-            "node_modules/fixture-sibling": sibling.lock,
+            "node_modules/@nvidia/openshell-sdk": {
+              ...selectedSdk.lock,
+              optional: true,
+              resolved: pathToFileURL(selectedSdkArchive).href,
+            },
+            "node_modules/fixture-transport": {
+              ...transport.lock,
+              optional: true,
+              resolved: pathToFileURL(transport.archive).href,
+            },
+            "node_modules/fixture-sibling": {
+              ...sibling.lock,
+              resolved: pathToFileURL(sibling.archive).href,
+            },
           },
         });
         fs.writeFileSync(path.join(workspace, "package.json"), manifest);
@@ -270,7 +323,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           PATH: process.env.PATH,
           HOME: root,
           NPM_CONFIG_CACHE: path.join(root, "cache"),
-          NPM_CONFIG_OFFLINE: "true",
+          NPM_CONFIG_PREFER_OFFLINE: "true",
           NPM_CONFIG_AUDIT: "false",
           NPM_CONFIG_FUND: "false",
           NPM_CONFIG_UPDATE_NOTIFIER: "false",
