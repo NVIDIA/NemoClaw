@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -41,7 +42,9 @@ describe("CLI source-checkout upgrade build", () => {
       );
       writeFileSync(path.join(fixtureRoot, ".source-revision"), `${"a".repeat(40)}\n`);
 
-      symlinkSync(path.join(REPOSITORY_ROOT, "bin"), path.join(fixtureRoot, "bin"), "junction");
+      cpSync(path.join(REPOSITORY_ROOT, "bin"), path.join(fixtureRoot, "bin"), {
+        recursive: true,
+      });
       symlinkSync(
         path.join(REPOSITORY_ROOT, "managed-inference"),
         path.join(fixtureRoot, "managed-inference"),
@@ -58,6 +61,14 @@ describe("CLI source-checkout upgrade build", () => {
       copyFileSync(
         path.join(REPOSITORY_ROOT, "scripts", "lib", "package-blueprint-runner-runtime.mts"),
         path.join(scriptsRoot, "package-blueprint-runner-runtime.mts"),
+      );
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "scripts", "lib", "normalize-package-bin-modes.mts"),
+        path.join(scriptsRoot, "normalize-package-bin-modes.mts"),
+      );
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "scripts", "lib", "repository-input-path.mts"),
+        path.join(scriptsRoot, "repository-input-path.mts"),
       );
 
       const policyRoot = path.join(fixtureRoot, "nemoclaw");
@@ -135,6 +146,17 @@ describe("CLI source-checkout upgrade build", () => {
       });
       expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
 
+      expect(
+        process.platform === "win32" ||
+          (statSync(path.join(fixtureRoot, "dist/lib/acp/main.js")).mode & 0o777) === 0o755,
+        "nemoclaw-acp",
+      ).toBe(true);
+      expect(
+        process.platform === "win32" ||
+          (statSync(path.join(fixtureRoot, "dist/lib/blueprint-runner.js")).mode & 0o777) === 0o755,
+        "nemoclaw-blueprint-runner",
+      ).toBe(true);
+
       expect(existsSync(previousCommandPath), PREVIOUS_COMMAND_ARTIFACT).toBe(false);
       expect(existsSync(previousCommandDeclarationPath), PREVIOUS_COMMAND_DECLARATION).toBe(false);
       expect(existsSync(previousCommandSourceMapPath), PREVIOUS_COMMAND_SOURCE_MAP).toBe(false);
@@ -162,6 +184,7 @@ describe("CLI source-checkout upgrade build", () => {
           ...process.env,
           HOME: path.join(fixtureRoot, "home"),
           NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
+          NEMOCLAW_GATEWAY_PORT: "49100",
         },
         timeout: 30_000,
       });
