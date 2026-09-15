@@ -3,10 +3,6 @@
 
 import { isAbsolute } from "node:path";
 
-import {
-  buildForwardServiceArgs,
-  createForwardServiceTarget,
-} from "../../../../src/lib/adapters/openshell/forward-service.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import {
   assertStockManagedImageReceipt,
@@ -41,6 +37,40 @@ const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
 const FORWARD_ALREADY_ABSENT =
   /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/i;
+
+async function forwardListenerAuthority(env: NodeJS.ProcessEnv): Promise<{
+  gatewayEndpoint: string;
+  gatewayName: string;
+  workspace: string;
+}> {
+  const [ports, gatewayEnv, gatewayIdentity, gatewayManagement] = await Promise.all([
+    import("../../../../src/lib/core/ports.ts"),
+    import("../../../../src/lib/onboard/docker-driver-gateway-env.ts"),
+    import("../../../../src/lib/onboard/gateway-binding/identity.ts"),
+    import("../../../../src/lib/onboard/gateway-management.ts"),
+  ]);
+  const { DEFAULT_GATEWAY_PORT, parsePort } = ports;
+  const { getGatewayHttpsEndpoint } = gatewayEnv;
+  const { resolveGatewayName } = gatewayIdentity;
+  const { loadGatewayManagementDeclaration } = gatewayManagement;
+  const gatewayPort = parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, env);
+  const configuredDeclaration = env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim();
+  const loaded = configuredDeclaration ? loadGatewayManagementDeclaration({ env }) : null;
+  if (loaded && !loaded.ok) {
+    throw new Error(`Forward listener gateway authority is invalid: ${loaded.reason}`);
+  }
+  const externalEndpoint =
+    loaded?.ok && loaded.declaration?.mode === "externally-supervised"
+      ? loaded.declaration.endpoint
+      : null;
+  return {
+    gatewayEndpoint: externalEndpoint
+      ? new URL(externalEndpoint).origin
+      : new URL(getGatewayHttpsEndpoint(gatewayPort)).origin,
+    gatewayName: env.OPENSHELL_GATEWAY?.trim() || resolveGatewayName(gatewayPort),
+    workspace: env.OPENSHELL_WORKSPACE?.trim() || "default",
+  };
+}
 
 export class HostCliClient {
   private readonly runner: CommandRunner;
@@ -238,17 +268,19 @@ export class HostCliClient {
         artifactName: `${artifactName}-listener-after`,
       }),
     ]);
-    const target = createForwardServiceTarget(
-      {
-        executable: commandPath,
-        gatewayName: "nemoclaw",
-        localHost: "127.0.0.1",
-        sandboxName,
-        workspace: "default",
-      },
-      Number(port),
+    const [{ buildCliOpenShellForwardServiceArgs }, authority] = await Promise.all([
+      import("../../../../src/lib/adapters/openshell/forward-cli-args.ts"),
+      forwardListenerAuthority(options.env ?? process.env),
+    ]);
+    const target = {
+      ...authority,
+      sandboxName,
+      localHost: "127.0.0.1" as const,
+      port: Number(port),
+    };
+    const expectedCommandLine = [commandPath, ...buildCliOpenShellForwardServiceArgs(target)].join(
+      " ",
     );
-    const expectedCommandLine = [commandPath, ...buildForwardServiceArgs(target)].join(" ");
     const afterPids = [
       ...new Set(
         after.stdout

@@ -5,10 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { resolveSandboxLaunchForwardPorts } from "../../../src/lib/actions/sandbox/process-recovery";
-import {
-  createForwardServiceTarget,
-  isForwardServiceListenerOwner,
-} from "../../../src/lib/adapters/openshell/forward-service";
+import { createCliOpenShellForwardAdapter } from "../../../src/lib/adapters/openshell/forward-cli";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
@@ -490,22 +487,29 @@ test(
       sandboxName: SANDBOX_NAME,
     });
 
-    const verifyFallback = (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
+    const verifyFallback = async (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
       const forwardPorts = resolveSandboxLaunchForwardPorts(SANDBOX_NAME);
-      const forwardOwnership = (forwardPorts ?? []).map(
-        (port) =>
-          `${port}=${isForwardServiceListenerOwner(
-            createForwardServiceTarget(
-              {
-                executable: wrapper.wrapperPath,
-                gatewayName: "nemoclaw",
-                localHost: "127.0.0.1",
-                sandboxName: SANDBOX_NAME,
-                workspace: "default",
-              },
-              port,
-            ),
-          )}`,
+      const adapter = createCliOpenShellForwardAdapter({
+        executable: wrapper.wrapperPath,
+        environment: commandEnv(),
+        gatewayEndpoint: "https://127.0.0.1:8080",
+        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+      });
+      const forwardOwnership = (
+        await adapter.observeForwards({
+          forwards: (forwardPorts ?? []).map((port) => ({
+            gatewayEndpoint: "https://127.0.0.1:8080",
+            gatewayName: "nemoclaw",
+            workspace: "default",
+            sandboxName: SANDBOX_NAME,
+            localHost: "127.0.0.1",
+            port,
+          })),
+        })
+      ).map((observation) =>
+        "forward" in observation
+          ? `${observation.forward.port}=${observation.state === "owned"}`
+          : `invalid=${observation.state}`,
       );
       const expectedFallbackEvents = [
         HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
@@ -526,7 +530,7 @@ test(
         ),
       ).toBe(true);
     };
-    fallbackWrapper && verifyFallback(fallbackWrapper);
+    await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
 
     progress.phase("validate GPU startup and supervisor proof");
     const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {

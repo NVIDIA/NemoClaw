@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
 import { dockerLlamaCppBindingSha256 as managedLlamaCppBindingSha256 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
@@ -35,7 +35,14 @@ const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-3
 const IMAGE = `ghcr.io/nvidia/llama-cpp@sha256:${"4".repeat(64)}`;
 const temporaryDirectories: string[] = [];
 
+beforeEach(() => {
+  const executableRoot = temporaryHome();
+  fs.writeFileSync(path.join(executableRoot, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  vi.stubEnv("PATH", executableRoot);
+});
+
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }

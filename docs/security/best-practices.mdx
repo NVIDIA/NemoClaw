@@ -287,7 +287,7 @@ Review filesystem defaults, writable paths, agent state, and Landlock enforcemen
 
 ## Process Controls
 
-Review capability drops, resource limits, runtime identity, and image hardening in [Understand Process Controls](./security-controls/process-controls).
+Review capability ownership, resource limits, runtime identity, and image hardening in [Understand Process Controls](./security-controls/process-controls).
 
 ## Gateway Authentication Controls
 
@@ -407,7 +407,7 @@ The following patterns weaken security without providing meaningful benefit.
 |---------|---------------|-------------------|
 | Omitting `protocol: rest` on REST API endpoints without a compatibility reason | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. Use L4 pass-through only for documented cases such as npm/Yarn on Node 22, where the client requires a CONNECT tunnel that L7 inspection would break. |
 | Adding endpoints to the baseline policy for one-off requests | Adding an endpoint to the baseline policy makes it permanently reachable across all sandbox instances. | Use operator approval. Approved endpoints persist within the sandbox instance but reset when you destroy and recreate the sandbox. |
-| Relying solely on the entrypoint for capability drops | OpenShell owns child capability enforcement in full mode. Without strict mode, the legacy `capsh` fallback warns and continues when dangerous bounding capabilities remain or cannot be verified. | Keep OpenShell enforcement enabled. For direct container launches, pass `--cap-drop=ALL` as defense-in-depth. |
+| Adding an entrypoint capability layer | OpenShell owns child capability enforcement for managed sandboxes. A second entrypoint policy can drift from exec and connect behavior. | Keep OpenShell enforcement enabled. For direct container launches, make the container runtime the owner and pass `--cap-drop=ALL`. |
 | Treating mutable agent config as an isolation boundary | The generated config tree contains model routing, channel settings, and runtime integration state (`/sandbox/.openclaw` for OpenClaw, `/sandbox/.hermes` for Hermes, `/sandbox/.deepagents` for Deep Agents). NemoClaw supports this state as mutable, so the agent can change it independently of host-managed policy and credential routing. | Treat OpenShell policy and credential providers as the enforcement boundary. Monitor agent-config drift and recreate the sandbox from trusted inputs after suspected compromise. |
 | Adding inference provider hosts to the network policy for NemoClaw inference | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. Apply `claude-code` only when intentionally running the separate Claude Code CLI inside the sandbox. |
 | Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |

@@ -13,6 +13,7 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 export { getNamedGatewayLifecycleState };
+export { getKnownSandboxTargetGatewayName } from "./gateway-target";
 import {
   formatOpenShellPolicyRecoveryAction,
   gatewayStartGuidance,
@@ -23,6 +24,7 @@ export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
+  getKnownSandboxTarget,
   getKnownSandboxTargetGatewayName,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -220,7 +222,7 @@ export function captureSandboxOwnershipPhases(
   return { output: result.output, status: result.status };
 }
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
-export function recoverPortableDemoSandboxLifecycleForConnect(
+export async function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry | null,
   gatewayName: string,
@@ -228,7 +230,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   lifecycleTiming?: HermesPortableLifecycleRecoveryTiming,
   currentnessTiming?: HermesPortableCurrentnessTiming,
   inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming,
-): PortableDemoLifecycleRecoveryResult {
+): Promise<PortableDemoLifecycleRecoveryResult> {
   const capture = (args: readonly string[], timeoutMs: number) => {
     commandAuthority?.assertTransactionCurrent();
     try {
@@ -258,7 +260,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   };
   commandAuthority?.assertCurrent();
   try {
-    return recoverPortableAgentSandboxLifecycle(
+    return await recoverPortableAgentSandboxLifecycle(
       sandboxName,
       {
         agent: sandbox?.agent,
@@ -285,7 +287,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
             }
           : {}),
         captureOpenshell: capture,
-        readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
+        readRegistry: getKnownSandboxTarget,
         ...(lifecycleTiming ? { recoveryTiming: lifecycleTiming } : {}),
         ...(currentnessTiming ? { currentnessTiming } : {}),
         ...(inspectionTiming ? { inspectionTiming } : {}),
@@ -297,12 +299,12 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
 }
 
 /** Requalify Hermes receipt authority without starting or mutating its sandbox. */
-export function assertHermesPortableLifecycleForConnect(
+export async function assertHermesPortableLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry,
   gatewayName: string,
-): void {
-  assertHermesPortableAgentLifecycleAuthority(
+): Promise<void> {
+  await assertHermesPortableAgentLifecycleAuthority(
     sandboxName,
     {
       agent: sandbox.agent,
@@ -311,7 +313,7 @@ export function assertHermesPortableLifecycleForConnect(
       openshellDriver: sandbox.openshellDriver,
       provider: sandbox.provider,
     },
-    { readRegistry: (name: string) => (name === sandboxName ? sandbox : null) },
+    { readRegistry: getKnownSandboxTarget },
   );
 }
 

@@ -6,21 +6,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./gateway-state", () => ({
   ensureLiveSandboxOrExit: vi.fn(async () => undefined),
+  getKnownSandboxTargetGatewayName: () => null,
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
-  runOpenshell: vi.fn(),
+const { runMock } = vi.hoisted(() => ({ runMock: vi.fn() }));
+vi.mock("../../adapters/openshell/sandbox-transfer-cli", () => ({
+  createCliOpenShellSandboxTransferExecutor: () => ({ run: runMock }),
 }));
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { uploadToSandbox } from "./upload";
 
-const runMock = runOpenshell as unknown as ReturnType<typeof vi.fn>;
 const ensureMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   runMock.mockReset();
+  runMock.mockResolvedValue({
+    outcome: { kind: "completed", exitCode: 0 },
+    release: vi.fn(),
+    wasInterrupted: () => false,
+  });
   ensureMock.mockClear();
 });
 
@@ -37,11 +43,17 @@ describe("uploadToSandbox", () => {
     });
 
     const expectedHostPath = path.resolve(process.cwd(), "SOUL.md");
-    expect(ensureMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
-    expect(runMock).toHaveBeenCalledWith(
-      ["sandbox", "upload", "alpha", expectedHostPath, "/sandbox/.openclaw/workspace/SOUL.md"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
+    expect(ensureMock).toHaveBeenCalledWith("alpha", {
+      allowNonReadyPhase: true,
+      exit: deferSandboxLifecycleExit,
+    });
+    expect(runMock).toHaveBeenCalledWith({
+      direction: "upload",
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      source: expectedHostPath,
+      destination: "/sandbox/.openclaw/workspace/SOUL.md",
+    });
     expect(result).toEqual({
       hostPath: expectedHostPath,
       sandboxDest: "/sandbox/.openclaw/workspace/SOUL.md",
@@ -51,7 +63,7 @@ describe("uploadToSandbox", () => {
   it("defaults the sandbox destination to /sandbox/ when omitted", async () => {
     await uploadToSandbox({ sandboxName: "alpha", hostPath: "./x" });
     const args = runMock.mock.calls[0]?.[0];
-    expect(args?.at(-1)).toBe("/sandbox/");
+    expect(args?.destination).toBe("/sandbox/");
   });
 
   it("forwards an absolute host path unchanged", async () => {
@@ -61,7 +73,7 @@ describe("uploadToSandbox", () => {
       sandboxDest: "/sandbox/etc/",
     });
     const args = runMock.mock.calls[0]?.[0];
-    expect(args?.[3]).toBe("/etc/hosts");
+    expect(args?.source).toBe("/etc/hosts");
   });
 
   it("preserves a trailing separator on a relative host directory source", async () => {
@@ -71,7 +83,7 @@ describe("uploadToSandbox", () => {
       sandboxDest: "/sandbox/work/",
     });
     const args = runMock.mock.calls[0]?.[0];
-    const hostPath = args?.[3] as string;
+    const hostPath = args?.source as string;
     expect(hostPath.endsWith(path.sep) || hostPath.endsWith("/")).toBe(true);
     expect(hostPath.slice(0, -1)).toBe(path.resolve(process.cwd(), "src"));
   });

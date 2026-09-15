@@ -60,10 +60,11 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     ): NonNullable<OnboardStateCompleteResult["updates"]>;
     removeLegacyCredentialsFile(): void;
     cleanupStaleHostFiles(): void;
+    /** False when process recovery refuses the required secret-boundary check. */
     checkAndRecoverSandboxProcesses(
       sandboxName: string,
       options: { quiet: boolean },
-    ): Promise<void>;
+    ): Promise<boolean>;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
@@ -194,6 +195,10 @@ function logTerminalReadyBlock(
   }
 }
 
+function recoveryIncompleteMessage(sandboxName: string): string {
+  return `Onboarding for '${sandboxName}' is incomplete because a required process or secret-boundary check did not pass. Inspect with ${CLI_NAME} ${sandboxName} doctor, resolve the reported problem, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+}
+
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
   sandboxName,
   agent,
@@ -278,8 +283,21 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // Sweep stale host files left by older credential migration paths (#3105).
   deps.cleanupStaleHostFiles();
   if (manageDashboard) {
-    // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
-    await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    // Policy application can restart the sandbox; recover before verification (#3573).
+    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
+      deps.error(`  ${recoveryIncompleteMessage(sandboxName)}`);
+      deps.reportDeploymentReadiness(false);
+      return {
+        stateResult: pauseOnboardMachine(
+          {},
+          {
+            state: "finalizing",
+            reason: "recovery_check_incomplete",
+          },
+        ),
+        unmigratedLegacyKeys,
+      };
+    }
   }
 
   return {
@@ -369,13 +387,28 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
         deploymentHealthy: false,
       };
     }
-    // The bounded warm-up can outlive a forward that was healthy after policy recovery.
-    // Recheck the gateway and forward before deployment verification.
-    if (manageDashboard) {
-      await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-    }
   }
   if (manageDashboard) {
+    // Recheck after pairing and on resume, including Hermes secret-boundary enforcement.
+    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
+      const message = recoveryIncompleteMessage(sandboxName);
+      deps.error(`  ${message}`);
+      deps.reportDeploymentReadiness(false);
+      return {
+        stateResult: pauseOnboardMachine(
+          deps.toSessionUpdates({
+            sandboxName,
+            provider,
+            model,
+            hermesAuthMethod,
+            hermesToolGateways,
+          }),
+          { state: "post_verify", reason: "recovery_check_incomplete" },
+        ),
+        verificationDiagnostics: [message],
+        deploymentHealthy: false,
+      };
+    }
     // Probe web-search credential isolation and egress now that the final
     // policy, provider, process, and forwarding state are live. Egress
     // diagnostics remain best-effort, but a confirmed raw credential must

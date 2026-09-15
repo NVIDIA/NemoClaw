@@ -60,10 +60,10 @@ describe("managed bootstrap sandbox registration", () => {
             resolveLifecycleRegistrationFields,
             lifecycle,
           ) => {
-            const verified = lifecycle.revalidate(
-              lifecycle.capture(resolveLifecycleRegistrationFields()),
+            const verified = await lifecycle.revalidate(
+              await lifecycle.capture(resolveLifecycleRegistrationFields()),
             );
-            publish(lifecycle.revalidate(verified));
+            publish(await lifecycle.revalidate(verified));
           },
         },
         cleanupBuildContext: vi.fn(),

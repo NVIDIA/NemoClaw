@@ -18,6 +18,32 @@ import {
 
 vi.setConfig({ maxConcurrency: 4 });
 
+function createSandboxListStubEnv(
+  home: string,
+  liveSandboxNames: readonly string[],
+): Record<string, string> {
+  const localBin = path.join(home, "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  fs.writeFileSync(
+    path.join(localBin, "openshell"),
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+      "  echo 'NAME'",
+      ...liveSandboxNames.map((name) => `  echo '${name}      Ready'`),
+      "  exit 0",
+      "fi",
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return {
+    HOME: home,
+    NEMOCLAW_OPENSHELL_BIN: "",
+    PATH: `${localBin}:${process.env.PATH || ""}`,
+  };
+}
+
 describe.concurrent("CLI debug command", () => {
   it("debug --help exits 0 and shows usage", async () => {
     const r = await runAsync("debug --help");
@@ -172,28 +198,11 @@ describe.concurrent("CLI debug command", () => {
       // the bug where the local registry kept a name the gateway no longer
       // serves.
       const home = resources.temporaryDirectory("nemoclaw-cli-debug-stale-");
-      const localBin = path.join(home, "bin");
-      fs.mkdirSync(localBin, { recursive: true });
       writeSandboxRegistry(home, "stale-box");
-      fs.writeFileSync(
-        path.join(localBin, "openshell"),
-        [
-          "#!/bin/sh",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-          "  echo 'NAME'",
-          "  exit 0",
-          "fi",
-          "exit 0",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
       const tarball = path.join(home, "out.tar.gz");
       const r = await runWithEnvAsync(
         `debug --sandbox stale-box --output ${tarball} 2>&1`,
-        {
-          HOME: home,
-          PATH: `${localBin}:${process.env.PATH || ""}`,
-        },
+        createSandboxListStubEnv(home, []),
         30000,
       );
       expect(r.code).not.toBe(0);
@@ -214,24 +223,10 @@ describe.concurrent("CLI debug command", () => {
     testTimeoutOptions(30_000),
     async ({ resources }) => {
       const home = resources.temporaryDirectory("nemoclaw-cli-stale-");
-      const localBin = path.join(home, "bin");
-      fs.mkdirSync(localBin, { recursive: true });
       writeSandboxRegistry(home, "ghost");
-      fs.writeFileSync(
-        path.join(localBin, "openshell"),
-        [
-          "#!/bin/sh",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-          "  echo 'NAME'",
-          "  exit 0",
-          "fi",
-          "exit 0",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
       const r = await runWithEnvAsync(
         "debug --quick 2>&1",
-        { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        createSandboxListStubEnv(home, []),
         30000,
       );
       expect(r.code).not.toBe(0);
@@ -265,24 +260,9 @@ describe.concurrent("CLI debug command", () => {
       );
       // Fake openshell so the live-list check sees `mybox`. Without this the
       // host's real openshell (or absence thereof) decides the assertion.
-      const localBin = path.join(home, "bin");
-      fs.mkdirSync(localBin, { recursive: true });
-      fs.writeFileSync(
-        path.join(localBin, "openshell"),
-        [
-          "#!/bin/sh",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-          "  echo 'NAME'",
-          "  echo 'mybox      Ready'",
-          "  exit 0",
-          "fi",
-          "exit 0",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
       const r = await runWithEnvAsync(
         "debug --quick --sandbox mybox 2>&1",
-        { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        createSandboxListStubEnv(home, ["mybox"]),
         30000,
       );
       expect(r.code).toBe(0);
