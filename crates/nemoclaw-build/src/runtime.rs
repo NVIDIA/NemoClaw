@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 use serde_json::json;
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Recipe {
-    recipe_revision: String,
-    #[serde(rename = "recipeArchiveSHA256")]
-    recipe_archive_sha256: String,
-    source_date_epoch: u64,
-}
 fn vendor_files(directory: &Path, root: &Path, files: &mut Vec<(String, PathBuf)>) -> Result<()> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
@@ -28,29 +20,15 @@ fn vendor_files(directory: &Path, root: &Path, files: &mut Vec<(String, PathBuf)
     }
     Ok(())
 }
-pub(super) async fn build_runtime(pins: &Pins, generic: bool) -> Result<()> {
+pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
     if bundle::platform()? != "linux_arm64" {
         return Err("Spark runtime image requires the qualified Linux ARM64 build host".into());
     }
     let version = nemoclaw_build::source_version(&sources()?);
-    let recipe: Recipe = serde_json::from_slice(&fs::read("runtimes/qwen38/pins.json")?)?;
-    let archive = if generic {
-        Vec::new()
-    } else {
-        download(&Artifact {
-        url: format!(
-            "https://codeload.github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark/tar.gz/{}",
-            recipe.recipe_revision
-        ),
-        sha256: recipe.recipe_archive_sha256,
-    })
-    .await?
-    };
-    let root = Path::new(if generic {
-        ".build/vllm"
-    } else {
-        ".build/spark"
-    });
+    let recipe = nemoclaw_build::RuntimeArtifact::parse(&fs::read(manifest)?)?;
+    let inputs = manifest.parent().ok_or("artifact directory missing")?;
+    let root = PathBuf::from(".build").join(&recipe.name);
+    let root = root.as_path();
     let context = root.join("context");
     fs::create_dir_all(&context)?;
     let vendor = root.join("vendor");
@@ -81,29 +59,20 @@ pub(super) async fn build_runtime(pins: &Pins, generic: bool) -> Result<()> {
         nemoclaw_build::source_archive(&files, recipe.source_date_epoch)?,
     )?;
     let binary = build_retained_source(root, &context.join("supervisor-source.tar.gz"))?;
-    if generic {
-        for name in ["Dockerfile", "NOTICE.md"] {
-            fs::copy(Path::new("runtimes/vllm").join(name), context.join(name))?;
+    for name in &recipe.files {
+        let source = inputs.join(name);
+        if !fs::symlink_metadata(&source)?.is_file() {
+            return Err("artifact input is not a regular file".into());
         }
-    } else {
-        fs::write(context.join("recipe.tar.gz"), archive)?;
-        for name in [
-            "Dockerfile",
-            "apply_patches.py",
-            "prepare.py",
-            "verify.py",
-            "pins.json",
-            "NOTICE.md",
-            "AGPL-3.0-or-later.txt",
-        ] {
-            fs::copy(Path::new("runtimes/qwen38").join(name), context.join(name))?;
-        }
-        for name in ["verify_packed.py", "model.json"] {
-            fs::copy(
-                Path::new("crates/nemoclaw-sdk/src/recipes/qwen38").join(name),
-                context.join(name),
-            )?;
-        }
+        fs::copy(source, context.join(name))?;
+    }
+    for (name, source) in &recipe.downloads {
+        let bytes = download(&Artifact {
+            url: source.url.clone(),
+            sha256: source.sha256.clone(),
+        })
+        .await?;
+        fs::write(context.join(name), bytes)?;
     }
     fs::copy("LICENSE", context.join("LICENSE"))?;
     fs::copy(binary, context.join("nemoclaw-runtime"))?;
@@ -128,14 +97,7 @@ pub(super) async fn build_runtime(pins: &Pins, generic: bool) -> Result<()> {
         ))
         .arg("--build-arg")
         .arg(format!("SOURCE_DATE_EPOCH={}", recipe.source_date_epoch))
-        .args([
-            "-t",
-            if generic {
-                "nc-prototype-vllm:rust-v1"
-            } else {
-                "nc-prototype-qwen38:spark-rust-v1"
-            },
-        ])
+        .args(["-t", &recipe.image])
         .arg(&context))?;
     run(Command::new("docker").args(["load", "-i"]).arg(output))?;
     Ok(())

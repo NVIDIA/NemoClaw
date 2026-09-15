@@ -160,3 +160,6 @@ pub fn source_inputs(root: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, S
     }
     Ok(files.into_iter().collect())
 }
+
+mod runtime_artifact;
+pub use runtime_artifact::RuntimeArtifact;

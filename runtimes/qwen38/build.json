@@ -1,0 +1,22 @@
+{
+  "name": "qwen38",
+  "image": "nc-prototype-qwen38:spark-rust-v1",
+  "sourceDateEpoch": 1788974180,
+  "files": [
+    "Dockerfile",
+    "NOTICE.md",
+    "apply_patches.py",
+    "prepare.py",
+    "verify.py",
+    "verify_packed.py",
+    "model.json",
+    "pins.json",
+    "AGPL-3.0-or-later.txt"
+  ],
+  "downloads": {
+    "recipe.tar.gz": {
+      "url": "https://codeload.github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark/tar.gz/d03809008834124e80223c3482f2ddb59577a48f",
+      "sha256": "5c98f577c4f786cbfb976db9424efb01ad16f2136b357c139f8212081395681a"
+    }
+  }
+}

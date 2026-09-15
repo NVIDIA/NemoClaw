@@ -98,7 +98,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "versions.json",
         "LICENSE",
         "crates/sdk/src/lib.rs",
-        "runtimes/qwen38/Dockerfile",
+        "runtimes/example/Dockerfile",
     ] {
         let file = root.path().join(name);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -116,4 +116,19 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, b"ignored").unwrap();
     }
     assert_eq!(first, nemoclaw_build::source_inputs(root.path()).unwrap());
+}
+
+#[test]
+fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
+    let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","NOTICE.md"],"downloads":{}}"#;
+    let recipe = nemoclaw_build::RuntimeArtifact::parse(input).unwrap();
+    assert_eq!(recipe.name, "fixture");
+    assert_eq!(recipe.files, ["Dockerfile", "NOTICE.md"]);
+    for bad in ["../outside", "/absolute", "nested/file", "Dockerfile/.."] {
+        let mut value: serde_json::Value = serde_json::from_slice(input).unwrap();
+        value["files"][0] = bad.into();
+        assert!(
+            nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&value).unwrap()).is_err()
+        );
+    }
 }
