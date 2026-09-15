@@ -472,9 +472,10 @@ export function createDockerGpuSandboxCreatePatch(
           "Managed startup cannot commit before the recreated OpenShell supervisor reconnects.",
         );
         const rollbackError = await rollbackAfterFailure();
-        const failure = rollbackError
-          ? new Error(`${error.message} Rollback failed: ${rollbackError.message}`)
-          : error;
+        if (rollbackError) {
+          attachManagedBootstrapRollbackError(error, rollbackError);
+        }
+        const failure = error;
         cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
