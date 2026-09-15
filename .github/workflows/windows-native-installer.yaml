@@ -953,11 +953,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Build the installed native Edge trust owner
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0-aarch64-pc-windows-msvc
+          target: aarch64-pc-windows-msvc
+          cache: false
+          rustflags: ""
       - name: Verify standard signed native ARM64 Microsoft Edge
         shell: pwsh
         run: |
           $output = "$env:RUNNER_TEMP\native-edge-prerequisite"
           $null = New-Item -ItemType Directory -Path $output
+          rustup run 1.95.0-aarch64-pc-windows-msvc cargo rustc --locked --release `
+            --target aarch64-pc-windows-msvc --features immutable-runtime `
+            --manifest-path "$env:GITHUB_WORKSPACE\packaging\windows\launcher\Cargo.toml" `
+            --target-dir "$output\target" -- -C target-feature=+crt-static
+          if ($LASTEXITCODE -ne 0) { throw 'The native Edge trust owner did not compile.' }
+          $install = "$output\install"
+          $null = New-Item -ItemType Directory -Path "$install\bin"
+          Copy-Item -LiteralPath "$output\target\aarch64-pc-windows-msvc\release\NemoClaw.exe" -Destination "$install\bin\NemoClaw.exe"
+          $env:NEMOCLAW_NATIVE_INSTALL_ROOT = $install
           node --experimental-strip-types --input-type=module -e @'
           import fs from "node:fs";
           import path from "node:path";
