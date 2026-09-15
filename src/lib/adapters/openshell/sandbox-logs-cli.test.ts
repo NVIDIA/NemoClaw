@@ -226,6 +226,33 @@ describe("CLI OpenShell sandbox logs adapter", () => {
     });
   });
 
+  it("classifies capture overflow without exposing credentials", async () => {
+    const secret = ["capture", "secret"].join("-");
+    const captureError = Object.assign(new Error(`max buffer Bearer ${secret}`), {
+      code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+    });
+    const logs = createCliOpenShellSandboxLogs({
+      resolveBinary: () => "/usr/bin/openshell",
+      runBuffered: async () => ({
+        status: null,
+        stdout: "partial",
+        stderr: `Authorization: Bearer ${secret}`,
+        error: captureError,
+      }),
+      environment: {},
+    });
+
+    await expect(logs.read(gatewayRequest)).resolves.toEqual({
+      content: "partial",
+      diagnostic: "Authorization: <REDACTED> <REDACTED>",
+      outcome: {
+        kind: "failed",
+        error: { kind: "capture", message: "max buffer Bearer <REDACTED>" },
+        exitCode: 1,
+      },
+    });
+  });
+
   it("supervises followed output and cancellation behind the typed session", async () => {
     const output = new PassThrough();
     const diagnostic = new PassThrough();
