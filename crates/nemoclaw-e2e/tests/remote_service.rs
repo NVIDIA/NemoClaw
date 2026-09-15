@@ -23,7 +23,7 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         .arg(root.join("deployment"))
         .arg(command);
     if !file.is_empty() {
-        process.arg("--file").arg(root.join(file));
+        process.arg(root.join(file));
     }
     let output = process
         .env(

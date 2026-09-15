@@ -6,15 +6,17 @@ available endpoints, and retain the same state directory for every operation.
 The prototype supports one provider, sandbox, agent, and route per document.
 
 ```sh
-nemoclaw plan --state-dir .local/deployment --file deployment.yaml
-nemoclaw apply --state-dir .local/deployment --file deployment.yaml
+nemoclaw plan --state-dir .local/deployment deployment.yaml
+nemoclaw apply --state-dir .local/deployment deployment.yaml
 nemoclaw export --state-dir .local/deployment > exported-new.yaml
-nemoclaw apply --state-dir .local/deployment --file exported-new.yaml
+nemoclaw apply --state-dir .local/deployment exported-new.yaml
 nemoclaw plan --destroy --state-dir .local/deployment
 nemoclaw destroy --state-dir .local/deployment
 ```
 
-Plan and apply also read YAML from standard input. Use `--file` on PowerShell.
+Plan and apply require a YAML path. Pass `-` explicitly to read standard input,
+for example `cat deployment.yaml | nemoclaw apply -`. Export writes YAML to
+standard output, or to a file with `--output exported.yaml`.
 `--bundle DIR` selects an explicit private bundle; otherwise the CLI uses the
 parent of its executable's `bin` directory. Keep the selected bundle unchanged
 while an operation runs. `--bundle-dir` remains an alias for early Rust builds.
@@ -109,7 +111,7 @@ non-default root; it never substitutes the client host's storage path.
 Load the pinned runtime image into the selected Docker daemon; the example's
 experiment image has not been published. Load the sandbox image into Podman.
 
-Run `nemoclaw apply < examples/remote-vllm.yaml`. Apply creates retained model
+Run `nemoclaw apply examples/remote-vllm.yaml`. Apply creates retained model
 storage and the inference network/container on the SSH target, checks preparation
 receipts and readiness there, then configures the sandbox's OpenShell route.
 Plan reads remote capacity and resource state without creating runtime resources.

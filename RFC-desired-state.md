@@ -16,8 +16,8 @@ Programmatic callers use the same validation, deployment lock, saved-plan checks
 resource bindings, secret references, cancellation, and recovery paths.
 
 ```sh
-nemoclaw plan < deployment.yaml
-nemoclaw apply < deployment.yaml
+nemoclaw plan deployment.yaml
+nemoclaw apply deployment.yaml
 nemoclaw export > exported.yaml
 nemoclaw plan --destroy
 nemoclaw destroy

@@ -143,10 +143,10 @@ when creating a separate experiment. Build the pinned local runtime artifact
 first, check capacity, and preserve the same state directory throughout:
 
 ```sh
-nemoclaw plan --state-dir .local/spark --file examples/spark.yaml
-nemoclaw apply --state-dir .local/spark --file examples/spark.yaml
+nemoclaw plan --state-dir .local/spark examples/spark.yaml
+nemoclaw apply --state-dir .local/spark examples/spark.yaml
 nemoclaw export --state-dir .local/spark > .local/spark-export.yaml
-nemoclaw apply --state-dir .local/spark --file .local/spark-export.yaml
+nemoclaw apply --state-dir .local/spark .local/spark-export.yaml
 ```
 
 A successful Spark apply includes an actual agent response through OpenShell.

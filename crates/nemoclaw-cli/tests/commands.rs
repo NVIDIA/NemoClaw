@@ -9,7 +9,7 @@ fn invalid_configuration_fails_before_creating_state_or_echoing_secrets() {
     let config = directory.path().join("input.yaml");
     fs::write(&config, "apiKey: secret-sentinel").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-        .args(["apply", "--file"])
+        .arg("apply")
         .arg(config)
         .arg("--state-dir")
         .arg(&state)
@@ -41,7 +41,7 @@ fn supported_commands_are_top_level_and_destroy_preview_accepts_no_input_file() 
     );
     assert!(
         !Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-            .args(["plan", "--destroy", "--file", "input.yaml"])
+            .args(["plan", "--destroy", "input.yaml"])
             .output()
             .unwrap()
             .status
