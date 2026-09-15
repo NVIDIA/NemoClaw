@@ -198,6 +198,10 @@ Each specialist returns a Markdown review grounded in repository evidence and sh
 guidance. No component combines findings or makes merge decisions. Specialist reviews are advisory.
 They do not replace required human review or change repository merge gates.
 
+The canonical coverage-decision contract lives in `trusted-guidance.mts`. It asks specialists to
+find the nearest test owner, prefer improving or replacing existing coverage, and justify any new
+coverage as the smallest way to detect a distinct behavior gap.
+
 Each specialist also records all additional E2E recommendations through a validated tool.
 The receipt preserves the deterministic floor, optional coverage, explicit empty decisions, and unresolved coverage.
 The [review queue contract](REVIEW-QUEUE.md) defines discovery, identity, dispatch, and result rules for read-only consumers.
