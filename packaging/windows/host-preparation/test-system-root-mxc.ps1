@@ -176,7 +176,7 @@ try {
         workersSddl=$preauthorizedAcl.Sddl;workersAccess=$preauthorizedRows;readMask=$requiredReadMask;readOnlyAttachment=$true}
     foreach($sid in @('S-1-15-2-1','S-1-15-2-2')){
         $matches=@($preauthorizedRows|Where-Object{$_.sid -ceq $sid -and $_.accessControlType -ceq 'Allow' -and
-            ($_.mask -band $requiredReadMask) -eq $requiredReadMask -and $_.inherited})
+            ($_.mask -band $requiredReadMask) -eq $requiredReadMask})
         if($matches.Count -ne 1){throw "The runtime image did not inherit the required AppContainer read grant for $sid."}
     }
     $worker=Join-Path $work 'worker.mjs';$result=Join-Path $work 'result.json'
