@@ -555,5 +555,4 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 15000);
-
 });
