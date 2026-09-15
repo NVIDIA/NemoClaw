@@ -6,7 +6,7 @@ import { gatewayStartGuidance } from "../gateway-start-guidance";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
-import { redactFull } from "../security/redact";
+import { redactFull, redactFullWithUrls } from "../security/redact";
 import {
   getSandboxEntryDisplayInference,
   isPendingReservationForSession,
@@ -223,8 +223,10 @@ export interface StatusReport {
 
 function safeStatusString(value: string | null | undefined): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
-  return redactFull(value);
+  return redactFullWithUrls(value);
 }
+
+const inventoryInferenceSources = new WeakMap<SandboxInventoryRow, GatewayInference>();
 
 function projectIncompleteOnboarding(
   sandboxes: readonly SandboxEntry[],
@@ -338,7 +340,7 @@ async function buildSandboxInventoryRow(
   const inference = getSandboxEntryDisplayInference(sandbox);
   const publicFields = await projectPublicSandboxFields(sandbox, inference, getPolicyPresets);
 
-  return {
+  const row: SandboxInventoryRow = {
     ...publicFields,
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
@@ -347,6 +349,8 @@ async function buildSandboxInventoryRow(
       ? { livePhase: safeStatusString(sandbox.livePhase ?? null) }
       : {}),
   };
+  inventoryInferenceSources.set(row, inference);
+  return row;
 }
 
 export async function getSandboxInventory(
@@ -446,18 +450,19 @@ export function renderSandboxInventoryText(
   for (const sandbox of inventory.sandboxes) {
     const liveModel = sandbox.isDefault ? safeStatusString(liveInference?.model) : null;
     const liveProvider = sandbox.isDefault ? safeStatusString(liveInference?.provider) : null;
+    const storedInference = inventoryInferenceSources.get(sandbox);
     const def = sandbox.isDefault ? " *" : "";
     const model = liveModel || sandbox.model || "unknown";
     const provider = liveProvider || sandbox.provider || "unknown";
     const modelDrifted = !!(
       sandbox.isDefault &&
       liveInference?.model &&
-      liveModel !== sandbox.model
+      liveInference.model !== storedInference?.model
     );
     const providerDrifted = !!(
       sandbox.isDefault &&
       liveInference?.provider &&
-      liveProvider !== sandbox.provider
+      liveInference.provider !== storedInference?.provider
     );
     // #5714: a gateway-recovered row's GPU state is unknown — the gateway
     // sandbox list does not expose it — so don't assert "CPU sandbox" (which
@@ -688,7 +693,7 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       log(`    ${name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
       const portablePhase = portablePhases.get(sb.name);
       if (portablePhase) log(`      agent: hermes  phase: ${portablePhase}`);
-      if (isDefault && liveModel && liveModel !== storedModel) {
+      if (isDefault && live?.model && live.model !== inference.model) {
         log(`      (onboarded: ${storedModel || "unknown"})`);
       }
       // #2604: surface the configured Inference (provider/model) and the

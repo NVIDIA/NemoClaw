@@ -154,6 +154,25 @@ describe("inventory row behavior", () => {
     expect(lines.join("\n")).not.toContain("example-not-a-real-value-1");
   });
 
+  it("redacts URL credentials while preserving raw route drift", async () => {
+    const lines: string[] = [];
+    const stored = "https://stored-user:stored-password@example.com/model";
+    const live = "https://live-user:live-password@example.com/model";
+    await listSandboxesCommand({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [{ name: "alpha", model: stored, provider: stored }],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => ({ model: live, provider: live }),
+      loadLastSession: () => null,
+      log: (message = "") => lines.push(message),
+    });
+
+    const output = lines.join("\n");
+    expect(output).not.toMatch(/(?:stored|live)-(?:user|password)/);
+    expect(output).toContain("live OpenShell gateway differs from onboarded");
+  });
+
   it("redacts completed and incomplete onboarding sandbox names", async () => {
     const secret = 'api_key="example-not-a-real-value-1"';
     const sandboxName = `alpha ${secret}`;
