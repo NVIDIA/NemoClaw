@@ -61,7 +61,7 @@ function reviewedLock(packageIdentity: ReviewedSourceRegistryPackage = reviewed)
     lockfileVersion: 3,
     name: "reviewed-sdk-artifact-fixture",
     packages: {
-      "": { dependencies: { "@nvidia/openshell-sdk": version } },
+      "": { optionalDependencies: { "@nvidia/openshell-sdk": version } },
       "node_modules/@nvidia/openshell-sdk": {
         integrity: packageIdentity.integrity,
         resolved: packageIdentity.tarballUrl,
@@ -162,7 +162,7 @@ function packedInstallFixture() {
   writeFileSync(
     join(source.root, "package.json"),
     JSON.stringify({
-      dependencies: { "@nvidia/openshell-sdk": "0.0.106" },
+      optionalDependencies: { "@nvidia/openshell-sdk": "0.0.106" },
       name: "reviewed-sdk-install-fixture",
       private: true,
       version: "1.0.0",
@@ -359,7 +359,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
     expect(stage.mock.calls[0]?.[0].archive.equals(archiveBytes)).toBe(true);
   });
 
-  it("installs the reviewed root archive offline after npm stages it", async () => {
+  it("installs the reviewed optional root archive without package credentials", async () => {
     const { packageIdentity, source } = packedInstallFixture();
 
     await prepareCiNpmInstallWithReviewedConfig(
@@ -371,14 +371,25 @@ describe("trusted OpenShell SDK archive preparation", () => {
       [
         "ci",
         "--allow-remote=root",
-        "--offline",
+        "--prefer-offline",
         "--ignore-scripts",
         "--no-audit",
         "--no-fund",
         "--cache",
         source.cacheDirectory,
       ],
-      { cwd: source.root, encoding: "utf8" },
+      {
+        cwd: source.root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_TOKEN: undefined,
+          GH_TOKEN: undefined,
+          NODE_AUTH_TOKEN: undefined,
+          NPM_CONFIG__AUTH_TOKEN: undefined,
+          NPM_TOKEN: undefined,
+        },
+      },
     );
 
     const installed = JSON.parse(

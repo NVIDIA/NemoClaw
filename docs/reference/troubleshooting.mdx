@@ -3024,7 +3024,7 @@ If `lsof` is unavailable, install it through the host's package-management polic
 Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
 Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
 
-The portable experimental profile is separate and unchanged.
+The portable experimental profile is separate and requires Linux x86_64 (amd64). Unsupported architectures stop before NemoClaw inspects or changes Portable host state.
 
 The portable experimental profile uses the `docker` command to drive rootless Podman. Before you run this profile, make sure a Docker-compatible CLI is available on `PATH`. On a Podman-only host, install the `podman-docker` shim for your distribution:
 

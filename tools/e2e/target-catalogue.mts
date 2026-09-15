@@ -922,22 +922,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     cloudflared: true,
     owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
   }),
-  managedRuntimeTarget("kimi-inference-compat", {
-    displayName: "Inference: configures a Kimi-compatible endpoint",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; Kimi-compatible inference fixture",
-    profile: "standard",
-    timeoutMinutes: 50,
-    installMode: "authenticated",
-    restoreCli: true,
-    exposeCliBin: true,
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-kimi-compat",
-      NEMOCLAW_E2E_INFERENCE_MODE: "mock",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   dockerOnlyTarget("llama-cpp-generic-gpu", {
     displayName: "Inference: completes an agent turn with llama.cpp on a generic NVIDIA GPU",
     agentRuntime: "openclaw",
