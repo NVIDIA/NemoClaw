@@ -173,7 +173,6 @@ calls.push({
 });
 fs.writeFileSync(process.env.INSTALL_LOG, JSON.stringify(calls));
 if (process.argv[2] === process.env.NPM_FAILURE) process.exit(17);
-if (process.argv[2] === "cache") process.exit(0);
 const directory = "node_modules/@nvidia/openshell-sdk";
 fs.mkdirSync(directory, { recursive: true });
 fs.writeFileSync(directory + "/package.json", JSON.stringify({ type: "module", exports: "./index.js" }));
@@ -289,7 +288,10 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           name: "sdk-install-fixture",
           version: "1.0.0",
           dependencies: { "fixture-sibling": "^1.0.0" },
-          optionalDependencies: { "@nvidia/openshell-sdk": lockedSdkVersion },
+          optionalDependencies: {
+            "@nvidia/openshell-sdk": lockedSdkVersion,
+            "fixture-transport": "1.0.0",
+          },
           scripts: {
             preinstall: "node -e \"require('node:fs').writeFileSync('lifecycle-ran', 'yes')\"",
           },
@@ -304,7 +306,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
             "node_modules/@nvidia/openshell-sdk": {
               ...selectedSdk.lock,
               optional: true,
-              resolved: pathToFileURL(selectedSdkArchive).href,
+              resolved: `https://127.0.0.1:9/${path.basename(selectedSdkArchive)}`,
             },
             "node_modules/fixture-transport": {
               ...transport.lock,
@@ -326,6 +328,8 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           NPM_CONFIG_PREFER_OFFLINE: "true",
           NPM_CONFIG_AUDIT: "false",
           NPM_CONFIG_FUND: "false",
+          NPM_CONFIG_FETCH_RETRIES: "0",
+          NPM_CONFIG_FETCH_TIMEOUT: "100",
           NPM_CONFIG_UPDATE_NOTIFIER: "false",
           RUNNER_TEMP: root,
         };
@@ -336,9 +340,12 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
             owner: context,
             timeoutMs: 30_000,
           });
+        const npmVersion = (await runNpm(["--version"])).stdout.trim();
+        expect(npmVersion).toMatch(/^12\./);
         await runNpm([
           "cache",
           "add",
+          selectedSdk.archive,
           transport.archive,
           sibling.archive,
           "--offline",
@@ -399,17 +406,27 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
       archives: ["sdk.tgz"],
       sdk: 'if (process.env.NODE_AUTH_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN) throw new Error("Unexpected credential"); export class OpenShellClient { static connect() {} }',
       status: 0,
-      calls: 2,
+      calls: 1,
       failure: "",
+      integrityMatches: true,
     },
-    { name: "no archive", archives: [], sdk: "", status: 1, calls: 0, failure: "" },
+    {
+      name: "no archive",
+      archives: [],
+      sdk: "",
+      status: 1,
+      calls: 0,
+      failure: "",
+      integrityMatches: true,
+    },
     {
       name: "one approved transition pair",
       archives: ["first.tgz", "second.tgz"],
       sdk: "export class OpenShellClient { static connect() {} }",
       status: 0,
-      calls: 3,
+      calls: 1,
       failure: "",
+      integrityMatches: true,
     },
     {
       name: "more than one transition pair",
@@ -418,35 +435,39 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
       status: 1,
       calls: 0,
       failure: "",
+      integrityMatches: true,
     },
     {
       name: "an SDK without the connection API",
       archives: ["sdk.tgz"],
       sdk: "export const OpenShellClient = {};",
       status: 1,
-      calls: 2,
+      calls: 1,
       failure: "",
+      integrityMatches: true,
     },
     {
-      name: "a cache staging failure",
+      name: "an archive integrity mismatch",
       archives: ["sdk.tgz"],
       sdk: "",
-      status: 17,
-      calls: 1,
-      failure: "cache",
+      status: 1,
+      calls: 0,
+      failure: "",
+      integrityMatches: false,
     },
     {
       name: "a dependency install failure",
       archives: ["sdk.tgz"],
       sdk: "",
       status: 17,
-      calls: 2,
+      calls: 1,
       failure: "ci",
+      integrityMatches: true,
     },
   ])(
     "checks $name before running the catalogue target",
     testTimeoutOptions(30_000),
-    async ({ archives, sdk, status, calls, failure }, context) => {
+    async ({ archives, sdk, status, calls, failure, integrityMatches }, context) => {
       const { expect } = context;
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-install-"));
       const archiveDirectory = path.join(directory, "openshell-sdk");
@@ -456,8 +477,45 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
         fs.mkdirSync(archiveDirectory);
         fs.mkdirSync(bin);
         fs.writeFileSync(log, "[]");
-        archives.forEach((archive) =>
-          fs.writeFileSync(path.join(archiveDirectory, archive), "fixture"),
+        const [sdkPackage, otherPackage] = await writePackageArchives(
+          directory,
+          [{ name: "@nvidia/openshell-sdk" }, { name: "fixture-other" }],
+          context,
+        );
+        archives.forEach((archive, index) =>
+          fs.copyFileSync(
+            index === 0 ? sdkPackage.archive : otherPackage.archive,
+            path.join(archiveDirectory, archive),
+          ),
+        );
+        fs.writeFileSync(
+          path.join(directory, "package.json"),
+          JSON.stringify({
+            name: "sdk-install-fixture",
+            optionalDependencies: { "@nvidia/openshell-sdk": "1.0.0" },
+            version: "1.0.0",
+          }),
+        );
+        fs.writeFileSync(
+          path.join(directory, "package-lock.json"),
+          JSON.stringify({
+            lockfileVersion: 3,
+            name: "sdk-install-fixture",
+            packages: {
+              "": {
+                name: "sdk-install-fixture",
+                optionalDependencies: { "@nvidia/openshell-sdk": "1.0.0" },
+                version: "1.0.0",
+              },
+              "node_modules/@nvidia/openshell-sdk": {
+                ...sdkPackage.lock,
+                integrity: integrityMatches ? sdkPackage.lock.integrity : "sha512-invalid",
+                optional: true,
+              },
+            },
+            requires: true,
+            version: "1.0.0",
+          }),
         );
         fs.writeFileSync(path.join(bin, "npm"), npmFixture, { mode: 0o755 });
         fs.symlinkSync(process.execPath, path.join(bin, "node"));
@@ -483,16 +541,6 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           status,
         );
         const expectedCalls = [
-          ...archives.map((archive) => ({
-            args: [
-              "cache",
-              "add",
-              path.join(archiveDirectory, archive),
-              "--offline",
-              "--ignore-scripts",
-            ],
-            auth: [null, null, null],
-          })),
           {
             args: ["ci", "--ignore-scripts", "--prefer-offline", "--no-audit", "--no-fund"],
             auth: [null, null, null],

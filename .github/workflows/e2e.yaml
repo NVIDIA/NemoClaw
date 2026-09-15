@@ -2825,7 +2825,7 @@ jobs:
             "${test_evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3008,7 +3008,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3314,7 +3314,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3390,7 +3390,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3401,17 +3401,39 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        run: |
+        run: &install-reviewed-openshell-sdk |
           set -euo pipefail
           mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print | sort)
           test "${#archives[@]}" -ge 1
           test "${#archives[@]}" -le 2
-          for archive in "${archives[@]}"; do
-            env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-              npm cache add "$archive" --offline --ignore-scripts
-          done
+          sdk_archive="$(env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+            node --input-type=module - "${archives[@]}" <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          const sdkName = "@nvidia/openshell-sdk";
+          const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
+          const root = lock.packages?.[""];
+          const sdk = lock.packages?.[`node_modules/${sdkName}`];
+          const requested = root?.optionalDependencies?.[sdkName] ?? root?.dependencies?.[sdkName] ?? root?.devDependencies?.[sdkName];
+          if (!sdk || requested !== sdk.version || typeof sdk.resolved !== "string" || !sdk.resolved.startsWith("https://") || typeof sdk.integrity !== "string" || !sdk.integrity.startsWith("sha512-")) throw new Error("OpenShell SDK lock entry is not an exact registry archive");
+          const matches = process.argv.slice(2).filter((archive) => {
+            const manifest = JSON.parse(execFileSync("tar", ["-xOf", archive, "package/package.json"], { encoding: "utf8" }));
+            const integrity = `sha512-${createHash("sha512").update(readFileSync(archive)).digest("base64")}`;
+            return manifest.name === sdkName && manifest.version === sdk.version && integrity === sdk.integrity;
+          });
+          if (matches.length !== 1) throw new Error("OpenShell SDK lock entry does not identify exactly one reviewed archive");
+          process.stdout.write(matches[0]);
+          NODE
+          )"
           env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
             npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+          if [[ ! -e node_modules/@nvidia/openshell-sdk ]]; then
+            install -d node_modules/@nvidia/openshell-sdk
+            tar --extract --gzip --file "$sdk_archive" \
+              --directory node_modules/@nvidia/openshell-sdk \
+              --strip-components=1 --no-same-owner --no-same-permissions
+          fi
           env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
             node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'
 
@@ -3688,7 +3710,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3820,7 +3842,7 @@ jobs:
       E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "openshell-credential-generation-window"
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs"
+      E2E_OBSERVABLE_OUTCOME: "Stable-handle refresh, revocation, detach, re-add, and valid rebuild preserve authorization epochs; expired inference credentials block rebuild before source deletion"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -3845,7 +3867,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4128,7 +4150,7 @@ jobs:
       # The restore action executes the candidate CLI for its final identity
       # check. Candidate-controlled state starts with dependency preparation.
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5087,22 +5109,10 @@ jobs:
 
       - name: Install reviewed OpenShell SDK archive without package credentials
         shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print | sort)
-          test "${#archives[@]}" -ge 1
-          test "${#archives[@]}" -le 2
-          for archive in "${archives[@]}"; do
-            env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-              npm cache add "$archive" --offline --ignore-scripts
-          done
-          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-            npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
-          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-            node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'
+        run: *install-reviewed-openshell-sdk
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5275,7 +5285,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5563,7 +5573,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5706,7 +5716,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5804,7 +5814,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 

@@ -323,7 +323,14 @@ export async function prepareRebuildTargetPreflights(args: {
       ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail, mcpRuntimeSelection),
   });
   if (!gatewayRecovered) return null;
-  if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail, mcpRuntimeSelection)) {
+  if (
+    !(await checkRebuildGatewaySchemaPreflight(
+      sandboxName,
+      sandboxEntry,
+      bail,
+      mcpRuntimeSelection,
+    ))
+  ) {
     return null;
   }
 

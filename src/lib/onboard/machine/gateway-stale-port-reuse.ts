@@ -51,7 +51,7 @@ export interface HealthyPortReuseInput {
   managedGatewayObservationAuthoritative?: boolean;
   portCheckOptions: CheckPortOpts | undefined;
   supportsLifecycleCommands: boolean;
-  destroyGateway: () => boolean;
+  destroyGateway: () => boolean | Promise<boolean>;
   checkPortAvailable: (port?: number, opts?: CheckPortOpts) => Promise<PortProbeResult>;
   verifyGatewayContainerRunning: (gatewayName: string) => GatewayContainerState;
 }
@@ -96,7 +96,7 @@ export async function applyHealthyPortReuse(
     });
     if (decision === "stale") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-      const gatewayReuseState = destroyGatewayForReuse(
+      const gatewayReuseState = await destroyGatewayForReuse(
         input.destroyGateway,
         "  ✓ Stale gateway metadata cleaned up",
         "  ! Stale gateway metadata cleanup failed; leaving registry state intact.",
