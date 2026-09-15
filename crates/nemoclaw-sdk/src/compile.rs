@@ -30,6 +30,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
     document.validate()?;
     let workspace = document.workspace();
     let provider = &document.spec.inference_providers[0];
+    let connection = document.inference_connection();
     let sandbox = &document.spec.sandboxes[0];
     let agent = &sandbox.agents[0];
     let mut result = Vec::new();
@@ -47,10 +48,10 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             "inference",
             "provider",
             vec![
-                ("endpoint", document.inference_endpoint()),
+                ("endpoint", connection.endpoint.clone()),
                 (
                     "credential_env",
-                    provider
+                    connection
                         .credential
                         .as_ref()
                         .map(|c| c.env.clone())

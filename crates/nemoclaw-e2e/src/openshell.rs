@@ -18,6 +18,7 @@ pub struct State {
     pub routes: HashMap<String, p::SetInferenceRouteRequest>,
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub exec_exit: i32,
+    pub inference_exit: i32,
     pub exec_truncated: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
@@ -503,11 +504,20 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 )),
             }));
         }
+        let exit = if request
+            .command
+            .iter()
+            .any(|arg| arg.contains("fetch('https://inference.local/"))
+        {
+            state.inference_exit
+        } else {
+            state.exec_exit
+        };
         state.exec_calls.push(request.command);
         if !state.exec_truncated {
             events.push(Ok(p::ExecSandboxEvent {
                 payload: Some(p::exec_sandbox_event::Payload::Exit(p::ExecSandboxExit {
-                    exit_code: state.exec_exit,
+                    exit_code: exit,
                 })),
             }));
         }

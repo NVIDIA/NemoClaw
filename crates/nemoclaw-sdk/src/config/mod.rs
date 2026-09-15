@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod inference;
 mod types;
+pub use inference::InferenceConnection;
 mod validation;
 use sha2::{Digest, Sha256};
 use std::{fmt, io::Read};
@@ -87,15 +89,7 @@ impl Document {
         )
     }
     pub fn inference_endpoint(&self) -> String {
-        let provider = &self.spec.inference_providers[0];
-        match &provider.service {
-            None => provider.endpoint.clone(),
-            Some(service) => format!(
-                "http://{}:{}/v1",
-                self.spec.gateway.bridge(),
-                service.serving.port
-            ),
-        }
+        self.inference_connection().endpoint
     }
     pub fn credential_names(&self) -> Vec<&str> {
         let g = &self.spec.gateway;

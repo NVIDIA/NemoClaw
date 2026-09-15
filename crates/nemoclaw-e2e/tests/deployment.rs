@@ -205,3 +205,61 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
     assert!(fixture.state.lock().unwrap().providers.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn unreachable_remote_inference_fails_the_sandbox_probe_without_recreation() {
+    struct Secret;
+    impl nemoclaw_sdk::openshell::Secrets for Secret {
+        fn resolve(&self, reference: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            assert_eq!(reference, "MODEL_TOKEN");
+            Ok("fixture-remote-model-token".into())
+        }
+    }
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    document.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
+    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
+        env: "MODEL_TOKEN".into(),
+    });
+    let deployment =
+        Deployment::new(directory.path(), &bundle).with_secrets(std::sync::Arc::new(Secret));
+    let cancel = CancellationToken::new();
+    fixture.state.lock().unwrap().inference_exit = 1;
+    deployment.plan(&document, &cancel).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+    assert!(
+        fixture.state.lock().unwrap().exec_calls.is_empty(),
+        "plan ran an active inference probe"
+    );
+    let error = deployment.apply(&document, &cancel).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("inference through the sandbox failed")
+    );
+    let state_path = directory.path().join("terraform.tfstate");
+    let bound = fs::read(&state_path).unwrap();
+    assert!(!String::from_utf8_lossy(&bound).contains("fixture-remote-model-token"));
+    let effects = fixture.state.lock().unwrap().effects;
+    assert_eq!(effects, 4);
+    fixture.state.lock().unwrap().inference_exit = 0;
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert_eq!(fs::read(&state_path).unwrap(), bound);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    deployment.destroy(&cancel).await.unwrap();
+}

@@ -288,3 +288,17 @@ This establishes a test seam, not remote-host detection or a remote observation
 agent. In-process SDK connection injection does not serialize transport clients
 or observers into OpenTofu subprocesses; those still use the explicit compiled
 endpoints. Remote placement must address that boundary before it is exposed.
+
+Inference connection resolution now returns the upstream URL and credential
+reference as one value, independently of sandbox engine selection. The current
+managed local topology still publishes through its bridge; that remains a local
+publication rule, not a proposed cross-host address. External inference keeps its
+explicit URL. Plan performs no reachability probe. Apply tests the route from the
+sandbox through OpenShell; a failed probe retains bindings for explicit recovery.
+
+Upstream inspection found a native OpenShell Podman driver in the pinned gateway.
+It uses Podman image volumes, secrets and rootless networking rather than merely
+substituting a socket in the Docker driver. Manual qualification must exercise
+that driver and record daemon identity behavior by rootless/rootful namespace.
+The host installation prerequisite is still pending; fixture success does not
+qualify either Podman mode or remote managed placement.
