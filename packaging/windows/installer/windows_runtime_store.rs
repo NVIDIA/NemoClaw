@@ -49,6 +49,22 @@ struct AttachVirtualDiskParameters {
     version: u32,
     reserved: u32,
 }
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Luid {
+    low: u32,
+    high: i32,
+}
+#[repr(C)]
+struct LuidAndAttributes {
+    luid: Luid,
+    attributes: u32,
+}
+#[repr(C)]
+struct TokenPrivileges {
+    count: u32,
+    privilege: LuidAndAttributes,
+}
 #[link(name = "virtdisk")]
 unsafe extern "system" {
     fn OpenVirtualDisk(
@@ -72,6 +88,22 @@ unsafe extern "system" {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn CloseHandle(handle: RawHandle) -> i32;
+    fn GetCurrentProcess() -> RawHandle;
+    fn GetLastError() -> u32;
+    fn SetLastError(error: u32);
+}
+#[link(name = "advapi32")]
+unsafe extern "system" {
+    fn OpenProcessToken(process: RawHandle, access: u32, token: *mut RawHandle) -> i32;
+    fn LookupPrivilegeValueW(system: *const u16, name: *const u16, luid: *mut Luid) -> i32;
+    fn AdjustTokenPrivileges(
+        token: RawHandle,
+        disable_all: i32,
+        state: *const TokenPrivileges,
+        buffer_length: u32,
+        previous: *mut TokenPrivileges,
+        return_length: *mut u32,
+    ) -> i32;
 }
 struct VirtualDisk(RawHandle);
 impl Drop for VirtualDisk {
@@ -82,6 +114,59 @@ impl Drop for VirtualDisk {
 
 pub(crate) fn diagnostic_status() -> u32 {
     LAST_NATIVE_STATUS.load(Ordering::Relaxed)
+}
+
+fn enable_volume_privilege() -> Result<(), Error> {
+    const TOKEN_ADJUST_PRIVILEGES: u32 = 0x20;
+    const TOKEN_QUERY: u32 = 0x8;
+    const SE_PRIVILEGE_ENABLED: u32 = 0x2;
+    let mut token = null_mut();
+    if unsafe {
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        )
+    } == 0
+        || token.is_null()
+    {
+        let status = unsafe { GetLastError() };
+        LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+        return Err(Error::Native("runtime-image-privilege"));
+    }
+    let token = VirtualDisk(token);
+    let mut name = "SeManageVolumePrivilege".encode_utf16().collect::<Vec<_>>();
+    name.push(0);
+    let mut luid = Luid::default();
+    if unsafe { LookupPrivilegeValueW(null(), name.as_ptr(), &mut luid) } == 0 {
+        let status = unsafe { GetLastError() };
+        LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+        return Err(Error::Native("runtime-image-privilege"));
+    }
+    let privileges = TokenPrivileges {
+        count: 1,
+        privilege: LuidAndAttributes {
+            luid,
+            attributes: SE_PRIVILEGE_ENABLED,
+        },
+    };
+    unsafe { SetLastError(0) };
+    let adjusted = unsafe {
+        AdjustTokenPrivileges(
+            token.0,
+            0,
+            &privileges,
+            0,
+            null_mut(),
+            null_mut(),
+        )
+    };
+    let status = unsafe { GetLastError() };
+    LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+    if adjusted == 0 || status != 0 {
+        return Err(Error::Native("runtime-image-privilege"));
+    }
+    Ok(())
 }
 
 fn open_virtual_disk(image: &Path, access: u32) -> Result<VirtualDisk, Error> {
@@ -119,6 +204,7 @@ fn attach_virtual_disk(image: &Path) -> Result<(), Error> {
         version: 1,
         reserved: 0,
     };
+    enable_volume_privilege()?;
     let attributes = std::fs::metadata(image)
         .map_err(|_| Error::Native("runtime-image-open"))?
         .file_attributes();
@@ -138,6 +224,7 @@ fn attach_virtual_disk(image: &Path) -> Result<(), Error> {
 
 fn detach_virtual_disk(image: &Path) -> Result<(), Error> {
     const DETACH: u32 = 0x0004_0000;
+    enable_volume_privilege()?;
     let disk = open_virtual_disk(image, DETACH)
         .map_err(|_| Error::Native("runtime-image-detach"))?;
     let status = unsafe { DetachVirtualDisk(disk.0, 0, 0) };
