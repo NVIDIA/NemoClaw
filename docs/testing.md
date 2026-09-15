@@ -252,3 +252,13 @@ The `ssh_upload` test additionally requires `NEMOCLAW_TEST_SSH_CONTAINER`, the
 full ID of a stopped container labeled `nemoclaw.experiment=ssh-transport`. It
 writes `/tmp/ssh-proof` and checks the streamed archive and unchanged identity.
 The caller owns fixture setup and cleanup; never target an unrelated container.
+
+The `remote_service` E2E fixture exercises the bundled CLI/provider boundary
+with an isolated Docker-over-SSH simulator and OpenShell fixture. Run
+`cargo test -p nemoclaw-e2e --test remote_service -- --ignored` with
+`NEMOCLAW_TEST_BUNDLE` set. It checks read-only planning, missing/low capacity,
+failed startup recovery, no-op, export/reapply, failed observation and daemon
+retargeting without recreation, and retained storage on destroy. Its readiness
+and artifact receipts are simulated; it does not download or serve a model.
+The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly
+selected Linux ARM64 NVIDIA host without provisioning resources.

@@ -89,3 +89,31 @@ The local lock excludes other NemoClaw operations on the same state directory,
 not other gateway clients. OpenShell deletes by name without an ID/version
 condition, so a concurrent replacement between the final identity check and
 delete cannot be eliminated by this client.
+
+## Remote model service
+
+[remote-vllm.yaml](../examples/remote-vllm.yaml) manages a Docker inference service
+through SSH while an existing native OpenShell gateway owns Podman sandboxes.
+`service.placement` selects the SSH engine and its private Docker network.
+`service.publication` declares the private host address and inference URL that
+OpenShell can reach. Existing `providerRef` routes remain unchanged. No engine
+registry or per-sandbox placement override is required.
+
+Replace the example SSH alias, gateway endpoint, and private publication address
+with your hosts. Publication currently requires a private IPv4 address, the
+service's port and `/v1` path. It uses HTTP without model credentials. The remote
+host must meet the existing Linux ARM64 Spark hardware profile and have Docker,
+Python 3 and `nvidia-smi`. Configure SSH authentication and host trust beforehand.
+Load the pinned runtime image into the selected Docker daemon; the example's
+experiment image has not been published. Load the sandbox image into Podman.
+
+Run `nemoclaw apply < examples/remote-vllm.yaml`. Apply creates retained model
+storage and the inference network/container on the SSH target, checks preparation
+receipts and readiness there, then configures the sandbox's OpenShell route.
+Plan reads remote capacity and resource state without creating runtime resources.
+Changing a bound engine endpoint requires migration and is rejected. Failed
+observations never authorize recreation. Destroy retains model data and network.
+
+The bundled fixture lifecycle and real read-only SSH host collector are tested.
+A separate-host GPU apply and agent reply remain a live qualification gate; the
+example is not evidence that an arbitrary remote GPU box is compatible.

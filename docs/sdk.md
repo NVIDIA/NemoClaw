@@ -51,7 +51,12 @@ SSH engines default to an unavailable remote capacity observer. Supply a typed
 local `/proc`, GPU and disk data are never substituted. Existing engine ID and
 resource ownership checks apply to observations obtained over SSH.
 
-This is an SDK transport boundary. Managed deployment YAML remains restricted
-to its qualified local topology. Remote provisioning still needs remote artifact
-and capacity observation, a reachable inference publication address, and the
-provider subprocess wiring. This transport does not tunnel inference traffic.
+Managed service placement now selects this transport independently of the
+OpenShell gateway. For an explicit SSH service, both SDK preflight and the provider
+subprocess use the fixed `SshHost` collector, unless an in-process SDK caller
+supplies its own observer. Plain `Engine::connect` retains the unavailable default.
+The collector reads the SSH host's Linux memory, NVIDIA inventory and Docker
+storage filesystem, rejects a Docker context pointing to another host, and tags
+measurements with the daemon identity for comparison. Python 3, Docker and
+`nvidia-smi` must already be available on that host. No packages are installed.
+This transport does not tunnel inference traffic.

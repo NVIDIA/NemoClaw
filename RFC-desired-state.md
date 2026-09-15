@@ -332,3 +332,37 @@ exercise daemon identity, absence, denied authentication/host trust and artifact
 upload/download. They qualify the transport, not remote provisioning, network
 reachability between hosts, or remote GPU observation. No engine-selection YAML
 or inference tunnel is introduced by this slice.
+
+The remote-model slice accepts independent service placement and publication.
+Decision: Accept for the v1 experiment at the user's direction; the requesting
+maintainer owns the experiment and its separate-host qualification gate. A
+service's placement selects a Docker SSH connection and private container
+network. Its publication selects the private host interface and URL that
+OpenShell can reach. An external gateway may use the qualified native Podman
+driver. There is no inference tunnel, generic provider framework, or per-sandbox
+engine selection in this change.
+
+Implementation found that the remote model must not depend on a gateway
+container or gateway storage. Its process depends only on its retained model
+storage, and it creates its own owned network. Gateway connection changes do not
+alter the remote model specification. Destroy checks the storage required by
+each process rather than assuming every process has gateway storage. Explicit
+SSH placement and publication are optional, preserving existing local specs.
+
+The SDK and provider subprocess reconstruct the same fixed, read-only SSH host
+collector. It reads Linux memory, GPU and Docker-storage capacity on the selected
+execution host, associates measurements with the daemon ID, and rejects missing
+or mismatched observations. It requires existing host trust, Python 3, Docker
+and NVIDIA tooling; it installs nothing and accepts no shell hooks. Capacity
+preflight and immediate startup checks remain direct. Refresh and export retain
+the shared typed osquery observation path. This bounded collector does not yet
+justify an installed remote observation agent.
+
+Fixture qualification covers read-only plan, insufficient and missing capacity,
+failed startup with stable identity, explicit recovery, no-op, export/reapply,
+transport failure, daemon retarget rejection and destroy with retained data.
+Real loopback SSH qualifies the collector against this Spark's Docker daemon.
+A separate-host GPU apply and an agent reply across that host boundary remain
+required before claiming live remote deployment qualification. The example
+requires preloaded pinned runtime images and a private routable IPv4 interface;
+the current managed model hardware profile remains Linux ARM64 DGX Spark.
