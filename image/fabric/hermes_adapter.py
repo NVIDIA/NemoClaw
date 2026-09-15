@@ -129,18 +129,20 @@ class HermesRuntime:
         async with self.lock:
             if self.failed or context.runtime_id != self.runtime_id or self.process.returncode is not None:
                 raise RuntimeError('Hermes runtime unavailable; no replay')
-            if not isinstance(request.input, str):
+            probe = request.input == {'probe': True}
+            if not probe and not isinstance(request.input, str):
                 raise ValueError('Hermes requires a text prompt')
             if not configuration_matches(self.inference):
                 raise RuntimeError('Hermes configuration drifted')
-            body = {'model': 'primary', 'input': request.input, 'store': True}
-            if self.previous_response:
+            body = {'model': 'primary', 'input': 'Reply with the word FOUR.' if probe else request.input, 'store': not probe}
+            if self.previous_response and not probe:
                 body['previous_response_id'] = self.previous_response
             try:
                 result = await asyncio.to_thread(api_request, '/v1/responses', body, 280)
                 if result.get('status') != 'completed' or not result.get('id'):
                     raise RuntimeError('Hermes returned an unsuccessful response')
-                self.previous_response = result['id']
+                if not probe:
+                    self.previous_response = result['id']
                 text = '\n'.join(c['text'] for item in result.get('output', [])
                                  for c in item.get('content', []) if c.get('type') == 'output_text')
                 return AgentRunResult(status=AgentRunStatus.SUCCEEDED,

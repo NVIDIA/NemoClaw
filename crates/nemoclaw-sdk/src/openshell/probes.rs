@@ -8,6 +8,20 @@ use std::time::Duration;
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
+fn hermes_response_text(bytes: &[u8]) -> Result<String, Error> {
+    if bytes.len() > 1 << 20 {
+        return Err(Error::Conflict("agent response exceeds the probe limit"));
+    }
+    let response: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| Error::Conflict("agent returned no confirmed response"))?;
+    let text = response["output"]["response"].as_str().unwrap_or("").trim();
+    if response["status"] != "succeeded" || text.is_empty() || text.len() > 16 << 10 {
+        return Err(Error::Conflict(
+            "agent returned no confirmed successful response",
+        ));
+    }
+    Ok(text.into())
+}
 fn response_text(bytes: &[u8]) -> Result<String, Error> {
     if bytes.len() > 1 << 20 {
         return Err(Error::Conflict("agent response exceeds the probe limit"));
@@ -324,30 +338,45 @@ impl OpenShell {
             &hex[16..20],
             &hex[20..]
         );
-        let command = [
-            "openclaw",
-            "agent",
-            "--agent",
-            value(binding, "agent_name"),
-            "--session-id",
-            &session,
-            "--message",
-            "Reply with the word FOUR.",
-            "--thinking",
-            "off",
-            "--json",
-            "--timeout",
-            "300",
-        ]
-        .map(String::from)
-        .to_vec();
+        let hermes = value(binding, "agent_runtime") == "fabric-hermes";
+        let command = if hermes {
+            vec![
+                "/opt/fabric/bin/python".into(),
+                "/opt/nemoclaw/fabric.py".into(),
+                "probe".into(),
+                value(binding, "agent_name").into(),
+                "hermes".into(),
+            ]
+        } else {
+            [
+                "openclaw",
+                "agent",
+                "--agent",
+                value(binding, "agent_name"),
+                "--session-id",
+                &session,
+                "--message",
+                "Reply with the word FOUR.",
+                "--thinking",
+                "off",
+                "--json",
+                "--timeout",
+                "300",
+            ]
+            .map(String::from)
+            .to_vec()
+        };
         let (exit, output) = self.exec_bound(binding, command, Row::new(), 360).await?;
         if exit != 0 {
             return Err(Error::Conflict(
                 "actual agent response failed; resources retained",
             ));
         }
-        let text = response_text(&output)?;
+        let text = if hermes {
+            hermes_response_text(&output)?
+        } else {
+            response_text(&output)?
+        };
         if !text
             .trim_matches([' ', '\n', '\r', '\t', '.', '!', '\"', '\''])
             .eq_ignore_ascii_case("FOUR")
@@ -367,6 +396,18 @@ const RESPONSES_PROBE: &str = r###"fetch('https://inference.local/v1/responses',
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hermes_reply_requires_success_before_accepting_text() {
+        assert_eq!(
+            hermes_response_text(br#"{"status":"succeeded","output":{"response":"FOUR"}}"#)
+                .unwrap(),
+            "FOUR"
+        );
+        assert!(
+            hermes_response_text(br#"{"status":"failed","output":{"response":"FOUR"}}"#).is_err()
+        );
+        assert!(hermes_response_text(br#"{"status":"succeeded","output":{}}"#).is_err());
+    }
     #[test]
     fn agent_reply_requires_confirmed_success_and_non_error_payloads() {
         assert_eq!(

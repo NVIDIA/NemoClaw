@@ -244,7 +244,7 @@ pub(super) fn constrain(root: &mut Value) {
             at("spec/gateway/management", json!({"const": "external"}), true),
             at(runtime, json!({"const": "podman"}), true)
          ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "openclaw"}}), true),
+        {"if": at(&format!("{agent}/harness"), json!({"not": {"enum": ["openclaw", "hermes"]}}), true),
          "then": {"allOf": [at("spec/gateway/management", json!({"const": "external"}), false), at(provider, forbid(&["service", "ollama"]), false)]}},
         {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
             {"allOf": [at(&format!("{agent}/harness"), json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},

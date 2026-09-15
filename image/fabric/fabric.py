@@ -90,6 +90,8 @@ async def serve():
             if request == {"operation": "check"}:
                 response = {"config": config, "runtime_id": runtime.runtime_id,
                             "ready": runtime.status == RuntimeStatus.ACTIVE, "inference": inference}
+            elif request == {"operation": "probe"} and config["harness"]["adapter_id"] == "nemoclaw.local.hermes":
+                response = (await asyncio.wait_for(runtime.invoke(input={"probe": True}), 300)).to_mapping()
             else:
                 raise ValueError("invalid request")
             encoded = json.dumps(response).encode() + b"\n"
@@ -168,7 +170,7 @@ if __name__ == "__main__":
         sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2], "pi", json.loads(sys.argv[4]), inference=inference)))
     elif len(sys.argv) == 3 and sys.argv[1] == "check":
         sys.exit(asyncio.run(client("check", sys.argv[2], inference=inference)))
-    elif len(sys.argv) == 4 and sys.argv[1] == "check" and sys.argv[3] in ("deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "pi"):
-        sys.exit(asyncio.run(client("check", sys.argv[2], sys.argv[3], inference=inference)))
+    elif len(sys.argv) == 4 and sys.argv[1] in ("check", "probe") and sys.argv[3] in ("deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "pi"):
+        sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2], sys.argv[3], inference=inference)))
     else:
         sys.exit("usage: fabric.py serve | check NAME [HARNESS]")

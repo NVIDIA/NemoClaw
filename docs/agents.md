@@ -11,7 +11,7 @@ Native channel enrollment, pairing, plugins, histories, and workspace data belon
 NemoClaw checks its reserved gateway and inference settings without replacing unrelated settings.
 
 An agent selects a `harness` from `deepagents`, `hermes`, `openclaw`, `claude`, `codex`, `mini-swe-agent`, `nooa`, `nooa-bench`, `remote-agent`, or `pi`.
-OpenClaw supports external services, managed OpenShell gateways, and managed DGX Spark or Ollama inference.
+OpenClaw and Hermes support external services, managed OpenShell gateways, and managed DGX Spark or Ollama inference.
 Other harnesses currently require external gateway and inference services.
 
 The strict schema rejects unsupported combinations.
@@ -64,6 +64,26 @@ Earlier images do not implement the agent-roster and disclosure interface.
 Changing YAML alone does not update an existing image or migrate retained native configuration.
 
 See [agent interfaces](interfaces.md) for authenticated OpenClaw dashboard access.
+
+## Hermes Native Server
+
+Fabric owns one authenticated native Hermes HTTP API server per sandbox.
+It invokes the native Responses endpoint and chains completed turns within the Fabric runtime.
+A runtime restart starts a new Fabric conversation; native persisted history remains in `/sandbox/.hermes`.
+An uncertain invocation stops the server without replay.
+
+NemoClaw owns the named OpenShell provider and selected API in native `config.yaml`.
+Configuration drift stops readiness without overwriting retained files.
+The private API token in `/sandbox/.hermes/interface-token` is reused across restarts and never enters exported YAML or OpenTofu state.
+Only the sandbox user can read the token; it remains with retained native state and is removed when that state is deleted.
+Missing or insecure credentials beside existing native configuration stop startup.
+
+Managed DGX Spark apply probes the already-running Fabric runtime with a separate conversation.
+The probe does not extend the Fabric conversation or store a Responses continuation; native session records may remain.
+It requires a successful agent response before reporting success; failure retains the established resources.
+Managed support does not establish that a particular model has enough context or reliable tool behavior.
+Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), then build with `python3 image/fabric/build.py --harness hermes` and use its immutable digest.
+Existing images and native state are not automatically migrated; use a fresh deployment UID and state directory when switching from the embedded Hermes adapter.
 
 ## Pi Model Selection
 

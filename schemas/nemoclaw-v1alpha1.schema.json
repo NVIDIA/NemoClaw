@@ -2541,7 +2541,10 @@
                         "properties": {
                           "harness": {
                             "not": {
-                              "const": "openclaw"
+                              "enum": [
+                                "openclaw",
+                                "hermes"
+                              ]
                             }
                           }
                         },

@@ -168,6 +168,9 @@ async def main():
                 native_path.write_text(retained)
                 subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS, *extra], check=True)
             assert len(requests) == startup_requests, 'readiness made an inference request'
+            if HARNESS == 'hermes':
+                probe = subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'probe', 'fixture', 'hermes'], capture_output=True, text=True, check=True)
+                assert json.loads(probe.stdout)['status'] == 'succeeded'
             requests.clear()
             if HARNESS == 'pi':
                 # Changing the model must stop the old runtime before reconfiguration.

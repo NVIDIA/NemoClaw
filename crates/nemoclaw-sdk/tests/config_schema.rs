@@ -253,7 +253,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         (
             "vllm.yaml",
             "/spec/sandboxes/0/agents/0/harness",
-            json!("hermes"),
+            json!("deepagents"),
             false,
         ),
         (

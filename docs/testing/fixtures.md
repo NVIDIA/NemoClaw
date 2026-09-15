@@ -174,3 +174,28 @@ This offline test uses the nondefault port 18800, lists native pairing requests 
 Its evidence includes `authenticated_interfaces_verified` in `proof.json`.
 The bundle fixture is `openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift` in the `deployment` test binary.
 [Recorded Linux ARM64 results](../validation/rust-openclaw-interfaces-linux-arm64.json) distinguish native gateway checks from simulated OpenShell lifecycle behavior.
+
+## Hermes Native API Lifecycle
+
+Build a fresh Hermes image using the [runtime procedure](../agents.md#runtime-lifecycle).
+From the repository root, test native authentication and shutdown without networking:
+
+```sh
+docker run --rm --network none --pull=never \
+  -e HERMES_HOME=/tmp/hermes-contract \
+  -v "$PWD/test/hermes_native.py:/test.py:ro" \
+  --entrypoint /opt/fabric/bin/python nc-prototype-fabric:hermes /test.py
+```
+
+The contract rejects missing and incorrect API credentials, verifies authenticated model discovery, and checks that disconnect closes the listener.
+The inference API fixtures above exercise the Fabric-owned native server, two ordered turns, and a separate probe through the hosted runtime.
+They use local protocol responses, not a live model.
+
+With a freshly verified bundle, run the managed Hermes lifecycle fixture:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-e2e --test remote_service managed_hermes -- --ignored
+```
+
+It simulates SSH/Docker, OpenShell, and the agent response while exercising apply, export/reapply, observation failures, and retained data through the bundled CLI/provider.

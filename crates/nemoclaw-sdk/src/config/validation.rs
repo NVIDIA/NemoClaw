@@ -228,7 +228,7 @@ impl Document {
                 "agent requires a supported harness",
             )?;
             require(
-                agent.harness == "openclaw"
+                matches!(agent.harness.as_str(), "openclaw" | "hermes")
                     || (gateway.management == "external"
                         && provider.service.is_none()
                         && provider.ollama.is_none()),

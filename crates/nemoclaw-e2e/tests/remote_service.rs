@@ -52,6 +52,14 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure() {
+    lifecycle("openclaw").await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
+async fn managed_hermes_model_lifecycle_preserves_data_and_observes_native_probe() {
+    lifecycle("hermes").await;
+}
+async fn lifecycle(harness: &str) {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
@@ -69,6 +77,7 @@ async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure(
     )
     .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
+    value["spec"]["sandboxes"][0]["agents"][0]["harness"] = harness.into();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
     value["spec"]["inferenceProviders"][0]["service"]["placement"] =

@@ -555,6 +555,17 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 )),
             }));
         }
+        if request.command.iter().any(|arg| arg == "probe")
+            && request.command.last().is_some_and(|arg| arg == "hermes")
+        {
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                    p::ExecSandboxStdout {
+                        data: br#"{"status":"succeeded","output":{"response":"FOUR"}}"#.to_vec(),
+                    },
+                )),
+            }));
+        }
         let exit = if request.command.iter().any(|arg| {
             arg.contains("fetch('https://inference.local/") || arg.ends_with("/pi-probe.js")
         }) {

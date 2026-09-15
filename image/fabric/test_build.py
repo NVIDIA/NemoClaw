@@ -16,7 +16,7 @@ class RecipeCoverage(unittest.TestCase):
         upstream = {json.loads(p.read_text())['adapter_id']
                     for p in source.glob('adapters/*/*/*.fabric-adapter.json')}
         recipes = {configuration('coverage', h, {'model': 'gpt-4o-mini'} if h == 'pi' else None)['harness']['adapter_id'] for h in HARNESSES}
-        self.assertEqual(recipes - {'nemoclaw.local.openclaw'}, upstream)
+        self.assertEqual((recipes - {'nemoclaw.local.openclaw', 'nemoclaw.local.hermes'}) | {'nvidia.fabric.hermes'}, upstream)
         for h in HARNESSES:
             lock = 'dependencies.lock' if h == 'deepagents' else f'{h}-dependencies.lock'
             self.assertTrue((ROOT / 'image/fabric' / lock).is_file(), h)
