@@ -3,8 +3,7 @@
 
 import { inspect } from "node:util";
 
-import { Command } from "@oclif/core";
-import * as prettyPrintModule from "../../../node_modules/@oclif/core/lib/errors/errors/pretty-print.js";
+import { Command, Errors } from "@oclif/core";
 import { assert, describe, expect, it, vi } from "vitest";
 
 import { captureHermesPortableOpenShellExecutableAuthority } from "../adapters/openshell/resolve-shared";
@@ -12,15 +11,6 @@ import { PodmanExecutablePermissionError } from "../adapters/podman/executable-a
 import { runOnboardCommand } from "./command";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { attachManagedBootstrapRollbackError } from "./managed-bootstrap/adapter";
-
-type PrettyPrint = (error: Error) => string | undefined;
-
-const prettyPrintDefault = prettyPrintModule.default as unknown;
-const prettyPrint = (
-  typeof prettyPrintDefault === "function"
-    ? prettyPrintDefault
-    : (prettyPrintDefault as { default: PrettyPrint }).default
-) as PrettyPrint;
 
 /** Expose the exit code without terminating the test process. */
 function exitWithCode(code: number): never {
@@ -54,6 +44,24 @@ async function catchOnboardFailure(failure: unknown): Promise<unknown> {
     error: vi.fn(),
     exit: exitWithCode,
   }).catch((error: unknown) => error);
+}
+
+/** Render through Oclif's public handler without terminating the test process. */
+async function renderThroughOclifHandle(error: Error): Promise<string> {
+  const output: string[] = [];
+  const consoleError = vi.spyOn(console, "error").mockImplementation((value?: unknown) => {
+    output.push(typeof value === "string" ? value : "");
+  });
+  const processExit = vi
+    .spyOn(process, "exit")
+    .mockImplementation((() => undefined) as typeof process.exit);
+  try {
+    await Errors.handle(error);
+    return output.join("\n");
+  } finally {
+    consoleError.mockRestore();
+    processExit.mockRestore();
+  }
 }
 
 describe("onboarding command failures", () => {
@@ -134,7 +142,7 @@ describe("onboarding command failures", () => {
 
     assert(caught instanceof Error);
     expect(access).not.toHaveBeenCalled();
-    const formatted = prettyPrint(caught);
+    const formatted = await renderThroughOclifHandle(caught);
     expect(formatted).not.toContain(Array.isArray(value) ? value[0] : value);
     expect(access).not.toHaveBeenCalled();
   });
@@ -191,7 +199,7 @@ describe("onboarding command failures", () => {
     void view.ref;
     void view.cause;
     void view.errors;
-    expect(prettyPrint(caught)).not.toContain(secret);
+    expect(await renderThroughOclifHandle(caught)).not.toContain(secret);
     expect(message).not.toHaveBeenCalled();
     expect(skipOclifErrorHandling).not.toHaveBeenCalled();
     expect(stack).not.toHaveBeenCalled();
@@ -210,7 +218,7 @@ describe("onboarding command failures", () => {
     const caught = await catchOnboardFailure({ message: secret });
 
     assert(caught instanceof Error);
-    expect(prettyPrint(caught)).not.toContain(secret);
+    expect(await renderThroughOclifHandle(caught)).not.toContain(secret);
     expect(inspect(caught, { depth: null })).not.toContain(secret);
   });
 
@@ -908,7 +916,7 @@ describe("onboarding command failures", () => {
         get: renderer,
       });
 
-      expect(prettyPrint(caught)).not.toContain(secret);
+      expect(await renderThroughOclifHandle(caught)).not.toContain(secret);
       expect(inspect(caught, { depth: null })).not.toContain(secret);
       expect(JSON.stringify(caught)).not.toContain(secret);
       expect(String(caught)).toBe("[REDACTED ERROR]");
