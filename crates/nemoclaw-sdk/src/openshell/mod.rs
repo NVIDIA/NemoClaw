@@ -99,12 +99,14 @@ fn provider_row(
         .and_then(|m| m.labels.get(CREDENTIAL))
         .cloned()
         .unwrap_or_default();
-    let source = provider
+    let metadata = provider
         .metadata
         .as_ref()
-        .and_then(|m| m.labels.get(CREDENTIAL_SOURCE))
-        .cloned()
-        .unwrap_or_default();
+        .ok_or(ObservationError::Incomplete)?;
+    if metadata.labels.contains_key(CREDENTIAL_SOURCE) {
+        return Err(ObservationError::BindingMismatch);
+    }
+    let source = credential_metadata::unpack(&metadata.annotations)?;
     let mut row = base(provider.metadata, name, removing)?;
     let key = if provider.r#type == "anthropic" {
         "ANTHROPIC_BASE_URL"
@@ -251,3 +253,5 @@ pub fn verify_identity(expected: &Row, observed: &Row) -> Result<(), Observation
     Ok(())
 }
 mod probes;
+
+pub(crate) mod credential_metadata;

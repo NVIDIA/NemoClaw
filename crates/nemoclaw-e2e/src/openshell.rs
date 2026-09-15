@@ -314,6 +314,22 @@ fn get_provider(
         provider: Some(provider),
     })
 }
+// Wire limits from the pinned OpenShell server (d1155aa), independently checked
+// here so an accepting protocol fixture cannot conceal invalid provider metadata.
+fn validate_provider_metadata(meta: &p::ObjectMeta) -> Result<(), Status> {
+    if meta
+        .labels
+        .values()
+        .any(|v| v.len() > 63 || !v.chars().all(|c| c.is_alphanumeric() || "-_.".contains(c)))
+        || meta.annotations.len() > 128
+        || meta.annotations.values().any(|v| v.len() > 8192)
+    {
+        return Err(Status::invalid_argument(
+            "provider metadata exceeds native gateway limits",
+        ));
+    }
+    Ok(())
+}
 fn create_provider(
     state: &mut State,
     q: p::CreateProviderRequest,
@@ -325,11 +341,14 @@ fn create_provider(
         .metadata
         .take()
         .ok_or_else(|| Status::invalid_argument("missing"))?;
+    validate_provider_metadata(&meta)?;
     let key = format!("{}/{}", q.workspace, meta.name);
     if state.providers.contains_key(&key) {
         return Err(Status::already_exists("collision"));
     }
-    provider.metadata = Some(state.metadata(meta.name, q.workspace, meta.labels));
+    let mut created_metadata = state.metadata(meta.name, q.workspace, meta.labels);
+    created_metadata.annotations = meta.annotations;
+    provider.metadata = Some(created_metadata);
     state.providers.insert(key, provider.clone());
     state.created("provider");
     if std::mem::take(&mut state.lose_create) {
@@ -351,6 +370,7 @@ fn update_provider(
         .metadata
         .as_mut()
         .ok_or_else(|| Status::invalid_argument("missing"))?;
+    validate_provider_metadata(meta)?;
     let key = format!("{}/{}", q.workspace, meta.name);
     let prior = state
         .providers

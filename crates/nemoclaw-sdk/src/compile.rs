@@ -174,10 +174,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             .find(|r| r.address == "nemoclaw_provider.inference")
             .unwrap()
             .values
-            .insert(
-                "credential_source".into(),
-                serde_json::to_string(&source).expect("typed credential source"),
-            );
+            .insert("credential_source".into(), source.json()?);
     }
     if let Some(proxy) = &provider.ollama_proxy {
         let spec = crate::ollama::proxy::specification(document, generations)
@@ -191,10 +188,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             .find(|r| r.address == "nemoclaw_provider.inference")
             .unwrap()
             .values
-            .insert(
-                "credential_source".into(),
-                serde_json::to_string(&source).expect("typed credential source"),
-            );
+            .insert("credential_source".into(), source.json()?);
         result.extend(
             crate::ollama::proxy::targets(document, generations)
                 .map_err(|_| ConfigError("invalid proxy resources"))?,
@@ -260,6 +254,10 @@ pub fn compile(
             if inference.ollama.is_some() {
                 attributes["depends_on"] = json!(["nemoclaw_ollama_model.inference"]);
             }
+        }
+        if let Some(value) = attributes["credential_source"].as_str() {
+            attributes["credential_source"] =
+                json!(value.replace("${", "$${").replace("%{", "%%{"));
         }
         if target.kind == "sandbox" {
             // JSON configuration strings are still OpenTofu templates. Preserve

@@ -52,14 +52,12 @@ impl OpenShell {
             }
         };
         let mut labels = labels(want);
-        if !source.is_empty() {
-            labels.insert(CREDENTIAL_SOURCE.into(), source.into());
-        }
         labels.insert(CREDENTIAL.into(), value(want, "credential_env").into());
         Ok(proto::Provider {
             metadata: Some(proto::ObjectMeta {
                 name: value(want, "name").into(),
                 labels,
+                annotations: credential_metadata::pack(source)?,
                 ..Default::default()
             }),
             r#type: kind.into(),

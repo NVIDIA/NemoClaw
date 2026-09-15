@@ -50,3 +50,35 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
             .is_valid(&input)
     );
 }
+
+#[test]
+fn generated_credential_and_runtime_specs_preserve_literal_recipe_environment() {
+    let mut input: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/spark.yaml")).unwrap();
+    input["spec"]["inferenceProviders"][0]["service"]["authentication"] = json!("bearer");
+    input["spec"]["inferenceProviders"][0]["service"]["recipe"]["serving"]["environment"]["VLLM_LITERAL"] =
+        json!("${literal.value} %{if untouched}");
+    let doc = Document::parse(input.to_string().as_bytes()).unwrap();
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .map(|k| (k.into(), "a".repeat(32)))
+    .into();
+    let graph = compile::compile(&doc, &generations, "0.1.0").unwrap();
+    let runtime = compile::compile_runtime(&doc, &generations, "0.1.0").unwrap();
+    for value in [
+        &graph["resource"]["nemoclaw_provider"]["inference"]["credential_source"],
+        &runtime["resource"]["nemoclaw_inference_service"]["runtime"]["spec"],
+    ] {
+        assert!(
+            value
+                .as_str()
+                .unwrap()
+                .contains("$${literal.value} %%{if untouched}")
+        );
+    }
+}

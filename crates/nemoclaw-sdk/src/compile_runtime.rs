@@ -70,7 +70,8 @@ pub fn compile_runtime(
     let mut graph = compile(document, generations, version)?;
     graph["resource"] = json!({});
     for target in runtime_targets(document, generations)? {
-        let mut attrs = json!({"spec":target.values["spec"]});
+        let mut attrs =
+            json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
         match target.kind.as_str() {
             GATEWAY_STORAGE_KIND | STORAGE_KIND => {
                 attrs["lifecycle"] = json!({"prevent_destroy":true})

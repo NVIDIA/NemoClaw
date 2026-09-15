@@ -14,6 +14,16 @@ pub(crate) enum Source {
     },
 }
 impl Source {
+    pub(crate) fn json(&self) -> Result<String, crate::config::ConfigError> {
+        let source = serde_json::to_string(self).expect("typed credential source");
+        crate::openshell::credential_metadata::pack(&source).map_err(|_| {
+            crate::config::ConfigError(
+                "managed credential reference exceeds gateway annotation capacity",
+            )
+        })?;
+        Ok(source)
+    }
+
     pub fn parse(value: &str, owner: &str, endpoint: &str) -> Result<Self, ObservationError> {
         let source: Self = serde_json::from_str(value).map_err(|_| ObservationError::Incomplete)?;
         match &source {
