@@ -28,6 +28,7 @@ import {
 } from "./command-argv";
 import { captureSanitizedResolvedOpenshellAsync } from "./sanitized-capture";
 import type { OpenShellSandboxResult } from "./sandbox-observer";
+import { OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS } from "./timeouts";
 import {
   classifyCliOpenShellCommandError,
   type CapturedOpenShellCommandResult,
@@ -67,7 +68,6 @@ type PolicyReaderDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?:
 type PolicyWriterDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
 
 const DEFAULT_POLICY_READ_TIMEOUT_MS = 15_000;
-const DEFAULT_POLICY_SET_TIMEOUT_MS = 65_000;
 const POLICY_READ_MAX_BYTES = 1024 * 1024;
 const POLICY_READ_ERROR_MESSAGES = {
   authentication: "OpenShell could not authenticate the sandbox policy read.",
@@ -308,7 +308,10 @@ export function createCliOpenShellSandboxPolicyWriter(
         submission = parsePolicySet(
           await deps.capture(
             policySetArgs(request, policyPath),
-            captureOptions(request, deps.defaultTimeoutMs ?? DEFAULT_POLICY_SET_TIMEOUT_MS),
+            captureOptions(
+              request,
+              deps.defaultTimeoutMs ?? OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS,
+            ),
           ),
         );
       } catch (error) {
