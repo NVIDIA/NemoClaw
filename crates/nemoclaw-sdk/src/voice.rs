@@ -8,7 +8,7 @@ use std::{
     fmt,
     net::SocketAddr,
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -24,6 +24,7 @@ use axum::{
     routing::post,
 };
 use futures_util::StreamExt;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -41,8 +42,13 @@ use crate::Binding;
 mod onboarding;
 pub use onboarding::{Bootstrap, Prepared, Ready};
 
-pub const PROFILE: &str = "nemoclaw-voice-r0/1";
+pub const PROFILE: &str = "nemoclaw-voice-r0/2";
 const MAX_MESSAGE: usize = 4096;
+pub(crate) const QUESTION: &str = "What is two plus two? Reply with only 4.";
+static ACCEPTED_ANSWER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[\p{White_Space}\p{P}]*4[\p{White_Space}\p{P}]*$")
+        .expect("fixed answer expression must compile")
+});
 
 /// An issued authority. Debug output deliberately excludes the bearer value.
 pub struct AccessGrant {
@@ -155,9 +161,18 @@ pub enum ProbeResult {
     Unavailable,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DispatchResult {
+    Answer(String),
+    TargetReplaced,
+    AgentUnavailable,
+    InvalidResponse,
+}
+
 #[async_trait]
 pub trait TargetProbe: Send + Sync + 'static {
     async fn probe(&self, binding: &Binding) -> ProbeResult;
+    async fn dispatch(&self, binding: &Binding) -> DispatchResult;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -165,6 +180,7 @@ pub struct ServerConfig {
     pub heartbeat_interval: Duration,
     pub probe_interval: Duration,
     pub probe_timeout: Duration,
+    pub dispatch_timeout: Duration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +205,7 @@ impl Default for ServerConfig {
             heartbeat_interval: Duration::from_secs(5),
             probe_interval: Duration::from_secs(5),
             probe_timeout: Duration::from_secs(5),
+            dispatch_timeout: Duration::from_secs(60),
         }
     }
 }
@@ -202,6 +219,7 @@ struct ServerState {
     clock: Arc<dyn Clock>,
     config: ServerConfig,
     active: Arc<AtomicBool>,
+    probe_used: AtomicBool,
     connection: watch::Sender<ConnectionState>,
     stop: CancellationToken,
 }
@@ -240,11 +258,13 @@ impl VoiceServer {
             clock,
             config,
             active: Arc::new(AtomicBool::new(false)),
+            probe_used: AtomicBool::new(false),
             connection,
             stop: stop.clone(),
         });
         let app = Router::new()
             .route("/r0/connect", post(connect))
+            .route("/r0/probe", post(semantic_probe))
             .with_state(state);
         let shutdown = stop.clone();
         let task = tokio::spawn(async move {
@@ -307,6 +327,20 @@ impl Drop for VoiceServer {
 struct ConnectRequest {
     profile: String,
     target_ref: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SemanticRequest {
+    profile: String,
+    target_ref: String,
+    question: String,
+}
+
+#[derive(Serialize)]
+struct SemanticResponse<'a> {
+    profile: &'a str,
+    answer: &'a str,
 }
 
 #[derive(Serialize)]
@@ -447,6 +481,142 @@ async fn connect(State(state): State<Arc<ServerState>>, request: Request) -> Res
     response(StatusCode::OK, "application/x-ndjson", body)
 }
 
+async fn semantic_probe(State(state): State<Arc<ServerState>>, request: Request) -> Response {
+    if !authenticated(request.headers(), &state.digest) {
+        return error(StatusCode::UNAUTHORIZED, "authentication_failed");
+    }
+    if state.clock.now() >= state.expires_at {
+        return error(StatusCode::UNAUTHORIZED, "credential_expired");
+    }
+    if request.uri().query().is_some() {
+        return error(StatusCode::BAD_REQUEST, "invalid_request");
+    }
+    if !json_content_type(request.headers()) {
+        return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type");
+    }
+    if request
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        != Some("application/json")
+    {
+        return error(StatusCode::BAD_REQUEST, "invalid_request");
+    }
+    let lengths: Vec<_> = request
+        .headers()
+        .get_all(header::CONTENT_LENGTH)
+        .iter()
+        .collect();
+    let Some(length) = lengths
+        .first()
+        .filter(|_| lengths.len() == 1)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+    else {
+        return error(StatusCode::BAD_REQUEST, "invalid_request");
+    };
+    if length > MAX_MESSAGE {
+        return error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large");
+    }
+    if length == 0 || request.headers().contains_key(header::TRANSFER_ENCODING) {
+        return error(StatusCode::BAD_REQUEST, "invalid_request");
+    }
+    let body = match to_bytes(request.into_body(), MAX_MESSAGE).await {
+        Ok(body) => body,
+        Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large"),
+    };
+    let request: SemanticRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => return error(StatusCode::BAD_REQUEST, "invalid_request"),
+    };
+    if request.profile != PROFILE {
+        return error(StatusCode::CONFLICT, "unsupported_profile");
+    }
+    if request.target_ref != state.target_ref {
+        return error(StatusCode::FORBIDDEN, "target_not_authorized");
+    }
+    if request.question != QUESTION {
+        return error(StatusCode::BAD_REQUEST, "invalid_request");
+    }
+    if !matches!(*state.connection.borrow(), ConnectionState::Connected) {
+        return error(StatusCode::CONFLICT, "connection_required");
+    }
+    match tokio::time::timeout(
+        state.config.probe_timeout,
+        state.probe.probe(&state.binding),
+    )
+    .await
+    {
+        Ok(ProbeResult::Ready) => {}
+        Ok(ProbeResult::Replaced) => {
+            return error(StatusCode::CONFLICT, "target_replaced");
+        }
+        Ok(ProbeResult::Unavailable) | Err(_) => {
+            return error(StatusCode::SERVICE_UNAVAILABLE, "agent_unavailable");
+        }
+    }
+    if !matches!(*state.connection.borrow(), ConnectionState::Connected) {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "connection_lost");
+    }
+    if state
+        .probe_used
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return error(StatusCode::CONFLICT, "probe_already_used");
+    }
+
+    let adapter = state.probe.clone();
+    let binding = state.binding.clone();
+    let mut dispatch = tokio::spawn(async move { adapter.dispatch(&binding).await });
+    let mut connection = state.connection.subscribe();
+    let until_expiry = (state.expires_at - state.clock.now())
+        .try_into()
+        .unwrap_or(Duration::ZERO);
+    let deadline = state.config.dispatch_timeout.min(until_expiry);
+    let result = tokio::select! {
+        biased;
+        () = state.stop.cancelled() => return error(StatusCode::SERVICE_UNAVAILABLE, "connection_lost"),
+        () = connection_lost(&mut connection) => return error(StatusCode::SERVICE_UNAVAILABLE, "connection_lost"),
+        () = tokio::time::sleep(deadline) => return error(StatusCode::SERVICE_UNAVAILABLE, "agent_unavailable"),
+        result = &mut dispatch => result.unwrap_or(DispatchResult::AgentUnavailable),
+    };
+    if !matches!(*state.connection.borrow(), ConnectionState::Connected) {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "connection_lost");
+    }
+    match result {
+        DispatchResult::Answer(answer) if ACCEPTED_ANSWER.is_match(&answer) => {
+            let body = serde_json::to_vec(&SemanticResponse {
+                profile: PROFILE,
+                answer: &answer,
+            })
+            .expect("fixed semantic response must serialize");
+            if body.len() > MAX_MESSAGE {
+                return error(StatusCode::BAD_GATEWAY, "invalid_response");
+            }
+            response(StatusCode::OK, "application/json", Body::from(body))
+        }
+        DispatchResult::Answer(_) | DispatchResult::InvalidResponse => {
+            error(StatusCode::BAD_GATEWAY, "invalid_response")
+        }
+        DispatchResult::TargetReplaced => error(StatusCode::CONFLICT, "target_replaced"),
+        DispatchResult::AgentUnavailable => {
+            error(StatusCode::SERVICE_UNAVAILABLE, "agent_unavailable")
+        }
+    }
+}
+
+async fn connection_lost(connection: &mut watch::Receiver<ConnectionState>) {
+    loop {
+        if !matches!(*connection.borrow_and_update(), ConnectionState::Connected) {
+            return;
+        }
+        if connection.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
 fn pre_stream_failure(guard: ActiveGuard, status: StatusCode, code: &'static str) -> Response {
     drop(guard);
     error(status, code)
@@ -469,6 +639,7 @@ async fn run_stream(state: Arc<ServerState>, tx: mpsc::Sender<Vec<u8>>, mut guar
             biased;
             () = state.stop.cancelled() => Some("server_stopping"),
             () = &mut expiry => Some("credential_expired"),
+            () = tx.closed() => return,
             _ = heartbeat.tick() => {
                 if tx.send(line(&Record::Heartbeat)).await.is_err() { return; }
                 None

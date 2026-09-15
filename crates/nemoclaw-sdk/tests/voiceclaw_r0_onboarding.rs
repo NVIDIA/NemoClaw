@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use nemoclaw_sdk::{
     Binding, CancellationToken,
     voice::{
-        AccessGrant, Bootstrap, Clock, CloseReason, PROFILE, ProbeResult, ServerConfig,
-        TargetProbe, VoiceServer,
+        AccessGrant, Bootstrap, Clock, CloseReason, DispatchResult, PROFILE, ProbeResult,
+        ServerConfig, TargetProbe, VoiceServer,
     },
 };
 use time::OffsetDateTime;
@@ -29,6 +29,10 @@ struct ReadyProbe;
 impl TargetProbe for ReadyProbe {
     async fn probe(&self, _: &Binding) -> ProbeResult {
         ProbeResult::Ready
+    }
+
+    async fn dispatch(&self, _: &Binding) -> DispatchResult {
+        DispatchResult::Answer("4".into())
     }
 }
 
@@ -65,7 +69,7 @@ result=""
 endpoint=""; target=""; fd=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --profile) [ "$2" = "nemoclaw-voice-r0/1" ]; shift 2 ;;
+    --profile) [ "$2" = "nemoclaw-voice-r0/2" ]; shift 2 ;;
     --result-file) result="$2"; shift 2 ;;
     --endpoint) endpoint="$2"; shift 2 ;;
     --target-ref) target="$2"; shift 2 ;;
@@ -75,7 +79,7 @@ while [ "$#" -gt 0 ]; do
 done
 if [ "$stage" = prepare ]; then
   umask 077
-  printf '{"profile":"nemoclaw-voice-r0/1","status":"prepared"}' > "$result"
+  printf '{"profile":"nemoclaw-voice-r0/2","status":"prepared"}' > "$result"
 elif [ "$stage" = connect ]; then
   [ "$endpoint" = "http://127.0.0.1:3456/r0/connect" ]
   [ "$target" = "opaque-target" ]
@@ -84,7 +88,7 @@ elif [ "$stage" = connect ]; then
   ! IFS= read -r unexpected
   [ "$credential" = "test-only-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" ]
   umask 077
-  printf '{"profile":"nemoclaw-voice-r0/1","status":"ready","targetRef":"opaque-target","clientInstructions":"Read protected client access."}' > "$result"
+  printf '{"profile":"nemoclaw-voice-r0/2","status":"ready","targetRef":"opaque-target","clientInstructions":"Read protected client access."}' > "$result"
 else
   exit 8
 fi
@@ -115,7 +119,7 @@ fi
 async fn rejects_insecure_malformed_or_secret_bearing_results() {
     for payload in [
         r#"{"profile":"wrong","status":"prepared"}"#,
-        r#"{"profile":"nemoclaw-voice-r0/1","status":"prepared","extra":true}"#,
+        r#"{"profile":"nemoclaw-voice-r0/2","status":"prepared","extra":true}"#,
     ] {
         let root = tempfile::tempdir().unwrap();
         let state = tempfile::tempdir().unwrap();
@@ -140,7 +144,7 @@ fn bootstrap_requires_an_absolute_regular_executable() {
     fs::create_dir(root.path().join("bin")).unwrap();
     std::os::unix::fs::symlink("/bin/true", root.path().join("bin/voiceclaw-nemoclaw-r0")).unwrap();
     assert!(Bootstrap::new(root.path()).is_err());
-    assert_eq!(PROFILE, "nemoclaw-voice-r0/1");
+    assert_eq!(PROFILE, "nemoclaw-voice-r0/2");
 }
 
 #[tokio::test]
@@ -196,6 +200,7 @@ if stage == 'connect':
             heartbeat_interval: Duration::from_millis(25),
             probe_interval: Duration::from_millis(25),
             probe_timeout: Duration::from_millis(20),
+            dispatch_timeout: Duration::from_millis(200),
         },
     )
     .await

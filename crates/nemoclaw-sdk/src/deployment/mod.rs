@@ -536,6 +536,13 @@ impl TargetProbe for DeploymentVoiceProbe {
         }
         self.client.voice_ready(&self.sandbox).await
     }
+
+    async fn dispatch(&self, authority: &Binding) -> crate::voice::DispatchResult {
+        if authority != &self.authority {
+            return crate::voice::DispatchResult::TargetReplaced;
+        }
+        self.client.voice_response(&self.sandbox).await
+    }
 }
 
 fn voice_target_ref(owner: &str, generation: &str, native_id: &str) -> String {
