@@ -53,6 +53,7 @@ def main():
             '--mount', f'type=bind,source={ROOT}/test/openclaw_native_messaging.py,target=/test.py,readonly',
             '--mount', f'type=bind,source={ROOT}/test/openclaw_cli_driver.mjs,target=/cli-driver.mjs,readonly',
             '--mount', f'type=bind,source={ROOT}/test/openclaw_fixture_transport.mjs,target=/fixture-transport.mjs,readonly',
+            '--mount', f'type=bind,source={ROOT}/image/fabric/interfaces.py,target=/opt/nemoclaw/interfaces.py,readonly',
             '--mount', f'type=bind,source={ROOT}/image/fabric/openclaw_adapter.py,target=/opt/nemoclaw/openclaw_adapter.py,readonly',
             '--mount', f'type=bind,source={ROOT}/image/fabric/fabric.py,target=/opt/nemoclaw/fabric.py,readonly',
             '--entrypoint', '/opt/fabric/bin/python', image, '/test.py', phase)
@@ -60,7 +61,7 @@ def main():
              'source_sha256': {name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in (
                  'tools/openclaw-native-test.py', 'test/openclaw_native_messaging.py',
                  'test/openclaw_cli_driver.mjs', 'test/openclaw_fixture_transport.mjs',
-                 'image/fabric/openclaw_adapter.py', 'image/fabric/fabric.py')},
+                 'image/fabric/openclaw_adapter.py', 'image/fabric/interfaces.py', 'image/fabric/fabric.py')},
              'phases': [json.loads((directory/'evidence'/f'{phase}-proof.json').read_text()) for phase in ('configure', 'recreate')]}
     (directory/'proof.json').write_text(json.dumps(proof, indent=2)+'\n')
     print(json.dumps({'passed': True, 'evidence': str(directory/'proof.json')}), flush=True)

@@ -218,6 +218,13 @@ pub(super) fn constrain(root: &mut Value) {
         "image",
         json!({"pattern": "^ollama/ollama@sha256:[a-f0-9]{64}$"}),
     );
+    property(
+        &mut defs["OpenClawDashboard"],
+        "port",
+        json!({"not":{"minimum":8642,"maximum":8652}}),
+    );
+    defs["OpenClawDashboard"]["minProperties"] = json!(1);
+    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["interfaces"]},"then":{"properties":{"harness":{"const":"openclaw"}}}}));
     service_constraints(defs);
 
     let provider = "spec/inferenceProviders/[]";

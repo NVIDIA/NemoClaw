@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 import signal
 import urllib.request
+import subprocess
+from interfaces import dashboard, gateway_settings, token
 
 
 from nemo_fabric_adapter_contract.models import AgentRunError, AgentRunResult, AgentRunStatus
@@ -47,8 +49,7 @@ def agent_entries(name, inference):
 
 def native_configuration(name, inference=None):
     config = {
-        'gateway': {'mode': 'local', 'bind': 'loopback', 'port': 18789,
-                    'auth': {'mode': 'none'}, 'controlUi': {'enabled': False}},
+        'gateway': gateway_settings(inference),
         'models': {'mode': 'replace', 'providers': {'openshell': {
             'baseUrl': 'https://inference.local/v1', 'api': 'openai-completions',
             'apiKey': 'openshell-placeholder', 'models': [{
@@ -97,6 +98,8 @@ def owned_configuration(name, inference=None):
                                'workspace': '/sandbox/workspace'}, 'entries': {name: {}}},
     }
 
+    if dashboard(inference) is not None:
+        config['gateway'] = gateway_settings(inference)
     if inference is not None:
         native = native_configuration(name, inference)
         config['models'] = native['models']
@@ -107,7 +110,9 @@ def owned_configuration(name, inference=None):
 
 def configuration_matches(name, inference=None):
     actual = json.loads((ROOT / 'openclaw.json').read_text())
-    # Native settings (including channels, pairing and plugins) belong to OpenClaw.
+    # Native settings outside deployment-owned gateway and agent settings remain native.
+    if dashboard(inference) is not None and actual.get('gateway') != gateway_settings(inference):
+        return False
     if inference is not None and 'agents' in inference:
         native = native_configuration(name, inference)
         # Roster and tool settings are deployment-owned when explicitly declared.
@@ -124,9 +129,17 @@ def healthy(name, runtime_id, inference=None):
     try:
         if not configuration_matches(name, inference):
             return False
-        with urllib.request.urlopen('http://127.0.0.1:18789/healthz', timeout=3) as response:
+        port = gateway_settings(inference)['port']
+        if dashboard(inference) is not None:
+            env = dict(os.environ, NEMOCLAW_INTERFACE_TOKEN=token(ROOT), OPENCLAW_GATEWAY_TOKEN=token(ROOT),
+                       OPENCLAW_CONFIG_PATH=str(ROOT / 'openclaw.json'), OPENCLAW_STATE_DIR=str(ROOT), OPENCLAW_HOME='/sandbox')
+            result = subprocess.run([NODE, CLI, 'gateway', 'call', 'health', '--json', '--timeout', '3000'],
+                                    env=env, capture_output=True, timeout=8)
+            if result.returncode != 0:
+                return False
+        with urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=3) as response:
             return response.status == 200
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         return False
 
 
@@ -188,11 +201,16 @@ class OpenClawRuntime:
         self.env = dict(os.environ, OPENCLAW_HOME='/sandbox',
                         OPENCLAW_STATE_DIR=str(self.home),
                         OPENCLAW_CONFIG_PATH=str(self.home / 'openclaw.json'))
+        if dashboard(self.inference) is not None:
+            self.env['NEMOCLAW_INTERFACE_TOKEN'] = token(self.home)
+            self.env['OPENCLAW_GATEWAY_TOKEN'] = self.env['NEMOCLAW_INTERFACE_TOKEN']
         self.session_key = f'agent:{self.name}:fabric-{self.runtime_id}'
         await self.start_gateway()
 
     def initialize_configuration(self):
         path = self.home / 'openclaw.json'
+        if dashboard(self.inference) is not None:
+            token(self.home, create=not path.exists())
         if path.exists():
             if not configuration_matches(self.name, self.inference):
                 raise RuntimeError('native configuration conflicts with deployment-owned settings')

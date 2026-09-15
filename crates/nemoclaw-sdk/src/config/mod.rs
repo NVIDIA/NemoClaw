@@ -4,7 +4,9 @@
 mod agent_inference;
 pub(crate) mod constraints;
 mod inference;
+mod interfaces;
 pub use agent_inference::*;
+pub use interfaces::*;
 mod network;
 pub use network::*;
 #[doc(hidden)]

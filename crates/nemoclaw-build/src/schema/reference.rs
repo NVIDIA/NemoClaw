@@ -143,6 +143,9 @@ fn guide(name: &str) -> &'static str {
         | "ReasoningEffort" | "AgentAuth" | "AuthMethod" => {
             "[Inference configuration](../inference.md)"
         }
+        "AgentInterfaces" | "OpenClawDashboard" | "DashboardBind" => {
+            "[Agent interfaces](../interfaces.md)"
+        }
         "Agent" => "[Agent runtimes](../agents.md)",
         _ => "[Configuration and credentials](../usage.md#configuration-and-credentials)",
     }

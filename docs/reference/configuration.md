@@ -57,6 +57,7 @@ Paths:
 | `auth` | [AgentAuth](#agentauth) | No | — | Hermes API-key authentication through the routed provider. The provider must declare a credential reference. |
 | `harness` | string | Yes | — | Agent harness. Harnesses other than openclaw require external gateway and inference services. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
 | `inference` | [Inference](#inference) | Yes | — | Primary inference route for this agent. |
+| `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access, declared only on the first agent in a sandbox. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `tools` | [AgentTools](#agenttools) | No | — | Optional OpenClaw tool restriction. Omission preserves native tools; allow: [read] exposes only the read tool, not OS-level filesystem isolation. |
 
@@ -74,6 +75,20 @@ Paths:
 |---|---|---|---|---|
 | `method` | [AuthMethod](#authmethod) | Yes | — | API-key authentication. Interactive login is not supported. |
 | `providerRef` | string | Yes | — | Must equal the primary route's providerRef. Secret values stay in OpenShell. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## AgentInterfaces
+
+Native agent interfaces. Declare once on the first agent in a shared sandbox.
+
+Guide: [Agent interfaces](../interfaces.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].interfaces`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `dashboard` | [OpenClawDashboard](#openclawdashboard) | Yes | — | Enable the OpenClaw dashboard with sandbox-local token authentication. |
 
 ## AgentTools
 
@@ -166,6 +181,20 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `env` | string | Yes | — | Uppercase environment variable name. For TLS fields, its value is a local certificate or key file path; otherwise it is a bearer/API credential. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+
+## DashboardBind
+
+Address on which the native dashboard listens inside the sandbox.
+
+Guide: [Agent interfaces](../interfaces.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].interfaces.dashboard.bind`
+
+Accepted input: string.
+
+Constraints: `"127.0.0.1"` or `"0.0.0.0"`.
 
 ## ExplicitPolicy
 
@@ -417,6 +446,21 @@ Paths:
 | `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. |
 | `proxy` | [Proxy](#proxy) | No | — | HTTP proxy address used by the agent process. Does not create a proxy or change gateway networking. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
+
+## OpenClawDashboard
+
+OpenClaw gateway settings. At least one field is required; omitted fields use native deployment defaults.
+
+Guide: [Agent interfaces](../interfaces.md).
+
+Paths:
+
+- `spec.sandboxes[].agents[].interfaces.dashboard`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `bind` | [DashboardBind](#dashboardbind) | No | — | Sandbox bind address; defaults to loopback. Host publication still requires OpenShell forwarding. |
+| `port` | integer | No | — | Sandbox gateway port; defaults to 18789. Ports 8642 through 8652 are reserved for Hermes. Constraints: minimum 1024; maximum 65535. |
 
 ## Overrides
 

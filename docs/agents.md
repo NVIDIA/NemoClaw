@@ -47,6 +47,8 @@ Build the updated OpenClaw image using the [runtime build procedure](#runtime-li
 Earlier images do not implement this agent-roster interface.
 Changing YAML alone does not update an existing image or migrate retained native configuration.
 
+See [agent interfaces](interfaces.md) for authenticated OpenClaw dashboard access.
+
 ## Pi Model Selection
 
 Pi receives the model ID from `inference.routes[].overrides.model`.

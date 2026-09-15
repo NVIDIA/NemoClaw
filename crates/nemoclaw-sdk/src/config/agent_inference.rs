@@ -109,6 +109,8 @@ pub(crate) struct RuntimeAgent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeInference {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interfaces: Option<AgentInterfaces>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<RuntimeAgent>,
     pub api: InferenceApi,
@@ -119,6 +121,9 @@ pub(crate) struct RuntimeInference {
 impl RuntimeInference {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
         self.tuning.validate(harness)?;
+        if let Some(interfaces) = &self.interfaces {
+            interfaces.validate(harness)?;
+        }
         let mut names = std::collections::BTreeSet::new();
         if !self.agents.is_empty()
             && (harness != "openclaw"
@@ -150,24 +155,26 @@ impl Document {
         (provider.api.is_some()
             || tuning != &RouteTuning::default()
             || agent.auth.is_some()
-            || roster)
-            .then(|| RuntimeInference {
-                agents: if roster {
-                    agents
-                        .iter()
-                        .map(|a| RuntimeAgent {
-                            name: a.name.clone(),
-                            tools: a.tools.clone(),
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                },
-                api: provider
-                    .api
-                    .unwrap_or(InferenceApi::for_harness(&agent.harness)),
-                tuning: tuning.clone(),
-                auth: agent.auth.clone(),
-            })
+            || roster
+            || agent.interfaces.is_some())
+        .then(|| RuntimeInference {
+            interfaces: agent.interfaces.clone(),
+            agents: if roster {
+                agents
+                    .iter()
+                    .map(|a| RuntimeAgent {
+                        name: a.name.clone(),
+                        tools: a.tools.clone(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            api: provider
+                .api
+                .unwrap_or(InferenceApi::for_harness(&agent.harness)),
+            tuning: tuning.clone(),
+            auth: agent.auth.clone(),
+        })
     }
 }

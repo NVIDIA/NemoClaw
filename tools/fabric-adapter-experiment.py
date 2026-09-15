@@ -10,6 +10,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--harness', required=True, choices=('openclaw', 'hermes', 'claude', 'codex', 'mini-swe-agent', 'nooa', 'nooa-bench', 'remote-agent', 'pi'))
+parser.add_argument('--interfaces', action='store_true', help='Exercise the native dashboard with sandbox-local authentication')
 parser.add_argument('--inference-api', choices=('openai-completions', 'openai-responses', 'anthropic-messages'), help='Exercise explicit API selection; OpenClaw also exercises route tuning')
 parser.add_argument('--image', help='Explicit locally built image reference')
 parser.add_argument('--pi-catalog', action='store_true', help='Exercise Pi catalog models instead of custom metadata')
@@ -37,7 +38,7 @@ image = subprocess.check_output(['docker','image','inspect',args.image or f'nc-p
 name = 'nc-fixture-' + str(uuid.uuid4())
 cmd = ['docker', 'run', '--name', name, '--rm', '--runtime=runc', '--network', 'none', *(['--user', '0', '--cap-add', 'NET_ADMIN'] if h == 'openclaw' else []),
        '--add-host', 'inference.local:' + ('8.8.4.4' if h == 'openclaw' else '127.0.0.1'),
-       '-e', f'FABRIC_INFERENCE_API={args.inference_api or ""}', '-e', f'FABRIC_PI_CATALOG={int(args.pi_catalog)}', '-e', 'HOME=/sandbox', '-e', 'TMPDIR=/sandbox/tmp', '-e', 'ADAPTER_PYTHON=/opt/fabric/bin/python',
+       '-e', f'FABRIC_TEST_INTERFACES={int(args.interfaces)}', '-e', f'FABRIC_INFERENCE_API={args.inference_api or ""}', '-e', f'FABRIC_PI_CATALOG={int(args.pi_catalog)}', '-e', 'HOME=/sandbox', '-e', 'TMPDIR=/sandbox/tmp', '-e', 'ADAPTER_PYTHON=/opt/fabric/bin/python',
        '-e', 'PYTHONPATH=/opt/nemoclaw', '-e', 'OPENAI_API_KEY=fixture-only', '-e', 'SSL_CERT_FILE=/certs/ca.crt', '-e', 'REQUESTS_CA_BUNDLE=/certs/ca.crt',
        '-e', 'NODE_EXTRA_CA_CERTS=/certs/ca.crt', '-e', 'LITELLM_LOCAL_MODEL_COST_MAP=True',
        '-v', f'{certs}:/certs:ro', '-v', f'{out}:/evidence', '-v', f'{ROOT / "test/fabric_adapters.py"}:/test.py:ro',

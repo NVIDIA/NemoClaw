@@ -126,6 +126,9 @@ async def main():
         inference['tuning'] = {'contextWindow': 65536, 'maxTokens': 2048, 'reasoning': True, 'reasoningEffort': 'low'}
     if inference and HARNESS == 'hermes':
         inference['auth'] = {'method': 'api-key', 'providerRef': 'fixture'}
+    if os.environ.get('FABRIC_TEST_INTERFACES') == '1':
+        inference = inference or {'api': 'openai-completions', 'tuning': {}}
+        inference['interfaces'] = {'dashboard': {'port': 18800, 'bind': '127.0.0.1'}}
     config = configuration('fixture', HARNESS, model, inference=inference)
     extra = ['--inference', json.dumps(inference)] if inference else []
     env = dict(os.environ, NEMOCLAW_AGENT_NAME='fixture', NEMOCLAW_FABRIC_HARNESS=HARNESS)

@@ -83,7 +83,7 @@ def main():
     shutil.copyfile(ROOT / "image/fabric" / dockerfile, BUILD / "Dockerfile")
     shutil.copyfile(ROOT / "image/fabric/fabric.py", BUILD / "fabric.py")
     if harness == "openclaw":
-        for name in ("openclaw_adapter.py", "openclaw.fabric-adapter.json"):
+        for name in ("openclaw_adapter.py", "openclaw.fabric-adapter.json", "interfaces.py"):
             shutil.copyfile(ROOT / "image/fabric" / name, BUILD / name)
     if harness == "pi":
         shutil.copyfile(ROOT / "image/fabric/pi_host.py", BUILD / "pi_host.py")
@@ -105,6 +105,7 @@ def main():
         "harness": harness, "version": {"deepagents": "0.7.13", "hermes": "0.21.0", "openclaw": "2026.9.4", "claude": "0.2.120", "codex": "0.144.4", "mini-swe-agent": "2.4.6", "nooa": "0.0.10", "nooa-bench": "0.0.10", "remote-agent": "0.4.0", "pi": "0.84.2"}[harness],
         **({"openclaw_image": "ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101",
             "adapter": "NemoClaw adapter; not supplied by upstream Fabric",
+            "interfaces_sha256": hashlib.sha256((ROOT / "image/fabric/interfaces.py").read_bytes()).hexdigest(),
             "adapter_sha256": hashlib.sha256((ROOT / "image/fabric/openclaw_adapter.py").read_bytes()).hexdigest()}
            if harness == "openclaw" else {}),
         **({"hermes_revision": HERMES_REVISION, "hermes_source_sha256": HERMES_HASH,
@@ -116,7 +117,7 @@ def main():
            if harness == "pi" else {}),
         "requirements_sha256": hashlib.sha256(lock.encode()).hexdigest(),
     }, indent=2) + "\n")
-    (BUILD / ".dockerignore").write_text("*\n!Dockerfile\n!pi-source/\n!pi-source/**\n!wheels/\n!wheels/**\n!requirements.txt\n!fabric.py\n!pi_host.py\n!provenance.json\n!openclaw_adapter.py\n!openclaw.fabric-adapter.json\n!hermes-agent-" + HERMES_REVISION + "/\n!hermes-agent-" + HERMES_REVISION + "/**\n")
+    (BUILD / ".dockerignore").write_text("*\n!Dockerfile\n!pi-source/\n!pi-source/**\n!wheels/\n!wheels/**\n!requirements.txt\n!fabric.py\n!pi_host.py\n!provenance.json\n!openclaw_adapter.py\n!interfaces.py\n!openclaw.fabric-adapter.json\n!hermes-agent-" + HERMES_REVISION + "/\n!hermes-agent-" + HERMES_REVISION + "/**\n")
     run("docker", "build", "-t", image_tag, str(BUILD))
     run("docker", "image", "inspect", image_tag, "--format", "{{index .RepoDigests 0}}")
 

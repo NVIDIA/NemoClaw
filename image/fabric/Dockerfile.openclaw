@@ -14,7 +14,7 @@ RUN /opt/fabric/bin/pip install --no-index --find-links=/opt/wheels --require-ha
 COPY --from=openclaw /app /app
 COPY --from=openclaw /usr/local/bin/node /usr/local/bin/node
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
-COPY openclaw_adapter.py openclaw.fabric-adapter.json /opt/nemoclaw/
+COPY openclaw_adapter.py openclaw.fabric-adapter.json interfaces.py /opt/nemoclaw/
 COPY fabric.py /opt/nemoclaw/fabric.py
 COPY provenance.json /opt/nemoclaw/provenance.json
 ENV HOME=/sandbox OPENCLAW_HOME=/sandbox OPENCLAW_STATE_DIR=/sandbox/.openclaw OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json

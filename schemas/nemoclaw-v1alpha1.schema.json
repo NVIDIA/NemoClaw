@@ -17,6 +17,20 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": [
+              "interfaces"
+            ]
+          },
+          "then": {
+            "properties": {
+              "harness": {
+                "const": "openclaw"
+              }
+            }
+          }
         }
       ],
       "description": "One Fabric harness and its inference route.",
@@ -44,6 +58,10 @@
         "inference": {
           "$ref": "#/$defs/Inference",
           "description": "Primary inference route for this agent."
+        },
+        "interfaces": {
+          "$ref": "#/$defs/AgentInterfaces",
+          "description": "Native dashboard access, declared only on the first agent in a sandbox."
         },
         "name": {
           "description": "Lowercase agent name.",
@@ -79,6 +97,20 @@
       "required": [
         "method",
         "providerRef"
+      ],
+      "type": "object"
+    },
+    "AgentInterfaces": {
+      "additionalProperties": false,
+      "description": "Native agent interfaces. Declare once on the first agent in a shared sandbox.",
+      "properties": {
+        "dashboard": {
+          "$ref": "#/$defs/OpenClawDashboard",
+          "description": "Enable the OpenClaw dashboard with sandbox-local token authentication."
+        }
+      },
+      "required": [
+        "dashboard"
       ],
       "type": "object"
     },
@@ -231,6 +263,14 @@
         "env"
       ],
       "type": "object"
+    },
+    "DashboardBind": {
+      "description": "Address on which the native dashboard listens inside the sandbox.",
+      "enum": [
+        "127.0.0.1",
+        "0.0.0.0"
+      ],
+      "type": "string"
     },
     "ExplicitPolicy": {
       "additionalProperties": false,
@@ -973,6 +1013,29 @@
           "tier": {
             "const": ""
           }
+        }
+      },
+      "type": "object"
+    },
+    "OpenClawDashboard": {
+      "additionalProperties": false,
+      "description": "OpenClaw gateway settings. At least one field is required; omitted fields use native deployment defaults.",
+      "minProperties": 1,
+      "properties": {
+        "bind": {
+          "$ref": "#/$defs/DashboardBind",
+          "description": "Sandbox bind address; defaults to loopback. Host publication still requires OpenShell forwarding."
+        },
+        "port": {
+          "description": "Sandbox gateway port; defaults to 18789. Ports 8642 through 8652 are reserved for Hermes.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1024,
+          "not": {
+            "maximum": 8652,
+            "minimum": 8642
+          },
+          "type": "integer"
         }
       },
       "type": "object"

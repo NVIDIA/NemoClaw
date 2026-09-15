@@ -248,6 +248,10 @@ pub struct Agent {
     /// Hermes API-key authentication through the routed provider. The provider must declare a credential reference.
     pub auth: Option<super::AgentAuth>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentInterfaces")]
+    /// Native dashboard access, declared only on the first agent in a sandbox.
+    pub interfaces: Option<super::AgentInterfaces>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentTools")]
     /// Optional OpenClaw tool restriction. Omission preserves native tools; allow: [read] exposes only the read tool, not OS-level filesystem isolation.
     pub tools: Option<super::AgentTools>,

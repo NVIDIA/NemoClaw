@@ -233,6 +233,13 @@ impl Document {
                         == (provider.provider == "anthropic"),
                 "API must match the provider implementation and be supported by the harness",
             )?;
+            if let Some(interfaces) = &agent.interfaces {
+                require(
+                    agent.name == sandbox.agents[0].name,
+                    "interfaces belong to the first agent in a shared sandbox",
+                )?;
+                interfaces.validate(&agent.harness)?;
+            }
             if let Some(auth) = &agent.auth {
                 require(
                     agent.harness == "hermes"
