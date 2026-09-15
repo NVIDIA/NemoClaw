@@ -31,6 +31,7 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 |------------|----------------------------------|
 | Node.js    | 22.19 or later |
 | npm        | 10 or later |
+| OpenShell  | `0.0.117-dev.142-g26f2f9639`, installed and verified by `$$nemoclaw onboard` |
 | SHA-256 tool | `sha256sum` or `shasum`, required only when the installer must install or upgrade Node.js through nvm |
 | Python     | Python 3 at a trusted system location, with POSIX descriptor-relative filesystem support |
 | Container runtime | Docker Engine, Docker Desktop, or Colima on a tested platform (default), or rootless Podman on qualified native Linux and Windows WSL2 paths |
@@ -87,6 +88,8 @@ docker info
 ```
 
 <Warning title="OpenShell Lifecycle">
+NemoClaw pins the OpenShell `dev` release at source commit `26f2f963936f68c0d5be36b34cda570d8f79f315`.
+The installer accepts only runtime version `0.0.117-dev.142-g26f2f9639` and verifies every downloaded artifact by SHA-256.
 For NemoClaw-managed environments, use `$$nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
 Avoid `openshell self-update`, `npm update -g openshell`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `$$nemoclaw onboard`.
 </Warning>

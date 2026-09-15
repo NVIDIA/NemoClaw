@@ -7,7 +7,7 @@ import path from "node:path";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { ROOT, runCapture } from "../runner";
 
-export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.116";
+export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.117-dev.142-g26f2f9639";
 
 export function getInstalledOpenshellVersion(versionOutput: string | null = null): string | null {
   const openshellBin = resolveOpenshell();
@@ -15,7 +15,7 @@ export function getInstalledOpenshellVersion(versionOutput: string | null = null
   const output = String(
     versionOutput ?? runCapture([openshellBin as string, "-V"], { ignoreError: true }),
   ).trim();
-  const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
+  const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)/i);
   if (match) return match[1];
   return null;
 }
@@ -60,7 +60,7 @@ function getBlueprintVersionField(field: string, rootDir = ROOT): string | null 
     const value = parsed && parsed[field];
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
-    if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(trimmed)) return null;
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(trimmed)) return null;
     return trimmed;
   } catch {
     return null;
@@ -98,9 +98,14 @@ export function isOpenshellDevVersion(versionOutput: string | null | undefined):
 }
 
 export function shouldAllowOpenshellAboveBlueprintMax(
-  _versionOutput: string | null | undefined,
+  versionOutput: string | null | undefined,
   _platform: NodeJS.Platform = process.platform,
-  _env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return false;
+  const channel = getOpenshellChannel(env);
+  const selectedVersion = getInstalledOpenshellVersion(versionOutput ?? null);
+  return (
+    (channel === "auto" || channel === "dev") &&
+    selectedVersion === SUPPORTED_OPENSHELL_FALLBACK_VERSION
+  );
 }

@@ -10,7 +10,10 @@ import {
   type OpenshellInstallVersionResolution,
   resolveOpenshellInstallVersion,
 } from "./openshell-install";
-import { getOpenshellChannel } from "./openshell-version";
+import {
+  getOpenshellChannel,
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+} from "./openshell-version";
 
 const GH_LIMIT = 1000;
 const PER_PAGE = 100;
@@ -171,14 +174,24 @@ export function computeOpenshellInstallEnv(
   deps: OpenshellInstallPinDeps,
 ): OpenshellInstallEnvDirective {
   const channel = getOpenshellChannel(baseEnv);
-  if (channel === "dev") {
+  const blueprintMin = deps.getBlueprintMinOpenshellVersion?.() ?? null;
+  const blueprintMax = deps.getBlueprintMaxOpenshellVersion();
+  if (channel === "stable") {
     const error = deps.error ?? ((m: string) => console.error(m));
     error("");
     error(
-      "  ✗ NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
+      `  ✗ NemoClaw requires OpenShell ${SUPPORTED_OPENSHELL_FALLBACK_VERSION}; the stable channel is not supported.`,
     );
     error("");
     return { env: null };
+  }
+  if (blueprintMax === SUPPORTED_OPENSHELL_FALLBACK_VERSION || channel === "dev") {
+    const overlay: NodeJS.ProcessEnv = {
+      NEMOCLAW_OPENSHELL_PIN_VERSION: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+    };
+    if (blueprintMin) overlay.NEMOCLAW_OPENSHELL_MIN_VERSION = blueprintMin;
+    if (blueprintMax) overlay.NEMOCLAW_OPENSHELL_MAX_VERSION = blueprintMax;
+    return { env: { ...baseEnv, ...overlay } };
   }
   const pin: OpenshellInstallPinResult = resolveOpenshellInstallPin(deps);
   if (pin.kind === "incompatible") {
@@ -189,8 +202,6 @@ export function computeOpenshellInstallEnv(
     return { env: null };
   }
   const overlay: NodeJS.ProcessEnv = {};
-  const blueprintMin = deps.getBlueprintMinOpenshellVersion?.() ?? null;
-  const blueprintMax = deps.getBlueprintMaxOpenshellVersion();
   if (blueprintMin) overlay.NEMOCLAW_OPENSHELL_MIN_VERSION = blueprintMin;
   if (blueprintMax) overlay.NEMOCLAW_OPENSHELL_MAX_VERSION = blueprintMax;
   if (pin.kind === "pin") overlay.NEMOCLAW_OPENSHELL_PIN_VERSION = pin.version;

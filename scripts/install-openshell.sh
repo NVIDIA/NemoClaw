@@ -117,24 +117,24 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 # round-trippable base policies: WebSocket text frames, provider-shaped
 # aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
 # `policy get --base` for MCP/JSON-RPC-safe read-modify-write operations.
-MIN_VERSION="0.0.116"
+MIN_VERSION="0.0.117-dev.142-g26f2f9639"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.116"
+MAX_VERSION="0.0.117-dev.142-g26f2f9639"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-# Keep the base-trusted template selector aligned with the immutable release;
-# the dev channel is rejected below and cannot consume it.
-DEV_MIN_VERSION="0.0.116"
+# The dev release label is mutable. The runtime version and every consumed
+# artifact digest below freeze this install to source 26f2f963936f68c0d5be36b34cda570d8f79f315.
+RELEASE_TAG="dev"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
-  stable | auto) ;;
-  dev) fail "NemoClaw requires exact stable OpenShell $DEV_MIN_VERSION; the dev channel is not supported." ;;
-  *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto" ;;
+  dev | auto) ;;
+  stable) fail "NemoClaw requires OpenShell $PIN_VERSION; the stable channel is not supported." ;;
+  *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: dev, auto" ;;
 esac
 
 FORCE_INSTALL="${NEMOCLAW_OPENSHELL_FORCE_INSTALL:-0}"
@@ -170,7 +170,7 @@ esac
 # assignment. `fail` now writes to stderr (#3446 CodeRabbit), but keeping
 # the validation outside of $(...) avoids relying on that.
 if [ -n "${NEMOCLAW_OPENSHELL_MIN_VERSION:-}" ]; then
-  if [[ "$NEMOCLAW_OPENSHELL_MIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if [[ "$NEMOCLAW_OPENSHELL_MIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
     [ "$NEMOCLAW_OPENSHELL_MIN_VERSION" = "$MIN_VERSION" ] \
       || fail "NEMOCLAW_OPENSHELL_MIN_VERSION must equal immutable OpenShell $MIN_VERSION."
     MIN_VERSION="$NEMOCLAW_OPENSHELL_MIN_VERSION"
@@ -179,7 +179,7 @@ if [ -n "${NEMOCLAW_OPENSHELL_MIN_VERSION:-}" ]; then
   fi
 fi
 if [ -n "${NEMOCLAW_OPENSHELL_MAX_VERSION:-}" ]; then
-  if [[ "$NEMOCLAW_OPENSHELL_MAX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if [[ "$NEMOCLAW_OPENSHELL_MAX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
     [ "$NEMOCLAW_OPENSHELL_MAX_VERSION" = "$MAX_VERSION" ] \
       || fail "NEMOCLAW_OPENSHELL_MAX_VERSION must equal immutable OpenShell $MAX_VERSION."
     MAX_VERSION="$NEMOCLAW_OPENSHELL_MAX_VERSION"
@@ -192,7 +192,7 @@ if [ -n "${NEMOCLAW_OPENSHELL_MAX_VERSION:-}" ]; then
   fi
 fi
 if [ -n "${NEMOCLAW_OPENSHELL_PIN_VERSION:-}" ]; then
-  if [[ "$NEMOCLAW_OPENSHELL_PIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if [[ "$NEMOCLAW_OPENSHELL_PIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
     [ "$NEMOCLAW_OPENSHELL_PIN_VERSION" = "$PIN_VERSION" ] \
       || fail "NEMOCLAW_OPENSHELL_PIN_VERSION must equal immutable OpenShell $PIN_VERSION."
     PIN_VERSION="$NEMOCLAW_OPENSHELL_PIN_VERSION"
@@ -200,8 +200,6 @@ if [ -n "${NEMOCLAW_OPENSHELL_PIN_VERSION:-}" ]; then
     fail "NEMOCLAW_OPENSHELL_PIN_VERSION='$NEMOCLAW_OPENSHELL_PIN_VERSION' is not a valid X.Y.Z version."
   fi
 fi
-
-RELEASE_TAG="v${PIN_VERSION}"
 
 # invalidState: a consumed OpenShell release asset differs from the digest
 # published for the selected immutable release, or a mutable registry tag moves.
@@ -217,41 +215,41 @@ RELEASE_TAG="v${PIN_VERSION}"
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.116:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
+    dev:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "29b2e4385984d0aebb0ae36b6febc0469d4f60b23a7f5613d175afe6043eeb34"
       ;;
-    v0.0.116:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43"
+    dev:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "11d6d34e3b1ec29dd607e04caac3f18dab87640ecfe99ed004fbb42a503cea41"
       ;;
-    v0.0.116:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "e582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22"
+    dev:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "9f834f996b3f7ebac360553037e099fa34c415f6ac4d30e2d7bf96301b9f7f64"
       ;;
-    v0.0.116:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89"
+    dev:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "dd7f143e45ca68dd67812ffe1da43a174789e1ba0106915296055e8b8c291807"
       ;;
-    v0.0.116:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "292c379193a339220234ffea585350901468bb8f4076e2076bc074e8ed18974b"
+    dev:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "0f00bb18adbccccb8ba68be14b3126322bfd37b90af1c8826fe9ff5e91915ec3"
       ;;
-    v0.0.116:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "f192d3d737c125264e13ef73458541df2ca6a9eb2fa599736a7f2587d5d2ce8d"
+    dev:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "8e3a2739a4e200e5d3617381acae1a69475e3ed1d17a0a9f2af2a79126644e4f"
       ;;
-    v0.0.116:openshell-sandbox-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423"
+    dev:openshell-sandbox-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "33cc5932f1f9ce27d30c6afd0b87adcf4adb7ef33123947e43c6a53b44014cd7"
       ;;
-    v0.0.116:openshell-sandbox-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557"
+    dev:openshell-sandbox-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "e5904b115a33cdccfe3e79d378327711ab2e6e57cb9efac74e32d643b777d5d6"
       ;;
-    v0.0.116:openshell-checksums-sha256.txt)
-      printf '%s\n' "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
+    dev:openshell-checksums-sha256.txt)
+      printf '%s\n' "41ab872f184a34cbfac8af876c6310117e790884b2cd423826f7aee7b0375cb5"
       ;;
-    v0.0.116:openshell-gateway-checksums-sha256.txt)
-      printf '%s\n' "572d80ded99fab0c2cf75f8108c62ab3e8455356b3c3b38de1be98806a2440e9"
+    dev:openshell-gateway-checksums-sha256.txt)
+      printf '%s\n' "34b49e96c7230a3ca05b3a9b94c9d6fbf212004f1e26053d8aab9249cdaed414"
       ;;
-    v0.0.116:openshell-sandbox-checksums-sha256.txt)
-      printf '%s\n' "0cb63b3b4436214224872c1ba245bda0d92d904822aa4f28015081269f398f93"
+    dev:openshell-sandbox-checksums-sha256.txt)
+      printf '%s\n' "9a45d76f6ef80ec99e75f50168513e14d72932d7f7b30d50363ee5abaf1956bc"
       ;;
-    v0.0.116:openshell.rb)
-      printf '%s\n' "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558"
+    dev:openshell.rb)
+      printf '%s\n' "9d6c209c0eb4c3bbebb15f3650377c264d4e3e80f4aa685f89018c6beba10252"
       ;;
     *)
       return 1
@@ -288,6 +286,8 @@ version_gte() {
   read -r -a b <<<"$2"
   for i in 0 1 2; do
     local ai=${a[$i]:-0} bi=${b[$i]:-0}
+    ai="${ai%%-*}"
+    bi="${bi%%-*}"
     if ((ai > bi)); then return 0; fi
     if ((ai < bi)); then return 1; fi
   done
@@ -847,10 +847,11 @@ ACTIVE_OPENSHELL_BIN=""
 if command -v openshell >/dev/null 2>&1; then
   ACTIVE_OPENSHELL_BIN="$(command -v openshell 2>/dev/null || true)"
   INSTALLED_VERSION_OUTPUT="$(openshell --version 2>&1 || true)"
-  INSTALLED_VERSION="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  INSTALLED_BUILD_VERSION="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*' | head -1 || true)"
+  INSTALLED_VERSION="${INSTALLED_BUILD_VERSION%%-*}"
   [ -n "$INSTALLED_VERSION" ] || INSTALLED_VERSION="0.0.0"
-  if printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -qi 'dev'; then
-    warn "OpenShell development builds are unsupported — reinstalling exact stable OpenShell ${PIN_VERSION}..."
+  if [ "$INSTALLED_BUILD_VERSION" != "$PIN_VERSION" ]; then
+    warn "openshell $INSTALLED_BUILD_VERSION does not match required build $PIN_VERSION — reinstalling..."
   elif version_gte "$INSTALLED_VERSION" "$MIN_VERSION"; then
     if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
       warn "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release — reinstalling pinned OpenShell ${PIN_VERSION}..."
