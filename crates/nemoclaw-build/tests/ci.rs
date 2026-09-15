@@ -2,6 +2,38 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test]
+fn native_commands_preserve_workspace_features_between_build_and_test() {
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
+    let steps = workflow["jobs"]["native"]["steps"].as_array().unwrap();
+    for script in steps.iter().filter_map(|step| step["run"].as_str()) {
+        for command in script
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("cargo "))
+        {
+            if command.starts_with("fmt ") {
+                continue;
+            }
+            assert!(
+                !command.starts_with("run "),
+                "run the prebuilt bundle tool directly"
+            );
+            assert!(
+                command.contains("--workspace"),
+                "package selection changes dependency features: {command}"
+            );
+            assert!(command.contains("--locked"));
+            if command.starts_with("build ") {
+                assert!(
+                    command.contains("--all-targets"),
+                    "build must include test dependency features"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn native_cache_reuses_compatible_builds_without_restoring_bundles_or_credentials() {
     let workflow: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();

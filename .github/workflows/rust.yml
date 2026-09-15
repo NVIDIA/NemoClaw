@@ -66,9 +66,13 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo build --locked --workspace --all-targets
           cargo test --locked --workspace
       - name: Build and verify native bundle
-        run: cargo run --locked -p nemoclaw-build -- bundle --platform "$TEST_PLATFORM"
+        run: |
+          suffix=""
+          if [ "$TEST_PLATFORM" = windows_amd64 ]; then suffix=.exe; fi
+          "./target/debug/nemoclaw-build$suffix" bundle --platform "$TEST_PLATFORM"
       - name: Execute real OpenTofu and SDK/CLI lifecycle
         run: |
           export NEMOCLAW_TEST_BUNDLE="$PWD/dist/$TEST_PLATFORM"
@@ -76,10 +80,8 @@ jobs:
           if [ "$TEST_PLATFORM" = windows_amd64 ]; then suffix=.exe; fi
           export NEMOCLAW_TEST_TOFU="$NEMOCLAW_TEST_BUNDLE/libexec/tofu$suffix"
           export NEMOCLAW_TEST_PROVIDER="$PWD/target/debug/terraform-provider-nemoclaw$suffix"
-          cargo build --locked -p nemoclaw-provider
-          cargo test --locked -p nemoclaw-e2e --test provider_protocol -- --ignored
-          cargo test --locked -p nemoclaw-e2e --test opentofu_openshell -- --ignored
-          cargo test --locked -p nemoclaw-e2e --test deployment --test fabric_deployment -- --ignored
+          tests=(--test provider_protocol --test opentofu_openshell --test deployment --test fabric_deployment)
           if [ "$TEST_PLATFORM" != windows_amd64 ]; then
-            cargo test --locked -p nemoclaw-e2e --test ollama -- --ignored
+            tests+=(--test ollama)
           fi
+          cargo test --locked --workspace "${tests[@]}" -- --ignored
