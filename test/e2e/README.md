@@ -592,13 +592,14 @@ snake-case include entries and use `coverage_variant` when one job contributes
 multiple rows. `tools/e2e/workflow-plan.mts` composes and validates these sources.
 Do not add a separate hand-maintained execution list.
 
-The default coverage matrix excludes explicit-only jobs and inert typed-registry declarations.
-The rendered report lists those categories separately and inventories every typed declaration,
-including declarations that have no executable matrix cell.
-Explicit-only rows keep their coverage dimensions but do not join the default release matrix.
-Inert declarations report unresolved coverage fields and the missing executable ownership.
-
-The inert declarations are combinatorial gaps, not supported matrix cells. #8285 owns the decision on the inert cross-runtime foundation. #8286 owns executable-only registry cleanup after that decision. Do not schedule other Cartesian-product cells without an accepted supported combination. This migration removes no execution, so it requires no duplicate-to-retained-evidence mapping. A documented gap does not schedule a new combination or change release judgment.
+The typed registry contains executable matrix cells only. Each cell must name
+executable platform, install, runtime, and onboarding routes plus resolved
+coverage metadata. A declared lifecycle route must also be executable. Registry
+construction rejects invalid cells. Selecting a removed or unknown target ID
+fails and lists the available IDs. Proposed platform, agent, or runtime
+combinations stay in their owned planning issue until fixtures and execution
+ownership exist. Explicit-only workflow rows keep their coverage dimensions but
+do not join the default release matrix.
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
