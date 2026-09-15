@@ -11,14 +11,142 @@ use super::runtime_transaction::{
 };
 use super::windows_sha256::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::c_void;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::os::windows::ffi::OsStrExt;
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::ptr::{null, null_mut};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 const STORAGE_HEADER: &str = "NEMOCLAW_MSI_STORAGE_V1\n";
 const EMBEDDED_IMAGE_RUNTIME_ID: Option<&str> = option_env!("NEMOCLAW_RUNTIME_IMAGE_ID");
 const EMBEDDED_IMAGE_SHA256: Option<&str> = option_env!("NEMOCLAW_RUNTIME_IMAGE_SHA256");
+static LAST_NATIVE_STATUS: AtomicU32 = AtomicU32::new(0);
+
+type RawHandle = *mut c_void;
+#[repr(C)]
+struct Guid {
+    data1: u32,
+    data2: u16,
+    data3: u16,
+    data4: [u8; 8],
+}
+#[repr(C)]
+struct VirtualStorageType {
+    device_id: u32,
+    vendor_id: Guid,
+}
+#[repr(C)]
+struct OpenVirtualDiskParameters {
+    version: u32,
+    rw_depth: u32,
+}
+#[repr(C)]
+struct AttachVirtualDiskParameters {
+    version: u32,
+    reserved: u32,
+}
+#[link(name = "virtdisk")]
+unsafe extern "system" {
+    fn OpenVirtualDisk(
+        storage: *const VirtualStorageType,
+        path: *const u16,
+        access: u32,
+        flags: u32,
+        parameters: *const OpenVirtualDiskParameters,
+        handle: *mut RawHandle,
+    ) -> u32;
+    fn AttachVirtualDisk(
+        handle: RawHandle,
+        security: *const c_void,
+        flags: u32,
+        provider_flags: u32,
+        parameters: *const AttachVirtualDiskParameters,
+        overlapped: *mut c_void,
+    ) -> u32;
+    fn DetachVirtualDisk(handle: RawHandle, flags: u32, provider_flags: u32) -> u32;
+}
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CloseHandle(handle: RawHandle) -> i32;
+}
+struct VirtualDisk(RawHandle);
+impl Drop for VirtualDisk {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
+pub(crate) fn diagnostic_status() -> u32 {
+    LAST_NATIVE_STATUS.load(Ordering::Relaxed)
+}
+
+fn open_virtual_disk(image: &Path, access: u32) -> Result<VirtualDisk, Error> {
+    const VIRTUAL_STORAGE_TYPE_DEVICE_VHDX: u32 = 3;
+    const MICROSOFT_VENDOR: Guid = Guid {
+        data1: 0xec98_4aec,
+        data2: 0xa0f9,
+        data3: 0x47e9,
+        data4: [0x90, 0x1f, 0x71, 0x41, 0x5a, 0x66, 0x34, 0x5b],
+    };
+    let storage = VirtualStorageType {
+        device_id: VIRTUAL_STORAGE_TYPE_DEVICE_VHDX,
+        vendor_id: MICROSOFT_VENDOR,
+    };
+    let parameters = OpenVirtualDiskParameters {
+        version: 1,
+        rw_depth: 1,
+    };
+    let mut handle = null_mut();
+    let mut path = image.as_os_str().encode_wide().collect::<Vec<_>>();
+    path.push(0);
+    let status = unsafe {
+        OpenVirtualDisk(&storage, path.as_ptr(), access, 0, &parameters, &mut handle)
+    };
+    LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+    if status != 0 || handle.is_null() {
+        return Err(Error::Native("runtime-image-open"));
+    }
+    Ok(VirtualDisk(handle))
+}
+
+fn attach_virtual_disk(image: &Path) -> Result<(), Error> {
+    const ATTACH_RO: u32 = 0x0001_0000;
+    const PARAMETERS: AttachVirtualDiskParameters = AttachVirtualDiskParameters {
+        version: 1,
+        reserved: 0,
+    };
+    let attributes = std::fs::metadata(image)
+        .map_err(|_| Error::Native("runtime-image-open"))?
+        .file_attributes();
+    if attributes & (0x0800 | 0x4000) != 0 {
+        return Err(Error::Native("runtime-image-host-compression"));
+    }
+    let disk = open_virtual_disk(image, ATTACH_RO)?;
+    // Read-only, no automatic drive letter, and persistent beyond this helper
+    // handle. The explicit transaction detach remains the sole owner cleanup.
+    let status = unsafe { AttachVirtualDisk(disk.0, null(), 0x1 | 0x2 | 0x4, 0, &PARAMETERS, null_mut()) };
+    LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+    if status != 0 {
+        return Err(Error::Native("runtime-image-attach"));
+    }
+    Ok(())
+}
+
+fn detach_virtual_disk(image: &Path) -> Result<(), Error> {
+    const DETACH: u32 = 0x0004_0000;
+    let disk = open_virtual_disk(image, DETACH)
+        .map_err(|_| Error::Native("runtime-image-detach"))?;
+    let status = unsafe { DetachVirtualDisk(disk.0, 0, 0) };
+    LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+    if !matches!(status, 0 | 2 | 1168) {
+        return Err(Error::Native("runtime-image-detach"));
+    }
+    Ok(())
+}
 fn native_error(value: &'static str) -> Error {
     if value == "runtime-busy" {
         Error::Busy
@@ -155,7 +283,8 @@ impl WindowsStore {
             return Ok(());
         }
         std::fs::create_dir_all(&mount).map_err(|_| Error::Native("runtime-image-mount"))?;
-        let image = image.to_str().ok_or(Error::Identity)?;
+        attach_virtual_disk(&image)?;
+        let image_text = image.to_str().ok_or(Error::Identity)?;
         // DiskPart's folder-mount grammar takes the empty directory path itself;
         // a trailing separator makes the quoted `assign mount=` operand invalid.
         let mount = mount
@@ -166,13 +295,17 @@ impl WindowsStore {
         Self::diskpart(
             runtime_id,
             &[
-                format!("select vdisk file=\"{image}\""),
-                "attach vdisk readonly".into(),
+                format!("select vdisk file=\"{image_text}\""),
                 "select partition 1".into(),
                 format!("assign mount=\"{mount}\""),
                 "exit".into(),
             ],
-        )?;
+        )
+        .inspect_err(|_| {
+            let status = LAST_NATIVE_STATUS.load(Ordering::Relaxed);
+            let _ = detach_virtual_disk(&image);
+            LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+        })?;
         if !Path::new(&mount).join("runtime.manifest").is_file() {
             return Err(Error::Native("runtime-image-mount"));
         }
@@ -180,20 +313,10 @@ impl WindowsStore {
     }
     fn detach_image(runtime_id: &str) -> Result<(), Error> {
         let (image, mount) = Self::image_paths(runtime_id)?;
-        if !image.is_file() || !mount.join("runtime.manifest").exists() {
+        if !image.is_file() {
             return Ok(());
         }
-        Self::diskpart(
-            runtime_id,
-            &[
-                format!(
-                    "select vdisk file=\"{}\"",
-                    image.to_str().ok_or(Error::Identity)?
-                ),
-                "detach vdisk".into(),
-                "exit".into(),
-            ],
-        )?;
+        detach_virtual_disk(&image)?;
         if mount.join("runtime.manifest").exists() {
             return Err(Error::Native("runtime-image-detach"));
         }

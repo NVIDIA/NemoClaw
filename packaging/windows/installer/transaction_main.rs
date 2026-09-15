@@ -86,7 +86,7 @@ mod diagnostics {
             }
         }
     }
-    pub(super) fn record(stage: &str, error: &str, exit_code: i32) {
+    pub(super) fn record(stage: &str, error: &str, exit_code: i32, native_status: u32) {
         let Some(key) = key() else { return };
         let name = wide(VALUE);
         let mut size = 0;
@@ -101,7 +101,9 @@ mod diagnostics {
             )
         };
         if existing == ERROR_FILE_NOT_FOUND {
-            let data = wide(&format!("stage={stage}; error={error}; exitCode={exit_code}"));
+            let data = wide(&format!(
+                "stage={stage}; error={error}; exitCode={exit_code}; nativeStatus={native_status}"
+            ));
             unsafe {
                 RegSetValueExW(
                     key,
@@ -130,6 +132,9 @@ fn failure_exit_code(error: &str) -> i32 {
         "Native(\"runtime-image-script-cleanup\")" => 114,
         "Native(\"runtime-image-mount\")" => 115,
         "Native(\"runtime-image-detach\")" => 116,
+        "Native(\"runtime-image-open\")" => 117,
+        "Native(\"runtime-image-host-compression\")" => 118,
+        "Native(\"runtime-image-attach\")" => 119,
         _ => 120,
     }
 }
@@ -198,7 +203,12 @@ fn main() {
                         | "commit-install" | "commit-remove" | "rollback") => args[1],
                     _ => "invalid",
                 };
-                diagnostics::record(stage, &error, exit_code);
+                diagnostics::record(
+                    stage,
+                    &error,
+                    exit_code,
+                    windows_runtime_store::diagnostic_status(),
+                );
             }
             std::process::exit(exit_code);
         }
