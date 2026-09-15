@@ -251,7 +251,7 @@ function reportFinalGatewayLeftRunning(
     `  ${YW}⚠${R} Shared NemoClaw gateway left running${cleanupRequested ? "; --cleanup-gateway was not applied" : ""}: ${cause}.`,
   );
   console.warn(
-    `  ${YW}⚠${R} After 'openshell sandbox list' reports no sandboxes, run 'openshell gateway remove ${gatewayName}' to remove it.`,
+    `  ${YW}⚠${R} After 'openshell sandbox list -g ${gatewayName}' reports no sandboxes, run 'openshell gateway remove ${gatewayName}' to remove it.`,
   );
 }
 

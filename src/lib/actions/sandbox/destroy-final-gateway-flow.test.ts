@@ -78,6 +78,7 @@ describe("destroySandbox final gateway decision", () => {
     expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
     expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
     expect(warnOutput(harness)).toContain("OpenShell still reports sandbox 'beta'");
+    expect(warnOutput(harness)).toContain("openshell sandbox list -g nemoclaw-19080");
     expect(warnOutput(harness)).toContain("openshell gateway remove nemoclaw-19080");
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain(
       "Shared NemoClaw gateway preserved",
@@ -97,6 +98,7 @@ describe("destroySandbox final gateway decision", () => {
     expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
     expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
     expect(warnOutput(harness)).toContain("'openshell sandbox list' failed");
+    expect(warnOutput(harness)).toContain("openshell sandbox list -g nemoclaw-19080");
     expect(warnOutput(harness)).toContain("openshell gateway remove nemoclaw-19080");
   });
 });
