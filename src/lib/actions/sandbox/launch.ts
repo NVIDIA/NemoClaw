@@ -41,14 +41,14 @@ import {
 import { getKnownSandboxTarget, getPersistedSandboxTargetGateway } from "./gateway-target";
 import {
   createBoundLaunchReadinessDeps,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   publicationFromDecision,
   publishLaunchReadiness,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 
-const LAUNCH_READINESS_FENCE_REPAIR =
-  "Launch readiness evidence could not be safely invalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
+const LAUNCH_READINESS_FENCE_FAILURE = "Launch readiness evidence could not be safely invalidated.";
 const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({
   hostCwd: REPOSITORY_ROOT,
 });
@@ -447,7 +447,11 @@ async function prepareLaunchSession(
     ) {
       throw new Error(`Sandbox '${sandboxName}' is not registered in the local NemoClaw state.`);
     }
-    if (decision.recoveryBlocked) throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
+    if (decision.recoveryBlocked) {
+      throw new Error(
+        `${LAUNCH_READINESS_FENCE_FAILURE}${formatLaunchReadinessUnsafeAuthorityEvidence(undefined)}`,
+      );
+    }
     const fallbackDecision = decision;
     const publicationRequest = publicationFromDecision(sandboxName, fallbackDecision);
     const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
@@ -478,7 +482,11 @@ async function prepareLaunchSession(
       acceptedHermesAuthority = decision.kind === "accepted" ? inspection.hermesAuthority : null;
       continue;
     }
-    if (gated.kind === "unsafe") throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
+    if (gated.kind === "unsafe") {
+      throw new Error(
+        `${LAUNCH_READINESS_FENCE_FAILURE}${formatLaunchReadinessUnsafeAuthorityEvidence(gated.evidence)}`,
+      );
+    }
     if (gated.value.publication?.kind === "policy-observation-failed") {
       const gatewayName = publicationRequest.gatewayName ?? "the recorded gateway";
       throw new Error(
