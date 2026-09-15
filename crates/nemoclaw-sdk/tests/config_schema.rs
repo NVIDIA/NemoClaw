@@ -104,6 +104,22 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
 }
 
 #[test]
+fn voiceclaw_intent_schema_matches_the_parser_boundary() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let original = input("voiceclaw-r0.yaml");
+    agrees(&validator, &original, true);
+    for (path, replacement) in [
+        ("/spec/integrations/0/kind", json!("unknown")),
+        ("/spec/integrations/0/agentRef", json!("UPPER")),
+        ("/spec/sandboxes/0/agents/0/harness", json!("hermes")),
+    ] {
+        let mut value = original.clone();
+        *value.pointer_mut(path).unwrap() = replacement;
+        agrees(&validator, &value, false);
+    }
+}
+
+#[test]
 fn schema_and_parser_accept_every_maintained_example() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");

@@ -56,7 +56,13 @@ pub(super) fn constrain(root: &mut Value) {
     property(root, "apiVersion", json!({"const": API_VERSION}));
     property(root, "kind", json!({"const": c::KIND}));
     let defs = root["$defs"].as_object_mut().unwrap();
-    for name in ["Metadata", "InferenceProvider", "Sandbox", "Agent"] {
+    for name in [
+        "Metadata",
+        "InferenceProvider",
+        "Sandbox",
+        "Agent",
+        "Integration",
+    ] {
         property(
             defs.get_mut(name).unwrap(),
             "name",
@@ -77,6 +83,17 @@ pub(super) fn constrain(root: &mut Value) {
         );
     }
     property(&mut defs["Sandbox"], "agents", json!({"minItems": 1}));
+    property(&mut defs["Spec"], "integrations", json!({"maxItems": 1}));
+    property(
+        &mut defs["Integration"],
+        "agentRef",
+        json!({"pattern": c::SLUG}),
+    );
+    property(
+        &mut defs["Integration"],
+        "kind",
+        json!({"const": "voiceclaw"}),
+    );
     defs["Sandbox"]["allOf"] = json!([{
         "if": {"properties": {"agents": {"minItems": 2}}, "required": ["agents"]},
         "then": {"properties": {"agents": {"items": {"properties": {"harness": {"const": "openclaw"}}}}}}
@@ -270,13 +287,16 @@ pub(super) fn constrain(root: &mut Value) {
         {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "pi"}}), true),
          "then": at(&route, forbid(&["piModel"]), false)},
         {"if": at(&format!("{provider}/ollama"), json!({}), true),
-         "then": at(&format!("{route}/model"), json!({"pattern": c::OLLAMA_MODEL}), false)}
+         "then": at(&format!("{route}/model"), json!({"pattern": c::OLLAMA_MODEL}), false)},
+        {"if": at("spec/integrations", json!({"minItems": 1}), true), "then": at(
+            "spec/sandboxes/[]/agents", json!({"maxItems": 1, "items": {"properties": {"harness": {"const": "openclaw"}}}}), false)}
     ]);
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+        "The parser checks that a VoiceClaw integration's agentRef exactly matches the one declared OpenClaw agent.",
         "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
