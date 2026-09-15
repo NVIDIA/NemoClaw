@@ -20,17 +20,17 @@ import {
 import { waitForStandaloneDockerDriverGateway } from "../docker-driver-gateway-readiness";
 import * as dockerDriverGatewayRuntimeMarker from "../docker-driver-gateway-runtime-marker";
 import {
-  createDockerDriverGatewayStateOwnership,
-  type DockerDriverGatewayStateOwnership,
-} from "./state-ownership";
-import {
   getTrustedActiveOpenShellGatewayUserServiceStopTarget,
   type TrustedActiveOpenShellGatewayUserServiceStopTarget,
 } from "../docker-driver-gateway-service";
-import * as gatewayStateLifecycleLock from "./state-lifecycle-lock";
 import { formatGatewayHealthWaitLimit } from "../gateway-health-wait";
-import { verifySandboxBridgeGatewayReachableOrExit } from "../gateway-sandbox-reachability";
 import type { GatewayRecoveryOutput } from "../gateway-recovery";
+import { verifySandboxBridgeGatewayReachableOrExit } from "../gateway-sandbox-reachability";
+import * as gatewayStateLifecycleLock from "./state-lifecycle-lock";
+import {
+  createDockerDriverGatewayStateOwnership,
+  type DockerDriverGatewayStateOwnership,
+} from "./state-ownership";
 
 type GatewayRuntimeHelpers = ReturnType<
   typeof import("../docker-driver-gateway-runtime").createDockerDriverGatewayRuntimeHelpers
@@ -65,10 +65,12 @@ export interface DockerDriverGatewayStartDeps {
   isGatewayTcpReady: DynamicGatewayHelpers["isGatewayTcpReady"];
   isPidAlive: GatewayRuntimeHelpers["isPidAlive"];
   logDockerDriverGatewayRestart(reason: string): void;
+  platform?: NodeJS.Platform;
   registerDockerDriverGatewayEndpoint(
     runtimeSelection?: OpenShellRuntimeSelection,
   ): Promise<boolean>;
   rememberDockerDriverGatewayPid: GatewayRuntimeHelpers["rememberDockerDriverGatewayPid"];
+  readDockerDriverGatewayProcessEnvironment?: (pid: number) => Record<string, string> | null;
   resolveOpenShellGatewayBinary: GatewayRuntimeHelpers["resolveOpenShellGatewayBinary"];
   resolveOpenShellSandboxBinary: GatewayRuntimeHelpers["resolveOpenShellSandboxBinary"];
   runner: Pick<typeof import("../../runner"), "runCapture" | "runCaptureEx">;
@@ -150,11 +152,13 @@ export function createDockerDriverGatewayStart(
   deps: DockerDriverGatewayStartDeps,
 ): DockerDriverGatewayStart {
   const stateOwnership = createDockerDriverGatewayStateOwnership({
+    getDockerDriverGatewayPid: deps.getDockerDriverGatewayPid,
     getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
     isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
     isPidAlive: deps.isPidAlive,
+    platform: deps.platform,
+    readProcessEnvironment: deps.readDockerDriverGatewayProcessEnvironment,
     resolveOpenShellGatewayBinary: deps.resolveOpenShellGatewayBinary,
-    runCapture: deps.runner.runCapture,
     runCaptureEx: deps.runner.runCaptureEx,
   });
 

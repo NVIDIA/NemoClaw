@@ -17,6 +17,7 @@ interface ProcessScanResult {
 }
 
 interface DockerDriverGatewayStateOwnershipDeps {
+  getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayStateDir(): string;
   isDockerDriverGatewayProcess(
     pid: number,
@@ -24,9 +25,9 @@ interface DockerDriverGatewayStateOwnershipDeps {
     opts?: { requireDockerDriverEnv?: boolean },
   ): boolean;
   isPidAlive(pid: number): boolean;
+  platform?: NodeJS.Platform;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
   resolveOpenShellGatewayBinary(): string | null;
-  runCapture(args: string[], opts?: { ignoreError?: boolean }): string;
   runCaptureEx(args: readonly string[]): ProcessScanResult;
 }
 
@@ -43,45 +44,43 @@ export function processEnvironmentUsesSelectedGatewayState(
   const namespace = processEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
   const databaseUrl = processEnv.OPENSHELL_DB_URL;
   const selectedDatabaseUrl = `sqlite:${path.join(stateDir, "openshell.db")}`;
-  if (databaseUrl !== undefined && databaseUrl !== selectedDatabaseUrl) return false;
+  if (databaseUrl !== undefined) return databaseUrl === selectedDatabaseUrl;
   if (namespace === selectedNamespace) return true;
-  return (
-    (namespace === undefined || namespace === "default") && databaseUrl === selectedDatabaseUrl
-  );
+  return false;
 }
 
-function readProcessEnvironmentFromPs(
-  pid: number,
-  stateDir: string,
-  runCapture: DockerDriverGatewayStateOwnershipDeps["runCapture"],
-): Record<string, string> | null {
-  // `ps eww` separates environment entries with spaces and does not preserve
-  // where a value containing whitespace ends. Do not use that fallback to
-  // authorize a state operation when the selected database path is ambiguous.
-  if (/\s/u.test(path.join(stateDir, "openshell.db"))) return null;
-  const command = runCapture(["ps", "eww", "-p", String(pid), "-o", "command="], {
-    ignoreError: true,
-  }).trim();
-  const processEnv: Record<string, string> = {};
-  for (const key of [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV, "OPENSHELL_DB_URL"] as const) {
+function processEnvironmentFromPsOutput(stdout: string): Record<string, string> | null {
+  const lines = stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
+  if (lines.length !== 1) return null;
+
+  const environment: Record<string, string> = {};
+  for (const key of [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV, "OPENSHELL_DB_URL"]) {
     const prefix = `${key}=`;
-    const value = command.split(/\s+/).find((token) => token.startsWith(prefix));
-    if (value) processEnv[key] = value.slice(prefix.length);
+    const values = lines[0]
+      .split(/\s+/)
+      .filter((token) => token.startsWith(prefix))
+      .map((token) => token.slice(prefix.length));
+    if (values.length > 1) return null;
+    if (values.length === 1) environment[key] = values[0];
   }
-  return Object.keys(processEnv).length > 0 ? processEnv : null;
+  return Object.keys(environment).length > 0 ? environment : null;
 }
 
 export function createDockerDriverGatewayStateOwnership(
   deps: DockerDriverGatewayStateOwnershipDeps,
 ): DockerDriverGatewayStateOwnership {
   const readProcessEnvironment = (pid: number) => {
-    const processEnv = (deps.readProcessEnvironment ?? readDockerDriverGatewayProcessEnvironment)(
+    const environment = (deps.readProcessEnvironment ?? readDockerDriverGatewayProcessEnvironment)(
       pid,
     );
-    return (
-      processEnv ??
-      readProcessEnvironmentFromPs(pid, deps.getDockerDriverGatewayStateDir(), deps.runCapture)
-    );
+    if (environment || (deps.platform ?? process.platform) !== "darwin") return environment;
+    try {
+      const result = deps.runCaptureEx(["ps", "eww", "-p", String(pid), "-o", "command="]);
+      if (result.timedOut || result.exitCode !== 0) return null;
+      return processEnvironmentFromPsOutput(result.stdout);
+    } catch {
+      return null;
+    }
   };
 
   function isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean {
@@ -95,13 +94,42 @@ export function createDockerDriverGatewayStateOwnership(
       : false;
   }
 
+  /** Fail closed unless one process scan proves no gateway uses the selected state. */
   function isDockerDriverGatewayStateInUse(): boolean {
-    const scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
+    const gatewayBin = deps.resolveOpenShellGatewayBinary();
+    try {
+      const recordedPid = deps.getDockerDriverGatewayPid();
+      if (
+        recordedPid !== null &&
+        deps.isPidAlive(recordedPid) &&
+        deps.isDockerDriverGatewayProcess(recordedPid, gatewayBin, {
+          requireDockerDriverEnv: false,
+        })
+      ) {
+        const processEnv = readProcessEnvironment(recordedPid);
+        if (!processEnv) return true;
+        if (
+          processEnvironmentUsesSelectedGatewayState(
+            processEnv,
+            deps.getDockerDriverGatewayStateDir(),
+          )
+        ) {
+          return true;
+        }
+      }
+    } catch {
+      return true;
+    }
+    let scan: ProcessScanResult;
+    try {
+      scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
+    } catch {
+      return true;
+    }
     if (scan.timedOut || (scan.exitCode !== 0 && scan.exitCode !== 1)) return true;
     if (scan.exitCode === 1) return false;
     const lines = scan.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
     if (lines.length === 0) return true;
-    const gatewayBin = deps.resolveOpenShellGatewayBinary();
     for (const line of lines) {
       const recorded = line.trim();
       if (!/^[1-9]\d*$/.test(recorded)) return true;

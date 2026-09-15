@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { gatewayAdaptersForTest } from "../../../../test/helpers/openshell-gateway-adapters";
 import path from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
+import { gatewayAdaptersForTest } from "../../../../test/helpers/openshell-gateway-adapters";
 import {
   buildDockerDriverGatewayConfigToml,
   ensureDockerDriverGatewayJwtBundle,
@@ -45,19 +44,45 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
-  async function captureFailedStartRecovery(ownsSelectedState: boolean) {
+  async function captureFailedStartRecovery(
+    ownsSelectedState: boolean,
+    options: { processEnvironmentSource?: "proc" | "ps"; platform?: NodeJS.Platform } = {},
+  ) {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
+    const platform = options.platform ?? "linux";
     const adapters = gatewayAdaptersForTest();
     const lines: string[] = [];
+    const serviceExecutablePath =
+      platform === "darwin"
+        ? "/opt/homebrew/opt/openshell/bin/openshell-gateway"
+        : "/opt/openshell/openshell-gateway";
+    const serviceStopCommand =
+      platform === "darwin"
+        ? "brew services stop openshell"
+        : "systemctl --user stop openshell-gateway";
     const serviceTarget = vi.fn(() => ({
-      executablePath: "/opt/openshell/openshell-gateway",
+      executablePath: serviceExecutablePath,
       pid: 5444,
-      stopCommand: "systemctl --user stop openshell-gateway",
+      stopCommand: serviceStopCommand,
     }));
-    const readProcessEnvironment = vi.fn(
-      () =>
-        `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${ownsSelectedState ? gatewayIdForStateDir(stateDir) : "another-gateway"}`,
+    const selectedStateEnvironment = {
+      NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: ownsSelectedState
+        ? gatewayIdForStateDir(stateDir)
+        : "another-gateway",
+    };
+    const readProcessEnvironment = vi.fn(() =>
+      options.processEnvironmentSource === "ps" ? null : selectedStateEnvironment,
+    );
+    const runCapture = vi.fn(() => "");
+    const runCaptureEx = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? {
+            stdout: `${serviceExecutablePath} NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${selectedStateEnvironment.NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE}`,
+            exitCode: 0,
+            timedOut: false,
+          }
+        : { stdout: "", exitCode: null, timedOut: true },
     );
     const checkGatewayPortAvailable = vi
       .fn()
@@ -142,13 +167,15 @@ describe("gateway lifecycle late binding", () => {
         isGatewayTcpReady: async () => false,
         isPidAlive: () => true,
         logDockerDriverGatewayRestart: vi.fn(),
+        platform,
         registerDockerDriverGatewayEndpoint: async () => false,
         rememberDockerDriverGatewayPid: vi.fn(),
+        readDockerDriverGatewayProcessEnvironment: readProcessEnvironment,
         resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
         resolveOpenShellSandboxBinary: () => null,
         runner: {
-          runCapture: readProcessEnvironment,
-          runCaptureEx: () => ({ stdout: "", exitCode: null, timedOut: true }),
+          runCapture,
+          runCaptureEx,
         },
         runCaptureOpenshell: () => "",
         sleepSeconds: vi.fn(),
@@ -169,6 +196,8 @@ describe("gateway lifecycle late binding", () => {
       return {
         output: lines.join("\n"),
         processEnvironmentCalls: readProcessEnvironment.mock.calls,
+        runCaptureCalls: runCapture.mock.calls,
+        runCaptureExCalls: runCaptureEx.mock.calls,
         serviceTargetCalls: serviceTarget.mock.calls.length,
       };
     } finally {
@@ -188,10 +217,8 @@ describe("gateway lifecycle late binding", () => {
     expect(result.output).not.toContain("sudo lsof -iTCP -sTCP:LISTEN -P -n");
     expect(result.output).not.toContain("systemctl --user stop openshell-gateway");
     expect(result.serviceTargetCalls).toBe(1);
-    expect(result.processEnvironmentCalls).toContainEqual([
-      ["ps", "eww", "-p", "5444", "-o", "command="],
-      { ignoreError: true },
-    ]);
+    expect(result.processEnvironmentCalls).toContainEqual([5444]);
+    expect(result.runCaptureCalls).toHaveLength(0);
   });
 
   it("passes the verified service stop command through failed-start recovery (#11720)", async () => {
@@ -202,9 +229,22 @@ describe("gateway lifecycle late binding", () => {
     );
     expect(result.output).not.toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
     expect(result.serviceTargetCalls).toBe(2);
-    expect(result.processEnvironmentCalls).toContainEqual([
+    expect(result.processEnvironmentCalls).toContainEqual([5444]);
+    expect(result.runCaptureCalls).toHaveLength(0);
+  });
+
+  it("passes a Homebrew stop command after macOS process state proof (#11720)", async () => {
+    const result = await captureFailedStartRecovery(true, {
+      platform: "darwin",
+      processEnvironmentSource: "ps",
+    });
+
+    expect(result.output).toContain("brew services stop openshell && nemoclaw onboard --resume");
+    expect(result.output).not.toContain("sudo lsof -i :9777 -sTCP:LISTEN -P -n");
+    expect(result.serviceTargetCalls).toBe(2);
+    expect(result.processEnvironmentCalls).toContainEqual([5444]);
+    expect(result.runCaptureExCalls).toContainEqual([
       ["ps", "eww", "-p", "5444", "-o", "command="],
-      { ignoreError: true },
     ]);
   });
 
@@ -227,6 +267,29 @@ describe("gateway lifecycle late binding", () => {
         isDockerDriverGatewayPidUsingSelectedState: () => true,
       }),
     ).resolves.toBe(serviceTarget.stopCommand);
+  });
+
+  it("withholds a stop command when the active service PID differs from the selected listener", async () => {
+    const serviceTarget = {
+      executablePath: "/opt/openshell/openshell-gateway",
+      pid: 5444,
+      stopCommand: "systemctl --user stop openshell-gateway",
+    };
+    const stateOwner = vi.fn(() => true);
+
+    await expect(
+      resolveSelectedGatewayServiceStopCommand({
+        checkGatewayPortAvailable: async () => ({
+          ok: false,
+          pid: 6444,
+          process: "openshell-gateway",
+        }),
+        getGatewayPortListenerRawScan: () => ({ complete: true, pids: [6444] }),
+        getTrustedActiveOpenShellGatewayUserServiceStopTarget: () => serviceTarget,
+        isDockerDriverGatewayPidUsingSelectedState: stateOwner,
+      }),
+    ).resolves.toBeNull();
+    expect(stateOwner).not.toHaveBeenCalled();
   });
 
   it("withholds a stop command when the service identity changes during ownership proof", async () => {

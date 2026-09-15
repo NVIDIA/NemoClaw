@@ -593,7 +593,8 @@ The diagnosis always prints the database path. When an unused archive path is av
 
 When NemoClaw proves that one managed service owns the selected port and state, the recovery stops that service and retries onboarding.
 The stop command names the upstream OpenShell package unit, the NemoClaw user service, or the Homebrew formula selected for this host.
-If the listener, state namespace, or service identity does not match, NemoClaw prints no stop command and uses the standalone ownership checks.
+If the listener, selected-state proof, or service identity does not match, NemoClaw prints no stop command and uses the standalone ownership checks.
+When `OPENSHELL_DB_URL` is present, it proves selected-state ownership only when it matches the selected database URL, even if the namespace value differs.
 The onboarding retry resolves ownership again before it can offer a state move.
 
 When no managed service owns the selected port and state, the gateway runtime checks the recorded process and scans current gateway process identities for the selected state directory.
