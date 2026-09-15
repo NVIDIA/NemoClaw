@@ -513,11 +513,9 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 )),
             }));
         }
-        let exit = if request
-            .command
-            .iter()
-            .any(|arg| arg.contains("fetch('https://inference.local/"))
-        {
+        let exit = if request.command.iter().any(|arg| {
+            arg.contains("fetch('https://inference.local/") || arg.ends_with("/pi-probe.js")
+        }) {
             state.inference_exit
         } else {
             state.exec_exit

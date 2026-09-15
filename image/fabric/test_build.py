@@ -11,11 +11,11 @@ from fabric import configuration
 
 class RecipeCoverage(unittest.TestCase):
     def test_every_upstream_adapter_has_a_recipe(self):
-        source = ROOT / '.build/fabric' / f'NeMo-Fabric-{REVISION}'
+        source = next((ROOT / '.build').glob(f'fabric*/NeMo-Fabric-{REVISION}'), ROOT / '.build/missing')
         self.assertTrue(source.is_dir(), 'build the default image to populate the verified source first')
         upstream = {json.loads(p.read_text())['adapter_id']
                     for p in source.glob('adapters/*/*/*.fabric-adapter.json')}
-        recipes = {configuration('coverage', h)['harness']['adapter_id'] for h in HARNESSES}
+        recipes = {configuration('coverage', h, {'model': 'gpt-4o-mini'} if h == 'pi' else None)['harness']['adapter_id'] for h in HARNESSES}
         self.assertEqual(recipes - {'nemoclaw.local.openclaw'}, upstream)
         for h in HARNESSES:
             lock = 'dependencies.lock' if h == 'deepagents' else f'{h}-dependencies.lock'
@@ -27,7 +27,7 @@ class RecipeCoverage(unittest.TestCase):
         self.assertEqual(remote['harness']['settings']['api_type'], 'openai-completions')
         self.assertEqual(configuration('coverage', 'nooa')['workflow']['target_id'], 'nvidia.nooa.coding-agent')
         for h in ('codex', 'nooa', 'nooa-bench', 'remote-agent', 'pi'):
-            self.assertNotIn('max_turns', configuration('coverage', h)['runtime'])
+            self.assertNotIn('max_turns', configuration('coverage', h, {'model': 'gpt-4o-mini'} if h == 'pi' else None)['runtime'])
 
 
 if __name__ == '__main__':

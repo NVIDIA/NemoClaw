@@ -245,12 +245,26 @@ impl Document {
                 && MODEL.is_match(&route.overrides.model),
             "primary route must reference the declared provider and valid model",
         )?;
-        // The pinned image selects Pi's gpt-4o catalog metadata. A different
-        // route model would silently retain that model's limits and capabilities.
-        require(
-            agent.harness != "pi" || route.overrides.model == "gpt-4o",
-            "the pinned Pi recipe requires route model gpt-4o; other models are unsupported",
-        )?;
+        if let Some(model) = &route.overrides.pi_model {
+            require(
+                agent.harness == "pi"
+                    && matches!(
+                        model.api.as_str(),
+                        "openai-completions" | "openai-responses"
+                    )
+                    && model.max_output_tokens > 0
+                    && model.max_output_tokens <= model.context_tokens
+                    && model.context_tokens <= i32::MAX as u32
+                    && !model.input.is_empty()
+                    && model.input.len() <= 2
+                    && model
+                        .input
+                        .iter()
+                        .all(|input| matches!(input.as_str(), "text" | "image"))
+                    && (model.input.len() != 2 || model.input[0] != model.input[1]),
+                "piModel requires Pi, a supported API, explicit context/output limits, and unique text/image inputs",
+            )?;
+        }
         require(
             provider.service.is_none()
                 || (route.overrides.model == provider.service.as_ref().unwrap().served_model()

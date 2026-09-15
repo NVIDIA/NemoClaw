@@ -111,7 +111,11 @@ async def main():
     ctx.load_cert_chain('/certs/fixture.crt', '/certs/fixture.key')
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    config = configuration('fixture', HARNESS)
+    model = {'model': 'qwen3:4b', 'piModel': {'api': 'openai-completions',
+        'contextTokens': 8192, 'maxOutputTokens': 2048, 'reasoning': False, 'input': ['text']}} if HARNESS == 'pi' else None
+    if HARNESS == 'pi' and os.environ.get('FABRIC_PI_CATALOG') == '1':
+        model = {'model': 'gpt-4o-mini'}
+    config = configuration('fixture', HARNESS, model)
     env = dict(os.environ, NEMOCLAW_AGENT_NAME='fixture', NEMOCLAW_FABRIC_HARNESS=HARNESS)
     with open('/evidence/host.log', 'w') as log:
         host = subprocess.Popen([sys.executable, '/opt/nemoclaw/fabric.py', 'serve'], env=env, stdout=log, stderr=log)
@@ -122,14 +126,38 @@ async def main():
                 if Path('/sandbox/fabric.sock').exists():
                     break
                 await asyncio.sleep(1)
+            if HARNESS == 'pi':
+                subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'configure', 'fixture', 'pi', json.dumps(model)], check=True)
             for _ in range(2):
                 subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', HARNESS], check=True)
             mismatch = subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'wrong-name', HARNESS])
             assert mismatch.returncode != 0, 'readiness accepted different configuration'
             assert not requests, 'readiness made an inference request'
+            if HARNESS == 'pi':
+                # Changing the model must stop the old runtime before reconfiguration.
+                import socket
+                def status():
+                    with socket.socket(socket.AF_UNIX) as connection:
+                        connection.connect('/sandbox/fabric.sock')
+                        connection.sendall(b'{"operation":"check"}\n')
+                        return json.loads(connection.makefile().readline())
+                first = status()['runtime_id']
+                subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'configure', 'fixture', 'pi', json.dumps(model)], check=True)
+                assert status()['runtime_id'] == first, 'unchanged apply restarted Pi'
+                alternate = {**model, 'model': 'a-second-custom-model' if 'piModel' in model else 'gpt-4.1-mini'}
+                subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'prepare', 'fixture', 'pi', json.dumps(alternate)], check=True)
+                assert not status()['ready'], 'old Pi runtime remained active before route change'
+                subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'configure', 'fixture', 'pi', json.dumps(alternate)], check=True)
+                assert status()['runtime_id'] != first
+                assert status()['config']['models']['default']['model'] == alternate['model']
+                mismatch = subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'check', 'fixture', 'pi', json.dumps(model)])
+                assert mismatch.returncode != 0, 'readiness accepted a different route model'
+                subprocess.run([sys.executable, '/opt/nemoclaw/fabric.py', 'configure', 'fixture', 'pi', json.dumps(model)], check=True)
         finally:
             host.terminate()
             host.wait(timeout=30)
+    if HARNESS == 'pi':
+        subprocess.run(['node', '/opt/fabric-source/adapters/typescript/pi/dist/pi-probe.js', json.dumps(model)], check=True)
     runtime = await Fabric().start_runtime(FabricConfig.model_validate(config), base_dir='/sandbox')
     results = []
     try:
@@ -150,11 +178,15 @@ async def main():
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(f, dest)
         server.shutdown()
+    if HARNESS == 'pi':
+        assert requests and all(request['body']['model'] == model['model'] for request in requests), requests
     if HARNESS in ('mini-swe-agent', 'nooa', 'nooa-bench'):
         assert Path('/sandbox/workspace/tool-proof.txt').read_text() == 'FABRIC_FIXTURE_OK'
     Path('/evidence/proof.json').write_text(json.dumps({'harness': HARNESS, 'readiness_without_inference': True,
         'tool_file_verified': HARNESS in ('mini-swe-agent', 'nooa', 'nooa-bench'),
         'stopped': True, 'ordered_invocations': len(results), 'runtime_id': runtime.runtime_id, 'request_paths': sorted({r['path'] for r in requests}),
+        **({'configured_model': model['model'], 'request_models': sorted({r['body']['model'] for r in requests}),
+            'model_change_and_unchanged_apply_verified': True} if HARNESS == 'pi' else {}),
         'network': 'none; local TLS protocol fixture; no live model'}, indent=2)+'\n')
 
 

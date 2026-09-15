@@ -171,6 +171,18 @@ pub struct Route {
 pub struct Overrides {
     #[serde(rename = "model")]
     pub model: String,
+    #[serde(rename = "piModel", skip_serializing_if = "Option::is_none")]
+    pub pi_model: Option<PiModel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PiModel {
+    pub api: String,
+    pub context_tokens: u32,
+    pub max_output_tokens: u32,
+    pub reasoning: bool,
+    pub input: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import sys
@@ -13,7 +14,30 @@ REQUEST_LIMIT = 512 * 1024  # accommodates JSON escaping of a 64 KiB prompt
 RESULT_LIMIT = 4 * 1024 * 1024
 
 
-def configuration(name, harness="deepagents"):
+def configuration(name, harness="deepagents", model=None):
+    if harness == "pi":
+        if model is None:
+            from pi_host import MODEL_PATH
+            if not MODEL_PATH.exists():
+                raise ValueError("Pi requires the configured route model")
+            model = json.loads(MODEL_PATH.read_text())
+        if (not isinstance(model, dict) or set(model) - {"model", "piModel"}
+                or not isinstance(model.get("model"), str)
+                or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}", model["model"])):
+            raise ValueError("Pi requires a valid configured route model")
+        if "piModel" in model:
+            metadata = model["piModel"]
+            if (not isinstance(metadata, dict)
+                    or set(metadata) != {"api", "contextTokens", "maxOutputTokens", "reasoning", "input"}
+                    or metadata["api"] not in ("openai-completions", "openai-responses")
+                    or type(metadata["contextTokens"]) is not int
+                    or type(metadata["maxOutputTokens"]) is not int
+                    or not 0 < metadata["maxOutputTokens"] <= metadata["contextTokens"] <= 2147483647
+                    or type(metadata["reasoning"]) is not bool
+                    or not isinstance(metadata["input"], list) or not metadata["input"]
+                    or any(item not in ("text", "image") for item in metadata["input"])
+                    or len(set(metadata["input"])) != len(metadata["input"])):
+                raise ValueError("Pi requires valid explicit model metadata")
     adapter = {"deepagents": "nvidia.fabric.langchain.deepagents",
                "hermes": "nvidia.fabric.hermes",
                "openclaw": "nemoclaw.local.openclaw",
@@ -31,7 +55,9 @@ def configuration(name, harness="deepagents"):
                     **({"settings": {"base_url": "https://inference.local/v1", "api_type": "openai-completions"}} if harness == "remote-agent" else {}),
                     **({"settings": {"agent_name": name}} if harness == "openclaw" else {})},
         "models": {"default": {
-            "provider": "openai", "model": "gpt-4o" if harness == "pi" else "primary",
+            "provider": "openai", "model": model["model"] if harness == "pi" else "primary",
+            **({"settings": {"model_metadata": model["piModel"]}}
+               if harness == "pi" and "piModel" in model else {}),
             **({"base_url": "https://inference.local/v1"} if harness != "remote-agent" else {}),
             **({"settings": {"client_type": "completion"}} if harness in ("nooa", "nooa-bench") else {}),
             "api_key_env": "OPENAI_API_KEY",
@@ -43,6 +69,9 @@ def configuration(name, harness="deepagents"):
 
 
 async def serve():
+    if os.environ.get("NEMOCLAW_FABRIC_HARNESS") == "pi":
+        from pi_host import serve as serve_pi
+        return await serve_pi(configuration)
     from nemo_fabric import Fabric, FabricConfig, RuntimeStatus
 
     os.umask(0o077)
@@ -87,20 +116,33 @@ async def serve():
         Path(SOCKET).unlink(missing_ok=True)
 
 
-async def client(operation, argument, harness="deepagents"):
-    reader, writer = await asyncio.open_unix_connection(SOCKET, limit=RESULT_LIMIT)
+async def client(operation, argument, harness="deepagents", model=None):
+    expected = configuration(argument, harness, model)
+    deadline = asyncio.get_running_loop().time() + 90
+    while True:
+        try:
+            reader, writer = await asyncio.open_unix_connection(SOCKET, limit=RESULT_LIMIT)
+            break
+        except (FileNotFoundError, ConnectionRefusedError):
+            if operation not in ("configure", "prepare") or asyncio.get_running_loop().time() >= deadline:
+                raise
+            await asyncio.sleep(0.1)
     try:
         request = {"operation": operation}
+        if operation in ("configure", "prepare"):
+            request.update(name=argument, model=model)
         writer.write(json.dumps(request).encode() + b"\n")
         await writer.drain()
         result = json.loads(await asyncio.wait_for(reader.readline(), 320))
-        if operation == "check":
+        if operation == "prepare":
+            return 0 if result == {"prepared": True} else 2
+        if operation in ("check", "configure"):
             if harness == "openclaw":
                 from openclaw_adapter import healthy
                 if not await asyncio.to_thread(healthy, argument, result.get("runtime_id", "")):
                     return 2
             return 0 if (result.get("ready") and result.get("runtime_id")
-                         and result.get("config") == configuration(argument, harness)) else 2
+                         and result.get("config") == expected) else 2
         print(json.dumps(result))
         return 0 if result.get("status") == "succeeded" else 1
     finally:
@@ -111,6 +153,8 @@ async def client(operation, argument, harness="deepagents"):
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "serve":
         asyncio.run(serve())
+    elif len(sys.argv) == 5 and sys.argv[1] in ("configure", "prepare", "check") and sys.argv[3] == "pi":
+        sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2], "pi", json.loads(sys.argv[4]))))
     elif len(sys.argv) == 3 and sys.argv[1] == "check":
         sys.exit(asyncio.run(client("check", sys.argv[2])))
     elif len(sys.argv) == 4 and sys.argv[1] == "check" and sys.argv[3] in ("deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "pi"):

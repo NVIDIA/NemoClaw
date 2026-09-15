@@ -217,6 +217,17 @@ impl Deployment {
             .await?;
         let mut changes = runtime_changes;
         changes.extend(check_plan(&plan, &allowed, &bindings)?);
+        let agent = &document.spec.sandboxes[0].agents[0];
+        if !fresh
+            && agent.harness == "pi"
+            && agent.inference.routes[0].overrides
+                != record.document.spec.sandboxes[0].agents[0].inference.routes[0].overrides
+        {
+            changes.push(Change {
+                resource: format!("fabric_runtime.{}", agent.name),
+                actions: vec!["update".into()],
+            });
+        }
         let mut result = OperationResult::planned(changes);
         if !apply {
             if fresh {
@@ -233,6 +244,18 @@ impl Deployment {
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
         (self.progress)(Progress::Applying);
+        if agent.harness == "pi"
+            && let Some(binding) = bindings.get(&targets[3].address)
+        {
+            let mut sandbox = targets[3].values.clone();
+            sandbox.insert("id".into(), binding.id.clone());
+            sandbox.insert(
+                "pi_model_config".into(),
+                serde_json::to_string(&agent.inference.routes[0].overrides)
+                    .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
+            );
+            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, true)=>result?}
+        }
         self.tofu(
             &bundle,
             &store,
@@ -260,6 +283,15 @@ impl Deployment {
                 .clone(),
         );
         (self.progress)(Progress::Readiness);
+        let agent = &document.spec.sandboxes[0].agents[0];
+        if agent.harness == "pi" {
+            sandbox.insert(
+                "pi_model_config".into(),
+                serde_json::to_string(&agent.inference.routes[0].overrides)
+                    .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
+            );
+            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
+        }
         client.ready(&sandbox, cancel).await?;
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.inference_ready(&sandbox)=>result?}
         if document.spec.inference_providers[0].service.is_some() {
@@ -448,6 +480,15 @@ impl Deployment {
                         return Err(Error::Conflict(
                             "sandbox configuration drift requires inspection",
                         ));
+                    }
+                    if document.spec.sandboxes[0].agents[0].harness == "pi" {
+                        expected.insert(
+                            "pi_model_config".into(),
+                            serde_json::to_string(
+                                &document.spec.sandboxes[0].agents[0].inference.routes[0].overrides,
+                            )
+                            .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
+                        );
                     }
                     client.configuration(&expected).await?;
                 }
