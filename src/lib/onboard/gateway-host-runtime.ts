@@ -12,11 +12,12 @@
  * `gateway-ownership`; this module only binds them to real host probes.
  */
 
+import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
+import type { OpenShellGatewayReuseObserver } from "../adapters/openshell/gateway-reuse";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { waitForPort } from "../core/wait";
-import { isGatewayHealthy } from "../state/gateway";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
 import {
   hasOpenShellGatewayUserService,
@@ -64,6 +65,8 @@ function restartTrustedPackagedGateway(owner: GatewayOwner): void {
 }
 
 export interface GatewayHostRuntimeDeps {
+  lifecycle: OpenShellGatewayLifecycle;
+  observer: OpenShellGatewayReuseObserver;
   applyOverlayfsAutoFix(clusterImage: string): string | null;
   checkGatewayPortAvailable(): Promise<PortProbeResult>;
   hasOpenShellGatewayUserService?: typeof hasOpenShellGatewayUserService;
@@ -87,13 +90,7 @@ export interface GatewayHostRuntimeDeps {
     opts?: { gatewayBin?: string | null },
   ): GatewayPortListenerRawScan;
   getInstalledOpenshellVersion(): string | null;
-  isGatewayHealthy?: typeof isGatewayHealthy;
   loadGatewayManagementDeclaration?: typeof loadGatewayManagementDeclaration;
-  runCaptureOpenshell(args: string[], opts?: { ignoreError?: boolean }): string;
-  runOpenshell(
-    args: string[],
-    opts?: { ignoreError?: boolean; suppressOutput?: boolean },
-  ): { status: number | null };
   resolveOpenShellGatewayBinary(): string | null;
   spawnSyncImpl?: typeof import("node:child_process").spawnSync;
   /** Explicit environment for local supervisor status probes. */
@@ -521,43 +518,34 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       throw new GatewayOwnershipError(expectedAttachment.code, expectedAttachment.message, owner);
     }
     prepareExternalGatewayClient(owner);
-    const removeAttemptedRegistration = () => {
-      deps.runOpenshell(["gateway", "remove", owner.gatewayName], {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      if (process.env.OPENSHELL_GATEWAY === owner.gatewayName) {
-        delete process.env.OPENSHELL_GATEWAY;
+    const request = { target: { kind: "named" as const, gatewayName: owner.gatewayName } };
+    const removeAttemptedRegistration = async () => {
+      const currentOwner = getGatewayOwner();
+      if (!sameGatewayOwner(owner, currentOwner))
+        throw new Error("Gateway authority changed; registration was retained.");
+      const removed = await deps.lifecycle.removeGateway(request);
+      if (!removed.ok) {
+        getGatewayOwner();
+        await deps.observer.observeGatewayReuse(request);
+        throw new Error(
+          `${removed.error.message} Gateway registration was retained for inspection.`,
+        );
       }
+      if (process.env.OPENSHELL_GATEWAY === owner.gatewayName) delete process.env.OPENSHELL_GATEWAY;
     };
-    const add = () =>
-      deps.runOpenshell(
-        ["gateway", "add", owner.endpoint as string, "--local", "--name", owner.gatewayName],
-        { ignoreError: true, suppressOutput: true },
-      );
-    let addResult = add();
-    if (addResult.status !== 0) {
-      removeAttemptedRegistration();
-      addResult = add();
+    const added = await deps.lifecycle.registerGateway({ ...request, endpoint: owner.endpoint });
+    if (!added.ok) {
+      getGatewayOwner();
+      await deps.observer.observeGatewayReuse(request);
+      throw new GatewayOwnershipError("gateway_registration_failed", added.error.message, owner);
     }
-    const selectResult = deps.runOpenshell(["gateway", "select", owner.gatewayName], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    const status = deps.runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", owner.gatewayName], {
-      ignoreError: true,
-    });
-    const activeInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (
-      addResult.status !== 0 ||
-      selectResult.status !== 0 ||
-      !(deps.isGatewayHealthy ?? isGatewayHealthy)(status, namedInfo, activeInfo, owner.gatewayName)
-    ) {
-      removeAttemptedRegistration();
+    const selected = await deps.lifecycle.selectGateway(request);
+    const observed = await deps.observer.observeGatewayReuse(request);
+    if (!selected.ok || observed.error || !observed.healthy || !observed.namedMetadata) {
+      getGatewayOwner();
       throw new GatewayOwnershipError(
         "gateway_registration_failed",
-        `Failed to register and select externally supervised gateway '${owner.gatewayName}' at ${owner.endpoint}.`,
+        `Failed to verify registered gateway '${owner.gatewayName}'. Registration was retained for inspection.`,
         owner,
       );
     }
@@ -566,12 +554,12 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     try {
       currentProbe = await probeGatewayAttachment(owner);
     } catch (error) {
-      removeAttemptedRegistration();
+      await removeAttemptedRegistration();
       throw error;
     }
     const currentAttachment = evaluateGatewayAttachment(owner, currentProbe);
     if (!currentAttachment.ok || !sameAttachmentEvidence(expectedProbe, currentProbe)) {
-      removeAttemptedRegistration();
+      await removeAttemptedRegistration();
       if (!currentAttachment.ok) {
         throw new GatewayOwnershipError(currentAttachment.code, currentAttachment.message, owner);
       }

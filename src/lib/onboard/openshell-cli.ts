@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle-cli";
+import { createCliOpenShellGatewayReuseObserver } from "../adapters/openshell/gateway-reuse-cli";
 import { processTreeBoundedOpenshellInvocation } from "../adapters/openshell/process-tree-timeout";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { ROOT, run, runCapture, shellQuote } from "../runner";
@@ -25,6 +27,8 @@ export interface OpenshellCliDeps {
 }
 
 export interface OpenshellCliHelpers {
+  gatewayLifecycleAdapter: ReturnType<typeof createCliOpenShellGatewayLifecycle>;
+  gatewayReuseAdapter: ReturnType<typeof createCliOpenShellGatewayReuseObserver>;
   getOpenshellBinary(): string;
   openshellShellCommand(args: string[], options?: { openshellBinary?: string }): string;
   openshellArgv(args: string[], options?: { openshellBinary?: string }): string[];
@@ -115,6 +119,8 @@ export function createOpenshellCliHelpers(deps: OpenshellCliDeps): OpenshellCliH
   }
 
   return {
+    gatewayLifecycleAdapter: createCliOpenShellGatewayLifecycle(captureOpenshell),
+    gatewayReuseAdapter: createCliOpenShellGatewayReuseObserver(captureOpenshell),
     getOpenshellBinary,
     openshellShellCommand,
     openshellArgv,
