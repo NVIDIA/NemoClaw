@@ -13,6 +13,7 @@
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "fast": [
+        "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
@@ -97,6 +98,7 @@
       "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
       "liveSources": ["test/e2e/live/native-runtime-qualification-case-executor.ts"],
       "fast": [
+        "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
         "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
         "test/e2e/support/native-runtime-qualification.test.ts",
@@ -219,7 +221,6 @@
     },
     {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
-      "liveSources": ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
         "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
@@ -228,7 +229,6 @@
         "src/lib/sandbox/privileged-exec.test.ts",
         "test/inference/managed/managed-gateway-control.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
-        "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
