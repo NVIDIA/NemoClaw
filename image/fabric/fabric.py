@@ -26,7 +26,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
                 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}", model["model"])):
             raise ValueError("Pi requires a valid configured route model")
     adapter = {"deepagents": "nvidia.fabric.langchain.deepagents",
-               "hermes": "nvidia.fabric.hermes",
+               "hermes": "nemoclaw.local.hermes",
                "openclaw": "nemoclaw.local.openclaw",
                "claude": "nvidia.fabric.claude", "codex": "nvidia.fabric.codex",
                "mini-swe-agent": "nvidia.fabric.mini-swe-agent",
@@ -35,12 +35,13 @@ def configuration(name, harness="deepagents", model=None, inference=None):
     config = {
         **({"discovery": {"local_paths": ["/opt/nemoclaw/openclaw.fabric-adapter.json"]}}
            if harness == "openclaw" else {}),
+        **({"discovery": {"local_paths": ["/opt/nemoclaw/hermes.fabric-adapter.json"]}} if harness == "hermes" else {}),
         **({"discovery": {"local_paths": ["/opt/fabric-source/adapters/typescript/pi/pi.fabric-adapter.json"]}} if harness == "pi" else {}),
         "metadata": {"name": name},
         **({"workflow": {"target_id": "nvidia.nooa.coding-agent"}} if harness == "nooa" else {}),
         "harness": {"adapter_id": adapter,
                     **({"settings": {"base_url": "https://inference.local/v1", "api_type": "openai-completions"}} if harness == "remote-agent" else {}),
-                    **({"settings": {"agent_name": name}} if harness == "openclaw" else {})},
+                    **({"settings": {"agent_name": name}} if harness in ("openclaw", "hermes") else {})},
         "models": {"default": {
             "provider": "openai", "model": model["model"] if harness == "pi" else "primary",
             **({"settings": {"model_metadata": model["piModel"]}}
@@ -50,7 +51,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             "api_key_env": "OPENAI_API_KEY",
         }},
         "environment": {"workspace": "/sandbox/workspace"},
-        "runtime": {**({"max_turns": 8} if harness in ("deepagents", "hermes", "claude", "mini-swe-agent") else {}),
+        "runtime": {**({"max_turns": 8} if harness in ("deepagents", "claude", "mini-swe-agent") else {}),
                     "timeout_seconds": 300, "artifacts": "/sandbox/artifacts"},
     }
 
@@ -59,11 +60,11 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         if harness == 'openclaw':
             config['harness']['settings']['inference'] = inference
         elif harness == 'hermes':
-            config['harness']['settings'] = {'api_mode': {
+            config['harness']['settings'].update({'inference': inference, 'api_mode': {
                 'openai-completions': 'chat_completions',
                 'openai-responses': 'codex_responses',
                 'anthropic-messages': 'anthropic_messages',
-            }[api]}
+            }[api]})
             config['models']['default']['provider'] = 'anthropic' if api == 'anthropic-messages' else 'openai'
     return config
 
@@ -138,6 +139,10 @@ async def client(operation, argument, harness="deepagents", model=None, inferenc
         if operation == "prepare":
             return 0 if result == {"prepared": True} else 2
         if operation in ("check", "configure"):
+            if harness == "hermes":
+                from hermes_adapter import healthy
+                if not await asyncio.to_thread(healthy, inference):
+                    return 2
             if harness == "openclaw":
                 from openclaw_adapter import healthy
                 if not await asyncio.to_thread(healthy, argument, result.get("runtime_id", ""), inference):

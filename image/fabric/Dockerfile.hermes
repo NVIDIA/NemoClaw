@@ -14,7 +14,7 @@ RUN /opt/fabric/bin/pip install --no-index --find-links=/opt/wheels --require-ha
 # source and use its supported editable install, with already locked dependencies.
 COPY hermes-agent-29112bef099274229cadff79cdff7bf7b99c4b77 /opt/hermes
 RUN /opt/fabric/bin/pip install --no-index --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
-COPY fabric.py /opt/nemoclaw/fabric.py
+COPY fabric.py hermes_adapter.py interfaces.py hermes.fabric-adapter.json /opt/nemoclaw/
 COPY provenance.json /opt/nemoclaw/provenance.json
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
 USER node
