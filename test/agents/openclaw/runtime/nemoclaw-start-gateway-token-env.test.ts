@@ -68,7 +68,7 @@ describe("OpenClaw gateway credential environment", () => {
   describe.skipIf(!fs.existsSync("/proc/self/cmdline"))("Linux process inspection", () => {
     it.each([
       { logMode: "truncate", launchPath: "initial launch" },
-      { logMode: "append", launchPath: "automatic respawn" },
+      { logMode: "append", launchPath: "native relaunch" },
     ])(
       "keeps the gateway token out of process cmdline and environ during $launchPath (#8693)",
       ({ logMode }) => {

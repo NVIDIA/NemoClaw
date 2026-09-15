@@ -55,7 +55,6 @@ export type GatewayRestartFailureLayer =
   | "unsafe config path"
   | "config hash mismatch"
   | "mcp configuration drift"
-  | "relaunch quarantined"
   | "launch failure"
   | "health timeout"
   | "forward recovery failure";
@@ -84,17 +83,6 @@ type SandboxExec = (
 ) => Promise<GatewayRestartCommandResult | null>;
 
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
-
-// Substrings of the in-sandbox supervisor's quarantine lines. The supervisor
-// only forwards allowlisted lines to the host, so matching them is what tells
-// the host that no further relaunch will be attempted by this supervisor
-// instance. Keep in sync with the messages in agents/hermes/start.sh
-// and their allowlist in scripts/managed-gateway-control.py.
-const GATEWAY_RELAUNCH_QUARANTINE_MARKERS = [
-  "relaunch is stopped for this supervisor instance",
-  "quarantined without another launch",
-  "quarantining the managed startup supervisor",
-] as const;
 
 export type GatewayRestartDeps = {
   getSessionAgent: typeof agentRuntime.getSessionAgent;
@@ -242,17 +230,6 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
       detail: detail || "unsafe config path",
     };
   }
-  // A quarantined supervisor is the strictly more specific and terminal fact:
-  // it stops attempting relaunch entirely, so the controller then reports the
-  // generic health timeout it would report for any unresponsive gateway.
-  // Classify the quarantine first so the host names the state that blocks
-  // recovery instead of its health-check side effect.
-  if (GATEWAY_RELAUNCH_QUARANTINE_MARKERS.some((marker) => output.includes(marker))) {
-    return {
-      layer: "relaunch quarantined",
-      detail: detail || "the in-sandbox supervisor quarantined gateway relaunch",
-    };
-  }
   if (output.includes("HERMES_MCP_CONFIG_DRIFT")) {
     return {
       layer: "mcp configuration drift",
@@ -283,27 +260,15 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
 
 export function isGatewayTerminalRepairLayer(
   layer: GatewayRestartFailureLayer | null | undefined,
-): layer is "config hash mismatch" | "mcp configuration drift" | "relaunch quarantined" {
-  return (
-    layer === "config hash mismatch" ||
-    layer === "mcp configuration drift" ||
-    layer === "relaunch quarantined"
-  );
+): layer is "config hash mismatch" | "mcp configuration drift" {
+  return layer === "config hash mismatch" || layer === "mcp configuration drift";
 }
 
-/** Report terminal restart repair without treating process quarantine as config drift. */
+/** Report terminal native configuration repair guidance. */
 export function gatewayTerminalRepairLines(
   sandboxName: string,
-  layer: "config hash mismatch" | "mcp configuration drift" | "relaunch quarantined",
+  layer: "config hash mismatch" | "mcp configuration drift",
 ): readonly string[] {
-  if (layer === "relaunch quarantined") {
-    return [
-      "The in-sandbox supervisor stopped relaunch after repeated process or health failures.",
-      `Inspect the Hermes failure with \`nemoclaw ${sandboxName} logs --tail 50\`.`,
-      `After correcting the cause, reset the supervisor with \`nemoclaw ${sandboxName} stop\`, then \`nemoclaw ${sandboxName} start\`.`,
-      `If the sandbox still cannot start, rebuild it with \`nemoclaw ${sandboxName} rebuild --yes\`.`,
-    ];
-  }
   if (layer === "mcp configuration drift") {
     return [
       "Hermes refused the gateway restart because its native MCP configuration is missing, conflicting, or not reconciled.",
