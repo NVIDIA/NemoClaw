@@ -815,6 +815,13 @@ async function recoverSandboxProcesses(
     (persistedProvider?.recovery.supported === true ||
       !usesManagedGatewayController(persistedSandbox))
   ) {
+    if (persistedProvider?.recovery.supported === true && runtimeSelection) {
+      return {
+        kind: "unsupported-provider",
+        failureDetail:
+          "Provider recovery is not available for an explicitly selected OpenShell target because the provider recovery surface is host-local.",
+      };
+    }
     const result = recoverRegisteredRuntimeProviderSandbox(persistedSandbox);
     if (result) {
       if (result.exitCode === 0) return { kind: "provider" };
@@ -1035,7 +1042,7 @@ function isRetryableOpenshellReRegistrationState(
 ): boolean {
   if (!hasRetryableOpenshellFailureShape(result)) return false;
   const error = normalizeOpenshellStructuredError(result.stderr);
-  // OpenShell can publish Ready before replacement registration settles.
+  // OpenShell can publish Ready before sandbox control-plane readiness settles.
   // Retry only if the readiness probe reports phase Error for this sandbox.
   // The CLI can emit informational stdout before this exact stderr refusal;
   // stdout does not change the result of the read-only `true` probe.
@@ -1050,16 +1057,16 @@ function isRetryableOpenshellReRegistrationState(
   if (result.stdout.trim() !== "") return false;
   if (error === OPENSHELL_SANDBOX_NOT_READY) return true;
 
-  // OpenShell 0.0.85 can keep the recreated sandbox's cached phase at Ready
-  // while its replacement supervisor session is still registering. The exec
+  // OpenShell 0.0.85 can keep the recovering sandbox's cached phase at Ready
+  // while its supervisor session is still registering. The exec
   // RPC can fail before a session connects, after a session disconnects, while
-  // the replacement supervisor's local SSH relay target is starting, or after
+  // the supervisor's local SSH relay target is starting, or after
   // the session connects but does not claim its reverse relay within OpenShell's
   // 10-second relay deadline. These exact results are control-plane
   // re-registration states; all other OpenShell failures remain terminal.
   // NemoClaw cannot repair this OpenShell-owned phase/session state without
   // bypassing the control plane. Remove these matches when supported OpenShell
-  // versions publish Ready only after the replacement session and relay are
+  // versions publish Ready only after the supervisor session and relay are
   // usable, or report the standard sandbox-not-ready state until then.
   const sessionUnavailable =
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
@@ -1118,11 +1125,11 @@ function recreatedSandboxOpenShellReadinessFailureDetail(
   const detail = (() => {
     switch (failure) {
       case "managed-health-definitive-failure":
-        return "the managed supervisor health check for the pinned replacement container did not pass. NemoClaw did not start the primary dashboard/API host forward";
+        return "the managed supervisor health check did not pass after gateway recovery. NemoClaw did not start the primary dashboard/API host forward";
       case "managed-health-inconclusive-timeout":
-        return "the managed supervisor health check for the pinned replacement container stayed inconclusive within the OpenShell readiness deadline. NemoClaw did not start the primary dashboard/API host forward";
+        return "the managed supervisor health check stayed inconclusive within the OpenShell readiness deadline after gateway recovery. NemoClaw did not start the primary dashboard/API host forward";
       case "openshell-readiness-failure":
-        return "the recreated sandbox did not become ready in OpenShell. NemoClaw did not start the primary dashboard/API host forward";
+        return "the sandbox did not become ready in OpenShell after gateway recovery. NemoClaw did not start the primary dashboard/API host forward";
     }
   })();
   const managedHealthResult = managedHealthFailureDetail
@@ -1134,10 +1141,10 @@ function recreatedSandboxOpenShellReadinessFailureDetail(
   return `${detail}${managedHealthResult}${openshellResult}`;
 }
 
-// Default seconds to wait for OpenShell to re-register a recreated sandbox as
-// Ready before returning a classified recovery failure. Aligned with
+// Default seconds to wait for OpenShell to report a recovering sandbox as Ready
+// before returning a classified recovery failure. Aligned with
 // `connect`'s readiness budget (`waitForSandboxReadyOrExit` defaults to 120s):
-// both prove the same post-recreate sandbox readiness, but this path used to
+// both prove the same sandbox readiness, but this path used to
 // give up 4x sooner (30s), so a cold-start `phase: Error` settling window that
 // exceeded 30s but was within `connect`'s 120s left the primary dashboard/API
 // forward unstarted — exactly why `connect --probe-only` recovers what `start`
@@ -1145,10 +1152,9 @@ function recreatedSandboxOpenShellReadinessFailureDetail(
 const GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS = 120;
 
 /**
- * Wait until OpenShell has re-registered a directly recreated sandbox as
- * ready. This probe deliberately has no direct-Docker or SSH fallback: it is
- * proving the control-plane readiness that gates state restoration and the
- * replacement-container commit.
+ * Wait until OpenShell reports a recovering sandbox as ready. This probe
+ * deliberately has no direct-container or SSH fallback: it proves the
+ * control-plane readiness that gates forward restoration.
  */
 async function waitForRecreatedSandboxOpenShellReadyResult(
   sandboxName: string,
