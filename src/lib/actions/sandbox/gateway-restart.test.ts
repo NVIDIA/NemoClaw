@@ -119,7 +119,11 @@ describe("restartSandboxGateway native lifecycle", () => {
       detail: "Hermes secret-boundary validation did not pass before native restart",
     });
     expect(execute).toHaveBeenCalledOnce();
-    expect(execute.mock.calls[0]?.[1]).toContain("validate-hermes-env-secret-boundary.py");
+    expect(execute).toHaveBeenCalledWith(
+      "hermes-box",
+      expect.stringContaining("validate-hermes-env-secret-boundary.py"),
+      45_000,
+    );
     expect(execute).not.toHaveBeenCalledWith("hermes-box", "hermes gateway restart", 210000);
   });
 
