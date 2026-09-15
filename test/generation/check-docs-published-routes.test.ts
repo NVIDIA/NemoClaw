@@ -512,6 +512,32 @@ describe("Manage Sandboxes extension routes", () => {
   });
 });
 
+describe("Pi documentation routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes every Pi page in the Pi guide", () => {
+    expect(index.routes.has("/user-guide/pi/get-started/quickstart")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/inference/configure-model-limits")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/manage-sandboxes/run-pi")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/reference/commands")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/reference/pi-support")).toBe(true);
+  });
+
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "keeps Pi-only pages out of the %s guide",
+    (variant) => {
+      expect(index.routes.has(`/user-guide/${variant}/get-started/quickstart-pi`)).toBe(false);
+      expect(index.routes.has(`/user-guide/${variant}/manage-sandboxes/run-pi`)).toBe(false);
+      expect(index.routes.has(`/user-guide/${variant}/reference/pi-support`)).toBe(false);
+      expect(
+        index.routes.has(
+          `/user-guide/${variant}/inference/manage-inference/configure-model-limits`,
+        ),
+      ).toBe(true);
+    },
+  );
+});
+
 describe("Documentation Engineering routes", () => {
   const index = buildPublishedRouteIndex();
 

@@ -392,7 +392,7 @@ test(
       { artifactName: "pi-personal-profiles-before-recovery", env, timeoutMs: 30_000 },
     );
     expect(personalProfiles.exitCode, resultText(personalProfiles)).toBe(0);
-    const restart = await host.command(
+    await host.command(
       "bash",
       [
         "-ec",
@@ -403,9 +403,15 @@ test(
       ],
       { artifactName: "pi-sandbox-stop-start", env, timeoutMs: 6 * 60_000 },
     );
-    expect(restart.exitCode, resultText(restart)).toBe(0);
     await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName: SANDBOX_NAME });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
+    const recover = await host.nemoclaw([SANDBOX_NAME, "recover"], {
+      artifactName: "pi-recover-after-restart",
+      env,
+      redactionValues: inference.redactionValues(),
+      timeoutMs: 6 * 60_000,
+    });
+    expect(recover.exitCode, resultText(recover)).toBe(0);
     const recoveryProof = await runReadTask(artifacts, host, sandbox, env, "after-recovery");
     const profilesAfterRecovery = await execPiShell(
       sandbox,
