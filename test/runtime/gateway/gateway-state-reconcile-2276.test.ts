@@ -189,6 +189,11 @@ if (args[0] === "provider" && args[1] === "get") {
   process.exit(0);
 }
 
+if (args[0] === "provider" && args[1] === "list") {
+  process.stdout.write('[{"name":"nvidia-prod","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
+  process.exit(0);
+}
+
 if (args.includes("forward") && args.includes("list")) {
   process.stderr.write("No active forwards.\\n");
   process.exit(0);
