@@ -1114,6 +1114,7 @@ describe("security posture fixture", () => {
         startupLogClean: true,
       });
       expect(command).toHaveBeenCalledTimes(3);
+      expect(command.mock.calls[2]?.[1]?.[3]).toMatch(/\nexit 0$/u);
       expect(resolvePrivilegedTarget).toHaveBeenCalledTimes(2);
       expect(executePrivilegedCommand).toHaveBeenCalledWith(
         SANDBOX_NAME,

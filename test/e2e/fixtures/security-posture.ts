@@ -527,7 +527,8 @@ for field in CapInh CapPrm CapEff CapBnd CapAmb; do
   test -n "$value"
   line="$line $field=$value"
 done
-printf '%s\n' "$line"`;
+printf '%s\n' "$line"
+exit 0`;
 }
 
 export function parseCapabilitySurfaceReport(
