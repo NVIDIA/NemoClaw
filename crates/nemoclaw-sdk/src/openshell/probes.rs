@@ -48,6 +48,16 @@ fn response_text(bytes: &[u8]) -> Result<String, Error> {
     Ok(text.into())
 }
 impl OpenShell {
+    pub(crate) async fn voice_ready(&self, binding: &Row) -> crate::voice::ProbeResult {
+        match self.agent_configuration(binding).await {
+            Ok(()) => crate::voice::ProbeResult::Ready,
+            Err(Error::Observation(ObservationError::BindingMismatch)) => {
+                crate::voice::ProbeResult::Replaced
+            }
+            Err(_) => crate::voice::ProbeResult::Unavailable,
+        }
+    }
+
     pub async fn verify_gateway(&self, driver: &str) -> Result<(), Error> {
         let info = self
             .grpc()

@@ -10,7 +10,10 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use nemoclaw_sdk::{
     Binding,
-    voice::{AccessGrant, Clock, PROFILE, ProbeResult, ServerConfig, TargetProbe, VoiceServer},
+    voice::{
+        AccessGrant, Clock, CloseReason, PROFILE, ProbeResult, ServerConfig, TargetProbe,
+        VoiceServer,
+    },
 };
 use reqwest::{Client, StatusCode, header};
 use serde_json::{Value, json};
@@ -288,6 +291,13 @@ async fn streams_ready_heartbeats_and_rejects_a_concurrent_connection() {
 
     drop(stream);
     tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(
+        server
+            .wait_for_run(&nemoclaw_sdk::CancellationToken::new())
+            .await
+            .unwrap(),
+        CloseReason::ClientDisconnected
+    );
     let replacement = request(
         &client,
         &server,
@@ -360,6 +370,13 @@ async fn server_shutdown_closes_the_stream_without_destroying_target_state() {
     assert_eq!(
         closed.unwrap(),
         json!({"type":"closed","reason":"server_stopping"})
+    );
+    assert_eq!(
+        server
+            .wait_for_run(&nemoclaw_sdk::CancellationToken::new())
+            .await
+            .unwrap(),
+        CloseReason::ServerStopping
     );
 }
 

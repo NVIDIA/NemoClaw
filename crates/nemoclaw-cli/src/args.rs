@@ -40,6 +40,9 @@ pub(crate) enum Command {
         /// Desired-state YAML path, or - to read standard input.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Operator-approved VoiceClaw installation root used only when the configuration declares VoiceClaw.
+        #[arg(long, value_name = "DIR")]
+        voiceclaw: Option<PathBuf>,
     },
     /// Export observed configuration without secret values.
     #[command(after_help = "Examples:\n  nemoclaw export --output spark.yaml\n  nemoclaw export")]
@@ -76,6 +79,16 @@ mod tests {
             );
             assert!(Cli::try_parse_from(["nemoclaw", command, "--file", "spark.yaml"]).is_err());
         }
+        assert!(
+            Cli::try_parse_from([
+                "nemoclaw",
+                "apply",
+                "voice.yaml",
+                "--voiceclaw",
+                "/opt/voiceclaw"
+            ])
+            .is_ok()
+        );
         assert!(Cli::try_parse_from(["nemoclaw", "plan", "--destroy"]).is_ok());
         assert!(Cli::try_parse_from(["nemoclaw", "plan", "--destroy", "spark.yaml"]).is_err());
     }

@@ -27,12 +27,19 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
+use tokio::{
+    net::TcpListener,
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroize;
 
 use crate::Binding;
+
+mod onboarding;
+pub use onboarding::{Bootstrap, Prepared, Ready};
 
 pub const PROFILE: &str = "nemoclaw-voice-r0/1";
 const MAX_MESSAGE: usize = 4096;
@@ -160,6 +167,22 @@ pub struct ServerConfig {
     pub probe_timeout: Duration,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseReason {
+    ClientDisconnected,
+    CredentialExpired,
+    AgentUnavailable,
+    TargetReplaced,
+    ServerStopping,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionState {
+    Waiting,
+    Connected,
+    Closed(CloseReason),
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -179,12 +202,14 @@ struct ServerState {
     clock: Arc<dyn Clock>,
     config: ServerConfig,
     active: Arc<AtomicBool>,
+    connection: watch::Sender<ConnectionState>,
     stop: CancellationToken,
 }
 
 pub struct VoiceServer {
     endpoint: String,
     stop: CancellationToken,
+    connection: watch::Receiver<ConnectionState>,
     task: JoinHandle<()>,
 }
 
@@ -205,6 +230,7 @@ impl VoiceServer {
         let listener = TcpListener::bind(address).await?;
         let address = listener.local_addr()?;
         let stop = CancellationToken::new();
+        let (connection, observed_connection) = watch::channel(ConnectionState::Waiting);
         let state = Arc::new(ServerState {
             digest: grant.digest,
             target_ref: grant.target_ref.clone(),
@@ -214,6 +240,7 @@ impl VoiceServer {
             clock,
             config,
             active: Arc::new(AtomicBool::new(false)),
+            connection,
             stop: stop.clone(),
         });
         let app = Router::new()
@@ -233,6 +260,7 @@ impl VoiceServer {
         Ok(Self {
             endpoint: format!("http://{host}:{}/r0/connect", address.port()),
             stop,
+            connection: observed_connection,
             task,
         })
     }
@@ -243,6 +271,27 @@ impl VoiceServer {
 
     pub fn stop(&self) {
         self.stop.cancel();
+    }
+
+    pub fn connection_state(&self) -> ConnectionState {
+        *self.connection.borrow()
+    }
+
+    pub async fn wait_for_run(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<CloseReason, crate::Error> {
+        let mut connection = self.connection.clone();
+        loop {
+            match *connection.borrow_and_update() {
+                ConnectionState::Closed(reason) => return Ok(reason),
+                ConnectionState::Waiting | ConnectionState::Connected => {}
+            }
+            tokio::select! {
+                () = cancel.cancelled() => return Err(crate::Error::Cancelled),
+                changed = connection.changed() => changed.map_err(|_| crate::Error::State("voice connection state ended unexpectedly"))?,
+            }
+        }
     }
 }
 
@@ -276,11 +325,26 @@ enum Record<'a> {
     },
 }
 
-struct ActiveGuard(Arc<AtomicBool>);
+struct ActiveGuard {
+    active: Arc<AtomicBool>,
+    connection: watch::Sender<ConnectionState>,
+    reason: CloseReason,
+    connected: bool,
+}
+
+impl ActiveGuard {
+    fn close(&mut self, reason: CloseReason) {
+        self.reason = reason;
+    }
+}
 
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.active.store(false, Ordering::Release);
+        if self.connected {
+            self.connection
+                .send_replace(ConnectionState::Closed(self.reason));
+        }
     }
 }
 
@@ -335,7 +399,12 @@ async fn connect(State(state): State<Arc<ServerState>>, request: Request) -> Res
     {
         return error(StatusCode::CONFLICT, "connection_active");
     }
-    let guard = ActiveGuard(state.active.clone());
+    let guard = ActiveGuard {
+        active: state.active.clone(),
+        connection: state.connection.clone(),
+        reason: CloseReason::ClientDisconnected,
+        connected: false,
+    };
     match tokio::time::timeout(
         state.config.probe_timeout,
         state.probe.probe(&state.binding),
@@ -355,7 +424,7 @@ async fn connect(State(state): State<Arc<ServerState>>, request: Request) -> Res
     let (tx, rx) = mpsc::channel::<Vec<u8>>(2);
     let stream_state = state.clone();
     tokio::spawn(async move {
-        let _guard = guard;
+        let mut guard = guard;
         if tx
             .send(line(&Record::Ready {
                 profile: PROFILE,
@@ -367,7 +436,11 @@ async fn connect(State(state): State<Arc<ServerState>>, request: Request) -> Res
         {
             return;
         }
-        run_stream(stream_state, tx).await;
+        stream_state
+            .connection
+            .send_replace(ConnectionState::Connected);
+        guard.connected = true;
+        run_stream(stream_state, tx, guard).await;
     });
 
     let body = Body::from_stream(ReceiverStream::new(rx).map(Ok::<_, Infallible>));
@@ -379,7 +452,7 @@ fn pre_stream_failure(guard: ActiveGuard, status: StatusCode, code: &'static str
     error(status, code)
 }
 
-async fn run_stream(state: Arc<ServerState>, tx: mpsc::Sender<Vec<u8>>) {
+async fn run_stream(state: Arc<ServerState>, tx: mpsc::Sender<Vec<u8>>, mut guard: ActiveGuard) {
     let until_expiry = (state.expires_at - state.clock.now())
         .try_into()
         .unwrap_or(Duration::ZERO);
@@ -410,6 +483,13 @@ async fn run_stream(state: Arc<ServerState>, tx: mpsc::Sender<Vec<u8>>) {
         };
         if let Some(reason) = reason {
             let _ = tx.send(line(&Record::Closed { reason })).await;
+            guard.close(match reason {
+                "credential_expired" => CloseReason::CredentialExpired,
+                "agent_unavailable" => CloseReason::AgentUnavailable,
+                "target_replaced" => CloseReason::TargetReplaced,
+                "server_stopping" => CloseReason::ServerStopping,
+                _ => unreachable!("fixed close reason"),
+            });
             return;
         }
     }

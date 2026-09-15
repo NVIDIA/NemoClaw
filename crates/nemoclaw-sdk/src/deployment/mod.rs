@@ -9,14 +9,19 @@ mod ollama;
 mod plan;
 mod runtime;
 use crate::{
-    CancellationToken, Error,
+    Binding, CancellationToken, Error,
     backend::{Backend, Row},
     bundle::Bundle,
     compile::{self, Target},
     config::{Credential, Document},
     openshell::{EnvironmentSecrets, OpenShell, Secrets, verify_identity},
     state::{Record, StateBinding, Store, atomic_write, save_json},
+    voice::{
+        AccessGrant, Bootstrap, CloseReason, ConnectionState, ServerConfig, SystemClock,
+        TargetProbe, VoiceServer,
+    },
 };
+use async_trait::async_trait;
 use plan::{Plan, check_destroy_plan, check_plan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -26,6 +31,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use time::OffsetDateTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress {
@@ -59,6 +65,17 @@ pub struct OperationResult {
     pub agent_response: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub integrations: Vec<IntegrationResult>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationResult {
+    pub name: String,
+    pub status: String,
+    pub process_lifecycle: String,
+    pub reason: String,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -68,6 +85,7 @@ impl OperationResult {
             deferred: Vec::new(),
             agent_response: String::new(),
             retained: Vec::new(),
+            integrations: Vec::new(),
         }
     }
 }
@@ -80,6 +98,7 @@ pub struct Deployment {
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
     engines: crate::docker::Connections,
+    voiceclaw: Option<Bootstrap>,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -89,6 +108,7 @@ impl Deployment {
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
             engines: crate::docker::Connections::default(),
+            voiceclaw: None,
         }
     }
     /// Supply in-process engine connections. Provider subprocesses independently
@@ -103,6 +123,10 @@ impl Deployment {
     }
     pub fn with_progress(mut self, progress: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
         self.progress = progress;
+        self
+    }
+    pub fn with_voiceclaw(mut self, bootstrap: Bootstrap) -> Self {
+        self.voiceclaw = Some(bootstrap);
         self
     }
     fn open(&self) -> Result<(Bundle, Store), Error> {
@@ -310,6 +334,81 @@ impl Deployment {
         }
         record.succeeded = true;
         store.save(&record)?;
+        if let Some(integration) = document.spec.integrations.first() {
+            let bootstrap = self.voiceclaw.as_ref().ok_or(Error::Conflict(
+                "VoiceClaw integration requires an operator-approved bootstrap path; agent retained",
+            ))?;
+            bootstrap.prepare(&store.directory, cancel).await?;
+
+            let bindings = store.bindings()?;
+            let mut current = targets[3].values.clone();
+            let established = bindings
+                .get(&targets[3].address)
+                .ok_or(Error::State("sandbox has no established identity"))?;
+            current.insert("id".into(), established.id.clone());
+            if client.voice_ready(&current).await != crate::voice::ProbeResult::Ready {
+                return Err(Error::Conflict(
+                    "VoiceClaw target revalidation failed; agent retained",
+                ));
+            }
+            let owner = format!("{}/{}", document.metadata.uid, integration.name);
+            let generation = current
+                .get("generation")
+                .ok_or(Error::State("sandbox generation is unavailable"))?;
+            let native_id = current
+                .get("id")
+                .ok_or(Error::State("sandbox identity is unavailable"))?;
+            let authority = Binding::new(&owner, generation, native_id)?;
+            let target_ref = voice_target_ref(&owner, generation, native_id);
+            let grant =
+                AccessGrant::issue(&target_ref, authority.clone(), OffsetDateTime::now_utc())
+                    .map_err(|_| Error::State("cannot issue VoiceClaw access"))?;
+            let probe = Arc::new(DeploymentVoiceProbe {
+                client: client.clone(),
+                sandbox: current,
+                authority,
+            });
+            let server = VoiceServer::bind(
+                "127.0.0.1:0".parse().expect("fixed loopback address"),
+                &grant,
+                probe,
+                Arc::new(SystemClock),
+                ServerConfig::default(),
+            )
+            .await
+            .map_err(|_| Error::State("cannot start private VoiceClaw semantic server"))?;
+            let ready = bootstrap
+                .connect(&store.directory, server.endpoint(), &grant, cancel)
+                .await?;
+            if !matches!(
+                server.connection_state(),
+                ConnectionState::Connected | ConnectionState::Closed(_)
+            ) {
+                return Err(Error::Conflict(
+                    "VoiceClaw reported ready without a semantic connection; agent retained",
+                ));
+            }
+            drop(ready);
+            drop(grant);
+            let run_cancel = CancellationToken::new();
+            let reason = tokio::select! {
+                result = server.wait_for_run(&run_cancel) => result?,
+                () = cancel.cancelled() => {
+                    server.stop();
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        server.wait_for_run(&run_cancel),
+                    ).await;
+                    return Err(Error::Cancelled);
+                }
+            };
+            result.integrations.push(IntegrationResult {
+                name: integration.name.clone(),
+                status: "disconnected".into(),
+                process_lifecycle: "not-managed".into(),
+                reason: close_reason(reason).into(),
+            });
+        }
         result.outcome = Outcome::Succeeded;
         Ok(result)
     }
@@ -420,6 +519,49 @@ impl Deployment {
         preview: bool,
     ) -> Result<OperationResult, Error> {
         self.teardown_stages(cancel, preview).await
+    }
+}
+
+struct DeploymentVoiceProbe {
+    client: OpenShell,
+    sandbox: Row,
+    authority: Binding,
+}
+
+#[async_trait]
+impl TargetProbe for DeploymentVoiceProbe {
+    async fn probe(&self, authority: &Binding) -> crate::voice::ProbeResult {
+        if authority != &self.authority {
+            return crate::voice::ProbeResult::Replaced;
+        }
+        self.client.voice_ready(&self.sandbox).await
+    }
+}
+
+fn voice_target_ref(owner: &str, generation: &str, native_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    for value in [owner, generation, native_id] {
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value.as_bytes());
+    }
+    format!(
+        "nvr0-{}",
+        digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    )
+}
+
+fn close_reason(reason: CloseReason) -> &'static str {
+    match reason {
+        CloseReason::ClientDisconnected => "client_disconnected",
+        CloseReason::CredentialExpired => "credential_expired",
+        CloseReason::AgentUnavailable => "agent_unavailable",
+        CloseReason::TargetReplaced => "target_replaced",
+        CloseReason::ServerStopping => "server_stopping",
     }
 }
 fn allowed(targets: &[Target]) -> BTreeMap<String, Row> {

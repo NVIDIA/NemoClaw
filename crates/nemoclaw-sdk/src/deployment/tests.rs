@@ -242,3 +242,24 @@ fn public_operation_futures_fit_the_async_callers_stack_budget() {
         );
     }
 }
+
+#[test]
+fn voice_target_reference_is_opaque_stable_and_bound_to_actual_identity() {
+    let target = voice_target_ref("deployment/voice", "generation-a", "native-id-a");
+    assert!(target.starts_with("nvr0-") && target.len() == 69);
+    for private in ["deployment", "voice", "generation-a", "native-id-a"] {
+        assert!(!target.contains(private));
+    }
+    assert_eq!(
+        target,
+        voice_target_ref("deployment/voice", "generation-a", "native-id-a")
+    );
+    assert_ne!(
+        target,
+        voice_target_ref("deployment/voice", "generation-b", "native-id-a")
+    );
+    assert_ne!(
+        target,
+        voice_target_ref("deployment/voice", "generation-a", "native-id-b")
+    );
+}
