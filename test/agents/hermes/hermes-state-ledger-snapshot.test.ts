@@ -157,7 +157,7 @@ describe("Hermes 0.19 durable state ledgers", () => {
     },
   );
 
-  it("backs up and restores every default-profile ledger without replacing the new API key", () => {
+  it("backs up and restores every default-profile ledger without replacing the new API key", async () => {
     const fixture = tempFixture();
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -284,7 +284,7 @@ for (const name of ["SOUL.md", ".hermes_history"]) {
 
       const replacementEnv = `API_SERVER_KEY=${"b".repeat(64)}\n`;
       fs.writeFileSync(envPath, replacementEnv);
-      const restore = sandboxState.restoreSandboxState("hermes", backupPath);
+      const restore = await sandboxState.restoreSandboxState("hermes", backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredFiles).toEqual(backup.backedUpFiles);
       expect(

@@ -70,6 +70,8 @@ When `--apf-interceptor` is not selected, fresh onboarding passes the operator-s
 
 Completed onboarding stores no policy authority, policy receipt, policy copy, policy hash, policy version, preset list, or desired policy tier. Incomplete operations retain only the bounded transaction data required for recovery and cleanup.
 
+Portable Hermes policy proofs are asynchronous. Onboarding, lifecycle recovery, and uninstall await each proof while retaining the HOME fence and sandbox lifecycle lock. Onboarding registration revalidation also reaches the shared restore target callback: finalization and state restore await it before filesystem mutation and recheck snapshot content after it settles. Uninstall advances its journal only after each awaited validation and resource action completes.
+
 ## Effect-order flows
 
 `*` marks a durable checkpoint and `!` marks the sandbox-delete boundary. In-place destructive effects that occur earlier are called out in the matrix.
