@@ -44,6 +44,10 @@ $$nemoclaw <sandbox-name> start
 ```
 
 This path preserves the sandbox workspace after the container starts.
+`start` also repairs a sandbox that OpenShell still reports as `Stopped` while its container runs,
+which can happen when something started the container outside OpenShell. It reports that it is
+starting the sandbox through OpenShell rather than treating the running container as already
+started.
 If the container is paused, follow the printed `docker unpause` guidance instead.
 If Docker no longer has the container, destroy the stale NemoClaw entry and onboard a clean replacement.
 Restore a separately created snapshot afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
@@ -57,9 +61,14 @@ Restore a separately created snapshot afterward if one is available; rebuild can
 ## Recover the Agent Runtime
 
 <AgentOnly variant="openclaw,hermes">
-  `recover` can start an existing stopped Docker-driver container before it repairs the agent
-  runtime. It starts only a non-paused container that Docker still associates with the registered
-  sandbox. It leaves a running or paused container unchanged. If Docker cannot start the container,
+  `recover` can start an existing stopped Docker-driver sandbox before it repairs the agent
+  runtime. It starts the sandbox through OpenShell, which restarts the same container and also
+  advances the sandbox out of the `Stopped` phase that the readiness check waits on. It starts only
+  a non-paused container that Docker still associates with the registered sandbox. If that container
+  is already running while OpenShell reports `Stopped`, `recover` still starts the sandbox through
+  OpenShell to repair the phase. It leaves paused containers and running sandboxes in other phases
+  unchanged. If OpenShell cannot start a stopped container, recovery starts the container directly
+  so it is running again, and `start` repairs the phase on the next run. If neither start succeeds,
   recovery continues to the OpenShell readiness check and reports the resulting failure.
 </AgentOnly>
 
