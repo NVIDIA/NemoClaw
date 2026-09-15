@@ -550,7 +550,7 @@ function applyEnvLines(
     if (!key) throw new Error("Messaging runtime credential alias line is invalid.");
     desired.set(key, line);
   }
-  const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
+  const stale = new Set(staleCredentialEnvKeys(plan, new Set(desired.keys())));
   if (options.preserveResolverCredentialLines) {
     for (const line of (existing ?? "").split(/\n/u)) {
       const key = readEnvLineKey(line);
