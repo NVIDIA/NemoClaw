@@ -34,6 +34,7 @@ import { redact, redactFull } from "../../security/redact";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
 import {
+  captureRuntimeProviderDestroyIdentity,
   classifyDestroyContainerIdentity,
   isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
@@ -291,9 +292,17 @@ export async function executeSandboxDestroy({
           };
         }
         try {
-          const actual = sandbox
-            ? identityProvider.cleanup.captureDestroyIdentity?.({ sandbox, sandboxName })
-            : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
+          const captureBySandbox = identityProvider.cleanup.captureDestroyIdentity;
+          const actual = captureRuntimeProviderDestroyIdentity(
+            identityProvider,
+            sandbox,
+            sandboxName,
+            captureBySandbox
+              ? (registeredSandbox, name) =>
+                  captureBySandbox({ sandbox: registeredSandbox, sandboxName: name })
+              : undefined,
+            identityProvider.cleanup.captureDestroyIdentityByName,
+          );
           if (!actual) {
             return {
               status: "probe-failed",

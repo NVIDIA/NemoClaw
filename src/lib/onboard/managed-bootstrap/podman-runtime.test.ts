@@ -26,10 +26,11 @@ vi.mock("./adapter", async (importOriginal) => ({
   prepareManagedBootstrapSequence: coordinator.prepare,
 }));
 
-import type {
-  ManagedBootstrapActivatedTransaction,
-  ManagedBootstrapAdapter,
-  ManagedBootstrapPreparedTransaction,
+import {
+  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  type ManagedBootstrapActivatedTransaction,
+  type ManagedBootstrapAdapter,
+  type ManagedBootstrapPreparedTransaction,
 } from "./adapter";
 import {
   OPENSHELL_MAIN_PROCESS_SPEC_ENV,
@@ -192,6 +193,117 @@ function installCoordinatorMocks() {
 }
 
 describe("Podman managed-bootstrap runtime surface", () => {
+  it("binds create receipt identity and held argv to stable structured inspection", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-create-held-"));
+    try {
+      let launchedHeldArgv: readonly string[] = [];
+      const capture = vi.fn((args: readonly string[]) => {
+        switch (args[1]) {
+          case "ls":
+            return {
+              status: 0,
+              stdout: JSON.stringify([{ Id: ORIGINAL_RUNTIME_ID }]),
+              stderr: "",
+              error: undefined,
+            };
+          case "inspect":
+            return {
+              status: 0,
+              stdout: JSON.stringify([
+                {
+                  Id: ORIGINAL_RUNTIME_ID,
+                  Image: `sha256:${"5".repeat(64)}`,
+                  Name: "openshell-default--alpha-sandbox-alpha",
+                  Config: {
+                    Entrypoint: ["/opt/openshell/bin/supervisor"],
+                    Cmd: [],
+                    Env: [
+                      `NEMOCLAW_MANAGED_BOOTSTRAP_IDENTITY=${IDENTITY}`,
+                      `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${openshellMainProcessSpecEnvValue(
+                        launchedHeldArgv,
+                        false,
+                      )}`,
+                    ],
+                    Labels: {
+                      "openshell.managed": "true",
+                      "openshell.ai/sandbox-id": "sandbox-alpha",
+                      "openshell.ai/sandbox-name": "alpha",
+                      "openshell.ai/sandbox-namespace": "",
+                      "openshell.ai/sandbox-workspace": "default",
+                    },
+                    User: "root",
+                  },
+                  State: { Paused: false, Restarting: false, Running: true },
+                },
+              ]),
+              stderr: "",
+              error: undefined,
+            };
+          default:
+            throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
+        }
+      });
+      const operationEngine = { ...engine(), capture };
+      const adapter = createPodmanManagedBootstrapAdapter({
+        engine: operationEngine,
+        stateRoot,
+        environment: {},
+        gatewayPort: 8080,
+        workspaceRoot: { uid: 1000, gid: 1000, mode: 0o755 },
+        watcherController: {
+          recoverUnfinishedLease: vi.fn(),
+          reclaimStoppedLease: vi.fn(),
+          quiesceAndProve: vi.fn(),
+        },
+      });
+      const request = lifecycleInput(adapter).request;
+      const launch = vi.fn(async (input: { heldWorkloadArgv: readonly string[] }) => {
+        launchedHeldArgv = input.heldWorkloadArgv;
+        return {
+          sandbox: { sandboxName: "alpha", sandboxId: "sandbox-alpha", driverId: "podman" },
+          ready: true as const,
+          readyAt: "2026-09-15T00:00:00.000Z",
+        };
+      });
+
+      const handle = await adapter.createHeldWorkload({
+        bootstrapIdentity: IDENTITY,
+        request,
+        launch,
+        plan: {
+          schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+          sandboxName: "alpha",
+          driverId: "podman",
+          image: {
+            repository: "registry.example/nemoclaw/openclaw",
+            manifestDigest: MANIFEST_DIGEST,
+          },
+          profile: { agent: "openclaw", fingerprint: "a".repeat(64) },
+          agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+          managedStateRoots: [],
+          intendedWorkloadArgv: ["env", "/usr/local/bin/nemoclaw-start"],
+          expectedSupervisorArgv: ["/opt/openshell/bin/supervisor"],
+          metadata: {},
+        },
+      });
+
+      expect(handle.sandbox).toEqual({
+        sandboxName: "alpha",
+        sandboxId: "sandbox-alpha",
+        driverId: "podman",
+      });
+      expect(handle.heldWorkloadArgv).toEqual(launchedHeldArgv);
+      expect(launchedHeldArgv).toEqual(
+        expect.arrayContaining([IDENTITY, "/usr/local/bin/nemoclaw-managed-startup-hold"]),
+      );
+      expect(handle.intendedWorkloadArgv).toEqual(["env", "/usr/local/bin/nemoclaw-start"]);
+      expect(capture.mock.calls.filter(([args]) => args[1] === "ls")).toHaveLength(1);
+      expect(capture.mock.calls.filter(([args]) => args[1] === "inspect")).toHaveLength(3);
+    } finally {
+      fs.rmSync(stateRoot, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     [8080, "nemoclaw", "openshell-docker-gateway"],
     [18080, "nemoclaw-18080", "openshell-docker-gateway-18080"],

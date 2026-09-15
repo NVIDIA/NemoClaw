@@ -599,6 +599,13 @@ function sameMap(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function containsExactEntries(
+  observed: Readonly<Record<string, string>>,
+  expected: Readonly<Record<string, string>>,
+): boolean {
+  return Object.entries(expected).every(([key, value]) => observed[key] === value);
+}
+
 function volumeExists(authority: PodmanBootstrapReplacementAuthority, volumeName: string): boolean {
   const result = captureWhileWatcherHeld(authority, ["volume", "exists", volumeName]);
   if (result.status === 0) return true;
@@ -751,7 +758,7 @@ function inspectExactContainer(
     name !== expected.name ||
     actualImageContentId !== expected.imageContentId ||
     (expected.running !== undefined && state.Running !== expected.running) ||
-    !sameMap(labels, exactStringMap(expected.labels, "Expected Podman labels"))
+    !containsExactEntries(labels, exactStringMap(expected.labels, "Expected Podman labels"))
   ) {
     return failure("Podman bootstrap container identity or state changed after it was pinned.");
   }

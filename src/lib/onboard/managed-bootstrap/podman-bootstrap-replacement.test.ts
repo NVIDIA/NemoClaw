@@ -145,6 +145,7 @@ class PodmanHarness {
   public replacementStartsOnCreate = false;
   public failReplacementInspectOnce = false;
   public replacementEnvironment: readonly string[] = ENVIRONMENT;
+  public replacementImageLabels: Readonly<Record<string, string>> = {};
   public stateVolumeMountMode = "z";
   public capturedEnvironmentFile: string | null = null;
   public capturedEnvironmentContents: string | null = null;
@@ -293,7 +294,7 @@ class PodmanHarness {
           id: REPLACEMENT_RUNTIME_ID,
           name: STAGING_NAME,
           image: REPLACEMENT_IMAGE_ID,
-          labels,
+          labels: { ...this.replacementImageLabels, ...labels },
           entrypoint: ENTRYPOINT_ARGV,
           command: COMMAND_ARGV,
           environment: this.replacementEnvironment,
@@ -708,6 +709,22 @@ describe("Podman bootstrap stopped replacement", () => {
       "identity or state changed after it was pinned",
     );
     expect(store.load(BOOTSTRAP_IDENTITY)?.phase).toBe("state-volume-created");
+  });
+
+  it("accepts additional labels inherited from the pinned replacement image", () => {
+    const harness = new PodmanHarness();
+    harness.replacementImageLabels = {
+      "io.nvidia.nemoclaw.managed-image.contract": "1",
+      "org.opencontainers.image.revision": "candidate-revision",
+    };
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() => prepare(harness, store, watcher.lease)).not.toThrow();
+    expect(harness.replacement?.labels).toMatchObject({
+      ...REPLACEMENT_LABELS,
+      ...harness.replacementImageLabels,
+    });
   });
 
   it("stops only the exact original after the stopped replacement remains stable", () => {
