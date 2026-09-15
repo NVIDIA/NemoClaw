@@ -24,9 +24,6 @@ interface DiagnosticWalk {
 const CUSTOM_INSPECT = Symbol.for("nodejs.util.inspect.custom");
 const RENDERER_HOOKS = ["toJSON", CUSTOM_INSPECT] as const;
 const COERCION_HOOKS = ["toString", "valueOf", Symbol.toPrimitive] as const;
-const SAFE_ERROR_TO_STRING = Object.getOwnPropertyDescriptor(Error.prototype, "toString")?.value;
-const SAFE_OBJECT_TO_STRING = Object.getOwnPropertyDescriptor(Object.prototype, "toString")?.value;
-const SAFE_OBJECT_VALUE_OF = Object.getOwnPropertyDescriptor(Object.prototype, "valueOf")?.value;
 const REDACTED_ERROR_MESSAGE =
   "Onboarding failed; diagnostic details were redacted because they could not be sanitized safely.";
 
@@ -50,14 +47,6 @@ function isRendererHook(key: PropertyKey): boolean {
 /** Identify coercion properties that renderers can invoke implicitly. */
 function isCoercionHook(key: PropertyKey): boolean {
   return key === "toString" || key === "valueOf" || key === Symbol.toPrimitive;
-}
-
-/** Retain only the captured built-in Error/Object coercion implementations. */
-function isSafeBuiltinCoercion(key: PropertyKey, value: unknown): boolean {
-  if (key === "toString") {
-    return value === SAFE_ERROR_TO_STRING || value === SAFE_OBJECT_TO_STRING;
-  }
-  return key === "valueOf" && value === SAFE_OBJECT_VALUE_OF;
 }
 
 /** Select the inert value used to replace an executable diagnostic hook. */
@@ -127,7 +116,7 @@ function redactAccessor(
     descriptor: {
       configurable: descriptor.configurable,
       enumerable: descriptor.enumerable,
-      value: isRendererHook(key) || isCoercionHook(key) ? neutralizedHookValue(key) : "<REDACTED>",
+      value: isRendererHook(key) ? neutralizedHookValue(key) : "<REDACTED>",
       writable: true,
     },
   });
@@ -144,10 +133,6 @@ function redactStoredValue(
   let value: unknown;
   if (isRendererHook(key) && descriptor.value !== undefined) {
     value = neutralizedHookValue(key);
-  } else if (isCoercionHook(key) && typeof descriptor.value === "function") {
-    value = isSafeBuiltinCoercion(key, descriptor.value)
-      ? descriptor.value
-      : neutralizedHookValue(key);
   } else {
     value = redactNestedDiagnostic(descriptor.value, walk);
   }
@@ -164,23 +149,63 @@ function redactStoredValue(
   walk.updates.push({ target, key, descriptor: replacement });
 }
 
-/** Determine whether an inherited descriptor can execute during diagnostic rendering. */
-function isExecutableInheritedHook(key: PropertyKey, descriptor: PropertyDescriptor): boolean {
+/** Determine whether an inherited renderer can execute during diagnostic formatting. */
+function isExecutableInheritedRenderer(descriptor: PropertyDescriptor): boolean {
   if (!("value" in descriptor)) return true;
-  if (typeof descriptor.value !== "function") return false;
-  return !isCoercionHook(key) || !isSafeBuiltinCoercion(key, descriptor.value);
+  return typeof descriptor.value === "function";
 }
 
-/** Shadow inherited rendering and coercion hooks without invoking their values. */
-function neutralizeInheritedHooks(source: object, target: object, walk: DiagnosticWalk): void {
-  for (const key of [...RENDERER_HOOKS, ...COERCION_HOOKS]) {
+/** Give every retained container inert own coercion hooks without consulting its prototype. */
+function installSafeCoercionHooks(source: object, target: object, walk: DiagnosticWalk): void {
+  for (const key of COERCION_HOOKS) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (source !== target) {
+      Object.defineProperty(target, key, {
+        configurable: true,
+        enumerable: false,
+        value: safeDiagnosticCoercion,
+        writable: true,
+      });
+      continue;
+    }
+    if (descriptor && "value" in descriptor && descriptor.value === safeDiagnosticCoercion) {
+      continue;
+    }
+    if (
+      descriptor &&
+      !descriptor.configurable &&
+      (!("value" in descriptor) || !descriptor.writable)
+    ) {
+      walk.unsafe = true;
+      return;
+    }
+    if (!descriptor && !Object.isExtensible(target)) {
+      walk.unsafe = true;
+      return;
+    }
+    walk.updates.push({
+      target,
+      key,
+      descriptor: {
+        configurable: descriptor?.configurable ?? true,
+        enumerable: descriptor?.enumerable ?? false,
+        value: safeDiagnosticCoercion,
+        writable: "value" in (descriptor ?? {}) ? descriptor?.writable : true,
+      },
+    });
+  }
+}
+
+/** Shadow inherited rendering hooks without reading or invoking their values. */
+function neutralizeInheritedRenderers(source: object, target: object, walk: DiagnosticWalk): void {
+  for (const key of RENDERER_HOOKS) {
     if (Object.hasOwn(source, key)) continue;
     let prototype = Object.getPrototypeOf(source) as object | null;
     let inherited = false;
     while (prototype) {
       const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
       if (descriptor) {
-        inherited = isExecutableInheritedHook(key, descriptor);
+        inherited = isExecutableInheritedRenderer(descriptor);
         break;
       }
       prototype = Object.getPrototypeOf(prototype) as object | null;
@@ -207,9 +232,12 @@ function redactStoredDiagnosticProperties(
   target: object,
   walk: DiagnosticWalk,
 ): void {
-  neutralizeInheritedHooks(source, target, walk);
+  installSafeCoercionHooks(source, target, walk);
+  if (walk.unsafe) return;
+  neutralizeInheritedRenderers(source, target, walk);
   for (const key of Reflect.ownKeys(source)) {
     if (walk.unsafe) return;
+    if (isCoercionHook(key)) continue;
     if (isSensitiveDiagnosticKey(key)) {
       walk.unsafe = true;
       return;

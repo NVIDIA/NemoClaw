@@ -62,7 +62,7 @@ describe("onboarding command failures", () => {
     expect(leaf.stack).toContain("<REDACTED>");
     expect(cause.message).toBe("Retry after correcting permissions.");
     expect(inspect(failure, { depth: null })).not.toContain(secret);
-    expect(String(failure)).toBe("Error: Onboarding failed");
+    expect(String(failure)).toBe("[REDACTED ERROR]");
   });
 
   it("redacts nested aggregate members and causes before structured rendering", async () => {
@@ -286,6 +286,69 @@ describe("onboarding command failures", () => {
     expect(valueOf).not.toHaveBeenCalled();
     expect(Number(failure)).toBeNaN();
     expect(valueOf).not.toHaveBeenCalled();
+  });
+
+  it("does not consult inherited name or message getters during string coercion", async () => {
+    const secret = `nvapi-${"1".repeat(60)}`;
+    const name = vi.fn(() => `Name ${secret}`);
+    const message = vi.fn(() => `Message ${secret}`);
+    class GetterError extends Error {}
+    Object.defineProperties(GetterError.prototype, {
+      name: { configurable: true, get: name },
+      message: { configurable: true, get: message },
+    });
+    const failure = new GetterError();
+
+    await rethrowOnboardFailure(failure);
+
+    expect(name).not.toHaveBeenCalled();
+    expect(message).not.toHaveBeenCalled();
+    expect(String(failure)).toBe("[REDACTED ERROR]");
+    expect(String(failure)).not.toContain(secret);
+    expect(name).not.toHaveBeenCalled();
+    expect(message).not.toHaveBeenCalled();
+  });
+
+  it("does not consult an inherited Symbol.toStringTag getter during coercion", async () => {
+    const secret = `nvapi-${"2".repeat(60)}`;
+    const toStringTag = vi.fn(() => `Tag ${secret}`);
+    class TaggedError extends Error {}
+    Object.defineProperty(TaggedError.prototype, Symbol.toStringTag, {
+      configurable: true,
+      get: toStringTag,
+    });
+    const failure = new TaggedError("Onboarding failed");
+
+    await rethrowOnboardFailure(failure);
+
+    expect(toStringTag).not.toHaveBeenCalled();
+    expect(String(failure)).toBe("[REDACTED ERROR]");
+    expect(String(failure)).not.toContain(secret);
+    expect(toStringTag).not.toHaveBeenCalled();
+  });
+
+  it("does not trust a poisoned Error prototype captured during module import", async () => {
+    const secret = `nvapi-${"3".repeat(60)}`;
+    const poisonedToString = vi.fn(() => `Leaked diagnostic: ${secret}`);
+    const original = Object.getOwnPropertyDescriptor(Error.prototype, "toString");
+    assert(original);
+    Object.defineProperty(Error.prototype, "toString", {
+      ...original,
+      value: poisonedToString,
+    });
+    try {
+      vi.resetModules();
+      const { redactOnboardError } = await import("./diagnostics/redaction");
+      const failure = redactOnboardError(new Error("Onboarding failed"));
+
+      expect(poisonedToString).not.toHaveBeenCalled();
+      expect(String(failure)).toBe("[REDACTED ERROR]");
+      expect(String(failure)).not.toContain(secret);
+      expect(poisonedToString).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(Error.prototype, "toString", original);
+      vi.resetModules();
+    }
   });
 
   it("fails closed when an own coercion hook is immutable", async () => {
