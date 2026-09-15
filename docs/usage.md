@@ -5,7 +5,7 @@
 
 Build a [verified native bundle](build.md) and put its `bin` directory on `PATH`.
 Choose a checked-in [example](../examples/), set a fresh deployment UUID and available endpoints, and retain the same state directory for every operation.
-NemoClaw supports one provider, sandbox, agent, and route per document.
+NemoClaw supports one provider and sandbox per document, with [one or more OpenClaw agents](agents.md) sharing a primary route or one agent of another harness.
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
 Apply creates or changes runtime resources and can download model data and send inference requests.
@@ -72,6 +72,56 @@ Unavailable Landlock restrictions are not enforced.
 The [validation evidence](validation/README.md) records policy tests, not a security qualification.
 
 Use [sandbox policy and proxy configuration](sandbox-network.md) to replace the isolated preset or select an agent HTTP proxy.
+
+## Resource Ownership
+
+Ownership declarations are optional except for the existing `gateway.management` field.
+Existing YAML keeps its current behavior when the new fields are omitted.
+Adding an equivalent declaration leaves the compiled resources and runtime specifications unchanged; export preserves the declaration after a successful apply.
+
+`managed` means NemoClaw manages the resource's lifecycle under its existing retention policy.
+`external` means NemoClaw uses the resource without managing its lifecycle or administrative configuration.
+Using an external service still sends requests to it; attaching a container to an external network does not transfer ownership of that network.
+An external inference server still has a deployment-owned OpenShell provider registration, which destroy removes.
+
+Paths below are relative to `spec`:
+
+| Object | Ownership when omitted | Accepted declaration |
+|---|---|---|
+| `inferenceProviders[]` | Managed with `service` or `ollama`; external with `endpoint` alone | `management: managed` or `external`, matching that form |
+| `inferenceProviders[].service` and `.ollama` | Managed server | `management: managed` |
+| `gateway.storage`, `inferenceProviders[].service.storage`, `.ollama.storage` | Managed storage | `{management: managed}` |
+| `gateway.network`, `inferenceProviders[].service.placement.network` | Managed network, configured by the existing sibling `networkCIDR` | `{management: managed}` |
+| `inferenceProviders[].service.model` | Managed model download and preparation | `management: managed` alongside repository and revision |
+| `inferenceProviders[].ollama.model` | Managed installation of the route's model | `{management: managed}` |
+| `inferenceProviders[].ollama.network` | Existing external network | Network name, or `{management: external, name: NETWORK}` |
+| `sandboxes[].network.proxy` | Existing external HTTP proxy | `management: external` alongside host and port |
+
+External gateways cannot declare managed storage or networks.
+In the Ollama network object, `management` can also be omitted; `name` is required.
+The declarations do not grant permissions, change retention, adopt existing resources, or enable new lifecycle modes.
+External volumes and model installations, managed Ollama networks, and managed HTTP proxies are rejected.
+
+For example, under `inferenceProviders[].ollama`, either network form selects the same existing network:
+
+```yaml
+network: nc-prototype-slice
+```
+
+```yaml
+network:
+  management: external
+  name: nc-prototype-slice
+storage:
+  management: managed
+model:
+  management: managed
+```
+
+Use an existing network on the configured Ollama engine and keep the other Ollama settings and route model from your deployment.
+Run `nemoclaw plan` with the same state directory to verify that adding declarations proposes no resource changes, then apply and export using the commands above.
+Finish any interrupted apply with its original YAML before changing declarations.
+Ownership checks and failure handling still apply, and managed model storage still survives destroy.
 
 ## Editor Schema Assistance
 
