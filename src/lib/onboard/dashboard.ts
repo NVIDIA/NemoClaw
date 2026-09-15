@@ -54,14 +54,10 @@ function looksLikeForwardPortConflict(diagnostic: string): boolean {
   return /eaddrinuse|address already in use|port .* in use|bind: .*in use/iu.test(diagnostic);
 }
 
-type CommandResult = { status: number | null };
-
 type DashboardForwardRuntimeAuthority = OpenShellForwardRuntimeAuthority;
 
 export interface OnboardDashboardDeps {
-  runOpenshell(args: string[], opts?: Record<string, unknown>): CommandResult;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
-  openshellArgv(args: string[]): string[];
   runCapture?: typeof defaultRunCapture;
   cliName(): string;
   agentProductName(): string;
