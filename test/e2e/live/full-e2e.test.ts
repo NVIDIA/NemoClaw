@@ -215,12 +215,19 @@ ${GATEWAY_STOP_SCRIPT}`),
   ).toBe(true);
   await sleep(3_000);
 
-  const recovery = await repoNemoclaw(
+  const stoppedStatus = await repoNemoclaw(
     input.host,
     [SANDBOX_NAME, "status"],
-    "phase-4-status-recover-before-launch",
+    "phase-4-status-after-native-gateway-exit",
     {},
     120_000,
+  );
+  const recovery = await repoNemoclaw(
+    input.host,
+    [SANDBOX_NAME, "start"],
+    "phase-4-start-after-native-gateway-exit",
+    {},
+    180_000,
   );
   const configEdit =
     !recovery.timedOut && recovery.exitCode === 0 && securityPostureEnabled()
@@ -240,10 +247,16 @@ ${GATEWAY_STOP_SCRIPT}`),
         )
       : null;
   expect(
-    !recovery.timedOut &&
+    !stoppedStatus.timedOut &&
+      stoppedStatus.exitCode !== 0 &&
+      resultText(stoppedStatus).includes(`nemoclaw ${SANDBOX_NAME} start`) &&
+      !recovery.timedOut &&
       recovery.exitCode === 0 &&
       (!configEdit || (!configEdit.timedOut && configEdit.exitCode === 0)),
-    resultText(configEdit ?? recovery),
+    [stoppedStatus, recovery, configEdit]
+      .filter((result) => result !== null)
+      .map(resultText)
+      .join("\n"),
   ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
