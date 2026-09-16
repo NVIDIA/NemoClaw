@@ -76,8 +76,13 @@ impl Deployment {
 }
 
 fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> Result<(), Error> {
-    if observed["provider_type"] != expected["provider_type"] {
-        return Err(Error::Conflict("provider type drift requires inspection"));
+    if observed["provider_type"] != expected["provider_type"]
+        || observed["endpoint"] != expected["endpoint"]
+        || observed["credential_env"].is_empty() != expected["credential_env"].is_empty()
+    {
+        return Err(Error::Conflict(
+            "native provider profile binding drift requires inspection",
+        ));
     }
     if expected
         .get("credential_source")
@@ -106,9 +111,6 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         return Err(Error::Conflict("managed inference registration drifted"));
     }
     let provider = document.selected_provider_mut(&expected["name"])?;
-    if !managed {
-        provider.endpoint = observed["endpoint"].clone();
-    }
     provider.credential = (!observed["credential_env"].is_empty()).then(|| Credential {
         env: observed["credential_env"].clone(),
     });
@@ -178,14 +180,27 @@ mod tests {
         let mut document =
             Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes())
                 .unwrap();
+        document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
+        document.spec.inference_providers[0].credential = Some(Credential {
+            env: "OLD_KEY".into(),
+        });
         let expected = provider_row(&document);
+        for (field, value) in [
+            ("endpoint", "https://changed.example/v1"),
+            ("credential_env", ""),
+        ] {
+            let mut drift = expected.clone();
+            drift.insert(field.into(), value.into());
+            let original = document.clone();
+            assert!(export_provider(&mut document, &expected, &drift).is_err());
+            assert_eq!(document, original);
+        }
         let mut observed = expected.clone();
-        observed.insert("endpoint".into(), "https://changed.example/v1".into());
         observed.insert("credential_env".into(), "NEW_INFERENCE_KEY".into());
         export_provider(&mut document, &expected, &observed).unwrap();
         assert_eq!(
             document.spec.inference_providers[0].endpoint,
-            "https://changed.example/v1"
+            "https://models.example/v1"
         );
         assert_eq!(
             document.spec.inference_providers[0]
