@@ -889,7 +889,11 @@ export function createSetupNim(
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
     });
-    const openRouterFeaturedModels = nvidiaFeaturedModels;
+    const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
+      defaultModel: resolveAgentDefaultCloudModel(agent),
+      retiredModelIds: [],
+      writeLine: deps.log,
+    });
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
         model,

@@ -120,6 +120,17 @@ describe("NVIDIA featured model selection", () => {
     expect(promptCloudModel).toHaveBeenCalledOnce();
   });
 
+  it("preserves a recovered OpenRouter route when NVIDIA retirements are disabled", async () => {
+    const recoveredModel = "minimaxai/minimax-m3";
+    const session = createNvidiaFeaturedModelSession({
+      retiredModelIds: [],
+      writeLine: vi.fn(),
+    });
+
+    await expect(session.select(null, recoveredModel, true)).resolves.toBe(recoveredModel);
+    expect(promptCloudModel).not.toHaveBeenCalled();
+  });
+
   it("skips the catalog when the NVIDIA API key prompt asks to go back (#9404)", async () => {
     const select = vi.fn().mockResolvedValue("nvidia/selected-model");
     const session = { select } as unknown as NvidiaFeaturedModelSession;
