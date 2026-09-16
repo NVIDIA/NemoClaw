@@ -881,6 +881,10 @@ jobs:
             --node-path "$env:RUNNER_TEMP\system-drive-inputs\node\node.exe" `
             --output "$env:RUNNER_TEMP\system-root-mxc-proof\system-drive-build-gate.json"
           if ($LASTEXITCODE -ne 0) { throw 'The package verifier rejected the actual system-drive proof.' }
+          & python packaging/windows/hermes/test-native-adapter-paths.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'The native Hermes adapter path controls failed.' }
+          & python packaging/windows/hermes/test_generated_finder_paths.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'The generated Hermes finder controls failed.' }
       - name: Verify acceptance-controller Windows shell compatibility
         shell: pwsh
         run: |

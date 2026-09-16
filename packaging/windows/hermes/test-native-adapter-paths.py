@@ -362,7 +362,7 @@ class AdapterPathControls(unittest.TestCase):
         with self.assertRaises(adapter.NativeStartupRefusal):
             foreign._find_bash()
 
-    def test_owned_module_origin_works_without_realpath_and_foreign_origin_refused(
+    def test_owned_module_origin_works_without_realpath_or_ambient_search_path(
         self,
     ):
         expected = self.root / "hermes-agent/tools/lazy_deps.py"
@@ -381,8 +381,9 @@ class AdapterPathControls(unittest.TestCase):
         (foreign / "lazy_deps.py").write_text(
             "raise AssertionError('foreign source must not execute')"
         )
-        with self.assertRaises(adapter.NativeStartupRefusal):
-            finder.find_spec("tools.lazy_deps", [str(foreign)])
+        result = finder.find_spec("tools.lazy_deps", [str(foreign)])
+        self.assertEqual(Path(result.origin), expected)
+        self.assertIsInstance(result.loader, adapter._NativeLoader)
 
     def test_real_child_startup_policy_with_denied_realpath_keeps_tempfile_operations(
         self,

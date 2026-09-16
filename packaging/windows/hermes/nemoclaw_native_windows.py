@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import ctypes
 import importlib.abc
-import importlib.machinery
+import importlib.util
 import json
 import os
 import re
@@ -437,14 +437,18 @@ class _NativeFinder(importlib.abc.MetaPathFinder):
         relative = _MODULES.get(fullname)
         if relative is None:
             return None
-        spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
         expected = _regular_file(self.root / "hermes-agent" / relative, self.root)
-        if spec is None or spec.loader is None or not spec.origin:
+        # Editable-install finders may retain a relative origin after the
+        # runtime is moved into its sealed volume. Select the exact allowlisted
+        # file directly instead of admitting an ambient search-path result.
+        spec = importlib.util.spec_from_file_location(fullname, expected)
+        if (
+            spec is None
+            or spec.loader is None
+            or not spec.origin
+            or not _same_path(Path(spec.origin), expected)
+        ):
             _refuse("an official Hermes policy module could not be resolved.")
-        if _regular_file(Path(spec.origin), self.root) != expected:
-            _refuse(
-                "an official Hermes policy module resolved outside this installation."
-            )
         spec.loader = _NativeLoader(spec.loader, self.root, self.bash)
         return spec
 
