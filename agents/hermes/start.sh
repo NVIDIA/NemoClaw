@@ -2150,10 +2150,10 @@ start_hermes_dashboard_current_user() {
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
   launch_hermes_dashboard_process current || return 1
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
+  ensure_dashboard_log_stream || return 1
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" current "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
   fi
-  ensure_dashboard_log_stream || return 1
   start_socat_forwarder \
     "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID \
     "$DASHBOARD_PID" current
@@ -2165,10 +2165,10 @@ start_hermes_dashboard_sandbox_user() {
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
   launch_hermes_dashboard_process sandbox || return 1
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
+  ensure_dashboard_log_stream || return 1
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" sandbox "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
   fi
-  ensure_dashboard_log_stream || return 1
   start_socat_forwarder \
     "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID \
     "$DASHBOARD_PID" sandbox
