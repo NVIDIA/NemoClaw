@@ -233,6 +233,7 @@ class AdapterPathControls(unittest.TestCase):
             return actual_lstat(path)
 
         with (
+            patch.object(adapter, "_get_attributes", None),
             patch.object(Path, "lstat", observe),
             self.assertRaises(adapter.NativeStartupRefusal),
         ):
