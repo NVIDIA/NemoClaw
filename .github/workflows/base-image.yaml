@@ -24,6 +24,7 @@ on:
       - ".github/workflows/base-image.yaml"
       - ".github/workflows/base-image-platform.yaml"
       - ".github/workflows/managed-images.yaml"
+      - ".github/scripts/security-scan-results.mts"
       - "test/e2e/live/managed-image-activation-e2e.test.ts"
       - "test/e2e/live/managed-image-activation-e2e-helpers.ts"
       - ".github/actions/ci-reviewed-npm-audit/**"
@@ -101,7 +102,7 @@ on:
         required: false
         default: ""
       run_security_scans:
-        description: "On main, scan each published managed-image digest for Critical vulnerabilities, verified secrets, and malware"
+        description: "On main with the default OpenClaw version, scan managed-image digests for Critical vulnerabilities, verified secrets, and malware"
         required: false
         type: boolean
         default: false

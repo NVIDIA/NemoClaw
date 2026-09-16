@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   classifySecretExit,
@@ -13,7 +16,57 @@ import {
   redactSecretReport,
 } from "../../../.github/scripts/security-scan-results.mts";
 
+const scriptPath = fileURLToPath(
+  new URL("../../../.github/scripts/security-scan-results.mts", import.meta.url),
+);
+const temporaryRoots: string[] = [];
+function createTemporaryRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "nemoclaw-security-scan-"));
+  temporaryRoots.push(root);
+  return root;
+}
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
 describe("security scan report handling", () => {
+  it("redacts CLI reports and removes scanner scratch files", () => {
+    const root = createTemporaryRoot();
+    const rawPath = join(root, "raw.jsonl");
+    const stderrPath = join(root, "scanner.stderr");
+    const reportPath = join(root, "report.jsonl");
+    writeFileSync(
+      rawPath,
+      JSON.stringify({ DetectorName: "Example", Raw: "secret", Verified: true }),
+    );
+    writeFileSync(stderrPath, "secret diagnostic");
+
+    const result = spawnSync(
+      process.execPath,
+      [scriptPath, "redact-secrets", rawPath, stderrPath, reportPath],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(readFileSync(reportPath, "utf8"))).toEqual({
+      DetectorName: "Example",
+      Verified: true,
+    });
+    expect(() => readFileSync(rawPath)).toThrow();
+    expect(() => readFileSync(stderrPath)).toThrow();
+  });
+
+  it.each([183, 1])("classifies scanner exit %i as blocking through the CLI", (exitCode) => {
+    const result = spawnSync(
+      process.execPath,
+      [scriptPath, "classify-secret-exit", String(exitCode)],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("blocking\n");
+  });
   it("retains only reviewed secret finding metadata", () => {
     const [result] = parseSecretReport(
       `${JSON.stringify({
@@ -74,7 +127,7 @@ describe("security scan report handling", () => {
   });
 
   it("publishes only sanitized fields and removes successful scanner scratch files", () => {
-    const root = mkdtempSync(join(tmpdir(), "nemoclaw-security-scan-"));
+    const root = createTemporaryRoot();
     const rawPath = join(root, "raw.jsonl");
     const stderrPath = join(root, "scanner.stderr");
     const reportPath = join(root, "report.jsonl");
@@ -95,7 +148,7 @@ describe("security scan report handling", () => {
   });
 
   it("removes raw output and refuses a partial artifact when any result is malformed", () => {
-    const root = mkdtempSync(join(tmpdir(), "nemoclaw-security-scan-"));
+    const root = createTemporaryRoot();
     const rawPath = join(root, "raw.jsonl");
     const stderrPath = join(root, "scanner.stderr");
     const reportPath = join(root, "report.jsonl");

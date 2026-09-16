@@ -48,6 +48,7 @@ on:
       - ".github/workflows/base-image.yaml"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
+      - ".github/scripts/security-scan-results.mts"
       - ".dockerignore"
       - "Dockerfile"
       - "agents/**"
@@ -1619,7 +1620,7 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix:
+      matrix: &managed_image_inventory
         include:
           - agent: openclaw
             arch: amd64
@@ -2362,44 +2363,7 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - agent: openclaw
-            arch: amd64
-            display_name: OpenClaw
-            image: ghcr.io/nvidia/nemoclaw/openclaw-sandbox
-            platform: linux/amd64
-            artifact_platform: linux-amd64
-          - agent: openclaw
-            arch: arm64
-            display_name: OpenClaw
-            image: ghcr.io/nvidia/nemoclaw/openclaw-sandbox
-            platform: linux/arm64
-            artifact_platform: linux-arm64
-          - agent: hermes
-            arch: amd64
-            display_name: Hermes
-            image: ghcr.io/nvidia/nemoclaw/hermes-sandbox
-            platform: linux/amd64
-            artifact_platform: linux-amd64
-          - agent: hermes
-            arch: arm64
-            display_name: Hermes
-            image: ghcr.io/nvidia/nemoclaw/hermes-sandbox
-            platform: linux/arm64
-            artifact_platform: linux-arm64
-          - agent: langchain-deepagents-code
-            arch: amd64
-            display_name: Deep Agents Code
-            image: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox
-            platform: linux/amd64
-            artifact_platform: linux-amd64
-          - agent: langchain-deepagents-code
-            arch: arm64
-            display_name: Deep Agents Code
-            image: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox
-            platform: linux/arm64
-            artifact_platform: linux-arm64
+      matrix: *managed_image_inventory
     # Pulse Malware 1.1.2 and Pulse Secret 3.95.9-nvidia.1. Update these
     # digests only after reviewing the matching internal Pulse releases.
     env:
@@ -2432,7 +2396,7 @@ jobs:
           AGENT: ${{ matrix.agent }}
           ARCH: ${{ matrix.arch }}
           CONTRACT: ${{ runner.temp }}/managed-image-scan-candidate/contract.json
-          IMAGE: ${{ matrix.image }}
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
@@ -2455,15 +2419,15 @@ jobs:
           reference="$(jq -er '.reference' "$CONTRACT")"
           scan_root="$RUNNER_TEMP/managed-image-scan"
           install -d -m 0700 "$scan_root" security-reports
+          local_reference="nemoclaw-security-scan:${AGENT}-${ARCH}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'reference=%s\nlocal-reference=%s\n' "$reference" "$local_reference" >> "$GITHUB_OUTPUT"
           docker pull --platform "$PLATFORM" "$reference"
           image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
           [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
-          local_reference="nemoclaw-security-scan:${AGENT}-${ARCH}-${GITHUB_RUN_ID}"
           docker tag "$image_id" "$local_reference"
           docker save "$local_reference" > "$scan_root/image.tar"
           gzip -1 -c "$scan_root/image.tar" > "$scan_root/image.tar.gz"
           gzip -t "$scan_root/image.tar.gz"
-          printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
 
       - name: Pull exact Pulse scanner images
         id: pulse-images
@@ -2529,7 +2493,8 @@ jobs:
 
           node .github/scripts/security-scan-results.mts redact-secrets \
             "$raw_results" "$scanner_stderr" "$REPORT"
-          case "$(node .github/scripts/security-scan-results.mts classify-secret-exit "$exit_code")" in
+          classification="$(node .github/scripts/security-scan-results.mts classify-secret-exit "$exit_code")"
+          case "$classification" in
             accepted)
               echo "Secret scan passed."
               ;;
@@ -2538,6 +2503,10 @@ jobs:
               ;;
             blocking)
               echo "ERROR: The secret scan found a verified secret or failed with exit code $exit_code." >&2
+              exit 1
+              ;;
+            *)
+              echo "ERROR: The secret scan returned an unknown classification." >&2
               exit 1
               ;;
           esac
@@ -2619,9 +2588,23 @@ jobs:
       - name: Remove security scan scratch files
         if: always()
         shell: bash
+        env:
+          MANAGED_REFERENCE: ${{ steps.candidate.outputs.reference }}
+          LOCAL_REFERENCE: ${{ steps.candidate.outputs.local-reference }}
         run: |
-          rm -rf "$RUNNER_TEMP/managed-image-scan"
+          set -euo pipefail
+          cleanup_failed=0
+          for reference in "$LOCAL_REFERENCE" "$MANAGED_REFERENCE" "$PULSE_SECRET_IMAGE" "$PULSE_MALWARE_IMAGE"; do
+            if [ -n "$reference" ] && docker image inspect "$reference" >/dev/null 2>&1; then
+              if ! docker image rm "$reference"; then
+                echo "ERROR: Could not remove a security scan image." >&2
+                cleanup_failed=1
+              fi
+            fi
+          done
+          rm -rf "$RUNNER_TEMP/managed-image-scan" "$RUNNER_TEMP/managed-image-scan-candidate"
           rm -f "$RUNNER_TEMP"/pulse-secret-* "$RUNNER_TEMP"/pulse-ssa-token-*.env
+          exit "$cleanup_failed"
 
       - name: Enforce managed image security results
         if: always()

@@ -269,6 +269,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)\.github\/scripts\/security-scan-results\.mts$/,
+    testsToRun: runTests(
+      "test/e2e/support/security-scan-results.test.ts",
+      "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
     testsToRun: runTests(
       "test/inference/managed/managed-image-publication-workflow.test.ts",
