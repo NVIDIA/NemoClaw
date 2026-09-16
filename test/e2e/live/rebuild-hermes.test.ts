@@ -121,7 +121,6 @@ test(
     await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {
       artifactNamePrefix: "rebuild-hermes-ready-after-rebuild",
       env,
-      redactionValues: redactions,
     });
     await waitForNativeHermes(sandbox, redactions);
     const read = await sandboxSh(
