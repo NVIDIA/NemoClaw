@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Add explicit API mode forwarding to the pinned Fabric Hermes adapter.
 
-Upstream: NVIDIA/NeMo-Fabric 51a28c1aefec56abd877070b6973d0a32a1e3003,
+Upstream: NVIDIA/NeMo-Fabric 6e155bfbe9e740fb8ce1e1fda900d96f1435a23c,
 Apache-2.0. 2026-09-15: extend settings schema and forward api_mode to AIAgent
 from NousResearch/hermes-agent 29112bef099274229cadff79cdff7bf7b99c4b77.
 Upstream notices remain in the patched source and built wheel.
@@ -18,7 +18,7 @@ def patch_hermes(source):
     if original.count(anchor) != 1 or 'api_mode=self._settings.get("api_mode")' in original:
         raise ValueError('pinned Hermes adapter API forwarding anchor changed')
     adapter.write_text("# NemoClaw modification, 2026-09-15: forward explicit api_mode.\n"
-        "# Upstream: NVIDIA/NeMo-Fabric 51a28c1aefec56abd877070b6973d0a32a1e3003 (Apache-2.0).\n"
+        "# Upstream: NVIDIA/NeMo-Fabric 6e155bfbe9e740fb8ce1e1fda900d96f1435a23c (Apache-2.0).\n"
         + original.replace(anchor, anchor +
         '                        api_mode=self._settings.get("api_mode"),\n'))
     manifest = root / 'hermes.fabric-adapter.json'

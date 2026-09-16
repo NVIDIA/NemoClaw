@@ -18,8 +18,8 @@ import subprocess
 import tarfile
 import urllib.request
 
-REVISION = "51a28c1aefec56abd877070b6973d0a32a1e3003"
-SOURCE_HASH = "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf"
+REVISION = "6e155bfbe9e740fb8ce1e1fda900d96f1435a23c"
+SOURCE_HASH = "3f0c8faa48499decb14afa6119c43f47ea08ef01cf8b5c461ae0d3c8ea4b69b7"
 ROOT = Path(__file__).resolve().parents[2]
 HERMES_REVISION = "29112bef099274229cadff79cdff7bf7b99c4b77"
 HERMES_HASH = "76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a"

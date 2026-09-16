@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Check recipe coverage against the pinned Fabric source, including non-Python adapters."""
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 
 from build import HARNESSES, REVISION, ROOT
@@ -10,6 +13,25 @@ from fabric import configuration
 
 
 class RecipeCoverage(unittest.TestCase):
+    def test_adapter_contract_preserves_and_validates_sampling_controls(self):
+        source = ROOT / '.build/fabric' / f'NeMo-Fabric-{REVISION}'
+        result = subprocess.run([sys.executable, '-B', '-c', '''
+from nemo_fabric_adapter_contract.models import AgentModelConfig
+model = AgentModelConfig.from_mapping({"provider": "openai", "model": "primary",
+    "top_p": 0.8, "max_tokens": 37})
+assert model.top_p == 0.8 and model.max_tokens == 37
+assert AgentModelConfig.from_mapping(model.to_mapping()) == model
+for invalid in ({"max_tokens": 0}, {"top_p": 1.1}):
+    try:
+        AgentModelConfig.from_mapping({"provider": "openai", "model": "primary", **invalid})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid sampling controls accepted")
+'''], env=dict(os.environ, PYTHONPATH=str(source / 'adapter-contract/python/src')),
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_every_upstream_adapter_has_a_recipe(self):
         source = next((ROOT / '.build').glob(f'fabric*/NeMo-Fabric-{REVISION}'), ROOT / '.build/missing')
         self.assertTrue(source.is_dir(), 'build the default image to populate the verified source first')
