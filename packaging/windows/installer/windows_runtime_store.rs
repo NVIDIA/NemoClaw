@@ -179,7 +179,7 @@ fn open_mount_point(path: &Path, access: u32) -> Result<Handle, Error> {
     let handle = unsafe {
         StoreCreateFileW(
             path.as_ptr(),
-            access,
+            access | 0x0080,
             7,
             null(),
             3,
