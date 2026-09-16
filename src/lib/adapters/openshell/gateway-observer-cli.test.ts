@@ -218,12 +218,16 @@ describe("CLI gateway observation", () => {
     expect(JSON.stringify(result)).not.toContain("secret");
   });
 
-  it("rejects endpoint overrides before executing a probe", async () => {
+  it("rejects an endpoint override without executing a host-side probe (#11414)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.invalid");
-    const capture = captureFor(connected, info);
-    expect(
-      (await createCliOpenShellGatewayObserver(capture).observeGateway(request)).recoveryBlocked,
-    ).toBe(true);
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "plain HTTP responder" });
+    await expect(
+      createCliOpenShellGatewayObserver(capture).observeGateway(request),
+    ).resolves.toMatchObject({
+      state: "observation_failed",
+      recoveryBlocked: true,
+      error: { kind: "transport", reason: "endpoint_override" },
+    });
     expect(capture).not.toHaveBeenCalled();
   });
 
