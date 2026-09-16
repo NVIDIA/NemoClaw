@@ -101,8 +101,8 @@ The fixture starts disposable containers with networking disabled and local TLS 
 OpenClaw's fixture adds an address to the container's loopback interface with `NET_ADMIN`, then runs the agent as UID 1000.
 
 ```sh
-python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-prototype-fabric:openclaw --inference-api openai-responses
-python3 tools/fabric-adapter-experiment.py --harness hermes --image nc-prototype-fabric:hermes --inference-api anthropic-messages
+python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-fabric:openclaw --inference-api openai-responses
+python3 tools/fabric-adapter-experiment.py --harness hermes --image nc-fabric:hermes --inference-api anthropic-messages
 ```
 
 Repeat with `openai-completions`, `openai-responses`, and `anthropic-messages` to exercise all three APIs for each harness.
@@ -123,23 +123,23 @@ From the repository root, run the adapter tests and the pinned native tool facto
 ```sh
 docker run --rm --network none --pull=never \
   -v "$PWD/image/fabric:/work:ro" -w /work \
-  --entrypoint /opt/fabric/bin/python nc-prototype-fabric:openclaw \
+  --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
   -m unittest test_openclaw_adapter test_inference
 
 docker run --rm --network none --pull=never -e PYTHONPATH=/work \
   -v "$PWD/image/fabric:/work:ro" -w /work \
-  --entrypoint /usr/local/bin/node nc-prototype-fabric:openclaw \
+  --entrypoint /usr/local/bin/node nc-fabric:openclaw \
   /work/test_openclaw_tools.mjs
 
 docker run --rm --network none --pull=never -e PYTHONPATH=/work \
   -v "$PWD/image/fabric:/work:ro" -w /work \
-  --entrypoint /usr/local/bin/node nc-prototype-fabric:openclaw \
+  --entrypoint /usr/local/bin/node nc-fabric:openclaw \
   /work/test_openclaw_disclosure.mjs
 
 docker run --rm --network none --pull=never \
   -e NEMOCLAW_TEST_NATIVE_TOOLS=1 -e PYTHONPATH=/work \
   -v "$PWD/image/fabric:/work:ro" -w /work \
-  --entrypoint /opt/fabric/bin/python nc-prototype-fabric:openclaw \
+  --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
   -m unittest test_openclaw_tools_gateway
 ```
 
@@ -167,7 +167,7 @@ The local OpenShell fixture simulates the runtime observation result; native enf
 With a freshly built OpenClaw image and the prerequisites above, run:
 
 ```sh
-python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-prototype-fabric:openclaw --interfaces
+python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-fabric:openclaw --interfaces
 ```
 
 This offline test uses the nondefault port 18800, lists native pairing requests with the authenticated helper, rejects an incorrect token and weakened native device-auth settings, restores the original settings, and verifies that a runtime restart retains the token.
@@ -186,7 +186,7 @@ From the repository root, test native authentication and shutdown without networ
 docker run --rm --network none --pull=never \
   -e HERMES_HOME=/tmp/hermes-contract \
   -v "$PWD/test/hermes_native.py:/test.py:ro" \
-  --entrypoint /opt/fabric/bin/python nc-prototype-fabric:hermes /test.py
+  --entrypoint /opt/fabric/bin/python nc-fabric:hermes /test.py
 ```
 
 The contract rejects missing and incorrect API credentials, verifies authenticated model discovery, and checks that disconnect closes the listener.

@@ -56,7 +56,7 @@ Use the existing [source-build procedure](build.md) for the documented developme
 | Configuration | Requirements and owning guide |
 |---|---|
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API/model, and an immutable sandbox image; see [usage](usage.md) and [inference](inference.md) |
-| Fabric agent image | The documented local build uses Linux ARM64, Docker, uv, and a native C/Rust toolchain; see [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) |
+| Fabric agent image | The local build uses a native Linux ARM64 Docker builder with Buildx; see [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](models.md) and [AMD64 Nemotron configuration](models.md#configure-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Local Unix engine socket, an existing network supporting published ports, reachable private endpoint, and CPU-sized model; see [managed Ollama](inference.md#run-managed-ollama) |
 | External Ollama with managed proxy | Local Linux Docker host, loopback-only daemon, installed model digest, and a reachable private proxy endpoint; see [proxy setup](inference.md#use-external-ollama-through-a-managed-proxy) |

@@ -13,6 +13,40 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## Image Source Checks
+
+Use the [agent image build prerequisites](build.md#build-agent-images) and host Python 3.12 or newer for the target-selection test.
+From the repository root:
+
+```sh
+python3 -B -m unittest discover -s image -p test_builds.py
+docker buildx bake --check agents ollama-proxy
+docker buildx bake check
+```
+
+The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
+Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, Oxlint, Oxfmt, Python behavior tests, and Pi's TypeScript compilation and native model tests.
+Behavior tests run with networking disabled; downloading build dependencies still needs network access.
+Checks produce build cache entries and no tagged runtime images.
+
+For a faster source-only edit loop with host uv and Node.js 24.18.1 or newer:
+
+```sh
+uv tool run --from ruff==0.16.7 ruff check .
+uv tool run --from ruff==0.16.7 ruff format --check .
+npm --prefix image ci --ignore-scripts
+npm --prefix image run lint
+npm --prefix image run format:check
+```
+
+Use `ruff format .` through the same pinned uv invocation and `npm --prefix image run format` to apply formatting.
+The scope includes image Python/TypeScript, the native fixture code, and their two host runners.
+Upstream sources and model-specific recipe code retain their own conventions and checks.
+
+The [image workflow](../.github/workflows/images.yml) runs these checks on changes targeting `v1`, builds all ten agent images plus the proxy, and exercises native adapters against isolated local protocol fixtures.
+It also runs OpenClaw messaging, tools, execution, search, and tracing checks.
+These fixtures use no live credentials, send no external messages, and do not qualify GPU inference or live OpenShell deployments.
+
 ## CLI Tests
 
 Run `cargo test -p nemoclaw-cli` for argument, dispatch, I/O, and process tests.

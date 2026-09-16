@@ -58,6 +58,39 @@ Do not delete deployment state, model volumes, unrelated tool installations, or 
 A complete supported purge of retained runtime data remains [TBD](state.md#deletion-and-retention).
 Rebuild a bundle from the recorded source revision if the removed tools are needed again; compatibility with another revision is not implied.
 
+## Build Agent Images
+
+Use Docker with Buildx and a native Linux ARM64 builder.
+The image locks select CPython 3.13 ARM64 wheels; this workflow does not qualify other platforms.
+Build stages use pinned Rust, Node, and uv images and Debian Python, so the host needs no language toolchains for image assembly.
+Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
+Digest-based sandbox use requires a Docker image store that retains repository digests for local builds, such as the tested containerd store.
+
+From the repository root:
+
+```sh
+mkdir -p .build
+docker buildx bake openclaw --load --metadata-file .build/agent-images.json
+docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
+```
+
+Use the printed immutable reference in `sandboxes[].image.ref`.
+The sandbox compute daemon must have access to that exact image.
+Build metadata records the exported digest separately under the target's `containerimage.digest` key.
+The commands build and load local images; they do not publish images or launch a deployment.
+
+Select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `docker buildx bake agents --load`.
+`docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`.
+Set `IMAGE_PREFIX=nc-my-build` before Bake to use your own local repository name without replacing another build's tags.
+
+[The Bake file](../docker-bake.hcl) selects harnesses, dependency locks, and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
+Common Fabric wheels and base layers are shared; selected images contain only their required harness dependencies.
+The builder verifies archive and wheel hashes, retains upstream archives and local build sources under `/opt/nemoclaw/source/`, and records local source hashes in `/opt/nemoclaw/provenance.json`.
+The [source notice](../image/NOTICE.md) describes the retained local patches and licenses.
+Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
+
+Run [image checks](testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](testing/fixtures.md#inference-api-fixtures) for behavior qualification.
+
 ## Build a Runtime Image
 
 Runtime image builds require Linux, Docker, and Buildx.

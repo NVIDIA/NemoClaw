@@ -61,18 +61,16 @@ Named-provider walkthroughs remain [TBD](#additional-inference-workflows) until 
 Explicit API selection, tuning, and authentication require an image built from this revision's Fabric recipe.
 The older default image does not implement the new configuration check and will fail readiness with resources retained.
 
-From the repository root on Linux ARM64, with Docker, uv, and a native C/Rust toolchain available:
+Follow the [agent image build prerequisites](build.md#build-agent-images), then run from the repository root:
 
 ```sh
-python3 image/fabric/build.py --harness openclaw
+docker buildx bake openclaw --load
 # For Hermes:
-python3 image/fabric/build.py --harness hermes
+docker buildx bake hermes --load
 ```
 
-The builder verifies source archives and dependencies, builds a local image, and prints its immutable digest.
-It does not publish images.
-Use that digest in `sandboxes[].image.ref`.
-This local workflow requires a Docker image store that records a repository digest for built images, as the tested containerd image store does.
+These commands load `nc-fabric:openclaw` and `nc-fabric:hermes` locally.
+Follow [image digest selection](build.md#build-agent-images) and use the matching immutable reference in `sandboxes[].image.ref`.
 The sandbox compute daemon must have access to the built image under that digest; a build on another Docker daemon does not make it available to the gateway.
 The [tuning example](../examples/inference-tuning.yaml) and [Hermes authentication example](../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
@@ -156,8 +154,8 @@ Use a Docker image store that records a repository digest for locally built imag
 Build the proxy image from the repository root:
 
 ```sh
-docker build -t nc-ollama-proxy image/ollama-proxy
-docker image inspect nc-ollama-proxy --format '{{index .RepoDigests 0}}'
+docker buildx bake ollama-proxy --load
+docker image inspect nc-fabric:ollama-proxy --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable image reference below, choose an available private proxy address reachable by OpenShell, and replace the model digest with the lowercase 64-character value reported by Ollama's `/api/tags` API:
@@ -171,7 +169,7 @@ Use the printed immutable image reference below, choose an available private pro
   ollamaProxy:
     management: managed
     engine: unix:///var/run/docker.sock
-    image: nc-ollama-proxy@sha256:REPLACE_WITH_IMAGE_DIGEST
+    image: nc-fabric@sha256:REPLACE_WITH_IMAGE_DIGEST
     endpoint: http://172.20.0.1:11435/v1
     model:
       management: external

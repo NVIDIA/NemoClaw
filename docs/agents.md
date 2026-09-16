@@ -298,7 +298,7 @@ Managed DGX Spark apply probes the already-running Fabric runtime with a separat
 The probe does not extend the Fabric conversation or store a Responses continuation; native session records may remain.
 It requires a successful agent response before reporting success; failure retains the established resources.
 Managed support does not establish that a particular model has enough context or reliable tool behavior.
-Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), then build with `python3 image/fabric/build.py --harness hermes` and use its immutable digest.
+Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), then build with `docker buildx bake hermes --load` and use its immutable digest.
 Existing images and native state are not automatically migrated; use a fresh deployment UID and state directory when switching from the embedded Hermes adapter.
 
 ## Pi Model Selection
@@ -339,12 +339,12 @@ Pi's in-memory conversation does not survive a runtime restart.
 Export and readiness compare the hosted configuration with the declared model.
 After a sandbox process restart, apply again to start Pi against the current route.
 
-Build the updated Pi image and use its printed digest; old Pi images do not implement this configuration interface.
+Build the updated Pi image and select its immutable reference as described in [Build Agent Images](build.md#build-agent-images); old Pi images do not implement this configuration interface.
 Existing sandbox images are immutable, so use a separate deployment to move from an old image.
 The [Pi example](../examples/fabric-pi.yaml) includes explicit custom-model metadata.
 
 ```sh
-python3 image/fabric/build.py --harness pi
+docker buildx bake pi --load
 python3 tools/fabric-adapter-experiment.py --harness pi
 python3 tools/fabric-adapter-experiment.py --harness pi --pi-catalog
 ```
@@ -367,14 +367,11 @@ Changing YAML alone does not migrate agent files or conversations.
 Build a local Linux ARM64 image with:
 
 ```sh
-python3 image/fabric/build.py --harness openclaw
+docker buildx bake openclaw --load
 ```
 
-The builder needs Docker, uv, and a native C/Rust toolchain.
-It verifies upstream source archives and dependency hashes, then prints the resulting image digest.
-Put that immutable digest in the sandbox's `image.ref`.
-
-It does not publish an image.
+The [agent image builder](build.md#build-agent-images) runs the pinned toolchains inside Docker.
+Use the resulting immutable image reference in the sandbox's `image.ref`.
 See [the source notice](../image/NOTICE.md).
 
 Fabric's local OpenClaw adapter owns one native gateway with a session for each declared agent.
@@ -387,12 +384,12 @@ Native settings survive configuration checks and recreation when their state vol
 Qualification commands:
 
 ```sh
-python3 -m unittest discover -s image/fabric -p test_build.py
-python3 tools/openclaw-native-test.py --image nc-prototype-fabric:openclaw
+docker buildx bake check
+python3 tools/openclaw-native-test.py --image nc-fabric:openclaw
 python3 tools/fabric-adapter-experiment.py --harness codex
 ```
 
-The recipe coverage test needs the checksum-verified Fabric source populated by the builder.
+The check targets provide their verified source and dependencies inside disposable build stages.
 The native messaging and harness tests use disposable containers and retained evidence under `.local`.
 They do not send external messages.
 [Native messaging evidence](validation/rust-native-openclaw-linux-arm64.json) and [harness evidence](validation/rust-fabric-adapters-linux-arm64.json) distinguish protocol fixtures from complete live inference qualification.
