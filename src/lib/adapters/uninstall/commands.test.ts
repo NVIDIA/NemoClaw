@@ -12,6 +12,7 @@ import {
   defaultRunDocker,
   createUninstallProviderAdapter,
   createUninstallGatewayReuseObserver,
+  createUninstallSandboxLifecycle,
 } from "./commands";
 
 describe("uninstall host command execution", () => {
@@ -54,6 +55,44 @@ it("binds provider deletion to the uninstall environment and preserves uncertain
     ["provider", "delete", "nvidia-nim"],
     expect.objectContaining({ env }),
   );
+});
+
+it("filters the uninstall environment at the sandbox lifecycle boundary", async () => {
+  const env = {
+    HOME: "/home/uninstall",
+    NVIDIA_API_KEY: "must-not-reach-child",
+    OPENSHELL_GATEWAY: "owned-gateway",
+  };
+  const run = vi.fn<typeof defaultRun>(() => ({ status: 0, stdout: "deleted", stderr: "" }));
+  const lifecycle = createUninstallSandboxLifecycle(run, env);
+
+  await expect(
+    lifecycle.deleteSandbox({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "owned-gateway" },
+    }),
+  ).resolves.toMatchObject({ kind: "accepted" });
+  expect(run).toHaveBeenCalledOnce();
+  expect(run.mock.calls[0]?.[2]?.env).toMatchObject({
+    HOME: "/home/uninstall",
+    OPENSHELL_GATEWAY: "owned-gateway",
+  });
+  expect(run.mock.calls[0]?.[2]?.env).not.toHaveProperty("NVIDIA_API_KEY");
+});
+
+it("rejects a reserved uninstall endpoint override before sandbox deletion", async () => {
+  const run = vi.fn();
+  const lifecycle = createUninstallSandboxLifecycle(run, {
+    OPENSHELL_GATEWAY_ENDPOINT: "https://foreign.invalid",
+  });
+
+  await expect(
+    lifecycle.deleteSandbox({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "owned-gateway" },
+    }),
+  ).resolves.toMatchObject({ kind: "failed", error: { reason: "invalid_request" } });
+  expect(run).not.toHaveBeenCalled();
 });
 
 it.each([
