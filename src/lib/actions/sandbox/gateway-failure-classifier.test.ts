@@ -201,6 +201,18 @@ describe("isDockerRuntimeDown", () => {
     expect(isDockerRuntimeDown("alpha")).toBe(true);
   });
 
+  it("rejects malformed output from the JSON-formatted Docker info request (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 0,
+      stderr: "",
+      stdout: "unexpected",
+    });
+
+    expect(isDockerDaemonReachable()).toBe(false);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
+  });
+
   it("does not invoke Docker for a native Podman sandbox", () => {
     getSandboxMock.mockReturnValue({ openshellDriver: " PODMAN " });
     const dockerInfo = vi.fn(() => false);
