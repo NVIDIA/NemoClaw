@@ -22,12 +22,7 @@ const REVIEWED_NPM_IDENTITY = {
   npmVersion: "12.0.2",
   registryOrigin: "https://registry.npmjs.org/",
 } as const;
-const TRUSTED_WORKFLOWS = [
-  "e2e.yaml",
-  "managed-images.yaml",
-  "openshell-sdk-package-pr.yaml",
-  "pr.yaml",
-];
+const TRUSTED_WORKFLOWS = ["e2e.yaml", "managed-images.yaml", "main.yaml", "pr.yaml"];
 
 type Workflow = {
   readonly jobs?: Readonly<

@@ -4,10 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { type CoordinatorSnapshot, decideReviewAction } from "./decision.mts";
+import { decideReviewAction, parseCoordinatorSnapshot } from "./decision.mts";
 
 const inputPath = readInputPath(process.argv.slice(2));
-const snapshot = JSON.parse(fs.readFileSync(inputPath, "utf8")) as CoordinatorSnapshot;
+const snapshot = parseCoordinatorSnapshot(JSON.parse(fs.readFileSync(inputPath, "utf8")));
 const decision = decideReviewAction(snapshot);
 process.stdout.write(`${JSON.stringify(decision, null, 2)}\n`);
 
