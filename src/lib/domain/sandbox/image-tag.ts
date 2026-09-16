@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { PORTABLE_LOCAL_REGISTRY } from "./portable-registry";
+
 /** Gateway-built sandbox images (openshell sandbox create). */
 export const SANDBOX_FROM_IMAGE_REPO = "openshell/sandbox-from";
 /**
@@ -8,7 +10,7 @@ export const SANDBOX_FROM_IMAGE_REPO = "openshell/sandbox-from";
  * (Linux, or macOS on Apple Silicon — see isLinuxDockerDriverGatewayEnabled).
  */
 export const LOCAL_SANDBOX_IMAGE_REPO = "nemoclaw-sandbox-local";
-export const PORTABLE_LOCAL_SANDBOX_IMAGE_REPO = "localhost:5000/nemoclaw-sandbox-local";
+export const PORTABLE_LOCAL_SANDBOX_IMAGE_REPO = `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}`;
 
 /**
  * Every Docker repository that can hold a sandbox image. Any orphan sweep
@@ -21,6 +23,8 @@ export const SANDBOX_IMAGE_REPOS = [
   SANDBOX_FROM_IMAGE_REPO,
   LOCAL_SANDBOX_IMAGE_REPO,
   PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
+  // Retain images created before portable publication used an explicit IPv4 address.
+  "localhost:5000/nemoclaw-sandbox-local",
 ] as const;
 
 const BUILT_SANDBOX_IMAGE_RE = /Built image (openshell\/sandbox-from:\d+)/;

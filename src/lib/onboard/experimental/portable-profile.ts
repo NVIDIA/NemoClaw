@@ -19,9 +19,11 @@ export const PORTABLE_HOST_GATEWAY_IP = "169.254.2.2";
 export const PORTABLE_REGISTRY_IP = "10.87.0.3";
 export const PORTABLE_DOCKER_NETWORK_NAME = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 export const PORTABLE_DOCKER_NETWORK_SUBNET = "10.87.0.0/24";
-export const PORTABLE_REGISTRY_HOST = "127.0.0.1";
-export const PORTABLE_REGISTRY_PORT = 5000;
-export const PORTABLE_LOCAL_REGISTRY = `localhost:${PORTABLE_REGISTRY_PORT}`;
+export {
+  PORTABLE_REGISTRY_HOST,
+  PORTABLE_REGISTRY_PORT,
+  PORTABLE_LOCAL_REGISTRY,
+} from "../../domain/sandbox/portable-registry";
 
 export type ExperimentalOnboardProfile = typeof PORTABLE_EXPERIMENTAL_PROFILE;
 

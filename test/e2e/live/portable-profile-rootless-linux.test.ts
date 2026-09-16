@@ -965,7 +965,7 @@ async function main(progress: TestProgress): Promise<void> {
     );
     assert.equal(
       fs.readFileSync(registryConfig, "utf-8"),
-      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
+      '[[registry]]\nlocation = "127.0.0.1:5000"\ninsecure = true\n',
     );
     assert.match(
       run("ip", ["-o", "-4", "address", "show", "dev", "lo"]),
@@ -1048,7 +1048,7 @@ async function main(progress: TestProgress): Promise<void> {
       log: console.log,
     });
     const imageRef = prebuild.imageRef;
-    assert.equal(imageRef, "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
+    assert.equal(imageRef, "127.0.0.1:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
 
     run("podman", ["image", "rm", "--force", imageRef]);
     run("podman", ["pull", imageRef]);

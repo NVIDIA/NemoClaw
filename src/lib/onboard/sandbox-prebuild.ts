@@ -24,11 +24,7 @@ import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
-import {
-  isPortableExperimentalProfile,
-  PORTABLE_LOCAL_REGISTRY,
-  PORTABLE_REGISTRY_HOST,
-} from "./docker-driver-platform";
+import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -241,8 +237,6 @@ export async function prebuildSandboxImageIfEligible(
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
   if (portable) {
     const registryUrl = new URL("/v2/", `http://${PORTABLE_LOCAL_REGISTRY}`);
-    // The managed publication binds IPv4; localhost can resolve only to IPv6.
-    registryUrl.hostname = PORTABLE_REGISTRY_HOST;
     try {
       const response = await fetch(registryUrl, {
         redirect: "error",
