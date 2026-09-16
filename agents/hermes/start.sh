@@ -2248,9 +2248,13 @@ wait_for_hermes_gateway_internal() {
         200 | 401) return 0 ;;
       esac
     fi
-    if ! hermes_tracked_role_is_current gateway "$gateway_pid" "$service_user" "$INTERNAL_PORT"; then
-      wait "$gateway_pid"
-      return $?
+    # An exec transition can briefly make the live child's role unreadable.
+    # Keep polling within the deadline; waiting for that process to exit here
+    # would block startup forever. Readiness still requires its exact role,
+    # listener ownership, and HTTP health above.
+    if ! gateway_control_pid_is_live "$gateway_pid"; then
+      echo "[gateway] Hermes gateway exited before internal health became ready" >&2
+      return 1
     fi
     sleep 1
   done
