@@ -13,8 +13,8 @@ import {
   type LifecycleProfile,
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
+import { liveTargetTestTitle } from "../registry/execution.ts";
 import { listTargets, requireTargets } from "../registry/registry.ts";
-import { liveTargetSupport, liveTargetTestTitle } from "../registry/runtime-support.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
@@ -39,9 +39,6 @@ const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 // The workflow filters by the stable target ID prefix via `-t "^${TARGET_ID}:"`.
-// When that env is set, surface the structured `[not wired]` reason for the
-// targeted unsupported target at module load so the job log/summary
-// captures it before Vitest reports the skipped test by ID.
 const SELECTED_TARGET_ID = process.env.TARGET_ID;
 // That selector matches nothing when the ID names no registered target, and an
 // empty ID builds the selector `-t "^$"`, which also matches nothing. Vitest
@@ -66,27 +63,10 @@ const REGISTRY_TARGET_PHASES = [
 ] as const;
 
 for (const [targetIndex, target] of listTargets().entries()) {
-  const support = liveTargetSupport(target);
-  const timeoutContract = liveTargetTimeoutContract(target.environment?.lifecycle);
-  if (!support.supported) {
-    if (SELECTED_TARGET_ID === target.id) {
-      console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
-    }
-    test.skip(
-      liveTargetTestTitle(target, support),
-      {
-        meta: {
-          e2eArtifactRootId: target.id,
-          e2ePhases: REGISTRY_TARGET_PHASES,
-        },
-      },
-      () => {},
-    );
-    continue;
-  }
+  const timeoutContract = liveTargetTimeoutContract(target.environment.lifecycle);
 
   test(
-    liveTargetTestTitle(target, support),
+    liveTargetTestTitle(target),
     {
       meta: {
         e2eArtifactRootId: target.id,
@@ -113,23 +93,16 @@ for (const [targetIndex, target] of listTargets().entries()) {
       const dcodeBaseImageReference = dcodeBaseContract
         ? dcodeBaseImageReferenceForContract(dcodeBaseContract)
         : undefined;
-      target.requiredSecrets?.forEach((secret) => secrets.required(secret));
+      target.requiredSecrets.forEach((secret) => secrets.required(secret));
 
       expect(
         fs.existsSync(CLI_DIST_ENTRYPOINT),
         "run `npm run build:cli` before live repo CLI targets",
       ).toBe(true);
-      if (!target.environment) {
-        throw new Error(`target '${target.id}' is missing environment`);
-      }
-      if (!target.expectedStateId) {
-        throw new Error(`target '${target.id}' is missing expectedStateId`);
-      }
-
       await artifacts.target.declare({
         id: target.id,
         boundary: "typed-registry",
-        pendingRuntimeSuites: support.pendingRuntimeSuites,
+        pendingRuntimeSuites: target.suiteIds,
       });
 
       const runPlan = buildLiveTargetRunPlan(target);
@@ -161,9 +134,8 @@ for (const [targetIndex, target] of listTargets().entries()) {
 
       // Lifecycle phase runs between onboard and state-validation.
       // Targets opt in by setting `environment.lifecycle` to a
-      // whitelisted profile (see SUPPORTED_LIFECYCLES in
-      // runtime-support.ts). Profiles dispatch through
-      // LifecyclePhaseFixture before state validation.
+      // whitelisted profile. Profiles dispatch through LifecyclePhaseFixture
+      // before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
       // Every registry target crosses the optional lifecycle boundary before
       // state validation.
@@ -203,7 +175,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
         id: target.id,
         expectedStateId: validation.state.id,
         probes: validation.probes.map((probe) => probe.id),
-        pendingRuntimeSuites: support.pendingRuntimeSuites,
+        pendingRuntimeSuites: target.suiteIds,
         dcodeBaseImage,
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { TestProgress } from "./progress.ts";
+import type { ForwardCleanupOptions } from "./clients/host.ts";
 import type { ShellProbeRunOptions } from "./shell-probe.ts";
 
 export interface CleanupFailure {
@@ -29,7 +30,7 @@ export interface CleanupRegistryOptions {
 export interface CleanupHost {
   cleanupSandbox(name: string, options?: ShellProbeRunOptions): Promise<void>;
   cleanupGatewayRegistration(name: string, options?: ShellProbeRunOptions): Promise<void>;
-  cleanupForward(port: number, options?: ShellProbeRunOptions): Promise<void>;
+  cleanupForward(port: number, options?: ForwardCleanupOptions): Promise<void>;
 }
 
 interface CleanupEntry {
@@ -133,7 +134,7 @@ export class CleanupRegistry {
   trackForward(
     host: Pick<CleanupHost, "cleanupForward">,
     port: number,
-    options: ShellProbeRunOptions = {},
+    options: ForwardCleanupOptions = {},
   ): void {
     this.add(`stop forward ${port}`, () => host.cleanupForward(port, options));
   }
