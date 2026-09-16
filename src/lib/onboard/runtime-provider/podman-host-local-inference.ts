@@ -46,6 +46,10 @@ import {
 } from "./persisted-engine-authority";
 import { translatePodmanLocalInferenceArgs } from "./podman-inference-args";
 import {
+  assertInferencePublishPortsFree,
+  type InspectPublishedPort,
+} from "./podman-inference-publish-preflight";
+import {
   type PodmanInferenceAuthorityReceipt,
   type PodmanInferenceQualificationOptions,
   qualifyPodmanInferenceAuthority,
@@ -253,6 +257,8 @@ export interface PodmanHostLocalInferenceRuntimeOptions {
   readonly operationAcceleration?: HostLocalOllamaAccelerationAuthority;
   readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
   readonly redactSensitive: PodmanInferenceRedactor;
+  /** Test seam: inspect a host publish target before `podman run`. */
+  readonly inspectPublishedPort?: InspectPublishedPort;
 }
 
 export interface PodmanHostLocalInferenceOperationOptions {
@@ -273,6 +279,8 @@ export interface PodmanHostLocalInferenceOperationOptions {
   readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
   readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
   readonly redactSensitive: PodmanInferenceRedactor;
+  /** Test seam: inspect a host publish target before `podman run`. */
+  readonly inspectPublishedPort?: InspectPublishedPort;
 }
 
 export type PodmanPreparedHostLocalInferenceOperationOptions = Omit<
@@ -3918,6 +3926,11 @@ export function createPodmanHostLocalInferenceRuntime(
       () => {
         phase = "start";
         assertSpecAuthority();
+        assertInferencePublishPortsFree(
+          spec.endpoint.port,
+          spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+          options.inspectPublishedPort,
+        );
         const translatedArgs = translatedRunArguments(spec, authority);
         const result =
           spec.environment.length === 0 && spec.ollamaContextLength === null

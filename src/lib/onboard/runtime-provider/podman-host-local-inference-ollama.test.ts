@@ -14,6 +14,10 @@ import {
 import { PORTABLE_HOST_GATEWAY_IP } from "../experimental/portable-profile";
 import { prepareHostLocalInferenceStartup } from "./host-local-inference-routing";
 import { createPodmanHostLocalInferenceOperation } from "./podman-host-local-inference";
+import {
+  occupiedInferencePublishMessage,
+  type InspectPublishedPort,
+} from "./podman-inference-publish-preflight";
 
 const OLLAMA_MODEL_SIZE = 8 * 1024 ** 3;
 const OLLAMA_MODEL_DIGEST = "7".repeat(64);
@@ -23,6 +27,7 @@ function managedOllamaFixture(
     readonly externalNetwork?: boolean;
     readonly externalListenerIp?: string;
     readonly inputListenerIp?: string;
+    readonly inspectPublishedPort?: InspectPublishedPort;
   } = {},
 ) {
   const harness = createPodmanHostLocalInferenceTestHarness();
@@ -51,6 +56,7 @@ function managedOllamaFixture(
         }),
     onFailureEvidence: harness.onFailureEvidence,
     redactSensitive: harness.redactSensitive,
+    inspectPublishedPort: options.inspectPublishedPort,
   });
   const input = {
     ...harness.input,
@@ -162,6 +168,26 @@ describe("Podman managed Ollama lifecycle", () => {
       expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
     },
   );
+
+  it.each([
+    ["ollama", 4242],
+    ["rootlessport", null],
+    ["unknown", null],
+  ] as const)("rejects a %s holder of 11434 before Podman run (#11723)", (process, pid) => {
+    const occupied = {
+      address: "127.0.0.1",
+      port: 11434,
+      process,
+      pid,
+    } as const;
+    const fixture = managedOllamaFixture({
+      inspectPublishedPort: (address, port) =>
+        address === occupied.address && port === occupied.port ? occupied : null,
+    });
+
+    expect(() => prepareManagedOllama(fixture)).toThrow(occupiedInferencePublishMessage(occupied));
+    expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
+  });
 
   it("creates and rolls back a receipt-owned runtime for fresh Portable Hermes (#9596)", () => {
     const fixture = managedOllamaFixture();
