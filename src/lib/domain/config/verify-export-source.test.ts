@@ -593,15 +593,30 @@ describe("config export source verification (#10938)", () => {
     expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
-  it.each([undefined, "progressive"] as const)(
+  it.each([
+    [undefined, "https://api.openai.com/v1"],
+    ["progressive", "http://host.openshell.internal:35271/v1"],
+  ] as const)(
     "exports canonical Hermes without tools for registry selection %s",
-    async (toolDisclosure) => {
-      const result = await exportSnapshots([hermesSnapshot({ toolDisclosure })]);
+    async (toolDisclosure, endpoint) => {
+      const observed = hermesSnapshot({ toolDisclosure, endpointUrl: endpoint });
+      const result = await exportSnapshots([
+        {
+          ...observed,
+          inference: {
+            ...observed.inference,
+            endpoint,
+            endpointEvidence: { ...observed.inference.endpointEvidence!, endpoint },
+          },
+        },
+      ]);
       expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
       expect(result.read).toHaveBeenCalledTimes(2);
       expect(result.publish).not.toHaveBeenCalled();
       const [yaml] = result.writeStdout.mock.calls[0]!;
-      const sandbox = validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
+      const config = validateNemoClawConfig(YAML.parse(yaml));
+      expect(config.spec.inferenceProviders[0]).toMatchObject({ endpoint });
+      const sandbox = config.spec.sandboxes[0]!;
       expect(sandbox.agents[0]!.type).toBe("hermes");
       expect(sandbox.agents[0]).not.toHaveProperty("tools");
       expect(sandbox.network.policy.explicit).toEqual(canonicalPolicy);
@@ -839,9 +854,9 @@ describe("config export source verification (#10938)", () => {
         provider: "other",
         model: "model-b",
         api: "invalid",
-        endpoint: "http://local",
+        endpoint: "ftp://local",
         endpointEvidence: {
-          endpoint: "http://local",
+          endpoint: "ftp://local",
           provider: {
             gatewayName: "other",
             workspace: "default",
@@ -971,12 +986,12 @@ describe("config export source verification (#10938)", () => {
   });
 
   it.each([
-    "http://api.example.test/v1",
-    "https://user:credential-canary@api.example.test/v1",
-    "https://api.example.test/v1?token=credential-canary",
-    "https://api.example.test/v1#credential-canary",
-    "https://api.example.test/%0acredential-canary",
-    "https://api.example.test/%0A%",
+    "ftp://api.example.test/v1",
+    "http://user:credential-canary@api.example.test/v1",
+    "http://api.example.test/v1?token=credential-canary",
+    "http://api.example.test/v1#credential-canary",
+    "http://api.example.test/%0acredential-canary",
+    "http://api.example.test/%0A%",
   ])("rejects an unsafe endpoint without exposing it: %s", async (unsafeEndpoint) => {
     const value = snapshot();
     const raw = snapshot({

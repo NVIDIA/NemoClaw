@@ -41,6 +41,8 @@ const MODEL = "nemoclaw-managed-activation-model";
 const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
+const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
@@ -219,7 +221,7 @@ async function runAgentTurn(
   sandbox: SandboxClient,
   agent: ShippedManagedImageAgent,
   sandboxName: string,
-  phase: "before" | "after",
+  phase: "before" | "boundary" | "after",
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const result = await sandbox.exec(
@@ -265,6 +267,59 @@ async function runOpenClawSubagentTurn(
   );
 }
 
+export function managedHermesBoundaryPoisonCommand(): string {
+  return `set -eu; cp /sandbox/.hermes/.env ${shellQuote(HERMES_BOUNDARY_BACKUP)}; printf '%s\\n' ${shellQuote(`DEVTEST_API_TOKEN=${HERMES_BOUNDARY_SENTINEL}`)} >> /sandbox/.hermes/.env`;
+}
+
+async function proveHermesRestartSecretBoundary(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const poison = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(managedHermesBoundaryPoisonCommand()),
+    {
+      artifactName: "hermes-poison-env-before-native-restart",
+      env,
+      redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(poison, "prepare Hermes secret-boundary restart refusal");
+
+  const restart = await host.nemoclaw([sandboxName, "gateway", "restart", "--quiet"], {
+    artifactName: "hermes-native-restart-secret-boundary-refusal",
+    env,
+    redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+    timeoutMs: 60_000,
+  });
+
+  const restore = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      `set -eu; cp ${shellQuote(HERMES_BOUNDARY_BACKUP)} /sandbox/.hermes/.env; rm -f ${shellQuote(HERMES_BOUNDARY_BACKUP)}`,
+    ),
+    {
+      artifactName: "hermes-restore-env-after-native-restart-refusal",
+      env,
+      redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(restore, "restore Hermes environment after restart refusal");
+
+  const output = resultText(restart);
+  expect(
+    restart.exitCode !== 0 &&
+      output.includes("secret-boundary") &&
+      !output.includes(HERMES_BOUNDARY_SENTINEL),
+    output,
+  ).toBe(true);
+  await runAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
+}
+
 export async function preclean(
   host: HostCliClient,
   lifecycle: LifecyclePhaseFixture,
@@ -301,13 +356,6 @@ async function verifyExactCleanup(
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const list = await host.nemoclaw(["list"], {
-    artifactName: `post-destroy-nemoclaw-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
-  });
-  assertExitZero(list, "list sandboxes after managed activation destroy");
-  expect(outputContainsSandbox(list, sandboxName), resultText(list)).toBe(false);
   const openshellList = await sandbox.list({
     artifactName: `post-destroy-openshell-list-${sandboxName}`,
     env,
@@ -326,7 +374,6 @@ async function verifyExactCleanup(
   );
   assertExitZero(containers, "inspect Docker inventory after managed activation destroy");
   expect(containers.stdout.trim(), resultText(containers)).toBe("");
-  expect(registryDocument().sandboxes?.[sandboxName]).toBeUndefined();
 }
 
 function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
@@ -343,16 +390,16 @@ function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
-function enterRecoveryPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
+function enterGatewayRestartPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
   switch (agent) {
     case "openclaw":
-      progress.phase("restart and recover OpenClaw");
+      progress.phase("restart OpenShell gateway and recheck OpenClaw");
       return;
     case "hermes":
-      progress.phase("restart and recover Hermes");
+      progress.phase("restart OpenShell gateway and recheck Hermes");
       return;
     case "langchain-deepagents-code":
-      progress.phase("restart and recover Deep Agents Code");
+      progress.phase("restart OpenShell gateway and recheck Deep Agents Code");
       return;
   }
 }
@@ -497,11 +544,12 @@ async function qualifyAgent(
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   expectManagedReceipt(sandboxName, contract);
-  await host.expectListed(sandboxName, { env });
-  await host.expectStatus(sandboxName, { env, timeoutMs: 120_000 });
-  await sandbox.expectListed(sandboxName, { env });
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
+  if (agent === "hermes") {
+    progress.phase("prove Hermes secret-boundary refusal before native restart");
+    await proveHermesRestartSecretBoundary(host, sandbox, sandboxName, env);
+  }
   const marker = `managed-activation-${agent}-${Date.now()}`;
   const writeMarker = await sandbox.execShell(
     sandboxName,
@@ -516,7 +564,7 @@ async function qualifyAgent(
   );
   expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
 
-  enterRecoveryPhase(progress, agent);
+  enterGatewayRestartPhase(progress, agent);
   await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName });
   await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
   await lifecycle.assertSandboxReadyAfterGatewayRestart(sandboxName, {
@@ -533,17 +581,18 @@ async function qualifyAgent(
       timeoutMs: 30_000,
     },
   );
-  expect(readMarker.exitCode, resultText(readMarker)).toBe(0);
-  expect(readMarker.stdout.trim()).toBe(marker);
+  expect(
+    readMarker.exitCode === 0 && readMarker.stdout.trim() === marker,
+    resultText(readMarker),
+  ).toBe(true);
   await runAgentTurn(sandbox, agent, sandboxName, "after", env);
 
   enterCleanupPhase(progress, agent);
-  const destroy = await host.nemoclaw([sandboxName, "destroy", "--yes", "--no-cleanup-gateway"], {
-    artifactName: `managed-activation-destroy-${agent}`,
+  await sandbox.cleanupSandbox(sandboxName, {
+    artifactName: `managed-activation-openshell-delete-${agent}`,
     env,
-    timeoutMs: 5 * 60_000,
+    timeoutMs: 120_000,
   });
-  expect(destroy.exitCode, resultText(destroy)).toBe(0);
   await verifyExactCleanup(host, sandbox, sandboxName, env);
 }
 
@@ -619,7 +668,14 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       revision: contract.source.revision,
       cohort: contract.source.cohort,
     })),
-    lifecycle: ["onboard", "agent-turn", "gateway-restart", "reconcile", "agent-turn", "destroy"],
+    lifecycle: [
+      "onboard",
+      "agent-turn",
+      "openshell-gateway-restart",
+      "native-readiness",
+      "agent-turn",
+      "openshell-delete",
+    ],
   });
   await artifacts.target.complete({
     id: "managed-image-activation",

@@ -14,13 +14,14 @@ test(
       e2ePhases: [
         "validate exact candidate catalog and host runtime",
         "onboard and exercise OpenClaw",
-        "restart and recover OpenClaw",
+        "restart OpenShell gateway and recheck OpenClaw",
         "destroy and verify OpenClaw cleanup",
         "onboard and exercise Hermes",
-        "restart and recover Hermes",
+        "prove Hermes secret-boundary refusal before native restart",
+        "restart OpenShell gateway and recheck Hermes",
         "destroy and verify Hermes cleanup",
         "onboard and exercise Deep Agents Code",
-        "restart and recover Deep Agents Code",
+        "restart OpenShell gateway and recheck Deep Agents Code",
         "destroy and verify Deep Agents Code cleanup",
         "prove buildless all-agent activation",
       ],
@@ -30,7 +31,7 @@ test(
     await artifacts.target.declare({
       id: "managed-image-activation",
       boundary:
-        "exact candidate CLI and published all-agent managed-image digests through real Docker, OpenShell, agent turns, restart recovery, and exact cleanup",
+        "exact candidate CLI and published all-agent managed-image digests through real Docker, OpenShell, agent turns, gateway restart readiness, and exact cleanup",
       agents: ["openclaw", "hermes", "langchain-deepagents-code"],
       syntheticBoundary:
         "Only the OpenAI-compatible inference response is synthetic; runtime construction and agent execution are real.",
