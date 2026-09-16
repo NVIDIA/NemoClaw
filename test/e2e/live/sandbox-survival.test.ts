@@ -32,6 +32,7 @@ import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import {
   SANDBOX_SURVIVAL_EXEC_TIMEOUT_MS,
+  SANDBOX_SURVIVAL_HOST_FORWARD_TIMEOUT_MS,
   SANDBOX_SURVIVAL_READINESS_ATTEMPTS,
   SANDBOX_SURVIVAL_READINESS_DELAY_MS,
   SANDBOX_SURVIVAL_TEST_TIMEOUT_MS,
@@ -94,8 +95,8 @@ async function waitForHostForwardReady(
 ): Promise<void> {
   await pollUntil({
     artifactPrefix,
-    attempts: 30,
-    delayMs: 5_000,
+    attempts: SANDBOX_SURVIVAL_READINESS_ATTEMPTS,
+    delayMs: SANDBOX_SURVIVAL_READINESS_DELAY_MS,
     probe: (_attempt, artifactName) =>
       host.command(
         "curl",
@@ -117,7 +118,7 @@ async function waitForHostForwardReady(
         {
           artifactName,
           env: buildAvailabilityProbeEnv(),
-          timeoutMs: 10_000,
+          timeoutMs: SANDBOX_SURVIVAL_HOST_FORWARD_TIMEOUT_MS,
         },
       ),
     accept: (result) =>
