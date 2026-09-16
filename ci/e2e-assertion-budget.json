@@ -12,31 +12,31 @@
     "epicLiveExpectCalls": 2677
   },
   "limits": {
-    "testFileCount": 83,
-    "liveFileCount": 197,
+    "testFileCount": 82,
+    "liveFileCount": 196,
     "direct": {
-      "expectCalls": 1476,
-      "matcherAssertions": 1453,
+      "expectCalls": 1462,
+      "matcherAssertions": 1439,
       "nodeAssertions": 105,
-      "namedAssertionHelpers": 500,
+      "namedAssertionHelpers": 486,
       "failCalls": 0,
-      "throwGuards": 76,
+      "throwGuards": 75,
       "objectFieldAssertions": 191,
-      "assertionPoints": 2325,
-      "generatedProbeBlocks": 101,
-      "generatedProbeConditions": 255
+      "assertionPoints": 2296,
+      "generatedProbeBlocks": 99,
+      "generatedProbeConditions": 253
     },
     "unique": {
-      "expectCalls": 1924,
-      "matcherAssertions": 1896,
+      "expectCalls": 1910,
+      "matcherAssertions": 1882,
       "nodeAssertions": 121,
-      "namedAssertionHelpers": 738,
+      "namedAssertionHelpers": 724,
       "failCalls": 1,
-      "throwGuards": 552,
+      "throwGuards": 551,
       "objectFieldAssertions": 273,
-      "assertionPoints": 3581,
-      "generatedProbeBlocks": 243,
-      "generatedProbeConditions": 853
+      "assertionPoints": 3552,
+      "generatedProbeBlocks": 241,
+      "generatedProbeConditions": 851
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -118,7 +118,6 @@
       "test/e2e/live/sandbox-rlimits-connect.test.ts": [1,1,1,1,0],
       "test/e2e/live/sandbox-survival.test.ts": [4,12,4,12,0],
       "test/e2e/live/sessions-agents-cli.test.ts": [20,29,20,31,0],
-      "test/e2e/live/shields-retirement-upgrade.test.ts": [14,29,14,39,5],
       "test/e2e/live/skill-agent.test.ts": [8,10,8,10,0],
       "test/e2e/live/snapshot-commands.test.ts": [26,39,26,41,3],
       "test/e2e/live/spark-express-vllm.test.ts": [35,45,47,65,3],
