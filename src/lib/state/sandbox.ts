@@ -2487,6 +2487,13 @@ async function restoreSandboxStateInternal(
   // Older manifests leave this field absent, so preserve their historical restore behavior.
   const failedBackupDirs = new Set(manifest.failedBackupDirs ?? []);
   const localDirSet = new Set(localDirs);
+  const preservesTargetStateWhenAbsent = (stateDir: string): boolean =>
+    targetAgent.stateDirectories.some((declaration) => {
+      if (!declaration.backup || declaration.clearWhenAbsent) return false;
+      return declaration.kind === "path"
+        ? declaration.path === stateDir
+        : stateDir.startsWith(declaration.prefix);
+    });
   const staleContentDirs =
     manifest.failedBackupDirs === undefined
       ? []
@@ -2495,7 +2502,8 @@ async function restoreSandboxStateInternal(
             isTargetBackupDir(stateDir) &&
             !isTargetNonBackupDir(stateDir) &&
             !localDirSet.has(stateDir) &&
-            !failedBackupDirs.has(stateDir),
+            !failedBackupDirs.has(stateDir) &&
+            !preservesTargetStateWhenAbsent(stateDir),
         );
   const cleanupStateDirs = [...new Set([...localDirs, ...staleContentDirs])];
   const targetStateFiles = new Map<string, AgentStateFile>();
