@@ -816,14 +816,15 @@ exit "$rc"
     );
   const mockRequestMatched =
     !mockProvider ||
-    mockRequests.some(
-      (request) =>
-        request.method === "POST" &&
-        request.path === "/v1/messages" &&
-        request.model === SWITCH_MODEL &&
-        request.stream &&
-        request.toolCount === 0,
-    );
+    (mockRequests.length > 0 &&
+      mockRequests.every(
+        (request) =>
+          request.method === "POST" &&
+          request.path === "/v1/messages" &&
+          request.model === SWITCH_MODEL &&
+          request.stream &&
+          request.toolCount === 0,
+      ));
   const expectedOpenClawProvider =
     SWITCH_INFERENCE_API === "anthropic-messages" ? "anthropic" : "inference";
   if (
