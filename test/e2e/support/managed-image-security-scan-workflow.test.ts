@@ -53,8 +53,23 @@ describe("optional managed image security scans", () => {
     const root = mkdtempSync(join(tmpdir(), "nemoclaw-scan-result-gate-"));
     onTestFinished(() => rmSync(root, { recursive: true, force: true }));
     const bin = join(root, "bin");
+    const rawSecret = "workflow-fixture-raw-secret";
+    const finding = {
+      DetectorName: "Fixture",
+      Verified: scannerExit === 183,
+      Redacted: "[REDACTED]",
+      SourceMetadata: { Data: { Docker: { file: "/fixture.env", line: 1 } } },
+    };
     mkdirSync(bin);
-    writeFileSync(join(bin, "docker"), '#!/bin/bash\nexit "$SCANNER_EXIT"\n', { mode: 0o755 });
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/bash
+printf '%s\\n' "$SCANNER_RESULT"
+printf '%s\\n' "$RAW_SECRET" >&2
+exit "$SCANNER_EXIT"
+`,
+      { mode: 0o755 },
+    );
     writeFileSync(
       join(bin, "node"),
       `#!/bin/bash
@@ -82,12 +97,28 @@ exec "$NODE_BINARY" "$@"
           REPORT: join(root, "report.jsonl"),
           PULSE_SECRET_IMAGE: "scanner@sha256:fixture",
           SCANNER_EXIT: String(scannerExit),
+          SCANNER_RESULT: JSON.stringify({
+            ...finding,
+            Raw: rawSecret,
+            RawV2: rawSecret,
+            ExtraData: { token: rawSecret },
+          }),
+          RAW_SECRET: rawSecret,
           CLASSIFIER_MODE: classifier,
           NODE_BINARY: process.execPath,
         },
       },
     );
+    expect(result.error).toBeUndefined();
     expect(result.status === 0, result.stderr).toBe(succeeds);
+    const report = readFileSync(join(root, "report.jsonl"), "utf8");
+    expect(
+      report
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+    ).toEqual([finding]);
+    expect(report + result.stdout + result.stderr).not.toContain(rawSecret);
     expect(existsSync(join(root, "pulse-secret-results.jsonl"))).toBe(false);
     expect(existsSync(join(root, "pulse-secret.stderr"))).toBe(false);
   });
