@@ -22,6 +22,14 @@ on:
         required: false
         default: "0.1.3"
         type: string
+      finished_windows_validation_scope:
+        description: Pi requires startup-only (local mock model; no live inference or migration qualification)
+        required: false
+        default: full-acceptance
+        type: choice
+        options:
+          - full-acceptance
+          - startup-only
       run_windows_native_installer:
         description: Build the selected finished native preview installer, then test it
         required: false
@@ -476,7 +484,7 @@ jobs:
   windows-finished-setup-migration:
     name: Native setup failure and published-preview migration (ARM64)
     needs: windows-finished-installer
-    if: ${{ always() && needs.windows-finished-installer.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' }}
+    if: ${{ always() && needs.windows-finished-installer.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && inputs.finished_windows_validation_scope != 'startup-only' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 35
     steps:
@@ -563,6 +571,7 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/finished-windows/application
       - name: Exercise the installed preview, real inference and owned cleanup
+        if: ${{ inputs.finished_windows_validation_scope != 'startup-only' }}
         shell: pwsh
         env:
           PRODUCT_VERSION: ${{ inputs.finished_windows_product_version }}
@@ -573,6 +582,16 @@ jobs:
           & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\run-installed-acceptance.ps1" `
             -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -WorkDirectory "$env:RUNNER_TEMP\finished-windows" `
             -ProductVersion $env:PRODUCT_VERSION -ArtifactSourceRevision $env:GITHUB_SHA -Mode current-build -Agent $env:SELECTED_AGENT
+      - name: Exercise installed startup and cleanup without inference credentials
+        if: ${{ inputs.finished_windows_validation_scope == 'startup-only' }}
+        shell: pwsh
+        env:
+          PRODUCT_VERSION: ${{ inputs.finished_windows_product_version }}
+          SELECTED_AGENT: ${{ inputs.finished_windows_agent || 'openclaw' }}
+        run: |
+          & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\run-installed-acceptance.ps1" `
+            -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -WorkDirectory "$env:RUNNER_TEMP\finished-windows" `
+            -ProductVersion $env:PRODUCT_VERSION -ArtifactSourceRevision $env:GITHUB_SHA -Mode current-build -Agent $env:SELECTED_AGENT -ValidationScope startup-only
       - name: Preserve fresh install, application and uninstall evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -601,6 +620,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Reject unsupported finished-installer validation scopes
+        if: ${{ inputs.run_windows_native_installer }}
+        shell: pwsh
+        env:
+          SELECTED_AGENT: ${{ inputs.finished_windows_agent || 'openclaw' }}
+          VALIDATION_SCOPE: ${{ inputs.finished_windows_validation_scope || 'full-acceptance' }}
+        run: |
+          if ($env:SELECTED_AGENT -ceq 'pi' -and $env:VALIDATION_SCOPE -cne 'startup-only') { throw 'Pi requires startup-only; full installed acceptance is not implemented.' }
+          if ($env:SELECTED_AGENT -ceq 'hermes' -and $env:VALIDATION_SCOPE -ceq 'startup-only') { throw 'Hermes requires its existing full-acceptance lane.' }
       - name: Prepare the pinned native application compiler
         shell: pwsh
         run: |

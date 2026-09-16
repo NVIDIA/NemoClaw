@@ -35,6 +35,14 @@ test("SDK exports retain conditional targets and explicit overrides after compac
     () => compiledExports({ "./*": { require: "./*.js" } }, {}),
     /Unsupported SDK export pattern/,
   );
+  assert.throws(
+    () => compiledExports({ "./*/*": "./esm/*.js" }, { "./esm/index.js": "./esm/e-index.mjs" }),
+    /Unsupported SDK export key/,
+  );
+  assert.deepEqual(
+    compiledExports({ "./*.js": "./esm/*.js" }, { "./esm/$&.js": "./esm/e-dollar.mjs" }),
+    { "./$&.js": "./esm/e-dollar.mjs" },
+  );
 });
 
 test("compiled SDK modules preserve live bindings, resources, and short paths", async () => {

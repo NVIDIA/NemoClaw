@@ -27,13 +27,16 @@ export function compiledExports(value: any, mapping: Record<string, string>): an
     if (key === "source" || key === "types") continue;
     if (!key.includes("*")) result[key] = compiledExports(item, mapping);
     else {
+      assert.equal(key.split("*").length, 2, "Unsupported SDK export key.");
+      const [keyPrefix, keySuffix] = key.split("*");
       const target = typeof item === "string" ? item : (item as any).default;
       assert.equal(typeof target, "string", "Unsupported SDK export pattern.");
       const [prefix, suffix] = target.split("*");
       assert.equal(target.split("*").length, 2);
       for (const [source, output] of Object.entries(mapping)) {
         if (!source.startsWith(prefix) || !source.endsWith(suffix)) continue;
-        const name = key.replace("*", source.slice(prefix.length, source.length - suffix.length));
+        const name =
+          keyPrefix + source.slice(prefix.length, source.length - suffix.length) + keySuffix;
         // Explicit package exports take precedence over wildcard exports.
         if (!(name in value))
           result[name] = typeof item === "string" ? output : { default: output };

@@ -108,6 +108,13 @@ omitted; original licenses are archived before transformation. A hashed build
 receipt binds the transformed inputs, and the final payload still must pass the
 Windows path-length check. This packaging step is not installed qualification.
 
+For Pi installer tests, select `finished_windows_validation_scope: startup-only`.
+This lane installs the package, verifies the compiled runtime identity, runs three
+contained Pi turns against a local mock model, and uninstalls the package.
+It does not receive repository inference keys. Its receipt does not qualify live
+inference, interactive onboarding, migration, or N1X security. OpenClaw and Hermes
+retain the default `full-acceptance` lane; full Pi acceptance remains unimplemented.
+
 Hermes uses the corrected pywinpty ARM64 wheel, including its matched `conpty.dll`
 and `OpenConsole.exe` beside the native Python extension. The Microsoft ConPTY
 notice is installed as `hermes/CONPTY-LICENSE.txt`. An early Windows check loads

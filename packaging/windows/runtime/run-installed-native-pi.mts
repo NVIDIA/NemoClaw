@@ -1108,7 +1108,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     fs.closeSync(gatewayLog);
     fs.closeSync(gatewayError);
     logsClosed = true;
-    for (const directory of [runRoot, runtimeRoot]) {
+    for (const directory of [runRoot, runtimeRoot, shareRoot]) {
       if (!(await removeDirectory(directory)))
         fail(`runtime root remained: ${path.basename(directory)}`);
     }
@@ -1137,7 +1137,6 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       `${JSON.stringify(receipt, null, 2)}\n`,
       "utf8",
     );
-    await removeDirectory(shareRoot);
     passed = true;
     console.log(
       `${agentLabel.toUpperCase()}> PASS three real ${agentLabel} agent turns inside native MXC`,

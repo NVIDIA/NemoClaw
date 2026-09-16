@@ -65,7 +65,7 @@ export async function captureOwned(
   };
 }
 
-function environment(installRoot: string) {
+export function environment(installRoot: string, source: NodeJS.ProcessEnv = process.env) {
   const allowed = new Set([
     "systemroot",
     "windir",
@@ -86,10 +86,86 @@ function environment(installRoot: string) {
   ]);
   return {
     ...Object.fromEntries(
-      Object.entries(process.env).filter(([name]) => allowed.has(name.toLowerCase())),
+      Object.entries(source).filter(([name]) => allowed.has(name.toLowerCase())),
     ),
     NEMOCLAW_NATIVE_INSTALL_ROOT: installRoot,
   };
+}
+
+export function smokeAgent(value: string = "openclaw") {
+  assert.ok(value === "openclaw" || value === "pi", "Unsupported finished-package smoke agent.");
+  return value;
+}
+
+export function turnArguments(agent: "openclaw" | "pi", output: string) {
+  return [
+    ...(agent === "pi"
+      ? ["--runtime-host", "terminal-turn", "--agent", "pi"]
+      : ["--native-turn", "--wait"]),
+    "--qualification",
+    "--artifact-directory",
+    output,
+  ];
+}
+
+export function validateTurn(
+  agent: "openclaw" | "pi",
+  output: string,
+  systemDriveRoot = `${process.env.SystemDrive ?? "C:"}\\`,
+) {
+  const pattern =
+    agent === "pi"
+      ? /^native-windows-pi-[a-f0-9]{10}\.json$/u
+      : /^native-windows-turn-[a-f0-9]+\.json$/u;
+  const names = fs.readdirSync(output).filter((name) => pattern.test(name));
+  assert.equal(names.length, 1, "Expected exactly one completed contained-turn receipt.");
+  const file = path.join(output, names[0]);
+  const stat = fs.lstatSync(file);
+  assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 1024 * 1024);
+  const turn = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.equal(turn.verdict, "pass");
+  if (agent === "pi") {
+    assert.equal(turn.classification, "installed-nemoclaw-native-windows-pi");
+    assert.equal(turn.piVersion, "0.84.1");
+    assert.equal(turn.architecture, "arm64");
+    assert.equal(turn.backend, "process_container");
+    assert.equal(turn.deterministicLocalModel, true);
+    assert.equal(turn.turnCount, 3);
+    assert.equal(turn.turns?.length, 3);
+    for (let index = 0; index < 3; index++) {
+      const expected = `NATIVE_PI_TURN_${index + 1}_OK`;
+      assert.equal(turn.turns[index].expected, expected);
+      assert.equal(typeof turn.turns[index].output, "string");
+      assert.ok(turn.turns[index].output.includes(expected));
+    }
+    const runId = names[0].slice("native-windows-pi-".length, -".json".length);
+    for (const prefix of [
+      "NemoClawNativeAgent",
+      "NemoClawNativeAgentShare",
+      "NemoClawNativeAgentRuntime",
+    ]) {
+      const ownedRoot = path.join(systemDriveRoot, `${prefix}-pi-${runId}`);
+      try {
+        fs.lstatSync(ownedRoot);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      throw new Error("The contained Pi turn retained an owned directory: " + ownedRoot);
+    }
+  } else {
+    assert.equal(turn.exactReply, "CHAT_OK");
+    assert.equal(turn.openClawExecutionMode, "embedded-worker");
+    assert.equal(turn.workloadStopped, true);
+  }
+  for (const key of [
+    "createWatcherStopped",
+    "gatewayStopped",
+    "sandboxDeleted",
+    "sandboxRegistryAbsent",
+    "qualificationRootsRemoved",
+  ])
+    assert.equal(turn[key], true, "The contained turn did not confirm owned cleanup.");
 }
 
 async function main() {
@@ -97,6 +173,8 @@ async function main() {
     throw new Error("The finished-package control requires Windows ARM64 and the pinned Node.");
   const installRoot = argument("--install-root"),
     output = argument("--output");
+  const agentIndex = process.argv.indexOf("--agent");
+  const agent = smokeAgent(agentIndex < 0 ? "openclaw" : (process.argv[agentIndex + 1] ?? ""));
   const identity = JSON.parse(fs.readFileSync(argument("--runtime-identity"), "utf8"));
   if (fs.existsSync(output)) throw new Error("The finished-package evidence output must be fresh.");
   fs.mkdirSync(output);
@@ -122,7 +200,7 @@ async function main() {
     assert.equal(description.sea, true);
     assert.equal(description.node, "v22.23.2");
     const lease = JSON.parse(
-      await run("runtime-identity", ["--runtime-session", "openclaw"], "release\n"),
+      await run("runtime-identity", ["--runtime-session", agent], "release\n"),
     );
     for (const key of [
       "runtimeId",
@@ -130,40 +208,24 @@ async function main() {
       "sourceRevision",
       "nodeSha256",
       "nodeVersion",
-    ])
+    ]) {
+      assert.equal(typeof identity[key], "string", "The build runtime identity is incomplete.");
+      assert.ok(identity[key].length > 0);
       assert.equal(lease[key], identity[key], "The installed runtime identity differs.");
+    }
     assert.equal(lease.integrity, "installer-sealed-content");
     assert.equal(lease.leaseHeld, true);
-    await run("contained-turn", [
-      "--native-turn",
-      "--wait",
-      "--qualification",
-      "--artifact-directory",
-      path.join(output, "turn"),
-    ]);
-    const names = fs
-      .readdirSync(path.join(output, "turn"))
-      .filter((name) => /^native-windows-turn-[a-f0-9]+\.json$/u.test(name));
-    assert.equal(names.length, 1);
-    const turn = JSON.parse(fs.readFileSync(path.join(output, "turn", names[0]), "utf8"));
-    assert.equal(turn.verdict, "pass");
-    assert.equal(turn.exactReply, "CHAT_OK");
-    assert.equal(turn.openClawExecutionMode, "embedded-worker");
-    for (const key of [
-      "createWatcherStopped",
-      "workloadStopped",
-      "gatewayStopped",
-      "sandboxDeleted",
-      "sandboxRegistryAbsent",
-      "qualificationRootsRemoved",
-    ])
-      assert.equal(turn[key], true, "The contained turn did not confirm owned cleanup.");
+    await run("contained-turn", turnArguments(agent, path.join(output, "turn")));
+    validateTurn(agent, path.join(output, "turn"));
   } catch (error) {
     primary = error;
   }
   const receipt = {
     schemaVersion: 1,
     classification: "installed-finished-package-smoke",
+    agent,
+    validationScope: "startup-only",
+    deterministicLocalModel: true,
     runtime: identity,
     verdict: primary === undefined ? "pass" : "fail",
     failedStage: primary === undefined ? null : stage,

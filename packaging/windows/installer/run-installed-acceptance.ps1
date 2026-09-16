@@ -8,10 +8,14 @@ param([Parameter(Mandatory)][string]$SourceRoot,
     [Parameter(Mandatory)][string]$ProductVersion,
     [Parameter(Mandatory)][string]$ArtifactSourceRevision,
     [ValidateSet('current-build','built-0.1.3-replay')][string]$Mode = 'current-build',
-    [ValidateSet('openclaw','hermes')][string]$Agent = 'openclaw')
+    [ValidateSet('openclaw','hermes','pi')][string]$Agent = 'openclaw',
+    [ValidateSet('full-acceptance','startup-only')][string]$ValidationScope = 'full-acceptance')
 $ErrorActionPreference = 'Stop'
 $controllerSource = $env:GITHUB_SHA
-if ($Agent -ceq 'hermes' -and $Mode -cne 'current-build') { throw 'Hermes cannot reuse the historical OpenClaw replay lane.' }
+if ($Agent -cne 'openclaw' -and $Mode -cne 'current-build') { throw 'Only OpenClaw can reuse the historical replay lane.' }
+if ($Agent -ceq 'pi' -and $ValidationScope -cne 'startup-only') { throw 'Pi supports startup-only smoke, not full installed acceptance.' }
+if ($ValidationScope -ceq 'startup-only' -and ($Agent -ceq 'hermes' -or $Mode -cne 'current-build')) { throw 'Startup-only smoke supports current OpenClaw and Pi builds only.' }
+if ($ValidationScope -ceq 'startup-only' -and ($env:NVIDIA_API_KEY -or $env:NVIDIA_INFERENCE_API_KEY)) { throw 'Startup-only smoke must not receive inference credentials.' }
 if ($env:OS -cne 'Windows_NT' -or $env:GITHUB_ACTIONS -cne 'true' -or $PSVersionTable.PSEdition -cne 'Core' -or
     $controllerSource -cnotmatch '^[a-f0-9]{40}$' -or $ArtifactSourceRevision -cnotmatch '^[a-f0-9]{40}$' -or
     $ProductVersion -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Installed acceptance requires explicit Windows CI identities.' }
@@ -27,7 +31,7 @@ $ciNode = Join-Path $WorkDirectory 'application\node\node.exe'
 if ((Get-FileHash -LiteralPath $ciNode -Algorithm SHA256).Hash.ToLowerInvariant() -cne '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878') {
     throw 'The CI controller Node executable differs from the pinned Windows ARM64 input.'
 }
-& $ciNode --experimental-strip-types --no-warnings --test (Join-Path $SourceRoot 'packaging\windows\installer\control-installed-openclaw-input.test.mts') (Join-Path $SourceRoot 'packaging\windows\installer\run-installed-acceptance.test.mts')
+& $ciNode --experimental-strip-types --no-warnings --test (Join-Path $SourceRoot 'packaging\windows\installer\control-installed-openclaw-input.test.mts') (Join-Path $SourceRoot 'packaging\windows\installer\run-installed-acceptance.test.mts') (Join-Path $SourceRoot 'packaging\windows\installer\qualify-finished-package.test.mts')
 if ($LASTEXITCODE -ne 0) { throw 'The Windows observer or diagnostic controls failed.' }
 
 $work = [IO.Path]::GetFullPath($WorkDirectory)
@@ -46,6 +50,7 @@ foreach ($file in $build.files) {
   }
 }
 $timings = [ordered]@{ schemaVersion = 1; sourceRevision = $ArtifactSourceRevision; artifactSourceRevision = $ArtifactSourceRevision; controllerSourceRevision = $controllerSource; currentHeadQualification = $false; mode = $Mode; measurement = 'fresh-runner-installed-preview'; agent = $Agent;
+  validationScope = $ValidationScope; fullInstalledQualification = $false; migrationQualified = $false;
   hostPreparationRunBeforeInstall = $false; upgradeMeasured = $false; installTargetMilliseconds = 30000; installTargetSatisfied = $false; primaryException = $null; nativeRuntimeFailure = $null; compiledMsi = $build.compiledMsi; stages = [ordered]@{} }
 function Invoke-OwnedSetup([string]$Action, [string]$Log) {
   $info = [Diagnostics.ProcessStartInfo]::new()
@@ -60,6 +65,15 @@ function Invoke-OwnedSetup([string]$Action, [string]$Log) {
 try {
   Invoke-OwnedSetup '-install' "$work\install.log"
   $timings['startupComparisonAvailable'] = $false
+  if ($ValidationScope -ceq 'startup-only') {
+    & $ciNode --experimental-strip-types --no-warnings "$SourceRoot\packaging\windows\installer\qualify-finished-package.mts" `
+      --agent $Agent --install-root $installation --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
+    if ($LASTEXITCODE -ne 0) { throw 'The installed startup-only smoke failed.' }
+    $smoke = Get-Content -LiteralPath "$work\installed-smoke\finished-package-smoke.json" -Raw | ConvertFrom-Json
+    if ($smoke.verdict -cne 'pass' -or $smoke.agent -cne $Agent -or $smoke.validationScope -cne 'startup-only' -or
+        $smoke.fullInstalledQualification -isnot [bool] -or $smoke.fullInstalledQualification) { throw 'The installed startup-only receipt is incomplete.' }
+    $timings['startupSmoke'] = @{ receipt = 'installed-smoke/finished-package-smoke.json'; deterministicLocalModel = $true }
+  } else {
   foreach ($case in @(
     @{ name = 'firstInstalledLaunch'; directory = 'installed-acceptance' },
     @{ name = 'warmInstalledLaunch'; directory = 'installed-acceptance-warm' }
@@ -89,6 +103,7 @@ try {
       --install-root "$env:ProgramFiles\NVIDIA\NemoClaw" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
     if ($LASTEXITCODE -ne 0) { throw 'The installed compiled/contained smoke failed.' }
   } else { $timings['compiledRuntimeControls'] = 'Hermes acceptance validated capabilities, SEA identity and held runtime tuple.' }
+  }
 } catch { $primary = $_ }
 finally {
   try {
@@ -161,6 +176,7 @@ if (-not $timings.installTargetSatisfied -and $null -eq $primary) {
   try { throw 'The installed preview missed its measured30-second installation target.' } catch { $primary = $_ }
 }
 $timings.primaryException = if ($null -eq $primary) { $null } else { $primary.Exception.Message }
+$timings.fullInstalledQualification = $ValidationScope -ceq 'full-acceptance' -and $null -eq $primary
 try { [IO.File]::WriteAllText("$work\installed-stage-timings.json", ($timings | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false)) }
 catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; timing evidence also could not be saved.' } }
 if ($null -ne $primary) { throw $primary }
