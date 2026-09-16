@@ -85,11 +85,9 @@ describe("Podman inference publish preflight", () => {
       ["/usr/bin/lsof", "-nP", "-iTCP@127.0.0.1:11434", "-sTCP:LISTEN"],
       ["/usr/bin/sudo", "-n", "/usr/bin/lsof", "-nP", "-iTCP@127.0.0.1:11434", "-sTCP:LISTEN"],
     ]);
-    for (const argv of commands) {
-      expect(argv[0]?.startsWith("/")).toBe(true);
-      expect(argv).not.toContain("lsof");
-      expect(argv).not.toContain("sudo");
-    }
+    expect(commands.map((argv) => argv[0])).toEqual(["/usr/bin/lsof", "/usr/bin/sudo"]);
+    expect(commands.flat()).not.toContain("lsof");
+    expect(commands.flat()).not.toContain("sudo");
   });
 
   it("inspects loopback before the portable gateway publish (#11723)", () => {
