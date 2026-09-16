@@ -9,6 +9,7 @@ module is imported eagerly or edited. Non-Windows interpreters are unchanged.
 
 from __future__ import annotations
 
+import ctypes
 import importlib.abc
 import importlib.machinery
 import json
@@ -31,13 +32,18 @@ _MODULES = {
 }
 _active_root: Path | None = None
 _get_attributes = None
+_get_volume_name = None
 if os.name == "nt":
-    import ctypes
     from ctypes import wintypes
 
     _get_attributes = ctypes.WinDLL("kernel32", use_last_error=True).GetFileAttributesW
     _get_attributes.argtypes = [wintypes.LPCWSTR]
     _get_attributes.restype = wintypes.DWORD
+    _get_volume_name = ctypes.WinDLL(
+        "kernel32", use_last_error=True
+    ).GetVolumeNameForVolumeMountPointW
+    _get_volume_name.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    _get_volume_name.restype = wintypes.BOOL
 
 
 class NativeStartupRefusal(SystemExit):
@@ -78,7 +84,37 @@ def _absolute_path(path: Path) -> Path:
     return path
 
 
-def _path_kind(path: Path) -> str:
+def _same_path(left: Path, right: Path) -> bool:
+    return str(left).replace("/", "\\").rstrip("\\").casefold() == str(
+        right
+    ).replace("/", "\\").rstrip("\\").casefold()
+
+
+def _runtime_volume_mount(root: Path) -> Path | None:
+    authority = os.environ.get("NEMOCLAW_AGENT_RUNTIME")
+    if authority is None:
+        return None
+    expected = _absolute_path(Path(authority))
+    if not _same_path(root, expected):
+        _refuse("the host runtime authority differs from the installed deployment.")
+    mount = root.parent
+    if (
+        root.name.casefold() != "hermes"
+        or re.fullmatch(r"[a-f0-9]{64}", mount.name) is None
+        or mount.parent.name.casefold() != "runtimes"
+        or _get_volume_name is None
+    ):
+        _refuse("the installed runtime mount identity is invalid.")
+    volume = ctypes.create_unicode_buffer(64)
+    mount_path = str(mount).rstrip("\\/") + "\\"
+    if _get_volume_name(mount_path, volume, len(volume)) == 0 or re.fullmatch(
+        r"\\\\\?\\Volume\{[0-9A-Fa-f-]{36}\}\\", volume.value
+    ) is None:
+        _refuse("the installed runtime is not an exact volume mount.")
+    return mount
+
+
+def _path_kind(path: Path, allowed_mount: Path | None = None) -> str:
     if _get_attributes is not None:
         # Unlike realpath/lstat in Python 3.11, this query does not need an
         # exclusive handle or final-path resolution. For a symbolic link it
@@ -86,7 +122,13 @@ def _path_kind(path: Path) -> str:
         attributes = _get_attributes(str(path))
         if attributes == 0xFFFFFFFF:
             raise ctypes.WinError(ctypes.get_last_error())
-        if attributes & (0x400 | 0x40):  # REPARSE_POINT or DEVICE
+        if attributes & 0x40:  # DEVICE
+            _refuse(
+                "an installer-owned runtime path has an invalid filesystem identity."
+            )
+        if attributes & 0x400 and (
+            allowed_mount is None or not _same_path(path, allowed_mount)
+        ):
             _refuse(
                 "an installer-owned runtime path has an invalid filesystem identity."
             )
@@ -101,9 +143,13 @@ def _path_kind(path: Path) -> str:
     _refuse("an installer-owned runtime path has an invalid filesystem identity.")
 
 
-def _regular_file(path: Path, root: Path) -> Path:
+def _regular_file(
+    path: Path, root: Path, allowed_mount: Path | None = None
+) -> Path:
     path = _absolute_path(path)
     root = _absolute_path(root)
+    if allowed_mount is None:
+        allowed_mount = _runtime_volume_mount(root)
     try:
         path.relative_to(root)
         # Check from the volume root downward so intermediate junctions and
@@ -112,7 +158,7 @@ def _regular_file(path: Path, root: Path) -> Path:
         # these checks do not replace that host ownership/lease boundary.
         for current in (*reversed(path.parents), path):
             expected = "file" if current == path else "directory"
-            if _path_kind(current) != expected:
+            if _path_kind(current, allowed_mount) != expected:
                 _refuse(
                     "an installer-owned runtime path has an invalid filesystem identity."
                 )
@@ -125,7 +171,6 @@ def _regular_file(path: Path, root: Path) -> Path:
 
 def _discover_root(module_path: Path) -> Path:
     location = _absolute_path(module_path)
-    _regular_file(location, Path(location.anchor))
     for parent in list(location.parents)[:12]:
         marker = parent / MARKER
         try:
@@ -153,6 +198,9 @@ def _discover_root(module_path: Path) -> Path:
             or record.get("layoutVersion") != 1
         ):
             _refuse("the native deployment marker does not match this adapter.")
+        mount = _runtime_volume_mount(parent)
+        _regular_file(location, parent, mount)
+        _regular_file(marker, parent, mount)
         relative = location.relative_to(parent)
         if relative.parts[0] not in {"hermes-agent", "tools"}:
             _refuse("the startup adapter is outside its installed Python environment.")

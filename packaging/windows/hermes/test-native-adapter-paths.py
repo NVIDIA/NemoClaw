@@ -267,6 +267,49 @@ class AdapterPathControls(unittest.TestCase):
         ):
             adapter._path_kind(self.bash)
 
+    def test_only_declared_volume_mount_reparse_is_allowed(self):
+        mount = self.root.parent
+
+        def attributes(value):
+            current = Path(value)
+            if current == mount:
+                return 0x410  # DIRECTORY | REPARSE_POINT
+            return 0x20 if current == self.bash else 0x10
+
+        with patch.object(adapter, "_get_attributes", attributes):
+            self.assertEqual(
+                adapter._regular_file(self.bash, self.root, mount), self.bash
+            )
+            with self.assertRaises(adapter.NativeStartupRefusal):
+                adapter._regular_file(self.bash, self.root, self.root)
+
+    def test_installed_mount_requires_exact_host_authority_and_volume_guid(self):
+        identity = "a" * 64
+        root = PureWindowsPath(
+            rf"C:\Program Files\NVIDIA\NemoClaw\runtimes\{identity}\hermes"
+        )
+        volume = "\\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\"
+
+        def volume_name(path, output, size):
+            self.assertEqual(path, str(root.parent) + "\\")
+            self.assertGreaterEqual(size, len(volume) + 1)
+            output.value = volume
+            return 1
+
+        with (
+            patch.dict(os.environ, {"NEMOCLAW_AGENT_RUNTIME": str(root)}),
+            patch.object(adapter, "Path", PureWindowsPath),
+            patch.object(adapter, "_get_volume_name", volume_name),
+        ):
+            self.assertEqual(adapter._runtime_volume_mount(root), root.parent)
+            with self.assertRaises(adapter.NativeStartupRefusal):
+                adapter._runtime_volume_mount(root.with_name("other"))
+            with (
+                patch.object(adapter, "_get_volume_name", lambda *_args: 0),
+                self.assertRaises(adapter.NativeStartupRefusal),
+            ):
+                adapter._runtime_volume_mount(root)
+
     def test_windows_attribute_failure_refuses_without_falling_back(self):
         windows_error = SimpleNamespace(
             get_last_error=lambda: 5,
