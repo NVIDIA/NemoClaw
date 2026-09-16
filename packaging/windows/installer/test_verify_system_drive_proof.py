@@ -183,6 +183,11 @@ class SystemDriveProofTests(unittest.TestCase):
                     },
                     "appContainerReadRoots": [
                         {
+                            "name": ".",
+                            "sddl": workers_sddl,
+                            "access": copy.deepcopy(image_access),
+                        },
+                        {
                             "name": "workers",
                             "sddl": workers_sddl,
                             "access": image_access,
@@ -200,6 +205,8 @@ class SystemDriveProofTests(unittest.TestCase):
                 },
                 "mountPointSddl": workers_sddl,
                 "mountPointAccess": copy.deepcopy(detailed_access),
+                "volumeRootSddl": workers_sddl,
+                "volumeRootAccess": copy.deepcopy(detailed_access),
                 "workersSddl": workers_sddl,
                 "workersAccess": detailed_access,
                 "readMask": gate.READ_MASK,
@@ -482,6 +489,12 @@ class SystemDriveProofTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exact package read grants"):
             self.verify()
         mount_access[-1]["mask"] += 1
+        volume_access = self.proof["preauthorizedRuntime"]["volumeRootAccess"]
+        volume_access[-1]["mask"] -= 1
+        self.save()
+        with self.assertRaisesRegex(ValueError, "exact package read grants"):
+            self.verify()
+        volume_access[-1]["mask"] += 1
         image = self.proof["preauthorizedRuntime"]["imageReceipt"]
         image["mountedReadOnly"] = False
         self.save()

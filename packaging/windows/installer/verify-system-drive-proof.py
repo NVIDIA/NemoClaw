@@ -130,6 +130,8 @@ def verify_preauthorized_runtime(record):
             "imageReceipt",
             "mountPointSddl",
             "mountPointAccess",
+            "volumeRootSddl",
+            "volumeRootAccess",
             "workersSddl",
             "workersAccess",
             "readMask",
@@ -139,11 +141,14 @@ def verify_preauthorized_runtime(record):
         and bool(record["workersSddl"])
         and type(record.get("mountPointSddl")) is str
         and bool(record["mountPointSddl"])
+        and type(record.get("volumeRootSddl")) is str
+        and bool(record["volumeRootSddl"])
         and record.get("readMask") == READ_MASK
         and record.get("readOnlyAttachment") is True,
         "The preauthorized runtime proof is incomplete or not read-only.",
     )
     verify_acl_rows(record["mountPointAccess"], detailed=True)
+    verify_acl_rows(record["volumeRootAccess"], detailed=True)
     verify_acl_rows(record["workersAccess"], detailed=True)
     image = record.get("imageReceipt")
     require(
@@ -189,14 +194,20 @@ def verify_preauthorized_runtime(record):
     roots = image.get("appContainerReadRoots")
     require(
         type(roots) is list
-        and len(roots) == 1
-        and type(roots[0]) is dict
-        and set(roots[0]) == {"name", "sddl", "access"}
-        and roots[0].get("name") == "workers"
-        and roots[0].get("sddl") == record["workersSddl"],
+        and len(roots) == 2
+        and all(
+            type(root) is dict and set(root) == {"name", "sddl", "access"}
+            for root in roots
+        )
+        and {root.get("name") for root in roots} == {".", "workers"}
+        and next(root for root in roots if root["name"] == ".").get("sddl")
+        == record["volumeRootSddl"]
+        and next(root for root in roots if root["name"] == "workers").get("sddl")
+        == record["workersSddl"],
         "The preauthorized runtime image root identity is invalid.",
     )
-    verify_acl_rows(roots[0]["access"], detailed=False)
+    for root in roots:
+        verify_acl_rows(root["access"], detailed=False)
 
 
 def verify(

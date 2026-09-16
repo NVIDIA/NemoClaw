@@ -33,6 +33,7 @@ $imageAttach = Join-Path $output 'preauthorized-runtime-attach.txt'
 $imageAttachLog = Join-Path $output 'preauthorized-runtime-attach.log'
 $imageDetach = Join-Path $output 'preauthorized-runtime-detach.txt'
 $diskpart = Join-Path $env:SystemRoot 'System32\diskpart.exe'
+$mountvol = Join-Path $env:SystemRoot 'System32\mountvol.exe'
 $commands = [Collections.Generic.List[object]]::new()
 $cleanupErrors = [Collections.Generic.List[string]]::new()
 $primary = $null; $mxcAttempted = $false; $mxcStopped = $true; $imageAttached = $false
@@ -191,6 +192,23 @@ try {
             inheritanceFlags=[string]$_.InheritanceFlags;propagationFlags=[string]$_.PropagationFlags;
             accessControlType=[string]$_.AccessControlType}
     })
+    $volumeOutput=@(& $mountvol ($imageMount.TrimEnd('\')+'\') /L 2>&1)
+    $volumeRoots=@($volumeOutput|ForEach-Object{([string]$_).Trim()}|
+        Where-Object{$_ -match '^\\\\\?\\Volume\{[0-9A-Fa-f-]{36}\}\\$'})
+    if($LASTEXITCODE -ne 0 -or $volumeRoots.Count -ne 1){throw 'The attached proof volume-root identity could not be resolved.'}
+    $volumeRootAcl=Get-Acl -LiteralPath $volumeRoots[0]
+    $volumeRootRows=@($volumeRootAcl.Access|ForEach-Object{
+        $identity=$_.IdentityReference
+        $sid=if($identity.Value -ceq 'APPLICATION PACKAGE AUTHORITY\ALL APPLICATION PACKAGES'){'S-1-15-2-1'}
+        elseif($identity.Value -ceq 'APPLICATION PACKAGE AUTHORITY\ALL RESTRICTED APPLICATION PACKAGES'){'S-1-15-2-2'}
+        elseif($identity -is [Security.Principal.SecurityIdentifier]){$identity.Value}else{
+            try{$identity.Translate([Security.Principal.SecurityIdentifier]).Value}catch{$identity.Value}
+        }
+        $mask=[uint32]([int64]([int32]$_.FileSystemRights) -band 0xffffffffL)
+        [pscustomobject]@{sid=$sid;mask=$mask;inherited=$_.IsInherited;
+            inheritanceFlags=[string]$_.InheritanceFlags;propagationFlags=[string]$_.PropagationFlags;
+            accessControlType=[string]$_.AccessControlType}
+    })
     $preauthorized=Join-Path $imageMount 'workers'
     $preauthorizedAcl=Get-Acl -LiteralPath $preauthorized
     $preauthorizedRows=@($preauthorizedAcl.Access|ForEach-Object{
@@ -208,6 +226,7 @@ try {
     $requiredReadMask=[uint32]0x001200a9
     $receipt.preauthorizedRuntime=[ordered]@{imageReceipt=(Get-Content -LiteralPath $imageReceipt -Raw|ConvertFrom-Json);
         mountPointSddl=$mountPointAcl.Sddl;mountPointAccess=$mountPointRows;
+        volumeRootSddl=$volumeRootAcl.Sddl;volumeRootAccess=$volumeRootRows;
         workersSddl=$preauthorizedAcl.Sddl;workersAccess=$preauthorizedRows;readMask=$requiredReadMask;readOnlyAttachment=$true}
     foreach($sid in @('S-1-15-2-1','S-1-15-2-2')){
         $matches=@($preauthorizedRows|Where-Object{$_.sid -ceq $sid -and $_.accessControlType -ceq 'Allow' -and

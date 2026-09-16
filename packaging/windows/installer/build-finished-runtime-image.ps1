@@ -58,6 +58,7 @@ $workingImage = if ([string]::Equals([IO.Path]::GetPathRoot($OutputImage), $stag
 }
 $mount = Join-Path $env:RUNNER_TEMP ('nemoclaw-image-' + [guid]::NewGuid().ToString('N'))
 $diskpart = Join-Path $env:SystemRoot 'System32\diskpart.exe'
+$mountvol = Join-Path $env:SystemRoot 'System32\mountvol.exe'
 $script = Join-Path $env:RUNNER_TEMP ('nemoclaw-image-' + [guid]::NewGuid().ToString('N') + '.txt')
 $detach = Join-Path $env:RUNNER_TEMP ('nemoclaw-image-' + [guid]::NewGuid().ToString('N') + '-detach.txt')
 $receipt = [ordered]@{
@@ -117,8 +118,16 @@ try {
     }
     Set-Acl -LiteralPath $mount -AclObject $security
     # Set-Acl on a volume mount point protects the host reparse point rather
-    # than the attached volume root. Pre-create and protect each runtime root
-    # inside the image so Robocopy descendants inherit the package grants.
+    # than the attached volume root. Address that root through its volume GUID,
+    # then pre-create each runtime root so descendants inherit the same grants.
+    $volumeOutput = @(& $mountvol ($mount.TrimEnd('\') + '\') /L 2>&1)
+    $volumeRoots = @($volumeOutput | ForEach-Object { ([string]$_).Trim() } |
+        Where-Object { $_ -match '^\\\\\?\\Volume\{[0-9A-Fa-f-]{36}\}\\$' })
+    if ($LASTEXITCODE -ne 0 -or $volumeRoots.Count -ne 1) {
+        throw 'The runtime image volume-root identity could not be resolved.'
+    }
+    $volumeRoot = $volumeRoots[0]
+    Set-Acl -LiteralPath $volumeRoot -AclObject $security
     foreach ($name in $topLevelDirectories) {
         $directory = Join-Path $mount $name
         [IO.Directory]::CreateDirectory($directory) | Out-Null
@@ -133,8 +142,13 @@ try {
         throw "Runtime image population failed with status ${copyStatus}: $detail"
     }
     $requiredReadMask = [uint32]0x001200a9
-    $readRoots = @($topLevelDirectories | ForEach-Object {
-        $directory = Join-Path $mount $_
+    $readRootPaths = @([pscustomobject]@{ name='.'; path=$volumeRoot })
+    $readRootPaths += @($topLevelDirectories | ForEach-Object {
+        [pscustomobject]@{ name=$_; path=(Join-Path $mount $_) }
+    })
+    $readRoots = @($readRootPaths | ForEach-Object {
+        $name = $_.name
+        $directory = $_.path
         $acl = Get-Acl -LiteralPath $directory
         $rows = @($acl.Access | ForEach-Object {
             $identity = $_.IdentityReference
@@ -147,7 +161,7 @@ try {
             [pscustomobject]@{ sid=$sid; mask=$mask; inherited=$_.IsInherited;
                 accessControlType=[string]$_.AccessControlType }
         })
-        [pscustomobject]@{ name=$_; sddl=$acl.Sddl; access=$rows }
+        [pscustomobject]@{ name=$name; sddl=$acl.Sddl; access=$rows }
     })
     $receipt['appContainerReadRoots'] = $readRoots
     foreach ($root in $readRoots) {
