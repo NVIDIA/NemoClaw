@@ -6,7 +6,7 @@ import net from "node:net";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
-import { parseDockerDaemonObservation } from "../../domain/docker-host";
+import { isDockerInfoResultReachable } from "../../domain/docker-host";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
@@ -63,33 +63,13 @@ export type SandboxContainerFailureRunners = {
   portProbe: (port: number) => Promise<boolean>;
 };
 
-function defaultDockerInfo(): boolean {
+export function probeDockerDaemonReachability(): boolean {
   const result = dockerRun(["info", "--format", "{{json .}}"], {
     ignoreError: true,
     suppressOutput: true,
     timeout: DOCKER_TIMEOUT_MS,
   });
-  const stdout =
-    typeof result.stdout === "string"
-      ? result.stdout
-      : result.stdout == null
-        ? ""
-        : result.stdout.toString("utf8");
-  if (result.status !== 0) {
-    return false;
-  }
-
-  try {
-    JSON.parse(stdout);
-  } catch {
-    return false;
-  }
-
-  return parseDockerDaemonObservation(stdout).reachable;
-}
-
-export function isDockerDaemonReachable(): boolean {
-  return defaultDockerInfo();
+  return isDockerInfoResultReachable(result);
 }
 
 function dockerContainerListed(container: string, allFlag: boolean): boolean {
@@ -126,7 +106,7 @@ function defaultPortProbe(port: number): Promise<boolean> {
 }
 
 const defaultRunners: GatewayFailureRunners = {
-  dockerInfo: defaultDockerInfo,
+  dockerInfo: probeDockerDaemonReachability,
   dockerIsRunning: defaultDockerIsRunning,
   dockerExists: defaultDockerExists,
   portProbe: defaultPortProbe,
