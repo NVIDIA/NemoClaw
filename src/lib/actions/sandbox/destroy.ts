@@ -1247,7 +1247,7 @@ async function destroySandboxUnlocked(
           platform: process.platform,
         })
       : null;
-  if (cleanupDecision === "preserve") {
+  if (cleanupDecision !== null && !(await confirmCleanupGatewayDecision(cleanupDecision))) {
     reportGatewayPreserved(cleanupGatewayName);
   } else if (cleanupDecision !== null) {
     const finalGatewayCleanup = await resolveFinalDestroyGatewayCleanup(
@@ -1262,10 +1262,7 @@ async function destroySandboxUnlocked(
         ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
       },
     );
-    if (
-      finalGatewayCleanup.status === "cleanup" &&
-      (await confirmCleanupGatewayDecision(cleanupDecision))
-    ) {
+    if (finalGatewayCleanup.status === "cleanup") {
       if (destroyRuntimeProviderId || destroyRuntimeSelection) {
         await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
           ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
@@ -1274,8 +1271,6 @@ async function destroySandboxUnlocked(
       } else {
         await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
       }
-    } else if (finalGatewayCleanup.status === "cleanup") {
-      reportGatewayPreserved(cleanupGatewayName);
     } else {
       reportFinalGatewayLeftRunning(
         cleanupGatewayName,

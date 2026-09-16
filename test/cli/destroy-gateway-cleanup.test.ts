@@ -535,8 +535,8 @@ describe("CLI dispatch", () => {
         "  else",
         '    output="NAME STATUS\\nalpha Ready\\nbeta Ready"',
         "  fi",
-        '  printf "%s\\n" "$output" >> "$log_file"',
-        '  printf "%s\\n" "$output"',
+        '  printf "%b\\n" "$output" >> "$log_file"',
+        '  printf "%b\\n" "$output"',
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
@@ -558,7 +558,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha destroy --yes --cleanup-gateway", {
+    const r = runWithEnv("alpha destroy --yes --cleanup-gateway 2>&1", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });

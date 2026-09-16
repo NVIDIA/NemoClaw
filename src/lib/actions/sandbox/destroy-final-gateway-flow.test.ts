@@ -81,6 +81,47 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     );
   });
 
+  it("does not probe final gateway cleanup when the user declines", async () => {
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "0");
+    vi.stubEnv("NEMOCLAW_CLEANUP_GATEWAY", "");
+    const harness = createDestroyHarness({
+      promptResponses: ["yes", "no"],
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+    });
+
+    await expect(harness.destroySandbox("alpha")).resolves.toBeUndefined();
+
+    expect(harness.promptSpy).toHaveBeenCalledTimes(2);
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.finalGatewaySleepSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "Shared NemoClaw gateway preserved",
+    );
+  });
+
+  it("asks before probing final gateway cleanup when the user accepts", async () => {
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "0");
+    vi.stubEnv("NEMOCLAW_CLEANUP_GATEWAY", "");
+    const harness = createDestroyHarness({
+      promptResponses: ["yes", "yes"],
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+    });
+    harness.captureOpenshellSpy
+      .mockReturnValueOnce({ status: 0, output: TERMINATING_ALPHA_LIST })
+      .mockReturnValue({ status: 0, output: "" });
+
+    await expect(harness.destroySandbox("alpha")).resolves.toBeUndefined();
+
+    expect(harness.promptSpy).toHaveBeenCalledTimes(2);
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(2);
+    expect(harness.promptSpy.mock.invocationCallOrder[1]).toBeLessThan(
+      harness.captureOpenshellSpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.finalGatewaySleepSpy).toHaveBeenCalledOnce();
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledOnce();
+  });
+
   it("reports the live sandbox that blocks --cleanup-gateway after the last registered destroy", async () => {
     const harness = createDestroyHarness({
       executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
