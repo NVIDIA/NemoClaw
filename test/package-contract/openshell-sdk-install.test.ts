@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -127,24 +128,22 @@ describe("required OpenShell SDK installation", () => {
       { cwd: repositoryRoot, env, encoding: "utf8", timeout: 30_000 },
     );
     expect(packed.status, packed.stderr).toBe(0);
-    const jsonStart = packed.stdout.indexOf("[");
-    expect(jsonStart, packed.stdout).toBeGreaterThanOrEqual(0);
-    const packJson = packed.stdout.slice(jsonStart);
-    const packedResult = parseSingleNpmPackResult(packJson);
-    assert.ok(packedResult.filename, "npm pack did not report an archive filename");
-    expect(npmPackFilePaths(packJson)).toEqual(
+    const archives = readdirSync(root).filter((entry) => entry.endsWith(".tgz"));
+    expect(archives).toHaveLength(1);
+    const archivePath = path.join(root, archives[0]!);
+    const listing = spawnSync("tar", ["-tzf", archivePath], { encoding: "utf8" });
+    expect(listing.status, listing.stderr).toBe(0);
+    expect(listing.stdout.split("\n")).toEqual(
       expect.arrayContaining(
-        [sdkName, ...publicDependencies].map((name) => `node_modules/${name}/package.json`),
+        [sdkName, ...publicDependencies].map((name) => `package/node_modules/${name}/package.json`),
       ),
     );
 
     const extracted = path.join(root, "extracted");
     mkdirSync(extracted);
-    const extraction = spawnSync(
-      "tar",
-      ["-xzf", path.join(root, packedResult.filename), "-C", extracted],
-      { encoding: "utf8" },
-    );
+    const extraction = spawnSync("tar", ["-xzf", archivePath, "-C", extracted], {
+      encoding: "utf8",
+    });
     expect(extraction.status, extraction.stderr).toBe(0);
     const packageRoot = path.join(extracted, "package");
     const sdkImportUrl = pathToFileURL(
