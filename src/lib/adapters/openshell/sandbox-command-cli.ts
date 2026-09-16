@@ -95,14 +95,17 @@ function targetArgs(target: OpenShellGatewayTarget): string[] {
   return target.kind === "named" ? ["-g", target.gatewayName] : [];
 }
 
-function assertTarget(target: OpenShellGatewayTarget, environment = process.env): void {
+export function assertCliOpenShellTarget(
+  target: OpenShellGatewayTarget,
+  environment = process.env,
+): void {
   if (target.kind === "named" && !isValidName(target.gatewayName)) {
     throw new Error("Invalid OpenShell gateway name");
   }
   assertNoOpenShellGatewayEndpointOverride(environment);
 }
 
-function assertSandboxName(sandboxName: string): void {
+export function assertCliOpenShellSandboxName(sandboxName: string): void {
   if (!isValidName(sandboxName)) throw new Error("Invalid OpenShell sandbox name");
 }
 
@@ -273,8 +276,8 @@ export function createCliOpenShellSandboxCommandExecutor(
   const runBuffered = deps.runBuffered ?? runCliOpenShellBufferedCommand;
   return {
     probeDirectory: async (request) => {
-      assertSandboxName(request.sandboxName);
-      assertTarget(request.target);
+      assertCliOpenShellSandboxName(request.sandboxName);
+      assertCliOpenShellTarget(request.target);
       const binary = resolveBinary();
       if (!binary) {
         return {
@@ -302,9 +305,9 @@ export function createCliOpenShellSandboxCommandExecutor(
       return result.status === 1 ? { state: "missing" } : { state: "unobservable" };
     },
     runBuffered: async (request) => {
-      assertSandboxName(request.sandboxName);
+      assertCliOpenShellSandboxName(request.sandboxName);
       const environment = request.environment ?? deps.hostEnv ?? buildSubprocessEnv();
-      assertTarget(request.target, environment);
+      assertCliOpenShellTarget(request.target, environment);
       const binary = resolveBinary();
       if (!binary) {
         return {
@@ -328,8 +331,8 @@ export function createCliOpenShellSandboxCommandExecutor(
       return bufferedCommandCompletion(result);
     },
     runStreaming: async (request) => {
-      assertSandboxName(request.sandboxName);
-      assertTarget(request.target);
+      assertCliOpenShellSandboxName(request.sandboxName);
+      assertCliOpenShellTarget(request.target);
       const binary = resolveBinary();
       if (!binary) return unavailableBinary();
       const result = await runCliOpenShellStreamingCommand(
