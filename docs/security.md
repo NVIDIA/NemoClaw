@@ -81,7 +81,11 @@ Before enabling export, identify who can read the collector's stored data and ho
 The current integration selects an existing collector; it does not provision or manage that retention policy.
 
 Production tracing privacy review and retention guidance: **TBD**.
-Private vulnerability-reporting instructions for the v1 documentation: **TBD**.
+
+## Report a Vulnerability
+
+Use the private channels in [SECURITY.md](../SECURITY.md), including NVIDIA's disclosure program and encrypted PSIRT email.
+Do not include vulnerability details or credentials in a public issue.
 
 ## Implementation Evidence
 

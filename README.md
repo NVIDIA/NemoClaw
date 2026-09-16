@@ -24,6 +24,7 @@ The [design decision](docs/design/scope.md) defines implementation boundaries an
 
 Follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
 Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/CONTRIBUTING.md) for documentation changes.
+Report potential vulnerabilities through the private channels in [SECURITY.md](SECURITY.md).
 
 ## Licenses
 

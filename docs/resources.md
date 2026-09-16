@@ -45,7 +45,17 @@ My task: [describe the task and environment]
 ```
 
 This prompt routes documentation; it does not supply missing installers, native-data migration, or gateway provisioning.
-A rehearsed installation starter prompt and installable v1 docs-routing skill: **TBD**.
+
+### Use the Documentation Skill from a Checkout
+
+The repository includes a [NemoClaw user-guide skill](../.agents/skills/nemoclaw-user-guide/SKILL.md) for version selection and task routing.
+For an assistant with access to this checkout, ask it to read `.agents/skills/nemoclaw-user-guide/SKILL.md` before answering your NemoClaw task.
+Keep the skill in the checkout so its relative links resolve to the same revision's guides.
+It checks the intended product version and executable surface before choosing commands, and refuses to substitute main guidance when a v1 source is unavailable.
+Review the cited version and task guide in its answer before operational work.
+
+The skill only routes documentation; reading it does not install software or change deployment resources.
+Automatic discovery and packaged installation across assistant clients, plus a rehearsed installation starter prompt, remain **TBD** pending client qualification and release distribution.
 
 ## Contribute
 
@@ -66,6 +76,7 @@ Original NemoClaw code uses [Apache-2.0](../LICENSE).
 Read the notices for components and derived code:
 
 - [Agent runtime sources](../image/NOTICE.md).
+- [SDK memory and serving policy attribution](../crates/nemoclaw-sdk/NOTICE.md).
 - [Brave plugin attribution](../image/fabric/BRAVE-NOTICE.md).
 - [Generic vLLM runtime](../runtimes/vllm/NOTICE.md).
 - [AMD64 vLLM runtime and Nemotron configuration sources](../runtimes/vllm-amd64/NOTICE.md).
@@ -73,4 +84,5 @@ Read the notices for components and derived code:
 
 ## Report a Security Issue
 
-Private vulnerability-reporting instructions: **TBD**; see the [security guide](security.md).
+Use the private reporting channels in [SECURITY.md](../SECURITY.md).
+The [security guide](security.md) describes current controls and their qualification limits.

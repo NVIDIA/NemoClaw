@@ -154,7 +154,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `network-policy/apply-policy-presets.mdx` | Rewrite | `sandbox-network.md`: isolated preset or full explicit policy; no maintained-preset CLI | D08 | Pending audit |
 | `network-policy/approve-network-requests.mdx` | Hold | `sandbox-network.md`, `migration.md`: external live edits can drift from intent; no current NemoClaw approval workflow | D08 | Pending audit |
 | `network-policy/change-baseline-network-policy.mdx` | Rewrite | `sandbox-network.md`: full explicit policy, defaults, replacement, and data-loss effects | D08 | Pending audit |
-| `network-policy/configure-raw-tls-passthrough.mdx` | Merge | `sandbox-network.md`: retain only fields accepted by the pinned explicit-policy parser; review enforcement tradeoffs | D08 | Pending audit |
+| `network-policy/configure-raw-tls-passthrough.mdx` | Merge | `sandbox-network.md`: retain only fields accepted by the pinned explicit-policy parser; review enforcement tradeoffs | D08 | Written: [TLS and enforcement choices](../sandbox-network.md#choose-tls-inspection-and-enforcement); pinned OpenShell parser/proxy and SDK validation. Live host enforcement requires qualification. |
 | `network-policy/create-custom-policy-presets.mdx` | Rewrite | `sandbox-network.md`: author validated explicit policy instead of preset files | D08 | Pending audit |
 | `network-policy/customize-network-policy.mdx` | Merge | `sandbox-network.md`: one owner for declared policy changes and drift | D08 | Pending audit |
 | `network-policy/explain-network-policy-to-agents.mdx` | Hold | `sandbox-network.md`, `migration.md`: no policy-explain command; do not imply agent-side inspection | D08 | Pending audit |
@@ -186,16 +186,16 @@ Held pages may contain reusable explanations, but their old commands must remain
 
 | Source | Disposition | Destination and required change | Package | Coverage and evidence |
 |---|---|---|---|---|
-| `resources/agent-skills.mdx` | Rewrite | `resources.md`: version-aware Markdown, search/MCP, starter prompt, and routing skill | D08 | Pending audit |
+| `resources/agent-skills.mdx` | Rewrite | `resources.md`: version-aware Markdown, search/MCP, starter prompt, and routing skill | D08 | Written: [checkout skill](../resources.md#use-the-documentation-skill-from-a-checkout) and [versioned discovery](../resources.md#choose-the-v1-sources); skill validation and four independent routing walkthroughs. Client installation, scoped search/MCP and release installer rehearsal remain gated. |
 | `resources/community-contributions.mdx` | Merge | `resources.md`: contribution destinations and current accepted product boundary | D08 | Pending audit |
 | `resources/engineer-agentic-documentation.mdx` | Merge | `CONTRIBUTING.md`: retain applicable contributor guidance; archive main-specific automation description | D01 | Pending audit |
-| `resources/license.mdx` | Rewrite | `resources.md`, component notices: original and derived-source licenses, including Qwen3.8 attribution | D08 | Pending audit |
+| `resources/license.mdx` | Rewrite | `resources.md`, component notices: original and derived-source licenses, including Qwen3.8 attribution | D08 | Written: [component and SDK policy notices](../resources.md#licenses-and-source-notices); retained licenses/provenance beside each artifact. |
 
 ## Security — 9 Sources
 
 | Source | Disposition | Destination and required change | Package | Coverage and evidence |
 |---|---|---|---|---|
-| `security/best-practices.mdx` | Rewrite | `security.md`: current controls and limits by owner, environment, and qualification | D08 | Pending audit |
+| `security/best-practices.mdx` | Rewrite | `security.md`: current controls and limits by owner, environment, and qualification | D08 | Written: [trust boundaries](../security.md#identify-the-trust-boundaries), credential lifetimes and [private reporting](../../SECURITY.md); runtime/config code and official NVIDIA reporting destinations. Host security qualification remains required. |
 | `security/configure-corporate-ca-trust.mdx` | Rewrite | `security.md`: distinguish gateway mTLS, endpoint trust, image trust, and native runtime trust; no inherited CA-import automation | D08 | Pending audit |
 | `security/credential-rotation.mdx` | Rewrite | `security.md`: unchanged-reference rotation is not automatically detected; native interface token replacement and upstream revocation | D08 | Pending audit |
 | `security/credential-storage.mdx` | Rewrite | `security.md`: environment/file references, child-process access, gateway persistence, native token lifetimes, and redaction | D08 | Pending audit |
