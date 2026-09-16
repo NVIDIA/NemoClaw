@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
-pub const OPENTOFU_VERSION: &str = "1.12.6";
+pub use crate::artifact_pins::OPENTOFU_VERSION;
 pub type Generations = BTreeMap<String, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

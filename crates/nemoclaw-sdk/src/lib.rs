@@ -5,6 +5,10 @@
 
 use std::fmt;
 
+mod artifact_pins {
+    include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));
+}
+
 /// Identity that must survive refresh, independently of configuration drift.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binding {

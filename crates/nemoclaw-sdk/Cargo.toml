@@ -9,6 +9,9 @@ publish = false
 [lints]
 workspace = true
 
+[build-dependencies]
+serde_json.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 jsonschema.workspace = true

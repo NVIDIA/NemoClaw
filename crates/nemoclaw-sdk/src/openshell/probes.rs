@@ -84,7 +84,7 @@ impl OpenShell {
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();
-        if info.gateway_version != "0.0.117-dev.155+gb3e4ad457"
+        if info.gateway_version != crate::artifact_pins::OPENSHELL_VERSION
             || info.compute_drivers.len() != 1
             || (info.compute_drivers[0].name != driver
                 && info.compute_drivers[0]
