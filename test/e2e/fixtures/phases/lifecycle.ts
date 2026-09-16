@@ -422,11 +422,11 @@ export class LifecyclePhaseFixture {
    *   2. Model the Docker daemon's boot-owned container restart. Wait until
    *      the OpenShell gateway reports the preserved sandbox Ready.
    *
-   *   3. Invoke `nemoclaw <name> status` — the user-visible action
-   *      that documented the regression in #4423. On unfixed `main`
-   *      the destructive `missing` branch in `status.ts` wipes the
-   *      registry entry. Status must also restore the OpenClaw gateway
-   *      and host forward before it exits successfully.
+   *   3. Invoke the explicit native-agent `gateway restart`, then
+   *      `nemoclaw <name> status`. On unfixed `main` the destructive
+   *      `missing` branch in `status.ts` wipes the registry entry. The
+   *      restart must use the agent-owned command and restore the host
+   *      forward before status exits successfully.
    *
    *   The final status must exit zero to verify the restored sandbox
    *   delivery path. The state-validation phase that follows additionally
@@ -549,8 +549,19 @@ export class LifecyclePhaseFixture {
       results: [ready],
     });
 
-    // `nemoclaw <name> status` owns the post-reboot delivery-chain recovery.
-    // It must restore OpenClaw and the host forward without invoking `nemoclaw <name> start`.
+    // The native agent owns its gateway lifecycle. Request its explicit restart
+    // after the OpenShell-owned sandbox boot, then observe the delivery chain.
+    const gatewayRestart = await this.host.nemoclaw([instance.sandboxName, "gateway", "restart"], {
+      artifactName: `lifecycle-post-reboot-native-gateway-restart-${instance.sandboxName}`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: STATUS_TIMEOUT_MS,
+    });
+    assertExitZero(gatewayRestart, `restart native gateway for ${instance.sandboxName}`);
+    steps.push({
+      id: `native-gateway-restart:${instance.sandboxName}`,
+      results: [gatewayRestart],
+    });
+
     const statusResult = await this.host.expectStatus(instance.sandboxName, {
       artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
       env: buildAvailabilityProbeEnv(),

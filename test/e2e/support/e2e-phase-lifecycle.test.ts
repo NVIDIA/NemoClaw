@@ -260,6 +260,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
     runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-cloud-oc  Ready\n"));
+    runner.enqueue(shellResult(0)); // native gateway restart
     runner.enqueue(shellResult(0)); // status proves recovered delivery readiness
 
     const result = await prepared.simulate("post-reboot-recovery", instance());
@@ -271,6 +272,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
       "gateway-connected:nemoclaw",
       "runtime-boot-start:openshell-cluster-e2e-cloud-oc",
       "sandbox-ready-after-boot:e2e-cloud-oc",
+      "native-gateway-restart:e2e-cloud-oc",
       "nemoclaw-status:e2e-cloud-oc",
     ]);
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
@@ -284,6 +286,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
       "openshell status",
       "docker container start openshell-cluster-e2e-cloud-oc",
       "openshell sandbox list",
+      "nemoclaw e2e-cloud-oc gateway restart",
       "nemoclaw e2e-cloud-oc status",
     ]);
     expect(cleanup.calls.map((call) => call.name)).toEqual([
@@ -342,6 +345,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
     runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-cloud-oc  Ready\n"));
+    runner.enqueue(shellResult(0)); // native gateway restart
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status non-zero
 
     await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
@@ -361,6 +365,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
     runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-cloud-oc  Ready\n"));
+    runner.enqueue(shellResult(0)); // native gateway restart
     runner.enqueue(shellResult(0)); // status restores the delivery chain
 
     const result = await prepared.simulate("post-reboot-recovery", instance());
@@ -372,16 +377,19 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
           (call) =>
             call === "docker container start container-1" ||
             call === "openshell sandbox list" ||
+            call === "nemoclaw e2e-cloud-oc gateway restart" ||
             call === "nemoclaw e2e-cloud-oc status",
         ),
     ).toEqual([
       "docker container start container-1",
       "openshell sandbox list",
+      "nemoclaw e2e-cloud-oc gateway restart",
       "nemoclaw e2e-cloud-oc status",
     ]);
-    expect(result.steps.slice(-3).map((step) => step.id)).toEqual([
+    expect(result.steps.slice(-4).map((step) => step.id)).toEqual([
       "runtime-boot-start:container-1",
       "sandbox-ready-after-boot:e2e-cloud-oc",
+      "native-gateway-restart:e2e-cloud-oc",
       "nemoclaw-status:e2e-cloud-oc",
     ]);
     expect(result.steps.at(-1)?.results[0]?.exitCode).toBe(0);
@@ -445,6 +453,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
     runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x  Ready\n"));
+    runner.enqueue(shellResult(0)); // native gateway restart
     runner.enqueue(shellResult(0)); // status proves recovered delivery readiness
 
     const result = await prepared.simulate(

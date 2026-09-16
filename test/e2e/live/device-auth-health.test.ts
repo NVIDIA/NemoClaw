@@ -4,8 +4,8 @@
 /**
  *
  * Preserves the legacy #2342 contract with real install/onboard, sandbox HTTP
- * probes, `nemoclaw status`, host port-forward checks, and gateway recovery:
- * device-auth 401 responses must not be misreported as Health Offline.
+ * probes, `nemoclaw status`, host port-forward checks, and explicit sandbox
+ * restart: device-auth 401 responses must not be misreported as Health Offline.
  */
 
 import { testTimeout } from "../../helpers/timeouts.ts";
@@ -44,7 +44,7 @@ test(
         "start authenticated inference fixture",
         "onboard device-auth OpenClaw sandbox",
         "verify sandbox and forwarded dashboard health",
-        "recover stopped OpenClaw gateway",
+        "restart the sandbox after its native OpenClaw gateway exits",
       ],
     },
   },
@@ -81,7 +81,8 @@ test(
         "/health is reachable from inside the sandbox",
         "the authenticated dashboard root may return 401 without being treated as offline",
         "nemoclaw status reports the gateway as live, not Health Offline",
-        "status remains non-offline after a gateway kill/recovery attempt",
+        "status directs a stopped native gateway to the supported sandbox restart path",
+        "status remains non-offline after the sandbox restart",
       ],
     });
 
@@ -205,7 +206,7 @@ test(
       expect(codes, message).toContain(actual),
     );
 
-    progress.phase("recover stopped OpenClaw gateway");
+    progress.phase("restart the sandbox after its native OpenClaw gateway exits");
     await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
@@ -217,13 +218,30 @@ test(
     );
     await new Promise((resolve) => setTimeout(resolve, 3_000));
 
-    const recoveryStatus = await host.nemoclaw([SANDBOX_NAME, "status"], {
+    const stoppedStatus = await host.nemoclaw([SANDBOX_NAME, "status"], {
       artifactName: "phase-5-nemoclaw-status-after-gateway-kill",
       env: commandEnv(),
       timeoutMs: 120_000,
     });
-    expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
-    assertStatusNotOffline(resultText(recoveryStatus), "recovery status");
+    const restart = await host.nemoclaw([SANDBOX_NAME, "start"], {
+      artifactName: "phase-5-nemoclaw-start-after-gateway-kill",
+      env: commandEnv(),
+      timeoutMs: 180_000,
+    });
+
+    const restartedStatus = await host.nemoclaw([SANDBOX_NAME, "status"], {
+      artifactName: "phase-5-nemoclaw-status-after-sandbox-start",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(
+      stoppedStatus.exitCode !== 0 &&
+        resultText(stoppedStatus).includes(`nemoclaw ${SANDBOX_NAME} start`) &&
+        restart.exitCode === 0 &&
+        restartedStatus.exitCode === 0,
+      [stoppedStatus, restart, restartedStatus].map(resultText).join("\n"),
+    ).toBe(true);
+    assertStatusNotOffline(resultText(restartedStatus), "post-restart status");
     await waitForRecoveryArtifact(artifacts, sandbox);
   },
 );
