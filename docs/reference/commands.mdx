@@ -1482,7 +1482,7 @@ $$nemoclaw my-assistant stop
 For OpenClaw-managed gateways, the command first asks the in-sandbox gateway to shut down its channels gracefully; agent-managed gateways (for example Hermes) are supervised inside the sandbox and shut down with the container's stop signal. Then the container stops; a container stuck in a crash loop is stopped the same way, which also disarms its restart policy.
 
 <AgentOnly variant="openclaw,hermes">
-  after the container stops NemoClaw attempts to stop that sandbox's
+  After the container stops, NemoClaw attempts to stop that sandbox's
   host dashboard forward. If the container does not stop, NemoClaw leaves the dashboard forward
   running.
 </AgentOnly>
@@ -3498,7 +3498,7 @@ With both flags, `doctor` exits before it runs checks, writes one JSON error to 
 ### `$$nemoclaw debug`
 
 Collect diagnostics for bug reports.
-The command, the command gathers system information, Docker state, gateway logs, and sandbox status into a summary or tarball.
+The command gathers system information, Docker state, gateway logs, and sandbox status into a summary or tarball.
 Use `--sandbox <name>` to select a sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball.
 
 ```bash
@@ -3515,7 +3515,7 @@ If `--output` is set and the tarball cannot be written (for example, the destina
 
 
 An explicit name can come from `--sandbox`, `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_SANDBOX`, or `SANDBOX_NAME`, in that precedence order.
-The command, the name must match a registered sandbox.
+The name must match a registered sandbox.
 NemoClaw checks the sandbox on its registered owning gateway.
 An unknown sandbox, invalid gateway binding, denied OpenShell observation, or confirmed absence from that gateway exits nonzero without writing a tarball.
 The error names the sandbox and the source environment variable when applicable.
@@ -3670,7 +3670,7 @@ If uninstall reports that onboarding owns the state directory while onboarding i
 If the reported `onboard.lock` remains after onboarding ended abruptly, rerun uninstall after the recorded process ends so NemoClaw can recover the stale lock.
 Uninstall reports the lock path and preserves a recent malformed lock for 30 seconds because another process can still be writing it.
 Wait until the lock has not changed for at least 30 seconds, confirm that no onboarding process shares the state root, and retry.
-Successful managed cleanup recursively removes that directory and all contents; `--keep-openshell` preserve it.
+Successful managed cleanup recursively removes that directory and all contents; `--keep-openshell` preserves it.
 Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a complete process-absence scan; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
 
 ```bash
@@ -3755,7 +3755,7 @@ Each port runs as its own uninstall so that every port-scoped value, including t
 An ambient `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` applies only to the currently selected port, which runs last.
 Child passes for other ports use their default per-port gateway state directories.
 If another port with a custom directory fails, rerun `NEMOCLAW_GATEWAY_PORT=<failed-port> NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" $$nemoclaw uninstall`.
-the selected port runs last so its pass can remove the shared host resources once no other environment remains.
+The selected port runs last so its pass can remove the shared host resources once no other environment remains.
 `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port; `--gateway` remains a check against the selected port only.
 A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
 The sweep cannot select an unidentified environment until its gateway port can be determined.
@@ -3775,7 +3775,7 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-when uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file. When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources. With `--destroy-user-data`, that scoped path removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified (for example odd `~/.nemoclaw/gateways/` entries or an unreadable gateway list). When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package and the other shared host resources. If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources. When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
+When uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file. When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources. With `--destroy-user-data`, that scoped path removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified (for example odd `~/.nemoclaw/gateways/` entries or an unreadable gateway list). When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package and the other shared host resources. If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources. When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 
 When used alone, `--yes` only acknowledges the global `Proceed?` confirmation prompt and preserves the listed host-side entries. Removing the preserved entries requires the explicit opt-in flag (`--destroy-user-data`) or the matching env var (`NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`). Existing automation that uses `--yes` without either data-removal option retains those entries.
 
@@ -3791,7 +3791,7 @@ Decision matrix:
 
 The preserved entries survive uninstall as inert files on disk. Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot restore` can use them.
 
-The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own. Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration. after uninstall confirms that no sibling gateways remain, it also deletes provider registrations. a NemoClaw-managed gateway also removes the Docker image. For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources. Uninstall warns about this at preserve time. After reinstalling, the installer reports such records as not found on their recorded gateway instead of claiming they were recovered; run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it. Pass `--destroy-user-data` at uninstall time if you prefer to purge the registry along with its dependencies.
+The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own. Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration. After uninstall confirms that no sibling gateways remain, it also deletes provider registrations. A NemoClaw-managed gateway also removes the Docker image. For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources. Uninstall warns about this at preserve time. After reinstalling, the installer reports such records as not found on their recorded gateway instead of claiming they were recovered; run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it. Pass `--destroy-user-data` at uninstall time if you prefer to purge the registry along with its dependencies.
 
 #### `$$nemoclaw uninstall` vs. the hosted `uninstall.sh`
 

@@ -320,7 +320,7 @@ After gateway registration cleanup succeeds or confirms that the selected gatewa
 If gateway registration cleanup fails, uninstall exits nonzero and preserves the remaining state.
 Resolve the reported gateway-registration error, then rerun uninstall.
 The warning identifies recognized connection refusals and permission denials with fixed text; it redacts other command output and reports only the failed command and exit status.
-After uninstall confirms that no sibling gateways remain, it also removes the provider registrations and Docker image that the recorded sandboxes depend on.
+After uninstall confirms that no sibling gateways remain, it also removes provider registrations. A NemoClaw-managed gateway also removes the Docker image that the recorded sandboxes depend on.
 
 Uninstall warns that those records cannot be recovered automatically on reinstall, and the remediation is `$$nemoclaw <name> destroy` followed by `$$nemoclaw onboard`.
 </Note>
