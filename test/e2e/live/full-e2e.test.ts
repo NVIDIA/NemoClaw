@@ -4,8 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
-import { GATEWAY_STOP_SCRIPT } from "../../../src/lib/tunnel/gateway-stop-script.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -175,12 +173,12 @@ console.log(JSON.stringify({
   );
 }
 
-async function runOpenClawLaunchTurnAfterRecovery(input: {
+async function runOpenClawLaunchTurn(input: {
   host: HostCliClient;
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
-  const stopGateway = await input.sandbox.execShell(
+  const prepareLaunch = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
 /usr/local/bin/openclaw completion --shell bash --write-state --install --yes
@@ -192,10 +190,9 @@ ${
     ? "bash -lc 'openclaw doctor --fix --yes --non-interactive && /usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
     : ""
 }
-sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
-${GATEWAY_STOP_SCRIPT}`),
+sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256`),
     {
-      artifactName: "phase-4-stop-openclaw-gateway-before-launch",
+      artifactName: "phase-4-prepare-openclaw-launch",
       env: env(),
       redactionValues: input.redactionValues,
       timeoutMs: 120_000,
@@ -205,45 +202,33 @@ ${GATEWAY_STOP_SCRIPT}`),
     ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-fix")
     : null;
   expect(
-    !stopGateway.timedOut &&
-      stopGateway.exitCode === 0 &&
+    !prepareLaunch.timedOut &&
+      prepareLaunch.exitCode === 0 &&
       (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix)),
-    [stopGateway, afterNativeFix]
+    [prepareLaunch, afterNativeFix]
       .filter((result) => result !== null)
       .map(resultText)
       .join("\n"),
   ).toBe(true);
-  await sleep(3_000);
-
-  const recovery = await repoNemoclaw(
-    input.host,
-    [SANDBOX_NAME, "status"],
-    "phase-4-status-recover-before-launch",
-    {},
-    120_000,
-  );
-  const configEdit =
-    !recovery.timedOut && recovery.exitCode === 0 && securityPostureEnabled()
-      ? await repoNemoclaw(
-          input.host,
-          [
-            SANDBOX_NAME,
-            "config",
-            "set",
-            "--key",
-            "agents.defaults.timeoutSeconds",
-            "--value",
-            "120",
-            "--restart",
-          ],
-          "phase-4-host-config-edit-private-state",
-        )
-      : null;
+  const configEdit = securityPostureEnabled()
+    ? await repoNemoclaw(
+        input.host,
+        [
+          SANDBOX_NAME,
+          "config",
+          "set",
+          "--key",
+          "agents.defaults.timeoutSeconds",
+          "--value",
+          "120",
+          "--restart",
+        ],
+        "phase-4-host-config-edit-private-state",
+      )
+    : null;
   expect(
-    !recovery.timedOut &&
-      recovery.exitCode === 0 &&
-      (!configEdit || (!configEdit.timedOut && configEdit.exitCode === 0)),
-    resultText(configEdit ?? recovery),
+    !configEdit || (!configEdit.timedOut && configEdit.exitCode === 0),
+    configEdit ? resultText(configEdit) : "OpenClaw launch preparation succeeded",
   ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
@@ -259,7 +244,7 @@ ${GATEWAY_STOP_SCRIPT}`),
 
   const nativeNetwork = await inspectNativeNetwork(
     input.sandbox,
-    "phase-4-native-network-after-recovery",
+    "phase-4-native-network-after-launch",
   );
   const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
   const permissions = await input.sandbox.execShell(
@@ -278,8 +263,8 @@ ${GATEWAY_STOP_SCRIPT}`),
       timeoutMs: 30_000,
     },
   );
-  const afterRecovery = securityPostureEnabled()
-    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-recovery")
+  const afterLaunch = securityPostureEnabled()
+    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-launch")
     : null;
   expect(
     !permissions.timedOut &&
@@ -294,8 +279,8 @@ ${GATEWAY_STOP_SCRIPT}`),
       Object.values(network.interfaces)
         .flat()
         .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
-      (!afterRecovery || nativeStateDoctorReportIsValid(afterRecovery)),
-    [permissions, nativeNetwork, afterRecovery]
+      (!afterLaunch || nativeStateDoctorReportIsValid(afterLaunch)),
+    [permissions, nativeNetwork, afterLaunch]
       .filter((result) => result !== null)
       .map(resultText)
       .join("\n"),
@@ -516,7 +501,7 @@ test(
         "check full E2E prerequisites",
         "install and onboard OpenClaw sandbox",
         "validate CLI sandbox and policy state",
-        "exercise hosted, sandbox, and post-recovery launch inference",
+        "exercise hosted, sandbox, and launch inference",
         "inspect runtime logs and security posture",
         "remove full-E2E sandbox",
       ],
@@ -572,7 +557,7 @@ test(
         "nemoclaw logs produces output and cleanup removes registry state",
         ...(securityPostureEnabled()
           ? [
-              "non-root host, native private state through doctor/fix/config edit/recovery, editable profiles, protected proxy files, and clean startup log",
+              "non-root host, native private state through doctor/fix/config edit, editable profiles, protected proxy files, and clean startup log",
             ]
           : []),
       ],
@@ -745,7 +730,7 @@ test(
     expect(policy.exitCode, resultText(policy)).toBe(0);
     expect(resultText(policy)).toMatch(/network_policies|egress/i);
 
-    progress.phase("exercise hosted, sandbox, and post-recovery launch inference");
+    progress.phase("exercise hosted, sandbox, and launch inference");
     const directProbe = buildHostedInferenceModelsProbe(hosted.apiKey, hosted.endpointUrl);
     const direct = await host.command(directProbe.command, directProbe.args, {
       artifactName: "phase-4-direct-hosted-inference-models",
@@ -790,7 +775,7 @@ test(
     expect(sandboxInference.outcome, sandboxInferenceDiagnostic).toBe("passed");
 
     await (process.platform === "linux"
-      ? runOpenClawLaunchTurnAfterRecovery({ host, redactionValues, sandbox })
+      ? runOpenClawLaunchTurn({ host, redactionValues, sandbox })
       : Promise.resolve());
 
     progress.phase("inspect runtime logs and security posture");

@@ -806,7 +806,13 @@ describe("finalization process-recovery refusal propagation", () => {
     ).resolves.toBe(false);
   });
 
-  it("pauses onboarding when the stopped gateway could not be recovered", async () => {
+  it("uses the native agent command for a stopped gateway during onboarding", async () => {
+    const restartSandboxGateway = vi.fn(async () => ({
+      ok: true as const,
+      restarted: true as const,
+      healthPassed: true as const,
+      forwardRecovered: true,
+    }));
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: vi.fn(async () => ({
         checked: true,
@@ -816,12 +822,41 @@ describe("finalization process-recovery refusal propagation", () => {
       })),
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
     });
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRestart").mockReturnValue({
+      restartSandboxGateway,
+    });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
         "fresh-hermes",
         { quiet: true },
         { HOME: "/home/kiosk" },
       ),
+    ).resolves.toBe(true);
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("fresh-hermes", {
+      quiet: true,
+    });
+  });
+
+  it("pauses when the native agent cannot restart a stopped gateway", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRestart").mockReturnValue({
+      restartSandboxGateway: vi.fn(async () => ({
+        ok: false as const,
+        failureLayer: "native agent command" as const,
+        detail: "restart rejected",
+      })),
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
     ).resolves.toBe(false);
   });
 

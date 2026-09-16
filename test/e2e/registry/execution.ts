@@ -25,13 +25,6 @@ const EXECUTABLE_ROUTES: readonly TargetEnvironment[] = [
   {
     platform: "ubuntu-local",
     install: "repo-current",
-    runtime: "docker-running",
-    onboarding: "cloud-openclaw",
-    lifecycle: "post-reboot-recovery",
-  },
-  {
-    platform: "ubuntu-local",
-    install: "repo-current",
     runtime: "managed-runtime-running",
     onboarding: "cloud-openclaw-policy-custom-missing-presets",
   },

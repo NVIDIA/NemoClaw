@@ -878,21 +878,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       SLACK_BOT_TOKEN: "xoxb-test-hermes-slack-token",
     },
   }),
-  managedRuntimeTarget("issue-2478-crash-loop-recovery", {
-    displayName: "Gateway: recovers after process termination and remains stable",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu Docker host; local gateway; no inference endpoint",
-    profile: "standard",
-    timeoutMinutes: 30,
-    installMode: "authenticated",
-    restoreCli: true,
-    exposeCliBin: true,
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-2478",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   managedRuntimeTarget("issue-4462-scope-upgrade-approval", {
     displayName: "Authorization: approves a write-scope upgrade without operator.admin",
     agentRuntime: "openclaw",

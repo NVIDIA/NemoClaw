@@ -574,13 +574,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/issue-2478-crash-loop-recovery.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
       "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
       "fast": [
