@@ -30,6 +30,12 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 import { pollUntil } from "../fixtures/polling.ts";
+import {
+  SANDBOX_SURVIVAL_EXEC_TIMEOUT_MS,
+  SANDBOX_SURVIVAL_READINESS_ATTEMPTS,
+  SANDBOX_SURVIVAL_READINESS_DELAY_MS,
+  SANDBOX_SURVIVAL_TEST_TIMEOUT_MS,
+} from "../fixtures/sandbox-survival-budget.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-survival";
 const DASHBOARD_PORT = Number(process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
@@ -70,8 +76,8 @@ async function waitForNativeAgentReady(
 ): Promise<void> {
   await pollUntil({
     artifactPrefix,
-    attempts: 30,
-    delayMs: 5_000,
+    attempts: SANDBOX_SURVIVAL_READINESS_ATTEMPTS,
+    delayMs: SANDBOX_SURVIVAL_READINESS_DELAY_MS,
     probe: (_attempt, artifactName) =>
       exec(
         `code="$(curl -q --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 http://127.0.0.1:${String(gatewayPort)}/health)"; case "$code" in 200|401) printf '%s\\n' ready ;; *) exit 1 ;; esac`,
@@ -122,7 +128,7 @@ async function waitForHostForwardReady(
 test(
   "sandbox recovers a running container left in OpenShell Stopped phase",
   {
-    timeout: testTimeout(30 * 60_000),
+    timeout: testTimeout(SANDBOX_SURVIVAL_TEST_TIMEOUT_MS),
     meta: {
       e2ePhases: [
         "confirm the selected runtime prerequisite",
@@ -275,7 +281,7 @@ test(
       sandbox.exec(SANDBOX_NAME, ["sh", "-lc", script], {
         artifactName,
         env: sandboxAccessEnv(),
-        timeoutMs: 60_000,
+        timeoutMs: SANDBOX_SURVIVAL_EXEC_TIMEOUT_MS,
       });
 
     progress.phase("prove baseline sandbox access and native agent readiness");
@@ -299,6 +305,7 @@ test(
       },
     ];
     await stateValidation.writeSandboxMarkers(instance, markers);
+    await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
 
     const resourceHandle = await runtimeProvider.resolveSandboxResourceHandle(SANDBOX_NAME, {
       artifactName: "sandbox-survival-runtime-resource",
@@ -380,7 +387,6 @@ test(
         }),
         `${command} must preserve the sandbox container identity`,
       ).toBe(resourceHandle);
-      await expectSandboxExecAlive(SANDBOX_NAME, execShell, `post-${command}-sandbox-exec-alive`);
       await waitForNativeAgentReady(
         execShell,
         `post-${command}-native-agent-ready`,
