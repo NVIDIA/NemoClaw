@@ -56,7 +56,6 @@ describe("Hermes gateway auxiliary retry", () => {
       "hermes_gateway_healthy() { return 0; }",
       'ensure_hermes_supervised_auxiliaries() { auxiliary_calls=$((auxiliary_calls + 1)); [ "$auxiliary_calls" -ge 3 ]; }',
       "finalize_tirith_marker_retry() { :; }",
-      "commit_hermes_mcp_applied_if_pending() { return 0; }",
       "refresh_hermes_supervised_child_pids() { :; }",
       "nemoclaw_runtime_state_mutation_checkpoint() { return 0; }",
       "hermes_stop_tracked_role() { stop_calls=$((stop_calls + 1)); return 0; }",

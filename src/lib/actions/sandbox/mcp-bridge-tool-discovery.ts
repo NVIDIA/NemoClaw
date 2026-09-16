@@ -3,8 +3,8 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
-import type { McpBridgeEntry } from "../../state/registry";
 import type {
+  McpSourceEntry,
   McpBridgeStatus,
   McpBridgeToolDiscoveryFailedStage,
   McpBridgeToolDiscoveryFailureClass,
@@ -90,7 +90,7 @@ export function toolDiscoveryReadinessSkipDetail(
 }
 
 export function buildMcpToolDiscoveryCommand(
-  entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
+  entry: Pick<McpSourceEntry, "server" | "url" | "env">,
   adapter: AgentMcpAdapter,
 ): McpToolDiscoveryCommand | null {
   const credentialEnv = entry.env[0];
@@ -158,7 +158,7 @@ function compareNames(left: string, right: string): number {
 
 export function classifyMcpToolDiscoveryResult(
   result: SandboxCommandResult | null,
-  entry: Pick<McpBridgeEntry, "env">,
+  entry: Pick<McpSourceEntry, "env">,
   resultMarker: string,
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
   if (result === null) return failure("sandbox unreachable", "runtime", "runtime", null);
@@ -305,7 +305,7 @@ export function classifyMcpToolDiscoveryResult(
 
 export async function discoverMcpTools(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: McpToolDiscoveryReadiness,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -313,11 +313,6 @@ export async function discoverMcpTools(
   if (!adapter) {
     return mcpToolDiscoveryPreconditionFailure(
       "tool discovery skipped: MCP adapter is not declared",
-    );
-  }
-  if (entry.addState) {
-    return mcpToolDiscoveryPreconditionFailure(
-      "tool discovery skipped: add transaction is incomplete",
     );
   }
   const readinessSkipDetail = toolDiscoveryReadinessSkipDetail(readiness);

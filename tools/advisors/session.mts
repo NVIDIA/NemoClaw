@@ -25,6 +25,7 @@ import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
   assistantTextRepairErrors,
   assistantTextRepairPrompt,
+  AdvisorTurnFlowDiagnosticAccumulator,
   type AdvisorContextToolResult,
   type AdvisorPromptTurn,
   type AdvisorTurnFlowEvent,
@@ -346,19 +347,29 @@ export async function runReadOnlyAdvisor(
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
+  const availableToolNames = new Set(READ_ONLY_TOOLS);
+  for (const toolName of contextTools.allToolNames) availableToolNames.add(toolName);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
+  let currentTurnDiagnostics = new AdvisorTurnFlowDiagnosticAccumulator(availableToolNames);
+  let currentTurnRepairAttempts = {
+    assistantText: false,
+    atomicTerminal: false,
+    terminalSubmit: false,
+  };
+  const recordTurnFlow = (event: AdvisorTurnFlowEvent): void => {
+    currentTurnFlow.push(event);
+    currentTurnDiagnostics.record(event);
+  };
   const customTools = [
     ...createRepoConfinedReadOnlyTools(
       options.cwd,
       (observation) => {
-        currentTurnFlow.push({ type: "read", ...observation });
+        recordTurnFlow({ type: "read", ...observation });
       },
       options.additionalReadRoots,
     ),
     ...contextTools.customTools,
   ];
-  const availableToolNames = new Set(READ_ONLY_TOOLS);
-  for (const toolName of contextTools.allToolNames) availableToolNames.add(toolName);
   for (const tool of options.customTools ?? []) {
     const toolName = sanitizeToolName(tool.name);
     if (toolName !== tool.name) {
@@ -444,7 +455,7 @@ export async function runReadOnlyAdvisor(
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     if (event.type === "message_update") {
       if (event.assistantMessageEvent.type === "text_delta") {
-        currentTurnFlow.push({ type: "text", text: event.assistantMessageEvent.delta });
+        recordTurnFlow({ type: "text", text: event.assistantMessageEvent.delta });
         currentTurnText?.append(event.assistantMessageEvent.delta);
         raw.append(event.assistantMessageEvent.delta);
         return;
@@ -468,12 +479,12 @@ export async function runReadOnlyAdvisor(
       return;
     }
     if (event.type === "tool_execution_start") {
-      currentTurnFlow.push({ type: "tool_start", toolName: event.toolName });
+      recordTurnFlow({ type: "tool_start", toolName: event.toolName });
       raw.append(`\n[${options.logPrefix}] tool_start ${event.toolName}\n`);
       return;
     }
     if (event.type === "tool_execution_end") {
-      currentTurnFlow.push({
+      recordTurnFlow({
         type: "tool_end",
         toolName: event.toolName,
         isError: event.isError,
@@ -551,6 +562,12 @@ export async function runReadOnlyAdvisor(
       currentTurnError = undefined;
       successfulToolNames = new Set();
       currentTurnFlow = [];
+      currentTurnDiagnostics = new AdvisorTurnFlowDiagnosticAccumulator(availableToolNames);
+      currentTurnRepairAttempts = {
+        assistantText: false,
+        atomicTerminal: false,
+        terminalSubmit: false,
+      };
       turnTextBuffers.push(currentTurnText);
       const turnIndex = `${index + 1}/${promptTurns.length}`;
       options.onTurnStart?.(turn);
@@ -579,11 +596,22 @@ export async function runReadOnlyAdvisor(
             await Promise.race([session.prompt(prompt), timeoutPromise]);
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
-          await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
+          await promptAndWait(
+            promptWithRequiredContextTools(
+              turn.prompt,
+              contextToolNames,
+              tools.requiredReadOneOfPaths,
+            ),
+          );
           const initialFlow = currentTurnFlow;
+          // A configured assistant-text repair is a separate, tool-disabled continuation. Preserve
+          // the original flow for terminal-submit validation so the harness's own repair prose is
+          // not mistaken for model activity after a successful submit.
+          let terminalSubmitValidationFlow = initialFlow;
           if (
             repairableAssistantText(turn, initialFlow, tools, successfulToolNames, currentTurnError)
           ) {
+            currentTurnRepairAttempts.assistantText = true;
             contextTools.deactivate();
             session.setActiveToolsByName([]);
             currentTurnFlow = [];
@@ -605,6 +633,7 @@ export async function runReadOnlyAdvisor(
             currentTurnError,
           );
           if (repairToolName) {
+            currentTurnRepairAttempts.atomicTerminal = true;
             contextTools.deactivate();
             session.setActiveToolsByName([repairToolName]);
             currentTurnFlow = [];
@@ -631,7 +660,6 @@ export async function runReadOnlyAdvisor(
             tools,
             currentTurnError,
           );
-          let terminalSubmitValidationFlow = currentTurnFlow;
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
             currentTurnFlow,
@@ -640,6 +668,7 @@ export async function runReadOnlyAdvisor(
             currentTurnError,
           );
           if (submitRepairToolName) {
+            currentTurnRepairAttempts.terminalSubmit = true;
             const originalSubmitFlow = currentTurnFlow;
             contextTools.deactivate();
             session.setActiveToolsByName([
@@ -692,6 +721,15 @@ export async function runReadOnlyAdvisor(
       options.logProgress(
         `Advisor SDK turn ${turnIndex} settled: ${turn.name} status=${settlement.turn.status} textBytes=${turnTextBytes}`,
       );
+      if (settlement.turn.error) {
+        const diagnostics = currentTurnDiagnostics.snapshot(tools.requiredToolNames);
+        options.logProgress(
+          `Advisor SDK turn failure diagnostics: ${JSON.stringify({
+            ...diagnostics,
+            repairAttempts: currentTurnRepairAttempts,
+          })}`,
+        );
+      }
       if (settlement.turn.error) {
         turnErrors.push(`${turn.name}: ${settlement.turn.error}`);
       }

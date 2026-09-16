@@ -74,6 +74,11 @@ export type TrustedSandboxShellScript = string & {
   readonly [trustedSandboxShellScriptBrand]: true;
 };
 
+// OpenShell records the create argv as the sandbox's canonical main process.
+// Historical rebuild fixtures therefore need a non-terminal process until the
+// real rebuild flow takes ownership of the sandbox lifecycle.
+export const HISTORICAL_SANDBOX_MAIN_PROCESS = ["sleep", "infinity"] as const;
+
 export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
   if (script.length === 0) {
     throw new Error("sandbox shell script must not be empty");
@@ -205,6 +210,16 @@ export class SandboxClient {
     assertExitZero(result, "openshell sandbox list");
     if (!outputContainsSandbox(result, name)) {
       throw new Error(`openshell sandbox list did not include '${name}'.`);
+    }
+    return result;
+  }
+
+  async expectAbsent(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    validateSandboxName(name);
+    const result = await this.list({ env: openshellProbeEnv(), ...options });
+    assertExitZero(result, "openshell sandbox list");
+    if (outputContainsSandbox(result, name)) {
+      throw new Error(`openshell sandbox list still included '${name}'.`);
     }
     return result;
   }

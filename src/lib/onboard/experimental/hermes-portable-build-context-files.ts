@@ -4,7 +4,6 @@
 /** Exact shipped files admitted by the schema-7 Hermes Dockerfile COPY contract. */
 export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/a2a-neutral.patch", mode: "100644" },
-  { path: "agents/hermes/build-mcp-digest.py", mode: "100644" },
   { path: "agents/hermes/config/build-env.ts", mode: "100644" },
   { path: "agents/hermes/config/generate.ts", mode: "100644" },
   { path: "agents/hermes/config/hermes-env.ts", mode: "100644" },
@@ -29,6 +28,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/image-build-probes.py", mode: "100644" },
   { path: "agents/hermes/managed_policy.py", mode: "100644" },
   { path: "agents/hermes/mcp-config-transaction.py", mode: "100755" },
+  { path: "agents/hermes/patch-auxiliary-token-limit.py", mode: "100755" },
   { path: "agents/hermes/patch-cron-execution-runtime.py", mode: "100755" },
   { path: "agents/hermes/patch-cron-restore-drain.py", mode: "100755" },
   { path: "agents/hermes/patch-discord-recovery-permissions.py", mode: "100755" },
@@ -48,6 +48,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/start.sh", mode: "100755" },
   { path: "agents/hermes/validate-cli-adapter.py", mode: "100755" },
   { path: "agents/hermes/validate-env-secret-boundary.py", mode: "100755" },
+  { path: "ci/reviewed-npm-audit.json", mode: "100644" },
   { path: "nemoclaw-blueprint/blueprint.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/model-specific-setup/hermes/README.md", mode: "100644" },
   {
@@ -116,7 +117,6 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/langfuse-hermes-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml", mode: "100644" },
-  { path: "nemoclaw-blueprint/provider-profiles/openai.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily-hermes-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily.yaml", mode: "100644" },
@@ -134,6 +134,8 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/lib/openclaw-npm-remediation.mts", mode: "100755" },
   { path: "scripts/lib/patch-bundled-npm-ip-address.mts", mode: "100755" },
   { path: "scripts/lib/reviewed-npm-archive.mts", mode: "100755" },
+  { path: "scripts/lib/reviewed-npm-audit.mts", mode: "100755" },
+  { path: "scripts/lib/reviewed-npm-identity.mts", mode: "100755" },
   { path: "scripts/lib/sandbox-init.sh", mode: "100755" },
   { path: "scripts/lib/sandbox-rlimits.sh", mode: "100644" },
   { path: "scripts/managed-bootstrap-entrypoint.c", mode: "100644" },
@@ -142,8 +144,9 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/managed-startup-hold.sh", mode: "100755" },
   { path: "scripts/patch-bundled-npm-brace-expansion.mts", mode: "100755" },
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
+  { path: "scripts/upgrade-bundled-npm.mts", mode: "100755" },
   {
-    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
+    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
     mode: "100644",
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },
@@ -429,6 +432,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/utils.test.ts", mode: "100644" },
   { path: "src/lib/messaging/utils.ts", mode: "100644" },
   { path: "src/lib/tool-disclosure.ts", mode: "100644" },
+  { path: "src/lib/providerless-inference.ts", mode: "100644" },
   {
     path: "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
     mode: "100644",

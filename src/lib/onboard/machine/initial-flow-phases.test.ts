@@ -25,7 +25,7 @@ type SandboxGpuConfig = {
   sandboxGpuDevice?: string | null;
   errors?: string[];
 };
-type Context = InitialOnboardFlowContext<null, Gpu, SandboxGpuConfig>;
+type Context = InitialOnboardFlowContext<{ name: string } | null, Gpu, SandboxGpuConfig>;
 
 function context(overrides: Partial<Context> = {}): Context {
   return {
@@ -102,7 +102,7 @@ function completeStep(): Session["steps"][string] {
 }
 
 describe("initial onboard flow phases", () => {
-  it("does not run managed gateway selection for an external owner (#7411)", () => {
+  it("does not run managed gateway selection for an external owner (#7411)", async () => {
     const owner = resolveGatewayOwner({
       gatewayName: "nemoclaw",
       gatewayPort: 31818,
@@ -122,7 +122,7 @@ describe("initial onboard flow phases", () => {
     });
     const getManagedReuseState = vi.fn(() => "healthy" as const);
 
-    expect(getInitialGatewayReuseStateForOwner(owner, getManagedReuseState)).toBe("missing");
+    expect(await getInitialGatewayReuseStateForOwner(owner, getManagedReuseState)).toBe("missing");
     expect(getManagedReuseState).not.toHaveBeenCalled();
   });
 
@@ -280,6 +280,17 @@ describe("initial onboard flow phases", () => {
       revalidateBeforeActivation: vi.fn(),
     };
     prepareExternalComponent.mockReturnValue(component);
+    await expect(
+      phases[0].run(
+        context({
+          agent: { name: "pi" },
+          session: createSession({ apfInterceptorRequested: true }),
+        }),
+      ),
+    ).rejects.toThrow("no qualified integration");
+    expect(runPreflight).not.toHaveBeenCalled();
+    expect(configureExternalComponentGateway).not.toHaveBeenCalled();
+
     assertExternalComponentFreshSandbox.mockImplementation(() => {
       throw new Error("sandbox is not fresh");
     });

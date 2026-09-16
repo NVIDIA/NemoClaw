@@ -45,9 +45,9 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
           "#!/usr/bin/env bash",
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           'case "$*" in',
-          '  --version|-V) printf "%s 0.0.106\\n" "${0##*/}"; exit 0;;',
+          '  --version|-V) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
           '  status) printf "No active gateway\\n"; exit 1;;',
-          '  "gateway info"|"gateway info -g nemoclaw"*) printf "No gateway metadata found\\n"; exit 1;;',
+          '  "gateway list -o json") printf "[]"; exit 0;;',
           "esac",
           "exit 1",
         ].join("\n"),
@@ -221,13 +221,9 @@ Module._load = function(request, parent, isMain) {
         "Status: Connected",
         "",
       ].join("\n");
-      const gatewayInfo = [
-        "Gateway Info",
-        "",
-        `Gateway: ${gatewayName}`,
-        `Server: ${gatewayEndpoint}`,
-        "",
-      ].join("\n");
+      const gatewayList = JSON.stringify([
+        { name: gatewayName, endpoint: gatewayEndpoint, active: true },
+      ]);
       const commandLog = workspace.path("openshell-commands.log");
       workspace.writeExecutable(
         "openshell",
@@ -236,9 +232,9 @@ Module._load = function(request, parent, isMain) {
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           `printf '%s\\n' "$*" >>${JSON.stringify(commandLog)}`,
           'case "$*" in',
-          '  --version|-V) printf "%s 0.0.106\\n" "${0##*/}"; exit 0;;',
+          '  --version|-V) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
           `  status|"status -g ${gatewayName}") printf ${JSON.stringify(gatewayStatus)}; exit 0;;`,
-          `  "gateway info"|"gateway info -g ${gatewayName}") printf ${JSON.stringify(gatewayInfo)}; exit 0;;`,
+          `  "gateway list -o json") printf ${JSON.stringify(gatewayList)}; exit 0;;`,
           `  "gateway select ${gatewayName}") exit 0;;`,
           "esac",
           "exit 1",
@@ -290,7 +286,7 @@ Module._load = function(request, parent, isMain) {
         : "";
       const commands = commandText ? commandText.split(/\r?\n/) : [];
       const diagnostic = `${combined}\ncommands=${JSON.stringify(commands)}`;
-      expect(commands, diagnostic).toContain(`gateway info -g ${gatewayName}`);
+      expect(commands, diagnostic).toContain("gateway list -o json");
       expect(combined).toContain("Reusing healthy NemoClaw gateway.");
       expect(fs.readFileSync(marker, "utf8")).toBe("8990\n");
     },
@@ -310,13 +306,9 @@ Module._load = function(request, parent, isMain) {
         "Status: Connected",
         "",
       ].join("\n");
-      const gatewayInfo = [
-        "Gateway Info",
-        "",
-        `Gateway: ${gatewayName}`,
-        `Server: ${gatewayEndpoint}`,
-        "",
-      ].join("\n");
+      const gatewayList = JSON.stringify([
+        { name: gatewayName, endpoint: gatewayEndpoint, active: true },
+      ]);
 
       ["openshell", "openshell-gateway", "openshell-sandbox"].forEach((component) => {
         workspace.writeExecutable(
@@ -325,9 +317,9 @@ Module._load = function(request, parent, isMain) {
             "#!/usr/bin/env bash",
             "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
             'case "$*" in',
-            '  --version|-V) printf "%s 0.0.106\\n" "${0##*/}"; exit 0;;',
+            '  --version|-V) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
             `  status|"status -g ${gatewayName}") printf ${JSON.stringify(gatewayStatus)}; exit 0;;`,
-            `  "gateway info"|"gateway info -g ${gatewayName}") printf ${JSON.stringify(gatewayInfo)}; exit 0;;`,
+            `  "gateway list -o json") printf ${JSON.stringify(gatewayList)}; exit 0;;`,
             "esac",
             "exit 1",
           ].join("\n"),
@@ -355,7 +347,7 @@ Module._load = function(request, parent, isMain) {
           '  case "$3" in',
           '    "{{.State.Running}}") printf "true\\n";;',
           `    "{{json .NetworkSettings.Ports}}") printf '%s\\n' ${JSON.stringify(portBindings)};;`,
-          '    "{{.Config.Image}}") printf "nvcr.io/nvidia/openshell/cluster:0.0.106\\n";;',
+          '    "{{.Config.Image}}") printf "nvcr.io/nvidia/openshell/cluster:0.0.116\\n";;',
           "    *) exit 1;;",
           "  esac",
           "  exit 0",

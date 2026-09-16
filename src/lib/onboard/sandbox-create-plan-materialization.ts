@@ -375,7 +375,7 @@ export async function materializeSandboxCreatePlan({
   const activateProviderEffects = async (
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<readonly string[]> => {
-    runProviderPreDeleteCleanup(revalidateSandboxIdentity);
+    await runProviderPreDeleteCleanup(revalidateSandboxIdentity);
     const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
       [
         ...(await upsertMessagingProviders(enabledMessagingTokenDefs, {

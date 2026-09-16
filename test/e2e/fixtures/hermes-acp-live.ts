@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { once } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { ArtifactSink } from "./artifacts.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
+import type { ShellProbeResult } from "./shell-probe.ts";
 import { superviseChild } from "../../helpers/process-supervisor.ts";
 
 const ACP_SCENARIO_TIMEOUT_MS = 3 * 60_000;
@@ -29,6 +29,7 @@ export type HermesAcpLiveScenario =
   | "remote-exit";
 
 export interface HermesAcpLiveOptions {
+  readonly adapterEntrypoint?: string;
   readonly artifacts: ArtifactSink;
   readonly deadlineAtMs?: number;
   readonly env: NodeJS.ProcessEnv;
@@ -64,6 +65,24 @@ export function hermesAcpLiveHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessE
     if (value !== undefined) result[name] = value;
   }
   return result;
+}
+
+export function hermesAcpGatewayStoppedPreconditionPassed(result: ShellProbeResult): boolean {
+  const text = `${result.stdout}\n${result.stderr}`;
+  if (result.exitCode === 0) {
+    return (
+      !result.timedOut &&
+      result.signal === null &&
+      /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(result.stdout)
+    );
+  }
+  return (
+    !result.timedOut &&
+    result.signal === null &&
+    /client error \(Connect\)/iu.test(text) &&
+    /tcp connect error/iu.test(text) &&
+    /Connection refused \(os error (?:61|111)\)/iu.test(text)
+  );
 }
 
 export function isAcpResponse(message: unknown, id: number): message is JsonObject {
@@ -150,10 +169,10 @@ async function writeRequest(
   const payload = `${JSON.stringify(request)}\n`;
   if (Buffer.byteLength(payload, "utf8") > 16 * 1024) return false;
   try {
-    const accepted = stream.write(payload);
-    onWritten?.();
-    if (!accepted) await once(stream, "drain");
-    return true;
+    return await new Promise<boolean>((resolve) => {
+      stream.write(payload, (error) => resolve(!error));
+      onWritten?.();
+    });
   } catch {
     return false;
   }
@@ -277,8 +296,9 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     Math.floor((scenarioTimeoutMs - ACP_SESSION_SHUTDOWN_RESERVE_MS) / 1_000),
   );
   const child = spawnObservedChild(
-    "nemoclaw-acp",
+    options.adapterEntrypoint ? process.execPath : "nemoclaw-acp",
     [
+      ...(options.adapterEntrypoint ? [options.adapterEntrypoint] : []),
       "--sandbox",
       options.sandboxName,
       "--gateway",
@@ -310,6 +330,11 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     for (const waiter of waiters) waiter();
     waiters.clear();
   };
+  input.on("error", () => {
+    protocolValid = false;
+    signalAdapter(child, "SIGTERM");
+    notify();
+  });
   const consumeLine = (line: string) => {
     if (!line.trim()) return;
     try {
@@ -379,9 +404,14 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   if (scenarioValid && options.scenario === "cancel") {
     signalAdapter(child, "SIGTERM");
   } else if (scenarioValid && options.scenario === "client-disconnect") {
-    input.end();
     child.stdout?.destroy();
     child.stderr?.destroy();
+    scenarioValid = await writeRequest(input, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/new",
+      params: { cwd: "/sandbox", mcpServers: [] },
+    });
   } else if (scenarioValid && options.scenario === "gateway-restart") {
     if (!options.restartGateway) {
       scenarioValid = false;
@@ -459,6 +489,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   const passed =
     !result.timedOut &&
     !result.spawnError &&
+    !result.cleanupError &&
     exitValid &&
     initialized &&
     scenarioValid &&

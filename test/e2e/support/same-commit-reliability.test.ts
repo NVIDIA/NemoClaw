@@ -451,11 +451,11 @@ describe("same-commit E2E reliability", () => {
           'E2E_TERMINAL_CLASSIFICATION {"v":1,"classification":"timeout","reason":"phase timed out"}\n',
       },
       {
-        name: "e2e-artifacts/live/example/retry/provider.json",
+        name: "e2e-artifacts/live/pi-agent-qualification-amd64/retry/pi-after-rebuild-provider-retry.json",
         contents: JSON.stringify({
           schemaVersion: 1,
-          operation: "provider.readiness",
-          owner: "provider",
+          operation: "pi-agent-qualification.read-after-rebuild",
+          owner: "inference-provider",
           idempotence: "read-only",
           maxAttempts: 2,
           outcome: "exhausted",

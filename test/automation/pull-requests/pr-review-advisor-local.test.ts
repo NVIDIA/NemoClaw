@@ -24,7 +24,7 @@ const SIGTERM_IGNORING_CHILD_FIXTURE = fileURLToPath(
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "local-review-test-"));
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "local-review-test-")));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -113,6 +113,8 @@ function artifactLifecycle(stop = async (): Promise<void> => undefined): LocalRe
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-summary.md"), "review\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-session.jsonl"), "{}\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-e2e.json"), "{}\n");
+      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-findings.json"), "{}\n");
+      fs.writeFileSync(path.join(output, "review-queue-context.json"), "{}\n");
     },
     remove: () => undefined,
   };
@@ -207,7 +209,7 @@ describe("local PR review advisor", () => {
         'let detached = false; try { execFileSync("git", ["symbolic-ref", "-q", "HEAD"], { stdio: "ignore" }); } catch { detached = true; }',
         'const policy = fs.readFileSync(path.join(source, "tools/pr-review-advisor/policy.txt"), "utf8").trim();',
         'fs.writeFileSync(path.join(source, "bootstrap-result.txt"), [hostValue, policy].join("|") + "\\n");',
-        'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH, git: fs.existsSync(".git"), gitHead, detached }));',
+        'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH, git: fs.existsSync(".git"), gitHead, detached, args: process.argv.slice(3) }));',
         "}",
       ].join("\n"),
     );
@@ -275,7 +277,7 @@ describe("local PR review advisor", () => {
 
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+      ["--no-warnings", "tools/pr-review-advisor/local-review.mts", "--pr", "42"],
       {
         cwd: source,
         encoding: "utf8",
@@ -309,6 +311,7 @@ describe("local PR review advisor", () => {
       git: true,
       gitHead: git(source, ["rev-parse", "origin/main"]),
       detached: true,
+      args: ["--pr", "42"],
     });
     expect(fs.existsSync(path.join(source, "contributor-module-executed"))).toBe(false);
     expect(fs.existsSync(path.join(source, "git-malicious-env"))).toBe(false);
@@ -504,6 +507,8 @@ describe("local PR review advisor", () => {
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-summary.md"), "review\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-session.jsonl"), "{}\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-e2e.json"), "{}\n");
+        fs.writeFileSync(path.join(out, "pr-review-" + interest + "-findings.json"), "{}\n");
+        fs.writeFileSync(path.join(out, "review-queue-context.json"), "{}\n");
       },
       remove: (env) => {
         calls.push("remove:" + env.PR_REVIEW_ADVISOR_INTEREST);
@@ -536,6 +541,44 @@ describe("local PR review advisor", () => {
         .filter((name) => typeof name === "string" && name.includes("final-result")),
     ).toEqual([]);
     expect(sourceState(source)).toEqual(before);
+  });
+
+  it("binds a requested PR review to its exact base, GitHub context, and coordinator output (#10610)", async () => {
+    const source = repository();
+    const publicationRoot = temporaryDirectory();
+    const contextPath = path.join(temporaryDirectory(), "github-context.json");
+    fs.writeFileSync(contextPath, '{"repo":"NVIDIA/NemoClaw","prNumber":42}\n');
+    const baseRef = git(source, ["rev-parse", "origin/main"]);
+    const observed: NodeJS.ProcessEnv[] = [];
+    const lifecycle = artifactLifecycle();
+    lifecycle.prepare = async (env) => void observed.push({ ...env });
+
+    const destination = await runLocalReview({
+      source,
+      publicationRoot,
+      baseRef,
+      github: {
+        contextPath,
+        prNumber: 42,
+        repo: "NVIDIA/NemoClaw",
+        reviewerLogin: "maintainer",
+      },
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle,
+      temporaryRoot: temporaryDirectory(),
+    });
+
+    expect(destination).toBe(path.join(publicationRoot, "artifacts", "pr-review-advisor-local"));
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({
+      BASE_REF: baseRef,
+      PR_NUMBER: "42",
+      PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: contextPath,
+      PR_REVIEW_ADVISOR_REVIEWER_LOGIN: "maintainer",
+      TARGET_REPO: "NVIDIA/NemoClaw",
+    });
+    expect(fs.existsSync(destination)).toBe(true);
+    expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
 
   it.each([
@@ -807,9 +850,13 @@ describe("local PR review advisor", () => {
   const interest = ADVISOR_SPECIALISTS[0]!.interest;
   const summary = `pr-review-${interest}-summary.md`;
   const session = `pr-review-${interest}-session.jsonl`;
+  const e2e = `pr-review-${interest}-e2e.json`;
+  const findings = `pr-review-${interest}-findings.json`;
   it.each([
     ["missing", [summary]],
-    ["extra", [summary, session, "extra.txt"]],
+    ["missing context", [summary, session, e2e, findings]],
+    ["missing findings", [summary, session, e2e, "review-queue-context.json"]],
+    ["extra", [summary, session, e2e, findings, "review-queue-context.json", "extra.txt"]],
   ])("rejects %s specialist artifact sets (#10611)", async (_case, files) => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {
@@ -835,7 +882,8 @@ describe("local PR review advisor", () => {
     ).rejects.toMatchObject({
       message: expect.stringContaining("failed during validate"),
       cause: expect.objectContaining({
-        message: "Specialist artifacts do not match the E2E, Markdown, and JSONL contract",
+        message:
+          "Specialist artifacts do not match the context, E2E, findings, Markdown, and JSONL contract",
       }),
     });
   });

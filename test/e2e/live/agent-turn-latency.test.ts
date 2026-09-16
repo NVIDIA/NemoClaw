@@ -7,12 +7,14 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import type { ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { normalizeMode } from "../fixtures/inference-adapter.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   assertHermesConfig,
   assertNoOpenClawTransportErrors,
   assertOpenClawConfig,
+  buildOpenClawFirstTurnLatencyEvidence,
   CLI,
   chatContent,
   cleanupTurnSandbox,
@@ -31,6 +33,7 @@ import {
 } from "./agent-turn-latency-helpers.ts";
 
 const TIMEOUT_MS = testTimeout(90 * 60_000);
+const MAX_HOST_DISPATCH_OVERHEAD_MS = 60_000;
 
 // A real latency measurement needs a real hosted endpoint; the shared
 // adapter's hermetic `mock` mode would just measure a loopback round trip
@@ -57,17 +60,29 @@ runAgentTurnLatencyTest(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    inference,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+  }) => {
     const results: Record<string, unknown> = {
       model: inference.model,
       maxTurnSeconds: MAX_TURN_SECONDS,
+      maxHostDispatchOverheadMs: MAX_HOST_DISPATCH_OVERHEAD_MS,
     };
     await artifacts.target.declare({
       id: "agent-turn-latency",
-      boundary: "two real sandboxes + hosted inference + OpenClaw agent turns + Hermes API turn",
+      boundary:
+        "two real sandboxes + hosted inference + host CLI agent turns with open stdin + Hermes API turn",
       openclawSandbox: OPENCLAW_SANDBOX,
       hermesSandbox: HERMES_SANDBOX,
     });
+    lifecycle.trackInstallerGatewayUserService();
     cleanup.trackDisposable("remove gateway nemoclaw", async () => {
       await host.cleanupGatewayRegistration("nemoclaw", {
         artifactName: "cleanup-gateway-destroy-turn-latency",
@@ -134,8 +149,9 @@ runAgentTurnLatencyTest(
       progress,
     );
     expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
-    expect(resultText(openclawRoute)).toContain(inference.expectedRouteProvider);
-    expect(resultText(openclawRoute)).toContain(inference.model);
+    for (const expected of [inference.expectedRouteProvider, inference.model]) {
+      expect(resultText(openclawRoute)).toContain(expected);
+    }
     const openclawConfig = await sandbox.execShell(
       OPENCLAW_SANDBOX,
       trustedSandboxShellScript(openclawConfigCommand()),
@@ -151,35 +167,112 @@ runAgentTurnLatencyTest(
     assertOpenClawConfig(openclawConfig.stdout, inference.model);
 
     progress.phase("run OpenClaw hosted inference turns");
-    const openclaw = await openclawTurn(sandbox, inference, progress);
-    expect(openclaw.result.exitCode, resultText(openclaw.result)).toBe(0);
-    assertNoOpenClawTransportErrors(resultText(openclaw.result));
-    expect(
-      containsAnswer(parseOpenClawAgentText(openclaw.result.stdout), "42"),
-      resultText(openclaw.result),
-    ).toBe(true);
-    expect(openclaw.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+    const filePrompt = "Reply with exactly FILE_MESSAGE_OK and no other text.";
+    const messageFile = await sandbox.execShell(
+      OPENCLAW_SANDBOX,
+      trustedSandboxShellScript(`set -eu
+cat > '/sandbox/e2e turn message.txt'
+ln -s 'e2e turn message.txt' /sandbox/e2e-turn-file-link
+ln -s e2e-turn-file-link /sandbox/e2e-turn-file-chain`),
+      {
+        artifactName: "prepare-agent-message-file",
+        env: env(OPENCLAW_SANDBOX, "openclaw", inference),
+        stdin: { text: filePrompt },
+        onOutput: progress.onOutput,
+        timeoutMs: 30_000,
+      },
+    );
+    expect(messageFile.exitCode, resultText(messageFile)).toBe(0);
 
-    const openclawFollowUp = await openclawTurn(sandbox, inference, progress, {
-      artifactName: "openclaw-agent-follow-up-turn",
-      prompt: "What is seven multiplied by eight? Reply with only the integer, no extra words.",
-    });
-    expect(openclawFollowUp.result.exitCode, resultText(openclawFollowUp.result)).toBe(0);
-    assertNoOpenClawTransportErrors(resultText(openclawFollowUp.result));
+    const formats = [
+      { name: "json", args: ["--json"], readText: parseOpenClawAgentText },
+      { name: "text", args: [], readText: (raw: string) => raw },
+    ];
+    const turns: Array<{
+      artifactName: string;
+      args: string[];
+      stdin?: ShellProbeRunOptions["stdin"];
+      expected: string;
+      readText: (raw: string) => string;
+    }> = [
+      {
+        artifactName: "openclaw-agent-turn",
+        args: [
+          "--json",
+          "-m",
+          "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+        ],
+        stdin: "open-pipe",
+        expected: "42",
+        readText: parseOpenClawAgentText,
+      },
+      {
+        artifactName: "openclaw-agent-follow-up-turn",
+        args: [
+          "--verbose",
+          "off",
+          "--timeout",
+          "60",
+          "-m",
+          "What is seven multiplied by eight? Reply with only the integer, no extra words.",
+        ],
+        stdin: "open-pipe",
+        expected: "56",
+        readText: (raw: string) => raw,
+      },
+      {
+        artifactName: "openclaw-agent-explicit-local-turn",
+        args: ["--local", "-m", "Reply with exactly LOCAL_MODE_OK and no other text."],
+        stdin: "open-pipe",
+        expected: "LOCAL_MODE_OK",
+        readText: (raw: string) => raw,
+      },
+      ...formats.map((format) => ({
+        artifactName: `openclaw-agent-file-chain-${format.name}`,
+        args: [...format.args, "--message-file", "/sandbox/e2e-turn-file-chain"],
+        stdin: { text: "Reply with exactly WRONG_STDIN_SOURCE and no other text." },
+        expected: "FILE_MESSAGE_OK",
+        readText: format.readText,
+      })),
+    ];
+    const completedTurns: Record<string, Awaited<ReturnType<typeof openclawTurn>>> = {};
+    for (const turn of turns) {
+      progress.event(`OpenClaw turn: ${turn.artifactName}`);
+      const completed = await openclawTurn(host, inference, progress, turn);
+      expect(completed.result.exitCode, resultText(completed.result)).toBe(0);
+      assertNoOpenClawTransportErrors(resultText(completed.result));
+      expect(
+        containsAnswer(turn.readText(completed.result.stdout), turn.expected),
+        resultText(completed.result),
+      ).toBe(true);
+      expect(completed.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+      completedTurns[turn.artifactName] = completed;
+    }
+    const firstTurn = completedTurns["openclaw-agent-turn"]!;
+    const firstTurnTiming = buildOpenClawFirstTurnLatencyEvidence(
+      firstTurn.result.stdout,
+      firstTurn.elapsedMs,
+    );
+    const turnTimes = Object.fromEntries(
+      Object.entries(completedTurns).map(([name, turn]) => [name, turn.elapsedMs]),
+    );
+    // This excludes the reported agent duration, so slow inference cannot hide
+    // a multi-minute wait in host dispatch, transport, or CLI startup.
     expect(
-      containsAnswer(parseOpenClawAgentText(openclawFollowUp.result.stdout), "56"),
-      resultText(openclawFollowUp.result),
-    ).toBe(true);
-    expect(openclawFollowUp.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+      firstTurnTiming.firstTurnHostOverheadMs,
+      JSON.stringify(firstTurnTiming),
+    ).toBeLessThanOrEqual(MAX_HOST_DISPATCH_OVERHEAD_MS);
     results.openclaw = {
-      firstTurnElapsedMs: openclaw.elapsedMs,
-      followUpTurnElapsedMs: openclawFollowUp.elapsedMs,
+      ...firstTurnTiming,
+      firstTurnElapsedMs: turnTimes["openclaw-agent-turn"],
+      followUpTurnElapsedMs: turnTimes["openclaw-agent-follow-up-turn"],
+      turns: turnTimes,
     };
 
     progress.phase("replace OpenClaw with Hermes sandbox");
     const openclawDestroy = await host.command(
       "node",
-      [CLI, OPENCLAW_SANDBOX, "destroy", "--yes"],
+      [CLI, OPENCLAW_SANDBOX, "destroy", "--yes", "--cleanup-gateway"],
       {
         artifactName: "destroy-openclaw-before-hermes",
         env: env(OPENCLAW_SANDBOX, "openclaw", inference),
@@ -208,8 +301,9 @@ runAgentTurnLatencyTest(
       progress,
     );
     expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
-    expect(resultText(hermesRoute)).toContain(inference.expectedRouteProvider);
-    expect(resultText(hermesRoute)).toContain(inference.model);
+    for (const expected of [inference.expectedRouteProvider, inference.model]) {
+      expect(resultText(hermesRoute)).toContain(expected);
+    }
     const hermesHealth = await waitHermesHealth(sandbox, inference, progress);
     expect(hermesHealth.exitCode, resultText(hermesHealth)).toBe(0);
     const hermesConfig = await sandbox.exec(

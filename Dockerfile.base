@@ -3,7 +3,7 @@
 #
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-trixie-slim, apt packages, setpriv, user/group setup,
+# Contains: node:24.18.1-trixie-slim, apt packages, setpriv, user/group setup,
 # .openclaw directory structure, OpenClaw CLI, and PyYAML.
 #
 # Built on main merges and pushed to GHCR. The production Dockerfile
@@ -15,11 +15,11 @@
 # structural (users, directories, symlinks) that doesn't depend on
 # NemoClaw application code. Specifically:
 #
-#   node:22-trixie-slim — pinned by sha256 digest, checked weekly by
+#   node:24.18.1-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to Debian trixie versions
 #   util-linux          — pinned Debian package providing setpriv
-#   npm 11.18.0         — reviewed archive + sha512 integrity
+#   npm 12.0.2         — reviewed archive + sha512 integrity
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
 #     users               stable contract with OpenShell
 #   .openclaw dirs      — directory structure is dictated by the OpenClaw
@@ -40,8 +40,9 @@
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
 #   3. util-linux upgrade           — update the pinned apt package version
-#   4. node:22-trixie-slim digest rotated — update-docker-pin.sh updates all
-#                                      Dockerfile and Dockerfile.base
+#   4. node:24.18.1-trixie-slim digest rotated — run:
+#        DOCKERFILE=Dockerfile.base scripts/update-docker-pin.sh
+#      Then repeat with DOCKERFILE=<path> for each remaining Dockerfile containing the pin.
 #   5. npm upgrade                  — update upgrade-bundled-npm.mts
 #   6. New .openclaw subdirectory   — add mkdir below
 #   7. PyYAML or other pip dep bump — change the version below
@@ -59,12 +60,12 @@ ARG PERL_PACKAGE_REVISION=1nemoclaw1
 # Debian trixie has not published libssh2 or Python packages containing the
 # reviewed upstream fixes. Build native packages once and install the same
 # artifacts into the managed OpenClaw image.
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS native-security-builder
+FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS native-security-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
         ca-certificates=20250419 \
-        curl=8.14.1-2+deb13u4 \
+        curl=8.14.1-2+deb13u5 \
         git=1:2.47.3-0+deb13u1 \
         libssl-dev=3.5.7-1~deb13u2 \
         openssh-server=1:10.0p1-7+deb13u4 \
@@ -97,7 +98,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN bash /scripts/security/build-perl-security-packages.sh \
     /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
-FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
+FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
 
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
@@ -119,18 +120,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
         python3-pip=25.1.1+dfsg-1 \
         python3-venv=3.13.5-1 \
-        curl=8.14.1-2+deb13u4 \
+        curl=8.14.1-2+deb13u5 \
         git=1:2.47.3-0+deb13u1 \
         gnupg=2.4.7-21+deb13u1 \
         ca-certificates=20250419 \
         iproute2=6.15.0-1 \
         iptables=1.8.11-2 \
         nftables=1.1.3-1 \
-        libcap2-bin=1:2.75-10+deb13u1+b1 \
+        libcap2-bin=1:2.75-10+deb13u1+b3 \
         libssl3t64=3.5.7-1~deb13u2 \
         util-linux=2.41-5 \
         procps=2:4.0.4-9 \
-        e2fsprogs=1.47.2-3+b11 \
+        e2fsprogs=1.47.2-3+b12 \
         "dos2unix=7.5.2-1*" \
         libonig5=6.9.9-1+b1 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
@@ -219,7 +220,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2" \
     && test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2" \
-    && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u5+nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' perl)" = "$perl_version_before" \
     && test "$(jq --version)" = "jq-1.8.2" \
     && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
@@ -246,7 +247,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
         "libssl3t64=3.5.7-1~deb13u2" \
-        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1" \
         > /usr/local/share/nemoclaw/security-packages.txt \
     && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
     && chmod 0644 /usr/local/share/nemoclaw/security-packages.txt \
@@ -413,6 +414,7 @@ ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
 ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
+ARG NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=
 # Keep paired runtime manifests and remediation helpers in grouped layers so
 # the published base retains its established image layout.
 COPY agents/openclaw/openclaw-runtime/package.json \
@@ -427,13 +429,16 @@ COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/reviewed-npm-audit.mts \
     scripts/lib/openclaw-npm-remediation.mts \
     /scripts/lib/
-COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
+COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
+COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /scripts/lib/patch-openclaw-npm12-pack-json.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
-# npm 10.9.8 in the pinned Node 22 image bundles an affected node-tar copy.
+# npm 11.16.0 in the pinned Node 24.18.1 image bundles affected tar 7.5.15.
 # Replace it before npm processes the reviewed npm archive.
 RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
@@ -444,19 +449,19 @@ RUN node /scripts/patch-bundled-npm-tar.mts \
 RUN node /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 restores affected tar 7.5.19. Replace it from the
+# npm 12.0.2 restores affected tar 7.5.19. Replace it from the
 # registry- and SRI-verified 7.5.21 archive before any npm consumers run.
 # hadolint ignore=DL3059
 RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 contains brace-expansion 5.0.7. Replace only that private
+# npm 12.0.2 contains brace-expansion 5.0.7. Replace only that private
 # package from the reviewed 5.0.9 archive after the complete npm upgrade.
 # hadolint ignore=DL3059
 RUN node /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 contains ip-address 10.2.0. Replace only that private package
+# npm 12.0.2 contains ip-address 10.2.0. Replace only that private package
 # with the reviewed 10.3.1 archive after the complete npm upgrade.
 # hadolint ignore=DL3059
 RUN node /scripts/lib/patch-bundled-npm-ip-address.mts \
@@ -477,6 +482,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/blueprint.yaml \
     --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-policy-result,required=false \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
     || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)."; exit 1; }; \
     OPENCLAW_MIN_VERSION=$(grep -m 1 'min_openclaw_version' /tmp/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
@@ -579,28 +585,9 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();' \
     && ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter \
     && test "$(mcporter --version)" = "$MCPORTER_VERSION" \
-    && MCPORTER_RECEIPT=/run/secrets/nemoclaw-mcporter-audit-receipt \
-    && MCPORTER_RAW_REPORT=/run/secrets/nemoclaw-mcporter-audit-raw-report \
-    && if [ -f "$MCPORTER_RECEIPT" ] || [ -f "$MCPORTER_RAW_REPORT" ] || [ -n "${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}" ]; then \
-        [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
-            || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
-        printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
-        node /scripts/lib/npm-audit-receipt.mts \
-            --receipt "$MCPORTER_RECEIPT" \
-            --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
-            --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
-            --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
-            --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
-            --registry https://registry.yarnpkg.com --threshold high \
-            --legacy-audit true \
-            --result /tmp/mcporter-npm-audit-policy.json \
-        && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json; \
-      else \
-        node /scripts/lib/reviewed-npm-audit.mts \
-            --directory /usr/local/lib/nemoclaw/mcporter-runtime \
-            --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high \
-            --report /tmp/mcporter-npm-audit.json --result /tmp/mcporter-npm-audit-policy.json; \
-      fi \
+    && NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH=/tmp/mcporter-npm-audit.json \
+        NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH=/tmp/mcporter-npm-audit-policy.json \
+        bash /scripts/lib/verify-mcporter-audit.sh \
     && MCPORTER_AUDIT_STATUS="$(node -p "require('/tmp/mcporter-npm-audit-policy.json').status")" \
     && MCPORTER_AUDIT_EXCEPTIONS="$(node -p "require('/tmp/mcporter-npm-audit-policy.json').acceptedAdvisories.join(',') || 'none'")" \
     && MCPORTER_AUDIT_POLICY_SHA256="$(node -p "require('/tmp/mcporter-npm-audit-policy.json').exceptionPolicySha256")" \
@@ -632,7 +619,6 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && rm -f /tmp/mcporter-npm-audit.json /tmp/mcporter-npm-audit-policy.json \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
-
 # Baseline health check. The base image runs no service, so this only
 # verifies the Node.js runtime is functional. Child images that expose
 # a service (e.g. the production Dockerfile's gateway) MUST override
@@ -640,6 +626,13 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
 # will still report healthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD node -e "process.exit(0)"
+
+# npm 12 emits package-keyed objects from `npm pack --json`; OpenClaw 2026.7.1
+# expects the earlier array/direct-object shapes when installing local npm archives.
+RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
+        node /scripts/lib/patch-openclaw-npm12-pack-json.mts \
+            /usr/local/lib/node_modules/openclaw/dist "$OPENCLAW_VERSION"; \
+    fi
 
 # Bake Homebrew core (Linuxbrew) into the sandbox base image (#3913).
 #

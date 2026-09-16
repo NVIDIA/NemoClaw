@@ -226,7 +226,7 @@ describe("MessagingSetupApplier credential env cleanup", () => {
     expect(writes).toEqual([]);
   });
 
-  it("rematerializes a manifest cross-key alias from OpenShell's revision placeholder", async () => {
+  it("rematerializes a manifest cross-key alias from OpenShell's stable placeholder", async () => {
     const plan = await buildHermesWechatPlan();
     const {
       files,
@@ -237,7 +237,10 @@ describe("MessagingSetupApplier credential env cleanup", () => {
     });
     const runOpenshell: MessagingOpenShellRunner = (args, options) =>
       args.some((arg) => arg.includes("printenv"))
-        ? { status: 0, stdout: "openshell:resolve:env:v7_WECHAT_BOT_TOKEN\n" }
+        ? {
+            status: 0,
+            stdout: `openshell:resolve:env:s${"a".repeat(64)}_WECHAT_BOT_TOKEN\n`,
+          }
         : runFiles(args, options);
 
     const result = MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, {
@@ -247,7 +250,7 @@ describe("MessagingSetupApplier credential env cleanup", () => {
     expect(result).toEqual({ changed: true, target: HERMES_ENV_PATH });
     expect(writes).toEqual([HERMES_ENV_PATH]);
     expect(files[HERMES_ENV_PATH]).toContain(
-      "WEIXIN_TOKEN=openshell:resolve:env:v7_WECHAT_BOT_TOKEN",
+      `WEIXIN_TOKEN=openshell:resolve:env:s${"a".repeat(64)}_WECHAT_BOT_TOKEN`,
     );
   });
 

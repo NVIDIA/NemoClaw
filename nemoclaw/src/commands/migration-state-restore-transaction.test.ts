@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -53,7 +54,7 @@ import { restoreSnapshotToHost } from "./migration-state.js";
 const temporaryRoots: string[] = [];
 
 function makeHome(): string {
-  const home = mkdtempSync(path.join(tmpdir(), "nemoclaw-restore-transaction-"));
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "nemoclaw-restore-transaction-")));
   temporaryRoots.push(home);
   return home;
 }

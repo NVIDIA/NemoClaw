@@ -259,7 +259,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
-    ["spec.sandboxes[].integrations.mcp", entry.mcp, "managed tools"],
     [
       "spec.sandboxes[].agents.secondary",
       entry.openclawImagePluginInstalls,
@@ -622,6 +621,7 @@ function projectAdditionalAgents(
   profile: ManagedStartupProfile,
 ): VerifiedExportSource["additionalAgents"] | null {
   if (profile.agentConfig.agent !== "openclaw") return undefined;
+  if (profile.inference === null) return null;
   try {
     const manifest = validateExtraAgents(
       profile.agentConfig.extraAgents,

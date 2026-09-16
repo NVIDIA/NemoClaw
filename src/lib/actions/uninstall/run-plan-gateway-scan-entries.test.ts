@@ -45,8 +45,8 @@ function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   });
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
 }
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
@@ -129,7 +129,7 @@ function writeScopedGatewayState(home: string, port = 8080): void {
  * assertions read the outcome rather than the calls a test double recorded.
  * Captures both `log` and `error` (runtime warnings) for assertion.
  */
-function uninstall(
+async function uninstall(
   home: string,
   shims: readonly string[],
   options: Pick<UninstallRunOptions, "destroyUserData"> & {
@@ -137,7 +137,7 @@ function uninstall(
   } = {},
 ) {
   const logs: string[] = [];
-  const result = runUninstallPlan(
+  const result = await runUninstallPlan(
     {
       assumeYes: true,
       deleteModels: false,
@@ -171,11 +171,11 @@ function writeForeignCliShims(shims: readonly string[]): void {
 describe("uninstall gateway-directory scan", () => {
   it.each([[".DS_Store"], [".localized"], ["._sandboxes.json"]])(
     "removes the CLI shims when the gateways directory holds only %s (#7905)",
-    (entry) => {
+    async (entry) => {
       const { home, shims } = makeHome("nemoclaw-uninstall-metadata-", [entry]);
 
       try {
-        const { result, logs, survivors } = uninstall(home, shims);
+        const { result, logs, survivors } = await uninstall(home, shims);
 
         expect(result.exitCode).toBe(0);
         expect(logs).not.toContain(SCOPED_RETENTION_LOG);
@@ -190,12 +190,12 @@ describe("uninstall gateway-directory scan", () => {
   // live gateway state, so each of these keeps the conservative treatment.
   it.each([["not-a-port"], ["._"], [".DS_Store/"]])(
     "keeps the CLI shims when the gateways directory holds %s (#7905)",
-    (entry) => {
+    async (entry) => {
       const { home, shims } = makeHome("nemoclaw-uninstall-conservative-", [entry]);
       writeScopedGatewayState(home);
 
       try {
-        const { result, logs, survivors } = uninstall(home, shims);
+        const { result, logs, survivors } = await uninstall(home, shims);
 
         expect(result.exitCode).toBe(0);
         expect(logs).toContain(SCOPED_RETENTION_LOG);
@@ -208,7 +208,7 @@ describe("uninstall gateway-directory scan", () => {
 
   it.skipIf(process.platform === "win32")(
     "keeps the CLI shims for a desktop-metadata symlink (#7905)",
-    () => {
+    async () => {
       const { home, shims } = makeHome("nemoclaw-uninstall-conservative-", []);
       writeScopedGatewayState(home);
       fs.symlinkSync(
@@ -217,7 +217,7 @@ describe("uninstall gateway-directory scan", () => {
       );
 
       try {
-        const { result, logs, survivors } = uninstall(home, shims);
+        const { result, logs, survivors } = await uninstall(home, shims);
 
         expect(result.exitCode).toBe(0);
         expect(logs).toContain(SCOPED_RETENTION_LOG);
@@ -230,12 +230,12 @@ describe("uninstall gateway-directory scan", () => {
 
   it.each([["not-a-port"], ["._"], [".DS_Store/"]])(
     "removes managed CLI shims with --destroy-user-data when the gateways directory holds %s (#9277)",
-    (entry) => {
+    async (entry) => {
       const { home, shims } = makeHome("nemoclaw-uninstall-destroy-shim-", [entry]);
       writeScopedGatewayState(home);
 
       try {
-        const { result, logs, survivors } = uninstall(home, shims, { destroyUserData: true });
+        const { result, logs, survivors } = await uninstall(home, shims, { destroyUserData: true });
 
         expect(result.exitCode).toBe(0);
         expect(logs).toContain(SCOPED_PACKAGE_RETENTION_LOG);
@@ -248,13 +248,13 @@ describe("uninstall gateway-directory scan", () => {
     },
   );
 
-  it("preserves foreign CLI files under --destroy-user-data without claiming removal (#9277)", () => {
+  it("preserves foreign CLI files under --destroy-user-data without claiming removal (#9277)", async () => {
     const { home, shims } = makeHome("nemoclaw-uninstall-destroy-foreign-", ["not-a-port"]);
     writeScopedGatewayState(home);
     writeForeignCliShims(shims);
 
     try {
-      const { result, logs, survivors } = uninstall(home, shims, { destroyUserData: true });
+      const { result, logs, survivors } = await uninstall(home, shims, { destroyUserData: true });
 
       expect(result.exitCode).toBe(0);
       expect(logs).toContain(SCOPED_PACKAGE_RETENTION_LOG);
@@ -267,12 +267,12 @@ describe("uninstall gateway-directory scan", () => {
     }
   });
 
-  it("keeps managed CLI shims with --destroy-user-data when a confirmed sibling gateway remains (#9277)", () => {
+  it("keeps managed CLI shims with --destroy-user-data when a confirmed sibling gateway remains (#9277)", async () => {
     const { home, shims } = makeHome("nemoclaw-uninstall-destroy-sibling-", []);
     writeScopedGatewayState(home);
 
     try {
-      const { result, logs, survivors } = uninstall(home, shims, {
+      const { result, logs, survivors } = await uninstall(home, shims, {
         destroyUserData: true,
         run: okWithSiblingGatewayList,
       });

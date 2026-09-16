@@ -32,7 +32,6 @@ export default async function prepare_pr_for_human_review(input: {
   notes: string[];
   resultJson: string;
 }> {
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   if (!Number.isSafeInteger(input.pullNumber) || input.pullNumber < 1)
     throw new Error("pullNumber must be positive");
   if (!["blocked", "docs-updated", "no-docs-needed"].includes(input.docsResult))

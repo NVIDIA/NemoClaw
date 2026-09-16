@@ -133,7 +133,7 @@ export function cleanupFailureMessage(commandCode: number, detail: string): stri
   return `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): ${detail}`;
 }
 
-function defaultSelectGateway(sandboxName: string): GatewaySelectResult {
+function defaultSelectGateway(sandboxName: string): Promise<GatewaySelectResult> {
   return (
     require("./gateway-select") as typeof import("./gateway-select")
   ).selectSandboxOwningGateway(sandboxName);
@@ -148,12 +148,14 @@ export type ExecSandboxDeps = {
   /** Post-command observability and cleanup seams. */
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
+  /** Reacquire and verify dispatch authority before delayed launch cleanup. */
+  withCleanupAuthority?: (cleanup: () => string | null) => Promise<string | null>;
   /** Activate config written by a successful direct Google Chat pairing approval. */
   restartGateway?: SandboxExecGatewayRestart;
   /** Resolve the sandbox's recorded agent before applying agent-specific post-exec effects. */
   resolveSandboxAgent?: SandboxExecAgentResolver;
   /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
-  selectGateway?: (sandboxName: string) => GatewaySelectResult;
+  selectGateway?: (sandboxName: string) => GatewaySelectResult | Promise<GatewaySelectResult>;
   /** Defer terminal process exit until an outer lifecycle lock is released. */
   exit?: (code: number) => never;
 };
@@ -161,8 +163,7 @@ export type ExecSandboxDeps = {
 async function runSandboxExecRequest(
   executor: OpenShellSandboxCommandExecutor,
   request: OpenShellSandboxCommandRequest,
-  cleanupDeps: SandboxExecCleanupDeps,
-): Promise<SandboxExecCompletion> {
+): Promise<Awaited<ReturnType<OpenShellSandboxCommandExecutor["runStreaming"]>>> {
   let completed: Awaited<ReturnType<OpenShellSandboxCommandExecutor["runStreaming"]>>;
   try {
     completed = await executor.runStreaming(request);
@@ -178,11 +179,28 @@ async function runSandboxExecRequest(
       release: () => {},
     };
   }
+  return completed;
+}
+
+async function finishSandboxExecRequest(
+  completed: Awaited<ReturnType<OpenShellSandboxCommandExecutor["runStreaming"]>>,
+  request: OpenShellSandboxCommandRequest,
+  cleanupDeps: SandboxExecCleanupDeps,
+  withCleanupAuthority?: ExecSandboxDeps["withCleanupAuthority"],
+): Promise<SandboxExecCompletion> {
   try {
     const commandCode = completed.outcome.kind === "completed" ? completed.outcome.exitCode : 1;
     const invocationError =
       completed.outcome.kind === "failed" ? completed.outcome.error.message : undefined;
-    const cleanupError = cleanupOpenClawAfterExec(request.sandboxName, cleanupDeps) ?? undefined;
+    const cleanup = () => cleanupOpenClawAfterExec(request.sandboxName, cleanupDeps);
+    let cleanupError: string | undefined;
+    try {
+      cleanupError =
+        (await (withCleanupAuthority ? withCleanupAuthority(cleanup) : cleanup())) ?? undefined;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      cleanupError = `cleanup authority unavailable: ${detail}`;
+    }
     return {
       code: cleanupError ? 1 : commandCode,
       commandCode,
@@ -240,6 +258,17 @@ export async function execSandbox(
   options: SandboxExecOptions = {},
   deps: ExecSandboxDeps = {},
 ): Promise<void> {
+  const finish = await startSandboxExec(sandboxName, command, options, deps);
+  await finish();
+}
+
+/** Dispatch under the caller's lifecycle fence; invoke completion after releasing it. */
+export async function startSandboxExec(
+  sandboxName: string,
+  command: readonly string[],
+  options: SandboxExecOptions = {},
+  deps: ExecSandboxDeps = {},
+): Promise<() => Promise<void>> {
   const { CLI_NAME } = require("../../cli/branding");
   const exit = deps.exit ?? process.exit;
   if (command.length === 0) {
@@ -259,7 +288,7 @@ export async function execSandbox(
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
     exit(1);
   }
-  const gatewaySelection = (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
+  const gatewaySelection = await (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
   if (gatewaySelection.outcome === "failed") {
     console.error(
       `  Failed to select gateway '${gatewaySelection.gatewayName}' for sandbox '${sandboxName}'.`,
@@ -296,71 +325,78 @@ export async function execSandbox(
     deps.policyHint,
     gatewayName,
   );
-  const completion = await runSandboxExecRequest(
-    commandExecutor,
-    {
-      sandboxName,
-      target,
-      command: wrapExecCommandWithRuntimeEnv(command),
-      workdir: options.workdir,
-      tty: options.tty,
-      timeoutSeconds: options.timeoutSeconds,
-      stdin: options.stdin,
-    },
-    deps.cleanupDeps ?? {
-      getSandbox: (name) =>
-        (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(name),
-      inspectMutableConfigPerms: (name) =>
-        (
-          require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
-        ).inspectMutableConfigPerms(name),
-      repairMutableConfigPerms: (name) =>
-        (
-          require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
-        ).repairMutableConfigPerms(name),
-    },
-  );
-  if (completion.invocationError) {
-    console.error(`  Failed to invoke openshell: ${completion.invocationError}`);
-    console.error("  Ensure 'openshell' is installed and on PATH.");
-  }
-  if (completion.cleanupError) {
-    console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
-  }
-  await emitPolicyDenialHint(completion);
-  let exitCode = completion.code;
-  const googleChatApprovalCommitted =
-    completion.commandCode === 0 && isGoogleChatPairingApproval(command);
-  const managedGoogleChatApproval =
-    googleChatApprovalCommitted && gatewaySelection.outcome === "selected";
-  if (googleChatApprovalCommitted && completion.cleanupError) {
-    console.error(
-      managedGoogleChatApproval
-        ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
-        : googleChatPairingUnmanagedCleanupFailureMessage(sandboxName),
+  const request: OpenShellSandboxCommandRequest = {
+    sandboxName,
+    target,
+    command: wrapExecCommandWithRuntimeEnv(command),
+    workdir: options.workdir,
+    tty: options.tty,
+    timeoutSeconds: options.timeoutSeconds,
+    stdin: options.stdin,
+  };
+  const pending = runSandboxExecRequest(commandExecutor, request);
+  return async () => {
+    const completion = await finishSandboxExecRequest(
+      await pending,
+      request,
+      deps.cleanupDeps ?? {
+        getSandbox: (name) =>
+          (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(
+            name,
+          ),
+        inspectMutableConfigPerms: (name) =>
+          (
+            require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
+          ).inspectMutableConfigPerms(name),
+        repairMutableConfigPerms: (name) =>
+          (
+            require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
+          ).repairMutableConfigPerms(name),
+      },
+      deps.withCleanupAuthority,
     );
-  }
-  if (exitCode === 0 && managedGoogleChatApproval) {
-    let recordedAgent: string | null = null;
-    try {
-      recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
-    } catch {
-      console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
-      exit(1);
+    if (completion.invocationError) {
+      console.error(`  Failed to invoke openshell: ${completion.invocationError}`);
+      console.error("  Ensure 'openshell' is installed and on PATH.");
     }
-    if (recordedAgent === "openclaw") {
-      let restartSucceeded = false;
+    if (completion.cleanupError) {
+      console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
+    }
+    await emitPolicyDenialHint(completion);
+    let exitCode = completion.code;
+    const googleChatApprovalCommitted =
+      completion.commandCode === 0 && isGoogleChatPairingApproval(command);
+    const managedGoogleChatApproval =
+      googleChatApprovalCommitted && gatewaySelection.outcome === "selected";
+    if (googleChatApprovalCommitted && completion.cleanupError) {
+      console.error(
+        managedGoogleChatApproval
+          ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
+          : googleChatPairingUnmanagedCleanupFailureMessage(sandboxName),
+      );
+    }
+    if (exitCode === 0 && managedGoogleChatApproval) {
+      let recordedAgent: string | null = null;
       try {
-        restartSucceeded = (await (deps.restartGateway ?? defaultRestartGateway)(sandboxName)).ok;
+        recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
       } catch {
-        // The approval already committed inside OpenClaw. Convert restart
-        // exceptions into the same explicit partial-commit recovery contract.
-      }
-      if (!restartSucceeded) {
         console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
-        exitCode = 1;
+        exit(1);
+      }
+      if (recordedAgent === "openclaw") {
+        let restartSucceeded = false;
+        try {
+          restartSucceeded = (await (deps.restartGateway ?? defaultRestartGateway)(sandboxName)).ok;
+        } catch {
+          // The approval already committed inside OpenClaw. Convert restart
+          // exceptions into the same explicit partial-commit recovery contract.
+        }
+        if (!restartSucceeded) {
+          console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+          exitCode = 1;
+        }
       }
     }
-  }
-  exit(exitCode);
+    exit(exitCode);
+  };
 }

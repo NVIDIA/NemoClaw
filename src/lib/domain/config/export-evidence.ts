@@ -68,7 +68,6 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "imageTag",
   "lifecycleGeneration",
   "lifecycleLiveIdentityFingerprint",
-  "mcp",
   "messaging",
   "model",
   "name",
@@ -112,12 +111,13 @@ export interface ObservedExportEndpointEvidence {
     readonly id: string;
     readonly resourceVersion: string;
     readonly profileWorkspace?: string;
+    /** null means the OpenAI profile was read at its binding and confirmed absent. */
     readonly managedProfile?: {
       readonly id: "brave" | "openai";
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;
-    };
+    } | null;
   };
   readonly endpoint: string;
   readonly source:

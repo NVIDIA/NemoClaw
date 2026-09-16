@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createHash, X509Certificate } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
@@ -40,6 +41,10 @@ export type ExternalComponentContractErrorCode =
   | "lifecycle_unsupported"
   | "platform_unsupported"
   | "schema_unsupported"
+  | "endpoint_restricted"
+  | "trust_invalid"
+  | "trust_changed"
+  | "preparation_failed"
   | "socket_ambiguous"
   | "socket_mode"
   | "socket_owner"
@@ -56,11 +61,46 @@ export class ExternalComponentContractError extends Error {
   }
 }
 
-export interface ExternalComponentDeclaration {
+export interface ExternalComponentDeclarationV1 {
   readonly schemaVersion: typeof EXTERNAL_COMPONENT_SCHEMA_VERSION;
   readonly componentId: string;
   readonly interceptorSocketPath: string;
   readonly activationSocketPath: string;
+}
+
+export interface ExternalComponentConnection {
+  readonly endpoint: string;
+  readonly caCertificatePath: string;
+  readonly audience: string;
+}
+
+export interface ExternalComponentDeclarationV2 {
+  readonly schemaVersion: 2;
+  readonly componentId: string;
+  readonly activationSocketPath: string;
+  readonly interceptor: ExternalComponentConnection;
+  readonly middleware: ExternalComponentConnection & { readonly name: string };
+  readonly providerProfileSource?: string;
+}
+
+export type ExternalComponentDeclaration =
+  | ExternalComponentDeclarationV1
+  | ExternalComponentDeclarationV2;
+
+export type ExternalComponentGatewayConfiguration =
+  | Pick<ExternalComponentDeclarationV1, "componentId" | "interceptorSocketPath">
+  | Omit<ExternalComponentDeclarationV2, "activationSocketPath">;
+
+export function gatewayConfigurationForExternalComponent(
+  declaration: ExternalComponentDeclaration,
+): ExternalComponentGatewayConfiguration {
+  if (declaration.schemaVersion === 1)
+    return {
+      componentId: declaration.componentId,
+      interceptorSocketPath: declaration.interceptorSocketPath,
+    };
+  const { activationSocketPath: _socket, ...configuration } = declaration;
+  return configuration;
 }
 
 interface FileIdentity {
@@ -87,6 +127,7 @@ interface EndpointProof extends PathProof {
 
 export interface PreparedExternalComponent {
   readonly declaration: ExternalComponentDeclaration;
+  setGatewayRevalidation?(revalidate: () => void): void;
   revalidateBeforeGateway(): void;
   revalidateBeforeActivation(): void;
 }
@@ -448,6 +489,7 @@ export function parseExternalComponentDeclaration(source: string): ExternalCompo
     throw new ExternalComponentContractError("declaration_invalid");
   }
   const record = parsed as Record<string, unknown>;
+  if (record.schemaVersion === 2) return parseConnectionDeclaration(record);
   if (Object.keys(record).some((field) => !DECLARATION_FIELDS.has(field))) {
     throw new ExternalComponentContractError("declaration_unknown_field");
   }
@@ -501,16 +543,184 @@ export function loadExternalComponentDeclaration(
     throw new ExternalComponentContractError("declaration_invalid");
   }
   const declaration = parseExternalComponentDeclaration(source);
-  const interceptorProof = captureEndpoint(declaration.interceptorSocketPath, uid);
+  const interceptorProof =
+    declaration.schemaVersion === 1
+      ? captureEndpoint(declaration.interceptorSocketPath, uid)
+      : null;
+  const trustProofs =
+    declaration.schemaVersion === 2
+      ? [declaration.interceptor, declaration.middleware].map((connection) =>
+          captureExternalComponentTrust(connection.caCertificatePath, uid),
+        )
+      : [];
   const activationProof = captureEndpoint(declaration.activationSocketPath, uid);
+  let revalidateGateway: (() => void) | undefined;
   const revalidate = (): void => {
     revalidateDeclaration(declarationProof);
-    revalidateEndpoint(interceptorProof);
+    if (interceptorProof) revalidateEndpoint(interceptorProof);
+    for (const proof of trustProofs) proof.revalidate();
     revalidateEndpoint(activationProof);
+    revalidateGateway?.();
   };
   return {
     declaration,
+    setGatewayRevalidation(revalidateGatewayProof) {
+      if (revalidateGateway) throw new ExternalComponentContractError("preparation_failed");
+      revalidateGateway = revalidateGatewayProof;
+    },
     revalidateBeforeGateway: revalidate,
     revalidateBeforeActivation: revalidate,
   };
+}
+
+function fields(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ExternalComponentContractError("declaration_invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !required.includes(key) && !optional.includes(key))) {
+    throw new ExternalComponentContractError("declaration_unknown_field");
+  }
+  if (required.some((key) => !Object.hasOwn(record, key))) {
+    throw new ExternalComponentContractError("declaration_invalid");
+  }
+  return record;
+}
+
+function serviceName(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u.test(value) ||
+    value.startsWith("openshell/")
+  )
+    throw new ExternalComponentContractError("declaration_invalid");
+  return value;
+}
+
+function connection(
+  record: Record<string, unknown>,
+  interceptor: boolean,
+): ExternalComponentConnection {
+  const endpoint = record.endpoint;
+  const match =
+    typeof endpoint === "string"
+      ? /^https:\/\/(127\.0\.0\.1|host\.openshell\.internal):([1-9]\d{0,4})$/u.exec(endpoint)
+      : null;
+  const host = match?.[1] ?? "";
+  if (
+    !match ||
+    Number(match[2]) > 65535 ||
+    host !== (interceptor ? "127.0.0.1" : "host.openshell.internal")
+  ) {
+    throw new ExternalComponentContractError("endpoint_restricted");
+  }
+  if (
+    typeof record.audience !== "string" ||
+    record.audience.length > 256 ||
+    !/^[\x21-\x7e]+$/u.test(record.audience)
+  )
+    throw new ExternalComponentContractError("declaration_invalid");
+  return Object.freeze({
+    endpoint: endpoint as string,
+    caCertificatePath: validatedSocketPath(record.caCertificatePath),
+    audience: record.audience,
+  });
+}
+
+function parseConnectionDeclaration(value: unknown): ExternalComponentDeclarationV2 {
+  const record = fields(
+    value,
+    ["schemaVersion", "componentId", "activationSocketPath", "interceptor", "middleware"],
+    ["providerProfileSource"],
+  );
+  const interceptor = fields(record.interceptor, ["endpoint", "caCertificatePath", "audience"]);
+  const middleware = fields(record.middleware, [
+    "name",
+    "endpoint",
+    "caCertificatePath",
+    "audience",
+  ]);
+  const componentId = serviceName(record.componentId);
+  if (record.providerProfileSource !== undefined && record.providerProfileSource !== componentId) {
+    throw new ExternalComponentContractError("declaration_invalid");
+  }
+  return Object.freeze({
+    schemaVersion: 2,
+    componentId,
+    activationSocketPath: validatedSocketPath(record.activationSocketPath),
+    interceptor: connection(interceptor, true),
+    middleware: Object.freeze({
+      ...connection(middleware, false),
+      name: serviceName(middleware.name),
+    }),
+    ...(record.providerProfileSource === undefined ? {} : { providerProfileSource: componentId }),
+  });
+}
+
+/** Certificate bytes stay public; private keys must never enter a supervisor's trust bundle. */
+export function captureExternalComponentTrust(
+  certificatePath: string,
+  uid = process.geteuid?.(),
+): {
+  readonly sha256: string;
+  revalidate(): void;
+} {
+  if (uid === undefined) throw new ExternalComponentContractError("trust_invalid");
+  try {
+    validatedSocketPath(certificatePath);
+    const parents = captureSafeParents(endpointParents(certificatePath), uid, false);
+    const stat = fs.lstatSync(certificatePath);
+    const expected = identity(stat, "file");
+    if ((stat.uid !== uid && stat.uid !== 0) || (stat.mode & 0o022) !== 0 || stat.nlink !== 1) {
+      throw new Error("unsafe certificate file");
+    }
+    const file = openRegularFileNoFollow(certificatePath);
+    let bytes: Buffer;
+    try {
+      if (!sameIdentity(expected, identity(file.stat(), "file")))
+        throw new Error("changed certificate");
+      bytes = file.readBytes(64 * 1024);
+    } finally {
+      file.close();
+    }
+    const pem = UTF8_DECODER.decode(bytes);
+    const certificates =
+      pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/gu) ?? [];
+    if (
+      !certificates.length ||
+      pem.replace(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/gu, "").trim()
+    ) {
+      throw new Error("certificate-only PEM required");
+    }
+    for (const certificate of certificates) {
+      const parsed = new X509Certificate(certificate);
+      if (
+        !parsed.ca ||
+        Date.parse(parsed.validFrom) > Date.now() ||
+        Date.parse(parsed.validTo) <= Date.now()
+      ) {
+        throw new Error("valid CA certificate required");
+      }
+    }
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    return {
+      sha256,
+      revalidate() {
+        try {
+          for (const parent of parents) assertPathProof(parent, "trust_changed");
+          assertPathProof({ path: certificatePath, identity: expected }, "trust_changed");
+          if (captureExternalComponentTrust(certificatePath, uid).sha256 !== sha256)
+            throw new Error("changed trust");
+        } catch {
+          throw new ExternalComponentContractError("trust_changed");
+        }
+      },
+    };
+  } catch {
+    throw new ExternalComponentContractError("trust_invalid");
+  }
 }

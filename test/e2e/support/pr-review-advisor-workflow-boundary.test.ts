@@ -68,6 +68,18 @@ it.each([
     "Unified advisor must retain completed CI / Pull Request identity",
   ],
   [
+    "manual revision output",
+    "steps.target.outputs.head_sha || steps.manual-target.outputs.head_sha",
+    "steps.target.outputs.head_sha",
+    "Unified advisor green checks gate must expose the checked PR revision",
+  ],
+  [
+    "manual PR identity",
+    '.state == "open" and .base.repo.full_name == $repo and .base.ref == $base',
+    '.state == "open"',
+    "Unified advisor manual dispatch must retain",
+  ],
+  [
     "gate dependency",
     "needs: require-green-checks",
     "needs: []",
@@ -89,7 +101,127 @@ it.each([
     "analysis commit binding",
     "needs.require-green-checks.outputs.head_sha || ''",
     "needs.require-green-checks.outputs.base_sha || ''",
-    "Unified advisor must prepare the PR revision from the successful checks run",
+    "Unified advisor must prepare the resolved PR revision",
+  ],
+  [
+    "manual PR base binding",
+    "needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.base_sha || ''",
+    "github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || ''",
+    "Unified advisor must prepare the resolved PR revision",
+  ],
+  [
+    "manual PR head binding",
+    "needs.require-green-checks.outputs.pr_number != '' && needs.require-green-checks.outputs.head_sha || ''",
+    "github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || ''",
+    "Unified advisor must prepare the resolved PR revision",
+  ],
+  [
+    "ref dispatch checkout",
+    "ref: ${{ needs.require-green-checks.outputs.head_sha }}",
+    "ref: ${{ github.sha }}",
+    "Unified advisor ref dispatch must check out the resolved head SHA",
+  ],
+  [
+    "ref dispatch base analysis",
+    "needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha",
+    "needs.require-green-checks.outputs.pr_number != '' && 'target/base' || inputs.base_ref",
+    "Unified advisor specialists must analyze the resolved revisions",
+  ],
+  [
+    "ref dispatch head analysis",
+    "needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha",
+    "needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || inputs.head_ref",
+    "Unified advisor specialists must analyze the resolved revisions",
+  ],
+  [
+    "ref dispatch sandbox inputs",
+    `      - name: Prepare advisor sandbox inputs
+        env:
+          BASE_REF: \${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
+          HEAD_REF: \${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}`,
+    `      - name: Prepare advisor sandbox inputs
+        env:
+          BASE_REF: \${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
+          HEAD_REF: \${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || inputs.head_ref }}`,
+    "Unified advisor specialists must analyze the resolved revisions",
+  ],
+  [
+    "blocker gate dependency",
+    "needs: [require-green-checks, build-advisor-runtime, review-specialists]",
+    "needs: [require-green-checks, build-advisor-runtime]",
+    "Unified advisor blocker gate must fail closed after every specialist",
+  ],
+  [
+    "blocker artifact attempt binding",
+    "pattern: pr-review-specialist-*-${{ github.run_attempt }}",
+    "pattern: pr-review-specialist-*",
+    "Unified advisor blocker gate must validate exact-attempt specialist evidence",
+  ],
+  [
+    "blocker artifact input",
+    "PR_REVIEW_ADVISOR_ARTIFACTS: ${{ runner.temp }}/pr-review-specialists",
+    "PR_REVIEW_ADVISOR_ARTIFACTS: ''",
+    "Unified advisor blocker gate must validate exact-attempt specialist evidence",
+  ],
+  [
+    "blocker executable command",
+    'run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/blocker-gate.mts" --attempt "$GITHUB_RUN_ATTEMPT"',
+    'run: echo "$ADVISOR_DIR/tools/pr-review-advisor/blocker-gate.mts"',
+    "Unified advisor blocker gate must validate exact-attempt specialist evidence",
+  ],
+  [
+    "coordinator shadow dependency",
+    "needs: [require-green-checks, build-advisor-runtime, review-specialists, advisor-blockers]",
+    "needs: [require-green-checks, build-advisor-runtime, review-specialists]",
+    "Unified advisor coordinator shadow must remain read-only and exact-head bound",
+  ],
+  [
+    "coordinator shadow evidence",
+    'run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"',
+    'run: echo "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"',
+    "Unified advisor coordinator shadow must consume exact-attempt trusted evidence",
+  ],
+  [
+    "coordinator upload step",
+    "- name: Upload coordinator shadow decision",
+    "- name: Upload coordinator result",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "coordinator upload action",
+    "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: pr-review-coordinator-shadow-",
+    "uses: actions/download-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: pr-review-coordinator-shadow-",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "coordinator upload name",
+    "name: pr-review-coordinator-shadow-${{ github.run_attempt }}",
+    "name: pr-review-coordinator-result-${{ github.run_attempt }}",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "coordinator upload path",
+    "path: artifacts/pr-review-coordinator-shadow/decision.json",
+    "path: artifacts/pr-review-coordinator-shadow/missing.json",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "coordinator upload absence",
+    "path: artifacts/pr-review-coordinator-shadow/decision.json\n          if-no-files-found: error",
+    "path: artifacts/pr-review-coordinator-shadow/decision.json\n          if-no-files-found: warn",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "publisher after blocker gate",
+    "needs: [require-green-checks, review-specialists, advisor-blockers, coordinator-shadow]",
+    "needs: [require-green-checks, review-specialists, coordinator-shadow]",
+    "Unified advisor publisher must run after a red blocker gate",
+  ],
+  [
+    "publisher always condition",
+    "if: ${{ always() && github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}",
+    "if: ${{ github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}",
+    "Unified advisor publisher must run after a red blocker gate",
   ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-"));

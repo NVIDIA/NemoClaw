@@ -23,6 +23,7 @@ import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { loadAgent } from "../../agent/defs";
+import * as registry from "../../state/registry";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
@@ -951,7 +952,7 @@ describe("sandbox workload ownership receipt", () => {
     const canonicalProfile = Buffer.from(ENCODED_PROFILE, "base64url").toString("utf8");
     const encodedProfile = Buffer.from(
       canonicalProfile.replace(
-        `"model":${JSON.stringify(profile.inference.model)}`,
+        `"model":${JSON.stringify(profile.inference!.model)}`,
         `"model":"nvapi-${"a".repeat(32)}"`,
       ),
       "utf8",
@@ -1046,9 +1047,11 @@ describe("socket-free MXC action contract", () => {
   beforeEach(() => {
     testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-provider-contract-"));
     vi.stubEnv("HOME", testHome);
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     fs.rmSync(testHome, { recursive: true, force: true });
   });
@@ -1108,6 +1111,7 @@ describe("socket-free MXC action contract", () => {
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },
         dashboardPort: 18789,
+        ...(agent === "hermes" ? { hermesApiPort: 8_642 } : {}),
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         registerSandbox,

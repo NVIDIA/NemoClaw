@@ -44,13 +44,13 @@ describe("OpenShell SDK gateway health observer", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    health.mockResolvedValue({ status: SERVICE_STATUS.HEALTHY, version: "0.0.106" });
+    health.mockResolvedValue({ status: SERVICE_STATUS.HEALTHY, version: "0.0.116" });
     connect.mockResolvedValue({ raw: { health } });
     loadSdk.mockResolvedValue({ connect, serviceStatus: SERVICE_STATUS });
     timeoutSignal.mockReturnValue(new AbortController().signal);
     officialSdkMocks.health.mockResolvedValue({
       status: SERVICE_STATUS.HEALTHY,
-      version: "0.0.106",
+      version: "0.0.116",
     });
     officialSdkMocks.connect.mockResolvedValue({ raw: { health: officialSdkMocks.health } });
   });
@@ -77,7 +77,7 @@ describe("OpenShell SDK gateway health observer", () => {
       caCert: CA_BUNDLE,
     });
     expect(health).toHaveBeenCalledWith({}, { signal });
-    expect(result).toEqual({ ok: true, value: { status: "healthy", release: "0.0.106" } });
+    expect(result).toEqual({ ok: true, value: { status: "healthy", release: "0.0.116" } });
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.ok ? result.value : {})).toBe(true);
   });
@@ -97,7 +97,7 @@ describe("OpenShell SDK gateway health observer", () => {
         signal: timeoutSignal.mock.results[0]?.value,
       },
     );
-    expect(result).toEqual({ ok: true, value: { status: "healthy", release: "0.0.106" } });
+    expect(result).toEqual({ ok: true, value: { status: "healthy", release: "0.0.116" } });
   });
 
   it.each([
@@ -138,18 +138,18 @@ describe("OpenShell SDK gateway health observer", () => {
     [SERVICE_STATUS.DEGRADED, "degraded"],
     [SERVICE_STATUS.UNHEALTHY, "unhealthy"],
   ])("maps SDK service status %s to %s (#9872)", async (sdkStatus, expected) => {
-    health.mockResolvedValue({ status: sdkStatus, version: "0.0.106" });
+    health.mockResolvedValue({ status: sdkStatus, version: "0.0.116" });
     const observer = createOpenShellSdkGatewayHealthObserver({ loadSdk, timeoutSignal });
 
     const result = await observer.observeHealth(request());
 
-    expect(result).toEqual({ ok: true, value: { status: expected, release: "0.0.106" } });
+    expect(result).toEqual({ ok: true, value: { status: expected, release: "0.0.116" } });
   });
 
   it.each([
     ["missing response", null],
-    ["missing status", { version: "0.0.106" }],
-    ["unknown status", { status: 99, version: "0.0.106" }],
+    ["missing status", { version: "0.0.116" }],
+    ["unknown status", { status: 99, version: "0.0.116" }],
     ["missing version", { status: SERVICE_STATUS.HEALTHY }],
   ])("returns a fixed schema error for %s (#9872)", async (_name, response) => {
     health.mockResolvedValue(response);

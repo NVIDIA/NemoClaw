@@ -252,8 +252,20 @@ export function assertUnambiguousDestroyContainerIdentity(
   const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
   if (providerOwnsIdentity) {
     try {
+      const recordedSandboxProviderId = deps.sandbox?.openshellDriver?.trim();
+      const recordedSandboxProvider = recordedSandboxProviderId
+        ? resolveRegisteredRuntimeProvider(recordedSandboxProviderId)
+        : null;
+      if (
+        recordedSandboxProviderId &&
+        recordedSandboxProvider?.identity.id !== provider.identity.id
+      ) {
+        throw new Error(
+          `Sandbox '${sandboxName}' belongs to runtime provider '${recordedSandboxProviderId}'.`,
+        );
+      }
       const providerIdentity =
-        deps.sandbox && captureProviderIdentity
+        deps.sandbox && recordedSandboxProvider && captureProviderIdentity
           ? captureProviderIdentity(deps.sandbox, sandboxName)
           : captureProviderIdentityByName?.(sandboxName);
       return providerIdentity

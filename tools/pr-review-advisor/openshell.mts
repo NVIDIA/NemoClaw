@@ -14,7 +14,6 @@ import {
   startOwnedOpenShellInference,
   type OwnedOpenShellInference,
   createOpenShellSandbox,
-  credentialFreeEnvironment,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
   downloadOpenShellPath,
@@ -27,7 +26,11 @@ import {
   type GitHubReviewContext,
   serializePreparedGitHubContext,
 } from "./github-context.mts";
-import { writeSpecialistDiff } from "./specialist-context.mts";
+import {
+  SPECIALIST_FOLLOW_UP_DIFF_FILE_NAME,
+  writeSpecialistDiff,
+  writeSpecialistFollowUpDiff,
+} from "./specialist-context.mts";
 
 const ADVISOR_CONTEXT_DIRECTORY_NAME = "pr-review-advisor-context";
 const ADVISOR_RUNTIME_DIRECTORY_NAME = "pr-review-advisor-runtime";
@@ -82,7 +85,7 @@ function createBoundaryProof(directory: string, relativeProofDirectory: string):
   fs.chmodSync(proofDirectory, 0o777);
 }
 
-function writeExclusive(file: string, content: string): void {
+export function writeExclusive(file: string, content: string): void {
   const fd = fs.openSync(
     file,
     fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
@@ -105,6 +108,34 @@ function resolveExecutable(name: string, env: NodeJS.ProcessEnv): string {
     env,
     stdio: ["ignore", "pipe", "inherit"],
   }).trim();
+}
+
+function usableFollowUpContext(
+  context: GitHubReviewContext | null,
+  workdir: string,
+  headRef: string,
+): GitHubReviewContext | null {
+  const reviewedHeadSha = context?.followUpReview?.reviewedHeadSha;
+  if (!reviewedHeadSha) return context;
+  const headSha = execFileSync("git", ["rev-parse", headRef], {
+    cwd: workdir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+  if (!/^[0-9a-f]{40}$/u.test(reviewedHeadSha) || reviewedHeadSha === headSha) {
+    const { followUpReview: _discarded, ...initialContext } = context;
+    return initialContext;
+  }
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", reviewedHeadSha, headRef], {
+      cwd: workdir,
+      stdio: "ignore",
+    });
+    return context;
+  } catch {
+    const { followUpReview: _discarded, ...initialContext } = context;
+    return initialContext;
+  }
 }
 
 function copyExecutable(source: string, destination: string): void {
@@ -207,7 +238,9 @@ export async function prepareAdvisorSandboxInputs(
 
   const contextEnv = { ...env };
   if (options.collectContext) delete contextEnv.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH;
-  const context = await (options.collectContext ?? collectGitHubReviewContext)(contextEnv);
+  const rawContext = await (options.collectContext ?? collectGitHubReviewContext)(contextEnv);
+  const headRef = env.PR_REVIEW_ADVISOR_INTEREST ? required(env.HEAD_REF, "HEAD_REF") : "HEAD";
+  const context = usableFollowUpContext(rawContext, advisorWorkdir, headRef);
   writeExclusive(
     path.join(contextDirectory, ADVISOR_CONTEXT_FILE_NAME),
     serializePreparedGitHubContext(context),
@@ -215,15 +248,21 @@ export async function prepareAdvisorSandboxInputs(
   fs.chmodSync(path.join(contextDirectory, ADVISOR_CONTEXT_FILE_NAME), 0o444);
   if (env.PR_REVIEW_ADVISOR_INTEREST) {
     const baseRef = required(env.BASE_REF, "BASE_REF");
-    const headRef = required(env.HEAD_REF, "HEAD_REF");
     const specialistDirectory = path.join(
       contextDirectory,
       ADVISOR_SPECIALIST_CONTEXT_DIRECTORY_NAME,
     );
     const diff = getDiff(baseRef, headRef, advisorWorkdir);
     writeSpecialistDiff(specialistDirectory, diff);
+    if (context?.followUpReview) {
+      const followUpDiff = getDiff(context.followUpReview.reviewedHeadSha, headRef, advisorWorkdir);
+      writeSpecialistFollowUpDiff(specialistDirectory, followUpDiff);
+    }
     fs.chmodSync(specialistDirectory, 0o555);
     fs.chmodSync(path.join(specialistDirectory, "diff.patch"), 0o444);
+    if (context?.followUpReview) {
+      fs.chmodSync(path.join(specialistDirectory, SPECIALIST_FOLLOW_UP_DIFF_FILE_NAME), 0o444);
+    }
   }
 
   const findExecutable = options.resolveExecutable ?? resolveExecutable;
@@ -319,6 +358,10 @@ function passthroughEnvironment(env: NodeJS.ProcessEnv): Record<string, string> 
   for (const name of [
     "BASE_REF",
     "GITHUB_REPOSITORY",
+    "GITHUB_RUN_ID",
+    "GITHUB_RUN_ATTEMPT",
+    "GITHUB_WORKFLOW_SHA",
+    "GITHUB_EVENT_NAME",
     "HEAD_REF",
     "PR_NUMBER",
     "PR_REVIEW_ADVISOR_ARTIFACT_DIR",
@@ -560,19 +603,44 @@ export function initializeAdvisorSandboxRuntime(): void {
   checkAdvisorSandboxRuntime();
 }
 
-export function runOpenShellAdvisorCommand(
+export async function runOpenShellAdvisorCommand(
   command: string | undefined,
   initialize: () => void = initializeAdvisorSandboxRuntime,
-): void {
+  waitForTermination: () => Promise<void> = waitForAdvisorSandboxTermination,
+): Promise<void> {
   const requiredCommand = required(command, "openshell command");
   if (requiredCommand !== "initialize") {
     throw new Error(`Unsupported OpenShell advisor command: ${requiredCommand}`);
   }
   initialize();
+  await waitForTermination();
+}
+
+type AdvisorSandboxSignals = {
+  once(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
+  removeListener(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
+};
+
+export function waitForAdvisorSandboxTermination(
+  signals: AdvisorSandboxSignals = process,
+): Promise<void> {
+  return new Promise((resolve) => {
+    // Signal listeners and an unresolved promise do not keep Node running when
+    // no active handles remain. Own one handle until OpenShell terminates PID 1.
+    const keepAlive = setInterval(() => undefined, 60_000);
+    const finish = () => {
+      clearInterval(keepAlive);
+      signals.removeListener("SIGTERM", finish);
+      signals.removeListener("SIGINT", finish);
+      resolve();
+    };
+    signals.once("SIGTERM", finish);
+    signals.once("SIGINT", finish);
+  });
 }
 
 async function main(): Promise<void> {
-  runOpenShellAdvisorCommand(process.argv[2]);
+  await runOpenShellAdvisorCommand(process.argv[2]);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

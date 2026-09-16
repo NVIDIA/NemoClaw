@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../state/onboard-session";
 import { nemoclawStateRoot } from "../state/state-root";
@@ -14,7 +14,9 @@ import type { GatewayManagementDeclaration } from "./gateway-management";
 import { type GatewayOwner, resolveGatewayOwner } from "./gateway-ownership";
 import {
   GatewayAuthorityError,
+  removeGatewayRegistrationThroughAdapter,
   resolveGatewayCredentialMutationAuthority,
+  resolveGatewayForwardAuthority,
   resolveGatewayRebuildAuthority,
   resolveGatewayTeardownAuthority,
 } from "./gateway-teardown-authority";
@@ -302,6 +304,58 @@ describe("resolveGatewayTeardownAuthority", () => {
   });
 });
 
+describe("resolveGatewayForwardAuthority", () => {
+  it("returns the exact external endpoint while its recorded authority still matches", () => {
+    const currentDeclaration = declaration();
+    const recordedOwner = owner(currentDeclaration);
+
+    expect(
+      resolveGatewayForwardAuthority(target, {
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({
+          ok: true,
+          declaration: currentDeclaration,
+          source: "profile",
+        }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toEqual(recordedOwner);
+  });
+
+  it("fails closed when forward recovery observes authority drift", () => {
+    const recordedOwner = owner(declaration("systemd-system"));
+
+    expect(() =>
+      resolveGatewayForwardAuthority(target, {
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({
+          ok: true,
+          declaration: declaration("systemd-user"),
+          source: "profile",
+        }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toThrow(/authority changed since onboarding.*sandbox forward recovery/u);
+  });
+
+  it("rejects a noncanonical forward target before loading authority", () => {
+    let loaded = false;
+
+    expect(() =>
+      resolveGatewayForwardAuthority(
+        { gatewayName: "other", gatewayPort: 8080 },
+        {
+          loadDeclaration: () => {
+            loaded = true;
+            return { ok: true, declaration: null, source: null };
+          },
+        },
+      ),
+    ).toThrow(/noncanonical target/u);
+    expect(loaded).toBe(false);
+  });
+});
+
 describe("resolveGatewayRebuildAuthority", () => {
   const packagedOwner = resolveGatewayOwner({
     ...target,
@@ -366,5 +420,97 @@ describe("resolveGatewayRebuildAuthority", () => {
     ).toThrow(
       /authority changed since onboarding.*sandbox rebuild will not perform gateway effects/,
     );
+  });
+});
+
+describe("gateway registration cleanup authority", () => {
+  function lifecycleFailure(unsupported = true, ambiguous = false) {
+    return {
+      ok: false as const,
+      unsupported,
+      ambiguous,
+      error: { kind: "command" as const, reason: "failed" as const, message: "Removal failed." },
+    };
+  }
+  function cleanupFixture(result = lifecycleFailure()) {
+    const lifecycle = {
+      supportsLegacyLifecycle: vi.fn(async () => true),
+      selectGateway: vi.fn(async () => ({ ok: true as const, state: "completed" as const })),
+      registerGateway: vi.fn(async () => ({ ok: true as const, state: "completed" as const })),
+      removeGateway: vi.fn(async () => result),
+      destroyGateway: vi.fn(async () => ({ ok: true as const, state: "completed" as const })),
+      listGateways: vi.fn(async () => ({ ok: true as const, names: [] })),
+    };
+    return {
+      gatewayName: target.gatewayName,
+      allowLegacyDestroy: true,
+      lifecycle,
+      revalidateAuthority: vi.fn(() => managedOwner(false)),
+    };
+  }
+
+  it("permits legacy destroy only after explicit unsupported removal and current ownership", async () => {
+    const options = cleanupFixture();
+    await expect(removeGatewayRegistrationThroughAdapter(options)).resolves.toEqual({
+      ok: true,
+      state: "completed",
+    });
+    expect(options.revalidateAuthority).toHaveBeenCalledOnce();
+    expect(options.lifecycle.destroyGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+    });
+    expect(options.lifecycle.removeGateway).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { authority: "external", currentOwner: owner(declaration()), allowLegacyDestroy: true },
+    {
+      authority: "different",
+      currentOwner: { ...managedOwner(false), gatewayName: "nemoclaw-8090" },
+      allowLegacyDestroy: true,
+    },
+    { authority: "disabled", currentOwner: managedOwner(false), allowLegacyDestroy: false },
+  ])(
+    "preserves the gateway when fallback authority is $authority",
+    async ({ currentOwner, allowLegacyDestroy }) => {
+      const options = cleanupFixture();
+      options.revalidateAuthority.mockReturnValue(currentOwner);
+      options.allowLegacyDestroy = allowLegacyDestroy;
+      await expect(removeGatewayRegistrationThroughAdapter(options)).resolves.toMatchObject({
+        ok: false,
+      });
+      expect(options.lifecycle.destroyGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reconciles ambiguous removal without retry or legacy destruction", async () => {
+    const options = cleanupFixture(lifecycleFailure(false, true));
+    await expect(removeGatewayRegistrationThroughAdapter(options)).resolves.toMatchObject({
+      ok: false,
+      ambiguous: true,
+    });
+    expect(options.revalidateAuthority).toHaveBeenCalledOnce();
+    expect(options.lifecycle.listGateways).toHaveBeenCalledOnce();
+    expect(options.lifecycle.removeGateway).toHaveBeenCalledOnce();
+    expect(options.lifecycle.destroyGateway).not.toHaveBeenCalled();
+  });
+
+  it("does not destroy after an ordinary failed removal", async () => {
+    const options = cleanupFixture(lifecycleFailure(false));
+    await expect(removeGatewayRegistrationThroughAdapter(options)).resolves.toMatchObject({
+      ok: false,
+    });
+    expect(options.lifecycle.destroyGateway).not.toHaveBeenCalled();
+  });
+
+  it("stops when ownership changes before legacy destruction", async () => {
+    const options = cleanupFixture();
+    options.revalidateAuthority.mockImplementation(() => {
+      throw new GatewayAuthorityError("authority changed");
+    });
+    await expect(removeGatewayRegistrationThroughAdapter(options)).rejects.toThrow(
+      "authority changed",
+    );
+    expect(options.lifecycle.destroyGateway).not.toHaveBeenCalled();
   });
 });

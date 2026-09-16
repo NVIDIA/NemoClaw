@@ -23,11 +23,11 @@ describe("rebuild filesystem restore", () => {
     vi.restoreAllMocks();
   });
 
-  it("restores through managed snapshot authority without replaying policy state", () => {
+  it("restores through managed snapshot authority without replaying policy state", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const restore = vi
       .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
-      .mockReturnValue({
+      .mockResolvedValue({
         success: true,
         restoredDirs: ["workspace"],
         restoredFiles: ["user.md"],
@@ -35,7 +35,7 @@ describe("rebuild filesystem restore", () => {
         failedFiles: [],
       });
 
-    const result = runRebuildRestorePhase({
+    const result = await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "openclaw",
       targetImageIsCustom: false,
@@ -52,11 +52,11 @@ describe("rebuild filesystem restore", () => {
     expect(result).toEqual({ restoreSucceeded: true });
   });
 
-  it("allows whole-state file restore only for an explicit custom image", () => {
+  it("allows whole-state file restore only for an explicit custom image", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const restore = vi
       .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
-      .mockReturnValue({
+      .mockResolvedValue({
         success: true,
         restoredDirs: [],
         restoredFiles: [],
@@ -64,7 +64,7 @@ describe("rebuild filesystem restore", () => {
         failedFiles: [],
       });
 
-    runRebuildRestorePhase({
+    await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "openclaw",
       targetImageIsCustom: true,
@@ -83,11 +83,11 @@ describe("rebuild filesystem restore", () => {
     );
   });
 
-  it("carries the frozen OpenShell target into fresh-plugin discovery and SSH restore reads (#10514)", () => {
+  it("carries the frozen OpenShell target into fresh-plugin discovery and SSH restore reads (#10514)", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const restore = vi
       .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
-      .mockReturnValue({
+      .mockResolvedValue({
         success: true,
         restoredDirs: [],
         restoredFiles: [],
@@ -100,7 +100,7 @@ describe("rebuild filesystem restore", () => {
       workspace: "default",
     };
 
-    runRebuildRestorePhase({
+    await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "openclaw",
       targetImageIsCustom: false,
@@ -117,15 +117,17 @@ describe("rebuild filesystem restore", () => {
     );
   });
 
-  it("migrates restored Hermes dashboard state into its current profile", () => {
+  it("migrates restored Hermes dashboard state into its current profile", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
-      success: true,
-      restoredDirs: ["profiles", "dashboard-home"],
-      restoredFiles: [],
-      failedDirs: [],
-      failedFiles: [],
-    });
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["profiles", "dashboard-home"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
     const target = {
       agentName: "hermes",
       configDir: "/sandbox/.hermes",
@@ -139,7 +141,7 @@ describe("rebuild filesystem restore", () => {
       .mockReturnValue("converged");
     const log = vi.fn();
 
-    const result = runRebuildRestorePhase({
+    const result = await runRebuildRestorePhase({
       sandboxName: "hermes",
       targetAgentType: "hermes",
       targetImageIsCustom: false,
@@ -155,15 +157,17 @@ describe("rebuild filesystem restore", () => {
     });
   });
 
-  it("restores digest-bound Hermes operator config before dashboard reseeding", () => {
+  it("restores digest-bound Hermes operator config before dashboard reseeding", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
-      success: true,
-      restoredDirs: ["profiles"],
-      restoredFiles: [],
-      failedDirs: [],
-      failedFiles: [],
-    });
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["profiles"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-10495-restore-"));
     try {
       const snapshot = {
@@ -205,7 +209,7 @@ describe("rebuild filesystem restore", () => {
         .spyOn(sandboxConfig, "restoreHermesDashboardConfig")
         .mockReturnValue("converged");
 
-      const result = runRebuildRestorePhase({
+      const result = await runRebuildRestorePhase({
         sandboxName: "hermes",
         targetAgentType: "hermes",
         targetImageIsCustom: false,
@@ -231,16 +235,18 @@ describe("rebuild filesystem restore", () => {
     }
   });
 
-  it("reports an unresolved or failed Hermes dashboard migration as incomplete", () => {
+  it("reports an unresolved or failed Hermes dashboard migration as incomplete", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
-      success: true,
-      restoredDirs: ["dashboard-home"],
-      restoredFiles: [],
-      failedDirs: [],
-      failedFiles: [],
-    });
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["dashboard-home"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
     vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
       agentName: "openclaw",
       configDir: "/sandbox/.openclaw",
@@ -250,7 +256,7 @@ describe("rebuild filesystem restore", () => {
     });
     const migrate = vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig");
 
-    const result = runRebuildRestorePhase({
+    const result = await runRebuildRestorePhase({
       sandboxName: "hermes",
       targetAgentType: "hermes",
       targetImageIsCustom: false,
@@ -265,16 +271,18 @@ describe("rebuild filesystem restore", () => {
     });
   });
 
-  it("fails closed when the Hermes config handoff digest does not match", () => {
+  it("fails closed when the Hermes config handoff digest does not match", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
-      success: true,
-      restoredDirs: [],
-      restoredFiles: [],
-      failedDirs: [],
-      failedFiles: [],
-    });
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
     const write = vi.spyOn(sandboxConfig, "writeSandboxConfig").mockImplementation(() => undefined);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-10495-tampered-"));
     try {
@@ -284,7 +292,7 @@ describe("rebuild filesystem restore", () => {
         mode: 0o600,
       });
 
-      const result = runRebuildRestorePhase({
+      const result = await runRebuildRestorePhase({
         sandboxName: "hermes",
         targetAgentType: "hermes",
         targetImageIsCustom: false,
@@ -313,8 +321,8 @@ describe("rebuild filesystem restore", () => {
     }
   });
 
-  it("returns an explicit empty Hermes config report when no backup manifest exists", () => {
-    const result = runRebuildRestorePhase({
+  it("returns an explicit empty Hermes config report when no backup manifest exists", async () => {
+    const result = await runRebuildRestorePhase({
       sandboxName: "hermes",
       targetAgentType: "hermes",
       targetImageIsCustom: false,
@@ -328,20 +336,22 @@ describe("rebuild filesystem restore", () => {
     });
   });
 
-  it("surfaces a filesystem restore failure without inventing policy recovery", () => {
+  it("surfaces a filesystem restore failure without inventing policy recovery", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const log = vi.fn();
-    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
-      success: false,
-      restoredDirs: [],
-      restoredFiles: [],
-      failedDirs: ["extensions"],
-      failedFiles: [],
-      error: "could not read fresh OpenClaw plugin install registry",
-    });
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: false,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: ["extensions"],
+        failedFiles: [],
+        error: "could not read fresh OpenClaw plugin install registry",
+      },
+    );
 
-    const result = runRebuildRestorePhase({
+    const result = await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "openclaw",
       targetImageIsCustom: false,

@@ -20,7 +20,6 @@ import {
   MANAGED_CLUSTER_TRANSACTION_LABEL,
   materializeManagedClusterVllmPlan,
   type ManagedClusterVllmPlan,
-  type ManagedClusterVllmRole,
   type ManagedClusterVllmRolePlan,
 } from "./managed-cluster-materialize.js";
 import {

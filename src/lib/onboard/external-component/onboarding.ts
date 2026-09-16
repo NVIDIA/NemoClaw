@@ -3,15 +3,20 @@
 
 import { inspectPolicyMutationContext } from "../../policy";
 import type { ExternalComponentActivationIncomplete } from "../../state/onboard-session";
-import { configureDockerDriverGatewayExternalComponent } from "../docker-driver-gateway-env";
+import {
+  configureDockerDriverGatewayExternalComponent,
+  observeConfiguredGatewayHostRuntime,
+} from "../docker-driver-gateway-env";
 import type { SandboxLifecycleHelpers } from "../sandbox-lifecycle";
 import {
   ExternalComponentContractError,
   loadExternalComponentDeclaration,
   type PreparedExternalComponent,
+  type ExternalComponentGatewayConfiguration,
 } from "./index";
 import { activateExternalComponent, createExternalComponentActivationId } from "./activation";
 import { createExternalComponentActivationProof } from "./proof";
+import { prepareExternalComponentNetwork } from "./network";
 
 export function prepareExternalComponent(
   session: {
@@ -53,13 +58,28 @@ export function flowDeps(
     assertGatewayReadiness: () => readiness.collectGatewayReadiness().then(() => undefined),
     assertExternalComponentFreshSandbox: (requestedSandboxName: string | null) =>
       assertExternalComponentFreshSandbox(requestedSandboxName, inspectSandboxForCreate),
-    configureExternalComponentGateway: (
-      externalComponent: {
-        readonly componentId: string;
-        readonly interceptorSocketPath: string;
-      } | null,
-    ) =>
-      configureDockerDriverGatewayExternalComponent(getDockerDriverGatewayEnv(), externalComponent),
+    configureExternalComponentGateway: async (
+      externalComponent: ExternalComponentGatewayConfiguration | null,
+    ) => {
+      const env = getDockerDriverGatewayEnv();
+      const network =
+        externalComponent && "interceptor" in externalComponent
+          ? await prepareExternalComponentNetwork(
+              env,
+              observeConfiguredGatewayHostRuntime({ environment: env }),
+            )
+          : undefined;
+      network?.revalidate();
+      if (network) env.DOCKER_HOST = `unix://${network.socketPath}`;
+      const preparation = configureDockerDriverGatewayExternalComponent(env, externalComponent);
+      if (!preparation || !network) return preparation;
+      const revalidate = () => {
+        network.revalidate();
+        preparation.revalidate();
+      };
+      revalidate();
+      return { ...preparation, revalidate };
+    },
     prepareExternalComponent,
   };
 }
@@ -92,8 +112,8 @@ export function finalDeps(
   runCaptureOpenshell: CaptureOpenShell,
 ) {
   return {
-    createExternalComponentActivationProof: (sandboxName: string) =>
-      createExternalComponentActivationProof(sandboxName, gatewayName, {
+    createExternalComponentActivationProof: async (sandboxName: string) =>
+      await createExternalComponentActivationProof(sandboxName, gatewayName, {
         getSandbox: registry.getSandbox,
         inspectPolicy: inspectPolicyMutationContext,
         listSandboxes: (selectedGatewayName: string) =>

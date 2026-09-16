@@ -56,6 +56,7 @@ import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -73,6 +74,7 @@ const AUTHORITATIVE_LOCAL_BASE_BUILD_OUTPUT =
   "Building OpenClaw sandbox base image locally because no compatible published base image was found.";
 const MEASURE_COLD_ONBOARD =
   !USE_PREINSTALLED_LAUNCHABLE && process.env.E2E_TARGET_ID === "full-e2e";
+let gateway: ReturnType<typeof fullE2eGateway>;
 
 interface ColdOnboardCapture {
   outputEvents: ShellProbeOutputEvent[];
@@ -95,7 +97,7 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    OPENSHELL_GATEWAY: "nemoclaw",
+    ...gateway.env,
     ...securityPostureModeEnv(),
     ...extra,
   };
@@ -311,13 +313,15 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
       timeoutMs: 60_000,
     })
     .catch(() => undefined);
-  await sandbox
-    .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "cleanup-openshell-gateway-destroy",
-      env: env(),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
+  await withOwnedFullE2eGateway(gateway, () =>
+    sandbox
+      .openshell(["gateway", "destroy", "-g", gateway.env.OPENSHELL_GATEWAY], {
+        artifactName: "cleanup-openshell-gateway-destroy",
+        env: env(),
+        timeoutMs: 60_000,
+      })
+      .catch(() => undefined),
+  );
 }
 
 function readAndDeleteTraceWindow(traceFile: string, traceDirectory: string): OnboardTraceWindow {
@@ -528,6 +532,7 @@ test(
     secrets,
     skip,
   }) => {
+    gateway = fullE2eGateway(USE_PREINSTALLED_LAUNCHABLE);
     const hosted = requireHostedInferenceConfig(
       secrets,
       process.env,
@@ -553,7 +558,9 @@ test(
         USE_PREINSTALLED_LAUNCHABLE
           ? "the baked Launchable completes onboarding without installing from source"
           : "install.sh --non-interactive completes onboarding",
-        "cold onboarding stays within the checked-in full-E2E performance budgets",
+        ...(MEASURE_COLD_ONBOARD
+          ? ["cold onboarding stays within the checked-in full-E2E performance budgets"]
+          : []),
         "nemoclaw and openshell are installed and usable",
         "sandbox appears in list/status and has policy/inference configuration",
         "direct hosted inference and sandbox inference.local both respond",
@@ -579,12 +586,14 @@ test(
     });
 
     !USE_PREINSTALLED_LAUNCHABLE && lifecycle.trackInstallerGatewayUserService();
-    cleanupRegistry.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-openshell-gateway-destroy",
-      env: env(),
-      redactionValues: [hosted.apiKey],
-      timeoutMs: 60_000,
-    });
+    await withOwnedFullE2eGateway(gateway, () =>
+      cleanupRegistry.trackGateway(host, gateway.env.OPENSHELL_GATEWAY, {
+        artifactName: "cleanup-openshell-gateway-destroy",
+        env: env(),
+        redactionValues: [hosted.apiKey],
+        timeoutMs: 60_000,
+      }),
+    );
     cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-openshell-sandbox-delete",

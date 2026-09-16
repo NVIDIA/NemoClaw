@@ -55,7 +55,6 @@ const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
 };
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
-const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION =
@@ -161,13 +160,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "retired-selector-compatibility",
-    {
-      name: "e2e-retired-selector-compatibility",
-      path: "e2e-artifacts/live/retired-selector-compatibility/",
-    },
-  ],
-  [
     "staging-brev-launchable",
     {
       name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
@@ -241,13 +233,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "${{ matrix.artifactName }}",
       path: "${{ runner.temp }}/native-runtime-evidence/",
-    },
-  ],
-  [
-    "llama-cpp-dgx-spark-qualification",
-    {
-      name: "e2e-llama-cpp-dgx-spark-qualification",
-      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/",
     },
   ],
   [
@@ -469,7 +454,6 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "live" ||
           jobName === "native-runtime-qualification-podman-toolchain" ||
           jobName === "openshell-dev-artifact" ||
-          jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
           SHARED_E2E_JOBS.has(jobName) ||

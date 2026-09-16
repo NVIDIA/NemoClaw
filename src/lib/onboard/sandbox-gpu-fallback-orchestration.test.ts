@@ -8,7 +8,6 @@ import {
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
 import {
-  cleanupNativeGpuFailureForFallback,
   executeSandboxGpuCreatePlan,
   type NativeGpuFallbackCleanupResult,
   type SandboxGpuCreateAttemptFailure,

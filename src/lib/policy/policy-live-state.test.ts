@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import YAML from "yaml";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,12 +22,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
+  cliOpenShellSandboxPolicyReader: {
     inspectSandboxPolicy: mocks.inspectSandboxPolicy,
     readSandboxPolicy: mocks.readSandboxPolicy,
     readSandboxPolicyRevision: mocks.readSandboxPolicyRevision,
   },
-  syncCliOpenShellSandboxPolicyWriter: {
+  cliOpenShellSandboxPolicyWriter: {
     setSandboxPolicy: mocks.setSandboxPolicy,
   },
 }));
@@ -87,7 +86,7 @@ describe("live OpenShell policy mutations", () => {
     }));
     mocks.resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
     mocks.setSandboxPolicy.mockImplementation((request) => {
-      livePolicy = fs.readFileSync(request.policyPath, "utf8");
+      livePolicy = request.document;
       return {
         outcome: { kind: "applied" },
         status: 0,
@@ -98,16 +97,16 @@ describe("live OpenShell policy mutations", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
-  it("uses live policy state without a registry owner or receipt", () => {
-    expect(inspectPolicyMutationContext(sandboxName, "inspect policy")).toEqual(
+  it("uses live policy state without a registry owner or receipt", async () => {
+    expect(await inspectPolicyMutationContext(sandboxName, "inspect policy")).toEqual(
       expect.objectContaining({ gatewayName: "nemoclaw" }),
     );
-    expect(inspectPolicyMutationContext(sandboxName, "inspect policy")).not.toHaveProperty(
+    expect(await inspectPolicyMutationContext(sandboxName, "inspect policy")).not.toHaveProperty(
       "authority",
     );
   });
 
-  it("pins recorded policy reads to the supplied operation target (#10514)", () => {
+  it("pins recorded policy reads to the supplied operation target (#10514)", async () => {
     const runtimeSelection = {
       gatewayName: "nemoclaw",
       localTlsDir: "/authority/tls",
@@ -115,7 +114,11 @@ describe("live OpenShell policy mutations", () => {
     } as const;
 
     expect(
-      captureRecordedSandboxBasePolicy(sandboxName, "capture a lifecycle policy", runtimeSelection),
+      await captureRecordedSandboxBasePolicy(
+        sandboxName,
+        "capture a lifecycle policy",
+        runtimeSelection,
+      ),
     ).toBe(livePolicy);
     expect(mocks.inspectSandboxPolicy).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
@@ -132,40 +135,41 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("confirms an ambiguous submission when authoritative readback matches", () => {
-    const context = inspectPolicyMutationContext(sandboxName, "prepare policy confirmation");
+  it("confirms an ambiguous submission when authoritative readback matches", async () => {
+    const context = await inspectPolicyMutationContext(sandboxName, "prepare policy confirmation");
 
-    expect(() =>
+    await expect(
       confirmAppliedPolicySetSubmission(
-        { outcome: { kind: "ambiguous", detail: "response stream reset" }, status: 3 },
+        { status: 1, outcome: { kind: "ambiguous", detail: "response stream reset" } },
         sandboxName,
         livePolicy,
         context,
         "apply the requested policy",
       ),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it("leaves an ambiguous submission unconfirmed when readback is unavailable", () => {
-    const context = inspectPolicyMutationContext(sandboxName, "prepare policy confirmation");
+  it("leaves an ambiguous submission unconfirmed when readback is unavailable", async () => {
+    const context = await inspectPolicyMutationContext(sandboxName, "prepare policy confirmation");
     mocks.readSandboxPolicy.mockReturnValue({
       ok: false,
       error: { kind: "timeout", message: "OpenShell policy read timed out" },
     });
 
-    expect(() =>
-      confirmAppliedPolicySetSubmission(
-        { outcome: { kind: "ambiguous", detail: "response stream reset" }, status: 3 },
-        sandboxName,
-        livePolicy,
-        context,
-        "apply the requested policy",
-      ),
-    ).toThrow("could not verify the resulting base policy");
+    await expect(
+      (async () =>
+        await confirmAppliedPolicySetSubmission(
+          { status: 1, outcome: { kind: "ambiguous", detail: "response stream reset" } },
+          sandboxName,
+          livePolicy,
+          context,
+          "apply the requested policy",
+        ))(),
+    ).rejects.toThrow("could not verify the resulting base policy");
   });
 
-  it("preserves an out-of-band host entry while adding and removing a preset", () => {
-    expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(true);
+  it("preserves an out-of-band host entry while adding and removing a preset", async () => {
+    expect(await applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(true);
     expect(mocks.setSandboxPolicy).toHaveBeenCalledOnce();
     expect(mocks.readSandboxPolicy).toHaveBeenCalledTimes(3);
     expect(YAML.parse(livePolicy).network_policies).toEqual(
@@ -174,20 +178,20 @@ describe("live OpenShell policy mutations", () => {
 
     mocks.setSandboxPolicy.mockClear();
     mocks.readSandboxPolicy.mockClear();
-    expect(removePreset(sandboxName, "weather", { nonFatal: true })).toBe(true);
+    expect(await removePreset(sandboxName, "weather", { nonFatal: true })).toBe(true);
     expect(mocks.setSandboxPolicy).toHaveBeenCalledOnce();
     expect(mocks.readSandboxPolicy).toHaveBeenCalledTimes(3);
     expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
   });
 
-  it("uses one initial base-policy read, one final recheck, and one write readback for a batch", () => {
-    expect(applyPresets(sandboxName, ["weather"])).toBe(true);
+  it("uses one initial base-policy read, one final recheck, and one write readback for a batch", async () => {
+    expect(await applyPresets(sandboxName, ["weather"])).toBe(true);
 
     expect(mocks.readSandboxPolicy).toHaveBeenCalledTimes(3);
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty("weather");
   });
 
-  it("does not overwrite a host edit that races a prepared full-policy update", () => {
+  it("does not overwrite a host edit that races a prepared full-policy update", async () => {
     let observations = 0;
     mocks.inspectSandboxPolicy.mockImplementation(() => {
       observations += 1;
@@ -214,13 +218,15 @@ describe("live OpenShell policy mutations", () => {
       });
     });
 
-    expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(false);
+    expect(await applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(
+      false,
+    );
     expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
     expect(mocks.readSandboxPolicy).toHaveBeenCalledTimes(2);
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
   });
 
-  it("preserves a host edit made after the final reread but before policy set", () => {
+  it("preserves a host edit made after the final reread but before policy set", async () => {
     let activeVersion = 1;
     let concurrentRevision = livePolicy;
     mocks.inspectSandboxPolicy.mockImplementation(() => {
@@ -239,7 +245,7 @@ describe("live OpenShell policy mutations", () => {
     mocks.setSandboxPolicy
       .mockImplementationOnce((request) => {
         writes += 1;
-        const requested = fs.readFileSync(request.policyPath, "utf8");
+        const requested = request.document;
         const concurrent = YAML.parse(livePolicy);
         concurrent.network_policies.concurrent_host_edit = {
           endpoints: [{ host: "concurrent.example.com", port: 443 }],
@@ -252,12 +258,12 @@ describe("live OpenShell policy mutations", () => {
       })
       .mockImplementation((request) => {
         writes += 1;
-        livePolicy = fs.readFileSync(request.policyPath, "utf8");
+        livePolicy = request.document;
         activeVersion += 1;
         return { outcome: { kind: "applied" }, status: 0 };
       });
 
-    expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(true);
+    expect(await applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(true);
     expect(writes).toBe(2);
     expect(YAML.parse(livePolicy).network_policies).toEqual(
       expect.objectContaining({
@@ -268,46 +274,46 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("accepts an ambiguous write only when live readback matches", () => {
+  it("accepts an ambiguous write only when live readback matches", async () => {
     const desiredPolicy = YAML.stringify({
       version: 1,
       network_policies: { host_approval: hostEntry, confirmed_after_reset: {} },
     });
     mocks.setSandboxPolicy.mockImplementation((request) => {
-      livePolicy = fs.readFileSync(request.policyPath, "utf8");
+      livePolicy = request.document;
       return {
         outcome: { kind: "ambiguous", detail: "openshell: response stream reset" },
-        status: 3,
+        status: 1,
       };
     });
 
-    expect(setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(true);
+    expect(await setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(true);
     expect(mocks.readSandboxPolicy).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxName, scope: "base" }),
     );
   });
 
-  it("rejects an ambiguous write when live readback differs", () => {
+  it("rejects an ambiguous write when live readback differs", async () => {
     const desiredPolicy = YAML.stringify({
       version: 1,
       network_policies: { requested_but_absent: {} },
     });
     mocks.setSandboxPolicy.mockReturnValue({
       outcome: { kind: "ambiguous", detail: "openshell: response stream reset" },
-      status: 3,
+      status: 1,
     });
 
-    expect(setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(false);
+    expect(await setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(false);
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("The current live policy differs from the requested document"),
     );
   });
 
-  it("rejects an ambiguous write when live readback is unavailable", () => {
+  it("rejects an ambiguous write when live readback is unavailable", async () => {
     const desiredPolicy = YAML.stringify({ version: 1, network_policies: {} });
     mocks.setSandboxPolicy.mockReturnValue({
       outcome: { kind: "ambiguous", detail: "openshell: response stream reset" },
-      status: 3,
+      status: 1,
     });
     mocks.readSandboxPolicy
       .mockImplementationOnce(() => policyRead(livePolicy))
@@ -316,13 +322,13 @@ describe("live OpenShell policy mutations", () => {
         error: { kind: "timeout", message: "OpenShell policy read timed out" },
       });
 
-    expect(setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(false);
+    expect(await setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(false);
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("The current live policy could not be read"),
     );
   });
 
-  it("removes one baseline entry from the bounded live policy", () => {
+  it("removes one baseline entry from the bounded live policy", async () => {
     const baselineEntry = {
       name: "npm_registry",
       endpoints: [{ host: "registry.npmjs.org", port: 443 }],
@@ -333,14 +339,14 @@ describe("live OpenShell policy mutations", () => {
     });
 
     expect(
-      excludeBaselineEntry(sandboxName, "npm_registry", digestBaselineEntry(baselineEntry), {
+      await excludeBaselineEntry(sandboxName, "npm_registry", digestBaselineEntry(baselineEntry), {
         nonFatal: true,
       }),
     ).toBe(true);
     expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
   });
 
-  it("does not let baseline exclude or restore overwrite a concurrent host edit", () => {
+  it("does not let baseline exclude or restore overwrite a concurrent host edit", async () => {
     const baselineEntry = {
       name: "npm_registry",
       endpoints: [{ host: "registry.npmjs.org", port: 443 }],
@@ -381,7 +387,7 @@ describe("live OpenShell policy mutations", () => {
     });
     installRace();
     expect(
-      excludeBaselineEntry(sandboxName, "npm_registry", digestBaselineEntry(baselineEntry), {
+      await excludeBaselineEntry(sandboxName, "npm_registry", digestBaselineEntry(baselineEntry), {
         nonFatal: true,
       }),
     ).toBe(false);
@@ -393,28 +399,30 @@ describe("live OpenShell policy mutations", () => {
       network_policies: { host_approval: hostEntry },
     });
     installRace();
-    expect(restoreBaselineEntry(sandboxName, "npm_registry", { nonFatal: true })).toBe(false);
+    expect(await restoreBaselineEntry(sandboxName, "npm_registry", { nonFatal: true })).toBe(false);
     expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
   });
 
-  it("makes no mutation when the bounded base-policy adapter refuses the read", () => {
+  it("makes no mutation when the bounded base-policy adapter refuses the read", async () => {
     mocks.readSandboxPolicy.mockReturnValue({
       ok: false,
       error: { kind: "timeout", message: "OpenShell policy read timed out" },
     });
 
-    expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(false);
-    expect(removePreset(sandboxName, "weather", { nonFatal: true, presetContent: preset })).toBe(
+    expect(await applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(
       false,
     );
-    expect(applyPresets(sandboxName, ["npm"])).toBe(false);
+    expect(
+      await removePreset(sandboxName, "weather", { nonFatal: true, presetContent: preset }),
+    ).toBe(false);
+    expect(await applyPresets(sandboxName, ["npm"])).toBe(false);
     expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
   });
 
-  it("derives custom preset identity from namespaced OpenShell keys", () => {
+  it("derives custom preset identity from namespaced OpenShell keys", async () => {
     expect(
-      applyPresetContent(sandboxName, "weather", preset, {
+      await applyPresetContent(sandboxName, "weather", preset, {
         custom: { sourcePath: "/tmp/weather.yaml" },
         nonFatal: true,
       }),
@@ -424,10 +432,10 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("loads a live custom preset without reporting a built-in miss (#10775)", () => {
+  it("loads a live custom preset without reporting a built-in miss (#10775)", async () => {
     vi.mocked(console.error).mockClear();
     expect(
-      applyPresetContent(sandboxName, "fixture-weather", preset, {
+      await applyPresetContent(sandboxName, "fixture-weather", preset, {
         custom: { sourcePath: "/tmp/weather.yaml" },
         nonFatal: true,
       }),
@@ -435,16 +443,16 @@ describe("live OpenShell policy mutations", () => {
     expect(console.error).not.toHaveBeenCalled();
     vi.mocked(console.error).mockClear();
 
-    expect(loadPresetForSandbox(sandboxName, "fixture-weather")).toContain(
+    expect(await loadPresetForSandbox(sandboxName, "fixture-weather")).toContain(
       "nemoclaw_custom__fixture-weather__weather",
     );
     expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining("Preset not found"));
   });
 
-  it("removes a live custom preset without reporting a built-in miss (#10775)", () => {
+  it("removes a live custom preset without reporting a built-in miss (#10775)", async () => {
     vi.mocked(console.error).mockClear();
     expect(
-      applyPresetContent(sandboxName, "fixture-weather", preset, {
+      await applyPresetContent(sandboxName, "fixture-weather", preset, {
         custom: { sourcePath: "/tmp/weather.yaml" },
         nonFatal: true,
       }),
@@ -452,15 +460,15 @@ describe("live OpenShell policy mutations", () => {
     expect(console.error).not.toHaveBeenCalled();
     vi.mocked(console.error).mockClear();
 
-    expect(removePreset(sandboxName, "fixture-weather", { nonFatal: true })).toBe(true);
+    expect(await removePreset(sandboxName, "fixture-weather", { nonFatal: true })).toBe(true);
     expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining("Preset not found"));
     expect(YAML.parse(livePolicy).network_policies).not.toHaveProperty(
       "nemoclaw_custom__fixture-weather__weather",
     );
   });
 
-  it("still reports a genuinely missing preset (#10775)", () => {
-    expect(removePreset(sandboxName, "no-such-preset", { nonFatal: true })).toBe(false);
+  it("still reports a genuinely missing preset (#10775)", async () => {
+    expect(await removePreset(sandboxName, "no-such-preset", { nonFatal: true })).toBe(false);
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("Cannot load preset: no-such-preset"),
     );

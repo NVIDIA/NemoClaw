@@ -78,6 +78,26 @@ function writeExecutable(filePath: string, source: string): void {
 }
 
 describe("E2E host dependency action boundary (#6961)", () => {
+  // source-shape-contract: security -- Mutating isolated copies proves reviewed host dependency action and script bytes fail closed on source drift
+  it("rejects drift in the reviewed action and script contents", () => {
+    const actionErrors = validateActionMutation({
+      mutateAction: (source) => YAML.stringify({ ...YAML.parse(source), name: "drifted" }),
+    });
+    expect(actionErrors).toEqual(
+      expect.arrayContaining([
+        "host-dependency-setup action content must match the action reviewed at its immutable commit pin",
+        "host-dependency-setup action must preserve its exact single-input package mapping and pinned helper invocation",
+      ]),
+    );
+
+    const scriptErrors = validateActionMutation({
+      mutateScript: (source) => `${source}\n# drift\n`,
+    });
+    expect(scriptErrors).toContain(
+      "host-dependency-setup script content must match the helper reviewed at its immutable commit pin",
+    );
+  });
+
   it.each([
     {
       jobName: "live",

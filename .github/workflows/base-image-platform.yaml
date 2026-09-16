@@ -86,3 +86,4 @@ jobs:
           openclaw-version: ${{ inputs.openclaw-version }}
           mcporter-audit-receipt: ${{ inputs.agent == 'openclaw' && format('{0}/reviewed-npm-audit/mcporter-runtime.receipt.json', runner.temp) || '' }}
           mcporter-audit-raw-report: ${{ inputs.agent == 'openclaw' && format('{0}/reviewed-npm-audit/mcporter-runtime.raw.json', runner.temp) || '' }}
+          mcporter-audit-policy-result: ${{ inputs.agent == 'openclaw' && format('{0}/reviewed-npm-audit/mcporter-runtime.policy.json', runner.temp) || '' }}

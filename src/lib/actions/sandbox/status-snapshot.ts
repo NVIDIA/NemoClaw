@@ -547,7 +547,7 @@ export async function collectSandboxStatusSnapshot(
       liveResult = null;
     }
   }
-  const rpcIssue = liveResult ? detectOpenShellStateRpcResultIssue(liveResult) : null;
+  const rpcIssue = liveResult ? await detectOpenShellStateRpcResultIssue(liveResult) : null;
   if (rpcIssue) {
     return {
       sb,
@@ -820,7 +820,7 @@ async function buildSandboxStatusReport(
   );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const hostMounts = normalizeSandboxStatusHostMounts(sb?.hostMounts);
-  const livePolicies = sb ? (deps.getGatewayPresets ?? getGatewayPresets)(sandboxName) : [];
+  const livePolicies = sb ? await (deps.getGatewayPresets ?? getGatewayPresets)(sandboxName) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,

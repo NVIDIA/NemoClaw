@@ -121,7 +121,7 @@ export function runOnboardProcess(
 /** Runs a Node fixture asynchronously and waits for its pipes to close. */
 export function runOnboardProcessAsync(
   argv: readonly string[],
-  options: Pick<RunOnboardProcessOptions, "env" | "cwd"> & {
+  options: Pick<RunOnboardProcessOptions, "env" | "cwd" | "input"> & {
     timeoutMs: number;
     context: Pick<TestContext, "signal" | "onTestFinished">;
   },
@@ -156,7 +156,7 @@ export function runOnboardProcessAsync(
     options.context.onTestFinished(owner.terminate);
     const abort = addAbortListener(options.context.signal, () => child.kill("SIGKILL"));
     child.once("close", () => abort[Symbol.dispose]());
-    child.stdin?.end();
+    child.stdin?.end(options.input);
   });
 }
 
@@ -166,6 +166,21 @@ export function runBoundedOnboardScript(
   options: Omit<RunOnboardProcessOptions, "killSignal" | "timeoutMs">,
 ): OnboardProcessResult {
   return runOnboardProcess([scriptPath], { ...options, timeoutMs: 45_000, killSignal: "SIGKILL" });
+}
+
+/** Runs a generated onboarding script asynchronously with a bounded hard-kill timeout. */
+export function runBoundedOnboardScriptAsync(
+  scriptPath: string,
+  options: Omit<RunOnboardProcessOptions, "killSignal" | "timeoutMs"> & {
+    context: Pick<TestContext, "signal" | "onTestFinished">;
+  },
+): Promise<OnboardProcessResult> {
+  const { context, ...processOptions } = options;
+  return runOnboardProcessAsync([scriptPath], {
+    ...processOptions,
+    timeoutMs: 45_000,
+    context,
+  });
 }
 
 /**

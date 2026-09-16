@@ -479,26 +479,24 @@ async function upsertProvider(
     };
   }
   if (exists && options.replaceExisting) {
-    const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
+    const { deleteProviderWithRecovery } =
+      require("./sandbox-provider-cleanup") as typeof import("./sandbox-provider-cleanup");
     const runOpenshell = identityCheckedRunner(
       _runOpenshell,
       options.revalidateSandboxIdentity,
       operation,
     );
-    const r = deleteProviderWithRecovery(name, {
+    const r = await deleteProviderWithRecovery(name, {
       runOpenshell,
       allowedSandboxes: options.allowedSandboxes,
     });
     if (!r.ok) {
-      const base =
-        compactText(redact(r.stderr)) ||
-        compactText(redact(r.stdout)) ||
-        `Failed to replace provider '${name}'.`;
+      const base = compactText(redact(r.error.message)) || `Failed to replace provider '${name}'.`;
       const detail =
         r.recoveryFailures.length > 0
           ? ` (detach failures: ${r.recoveryFailures.map((f) => `${f.sandbox}: ${compactText(redact(f.output))}`).join("; ")})`
           : "";
-      return { ok: false, status: r.status || 1, message: `${base}${detail}` };
+      return { ok: false, status: 1, message: `${base}${detail}` };
     }
   }
   const action = exists && !options.replaceExisting ? "update" : "create";
