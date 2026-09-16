@@ -51,10 +51,12 @@ for (const disclosure of ["direct", "progressive"]) {
     } else {
       assert(names.includes("tool_search"), names.join(","));
       const search = exposed.find((tool) => tool.name === "tool_search");
+      assert(search);
       const result = await search.execute("find-read", { query: "read" });
       assert(JSON.stringify(result).includes("read"));
       if (agentId === "reader") {
         const call = exposed.find((tool) => tool.name === "tool_call");
+        assert(call);
         const read = await call.execute("call-read", { id: "read", args: { path: sentinel } });
         assert(JSON.stringify(read).includes("disclosure-fixture"));
         for (const denied of ["exec", "write", "edit", "sessions_spawn"]) {

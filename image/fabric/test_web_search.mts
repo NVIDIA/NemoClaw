@@ -13,7 +13,10 @@ const options = {
   agents: [{ name: "main" }, { name: "reader", tools: { allow: ["read"] } }, { name: "writer" }],
   webSearch: { provider: "brave", agentRefs: ["main"], credential: { env: "SEARCH_KEY" } },
 };
-const config = JSON.parse(
+const config: {
+  plugins: { entries: { brave: { config: { webSearch: { baseUrl?: string; apiKey: unknown } } } } };
+  tools: { web: { search: unknown } };
+} = JSON.parse(
   execFileSync(
     "/opt/fabric/bin/python",
     [
@@ -37,8 +40,9 @@ for (const agentId of ["main", "reader", "writer"]) {
   assert.equal(names.includes("web_search"), agentId === "main", `${agentId}: ${names}`);
   if (agentId === "reader") assert.deepEqual(names, ["read"]);
 }
-const requests = [];
+const requests: { url: string; key: string | string[] | undefined }[] = [];
 const server = http.createServer((request, response) => {
+  assert(request.url);
   requests.push({ url: request.url, key: request.headers["x-subscription-token"] });
   response.writeHead(200, { "content-type": "application/json" });
   response.end(
@@ -55,10 +59,12 @@ const server = http.createServer((request, response) => {
     }),
   );
 });
-await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 try {
   // A private baseUrl is fixture-only; production always uses Brave's HTTPS endpoint.
-  config.plugins.entries.brave.config.webSearch.baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const address = server.address();
+  assert(address && typeof address === "object");
+  config.plugins.entries.brave.config.webSearch.baseUrl = `http://127.0.0.1:${address.port}`;
   const snapshot = await prepareSecretsRuntimeSnapshot({
     config,
     env: process.env,
@@ -75,9 +81,11 @@ try {
   const result = await tool.execute({ query: "owned fixture", count: 1 });
   assert(JSON.stringify(result).includes("Owned fixture"));
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].key, "fixture-placeholder");
-  assert.equal(new URL(requests[0].url, "http://fixture").pathname, "/res/v1/web/search");
-  assert.equal(new URL(requests[0].url, "http://fixture").searchParams.get("q"), "owned fixture");
+  const request = requests[0];
+  assert(request);
+  assert.equal(request.key, "fixture-placeholder");
+  assert.equal(new URL(request.url, "http://fixture").pathname, "/res/v1/web/search");
+  assert.equal(new URL(request.url, "http://fixture").searchParams.get("q"), "owned fixture");
 } finally {
   await new Promise((resolve) => server.close(resolve));
 }

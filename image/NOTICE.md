@@ -3,7 +3,7 @@
 
 # Agent Runtime Sources
 
-These Fabric recipes and the OpenClaw adapter use Python and JavaScript to integrate with the agents' native APIs.
+These Fabric recipes, adapters, and fixtures use Python and TypeScript to integrate with the agents' native APIs.
 
 [The shared Dockerfile](fabric/Dockerfile) pins source archives and base images.
 [Docker Bake](../docker-bake.hcl) selects the harness and its dependency lock.

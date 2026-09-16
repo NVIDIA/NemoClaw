@@ -5,7 +5,7 @@ variable "IMAGE_PREFIX" {
   default = "nc-fabric"
 }
 
-# These locks contain native CPython 3.13 ARM64 wheels. Other platforms need
+# These locks contain native CPython ARM64 wheels. Other platforms need
 # their own locks and qualification before they can be added here.
 variable "HARNESSES" {
   default = {
@@ -37,11 +37,14 @@ target "agents" {
   name = harness
   matrix = { harness = keys(HARNESSES) }
   target = HARNESSES[harness].stage
-  args = {
+  args = merge({
     HARNESS = harness
     ADAPTER = HARNESSES[harness].adapter
     LOCKFILE = HARNESSES[harness].lock
-  }
+  }, contains(["nooa", "nooa-bench", "hermes"], harness) ? {
+    # The pinned Nooa and Hermes releases require Python <3.14.
+    PYTHON_IMAGE = "python:3.13.15-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"
+  } : {})
   tags = ["${IMAGE_PREFIX}:${harness}"]
 }
 

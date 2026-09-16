@@ -19,7 +19,8 @@ if (process.argv[1]?.endsWith("/openclaw.mjs")) {
   const factory = exports.find(
     (value) => typeof value === "function" && value.name === "apiThrottler",
   );
-  if (!configure || !factory) throw new Error("Pinned Telegram throttler dependency changed");
+  if (typeof configure !== "function" || typeof factory !== "function")
+    throw new Error("Pinned Telegram throttler dependency changed");
   configure("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk", () =>
     factory({
       global: { maxConcurrent: 1 },

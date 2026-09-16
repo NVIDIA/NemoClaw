@@ -43,6 +43,7 @@ for (const agentId of ["reader", "primary", "reviewer"]) {
   } else {
     assert.deepEqual(names, ["read"]);
     const read = tools.find((tool) => tool.name === "read");
+    assert(read);
     const result = await read.execute("fixture-read", { path: sentinel });
     assert(JSON.stringify(result).includes("owned-read-fixture"));
     for (const denied of [

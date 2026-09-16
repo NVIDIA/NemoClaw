@@ -10,7 +10,10 @@ const selected = {
   model: "gpt-4o-mini",
   base_url: "https://inference.local/v1",
 };
-const load = (metadata, model = "qwen3:4b") =>
+const load = (
+  metadata: NonNullable<Parameters<typeof loadConfiguredModel>[0]["settings"]>[string] | undefined,
+  model = "qwen3:4b",
+) =>
   loadConfiguredModel(
     {
       ...selected,
@@ -50,6 +53,7 @@ test("Pi loads native fields, applies defaults, and preserves deployment identit
     assert.equal(model.api, "openai-completions");
     assert.deepEqual(model.thinkingLevelMap, { off: null });
     assert.deepEqual(model.samplingParams, { temperature: 0.17 });
+    assert(model.compat && "supportsDeveloperRole" in model.compat);
     assert.equal(model.compat.supportsDeveloperRole, false);
     assert.equal(model.reasoning, false);
     assert.deepEqual(model.input, ["text"]);

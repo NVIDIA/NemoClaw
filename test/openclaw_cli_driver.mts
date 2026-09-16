@@ -5,9 +5,10 @@ import readline from "node:readline";
 import { runCli } from "/app/dist/cli/run-main.js";
 const write = process.stdout.write.bind(process.stdout);
 class CliExit extends Error {
-  constructor(code) {
+  readonly code: number;
+  constructor(code: string | number) {
     super("CLI exit");
-    this.code = code;
+    this.code = Number(code);
   }
 }
 process.exit = (code) => {
@@ -35,7 +36,7 @@ for await (const line of input) {
     code = Number(process.exitCode ?? 0);
   } catch (error) {
     code = error instanceof CliExit ? error.code : 1;
-    if (!(error instanceof CliExit)) stderr += error.stack;
+    if (!(error instanceof CliExit)) stderr += error instanceof Error ? error.stack : String(error);
   }
   process.stdout.write = write;
   process.stderr.write = errWrite;

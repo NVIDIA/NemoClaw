@@ -281,7 +281,7 @@ def start():
         HOME="/sandbox",
         TMPDIR="/sandbox/tmp",
         NEMOCLAW_AGENT_NAME="main",
-        NODE_OPTIONS="--import=/fixture-transport.mjs",
+        NODE_OPTIONS="--import=/fixture-transport.mts",
         NEMOCLAW_FABRIC_HARNESS="openclaw",
         OPENAI_API_KEY="openshell-placeholder",
         ADAPTER_PYTHON="/opt/fabric/bin/python",
@@ -325,6 +325,9 @@ def stop(process, log):
 def main():
     global cli
     started = time.monotonic()
+    # Native permission checks require ownership, even when the host UID differs.
+    for directory in ("/sandbox", "/sandbox/.openclaw", "/sandbox/workspace"):
+        os.chown(directory, 1000, 1000)
     # Isolated loopback alias passes native model SSRF checks without weakening them.
     # --network none ensures this address never routes to an external system.
     subprocess.run(["ip", "addr", "add", "8.8.4.4/32", "dev", "lo"], check=True)
@@ -334,7 +337,7 @@ def main():
     server.socket = tls.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True).start()
     cli = subprocess.Popen(
-        ["node", "/cli-driver.mjs"],
+        ["node", "/cli-driver.mts"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,

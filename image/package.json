@@ -4,11 +4,14 @@
   "license": "Apache-2.0",
   "scripts": {
     "lint": "cd .. && image/node_modules/.bin/oxlint -c image/.oxlintrc.json --deny-warnings image/fabric test",
-    "format:check": "cd .. && image/node_modules/.bin/oxfmt -c image/.oxfmtrc.json --check 'image/fabric/*.{ts,mjs}' 'test/*.mjs'",
-    "format": "cd .. && image/node_modules/.bin/oxfmt -c image/.oxfmtrc.json --write 'image/fabric/*.{ts,mjs}' 'test/*.mjs'"
+    "format:check": "cd .. && image/node_modules/.bin/oxfmt -c image/.oxfmtrc.json --check 'image/fabric/*.{ts,mts}' 'test/*.{ts,mts}'",
+    "format": "cd .. && image/node_modules/.bin/oxfmt -c image/.oxfmtrc.json --write 'image/fabric/*.{ts,mts}' 'test/*.{ts,mts}'",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "@types/node": "24.13.5",
     "oxfmt": "0.68.0",
-    "oxlint": "1.83.0"
+    "oxlint": "1.83.0",
+    "typescript": "7.0.2"
   }
 }
