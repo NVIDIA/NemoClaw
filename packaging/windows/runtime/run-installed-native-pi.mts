@@ -247,6 +247,7 @@ const messageText = (content) => {
   if (!Array.isArray(content)) return "";
   return content.map((part) => typeof part === "string" ? part : part?.text ?? "").join(" ");
 };
+const modelRequests = [];
 const model = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/v1/models") {
     response.writeHead(200, { "content-type": "application/json" });
@@ -261,6 +262,8 @@ const model = createServer(async (request, response) => {
   const body = JSON.parse(await bodyText(request));
   const prompt = (body.messages ?? []).map((entry) => messageText(entry?.content)).join("\n");
   const expected = turnProofs.find(([, token]) => prompt.includes(token))?.[1] ?? "NATIVE_PI_OK";
+  if (body.model === "native-preview" && turnProofs.some(([, token]) => token === expected))
+    modelRequests.push(expected);
   const id = "chatcmpl-nemoclaw-native-pi";
   const created = Math.floor(Date.now() / 1000);
   if (body.stream === true) {
@@ -362,11 +365,15 @@ try {
   for (let index = 0; index < turnProofs.length; index += 1) {
     const [prompt, expected] = turnProofs[index];
     console.log("PI> TURN " + (index + 1) + " running through the real Pi CLI");
+    const requestStart = modelRequests.length;
     const result = await execute(prompt);
     const output = result.stdout.trim();
     if (!output.includes(expected)) throw new Error("Pi output did not contain exact token " + expected);
+    const observed = modelRequests.slice(requestStart);
+    if (!observed.length || observed.some((token) => token !== expected))
+      throw new Error("Pi did not send the expected local-model request " + expected);
     console.log("PI> TURN " + (index + 1) + " PASS " + expected);
-    turns.push({ prompt, expected, output });
+    turns.push({ prompt, expected, output, modelRequests: observed });
   }
   writeFileSync(resultPath, JSON.stringify({
     schemaVersion: 1,

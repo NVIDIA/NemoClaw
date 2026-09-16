@@ -8,7 +8,11 @@ import path from "node:path";
 import { nativeHermesCompatibility, type NativeRuntimeLaunchLease } from "./native-runtime.mts";
 
 type NativeMessage = { role: "system" | "user" | "assistant"; content: string };
-type ReadOpenedRegularFileOptions = { encoding?: BufferEncoding; maxBytes?: number };
+type ReadOpenedRegularFileOptions = {
+  encoding?: BufferEncoding;
+  maxBytes?: number;
+  rejectLinks?: boolean;
+};
 export type BrokerOperation = "models" | "chat-completions";
 export type NativeCredentialIdentity = { agent: string; inference: string; endpoint: string };
 
@@ -231,15 +235,15 @@ export async function deleteCredentialByBinding(
 
 export function readOpenedRegularFile(
   file: string,
-  options: { encoding: BufferEncoding; maxBytes?: number },
+  options: ReadOpenedRegularFileOptions & { encoding: BufferEncoding },
 ): string | null;
 export function readOpenedRegularFile(
   file: string,
-  options?: { encoding?: undefined; maxBytes?: number },
+  options?: ReadOpenedRegularFileOptions & { encoding?: undefined },
 ): Buffer | null;
 export function readOpenedRegularFile(
   file: string,
-  { encoding, maxBytes = 2 * 1024 * 1024 }: ReadOpenedRegularFileOptions = {},
+  { encoding, maxBytes = 2 * 1024 * 1024, rejectLinks = false }: ReadOpenedRegularFileOptions = {},
 ): Buffer | string | null {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
     fail("the opened file byte limit is invalid");
@@ -253,6 +257,16 @@ export function readOpenedRegularFile(
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) fail("the opened relay or diagnostic path is not a regular file");
+    if (rejectLinks) {
+      const named = fs.lstatSync(file);
+      if (
+        !named.isFile() ||
+        named.isSymbolicLink() ||
+        named.dev !== stat.dev ||
+        named.ino !== stat.ino
+      )
+        fail("the opened file path is a link or changed identity");
+    }
     if (stat.size > maxBytes) fail("the opened relay or diagnostic file exceeds its limit");
     const chunks: Buffer[] = [];
     let bytes = 0;

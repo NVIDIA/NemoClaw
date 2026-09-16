@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
+import { readOpenedRegularFile } from "../runtime/native-security.mts";
 
 function argument(name: string) {
   const index = process.argv.indexOf(name);
@@ -120,9 +121,13 @@ export function validateTurn(
   const names = fs.readdirSync(output).filter((name) => pattern.test(name));
   assert.equal(names.length, 1, "Expected exactly one completed contained-turn receipt.");
   const file = path.join(output, names[0]);
-  const stat = fs.lstatSync(file);
-  assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 1024 * 1024);
-  const turn = JSON.parse(fs.readFileSync(file, "utf8"));
+  const content = readOpenedRegularFile(file, {
+    encoding: "utf8",
+    maxBytes: 1024 * 1024,
+    rejectLinks: true,
+  });
+  assert.ok(typeof content === "string", "The completed contained-turn receipt disappeared.");
+  const turn = JSON.parse(content);
   assert.equal(turn.verdict, "pass");
   if (agent === "pi") {
     assert.equal(turn.classification, "installed-nemoclaw-native-windows-pi");
@@ -137,6 +142,12 @@ export function validateTurn(
       assert.equal(turn.turns[index].expected, expected);
       assert.equal(typeof turn.turns[index].output, "string");
       assert.ok(turn.turns[index].output.includes(expected));
+      assert.ok(
+        Array.isArray(turn.turns[index].modelRequests) &&
+          turn.turns[index].modelRequests.length > 0 &&
+          turn.turns[index].modelRequests.every((token: unknown) => token === expected),
+        "The Pi turn did not confirm its local-model request.",
+      );
     }
     const runId = names[0].slice("native-windows-pi-".length, -".json".length);
     for (const prefix of [
