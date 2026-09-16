@@ -1079,6 +1079,11 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       },
       workflowJobListing([workflowJob(302, "sandbox-image-contracts", "failure")]),
     );
+    const mainSdkFailure = runWorkflowShellStepWithJobs(
+      mainGate,
+      { ...successfulMain, SDK_PACKAGE_RESULT: "failure" },
+      workflowJobListing([workflowJob(303, "package-openshell-sdk", "failure")]),
+    );
     const malformedFailure = runWorkflowShellStepWithJobs(
       prGate,
       { ...successfulCode, STATIC_RESULT: "failure" },
@@ -1110,6 +1115,11 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(mainFailure.stdout).toContain("sandbox-image-contracts failed");
     expect(mainFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/302",
+    );
+    expect(mainSdkFailure.status).not.toBe(0);
+    expect(mainSdkFailure.stdout).toContain("package-openshell-sdk failed");
+    expect(mainSdkFailure.stdout).toContain(
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/303",
     );
     expect(malformedFailure.status).not.toBe(0);
     expect(malformedFailure.stdout).toContain(
