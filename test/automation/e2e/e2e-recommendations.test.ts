@@ -134,6 +134,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/hermes-acp-owning-paths.mts",
         "tools/e2e/onboard-timeout-contract.mts",
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
+        "tools/e2e/sandbox-survival-timeout-contract.mts",
         "tools/e2e/selector-aliases.mts",
         "tools/e2e/target-catalogue.mts",
         "scripts/checks/protected-managed-image-contract.ts",
