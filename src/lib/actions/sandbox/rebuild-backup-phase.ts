@@ -36,6 +36,7 @@ export {
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";
+export { bindRebuildSnapshotGpuAuthority } from "./rebuild-gpu-opt-out";
 
 export type RebuildBackupManifest = Exclude<
   Awaited<ReturnType<typeof backupSandboxStateForRebuild>>,
