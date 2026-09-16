@@ -338,11 +338,8 @@ export function isDockerRuntimeDown(
 }
 
 /**
- * Print actionable recovery guidance for a Docker daemon outage. Deliberately
- * never recommends rebuild/destroy/onboard: when Docker is down the sandbox
- * itself is fine and recreating it cannot succeed until the daemon is back
- * (#4428). Shared by status, connect, logs, and policy-list so the outage is
- * named consistently as a host runtime problem.
+ * A failed Docker probe cannot establish the sandbox state or the cause.
+ * Diagnose host access before recommending a runtime or sandbox mutation.
  */
 export function printDockerRuntimeDownGuidance(
   sandboxName: string,
@@ -387,12 +384,13 @@ export function printDockerRuntimeDownGuidance(
     `  The Docker daemon is not reachable, so sandbox '${sandboxName}' cannot be verified or started.`,
   );
   writer(
-    "  This is a Docker runtime outage on the host, not a sandbox failure — do not rebuild, destroy, or re-onboard the sandbox.",
+    "  Docker access failed. Preserve the sandbox; do not rebuild, destroy, or re-onboard it.",
   );
   writer("  Recovery:");
-  writer(
-    "    1. Start the Docker daemon (e.g. `sudo systemctl start docker`, or start Docker Desktop).",
-  );
-  writer("    2. Confirm it is back with `docker info`.");
-  writer(`    3. Retry: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
+  writer("    1. Run `docker info` to inspect the error.");
+  writer("    2. If the daemon is stopped, start Docker Desktop or the Docker service.");
+  writer("       For permission denied, correct the current user's access to the Docker socket.");
+  writer("       For context or TLS errors, correct the reported Docker configuration.");
+  writer("    3. Confirm `docker info` succeeds and reports server data.");
+  writer(`    4. Retry: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
 }
