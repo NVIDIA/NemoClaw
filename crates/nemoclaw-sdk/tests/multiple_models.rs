@@ -1,0 +1,82 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+use nemoclaw_sdk::{
+    compile::{Generations, targets},
+    config::{Document, schema::input_schema},
+};
+use serde_json::{Value, json};
+fn input() -> Value {
+    serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap()
+}
+fn choices() -> Value {
+    let mut value = input();
+    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    let mut fast = inference["routes"][0].clone();
+    fast["name"] = json!("fast");
+    fast["overrides"]["model"] = json!("fast-model");
+    inference["routes"].as_array_mut().unwrap().push(fast);
+    inference["default"] = json!("fast");
+    value
+}
+#[test]
+fn multiple_models_preserve_named_choices_and_each_agents_default() {
+    let mut value = choices();
+    let mut other = value["spec"]["sandboxes"][0]["agents"][0].clone();
+    other["name"] = json!("other");
+    other["inference"]["default"] = json!("primary");
+    value["spec"]["sandboxes"][0]["agents"]
+        .as_array_mut()
+        .unwrap()
+        .push(other);
+    let doc = Document::parse(value.to_string().as_bytes()).expect("multiple named models");
+    assert!(
+        jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let rows = targets(&doc, &generations).unwrap();
+    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 1);
+    let runtime: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.kind == "sandbox")
+            .unwrap()
+            .values["inference_json"],
+    )
+    .unwrap();
+    assert_eq!(runtime["connection"]["model"], "fast-model");
+    assert_eq!(runtime["agents"][0]["inference"]["default"], "fast");
+    assert_eq!(runtime["agents"][1]["inference"]["default"], "primary");
+    assert_eq!(
+        runtime["agents"][0]["inference"]["models"]
+            .as_object()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+}
+#[test]
+fn ambiguous_defaults_duplicate_choices_and_unsupported_harnesses_are_rejected() {
+    let mut missing = choices();
+    missing["spec"]["sandboxes"][0]["agents"][0]["inference"]
+        .as_object_mut()
+        .unwrap()
+        .remove("default");
+    let mut unknown = choices();
+    unknown["spec"]["sandboxes"][0]["agents"][0]["inference"]["default"] = json!("missing");
+    let mut duplicate = choices();
+    duplicate["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][1]["name"] =
+        json!("primary");
+    let mut hermes = choices();
+    hermes["spec"]["sandboxes"][0]["agents"][0]["harness"]["kind"] = json!("hermes");
+    for value in [missing, unknown, duplicate, hermes] {
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    }
+}

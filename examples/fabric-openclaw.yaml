@@ -18,7 +18,7 @@ spec:
   sandboxes:
     - name: assistant
       image:
-        ref: nc-native-inference-b3e4ad457@sha256:427d7f46ff377e9d6fe28c28a534441c673226cb1b336c9d1efe740f7a7937a6
+        ref: nc-multi-models@sha256:19369b10ebdbefcd37852ca52ff44c4f67e6ffc5fd81644e9988eb39e2c3406d
       runtime:
         provider: docker
       network:

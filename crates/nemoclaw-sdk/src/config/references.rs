@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{Agent, ConfigError, Document, Harness, Inference};
+use super::{Agent, ConfigError, Document, Harness, Inference, Route};
 
 impl Document {
     /// Resolve an agent's inference without replacing its authored reference.
@@ -67,14 +67,10 @@ impl Document {
             ));
         }
         for (inference, sandbox_visible) in self.inference_definitions() {
-            let [route] = inference.routes.as_slice() else {
-                return Err(ConfigError("exactly one primary route is required"));
-            };
-            if route.name != "primary" || !super::validation::valid_model(&route.overrides.model) {
-                return Err(ConfigError("primary route requires a valid model"));
+            inference.validate_choices()?;
+            for route in &inference.routes {
+                self.route_provider(route, sandbox_visible)?;
             }
-            route.overrides.tuning.validate("openclaw")?;
-            self.route_provider(route, sandbox_visible)?;
         }
         for agent in &sandbox.agents {
             self.agent_inference(agent)?;
@@ -166,6 +162,56 @@ impl Harness {
             if observability.uses_relay() && self.interfaces.is_some() {
                 return Err(ConfigError(
                     "Hermes Relay tracing cannot be combined with native Hermes interfaces",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Inference {
+    pub fn default_route(&self) -> Result<&Route, ConfigError> {
+        match (&self.default, self.routes.as_slice()) {
+            (None, [route]) => Ok(route),
+            (Some(name), routes) => {
+                routes
+                    .iter()
+                    .find(|route| &route.name == name)
+                    .ok_or(ConfigError(
+                        "default inference choice has no matching route",
+                    ))
+            }
+            _ => Err(ConfigError(
+                "multiple inference choices require an explicit default",
+            )),
+        }
+    }
+
+    fn validate_choices(&self) -> Result<(), ConfigError> {
+        self.default_route()?;
+        if self.routes.len() > 32 {
+            return Err(ConfigError("at most 32 model choices are supported"));
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for route in &self.routes {
+            if !super::validation::SLUG.is_match(&route.name)
+                || !names.insert(&route.name)
+                || !super::validation::valid_model(&route.overrides.model)
+            {
+                return Err(ConfigError(
+                    "inference choices require unique lowercase names and valid models",
+                ));
+            }
+            route.overrides.tuning.validate("openclaw")?;
+            if self.default_route()?.name != route.name
+                && route
+                    .overrides
+                    .tuning
+                    .reasoning_effort
+                    .is_some_and(|effort| effort != super::ReasoningEffort::Default)
+            {
+                return Err(ConfigError(
+                    "reasoningEffort configures the initial default model; omit it on other choices",
                 ));
             }
         }

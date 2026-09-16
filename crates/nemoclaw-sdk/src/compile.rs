@@ -281,7 +281,7 @@ pub fn compile(
             json!(["nemoclaw_ollama_storage.models"]);
         resources["nemoclaw_ollama_model"] = json!({"inference":{
             "service_id":"${nemoclaw_ollama.service.id}","endpoint":inference.endpoint,
-            "model":document.agent_inference(&document.spec.sandboxes[0].agents[0])?.routes[0].overrides.model,
+            "model":document.agent_inference(&document.spec.sandboxes[0].agents[0])?.default_route()?.overrides.model,
             "lifecycle":{"prevent_destroy":true}
         }});
     }

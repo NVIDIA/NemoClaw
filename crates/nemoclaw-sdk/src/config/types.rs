@@ -64,7 +64,7 @@ pub struct Spec {
     /// Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness.
+    /// Exactly one sandbox with one or more OpenClaw agents sharing one harness runtime, or one agent of another harness.
     pub sandboxes: Vec<Sandbox>,
 }
 
@@ -155,7 +155,7 @@ pub struct InferenceProvider {
     #[schemars(with = "super::Management")]
     pub management: Option<super::Management>,
     #[serde(rename = "name")]
-    /// Provider name referenced by the primary route.
+    /// Provider name referenced by model choices.
     pub name: String,
     #[serde(rename = "provider")]
     /// OpenShell provider implementation. Must match the selected API family.
@@ -252,7 +252,7 @@ pub struct Sandbox {
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
     pub network: Network,
     #[serde(rename = "agents")]
-    /// One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent.
+    /// One or more named OpenClaw agents sharing identical harness settings. Other harnesses require one agent.
     pub agents: Vec<Agent>,
 }
 
@@ -357,8 +357,12 @@ pub struct Agent {
 #[serde(default, deny_unknown_fields)]
 /// Agent inference routing.
 pub struct Inference {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    /// Initial model choice by route name. Required with multiple routes; omission selects the sole route.
+    pub default: Option<String>,
     #[serde(rename = "routes")]
-    /// Exactly one route named primary.
+    /// One or more uniquely named model choices. Multiple choices require OpenClaw.
     pub routes: Vec<Route>,
 }
 
@@ -368,7 +372,7 @@ pub struct Inference {
 /// Native model connection authorized through an attached OpenShell provider.
 pub struct Route {
     #[serde(rename = "name")]
-    /// The primary route name.
+    /// Unique lowercase name for this model choice.
     pub name: String,
     #[serde(
         rename = "providerRef",
@@ -390,7 +394,7 @@ pub struct Route {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Model overrides on the primary route.
+/// Model settings for one named inference choice.
 pub struct Overrides {
     #[serde(rename = "model")]
     /// Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.

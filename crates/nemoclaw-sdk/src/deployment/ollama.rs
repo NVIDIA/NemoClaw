@@ -191,7 +191,7 @@ impl Deployment {
                 .ready(
                     &document
                         .agent_inference(&document.spec.sandboxes[0].agents[0])?
-                        .routes[0]
+                        .default_route()?
                         .overrides
                         .model,
                 )
@@ -257,7 +257,7 @@ impl Deployment {
                 "model".into(),
                 document
                     .agent_inference(&document.spec.sandboxes[0].agents[0])?
-                    .routes[0]
+                    .default_route()?
                     .overrides
                     .model
                     .clone(),

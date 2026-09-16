@@ -14,6 +14,31 @@ The model ID is client configuration, not a proxy-enforced model restriction; th
 The YAML `routes` field currently names model configuration; it no longer creates an OpenShell route resource.
 See [state migration](state.md#native-inference-migration) before changing an existing deployment.
 
+## Give an Agent Multiple Model Choices
+
+OpenClaw agents can select different models from the same provider.
+Declare named `inference.routes` and set `inference.default` to the initial choice when there is more than one route.
+Omitting `default` selects the sole route; duplicate names and missing defaults are errors.
+Use `inferenceRef` to reuse the whole selection without repeating it.
+
+The [multiple-model example](../examples/multiple-models.yaml) gives a researcher smart and fast choices and a writer only the fast model.
+It assumes an existing endpoint serving both model IDs; it does not provision that server or download either model.
+Select a gateway, current agent image, endpoint, and models using the prerequisites below before applying it with a fresh deployment UID and state directory.
+
+The adapter configures each agent's native model aliases, initial model, and model-selection policy.
+These are harness restrictions inside a shared sandbox, not provider credential or network isolation between agents.
+This configuration supplies no automatic fallback, oracle consultation, or agent delegation behavior.
+Apply currently probes the first agent's default model; use native requests to verify each additional choice separately.
+Parser and native configuration tests do not establish model quality or live-provider compatibility.
+
+Multiple choices are currently supported only by OpenClaw, with at most 32 routes per inference definition.
+Other harnesses keep one choice.
+`reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
+Native reasoning changes remain a harness operation.
+Managed Ollama and its proxy currently manage one selected model; vLLM choices must use its declared served model.
+Distinct models require an externally operated endpoint serving them.
+Changing model choices changes the sandbox launch specification and requires a fresh deployment.
+
 ## Choose a Service Mode
 
 | Situation | Configuration and owning guide | Example to adapt |

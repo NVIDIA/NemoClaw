@@ -45,6 +45,36 @@
               ]
             }
           ]
+        },
+        {
+          "if": {
+            "properties": {
+              "inference": {
+                "properties": {
+                  "routes": {
+                    "minItems": 2
+                  }
+                },
+                "required": [
+                  "routes"
+                ]
+              }
+            },
+            "required": [
+              "inference"
+            ]
+          },
+          "then": {
+            "properties": {
+              "harness": {
+                "properties": {
+                  "kind": {
+                    "const": "openclaw"
+                  }
+                }
+              }
+            }
+          }
         }
       ],
       "description": "One Fabric harness and its inference route.",
@@ -988,7 +1018,7 @@
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
             }
           ],
-          "default": "nc-native-inference-b3e4ad457@sha256:427d7f46ff377e9d6fe28c28a534441c673226cb1b336c9d1efe740f7a7937a6",
+          "default": "nc-multi-models@sha256:19369b10ebdbefcd37852ca52ff44c4f67e6ffc5fd81644e9988eb39e2c3406d",
           "description": "Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects the default."
@@ -999,13 +1029,28 @@
     "Inference": {
       "additionalProperties": false,
       "description": "Agent inference routing.",
+      "if": {
+        "properties": {
+          "routes": {
+            "minItems": 2
+          }
+        },
+        "required": [
+          "routes"
+        ]
+      },
       "properties": {
+        "default": {
+          "description": "Initial model choice by route name. Required with multiple routes; omission selects the sole route.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
         "routes": {
-          "description": "Exactly one route named primary.",
+          "description": "One or more uniquely named model choices. Multiple choices require OpenClaw.",
           "items": {
             "$ref": "#/$defs/Route"
           },
-          "maxItems": 1,
+          "maxItems": 32,
           "minItems": 1,
           "type": "array"
         }
@@ -1013,6 +1058,11 @@
       "required": [
         "routes"
       ],
+      "then": {
+        "required": [
+          "default"
+        ]
+      },
       "type": "object"
     },
     "InferenceApi": {
@@ -1183,7 +1233,7 @@
           "description": "Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode."
         },
         "name": {
-          "description": "Provider name referenced by the primary route.",
+          "description": "Provider name referenced by model choices.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
@@ -1807,7 +1857,7 @@
     },
     "Overrides": {
       "additionalProperties": false,
-      "description": "Model overrides on the primary route.",
+      "description": "Model settings for one named inference choice.",
       "properties": {
         "contextWindow": {
           "description": "Model context capacity in tokens. Does not resize the inference server.",
@@ -2363,8 +2413,8 @@
       ],
       "properties": {
         "name": {
-          "const": "primary",
-          "description": "The primary route name.",
+          "description": "Unique lowercase name for this model choice.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
         "overrides": {
@@ -2447,7 +2497,7 @@
       "description": "The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.",
       "properties": {
         "agents": {
-          "description": "One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent.",
+          "description": "One or more named OpenClaw agents sharing identical harness settings. Other harnesses require one agent.",
           "items": {
             "$ref": "#/$defs/Agent"
           },
@@ -3173,7 +3223,7 @@
           "type": "object"
         },
         "sandboxes": {
-          "description": "Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness.",
+          "description": "Exactly one sandbox with one or more OpenClaw agents sharing one harness runtime, or one agent of another harness.",
           "items": {
             "$ref": "#/$defs/Sandbox"
           },
@@ -7231,9 +7281,10 @@
     "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
-    "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+    "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, OpenClaw-only multiple choices, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
     "The parser resolves harnessRef from enclosing harnesses and requires identical resolved harness settings across agents in a sandbox. Shared definitions reuse configuration, not runtime processes across sandboxes.",
+    "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
     "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
     "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing and multiple selected definitions, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",

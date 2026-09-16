@@ -44,7 +44,7 @@
           "nemoclaw_provider.inference"
         ],
         "generation": "sandbox-generation",
-        "image": "nc-native-inference-b3e4ad457@sha256:427d7f46ff377e9d6fe28c28a534441c673226cb1b336c9d1efe740f7a7937a6",
+        "image": "nc-multi-models@sha256:19369b10ebdbefcd37852ca52ff44c4f67e6ffc5fd81644e9988eb39e2c3406d",
         "inference_json": "{\"provider\":\"local\",\"connection\":{\"provider\":\"openai\",\"model\":\"qwen3.5:0.8b\",\"base_url\":\"http://172.20.0.1:11436/v1\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\"},\"api\":\"openai-completions\",\"tuning\":{}}",
         "lifecycle": {
           "prevent_destroy": true

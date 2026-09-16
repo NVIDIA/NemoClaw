@@ -33,13 +33,14 @@ Paths below are relative to `spec`; `agents[]` is inside `sandboxes[]` and `rout
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
 | Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | One selected definition across all agents in the sandbox |
-| Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | One primary route; agents in the sandbox must select identical inference settings |
+| Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw supports named choices with an explicit default; other harnesses require one choice |
 | Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Agent `harness` or `harnessRef` | One runtime per sandbox; all agents must select identical settings |
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
 
 Inference providers are list entries with a `name`; inferences, harnesses, and integrations are maps keyed by name.
 Inline providers also require `name`, which identifies the OpenShell provider registration.
-The schema currently supports exactly one sandbox and one primary route per agent.
+The schema currently supports exactly one sandbox; OpenClaw agents can select different models from its provider.
+See [multiple model choices](inference.md#give-an-agent-multiple-model-choices) for defaults and current service limits.
 Multiple OpenClaw agents can reference the same provider and integration; distinct inline instances are not shared implicitly.
 
 Hermes `auth.method` uses the provider selected by its primary route.

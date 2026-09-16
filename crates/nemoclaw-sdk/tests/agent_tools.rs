@@ -78,10 +78,6 @@ fn invalid_rosters_and_permissions_fail_before_planning() {
     v["spec"]["sandboxes"][0]["agents"][1]["harness"]["kind"] = json!("hermes");
     assert!(parse(&v).is_err());
     assert!(!schema.is_valid(&v));
-    let mut v = input(3);
-    v["spec"]["sandboxes"][0]["agents"][2]["inference"]["routes"][0]["overrides"]["model"] =
-        json!("another-model");
-    assert!(parse(&v).is_err());
 }
 
 #[test]

@@ -105,7 +105,7 @@ Readiness rejects conflicts in those checked fields; it does not continuously re
 ## Multiple OpenClaw Agents and Tool Restrictions
 
 A sandbox accepts one or more uniquely named OpenClaw agents.
-All agents currently share identical inference settings and the sandbox's single primary route.
+Agents share one harness runtime and can select different [named model choices](inference.md#give-an-agent-multiple-model-choices).
 Other harnesses still require one agent.
 The first declared agent receives plain-text Fabric invocations.
 Native OpenClaw commands can select any declared agent by name.
@@ -479,7 +479,7 @@ Native agent capabilities do not by themselves establish a complete NemoClaw dep
 | Arbitrary OpenClaw or Hermes plugin installation | **TBD** — requires a verified image, configuration, and lifecycle procedure; the declared Brave integration is documented above |
 | Memory search and embedding-service setup | **TBD** — needs evidence for the endpoint, credentials, policy, and native settings |
 | Context compaction configuration | **TBD** — verify behavior against the pinned native runtime before reusing earlier guidance |
-| Auxiliary-model sub-agents | **TBD** — current declared OpenClaw agents share one primary route |
+| Auxiliary-model sub-agents | **TBD** — model choices are configurable, but delegation and consultation behavior are not configured |
 | Deep Agents tracing and managed collector lifecycle | **TBD** — the implemented OpenClaw tracing profile uses an existing local collector |
 | Verified file/history backup and restoration for each harness | **TBD** — see [deployment state](state.md) |
 

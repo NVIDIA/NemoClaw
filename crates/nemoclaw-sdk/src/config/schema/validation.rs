@@ -108,13 +108,11 @@ pub(super) fn constrain(root: &mut Value) {
     }
     property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
     property(&mut defs["Credential"], "env", json!({"pattern": c::ENV}));
-    for (name, field) in [("Spec", "sandboxes"), ("Inference", "routes")] {
-        property(
-            defs.get_mut(name).unwrap(),
-            field,
-            json!({"minItems": 1, "maxItems": 1}),
-        );
-    }
+    property(
+        &mut defs["Spec"],
+        "sandboxes",
+        json!({"minItems":1,"maxItems":1}),
+    );
     property(
         &mut defs["Sandbox"],
         "agents",
@@ -208,7 +206,23 @@ pub(super) fn constrain(root: &mut Value) {
             {"required": ["harnessRef"], "not": {"required": ["harness"]}}
         ]}));
     defs["Harness"]["allOf"] = json!([]);
-    property(&mut defs["Route"], "name", json!({"const": "primary"}));
+    property(&mut defs["Route"], "name", json!({"pattern": c::SLUG}));
+    property(
+        &mut defs["Inference"],
+        "default",
+        json!({"pattern": c::SLUG}),
+    );
+    property(
+        &mut defs["Inference"],
+        "routes",
+        json!({"minItems":1,"maxItems":32}),
+    );
+    defs["Inference"]["if"] = json!({"properties":{"routes":{"minItems":2}},"required":["routes"]});
+    defs["Inference"]["then"] = json!({"required":["default"]});
+    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("inference/routes",json!({"minItems":2}),true),
+        "then": at("harness/kind",json!({"const":"openclaw"}),false)
+    }));
     defs["Route"]["oneOf"] = json!([
         {"required":["providerRef"],"not":{"required":["provider"]}},
         {"required":["provider"],"not":{"required":["providerRef"]}}
@@ -409,9 +423,10 @@ pub(super) fn constrain(root: &mut Value) {
         "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
-        "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+        "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, OpenClaw-only multiple choices, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
         "The parser resolves harnessRef from enclosing harnesses and requires identical resolved harness settings across agents in a sandbox. Shared definitions reuse configuration, not runtime processes across sandboxes.",
+        "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
         "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
         "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing and multiple selected definitions, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",

@@ -58,16 +58,15 @@ impl Document {
         let mut selected: Option<&InferenceProvider> = None;
         for agent in &sandbox.agents {
             let (inference, sandbox_visible) = self.scoped_inference(agent)?;
-            let [route] = inference.routes.as_slice() else {
-                return Err(ConfigError("exactly one primary route is required"));
-            };
-            let provider = self.route_provider(route, sandbox_visible)?;
-            if selected.is_some_and(|previous| !std::ptr::eq(previous, provider)) {
-                return Err(ConfigError(
-                    "a sandbox supports only one selected inference provider definition",
-                ));
+            for route in &inference.routes {
+                let provider = self.route_provider(route, sandbox_visible)?;
+                if selected.is_some_and(|previous| !std::ptr::eq(previous, provider)) {
+                    return Err(ConfigError(
+                        "a sandbox supports only one selected inference provider definition",
+                    ));
+                }
+                selected = Some(provider);
             }
-            selected = Some(provider);
         }
         selected.ok_or(ConfigError("at least one agent is required"))
     }

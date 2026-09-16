@@ -9,7 +9,7 @@ Use [inference API selection](../inference.md#choose-the-request-api) for the pr
 
 | `harness.kind` | Agents per sandbox | Gateway and inference management | Maintained example |
 |---|---|---|---|
-| `openclaw` | One or more; shared primary route | External or managed | [OpenClaw](../../examples/fabric-openclaw.yaml) |
+| `openclaw` | One or more; per-agent model choices | External or managed | [OpenClaw](../../examples/fabric-openclaw.yaml) |
 | `hermes` | One | External or managed | [Hermes](../../examples/fabric-hermes.yaml), [managed Hermes](../../examples/managed-hermes.yaml) |
 | `deepagents` | One | External only | [Deep Agents](../../examples/fabric.yaml) |
 | `claude` | One | External only | [Claude](../../examples/fabric-claude.yaml) |

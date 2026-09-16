@@ -39,7 +39,7 @@ pub fn specification(document: &Document, generations: &Generations) -> Result<S
             endpoint: proxy.endpoint.clone(),
             model: document
                 .agent_inference(&document.spec.sandboxes[0].agents[0])?
-                .routes[0]
+                .default_route()?
                 .overrides
                 .model
                 .clone(),
