@@ -394,13 +394,12 @@ describe("sandbox recreate recovery from a void journal", () => {
           gatewayPort: 8080,
         }),
       ).toEqual({ action: "continue_create" });
+      const { pendingRouteReservation: _, ...unreservedEntry } = reservedEntry;
       expect(
-        planSandboxRecreateRecovery(
-          legacyTransaction,
-          ABSENT_SOURCE,
-          { ...reservedEntry, pendingRouteReservation: false },
-          { gatewayName: "nemoclaw", gatewayPort: 8080 },
-        ),
+        planSandboxRecreateRecovery(legacyTransaction, ABSENT_SOURCE, unreservedEntry, {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+        }),
       ).toMatchObject({ action: "reject" });
     } finally {
       vi.unstubAllEnvs();
