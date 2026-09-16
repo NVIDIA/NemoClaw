@@ -7,7 +7,8 @@ import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/co
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
-  createCliOpenShellSandboxObserverFromRunner,
+  createCliOpenShellSandboxLookupFromRunner,
+  waitForSandboxDeleteAbsence,
 } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import type { OpenShellSandboxDeleteSubmission } from "../../adapters/openshell/sandbox-lifecycle";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
@@ -90,6 +91,10 @@ type SandboxDestroyExecutionInput = {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
     inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
     wipeSandboxState?: typeof wipeSandboxState;
+    deleteConvergence?: {
+      now?: () => number;
+      sleep?: (milliseconds: number) => void;
+    };
   };
 };
 
@@ -599,21 +604,23 @@ export async function executeSandboxDestroy({
       (deleteResult.kind === "accepted" ||
         (deleteResult.kind === "failed" && deleteResult.ambiguous))
     ) {
-      const observed = await createCliOpenShellSandboxObserverFromRunner(
-        selectedRunOpenshell,
-      ).listSandboxes({
-        target: { kind: "named", gatewayName: effectiveDeleteGatewayName },
-      });
-      alreadyGone =
-        observed.ok &&
-        !observed.value.sandboxes.some((candidate) => candidate.name === sandboxName);
+      const convergence = await waitForSandboxDeleteAbsence(
+        sandboxName,
+        effectiveDeleteGatewayName,
+        createCliOpenShellSandboxLookupFromRunner(selectedRunOpenshell),
+        () => undefined,
+        deps.deleteConvergence,
+      );
+      alreadyGone = convergence.confirmed;
       if (!alreadyGone && deleteResult.kind === "accepted") {
         const mcpRecoveryFailure = await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation);
         return {
           ok: false as const,
           deleteOutput: `OpenShell accepted deletion of sandbox '${sandboxName}', but did not confirm its absence.`,
           exitCode: 1,
-          gatewayUnreachable: !observed.ok && observed.error.kind === "transport",
+          gatewayUnreachable:
+            convergence.lastObservation?.ok === false &&
+            convergence.lastObservation.error.kind === "transport",
           hostLocalInferenceOwnershipRequiresGateway: false,
           mcpOwnershipRequiresGateway: false,
           mcpRecoveryFailure,

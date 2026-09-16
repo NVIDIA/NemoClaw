@@ -202,6 +202,7 @@ async function runDestroy(
     currentAfterDelete?: SandboxEntry | null;
     deleteResult?: { status: number; stdout: string; stderr: string };
     listResult?: { status: number; stdout: string; stderr: string };
+    lookupResults?: { status: number; stdout: string; stderr: string }[];
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
@@ -233,12 +234,23 @@ async function runDestroy(
   const stopInferenceResources = vi.fn(() => {
     runtimeProvider.events.push("legacy inference cleanup");
   });
+  let lookupAttempt = 0;
+  let convergenceClockMs = 0;
   const runOpenshell = vi.fn((args: string[]) => {
     const command = args.join(" ");
     runtimeProvider.events.push(command);
     switch (`${String(args[0])}:${String(args[1])}`) {
       case "sandbox:list":
         return options.listResult ?? { status: 0, stdout: "", stderr: "" };
+      case "sandbox:get": {
+        const sequenced =
+          options.lookupResults?.[Math.min(lookupAttempt, options.lookupResults.length - 1)];
+        lookupAttempt += 1;
+        const fallback = options.listResult?.stdout.trim()
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
+        return sequenced ?? fallback;
+      }
       case "sandbox:delete":
         current = args.at(-1) === "alpha" ? afterDelete : current;
         return options.deleteResult ?? { status: 0, stdout: "", stderr: "" };
@@ -267,6 +279,12 @@ async function runDestroy(
           }
         : {}),
       wipeSandboxState: () => undefined,
+      deleteConvergence: {
+        now: () => convergenceClockMs,
+        sleep: (milliseconds) => {
+          convergenceClockMs += milliseconds;
+        },
+      },
     },
   });
   return {
@@ -494,7 +512,11 @@ describe("sandbox destroy host-local inference transaction", () => {
       deleteGatewayName: "nemoclaw",
       getSandbox: () => current,
       listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
-      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      runOpenshell: vi.fn((args: string[]) =>
+        args[1] === "get"
+          ? { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }
+          : { status: 0, stdout: "", stderr: "" },
+      ),
       sandbox: entry,
       sandboxConfirmedAbsent: false,
       sandboxName: "alpha",
@@ -526,7 +548,11 @@ describe("sandbox destroy host-local inference transaction", () => {
       deleteGatewayName: "nemoclaw",
       getSandbox: () => entry,
       listSandboxes: () => ({ sandboxes: [entry] }),
-      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      runOpenshell: vi.fn((args: string[]) =>
+        args[1] === "get"
+          ? { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }
+          : { status: 0, stdout: "", stderr: "" },
+      ),
       sandbox: entry,
       sandboxConfirmedAbsent: false,
       sandboxName: "alpha",
@@ -714,6 +740,20 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("waits for accepted deletion to become explicitly absent without retrying it (#11941)", async () => {
+    const runtimeProvider = provider();
+    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+      lookupResults: [
+        { status: 0, stdout: "Name: alpha\nPhase: Deleting", stderr: "" },
+        { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+      ],
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "get")).toHaveLength(2);
   });
 
   it("reconciles ambiguous acknowledgement loss without retrying the mutation", async () => {

@@ -85,6 +85,7 @@ type DestroyHarnessOptions = {
   callThroughGatewaySelection?: boolean;
   agent?: "openclaw" | "hermes";
   deleteError?: Error;
+  deleteConvergenceAttempts?: number;
   deleteOutput?: string;
   deleteStatus?: number | null;
   dockerNameLabeledIds?: string[];
@@ -222,6 +223,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 
   const resolve = requireSource("../../adapters/openshell/resolve.js");
   const runtime = requireSource("../../adapters/openshell/runtime.js");
+  if (options.deleteConvergenceAttempts !== undefined) {
+    const wait = requireSource("../../core/wait.js") as typeof import("../../src/lib/core/wait");
+    vi.spyOn(wait, "waitUntilAsync").mockImplementation(async (condition) => {
+      for (let attempt = 0; attempt < options.deleteConvergenceAttempts!; attempt += 1) {
+        if (await condition()) return true;
+      }
+      return false;
+    });
+  }
   const destroyGateway = requireSource(
     "./destroy-gateway.js",
   ) as typeof import("../../src/lib/actions/sandbox/destroy-gateway");
@@ -485,6 +495,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
             stderr: "",
           }
         );
+      case "sandbox:get":
+        return options.sandboxListResult?.stdout?.includes("alpha")
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
       case "sandbox:delete":
         events.push("delete");
         sandboxPresent = false;

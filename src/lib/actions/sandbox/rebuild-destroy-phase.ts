@@ -4,10 +4,13 @@
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import { createCliOpenShellSandboxLifecycleFromRunner } from "../../adapters/openshell/sandbox-lifecycle-cli";
+import {
+  createCliOpenShellSandboxLifecycleFromRunner,
+  waitForSandboxDeleteAbsence,
+} from "../../adapters/openshell/sandbox-lifecycle-cli";
+import { createCliOpenShellSandboxLookup } from "../../adapters/openshell/sandbox-observer-cli";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { G, R } from "../../cli/terminal-style";
-import { waitUntil } from "../../core/wait";
 import * as nim from "../../inference/nim";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isExplicitMissingSandboxGatewayOutput } from "../../onboard/sandbox-recreate-probe";
@@ -88,10 +91,6 @@ interface RebuildDeleteAbsenceDeps {
   runtimeSelection?: OpenShellRuntimeSelection;
 }
 
-const REBUILD_DELETE_ABSENCE_MAX_ATTEMPTS = 20;
-const REBUILD_DELETE_ABSENCE_INITIAL_INTERVAL_MS = 250;
-const REBUILD_DELETE_ABSENCE_MAX_INTERVAL_MS = 1_000;
-
 function resolveRebuildDeleteTarget(
   sandboxName: string,
   sandboxEntry: RebuildSandboxEntry,
@@ -130,60 +129,42 @@ export function waitForRebuildDeleteAbsence(
   gatewayName: string,
   log: RebuildLog,
   deps: RebuildDeleteAbsenceDeps = {},
-): boolean {
+): Promise<boolean> {
   if (deps.runtimeSelection && deps.runtimeSelection.gatewayName !== gatewayName) {
     throw new Error("Rebuild delete gateway does not match the frozen OpenShell target.");
   }
-  const now = deps.now ?? Date.now;
-  const deadlineMs = now() + OPENSHELL_PROBE_TIMEOUT_MS;
-  const captureSandboxGet =
-    deps.captureSandboxGet ??
-    ((name: string, timeoutMs: number) => {
-      const probe = captureOpenshell(["sandbox", "get", "-g", gatewayName, name], {
-        ignoreError: true,
-        includeStderr: true,
-        includeStreams: true,
-        timeout: timeoutMs,
-        ...(deps.runtimeSelection
-          ? {
-              env: buildSelectedOpenShellSubprocessEnv(deps.runtimeSelection),
-              replaceEnv: true,
-            }
-          : {}),
-      });
-      return probe;
-    });
-  let attempt = 0;
-
-  return waitUntil(
-    () => {
-      attempt += 1;
-      const remainingMs = Math.max(1, Math.ceil(deadlineMs - now()));
-      const probe = captureSandboxGet(sandboxName, remainingMs);
-      const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
-      const combinedOutput = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
-      const state =
-        !probe.error &&
-        !probe.signal &&
-        probe.status !== null &&
-        probe.status !== 0 &&
-        isExplicitMissingSandboxGatewayOutput(combinedOutput, sandboxName)
-          ? "absent"
-          : probe.status === 0 && stdout.length > 0
-            ? "present"
-            : "unknown";
-      log(`Delete convergence probe ${attempt}: status=${probe.status}, state=${state}`);
-      return state === "absent";
+  const lookupSandbox = createCliOpenShellSandboxLookup({
+    capture: async (args, options) => {
+      const probe = deps.captureSandboxGet
+        ? deps.captureSandboxGet(sandboxName, options.timeout)
+        : captureOpenshell(args, {
+            ...options,
+            ...(deps.runtimeSelection
+              ? {
+                  env: buildSelectedOpenShellSubprocessEnv(deps.runtimeSelection),
+                  replaceEnv: true,
+                }
+              : {}),
+          });
+      const result = await probe;
+      const captured = {
+        ...result,
+        output:
+          result.output ?? `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`.trim(),
+      };
+      return result.signal
+        ? {
+            ...captured,
+            status: null,
+            error: result.error ?? new Error("OpenShell sandbox lookup was interrupted."),
+          }
+        : captured;
     },
-    {
-      deadlineMs,
-      initialIntervalMs: REBUILD_DELETE_ABSENCE_INITIAL_INTERVAL_MS,
-      maxIntervalMs: REBUILD_DELETE_ABSENCE_MAX_INTERVAL_MS,
-      maxAttempts: REBUILD_DELETE_ABSENCE_MAX_ATTEMPTS,
-      now,
-      ...(deps.sleep ? { sleep: deps.sleep } : {}),
-    },
-  );
+  });
+  return waitForSandboxDeleteAbsence(sandboxName, gatewayName, lookupSandbox, log, {
+    ...(deps.now ? { now: deps.now } : {}),
+    ...(deps.sleep ? { sleep: deps.sleep } : {}),
+  }).then((result) => result.confirmed);
 }
 
 /**
@@ -561,7 +542,7 @@ export async function runRebuildDestroyPhase(
       return null;
     }
   }
-  deletionConfirmed ||= waitForRebuildDeleteAbsence(sandboxName, gatewayName, log, {
+  deletionConfirmed ||= await waitForRebuildDeleteAbsence(sandboxName, gatewayName, log, {
     runtimeSelection: rebuildMcpRuntimeSelection,
   });
   if (!deletionConfirmed) {

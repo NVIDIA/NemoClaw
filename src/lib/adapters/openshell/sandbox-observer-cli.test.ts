@@ -301,6 +301,29 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it("does not treat missing-looking output from an interrupted lookup as absence (#11941)", async () => {
+    const lookup = createCliOpenShellSandboxLookup({
+      capture: () => ({
+        ...captured(1, "", "Error: sandbox alpha not found"),
+        signal: "SIGTERM",
+      }),
+    });
+
+    await expect(
+      lookup({ sandboxName: "alpha", target: namedOpenShellGateway("nemoclaw") }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The OpenShell sandbox observation failed.",
+        },
+      },
+      displayOutput: "",
+    });
+  });
+
   it.each([
     ["transport", "unreachable", captured(1, "", "client error (Connect): Connection refused")],
     ["transport", "unreachable", captured(1, "", "Status: Disconnected")],

@@ -54,6 +54,7 @@ export type CapturedOpenShellCommandResult = Readonly<{
   stdout?: string;
   stderr?: string;
   error?: Error;
+  signal?: NodeJS.Signals | null;
 }>;
 
 export type CapturedSandboxCommandResult = CapturedOpenShellCommandResult;
@@ -92,6 +93,7 @@ export type RunSandboxCommand = (
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
   error?: Error | null;
+  signal?: NodeJS.Signals | null;
 }>;
 
 export type CliOpenShellSandboxLookupResult = Readonly<{
@@ -319,6 +321,7 @@ function captureOpenShellCommandFromRunner(run: RunSandboxCommand): CaptureOpenS
       stdout,
       stderr,
       ...(result.error ? { error: result.error } : {}),
+      ...(result.signal ? { signal: result.signal } : {}),
     };
   };
 }
@@ -434,6 +437,9 @@ export function createCliOpenShellSandboxLookup(
       };
     }
     if (
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
       result.status !== 0 &&
       isExplicitMissingOpenShellSandboxOutput(output, request.sandboxName)
     ) {

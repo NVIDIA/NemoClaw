@@ -135,8 +135,9 @@ describe("rebuild destroy phase", () => {
         ? { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }
         : { status: 0, stdout: "", stderr: "" },
     );
-    mocks.waitUntil.mockImplementation(
-      (condition: () => boolean) => condition() || condition() || condition(),
+    mocks.waitUntilAsync.mockImplementation(
+      async (condition: () => boolean | Promise<boolean>) =>
+        (await condition()) || (await condition()) || (await condition()),
     );
     mocks.teardownSandboxDashboardForward.mockReturnValue(true);
     mocks.restoreSandboxLaunchForwards.mockReturnValue(true);
@@ -880,9 +881,9 @@ describe("rebuild destroy phase", () => {
   });
 
   it("bounds delete convergence without treating timeout or gateway errors as absence (#7194)", async () => {
-    const { waitUntil: realWaitUntil } =
+    const { waitUntilAsync: realWaitUntilAsync } =
       await vi.importActual<typeof import("../../core/wait")>("../../core/wait");
-    mocks.waitUntil.mockImplementation(realWaitUntil);
+    mocks.waitUntilAsync.mockImplementation(realWaitUntilAsync);
 
     let currentMs = 0;
     let attempts = 0;
@@ -901,13 +902,13 @@ describe("rebuild destroy phase", () => {
       currentMs += milliseconds;
     });
 
-    expect(
+    await expect(
       waitForRebuildDeleteAbsence("alpha", "nemoclaw", vi.fn(), {
         captureSandboxGet,
         now: () => currentMs,
         sleep,
       }),
-    ).toBe(false);
+    ).resolves.toBe(false);
 
     expect(captureSandboxGet.mock.calls.length).toBeGreaterThan(1);
     expect(captureSandboxGet.mock.calls.length).toBeLessThanOrEqual(20);
@@ -915,10 +916,10 @@ describe("rebuild destroy phase", () => {
     expect(currentMs).toBeLessThanOrEqual(15_000);
   });
 
-  it("recognizes the exact structured OpenShell sandbox-absence response (#7062)", () => {
+  it("recognizes the exact structured OpenShell sandbox-absence response (#7062)", async () => {
     const log = vi.fn();
 
-    expect(
+    await expect(
       waitForRebuildDeleteAbsence("alpha", "nemoclaw", log, {
         captureSandboxGet: vi.fn(() => ({
           status: 1,
@@ -927,9 +928,9 @@ describe("rebuild destroy phase", () => {
             "Error:   × code: 'Some requested entity was not found', message: \"sandbox not found\"",
         })),
       }),
-    ).toBe(true);
+    ).resolves.toBe(true);
 
-    expect(log).toHaveBeenCalledWith("Delete convergence probe 1: status=1, state=absent");
+    expect(log).toHaveBeenCalledWith("Delete convergence probe 1: state=missing");
   });
 
   it.each([
@@ -1042,7 +1043,7 @@ describe("rebuild destroy phase", () => {
     expect(result).not.toBeNull();
     expect(result?.removalReceipt).toBeNull();
     expect(events).toEqual(["delete", "get-live", "get-missing", "on-deleted"]);
-    expect(mocks.waitUntil).toHaveBeenCalledOnce();
+    expect(mocks.waitUntilAsync).toHaveBeenCalledOnce();
     expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(
       1,
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
@@ -1210,7 +1211,7 @@ describe("rebuild destroy phase", () => {
     expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).toHaveBeenCalledTimes(1);
     expect(mocks.captureOpenshell).toHaveBeenCalledTimes(3);
-    expect(mocks.waitUntil).toHaveBeenCalledWith(
+    expect(mocks.waitUntilAsync).toHaveBeenCalledWith(
       expect.any(Function),
       expect.objectContaining({ deadlineMs: expect.any(Number), maxAttempts: 20 }),
     );
