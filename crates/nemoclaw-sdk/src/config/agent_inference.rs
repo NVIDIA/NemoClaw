@@ -168,7 +168,8 @@ pub(crate) struct RuntimeInference {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeConnection {
     pub provider: String,
-    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub base_url: String,
     pub api_key_env: String,
 }
@@ -196,7 +197,7 @@ pub(crate) struct RuntimeAuth {
     pub provider_ref: String,
 }
 impl RuntimeConnection {
-    fn validate(&self, provider: &str) -> Result<(), ConfigError> {
+    fn validate(&self, provider: &str, harness: &str) -> Result<(), ConfigError> {
         super::validate_endpoint(&self.base_url, false)?;
         let profile = crate::openshell::inference_profile(
             provider,
@@ -216,7 +217,12 @@ impl RuntimeConnection {
                 "inference credential does not match its provider",
             ));
         }
-        if !super::validation::valid_model(&self.model) {
+        if self.model.is_none() != (harness == "pi")
+            || self
+                .model
+                .as_deref()
+                .is_some_and(|model| !super::validation::valid_model(model))
+        {
             return Err(ConfigError("invalid native inference model"));
         }
         Ok(())
@@ -225,7 +231,7 @@ impl RuntimeConnection {
 
 impl RuntimeInference {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        self.connection.validate(&self.provider)?;
+        self.connection.validate(&self.provider, harness)?;
         self.tuning.validate(harness)?;
         if let Some(search) = &self.web_search {
             search.validate(
@@ -277,7 +283,7 @@ impl RuntimeInference {
                     if !super::validation::SLUG.is_match(name) || !model.api.supported(harness) {
                         return Err(ConfigError("invalid native model choice"));
                     }
-                    model.connection.validate(&model.provider)?;
+                    model.connection.validate(&model.provider, harness)?;
                     model.tuning.validate(harness)?;
                 }
             }
@@ -325,7 +331,7 @@ impl Document {
             provider: provider.name.clone(),
             connection: RuntimeConnection {
                 provider: provider.provider.clone(),
-                model: route.overrides.model.clone(),
+                model: (harness.kind != "pi").then(|| route.overrides.model.clone()),
                 base_url: connection.endpoint,
                 api_key_env: profile
                     .credentials

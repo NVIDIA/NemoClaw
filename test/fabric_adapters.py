@@ -228,6 +228,18 @@ async def main():
         model = {"model": "gpt-4o-mini"}
     api = os.environ.get("FABRIC_INFERENCE_API")
     inference = {"api": api, "tuning": {}} if api else None
+    if HARNESS == "pi":
+        inference = {
+            "api": "openai-completions",
+            "tuning": {},
+            "connection": {
+                "provider": "openai",
+                "base_url": "https://inference.local/v1",
+                "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
+            },
+        }
+        os.environ["NEMOCLAW_INFERENCE_CONFIG"] = json.dumps(inference)
+        os.environ["NEMOCLAW_ANONYMOUS_API_KEY"] = "unused"
     relay_enabled = HARNESS == "hermes" and os.environ.get("FABRIC_HERMES_RELAY") == "1"
     if inference and HARNESS == "openclaw":
         inference["tuning"] = {
@@ -258,7 +270,7 @@ async def main():
         if HARNESS == "hermes" and os.environ.get("FABRIC_HERMES_DASHBOARD") == "disabled":
             inference["interfaces"]["dashboard"] = {"enabled": False}
     config = configuration("fixture", HARNESS, model, inference=inference)
-    extra = ["--inference", json.dumps(inference)] if inference else []
+    extra = ["--inference", json.dumps(inference)] if inference and HARNESS != "pi" else []
     env = dict(os.environ, NEMOCLAW_AGENT_NAME="fixture", NEMOCLAW_FABRIC_HARNESS=HARNESS)
     if inference:
         env["NEMOCLAW_INFERENCE_CONFIG"] = json.dumps(inference)

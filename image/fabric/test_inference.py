@@ -66,6 +66,17 @@ class InferenceConfiguration(unittest.TestCase):
             self.assertEqual(native["model"]["base_url"], connection["base_url"])
             self.assertEqual(native["custom_providers"][0]["api_key"], "opaque-test-placeholder")
 
+    def test_pi_uses_mutable_model_configuration_with_native_connection(self):
+        connection = {
+            "provider": "openai",
+            "base_url": "http://172.17.0.1:11434/v1",
+            "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
+        }
+        options = {"api": "openai-completions", "tuning": {}, "connection": connection}
+        for model in ("first-model", "second-model"):
+            config = configuration("main", "pi", {"model": model}, options)
+            self.assertEqual(config["models"]["default"], {**connection, "model": model})
+
     def test_missing_attached_credential_fails_before_native_configuration_is_written(self):
         from unittest.mock import patch
 

@@ -307,3 +307,22 @@ fn pi_model_is_an_optional_opaque_object() {
         assert!(Document::parse(tree.to_string().as_bytes()).is_err());
     }
 }
+
+#[test]
+fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
+    use nemoclaw_sdk::compile::{Generations, targets};
+    let mut document =
+        Document::parse(include_str!("fixtures/config/fabric-pi.yaml").as_bytes()).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|name| (name.into(), "a".repeat(32)))
+        .into();
+    let before = targets(&document, &generations).unwrap();
+    document.spec.sandboxes[0].agents[0]
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model = "another-custom-model".into();
+    assert_eq!(targets(&document, &generations).unwrap(), before);
+}

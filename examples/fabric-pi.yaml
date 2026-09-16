@@ -20,7 +20,7 @@ spec:
   sandboxes:
     - name: assistant
       image:
-        ref: nc-fabric-pi@sha256:fc53fc5a0c37bd487fc58e41886cd1afe8af387c6c8cf410e632c045a03a20dc
+        ref: nc-multi-models@sha256:2ee5e33522a37d3d77bb6381a92e963cb1d5884f2dd28b353b4b7fa0d95f212e
       runtime:
         provider: docker
       network:

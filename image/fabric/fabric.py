@@ -93,7 +93,7 @@ def relay_configuration(name):
     }
 
 
-def model_connection(inference=None):
+def model_connection(inference=None, model=None):
     connection = (inference or {}).get("connection")
     if connection is None:
         return {
@@ -102,6 +102,8 @@ def model_connection(inference=None):
             "base_url": "https://inference.local/v1",
             "api_key_env": "OPENAI_API_KEY",
         }
+    if model is not None and isinstance(connection, dict):
+        connection = {**connection, "model": model}
     if (
         not isinstance(connection, dict)
         or set(connection) != {"provider", "model", "base_url", "api_key_env"}
@@ -260,7 +262,9 @@ def configuration(name, harness="deepagents", model=None, inference=None):
                 "anthropic" if api == "anthropic-messages" else "openai"
             )
     if "connection" in (inference or {}):
-        config["models"]["default"].update(model_connection(inference))
+        config["models"]["default"].update(
+            model_connection(inference, model["model"] if harness == "pi" else None)
+        )
         if harness == "remote-agent":
             config["harness"]["settings"]["base_url"] = model_connection(inference)["base_url"]
     return config

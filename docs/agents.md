@@ -381,7 +381,7 @@ NemoClaw checks that `piModel` is an object.
 Pi owns its fields, defaults, and validation.
 Native options such as `cost`, `compat`, `samplingParams`, and `thinkingLevelMap` pass through, including nested null values.
 
-NemoClaw always supplies the route's model ID and OpenShell endpoint; `id` and `baseUrl` inside `piModel` cannot replace them.
+NemoClaw always supplies the route's model ID and selected provider endpoint; `id` and `baseUrl` inside `piModel` cannot replace them.
 Credentials remain supplied through OpenShell.
 
 Use Pi's native `contextWindow` and `maxTokens` names; the former NemoClaw `contextTokens` and `maxOutputTokens` names are no longer translated.
@@ -390,13 +390,13 @@ Pi rejects invalid native values at startup, with resources retained for a corre
 
 The inference probe also uses Pi's native model API.
 
-Apply configures Pi after creating the route.
-A model or metadata change stops Pi before the route changes and starts a new Pi runtime in the existing sandbox.
+Apply configures Pi after attaching the native provider.
+A model or metadata change stops Pi, updates its separate model configuration, and starts a new Pi runtime in the existing sandbox.
 Unchanged apply preserves the runtime.
 
 Pi's in-memory conversation does not survive a runtime restart.
 Export and readiness compare the hosted configuration with the declared model.
-After a sandbox process restart, apply again to start Pi against the current route.
+After a sandbox process restart, apply again to start Pi with the current model configuration.
 
 Build the updated Pi image and select its immutable reference as described in [Build Agent Images](build.md#build-agent-images); old Pi images do not implement this configuration interface.
 Existing sandbox images are immutable, so use a separate deployment to move from an old image.
