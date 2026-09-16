@@ -244,27 +244,27 @@ mod live {
             .collect()
     }
 
-    fn validate_v0_artifact(bytes: &[u8], expected_sha256: &str, source: &str) {
+    fn v0_artifact_audit(bytes: &[u8], source: Option<&str>) -> Value {
         assert_redacted(bytes);
-        assert_eq!(sha256(bytes), expected_sha256, "v0 artifact hash changed");
-        assert!(!source.trim().is_empty(), "v0 artifact source is required");
+        let mut audit = json!({"sha256": sha256(bytes)});
+        if let Some(source) = source.filter(|source| !source.trim().is_empty()) {
+            audit["source"] = json!(source);
+        }
+        audit
     }
 
     #[test]
-    fn standalone_v0_artifact_requires_exact_bytes_and_source_identity() {
+    fn standalone_v0_artifact_does_not_require_pipeline_provenance() {
         let bytes = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
         let digest = sha256(bytes);
-        validate_v0_artifact(bytes, &digest, "synthetic fixture modeled from f47724f");
+        let without_source = v0_artifact_audit(bytes, None);
+        assert_eq!(without_source["sha256"], digest);
+        assert!(without_source.get("source").is_none());
 
-        assert!(
-            std::panic::catch_unwind(|| validate_v0_artifact(
-                bytes,
-                &"0".repeat(64),
-                "synthetic fixture"
-            ))
-            .is_err()
+        assert_eq!(
+            v0_artifact_audit(bytes, Some("optional audit note"))["source"],
+            "optional audit note"
         );
-        assert!(std::panic::catch_unwind(|| validate_v0_artifact(bytes, &digest, "")).is_err());
     }
 
     #[test]
@@ -420,7 +420,7 @@ mod live {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "requires an exact v0 artifact hash and source, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
+    #[ignore = "requires a manually curated redacted v0 export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
     async fn v0_export_artifact_drives_v1_hosted_openclaw_lifecycle() {
         let gate = std::env::var("NEMOCLAW_RUN_LIVE_HOSTED_PARITY").unwrap();
         let qualification_candidate = match gate.as_str() {
@@ -460,10 +460,10 @@ mod live {
         let directory = explicit("NEMOCLAW_LIVE_HOSTED_STATE");
         let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
         let v0_export_bytes = fs::read(v0_export_path).unwrap();
-        let v0_export_sha256 = sha256(&v0_export_bytes);
-        let expected_export_sha256 = std::env::var("NEMOCLAW_LIVE_V0_EXPORT_SHA256").unwrap();
-        let v0_source = std::env::var("NEMOCLAW_LIVE_V0_SOURCE").unwrap();
-        validate_v0_artifact(&v0_export_bytes, &expected_export_sha256, &v0_source);
+        let v0_source = std::env::var("NEMOCLAW_LIVE_V0_SOURCE").ok();
+        let mut v0_export_evidence = v0_artifact_audit(&v0_export_bytes, v0_source.as_deref());
+        v0_export_evidence["redactedYaml"] =
+            json!(String::from_utf8(v0_export_bytes.clone()).unwrap());
         let image = std::env::var("NEMOCLAW_LIVE_FABRIC_IMAGE").unwrap();
         validate_fabric_image(&image);
         let gateway_engine = std::env::var("NEMOCLAW_LIVE_GATEWAY_ENGINE").unwrap();
@@ -500,7 +500,7 @@ mod live {
             },
         };
         let document = desired_state_from_v0_export(v0_export_bytes.as_slice(), bindings.clone())
-            .expect("the pinned v0 export must translate without dropping fields");
+            .expect("the curated v0 export must translate without dropping fields");
         validate_scenario_document(&document);
         let image = &document.spec.sandboxes[0].image.ref_;
         assert_eq!(
@@ -539,17 +539,13 @@ mod live {
                 "passed": false,
                 "qualified": false,
                 "qualificationCandidate": qualification_candidate,
-                "qualificationNote": "qualification requires review of artifact provenance, the process-principal decision, and lifecycle evidence",
+                "qualificationNote": "qualification requires review of the curated input, the process-principal decision, and lifecycle evidence",
                 "resumedAfterFailedApply": !fresh,
                 "startedEpoch": now(),
                 "v1Revision": v1_revision,
                 "v1SourceWorktreeClean": source_status.is_empty(),
                 "credentialInputs": {"NVIDIA_INFERENCE_API_KEY": "environment reference; value omitted"},
-                "v0Export": {
-                    "source": v0_source,
-                    "sha256": v0_export_sha256,
-                    "redactedYaml": String::from_utf8(v0_export_bytes).unwrap()
-                },
+                "v0Export": v0_export_evidence,
                 "translation": {
                     "contract": "strict-v0-export-to-v1alpha1-desired-state-v1",
                     "v1OnlyRuntimeBindings": bindings,

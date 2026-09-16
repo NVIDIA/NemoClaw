@@ -7,7 +7,7 @@
 // and made v1-only runtime bindings explicit inputs.
 // 2026-09-16: updated the target schema and made process-principal translation explicit.
 
-//! Strict desired-state translation for configuration exported by pinned v0 deployments.
+//! Strict desired-state translation for manually curated v0 configuration exports.
 
 use nemoclaw_sdk::config::{
     API_VERSION, Agent, AgentAuth, Credential, Document, Gateway, Harness, Image, Inference,

@@ -7,21 +7,20 @@ This scenario implements the first checklist item in [NVIDIA/NemoClaw issue #118
 It treats a redacted v0 configuration export as an input artifact and validates a new v1 deployment.
 It does not run, patch, or inspect the v0 test harness.
 
-The checked-in synthetic export permits deterministic development before v0 E2E workflows publish reusable exports.
+The checked-in synthetic export permits deterministic development before v0 E2E workflows produce representative exports.
 It is modeled from `test/e2e/manifests/openclaw-nvidia.yaml` at NVIDIA/NemoClaw revision `f47724f29838fe08898993fad1c8c6b7fcb3e080`.
-Replace it with exact bytes from a qualified v0 export when those artifacts become available.
-For an ad hoc producer run, prefer an exactly identified release such as signed tag `v0.0.126`, which includes the public `nemoclaw config export` command, and record the installed executable hash.
+Updating the fixture is a manual review step: redact and inspect a representative v0 export, copy it into this repository, and update the expected v1 document in the same change.
+The v0 E2E export mechanism is a convenient producer of candidate inputs, not a pipeline dependency of the v1 test.
+Source scenario, revision, date, or executable identity may be retained with the fixture as useful audit metadata, but the v1 test does not require or resolve an exact v0 version.
 
 This scenario creates a new v1 deployment.
 It does not adopt a v0 deployment or migrate its workspace, conversations, credentials, or runtime state.
 
 ## Artifact and Translation Contract
 
-The caller supplies these v0 artifact properties:
-
-- An absolute path to redacted YAML.
-- The SHA-256 of its exact bytes.
-- A nonempty source identity, such as a producing scenario and revision or a declared synthetic fixture.
+The caller supplies an absolute path to manually curated, redacted YAML.
+The runner computes and records the SHA-256 of the bytes it actually consumes.
+An optional free-form source note may identify the producing scenario or revision for later audits; it is not an execution or qualification gate.
 
 The translator rejects unknown v0 fields instead of silently dropping them.
 It carries portable deployment identity, gateway port, inference, agent, and network intent into v1.
@@ -46,7 +45,7 @@ cargo test -p nemoclaw-e2e --test hosted_parity
 
 The live test performs this v1 lifecycle:
 
-1. Verify the artifact hash, source identity, redaction, and strict translation.
+1. Verify redaction and strict translation, then record the consumed artifact's computed hash and optional source note.
 2. Plan and apply the translated desired state in an owned state directory.
 3. Require a real OpenClaw reply through the NVIDIA hosted endpoint.
 4. Require unchanged plan and apply with stable resource identities.
@@ -60,7 +59,7 @@ A feedback-only run may reapply the identical pending intent after a failure.
 A Linux qualification candidate must start from fresh state.
 
 The test writes `openclaw-nvidia-hosted-parity.json` and `exported.yaml` under the state directory.
-The evidence records the exact artifact hash and source, v1 revision and bundle, redacted input, v1-only bindings, environment, operations, resource identities, agent reply, export comparison, cleanup, and verdict.
+The evidence records the computed artifact hash, optional source note, v1 revision and bundle, redacted input, v1-only bindings, environment, operations, resource identities, agent reply, export comparison, cleanup, and verdict.
 Review retained files for credentials before sharing them.
 
 ## Prerequisites and Ownership
@@ -86,8 +85,8 @@ Set absolute paths and exact identities:
 ```sh
 export NEMOCLAW_LIVE_V1_REVISION="$(git rev-parse HEAD)"
 export NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml
-export NEMOCLAW_LIVE_V0_EXPORT_SHA256=sha256-of-exact-export-bytes
-export NEMOCLAW_LIVE_V0_SOURCE='producer scenario and exact revision'
+# Optional audit note; the runner does not resolve or validate this identity.
+export NEMOCLAW_LIVE_V0_SOURCE='producer scenario or revision'
 export NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/owned-state
 export NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle
 export NEMOCLAW_LIVE_GATEWAY_ENGINE=unix:///var/run/docker.sock
@@ -112,7 +111,7 @@ cargo test -p nemoclaw-e2e --test hosted_parity \
 
 Do not include this paid, credentialed test in an ignored-test aggregate.
 The runner records `qualified: false` in every result.
-Assign qualification only after reviewing the artifact provenance and redacted lifecycle evidence.
+Assign qualification only after reviewing the curated input and redacted lifecycle evidence.
 
 ## Docker Desktop Feedback
 
