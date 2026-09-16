@@ -1267,14 +1267,14 @@ describe("PR review advisor OpenShell wrapper", () => {
     createAdvisorSandbox(env, tools);
     await runAdvisorSandboxAsync(env, tools).completion;
     downloadAdvisorArtifacts(env, tools);
-    expect(
-      vi
-        .mocked(tools.run)
-        .mock.calls.find(
-          ([command, args]) =>
-            command === "openshell" && args[0] === "sandbox" && args[1] === "download",
-        )?.[2].timeout,
-    ).toBe(60_000);
+    const downloadOptions = vi
+      .mocked(tools.run)
+      .mock.calls.find(
+        ([command, args]) =>
+          command === "openshell" && args[0] === "sandbox" && args[1] === "download",
+      )?.[2];
+    expect(downloadOptions?.timeout).toBe(60_000);
+    expect(downloadOptions?.killSignal).toBe("SIGKILL");
     deleteAdvisorSandbox(env, tools);
 
     const calls = vi.mocked(tools.run).mock.calls;

@@ -4,7 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, onTestFinished } from "vitest";
-import { recordAdvisorJobFailure } from "../../../tools/pr-review-advisor/failure-artifacts.mts";
+import {
+  recordAdvisorJobFailure,
+  redactAdvisorDiagnostic,
+} from "../../../tools/pr-review-advisor/failure-artifacts.mts";
 import { preserveSpecialistRun } from "../../../tools/pr-review-advisor/run-specialist.mts";
 import {
   runAdvisorSpecialist,
@@ -34,6 +37,16 @@ function failedRun(sessionFile: string): RunAdvisorResult {
     sessionFile,
   };
 }
+
+it.each([
+  { field: "password", value: "private-password" },
+  { field: "token", value: "private-token" },
+  { field: "authorization", value: "Basic private-authorization" },
+])("redacts quoted JSON $field values from failure diagnostics", ({ field, value }) => {
+  const redacted = redactAdvisorDiagnostic(JSON.stringify({ [field]: value }));
+  expect(redacted).toContain("[REDACTED]");
+  expect(redacted).not.toContain(value);
+});
 
 it.each(["superseded", "failed"])(
   "retains a host failure receipt for %s setup without step output secrets",

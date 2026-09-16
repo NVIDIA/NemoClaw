@@ -6,8 +6,9 @@ import { pathToFileURL } from "node:url";
 
 const SECRET_NAME = /(auth|credential|key|password|secret|token)/iu;
 const SECRET_VALUE =
-  /\b((?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
-const AUTH_VALUE = /\b(authorization\s*[:=]\s*)(?:[^\s,;]+\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
+  /((?:(?<quote>["'])(?:api[_-]?key|credential|password|secret|token)\k<quote>|\b(?:api[_-]?key|credential|password|secret|token)\b)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
+const AUTH_VALUE =
+  /((?:(?<quote>["'])authorization\k<quote>|\bauthorization\b)\s*[:=]\s*)(?:[^\s,;]+\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
 const BEARER = /\b(bearer)\s+[^\s,;]+/giu;
 export function redactAdvisorDiagnostic(detail: string): string {
   for (const [name, value] of Object.entries(process.env))
