@@ -533,5 +533,17 @@
       "Uses `nemoclaw-contributor-create-pr`.",
       "Records the validation evidence reported by the implementation workflow instead of selecting new tests."
     ]
+  },
+  {
+    "id": "require-live-e2e-disposition-before-publication",
+    "question": "Publish my NemoClaw branch. It removes live E2E assertions and says only that unit tests cover them, but the implementation handoff does not identify the retained live contract or canonical test owners.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Publication requires an implementation disposition for changed live evidence before it can claim that semantic coverage remains complete.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not infer the live contract from a generic unit-test claim.",
+      "Routes the change back to implementation for canonical owners and stayed, moved, or removed dispositions.",
+      "Does not publish until the handoff identifies the distinct retained live evidence or proves that no live contract remains."
+    ]
   }
 ]

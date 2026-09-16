@@ -37,6 +37,9 @@ response alone or weaken the reference's concurrency and recovery rules.
 
 Open code-changing or sensitive-path PRs as drafts. Record available review context without claiming
 unobserved approval. Do not select labels or request maintainer reviews in this workflow.
+When the diff changes live E2E evidence, require the implementation handoff to apply
+[Test evidence selection](../_shared/test-evidence-selection.md) and identify what stayed live, moved,
+or was removed. Route an incomplete handoff back to implementation before publication.
 Follow [GitHub access](../_shared/git-github-hard-stop.md) for access errors and
 [Writing and review](../_shared/documentation-writing-review.md) for PR text.
 

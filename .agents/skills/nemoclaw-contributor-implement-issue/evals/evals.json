@@ -163,5 +163,18 @@
       "Follows CI and automated reviews for the current commit, repairing in-scope defects.",
       "Does not merge without merge authorization."
     ]
+  },
+  {
+    "id": "prune-live-e2e-with-lower-layer-evidence",
+    "question": "Implement an accepted test-pruning issue. The live E2E asserts parser output, exact progress text, and a real sandbox denial outcome. Keep only necessary live coverage.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "Deterministic parser behavior belongs in a lower layer, incidental progress text has no test owner, and the sandbox denial remains live.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`.",
+      "Moves parser evidence only when equivalent lower-layer coverage is absent.",
+      "Removes the incidental progress-text assertion.",
+      "Retains the smallest live assertion for the sandbox denial outcome.",
+      "Records which evidence stayed live, moved, or was removed without hiding duplicates in helpers or artifacts."
+    ]
   }
 ]

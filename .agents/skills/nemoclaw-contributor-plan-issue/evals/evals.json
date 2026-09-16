@@ -200,5 +200,18 @@
       "Follows CI and automated reviews for the current commit, repairing in-scope defects.",
       "Does not merge without merge authorization."
     ]
+  },
+  {
+    "id": "select-smallest-test-evidence-owner",
+    "question": "Plan an accepted NemoClaw issue that asks for a live E2E to verify deterministic target selection and one real sandbox network boundary.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "The plan assigns deterministic selection to a lower test layer and retains only the distinct sandbox boundary outcome in live E2E.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Names the canonical owner and shortest stable evidence layer for each behavior.",
+      "Routes deterministic target selection to unit, integration, package-contract, or `e2e-support` evidence.",
+      "Retains the smallest live assertion that proves the sandbox network boundary.",
+      "Does not duplicate deterministic selection evidence in the live E2E."
+    ]
   }
 ]
