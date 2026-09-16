@@ -438,6 +438,13 @@ moduleRuntime._resolveFilename = function resolveSourceFilename(request, parent,
         return resolveFilename.call(this, sourceRequest, parent, isMain, options);
       }
     }
+    if (request.startsWith(".") && request.endsWith(".mjs") && parentFilename) {
+      const sourceRequest = `${request.slice(0, -4)}.mts`;
+      const sourceCandidate = path.resolve(path.dirname(parentFilename), sourceRequest);
+      if (sourceCandidate.startsWith(sourceRoot) && fs.existsSync(sourceCandidate)) {
+        return resolveFilename.call(this, sourceRequest, parent, isMain, options);
+      }
+    }
     throw error;
   }
 };
