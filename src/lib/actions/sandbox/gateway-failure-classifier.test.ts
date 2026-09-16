@@ -34,8 +34,8 @@ import {
   classifyGatewayFailure,
   classifyObservedSandboxContainerFailure,
   type GatewayFailureRunners,
-  isDockerDaemonReachable,
   isDockerRuntimeDown,
+  probeDockerDaemonReachability,
 } from "./gateway-failure-classifier";
 
 function runners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
@@ -173,7 +173,7 @@ describe("isDockerRuntimeDown", () => {
       stdout: "Client: Docker Engine - Community",
     });
 
-    expect(isDockerDaemonReachable()).toBe(false);
+    expect(probeDockerDaemonReachability()).toBe(false);
     getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
     expect(isDockerRuntimeDown("alpha")).toBe(true);
   });
@@ -185,13 +185,13 @@ describe("isDockerRuntimeDown", () => {
       stdout: null as unknown as string,
     });
 
-    expect(isDockerDaemonReachable()).toBe(false);
+    expect(probeDockerDaemonReachability()).toBe(false);
     getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
     expect(isDockerRuntimeDown("alpha")).toBe(true);
   });
 
   it("accepts Docker info only when the daemon request succeeds (#11715)", () => {
-    expect(isDockerDaemonReachable()).toBe(true);
+    expect(probeDockerDaemonReachability()).toBe(true);
     getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
     expect(isDockerRuntimeDown("alpha")).toBe(false);
     expect(dockerRunMock).toHaveBeenCalledWith(["info", "--format", "{{json .}}"], {
@@ -208,7 +208,7 @@ describe("isDockerRuntimeDown", () => {
       stdout: '{"ServerVersion":"","ServerErrors":["daemon unavailable"]}',
     });
 
-    expect(isDockerDaemonReachable()).toBe(false);
+    expect(probeDockerDaemonReachability()).toBe(false);
     getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
     expect(isDockerRuntimeDown("alpha")).toBe(true);
   });
@@ -220,7 +220,7 @@ describe("isDockerRuntimeDown", () => {
       stdout: "unexpected",
     });
 
-    expect(isDockerDaemonReachable()).toBe(false);
+    expect(probeDockerDaemonReachability()).toBe(false);
     getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
     expect(isDockerRuntimeDown("alpha")).toBe(true);
   });

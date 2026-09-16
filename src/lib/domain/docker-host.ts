@@ -65,6 +65,24 @@ export function isDockerDaemonReachable(rawOutput = ""): boolean {
   return parseDockerDaemonObservation(rawOutput).reachable;
 }
 
+/** Interpret the status and JSON output from `docker info --format '{{json .}}'`. */
+export function isDockerInfoResultReachable(result: {
+  readonly status: number | null;
+  readonly stdout?: unknown;
+}): boolean {
+  if (result.status !== 0) return false;
+  const stdout = Buffer.isBuffer(result.stdout)
+    ? result.stdout.toString("utf8")
+    : String(result.stdout ?? "");
+  if (!stdout.trim()) return false;
+  try {
+    JSON.parse(stdout);
+  } catch {
+    return false;
+  }
+  return parseDockerDaemonObservation(stdout).reachable;
+}
+
 // A DOCKER_HOST value onboarding can use. Unset means Docker's default socket,
 // which is supported; a set value must be an absolute `unix://` socket that can
 // be written to the gateway environment file. TCP and SSH endpoints and

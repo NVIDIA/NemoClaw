@@ -15,7 +15,7 @@ import os from "node:os";
 import { failLine, warnLine } from "../cli/terminal-style";
 import { GATEWAY_PORT } from "../core/ports";
 import type { GatewayRecoveryOutput } from "./gateway-recovery";
-import { parseDockerDaemonObservation } from "../domain/docker-host";
+import { isDockerInfoResultReachable } from "../domain/docker-host";
 import { cliDisplayName, cliName } from "./branding";
 import {
   DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
@@ -180,15 +180,7 @@ function outputTail(value: unknown): string | undefined {
 }
 
 function isReachableRuntimeInfo(result: SandboxBridgeProbeRunResult): boolean {
-  if (result.status !== 0) return false;
-  const stdout = outputText(result.stdout);
-  if (!stdout) return false;
-  try {
-    JSON.parse(stdout);
-  } catch {
-    return false;
-  }
-  return parseDockerDaemonObservation(stdout).reachable;
+  return isDockerInfoResultReachable(result);
 }
 
 function summarizeProbeResult(result: SandboxBridgeProbeRunResult): string {
