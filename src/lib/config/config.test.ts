@@ -223,6 +223,14 @@ describe("NemoClawConfig v1", () => {
     );
   });
 
+  it("rejects secondary authentication through agent-wide validation (#11854)", () => {
+    const { value, secondary } = twoAgentConfig();
+    Object.assign(secondary, { auth: { method: "api-key", providerRef: "hosted-openai" } });
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents/1/auth is supported only for a Hermes agent",
+    );
+  });
+
   it("rejects a divergent route anywhere in a read-only roster (#11854)", () => {
     const { value, reviewer } = threeAgentConfig();
     reviewer.inference.routes[0]!.overrides.model = "other";
