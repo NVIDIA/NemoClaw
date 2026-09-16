@@ -33,6 +33,7 @@ import { pollUntil } from "../fixtures/polling.ts";
 import {
   SANDBOX_SURVIVAL_EXEC_TIMEOUT_MS,
   SANDBOX_SURVIVAL_HOST_FORWARD_TIMEOUT_MS,
+  SANDBOX_SURVIVAL_LIFECYCLE_TIMEOUT_MS,
   SANDBOX_SURVIVAL_READINESS_ATTEMPTS,
   SANDBOX_SURVIVAL_READINESS_DELAY_MS,
   SANDBOX_SURVIVAL_TEST_TIMEOUT_MS,
@@ -380,6 +381,9 @@ test(
 
       await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
         artifactNamePrefix: `post-${command}-openshell-ready`,
+        attempts: SANDBOX_SURVIVAL_READINESS_ATTEMPTS,
+        delayMs: SANDBOX_SURVIVAL_READINESS_DELAY_MS,
+        timeoutMs: SANDBOX_SURVIVAL_LIFECYCLE_TIMEOUT_MS,
       });
       expect(
         await runtimeProvider.resolveSandboxResourceHandle(SANDBOX_NAME, {

@@ -10,7 +10,7 @@ import {
 } from "../fixtures/sandbox-survival-budget.ts";
 
 describe("bounded polling", () => {
-  it("reserves cleanup time after all sandbox-survival readiness polling", () => {
+  it("reserves cleanup time after all sandbox-survival readiness waits", () => {
     expect(
       SANDBOX_SURVIVAL_READINESS_WORST_CASE_MS + SANDBOX_SURVIVAL_CLEANUP_RESERVE_MS,
     ).toBeLessThanOrEqual(SANDBOX_SURVIVAL_TEST_TIMEOUT_MS);
