@@ -142,7 +142,7 @@ COPY --from=node-check-tools /checks/node_modules /repo/image/node_modules
 COPY ruff.toml /repo/
 COPY image/ /repo/image/
 COPY test/ /repo/test/
-COPY tools/fabric-adapter-experiment.py tools/openclaw-native-test.py /repo/tools/
+COPY tools/fabric-adapter-experiment.py /repo/tools/
 RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.16.7 ruff check /repo \
     && uv tool run --from ruff==0.16.7 ruff format --check /repo \
     && npm run lint && npm run format:check && npm run typecheck

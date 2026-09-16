@@ -8,7 +8,6 @@
 !test/**
 !tools/
 !tools/fabric-adapter-experiment.py
-!tools/openclaw-native-test.py
 !ruff.toml
 !docker-bake.hcl
 **/node_modules

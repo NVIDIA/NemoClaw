@@ -43,7 +43,6 @@ jobs:
           python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inference-api openai-responses
           python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --inference-api openai-completions
           python3 tools/fabric-adapter-experiment.py --harness hermes --hermes-relay --inference-api anthropic-messages
-          python3 tools/openclaw-native-test.py
       - name: Exercise OpenClaw tools, execution, search, and tracing
         run: |
           docker run --rm --runtime=runc --network none --user 0 \

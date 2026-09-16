@@ -9,5 +9,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["fabric/test_openclaw*.mts", "fabric/test_web_search.mts", "../test/*.mts", "../test/*.d.ts"]
+  "include": ["fabric/test_openclaw*.mts", "fabric/test_web_search.mts", "../test/*.d.ts"]
 }

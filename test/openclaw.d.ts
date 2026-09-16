@@ -41,7 +41,3 @@ declare module "*/brave-web-search-provider-CY6mh6hm.js" {
     };
   };
 }
-
-declare module "*/cli/run-main.js" {
-  export function runCli(argv: string[]): Promise<void>;
-}
