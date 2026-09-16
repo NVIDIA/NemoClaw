@@ -837,12 +837,6 @@ exit "$rc"
   ) {
     return "ok";
   }
-  if (result.exitCode === 124) {
-    return {
-      skipped:
-        "OpenClaw gateway inference timed out after switch; route/config checks already passed",
-    };
-  }
   throw new Error(
     [
       `OpenClaw gateway inference failed after switch (exit ${result.exitCode})`,

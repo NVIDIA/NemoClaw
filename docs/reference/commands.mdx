@@ -3372,9 +3372,18 @@ Switch the active inference provider or model for a NemoClaw-managed Hermes sand
 
 By default, the command syncs the default registered sandbox.
 
-Each OpenShell gateway exposes one inference route to every sandbox registered on that gateway. Before changing the route, NemoClaw compares the requested provider and model with every same-gateway registry entry, including stopped sandboxes. Custom compatible routes must also have matching normalized endpoint URLs and API families. Provider-global credential environment-variable names must also match for the same provider name. If a route conflicts or a legacy custom route lacks enough endpoint or API-family metadata to prove compatibility, the command exits non-zero before changing the OpenShell route, agent config, or host registry and names the conflicting sandboxes. Align those sandboxes to the same route or remove a conflicting sandbox that you no longer need.
+Each OpenShell gateway exposes one inference route to every sandbox registered on that gateway.
+Before changing the route, NemoClaw compares it with every same-gateway registry entry, including stopped sandboxes.
+When only the provider or model differs, the command names the affected sandboxes and warns immediately before it re-points the shared route.
+Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
 
-Onboarding and `connect` can time-share compatible provider and model routes without replacing provider-global configuration. Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for the onboarding warnings, compatibility fields, and status drift report.
+For the same provider name, custom compatible routes must have matching normalized endpoint URLs and API families.
+Provider-global credential environment-variable names must also match.
+Endpoint, API-family, credential, incomplete-route, and invalid-gateway-binding conflicts remain fail-closed.
+The command exits nonzero before changing the OpenShell route, agent config, or host registry and names the conflicting sandboxes.
+Align the provider-global configuration, repair incomplete metadata, or remove a conflicting sandbox that you no longer need.
+
+Onboarding, `connect`, and `inference set` can time-share compatible provider and model routes without replacing provider-global configuration. Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for route-change warnings, compatibility fields, and the status drift report.
 
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
