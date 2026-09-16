@@ -15,6 +15,14 @@ export interface HermesPortableStartupOperation {
 
 const operations = new AsyncLocalStorage<HermesPortableStartupOperation>();
 
+/** Enable the bounded startup reuse gate by default; reject unknown values. */
+export function hermesPortableStartupReuseGateEnabled(env: NodeJS.ProcessEnv): boolean {
+  return (
+    env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE === undefined ||
+    env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE === "1"
+  );
+}
+
 /** Reuse evidence only beneath the same live lifecycle fence and bounded invocation. */
 export async function withHermesPortableStartupOperation<T>(
   sandboxName: string,
@@ -25,7 +33,7 @@ export async function withHermesPortableStartupOperation<T>(
 ): Promise<T> {
   if (
     env.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" ||
-    env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE !== "1"
+    !hermesPortableStartupReuseGateEnabled(env)
   ) {
     return await operation();
   }
@@ -41,7 +49,7 @@ export async function withHermesPortableStartupOperation<T>(
       const current = now();
       active &&=
         env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable" &&
-        env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE === "1" &&
+        hermesPortableStartupReuseGateEnabled(env) &&
         Number.isFinite(current) &&
         current >= previous &&
         current - started < MAX_REUSE_MS &&

@@ -68,6 +68,7 @@ import {
 } from "./hermes-portable-receipt";
 import {
   currentHermesPortableStartupOperation,
+  hermesPortableStartupReuseGateEnabled,
   qualifyHermesPortableOperatingAuthority,
   type HermesPortableOperatingAuthorityDeps,
 } from "./hermes-portable-operating-authority";
@@ -1592,8 +1593,7 @@ function currentHermesPortableLifecycleStartupScope(
   const scope = currentHermesPortableStartupOperation(sandboxName);
   return (env.NEMOCLAW_EXPERIMENTAL_PROFILE === undefined ||
     env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable") &&
-    (env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE === undefined ||
-      env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE === "1") &&
+    hermesPortableStartupReuseGateEnabled(env) &&
     scope?.stateDir === path.join(deps.stateDir ?? defaultPortableDemoStateDir(env), "state") &&
     deps.startupTimeoutMs === undefined
     ? scope
