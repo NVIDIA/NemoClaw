@@ -34,7 +34,24 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             .ok_or(Error::Bundle("cannot locate runtime bundle"))?
             .into(),
     };
-    let deployment = Deployment::new(&cli.state_dir, &bundle);
+    let mut deployment = Deployment::new(&cli.state_dir, &bundle);
+    if cli.verbose {
+        deployment = deployment.with_progress(std::sync::Arc::new(|event| {
+            if let nemoclaw_sdk::Progress::Completed {
+                operation,
+                elapsed,
+                outcome,
+            } = event
+            {
+                use std::io::Write;
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "{operation} {outcome} {:.3}s",
+                    elapsed.as_secs_f64()
+                );
+            }
+        }));
+    }
     let result = match cli.command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
         Command::Plan {

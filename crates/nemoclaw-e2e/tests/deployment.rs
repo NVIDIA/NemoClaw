@@ -274,14 +274,40 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             Ok("fixture-only-inference-key".into())
         }
     }
+    let timings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received = timings.clone();
     let deployment = Deployment::new(directory.path(), &bundle)
-        .with_secrets(std::sync::Arc::new(FixtureSecrets));
+        .with_secrets(std::sync::Arc::new(FixtureSecrets))
+        .with_progress(std::sync::Arc::new(move |event| {
+            if let nemoclaw_sdk::Progress::Completed {
+                operation, outcome, ..
+            } = event
+            {
+                received.lock().unwrap().push((operation, outcome));
+            }
+        }));
     let cancel = CancellationToken::new();
     let planning = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(planning.outcome, Outcome::Planned);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     let applied = deployment.apply(&document, &cancel).await;
     assert!(applied.is_ok(), "{applied:?}");
+    for operation in [
+        "bundle.verify",
+        "tofu.init",
+        "tofu.plan",
+        "tofu.show",
+        "tofu.apply",
+        "sandbox.ready",
+    ] {
+        assert!(
+            timings
+                .lock()
+                .unwrap()
+                .contains(&(operation, nemoclaw_sdk::StepOutcome::Succeeded)),
+            "missing timing for {operation}"
+        );
+    }
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, if has_search { 6 } else { 4 });
     if declare_ownership {

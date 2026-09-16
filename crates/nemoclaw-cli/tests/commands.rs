@@ -81,3 +81,24 @@ fn piped_input_requires_dash_and_usage_errors_exit_two() {
         assert!(!state.exists());
     }
 }
+
+#[test]
+fn verbose_reports_failed_steps_on_stderr_without_changing_stdout() {
+    let directory = tempfile::tempdir().unwrap();
+    for verbose in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+        command.args(["export", "--bundle"]).arg(directory.path());
+        command
+            .arg("--state-dir")
+            .arg(directory.path().join("state"));
+        if verbose {
+            command.arg("--verbose");
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(stderr.contains("bundle.verify failed"), verbose, "{stderr}");
+        assert!(!stderr.contains(directory.path().to_str().unwrap()));
+    }
+}

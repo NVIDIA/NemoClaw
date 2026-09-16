@@ -17,6 +17,9 @@ pub(crate) struct Cli {
     /// Verified runtime bundle (defaults to the installed bundle).
     #[arg(long = "bundle", alias = "bundle-dir", global = true)]
     pub(crate) bundle_dir: Option<PathBuf>,
+    /// Report operation timings on standard error.
+    #[arg(long, short, global = true)]
+    pub(crate) verbose: bool,
     #[command(subcommand)]
     pub(crate) command: Command,
 }
