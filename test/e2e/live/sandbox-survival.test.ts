@@ -4,7 +4,7 @@
 /**
  *
  * Preserves the supported boundaries: install.sh/onboard, OpenShell sandbox
- * stopped-phase recovery, native OpenClaw readiness, sandbox exec, and
+ * OpenShell stop/start, native OpenClaw readiness, sandbox exec, and
  * durable /sandbox/.openclaw state markers.
  */
 
@@ -22,17 +22,11 @@ import {
   SANDBOX_SURVIVAL_NATIVE_READINESS,
   SANDBOX_SURVIVAL_OPENSHELL_DELETE_TIMEOUT_MS,
   SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
-  SANDBOX_SURVIVAL_PRE_CLEANUP_TIMEOUT_MS,
-  SANDBOX_SURVIVAL_RECOVERY_OPERATION_TIMEOUTS,
-  SANDBOX_SURVIVAL_REPAIR_COMMANDS,
-  SANDBOX_SURVIVAL_REPAIR_TIMEOUT_MS,
+  SANDBOX_SURVIVAL_SANDBOX_LIFECYCLE_TIMEOUT_MS,
   SANDBOX_SURVIVAL_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/sandbox-survival-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import {
-  cleanupWhenCommandAvailable,
-  cleanupWhenOpenShellAvailable,
-} from "../fixtures/cleanup-resources.ts";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import {
   assertExitZero,
   type HostCliClient,
@@ -136,7 +130,7 @@ async function waitForHostForwardReady(
 }
 
 test(
-  "sandbox recovers a running container left in OpenShell Stopped phase",
+  "OpenShell stop/start preserves native agent state",
   {
     timeout: testTimeout(SANDBOX_SURVIVAL_TEST_TIMEOUT_MS),
     meta: {
@@ -145,9 +139,8 @@ test(
         "install and register the OpenClaw sandbox",
         "prove baseline sandbox access and native agent readiness",
         "write persistent OpenClaw markers",
-        "create a running-container and OpenShell-Stopped mismatch",
-        "recover the mismatch through nemoclaw recover",
-        "recreate and repair the mismatch through nemoclaw start",
+        "stop the sandbox through OpenShell",
+        "start the sandbox through OpenShell",
         "recheck native agent readiness, host-forward usability, and state",
         "destroy the sandbox",
       ],
@@ -173,10 +166,9 @@ test(
       boundary: "install-sh-openshell-sandbox-native-agent-state",
       contracts: [
         "install.sh --non-interactive creates the named OpenClaw sandbox",
-        "OpenShell owns stopped-phase recovery even when Docker reports the container running",
-        "nemoclaw recover and nemoclaw start independently repair that divergent state",
-        "sandbox exec, the native OpenClaw gateway, and the host forward are usable after each repair",
-        "declared workspace, session, and memory markers survive both recovery cycles",
+        "OpenShell owns sandbox stop and start",
+        "sandbox exec, the native OpenClaw gateway, and the host forward are usable after restart",
+        "declared workspace, session, and memory markers survive the OpenShell lifecycle",
         "final destroy removes the sandbox",
       ],
     });
@@ -187,10 +179,6 @@ test(
       scenarioLabel: "sandbox survival",
     });
 
-    await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-      artifactName: "pre-cleanup-nemoclaw-destroy-sandbox-survival",
-      timeoutMs: SANDBOX_SURVIVAL_PRE_CLEANUP_TIMEOUT_MS,
-    });
     await host.command(
       "sh",
       [
@@ -244,26 +232,23 @@ test(
       gatewayCleanupOptions,
     );
     const sandboxCleanupOptions = {
-      artifactName: "cleanup-nemoclaw-destroy-sandbox-survival",
+      artifactName: "cleanup-openshell-delete-sandbox-survival",
       redactionValues: [apiKey],
     };
-    cleanup.trackSandbox(
-      {
-        cleanupSandbox: (name: string) =>
-          cleanupWhenCommandAvailable(
+    let sandboxDeleted = false;
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandboxDeleted
+        ? Promise.resolve()
+        : cleanupWhenOpenShellAvailable(
             host,
-            host.commandPath,
             {
-              artifactName: "cleanup-probe-nemoclaw-sandbox-survival",
+              artifactName: "cleanup-probe-openshell-sandbox-survival",
               env: buildAvailabilityProbeEnv(),
               redactionValues: sandboxCleanupOptions.redactionValues,
               timeoutMs: 30_000,
             },
-            () => host.cleanupSandbox(name, sandboxCleanupOptions),
+            () => sandbox.cleanupSandbox(SANDBOX_NAME, sandboxCleanupOptions),
           ),
-      },
-      SANDBOX_NAME,
-      sandboxCleanupOptions,
     );
 
     progress.phase("install and register the OpenClaw sandbox");
@@ -308,103 +293,44 @@ test(
     await stateValidation.writeSandboxMarkers(instance, markers);
     await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
 
-    const resourceHandle = await runtimeProvider.resolveSandboxResourceHandle(SANDBOX_NAME, {
-      artifactName: "sandbox-survival-runtime-resource",
-      timeoutMs: SANDBOX_SURVIVAL_RECOVERY_OPERATION_TIMEOUTS.resourceLookupMs,
+    progress.phase("stop the sandbox through OpenShell");
+    const stop = await sandbox.openshell(["sandbox", "stop", "-g", "nemoclaw", SANDBOX_NAME], {
+      artifactName: "openshell-stop-sandbox-survival",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: SANDBOX_SURVIVAL_SANDBOX_LIFECYCLE_TIMEOUT_MS,
     });
-    for (const command of SANDBOX_SURVIVAL_REPAIR_COMMANDS) {
-      switch (command) {
-        case "recover":
-          progress.phase("create a running-container and OpenShell-Stopped mismatch");
-          break;
-        case "start":
-          progress.phase("recreate and repair the mismatch through nemoclaw start");
-          break;
-      }
-      const artifactPrefix = `${command}-mismatch`;
-      const stop = await sandbox.openshell(["sandbox", "stop", "-g", "nemoclaw", SANDBOX_NAME], {
-        artifactName: `${artifactPrefix}-openshell-stop`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: SANDBOX_SURVIVAL_RECOVERY_OPERATION_TIMEOUTS.stopMs,
-      });
-      assertExitZero(stop, `openshell sandbox stop before nemoclaw ${command}`);
+    assertExitZero(stop, "OpenShell sandbox stop");
 
-      // Reproduce #11790: Docker restarts the container behind OpenShell's
-      // lifecycle authority, leaving the container running while the phase
-      // remains Stopped.
-      const directStart = await runtimeProvider.command(["container", "start", resourceHandle], {
-        artifactName: `${artifactPrefix}-runtime-start`,
-        timeoutMs: SANDBOX_SURVIVAL_RECOVERY_OPERATION_TIMEOUTS.directStartMs,
-      });
-      assertExitZero(directStart, `${runtimeProvider.displayName} container start`);
-      const phase = await sandbox.openshell(["sandbox", "get", "-g", "nemoclaw", SANDBOX_NAME], {
-        artifactName: `${artifactPrefix}-openshell-stopped-phase`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: SANDBOX_SURVIVAL_RECOVERY_OPERATION_TIMEOUTS.phaseReadMs,
-      });
-      assertExitZero(phase, "openshell sandbox get");
-      expect(
-        resultText(phase),
-        `OpenShell did not retain the Stopped phase: ${resultText(phase)}`,
-      ).toMatch(/\bPhase:\s*Stopped\b/u);
+    progress.phase("start the sandbox through OpenShell");
+    const start = await sandbox.openshell(["sandbox", "start", "-g", "nemoclaw", SANDBOX_NAME], {
+      artifactName: "openshell-start-sandbox-survival",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: SANDBOX_SURVIVAL_SANDBOX_LIFECYCLE_TIMEOUT_MS,
+    });
+    assertExitZero(start, "OpenShell sandbox start");
 
-      const running = await runtimeProvider.command(
-        ["container", "inspect", "--format", "{{.State.Running}}", resourceHandle],
-        {
-          artifactName: `${artifactPrefix}-runtime-running`,
-          timeoutMs: SANDBOX_SURVIVAL_RECOVERY_OPERATION_TIMEOUTS.inspectMs,
-        },
-      );
-      assertExitZero(running, `${runtimeProvider.displayName} container inspect`);
-      expect(
-        running.stdout.trim(),
-        `${runtimeProvider.displayName} did not report the sandbox container running`,
-      ).toBe("true");
-
-      if (command === "recover") {
-        progress.phase("recover the mismatch through nemoclaw recover");
-      }
-      const lifecycleRepair = await host.nemoclaw([SANDBOX_NAME, command], {
-        artifactName: `nemoclaw-${command}-running-stopped-mismatch`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: SANDBOX_SURVIVAL_REPAIR_TIMEOUT_MS,
-      });
-      assertExitZero(lifecycleRepair, `nemoclaw ${SANDBOX_NAME} ${command}`);
-      switch (command) {
-        case "recover":
-          break;
-        case "start":
-          progress.phase("recheck native agent readiness, host-forward usability, and state");
-          break;
-      }
-
-      await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
-        artifactNamePrefix: `post-${command}-openshell-ready`,
-        attempts: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.attempts,
-        delayMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.delayMs,
-        timeoutMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.timeoutMs,
-      });
-      expect(
-        await runtimeProvider.resolveSandboxResourceHandle(SANDBOX_NAME, {
-          artifactName: `post-${command}-sandbox-container`,
-          timeoutMs: SANDBOX_SURVIVAL_RECOVERY_OPERATION_TIMEOUTS.resourceLookupMs,
-        }),
-        `${command} must preserve the sandbox container identity`,
-      ).toBe(resourceHandle);
-      await waitForNativeAgentReady(
-        execShell,
-        `post-${command}-native-agent-ready`,
-        DASHBOARD_PORT,
-      );
-      await waitForHostForwardReady(host, `post-${command}-host-forward-ready`, DASHBOARD_PORT);
-      await stateValidation.expectSandboxMarkers(instance, markers, `post-${command}-marker-read`);
-    }
+    progress.phase("recheck native agent readiness, host-forward usability, and state");
+    await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
+      artifactNamePrefix: "post-openshell-start-ready",
+      attempts: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.attempts,
+      delayMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.delayMs,
+      timeoutMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.timeoutMs,
+    });
+    await waitForNativeAgentReady(execShell, "post-openshell-start-native-ready", DASHBOARD_PORT);
+    await waitForHostForwardReady(host, "post-openshell-start-host-forward", DASHBOARD_PORT);
+    await stateValidation.expectSandboxMarkers(
+      instance,
+      markers,
+      "post-openshell-start-marker-read",
+    );
 
     progress.phase("destroy the sandbox");
-    await host.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "final-destroy-sandbox-survival",
+    await sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "final-openshell-delete-sandbox-survival",
+      env: buildAvailabilityProbeEnv(),
       timeoutMs: SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
     });
+    sandboxDeleted = true;
     const postDestroyList = await sandbox.list({
       artifactName: "post-destroy-openshell-sandbox-list",
       env: buildAvailabilityProbeEnv(),
@@ -419,12 +345,11 @@ test(
       status: "passed",
       assertions: {
         installCompleted: install.exitCode === 0,
-        recoverReconciledRunningStoppedMismatch: true,
-        startReconciledRunningStoppedMismatch: true,
+        openshellStopStartCompleted: true,
         nativeAgentReadyBeforeStop: true,
-        deliveryPathReadyAfterRecover: true,
-        markersPersistedAfterBothRepairs: true,
-        deliveryPathReadyAfterStart: true,
+        nativeAgentReadyAfterStart: true,
+        hostForwardReadyAfterStart: true,
+        markersPersistedAfterRestart: true,
         destroyedAtEnd,
       },
     });

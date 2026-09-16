@@ -6,6 +6,10 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
+import {
+  OPENSHELL_MAIN_PROCESS_SPEC_ENV,
+  openshellMainProcessSpecEnvValue,
+} from "../docker-startup-command-env";
 import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./adapter";
 import {
   inspectExactPodmanHeldWorkload,
@@ -48,11 +52,13 @@ function inspectOutput(
     readonly id?: string;
     readonly image?: string;
     readonly labels?: Readonly<Record<string, string>>;
+    readonly mainProcessSpec?: string | null;
     readonly name?: string;
     readonly running?: boolean;
     readonly sandboxId?: string;
     readonly sandboxName?: string;
     readonly user?: string;
+    readonly extraEnvironment?: readonly string[];
   } = {},
 ): string {
   const sandboxId = overrides.sandboxId ?? SANDBOX_ID;
@@ -67,8 +73,16 @@ function inspectOutput(
         Entrypoint: [SUPERVISOR_ARGV[0]],
         Env: [
           `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${overrides.bootstrapIdentity ?? BOOTSTRAP_IDENTITY}`,
-          "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+          ...(overrides.mainProcessSpec === null
+            ? []
+            : [
+                `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${
+                  overrides.mainProcessSpec ??
+                  openshellMainProcessSpecEnvValue(HELD_WORKLOAD_ARGV, false)
+                }`,
+              ]),
           "OPENSHELL_SANDBOX_TOKEN_FILE=/run/secrets/openshell-token",
+          ...(overrides.extraEnvironment ?? []),
         ],
         Labels: overrides.labels ?? {
           [PODMAN_MANAGED_LABEL]: "true",
@@ -178,9 +192,7 @@ describe("Podman managed bootstrap held-workload inspection", () => {
   it("rejects a non-empty expected namespace before discovering a workload", () => {
     const fake = engineWith([]);
 
-    expect(() => inspect(fake.engine, "default")).toThrow(
-      "sandbox namespace must match OpenShell v0.0.106",
-    );
+    expect(() => inspect(fake.engine, "default")).toThrow("sandbox namespace must match OpenShell");
     expect(fake.capture).not.toHaveBeenCalled();
   });
 
@@ -347,6 +359,33 @@ describe("Podman managed bootstrap held-workload inspection", () => {
     ]);
 
     expect(() => inspect(fake.engine)).toThrow("bootstrap identity binding changed");
+  });
+
+  it.each([
+    ["missing", { mainProcessSpec: null }],
+    [
+      "duplicate",
+      {
+        extraEnvironment: [
+          `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${openshellMainProcessSpecEnvValue(
+            HELD_WORKLOAD_ARGV,
+            false,
+          )}`,
+        ],
+      },
+    ],
+    ["malformed", { mainProcessSpec: "not-json" }],
+    [
+      "mismatched",
+      { mainProcessSpec: openshellMainProcessSpecEnvValue(["/bin/sleep", "infinity"], false) },
+    ],
+  ])("rejects %s OpenShell main-process metadata", (_label, overrides) => {
+    const fake = engineWith([
+      result(listOutput()),
+      result(inspectOutput(overrides as Parameters<typeof inspectOutput>[0])),
+    ]);
+
+    expect(() => inspect(fake.engine)).toThrow();
   });
 
   it("rejects image-content drift during the stable capture", () => {

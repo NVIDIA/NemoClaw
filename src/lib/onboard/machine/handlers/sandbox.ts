@@ -1116,7 +1116,7 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
-  private assertGatewayRouteCompatible(sandboxName: string | null): void {
+  private assertGatewayRouteCompatible(sandboxName: string | null): asserts sandboxName is string {
     const targetEntry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
     if (!sandboxName || !targetEntry) {
       this.failGatewayRouteCheck(

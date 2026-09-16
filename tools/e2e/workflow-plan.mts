@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import {
-  buildLiveTargetInventory,
   buildLiveTargetMatrix,
   liveTargetGatewayRuntimes,
   type LiveTargetMatrixEntry,
@@ -187,8 +186,6 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "runner",
       "runtime",
       "suites",
-      "supportReasons",
-      "supported",
       "timeout_minutes",
       "unresolvedReason",
     ])
@@ -217,13 +214,11 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     typeof value.observableOutcome === "string" &&
     typeof value.environmentOrInferenceEndpoint === "string" &&
     typeof value.unresolvedReason === "string" &&
-    typeof value.supported === "boolean" &&
     typeof value.timeout_minutes === "number" &&
     Number.isSafeInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
     isStringArray(value.suites) &&
     isStringArray(value.requiredSecrets) &&
-    isStringArray(value.supportReasons) &&
     isStringArray(value.pendingRuntimeSuites) &&
     hasValidExecutionMetadata(value)
   );
@@ -337,9 +332,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.shard === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.shard) &&
     (value.artifact_layout === "target-shard" || value.artifact_layout === "flat-shard") &&
-    (value.host_preparation === "none" ||
-      value.host_preparation === "hermes-swap" ||
-      value.host_preparation === "rebuild-swap") &&
+    (value.host_preparation === "none" || value.host_preparation === "hermes-swap") &&
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&
@@ -1088,7 +1081,6 @@ export function renderE2eWorkflowPlanSummary(
     plan.explicitOnlyJobs.includes(row.id),
   );
   const runtimeExclusions = runtimeExclusionsForPlan(plan, inventory);
-  const unsupportedDeclarations = buildLiveTargetInventory().filter((row) => !row.supported);
   const outcomeRows = new Map<string, E2eExecutionRow[]>();
   for (const row of plan.coverageMatrix) {
     const rows = outcomeRows.get(row.observableOutcome) ?? [];
@@ -1137,24 +1129,6 @@ export function renderE2eWorkflowPlanSummary(
       `| \`${e2eExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | Explicit dispatch only; excluded from the default release matrix | ${row.unresolvedReason} |`,
     );
   }
-  lines.push(
-    "",
-    "### Unsupported or unresolved typed declarations",
-    "",
-    "| Declaration | Agent runtime | Observable outcome | Environment or inference endpoint | Missing executable ownership |",
-    "| --- | --- | --- | --- | --- |",
-  );
-  for (const row of unsupportedDeclarations) {
-    lines.push(
-      `| \`${row.id}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.supportReasons.join("; ")} |`,
-    );
-  }
-  lines.push(
-    "",
-    "### Combinatorial gaps",
-    "",
-    `The ${unsupportedDeclarations.length} inert typed declarations above are not executable matrix cells. #8285 owns the decision on the inert cross-runtime foundation, and #8286 owns executable-only registry cleanup after that decision. Unlisted Cartesian-product cells are not required without an accepted supported combination. This migration removes no execution, so no duplicate-to-retained-evidence mapping is required.`,
-  );
   return `${lines.join("\n")}\n`;
 }
 
