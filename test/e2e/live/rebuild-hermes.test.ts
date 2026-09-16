@@ -48,6 +48,7 @@ test(
       agent: "hermes",
       apiKey: hosted.apiKey,
       sandboxName: SANDBOX_NAME,
+      extra: { NEMOCLAW_DASHBOARD_PORT: "18796" },
     });
     const redactions = redactionValues(hosted.apiKey);
 
