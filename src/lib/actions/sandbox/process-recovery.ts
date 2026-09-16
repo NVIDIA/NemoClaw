@@ -361,11 +361,24 @@ async function executeSandboxExecCommandForStatus(
   };
 }
 
-function parseSandboxGatewayProbe(result: SandboxCommandResult | null): boolean | null {
-  if (!result) return null;
-  if (result.stdout === "RUNNING") return true;
-  if (result.stdout === "STOPPED") return false;
-  return null;
+function parseSandboxGatewayProbe(result: SandboxCommandResult | null): true | null {
+  if (!result || result.status !== 0) return null;
+  return result.stdout === "RUNNING" ? true : null;
+}
+
+function parseSandboxGatewayRecoveryProbe(result: SandboxCommandResult | null): boolean | null {
+  const running = parseSandboxGatewayProbe(result);
+  if (running === true) return true;
+  if (!result || result.status !== 0) return null;
+  return result.stdout === "STOPPED" ? false : null;
+}
+
+function sandboxGatewayHealthProbeCommand(probeUrl: string): string {
+  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; *) echo UNAVAILABLE ;; esac`;
+}
+
+function sandboxGatewayRecoveryProbeCommand(probeUrl: string): string {
+  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; 0:*) echo STOPPED ;; *) echo UNAVAILABLE ;; esac`;
 }
 
 /**
@@ -386,8 +399,8 @@ async function isSandboxGatewayRunning(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
-  const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
-  const execProbe = parseSandboxGatewayProbe(
+  const command = sandboxGatewayRecoveryProbeCommand(probeUrl);
+  const execProbe = parseSandboxGatewayRecoveryProbe(
     await executeSandboxExecCommand(
       sandboxName,
       command,
@@ -405,7 +418,7 @@ async function isSandboxGatewayRunning(
   // their recovery contract is explicitly SSH-owned until manifests can
   // declare a trusted runtime user/supervisor.
   if (!agent || agent.name === "openclaw" || agent.name === "hermes") return null;
-  return parseSandboxGatewayProbe(
+  return parseSandboxGatewayRecoveryProbe(
     await executeSandboxCommand(
       sandboxName,
       command,
@@ -668,12 +681,34 @@ export async function isSandboxGatewayRunningForStatus(
     getSessionAgent?: typeof agentRuntime.getSessionAgent;
     commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
+    requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
   } = {},
 ): Promise<boolean | null> {
   const agent = (options.getSessionAgent ?? agentRuntime.getSessionAgent)(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
+  if (agent?.name === "hermes") {
+    const result = (options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction)(
+      sandboxName,
+      "probe",
+      OPENSHELL_PROBE_TIMEOUT_MS,
+    );
+    if (hasGatewayRecoveryMarker(result)) return true;
+    if (isExactlyManagedControlMarker(result, "SUPERVISOR_NOT_RUNNING")) return false;
+    return null;
+  }
+  return isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, options);
+}
+
+export async function isSandboxGatewayHttpReachableForStatus(
+  sandboxName: string,
+  gatewayName?: string,
+  options: {
+    commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+    getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
+  } = {},
+): Promise<boolean | null> {
   const probeUrl = (options.getHealthProbeUrl ?? getSandboxHealthProbeUrl)(sandboxName);
-  const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
+  const command = sandboxGatewayHealthProbeCommand(probeUrl);
   return parseSandboxGatewayProbe(
     await executeSandboxExecCommandForStatus(
       sandboxName,

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
+import { isSupportedDockerContextName, isSupportedGatewayDockerHost } from "./domain/docker-host";
 import { buildDockerSubprocessEnv } from "./subprocess-env";
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
@@ -28,13 +29,17 @@ export interface DockerHostDetectionOptions extends PlatformLookupOptions, WslDe
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
   probeDockerHost?: DockerHostProbe;
+  resolveDockerContextHost?: DockerContextHostResolver;
 }
 
 export interface DockerHostDetection {
   dockerHost: string;
-  source: "env" | "socket";
+  source: "env" | "context" | "socket";
   socketPath: string | null;
 }
+
+/** Resolve a Docker context name to the endpoint it selects, or null. */
+export type DockerContextHostResolver = (context: string) => string | null;
 
 export type DockerVersionIdentity = "docker" | "podman" | "unknown";
 
@@ -191,6 +196,33 @@ function buildDockerProbeEnv(
   return buildDockerSubprocessEnv(source, dockerHost);
 }
 
+const DOCKER_CONTEXT_HOST_FORMAT = "{{.Endpoints.docker.Host}}";
+
+/**
+ * Resolve the endpoint an explicitly selected Docker context names.
+ *
+ * `docker context inspect` reads the local context store and never contacts a
+ * daemon, so the endpoint is known before any reachability verdict exists. A
+ * context that cannot be resolved has no endpoint to redirect to either, so
+ * the caller keeps the host default and lets the real command report why.
+ */
+function resolveDockerContextHost(context: string, source: NodeJS.ProcessEnv): string | null {
+  if (!isSupportedDockerContextName(context)) return null;
+  const result = dockerSpawnSync(
+    ["context", "inspect", context, "--format", DOCKER_CONTEXT_HOST_FORMAT],
+    {
+      encoding: "utf-8",
+      env: buildDockerProbeEnv(source, undefined),
+      timeout: DOCKER_PROBE_TIMEOUT_MS,
+      maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
+    },
+  );
+  if (!result || result.error || result.status !== 0) return null;
+  const host = String(result.stdout ?? "").trim();
+  if (!host || /[\0\r\n]/u.test(host)) return null;
+  return host;
+}
+
 function probeDockerHost(
   dockerHost: string | undefined,
   source: NodeJS.ProcessEnv,
@@ -335,6 +367,30 @@ interface DockerAuthoritySelection {
  */
 function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAuthoritySelection {
   const env = opts.env ?? process.env;
+  // DOCKER_CONTEXT overrides DOCKER_HOST in the Docker CLI. It selects the
+  // daemon authority exactly as DOCKER_HOST does, so
+  // a discovered fallback socket must never replace it: redirecting a host that
+  // named its own authority runs NemoClaw against a daemon the operator did not
+  // choose, and reports readiness for that other daemon (#11719). Resolving the
+  // context to its endpoint keeps every later consumer — readiness probes,
+  // preflight, and the container-engine authority — measuring the same daemon.
+  const context = String(env.DOCKER_CONTEXT ?? "").trim();
+  if (context) {
+    const resolveContextHost =
+      opts.resolveDockerContextHost ?? ((name: string) => resolveDockerContextHost(name, env));
+    const contextHost = resolveContextHost(context);
+    // Only a supported local socket is recorded as the endpoint. Any other
+    // endpoint, and a context that does not resolve, keeps the host default so
+    // this selection never widens what a later consumer is allowed to contact.
+    return {
+      selection:
+        contextHost && isSupportedGatewayDockerHost(contextHost)
+          ? { dockerHost: contextHost, source: "context", socketPath: null }
+          : null,
+      conflict: null,
+    };
+  }
+
   if (env.DOCKER_HOST) {
     return {
       selection: {

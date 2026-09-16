@@ -126,7 +126,7 @@ console.log(JSON.stringify({ client, policy }));
     expect(npmPackFilePaths(packed)).toContain("dist/lib/adapters/openshell/sdk-import.mjs");
   });
 
-  it("loads the compiled adapters before the optional SDK is installed", () => {
+  it("loads the compiled adapters when the required SDK is missing", () => {
     const root = packageFixture();
     const output = execFileSync(
       process.execPath,
