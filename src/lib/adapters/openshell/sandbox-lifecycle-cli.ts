@@ -19,7 +19,7 @@ import {
   type CapturedOpenShellCommandResult,
 } from "./sandbox-observer-cli";
 import type { OpenShellSandboxError } from "./sandbox-observer";
-import { OPENSHELL_HEAVY_TIMEOUT_MS } from "./timeouts";
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "./command-execution";
 
 const DIAGNOSTIC_LIMIT_BYTES = 4 * 1024;
 const CAPTURE_LIMIT_BYTES = 1024 * 1024;
