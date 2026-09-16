@@ -112,52 +112,34 @@ test(
         timeoutMs: 120_000,
       },
     );
-    const approve = await sandbox.exec(
-      SANDBOX_NAME,
+    const devices = await sandbox.openshell(
+      ["sandbox", "exec", "-n", SANDBOX_NAME, "--", "openclaw", "devices", "list", "--json"],
+      {
+        artifactName: "cron-preflight-native-devices-list",
+        env,
+        redactionValues: redactions,
+        timeoutMs: 60_000,
+      },
+    );
+    const pending = (
+      JSON.parse(devices.stdout) as {
+        pending?: Array<{ id?: string; requestId?: string; scopes?: string[] }>;
+      }
+    ).pending;
+    const request = pending?.find(({ scopes }) => scopes?.includes("operator.admin"));
+    const requestId = String(request?.requestId ?? request?.id ?? "");
+    const approve = await sandbox.openshell(
       [
-        "sh",
-        "-lc",
-        [
-          "set -eu",
-          'devices="$(mktemp)"',
-          "trap 'rm -f -- \"$devices\"' EXIT",
-          'openclaw devices list --json >"$devices"',
-          'request_id="$(python3 - "$devices" <<\'PY\'',
-          "import json, sys",
-          "from pathlib import Path",
-          "raw=Path(sys.argv[1]).read_text(encoding='utf-8')",
-          "decoder=json.JSONDecoder()",
-          "values=[]",
-          "for index, char in enumerate(raw):",
-          "    if char != '{': continue",
-          "    try: value,_=decoder.raw_decode(raw[index:])",
-          "    except Exception: continue",
-          "    values.append(value)",
-          "def visit(value):",
-          "    if isinstance(value, list):",
-          "        for item in value:",
-          "            found=visit(item)",
-          "            if found: return found",
-          "        return ''",
-          "    if not isinstance(value, dict): return ''",
-          "    scopes=[]",
-          "    for key in ('scopes','requestedScopes'):",
-          "        if isinstance(value.get(key), list): scopes.extend(value[key])",
-          "    if 'operator.admin' in scopes:",
-          "        request_id=str(value.get('requestId') or value.get('id') or '').strip()",
-          "        if request_id: return request_id",
-          "    for child in value.values():",
-          "        found=visit(child)",
-          "        if found: return found",
-          "    return ''",
-          "for value in values:",
-          "    found=visit(value)",
-          "    if found: print(found); raise SystemExit(0)",
-          "raise SystemExit('operator.admin request not found')",
-          "PY",
-          ')"',
-          'openclaw devices approve "$request_id"',
-        ].join("\n"),
+        "sandbox",
+        "exec",
+        "-n",
+        SANDBOX_NAME,
+        "--",
+        "openclaw",
+        "devices",
+        "approve",
+        requestId,
+        "--json",
       ],
       {
         artifactName: "cron-preflight-native-devices-approve",
