@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -30,14 +31,13 @@ function nativePluginInstallScript(): string {
     configSchema: { type: "object", properties: {}, additionalProperties: false },
   });
   const entrypoint = `export default { id: "e2e-rebuild-plugin", name: "E2E Rebuild Plugin", version: "1.0.0", register() {} };\n`;
-  const encode = (value: string) => Buffer.from(value, "utf8").toString("base64");
   return [
     "source_dir=/sandbox/e2e-rebuild-plugin-source",
     'rm -rf -- "$source_dir"',
     'mkdir -p -- "$source_dir"',
-    `printf '%s' ${JSON.stringify(encode(packageJson))} | base64 -d > "$source_dir/package.json"`,
-    `printf '%s' ${JSON.stringify(encode(manifest))} | base64 -d > "$source_dir/openclaw.plugin.json"`,
-    `printf '%s' ${JSON.stringify(encode(entrypoint))} | base64 -d > "$source_dir/index.js"`,
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
     'HOME=/sandbox openclaw plugins install "$source_dir" --force',
     "HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --json >/dev/null",
   ].join("\n");

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { GATEWAY_STOP_SCRIPT } from "../../../src/lib/tunnel/gateway-stop-script.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -196,15 +197,14 @@ function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
 };
 export default plugin;
 `;
-  const encode = (value: string) => Buffer.from(value, "utf8").toString("base64");
   return [
     "set -eu",
     "source_dir=/sandbox/e2e-native-weather",
     'rm -rf -- "$source_dir"',
     'mkdir -p -- "$source_dir"',
-    `printf '%s' ${JSON.stringify(encode(packageJson))} | base64 -d > "$source_dir/package.json"`,
-    `printf '%s' ${JSON.stringify(encode(manifest))} | base64 -d > "$source_dir/openclaw.plugin.json"`,
-    `printf '%s' ${JSON.stringify(encode(entrypoint))} | base64 -d > "$source_dir/index.js"`,
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
     'HOME=/sandbox openclaw plugins install "$source_dir" --force',
   ].join("\n");
 }

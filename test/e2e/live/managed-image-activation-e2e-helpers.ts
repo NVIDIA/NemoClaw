@@ -286,14 +286,13 @@ export function managedActivationOpenClawPluginScript(): string {
   });
   const entrypoint =
     'export default { id: "managed-activation-native", name: "Managed Activation Native Plugin", version: "1.0.0", register() {} };\n';
-  const encode = (value: string) => Buffer.from(value, "utf8").toString("base64");
   return [
     "source_dir=/sandbox/managed-activation-native-plugin",
     'rm -rf -- "$source_dir"',
     'mkdir -p -- "$source_dir"',
-    `printf '%s' ${shellQuote(encode(packageJson))} | base64 -d > "$source_dir/package.json"`,
-    `printf '%s' ${shellQuote(encode(manifest))} | base64 -d > "$source_dir/openclaw.plugin.json"`,
-    `printf '%s' ${shellQuote(encode(entrypoint))} | base64 -d > "$source_dir/index.js"`,
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
     'HOME=/sandbox openclaw plugins install "$source_dir" --force',
   ].join("\n");
 }
