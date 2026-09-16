@@ -39,8 +39,6 @@ import {
   hermesPortableReservationForOnboarding,
   hermesPortableTestOpenShellAuthority as openshellExecutableAuthority,
   hermesPortableTestPodmanAuthority as podmanExecutableAuthority,
-  createHermesPortableContainerInspectResult,
-  unexpectedHermesPortablePodmanArgs as unexpectedPodmanArgs,
   type HermesPortableTransactionFixtureOptions,
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 
@@ -615,9 +613,9 @@ describe("Hermes portable onboarding transaction", () => {
   });
 
   it("resumes identical pending authority with effects without a duplicate create (#9203)", async () => {
-    const first = deps({ updateFails: true });
+    const first = deps({ cleanupFails: true });
     await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
-      "restart-policy update failed",
+      "temporary policy cleanup did not complete",
     );
     fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
     const second = deps({ existingSandbox: true });
@@ -926,18 +924,6 @@ network_policies:
     },
   );
 
-  it("preserves configuring after an ambiguous update and completes registry on retry (#9203)", async () => {
-    const first = deps({ updateFails: true });
-    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow();
-    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
-    const second = deps({ existingSandbox: true });
-
-    const resumed = await runHermesPortableOnboardingTransaction(input(), second.value);
-
-    expect(resumed.active.receipt.phase).toBe("active");
-    expect(second.events).toContain("registry");
-  });
-
   it("resumes an exact durable-policy publication that crashed before pending (#9203)", async () => {
     const transactionId = createHermesPortableTransactionId();
     const currentInput = input();
@@ -966,21 +952,6 @@ network_policies:
 
     expect(resumed.active.receipt.transactionId).toBe(transactionId);
     expect(resumed.active.receipt.phase).toBe("active");
-  });
-
-  it("rejects active authority when the live restart policy drifts (#9203)", async () => {
-    const fixture = deps();
-    await runHermesPortableOnboardingTransaction(input(), fixture.value);
-    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
-    fixture.podman.mockImplementation((args: readonly string[]) =>
-      args[0] === "container" && args[1] === "inspect"
-        ? createHermesPortableContainerInspectResult("no")
-        : unexpectedPodmanArgs(args),
-    );
-
-    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
-      "committed restart policy",
-    );
   });
 
   it("resumes configuring after registry commit but before active publication (#9203)", async () => {
@@ -1142,11 +1113,11 @@ network_policies:
 
   it("accepts a host-edited live policy after configuring publication (#10121)", async () => {
     fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
-    const first = deps({ updateFails: true, policySource: NATIVE_GPU_LIVE });
+    const first = deps({ failAfterRegistry: true, policySource: NATIVE_GPU_LIVE });
     await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
-      "restart-policy update failed",
+      "registry-to-active exit",
     );
-    expect(first.events).not.toContain("registry");
+    expect(first.events).toContain("registry");
     fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
     const second = deps({
       existingSandbox: true,

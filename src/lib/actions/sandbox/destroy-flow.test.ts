@@ -195,7 +195,7 @@ describe("destroySandbox flow", () => {
         gatewayPort: 19080,
       });
       expect(cleanup).toHaveBeenCalledOnce();
-      expect(trace).toEqual(["prepare", "list", "delete", "cleanup"]);
+      expect(trace).toEqual(["prepare", "list", "delete", "list", "cleanup"]);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).not.toHaveBeenCalled();
@@ -492,7 +492,7 @@ describe("destroySandbox flow", () => {
         ok: true,
         alreadyGone: false,
         deleteOutput: "",
-        deleteResult: { status: 0, stdout: "", stderr: "" },
+        deleteResult: { kind: "accepted", diagnostic: "", exitCode: 0 },
         detachOutcome: { detached: [], failures: [] },
         forcedLocalCleanup: false,
         commonLlamaCppAuthorityRetired: true,
@@ -613,7 +613,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
     expect(harness.preparePortableDestroyAuthoritySpy).toHaveBeenCalledTimes(2);
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
       expect.any(Object),
     );
   });

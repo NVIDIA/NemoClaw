@@ -4,7 +4,6 @@
 import { createHash } from "node:crypto";
 import { vi } from "vitest";
 
-import { EXPORTED_OLLAMA_MODEL } from "../../config/model";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
@@ -133,7 +132,7 @@ export function configuration(revision = 3) {
   };
 }
 
-export function ollamaSource(model = EXPORTED_OLLAMA_MODEL) {
+export function ollamaSource(model: string = "qwen3.5:9b") {
   const route = resolveManagedStartupInferenceRoute(
     "openclaw",
     "ollama-local",
