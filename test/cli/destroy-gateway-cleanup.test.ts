@@ -506,6 +506,20 @@ describe("CLI dispatch", () => {
     const openshellLog = path.join(home, "openshell.log");
     const bashLog = path.join(home, "docker.log");
     const deletedMarker = path.join(home, "alpha-deleted");
+    const sandboxListJson = (names: string[]) =>
+      JSON.stringify(
+        names.map((name) => ({
+          id: `sandbox-${name}`,
+          name,
+          labels: {},
+          resource_version: 1,
+          created_at: "2026-09-16T00:00:00Z",
+          phase: "Ready",
+          current_policy_version: 1,
+        })),
+      );
+    const beforeDeleteListJson = sandboxListJson(["alpha", "beta"]);
+    const afterDeleteListJson = sandboxListJson(["beta"]);
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -530,11 +544,22 @@ describe("CLI dispatch", () => {
         `log_file=${JSON.stringify(openshellLog)}`,
         `deleted_marker=${JSON.stringify(deletedMarker)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        '  if [ -e "$deleted_marker" ]; then',
-        '    output="NAME STATUS\\nbeta Ready"',
-        "  else",
-        '    output="NAME STATUS\\nalpha Ready\\nbeta Ready"',
-        "  fi",
+        '  case " $* " in',
+        '    *" -o json "*)',
+        '      if [ -e "$deleted_marker" ]; then',
+        `        output=${JSON.stringify(afterDeleteListJson)}`,
+        "      else",
+        `        output=${JSON.stringify(beforeDeleteListJson)}`,
+        "      fi",
+        "      ;;",
+        "    *)",
+        '      if [ -e "$deleted_marker" ]; then',
+        '        output="NAME STATUS\\nbeta Ready"',
+        "      else",
+        '        output="NAME STATUS\\nalpha Ready\\nbeta Ready"',
+        "      fi",
+        "      ;;",
+        "  esac",
         '  printf "%b\\n" "$output" >> "$log_file"',
         '  printf "%b\\n" "$output"',
         "  exit 0",
