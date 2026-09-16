@@ -29,6 +29,8 @@ const OPEN_READ_FLAGS =
 const SOURCE_DOCKERFILE_RELATIVE_PATH = "agents/hermes/Dockerfile" as const;
 const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 
+// Portable retains the same image-owned non-root startup hold even though its
+// host lifecycle remains independently receipt-bound.
 const LOCAL_COPY_SOURCES = [
   "agents/hermes/a2a-neutral.patch",
   "agents/hermes/config/",

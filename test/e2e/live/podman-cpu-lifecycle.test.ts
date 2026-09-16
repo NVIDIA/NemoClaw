@@ -50,6 +50,8 @@ import {
   waitForHealthyGateway,
 } from "./podman-cpu-lifecycle-helpers.ts";
 
+// Prove OpenShell-owned lifecycle for every standard runtime after retirement
+// of NemoClaw's provider-specific container controller.
 const AGENTS = [
   { agent: "openclaw", sandboxName: "podman-openclaw" },
   { agent: "hermes", sandboxName: "podman-hermes" },
