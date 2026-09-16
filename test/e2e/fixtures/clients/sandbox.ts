@@ -21,7 +21,7 @@ const sandboxNameContract = (
 const { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } = sandboxNameContract;
 
 const SANDBOX_ALREADY_ABSENT =
-  /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox|Unknown gateway ['"][^'"]+['"]|No active gateway/i;
+  /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/i;
 const INITIAL_OPENCLAW_PAIRING_TIMEOUT_MS = 60_000;
 const OPENCLAW_STATE_DIR = "/sandbox/.openclaw";
 

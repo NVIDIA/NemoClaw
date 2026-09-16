@@ -89,8 +89,8 @@ console.log(JSON.stringify({
   baseLifecycleScripts: explicitLifecycleScripts(baseBlock),
   scriptsSuppressed: {
     codex: /npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts/.test(codexBlock),
-    runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
-    base: /npm install -g --ignore-scripts "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
+    runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
+    base: /npm install -g --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
     optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force --accept-capabilities "npm-pack:/.test(optionalPluginBlock) &&
       optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_install_archive}"'),
     messagingPlugin: [

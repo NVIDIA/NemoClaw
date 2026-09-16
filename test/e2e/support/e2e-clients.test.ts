@@ -821,8 +821,6 @@ describe("E2E fixture clients", () => {
     "NotFound: sandbox assistant",
     "sandbox assistant not present",
     "no such sandbox: assistant",
-    "Error:   × Unknown gateway 'nemoclaw'.",
-    "Error:   × No active gateway.",
   ])("sandbox client accepts canonical already-absent cleanup output: %s", async (stderr) => {
     const runner = new FakeRunner();
     runner.enqueue({ exitCode: 1, stderr });
@@ -831,14 +829,16 @@ describe("E2E fixture clients", () => {
     await expect(sandbox.cleanupSandbox("assistant")).resolves.toBeUndefined();
   });
 
-  it("sandbox client surfaces unexpected cleanup failures", async () => {
+  it.each([
+    "permission denied",
+    "Error:   × Unknown gateway 'nemoclaw'.",
+    "Error:   × No active gateway.",
+  ])("sandbox client surfaces cleanup failures that do not prove absence: %s", async (stderr) => {
     const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    runner.enqueue({ exitCode: 1, stderr });
     const sandbox = new SandboxClient(runner);
 
-    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(
-      "cleanup OpenShell sandbox assistant failed: permission denied",
-    );
+    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(stderr);
   });
 
   it("sandbox client validates list output using the OpenShell gateway env", async () => {

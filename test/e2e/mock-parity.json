@@ -419,8 +419,12 @@
     },
     {
       "live": "test/e2e/live/cloud-inference.test.ts",
-      "liveSources": ["test/e2e/live/cloud-inference-provider-skip.ts"],
+      "liveSources": [
+        "test/e2e/live/cloud-inference-credential-boundary.ts",
+        "test/e2e/live/cloud-inference-provider-skip.ts"
+      ],
       "fast": [
+        "test/e2e/support/cloud-inference-credential-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/e2e-clients.test.ts"

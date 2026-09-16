@@ -396,6 +396,20 @@ describe("pull request and main workflow contracts", () => {
     expect(
       Object.entries(prWorkflow.jobs).filter(([, job]) => job.permissions?.packages !== undefined),
     ).toEqual([]);
+    expect(requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Run static checks").env).toEqual(
+      {
+        PR_NUMBER: "${{ github.event.pull_request.number }}",
+        BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+        HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+      },
+    );
+    expect(
+      requiredWorkflowStep(prWorkflow.jobs["cli-test-shards"], "Run CLI coverage shard").env,
+    ).toEqual({
+      PR_NUMBER: "${{ github.event.pull_request.number }}",
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+    });
   });
 
   // source-shape-contract: security -- Trusted main jobs may read packages only where the reviewed installer consumes the token

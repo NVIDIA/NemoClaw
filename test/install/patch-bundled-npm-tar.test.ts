@@ -203,6 +203,19 @@ describe("npm bundled node-tar remediation", () => {
           commands.push(command);
           expect(command).toBe("curl");
           expect(args).toContain(FIXED_TAR_TARBALL);
+          expect(args).toEqual(
+            expect.arrayContaining([
+              "--retry",
+              "5",
+              "--retry-all-errors",
+              "--retry-delay",
+              "2",
+              "--connect-timeout",
+              "15",
+              "--max-time",
+              "120",
+            ]),
+          );
           const outputIndex = args.indexOf("--output");
           expect(outputIndex).toBeGreaterThanOrEqual(0);
           fs.writeFileSync(args[outputIndex + 1]!, "mismatched archive bytes\n");

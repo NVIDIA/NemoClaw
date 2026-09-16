@@ -147,6 +147,10 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Run static checks
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
 
   hugging-face-models:
@@ -687,6 +691,10 @@ jobs:
           test -s nemoclaw/dist/shared/sandbox-name.cjs
 
       - name: Run CLI coverage shard
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
         with:
           shard: ${{ matrix.shard }}
