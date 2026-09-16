@@ -5,6 +5,7 @@
 import copy
 import importlib.util
 import json
+import ntpath
 import shutil
 import struct
 import subprocess
@@ -53,6 +54,11 @@ class SystemDriveProofTests(unittest.TestCase):
         self.proof_dir.mkdir()
         self.revision = "a" * 40
         self.node_path = r"D:\host\bin\node.exe"
+        self.preauthorized_path = ntpath.join(
+            ntpath.normpath(str(self.proof_dir.absolute())),
+            "preauthorized-runtime-mount",
+            "workers",
+        )
         self.build = {
             "schemaVersion": 1,
             "classification": "native-system-drive-preparation-build",
@@ -89,10 +95,35 @@ class SystemDriveProofTests(unittest.TestCase):
                 "cwd": r"C:\NemoClawHostPrepProof-0123456789ab",
             },
             "filesystem": {
-                "readonlyPaths": [self.node_path],
+                "readonlyPaths": [self.node_path, self.preauthorized_path],
                 "readwritePaths": [r"C:\NemoClawHostPrepProof-0123456789ab"],
             },
         }
+        workers_sddl = (
+            "O:BAG:SYD:PAI(A;OICI;0x1200a9;;;AU)(A;OICI;FA;;;SY)"
+            "(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;AC)"
+            "(A;OICI;0x1200a9;;;S-1-15-2-2)"
+        )
+        detailed_access = [
+            {
+                "sid": sid,
+                "mask": mask,
+                "inherited": False,
+                "inheritanceFlags": "ContainerInherit, ObjectInherit",
+                "propagationFlags": "None",
+                "accessControlType": "Allow",
+            }
+            for sid, mask in gate.ACL_MASKS.items()
+        ]
+        image_access = [
+            {
+                "sid": sid,
+                "mask": mask,
+                "inherited": False,
+                "accessControlType": "Allow",
+            }
+            for sid, mask in gate.ACL_MASKS.items()
+        ]
         helper_record = {
             "schemaVersion": 1,
             "classification": "nemoclaw-system-drive-metadata",
@@ -129,8 +160,48 @@ class SystemDriveProofTests(unittest.TestCase):
                 "architecture": "arm64",
                 "node": "22.23.2",
                 "allowedRead": True,
+                "preauthorizedRead": True,
                 "deniedRead": True,
                 "ownedWrite": True,
+            },
+            "preauthorizedRuntime": {
+                "imageReceipt": {
+                    "schemaVersion": 1,
+                    "classification": "finished-runtime-application-image",
+                    "runtimeId": "a" * 64,
+                    "status": "built-detached-and-verified",
+                    "format": "vhdx",
+                    "filesystem": "ntfs",
+                    "payloadObjects": 1,
+                    "source": {"logicalBytes": 91, "files": 3},
+                    "customerExtractionRequired": False,
+                    "runtimeLaunchCopiesRequired": False,
+                    "mountedReadOnly": True,
+                    "population": {
+                        "status": 3,
+                        "log": "preauthorized-runtime-image.robocopy.log",
+                    },
+                    "appContainerReadRoots": [
+                        {
+                            "name": "workers",
+                            "sddl": workers_sddl,
+                            "access": image_access,
+                        }
+                    ],
+                    "image": {
+                        "maximumMiB": 4096,
+                        "sha256": "b" * 64,
+                        "file": "preauthorized-runtime.vhdx",
+                        "bytes": 138412032,
+                    },
+                    "innerFilesystemCompression": "ntfs-inherited-before-population",
+                    "innerFilesystemAcl": gate.IMAGE_ACL,
+                    "manifestSha256": "c" * 64,
+                },
+                "workersSddl": workers_sddl,
+                "workersAccess": detailed_access,
+                "readMask": gate.READ_MASK,
+                "readOnlyAttachment": True,
             },
             "nodeAclRestored": True,
             "nodeFileKind": "regular-file",
@@ -216,6 +287,7 @@ class SystemDriveProofTests(unittest.TestCase):
             gate.sha((self.proof_dir / "system-root-mxc-proof.json").read_bytes()),
         )
         self.assertTrue(result["systemDriveMetadataPreparation"])
+        self.assertTrue(result["preauthorizedRuntimeReadOnly"])
         self.assertFalse(result["publicationApproved"])
         self.assertFalse(result["installedAcceptance"])
 
@@ -276,7 +348,12 @@ class SystemDriveProofTests(unittest.TestCase):
                 self.proof[record][field] = saved
 
     def test_guest_access_and_cleanup_cannot_be_skipped(self):
-        for field in ("allowedRead", "deniedRead", "ownedWrite"):
+        for field in (
+            "allowedRead",
+            "preauthorizedRead",
+            "deniedRead",
+            "ownedWrite",
+        ):
             with self.subTest(field=field):
                 self.proof["guest"][field] = False
                 self.save()
@@ -333,14 +410,36 @@ class SystemDriveProofTests(unittest.TestCase):
         original = copy.deepcopy(self.policy)
         alternatives = [
             {
-                "readonlyPaths": [self.node_path, "C:\\"],
+                "readonlyPaths": [
+                    self.node_path,
+                    self.preauthorized_path,
+                    "C:\\",
+                ],
                 "readwritePaths": original["filesystem"]["readwritePaths"],
             },
             {
-                "readonlyPaths": [r"D:\other\node.exe"],
+                "readonlyPaths": [
+                    r"D:\other\node.exe",
+                    self.preauthorized_path,
+                ],
                 "readwritePaths": original["filesystem"]["readwritePaths"],
             },
-            {"readonlyPaths": [self.node_path], "readwritePaths": ["C:\\"]},
+            {
+                "readonlyPaths": [self.node_path, r"D:\other\workers"],
+                "readwritePaths": original["filesystem"]["readwritePaths"],
+            },
+            {
+                "readonlyPaths": [self.preauthorized_path, self.node_path],
+                "readwritePaths": original["filesystem"]["readwritePaths"],
+            },
+            {
+                "readonlyPaths": [self.node_path],
+                "readwritePaths": original["filesystem"]["readwritePaths"],
+            },
+            {
+                "readonlyPaths": [self.node_path, self.preauthorized_path],
+                "readwritePaths": ["C:\\"],
+            },
             {**original["filesystem"], "allowAll": True},
         ]
         for value in alternatives:
@@ -354,6 +453,36 @@ class SystemDriveProofTests(unittest.TestCase):
         self.policy["filesystem"]["readwritePaths"] = ["C:\\"]
         self.save()
         with self.assertRaisesRegex(ValueError, "filesystem grants"):
+            self.verify()
+
+    def test_preauthorized_runtime_identity_cannot_be_weakened(self):
+        changes = (
+            ("readOnlyAttachment", False, "not read-only"),
+            ("readMask", gate.READ_MASK - 1, "incomplete"),
+        )
+        for field, value, message in changes:
+            with self.subTest(field=field):
+                saved = self.proof["preauthorizedRuntime"][field]
+                self.proof["preauthorizedRuntime"][field] = value
+                self.save()
+                with self.assertRaisesRegex(ValueError, message):
+                    self.verify()
+                self.proof["preauthorizedRuntime"][field] = saved
+        access = self.proof["preauthorizedRuntime"]["workersAccess"]
+        access[-1]["mask"] -= 1
+        self.save()
+        with self.assertRaisesRegex(ValueError, "exact package read grants"):
+            self.verify()
+        access[-1]["mask"] += 1
+        image = self.proof["preauthorizedRuntime"]["imageReceipt"]
+        image["mountedReadOnly"] = False
+        self.save()
+        with self.assertRaisesRegex(ValueError, "image receipt"):
+            self.verify()
+        image["mountedReadOnly"] = True
+        image["appContainerReadRoots"][0]["access"].pop()
+        self.save()
+        with self.assertRaisesRegex(ValueError, "exact package read grants"):
             self.verify()
 
     def test_actual_8df_node_metadata_requires_explicit_nonexact_annotation(self):

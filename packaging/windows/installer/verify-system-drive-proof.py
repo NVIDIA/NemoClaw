@@ -20,6 +20,18 @@ PROFILE = {
     "allowLocalNetwork": True,
     "childTimeoutMilliseconds": 30000,
 }
+READ_MASK = 0x001200A9
+ACL_MASKS = {
+    "S-1-5-11": READ_MASK,
+    "S-1-5-18": 0x001F01FF,
+    "S-1-5-32-544": 0x001F01FF,
+    "S-1-15-2-1": READ_MASK,
+    "S-1-15-2-2": READ_MASK,
+}
+IMAGE_ACL = (
+    "system-and-administrators-full-authenticated-users-and-appcontainer-"
+    "packages-read-execute; administrators-owned"
+)
 
 
 def require(condition, message):
@@ -79,6 +91,107 @@ def compare_node_acl(before, after, before_attributes, after_attributes):
         "exactRestored": exact,
         "metadataChange": "dacl-auto-inherited-added" if added else None,
     }
+
+
+def verify_acl_rows(rows, *, detailed):
+    expected_keys = {"sid", "mask", "inherited", "accessControlType"}
+    if detailed:
+        expected_keys |= {"inheritanceFlags", "propagationFlags"}
+    require(
+        type(rows) is list
+        and len(rows) == len(ACL_MASKS)
+        and all(
+            type(row) is dict
+            and set(row) == expected_keys
+            and row.get("sid") in ACL_MASKS
+            and type(row.get("mask")) is int
+            and row["mask"] == ACL_MASKS[row["sid"]]
+            and row.get("inherited") is False
+            and row.get("accessControlType") == "Allow"
+            and (
+                not detailed
+                or (
+                    row.get("inheritanceFlags") == "ContainerInherit, ObjectInherit"
+                    and row.get("propagationFlags") == "None"
+                )
+            )
+            for row in rows
+        )
+        and {row["sid"] for row in rows} == set(ACL_MASKS),
+        "The preauthorized runtime ACL differs from the exact package read grants.",
+    )
+
+
+def verify_preauthorized_runtime(record):
+    require(
+        type(record) is dict
+        and set(record)
+        == {
+            "imageReceipt",
+            "workersSddl",
+            "workersAccess",
+            "readMask",
+            "readOnlyAttachment",
+        }
+        and type(record.get("workersSddl")) is str
+        and bool(record["workersSddl"])
+        and record.get("readMask") == READ_MASK
+        and record.get("readOnlyAttachment") is True,
+        "The preauthorized runtime proof is incomplete or not read-only.",
+    )
+    verify_acl_rows(record["workersAccess"], detailed=True)
+    image = record.get("imageReceipt")
+    require(
+        type(image) is dict
+        and image.get("schemaVersion") == 1
+        and image.get("classification") == "finished-runtime-application-image"
+        and image.get("runtimeId") == "a" * 64
+        and image.get("status") == "built-detached-and-verified"
+        and image.get("format") == "vhdx"
+        and image.get("filesystem") == "ntfs"
+        and image.get("payloadObjects") == 1
+        and type(image.get("source")) is dict
+        and image["source"].get("files") == 3
+        and type(image["source"].get("logicalBytes")) is int
+        and image["source"]["logicalBytes"] > 0
+        and image.get("customerExtractionRequired") is False
+        and image.get("runtimeLaunchCopiesRequired") is False
+        and image.get("mountedReadOnly") is True
+        and type(image.get("population")) is dict
+        and image.get("population")
+        == {
+            "status": image["population"].get("status"),
+            "log": "preauthorized-runtime-image.robocopy.log",
+        }
+        and type(image["population"].get("status")) is int
+        and 0 <= image["population"]["status"] < 8
+        and image.get("innerFilesystemCompression")
+        == "ntfs-inherited-before-population"
+        and image.get("innerFilesystemAcl") == IMAGE_ACL
+        and re.fullmatch(r"[a-f0-9]{64}", image.get("manifestSha256", "")),
+        "The preauthorized runtime image receipt is invalid.",
+    )
+    image_file = image.get("image", {})
+    require(
+        type(image_file) is dict
+        and image_file.get("file") == "preauthorized-runtime.vhdx"
+        and type(image_file.get("bytes")) is int
+        and image_file["bytes"] > 0
+        and image_file.get("maximumMiB") == 4096
+        and re.fullmatch(r"[a-f0-9]{64}", image_file.get("sha256", "")),
+        "The preauthorized runtime image identity is invalid.",
+    )
+    roots = image.get("appContainerReadRoots")
+    require(
+        type(roots) is list
+        and len(roots) == 1
+        and type(roots[0]) is dict
+        and set(roots[0]) == {"name", "sddl", "access"}
+        and roots[0].get("name") == "workers"
+        and roots[0].get("sddl") == record["workersSddl"],
+        "The preauthorized runtime image root identity is invalid.",
+    )
+    verify_acl_rows(roots[0]["access"], detailed=False)
 
 
 def verify(
@@ -166,20 +279,29 @@ def verify(
     cwd = policy.get("process", {}).get("cwd", "")
     drive = proof.get("systemDriveRoot", "")
     readonly = filesystem.get("readonlyPaths", [])
+    preauthorized_path = ntpath.join(
+        ntpath.normpath(str(Path(proof_directory).absolute())),
+        "preauthorized-runtime-mount",
+        "workers",
+    )
     require(
         type(filesystem) is dict
         and set(filesystem) == {"readonlyPaths", "readwritePaths"}
         and type(readonly) is list
-        and len(readonly) == 1
+        and len(readonly) == 2
         and type(readonly[0]) is str
+        and type(readonly[1]) is str
         and re.fullmatch(r"[A-Za-z]:\\[^\r\n]+", str(node_path))
         and ntpath.basename(str(node_path)).lower() == "node.exe"
         and ntpath.normcase(readonly[0]) == ntpath.normcase(str(node_path))
+        and ntpath.normcase(readonly[1]) == ntpath.normcase(preauthorized_path)
         and re.fullmatch(re.escape(drive) + r"NemoClawHostPrepProof-[a-f0-9]{12}", cwd)
         and re.fullmatch(r"[A-Za-z]:\\", drive)
         and filesystem.get("readwritePaths") == [cwd],
-        "The actual filesystem grants exceed the single Node file and owned proof workspace.",
+        "The actual filesystem grants differ from Node, the preauthorized image "
+        "root, and the owned proof workspace.",
     )
+    verify_preauthorized_runtime(proof.get("preauthorizedRuntime"))
     first, repeat = proof.get("first", {}), proof.get("repeat", {})
     for record in (first, repeat):
         require(
@@ -212,9 +334,9 @@ def verify(
         and guest.get("node") == "22.23.2"
         and all(
             guest.get(field) is True
-            for field in ("allowedRead", "deniedRead", "ownedWrite")
+            for field in ("allowedRead", "preauthorizedRead", "deniedRead", "ownedWrite")
         ),
-        "Actual contained Node read/deny/write controls did not pass.",
+        "Actual contained Node and preauthorized-image read/deny/write controls did not pass.",
     )
     node_comparison = compare_node_acl(
         proof.get("nodeSddlBefore"),
@@ -271,6 +393,7 @@ def verify(
             for row in commands
         ],
         "systemDriveMetadataPreparation": True,
+        "preauthorizedRuntimeReadOnly": True,
         "sameJobHostAlreadyPrepared": True,
         "installedAcceptance": False,
         "publicationApproved": False,
