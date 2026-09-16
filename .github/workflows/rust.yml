@@ -69,10 +69,15 @@ jobs:
           cache-bin: "false"
       - name: Install test runner for Linux ARM64 pilot
         if: matrix.platform == 'linux_arm64'
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
-        with:
-          tool: cargo-nextest@0.9.144
-          fallback: none
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest"
+          cd "$RUNNER_TEMP/nextest"
+          archive=cargo-nextest-0.9.144-aarch64-unknown-linux-gnu.tar.gz
+          curl --fail --location --retry 3 "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.144/$archive" -o "$archive"
+          echo "7fecfd431b810c05c589d800524286b8f80ce2fe9fb1fef05caf16d095cea407  $archive" | sha256sum --check
+          tar -xzf "$archive" cargo-nextest
+          echo "$PWD" >> "$GITHUB_PATH"
+          ./cargo-nextest nextest --version
       - name: Formatting, lint, and deterministic behavior
         run: |
           cargo fmt --check
