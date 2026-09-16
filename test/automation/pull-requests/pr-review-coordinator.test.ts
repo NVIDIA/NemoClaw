@@ -9,6 +9,7 @@ import {
   type CoordinatorSnapshot,
   decideReviewAction,
 } from "../../../tools/pr-review-coordinator/decision.mts";
+import { evaluateCoordinatorShadow } from "../../../tools/pr-review-coordinator/shadow.mts";
 
 const HEAD = "1111111111111111111111111111111111111111";
 const NEXT_HEAD = "3333333333333333333333333333333333333333";
@@ -194,6 +195,70 @@ describe("repository-owned PR review coordination", () => {
         { headSha: NEXT_HEAD, baseSha: BASE },
       ),
     ).toThrow("Pull request head or base changed before the review write");
+  });
+
+  it("keeps exact-head model findings read-only and ambiguous in workflow shadow mode", () => {
+    const result = evaluateCoordinatorShadow({
+      context: {
+        repo: "NVIDIA/NemoClaw",
+        prNumber: 123,
+        pullRequest: {
+          state: "open",
+          draft: false,
+          mergeable: true,
+          user: { login: "contributor" },
+          head: { sha: HEAD },
+          base: { sha: BASE },
+        },
+      },
+      gate: {
+        status: "blocked",
+        findingCount: 1,
+        unresolvedRecommendationCount: 0,
+        findingInterests: ["architecture-standard-work"],
+        unresolvedInterests: [],
+      },
+      ledgers: [
+        {
+          version: 1,
+          revision: 1,
+          identity: "exact-head",
+          headSha: HEAD,
+          interest: "architecture-standard-work",
+          status: "findings",
+          findings: [
+            {
+              id: "F-architecture-standard-work-123",
+              interest: "architecture-standard-work",
+              severity: "P1",
+              kind: "design",
+              summary: "A material blocker",
+              path: "src/example.ts",
+              line: 1,
+              impact: "Impact",
+              smallestSafeFix: "Fix",
+              regressionTest: "Test",
+              exclusions: [],
+            },
+          ],
+          noFindingsReason: null,
+        },
+      ],
+      prNumber: 123,
+      headSha: HEAD,
+      baseSha: BASE,
+    });
+
+    expect(result).toMatchObject({
+      mode: "read-only-shadow",
+      snapshot: {
+        advisor: {
+          findings: [{ validation: "ambiguous" }],
+        },
+        readiness: { commitsVerified: false, productScope: "missing" },
+      },
+      decision: { action: "stay-quiet", reason: "ambiguous-follow-up" },
+    });
   });
 });
 

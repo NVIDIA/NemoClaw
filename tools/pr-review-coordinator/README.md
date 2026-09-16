@@ -5,8 +5,8 @@
 
 This directory contains the side-effect-free decision core for a repository-owned review
 coordinator. The coordinator consumes an exact-head PR Review Advisor result, repository
-readiness, and the prior review contract. It decides whether a future GitHub adapter should stay
-quiet, request changes, or approve.
+readiness, and the prior review contract. It decides whether a GitHub adapter should stay quiet,
+request changes, or approve.
 
 The local command is deliberately read-only:
 
@@ -15,7 +15,13 @@ npm run review:coordinate:local -- --input tools/pr-review-coordinator/examples/
 ```
 
 It does not call GitHub, run the Advisor, post reviews, modify branches, rerun CI, merge, or use an
-App key. This makes it safe to exercise the policy before enabling any GitHub workflow.
+App key. This makes it safe to exercise the policy directly.
+
+The checked-in Advisor workflow runs `shadow.mts` after every complete exact-head specialist run.
+That adapter verifies the shared exact-head artifacts and emits a retained decision artifact and job
+summary. It has read-only repository permissions. Model findings remain ambiguous in shadow mode,
+and commit-verification and product-scope gates remain closed, so the adapter cannot propose a
+review write or approval from evidence it does not yet own.
 
 The policy preserves the maintainer review loop's important behavior. Its input is reconciled
 Advisor evidence: the adapter must retain only P0/P1 ledger findings and label whether each finding

@@ -170,9 +170,21 @@ it.each([
     "Unified advisor blocker gate must validate exact-attempt specialist evidence",
   ],
   [
+    "coordinator shadow dependency",
+    "needs: [require-green-checks, build-advisor-runtime, review-specialists, advisor-blockers]",
+    "needs: [require-green-checks, build-advisor-runtime, review-specialists]",
+    "Unified advisor coordinator shadow must remain read-only and exact-head bound",
+  ],
+  [
+    "coordinator shadow evidence",
+    'run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"',
+    'run: echo "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"',
+    "Unified advisor coordinator shadow must consume exact-attempt trusted evidence",
+  ],
+  [
     "publisher after blocker gate",
-    "needs: [require-green-checks, review-specialists, advisor-blockers]",
-    "needs: [require-green-checks, review-specialists]",
+    "needs: [require-green-checks, review-specialists, advisor-blockers, coordinator-shadow]",
+    "needs: [require-green-checks, review-specialists, coordinator-shadow]",
     "Unified advisor publisher must run after a red blocker gate",
   ],
   [

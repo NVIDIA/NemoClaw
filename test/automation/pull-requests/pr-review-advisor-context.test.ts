@@ -16,6 +16,7 @@ import {
   extractIssueRefs,
   hasOpenPrReplacement,
   type OpenPrOverlap,
+  writeGitHubReviewContext,
 } from "../../../tools/pr-review-advisor/github-context.mts";
 import { buildSystemPrompt } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
 const ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -137,6 +138,83 @@ describe("PR review advisor", () => {
       true,
     );
     expect(requests.some((url) => /pulls\/7542\/comments/u.test(url))).toBe(false);
+  });
+
+  it("cancels a delayed pagination request at the shared context deadline", async () => {
+    const currentHead = "c".repeat(40);
+    let delayedSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      const page = url.searchParams.get("page");
+      const kind = url.pathname.endsWith("/pulls/7542")
+        ? "pull"
+        : url.pathname.endsWith("/pulls/7542/reviews") && page === "1"
+          ? "reviews-1"
+          : url.pathname.endsWith("/pulls/7542/reviews") && page === "2"
+            ? "reviews-2"
+            : "other";
+      delayedSignal = kind === "reviews-2" ? (init?.signal ?? undefined) : delayedSignal;
+      return kind === "pull"
+        ? ({
+            ok: true,
+            json: async () => ({
+              number: 7542,
+              title: "Deadline",
+              body: "",
+              head: { ref: "feature", sha: currentHead },
+              base: { ref: "main", sha: "d".repeat(40) },
+            }),
+          } as Response)
+        : kind === "reviews-1"
+          ? ({
+              ok: true,
+              json: async () => Array.from({ length: 100 }, () => ({})),
+            } as Response)
+          : kind === "reviews-2"
+            ? await new Promise<Response>((_resolve, reject) => {
+                delayedSignal?.addEventListener("abort", () => reject(delayedSignal?.reason), {
+                  once: true,
+                });
+              })
+            : ({ ok: true, json: async () => [] } as Response);
+    });
+
+    const context = await collectGitHubReviewContext(
+      {
+        GH_TOKEN: "host-token",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        PR_NUMBER: "7542",
+      },
+      { signal: AbortSignal.timeout(20) },
+    );
+
+    expect(delayedSignal?.aborted).toBe(true);
+    expect(context?.fetchError).toContain("timed out before every required page was fetched");
+  });
+
+  it("does not write a hosted context artifact after a GitHub API failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      status: 502,
+      text: async () => "upstream unavailable",
+    } as Response);
+    const directory = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-pr-advisor-context-"));
+    const output = path.join(directory, "github-context.json");
+    try {
+      await expect(
+        writeGitHubReviewContext(
+          {
+            GH_TOKEN: "host-token",
+            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+            PR_NUMBER: "7542",
+          },
+          output,
+        ),
+      ).rejects.toThrow("GitHub review context is incomplete");
+      expect(fs.existsSync(output)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("does not fall back when the trusted security rubric is unavailable", () => {

@@ -29,7 +29,9 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist performs either the initial complete assessment or the bounded frozen-contract follow-up, reads repository evidence, and records a native session trace.
 6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, findings ledger, and shared review-queue context.
 7. After every specialist completes successfully, a trusted aggregate job validates all exact-attempt finding ledgers and E2E receipts. It fails the workflow for any P0/P1 finding, unresolved E2E recommendation, or incomplete or malformed evidence.
-8. For automatic `workflow_run` PR runs, one publisher attempts to post a sticky comment that links to the workflow run, including after the aggregate job fails. A failed specialist suppresses publication. Manual dispatch does not run the publisher.
+8. For a PR-bound run, a read-only coordinator shadow consumes the same exact-head context and
+   specialist evidence. It publishes only a job summary and decision artifact.
+9. For automatic `workflow_run` PR runs, one publisher attempts to post a sticky comment that links to the workflow run, including after the aggregate job fails. A failed specialist suppresses publication. Manual dispatch does not run the publisher.
 
 For a PR-bound run, `Require no Advisor blockers` is the review-request signal. Request human review only when that job is green for the latest PR commit. It is not merge authorization, and contributors must still inspect the specialist reports.
 
@@ -41,7 +43,7 @@ primitives and exposes only sandbox runtime initialization as a CLI command. Bot
 lifecycle and credential-boundary helpers in `tools/openshell-agent/runtime.mts`, which are also
 used by the merge-conflict fixer.
 
-Provider failures, timeouts, missing specialist artifacts, blocker findings, unresolved E2E recommendations, and malformed evidence fail closed. Workflow logs retain orchestration diagnostics.
+Provider failures, timeouts, missing specialist artifacts, blocker findings, unresolved E2E recommendations, and malformed evidence fail closed. GitHub context collection has one 120-second deadline across all required API reads. A timeout or partial result prevents context artifact publication. Workflow logs retain orchestration diagnostics.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its comment
 links to the specialist reviews and does not dispatch or report pass/fail for E2E jobs.
@@ -152,6 +154,10 @@ workflow run also displays each Markdown review as a job summary. Replace `<inte
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
 
+For a complete PR-bound run, `pr-review-coordinator-shadow-<attempt>` contains the read-only
+coordinator decision in `decision.json`. The coordinator job also writes that decision to its job
+summary. The artifact does not authorize a review write or approval.
+
 The publisher has the only pull-request write permission. It receives neither the model credential
 nor the specialist artifacts. It posts only the workflow-run link.
 
@@ -163,8 +169,8 @@ From a prepared contributor checkout, run:
 npm run review:local
 ```
 
-To run the same local specialists against an exact open, non-draft GitHub pull request selected by
-the maintainer review-request queue:
+To run the same local specialists against a directly selected exact open, non-draft GitHub pull
+request:
 
 ```bash
 npm run review:local -- --pr 12345
@@ -173,12 +179,14 @@ npm run review:local -- --pr 12345
 The repository defaults to `NVIDIA/NemoClaw`. Use `--repo OWNER/REPO` after the PR number only
 when reviewing another repository.
 
-The PR form is read-only. It resolves and rechecks the live head and base, checks out the exact head
-in a disposable clone, collects bounded GitHub review context, and publishes results back to
-`artifacts/pr-review-advisor-local/`. The queue coordinator remains responsible for authenticated
-FIFO admission, validating findings, coverage and readiness guards, and the single consolidated
-review or approval. On a later commit, the latest trusted human review becomes the frozen contract
-and the specialists inspect its exact commit delta instead of starting over.
+The PR form is read-only. It does not authenticate or admit a maintainer review-request queue. It
+resolves and rechecks the selected PR's live head and base, checks out the exact head in a disposable
+clone, collects bounded GitHub review context, and publishes specialist artifacts back to
+`artifacts/pr-review-advisor-local/`. It does not combine findings, post a review, or approve the PR.
+The repository workflow's coordinator shadow consumes the same exact-head evidence and reports a
+read-only decision; a human maintainer still owns any consolidated review or approval. On a later
+commit, the latest trusted human review becomes the frozen contract and the specialists inspect its
+exact commit delta instead of starting over.
 
 Without `--pr`, the command snapshots the committed branch delta from `origin/main`, staged and
 unstaged final content, and nonignored untracked files. It does not use GitHub context, so this

@@ -15,6 +15,7 @@ import {
 } from "../advisors/json.mts";
 
 export const MAX_PREPARED_GITHUB_CONTEXT_BYTES = 5 * 1024 * 1024;
+export const GITHUB_CONTEXT_DEADLINE_MS = 120_000;
 const OPEN_PR_OVERLAP_LIMIT = 80;
 const OPEN_PR_OVERLAP_CONCURRENCY = 6;
 const OVERLAP_LINKED_ISSUE_LIMIT = 50;
@@ -140,6 +141,7 @@ export function readPreparedGitHubContext(
 
 export async function collectGitHubReviewContext(
   env: NodeJS.ProcessEnv,
+  options: { signal?: AbortSignal } = {},
 ): Promise<GitHubReviewContext | null> {
   const repo = env.TARGET_REPO || env.GITHUB_REPOSITORY;
   const prNumber = Number.parseInt(
@@ -157,16 +159,23 @@ export async function collectGitHubReviewContext(
   const token = env.GH_TOKEN || env.GITHUB_TOKEN;
   if (!repo || !Number.isFinite(prNumber) || prNumber <= 0 || !token) return null;
 
+  const signal = options.signal ?? AbortSignal.timeout(GITHUB_CONTEXT_DEADLINE_MS);
   const context: GitHubReviewContext = { repo, prNumber };
   try {
     const [rawPullRequest, openPulls, reviews] = await Promise.all([
-      githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
+      githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token, signal),
       githubRestPaginated<unknown>(
         `repos/${repo}/pulls?state=open&sort=updated&direction=desc`,
         token,
         100,
+        signal,
       ),
-      githubRestPaginated<unknown>(`repos/${repo}/pulls/${prNumber}/reviews`, token),
+      githubRestPaginated<unknown>(
+        `repos/${repo}/pulls/${prNumber}/reviews`,
+        token,
+        undefined,
+        signal,
+      ),
     ]);
     context.pullRequest = summarizePullRequest(rawPullRequest);
     const currentHeadSha =
@@ -181,6 +190,8 @@ export async function collectGitHubReviewContext(
       ? await githubRestPaginated<unknown>(
           `repos/${repo}/pulls/${prNumber}/reviews/${selectedReview.reviewId}/comments`,
           token,
+          undefined,
+          signal,
         )
       : [];
     context.followUpReview = selectFollowUpReview(
@@ -205,7 +216,7 @@ export async function collectGitHubReviewContext(
       .map((line) => boundedText(line, 2_000, "issue-reference line") as string)
       .slice(0, 20);
     context.linkedIssues = await Promise.all(
-      issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token)),
+      issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token, signal)),
     );
     context.openPrOverlaps = await collectOpenPrOverlaps(
       repo,
@@ -213,9 +224,14 @@ export async function collectGitHubReviewContext(
       token,
       openPulls,
       issueNumbers,
+      signal,
     );
   } catch (error: unknown) {
-    context.fetchError = error instanceof Error ? error.message : String(error);
+    context.fetchError = signal.aborted
+      ? "GitHub context collection timed out before every required page was fetched"
+      : error instanceof Error
+        ? error.message
+        : String(error);
   }
   return context;
 }
@@ -313,6 +329,8 @@ function summarizePullRequest(value: unknown): unknown {
     body: boundedText(getPath<unknown>(value, ["body"]), BODY_CHARACTER_LIMIT, "pull-request body"),
     state: stringOrUndefined(getPath<unknown>(value, ["state"])),
     draft: getPath<unknown>(value, ["draft"]),
+    mergeable: getPath<unknown>(value, ["mergeable"]),
+    mergeable_state: stringOrUndefined(getPath<unknown>(value, ["mergeable_state"])),
     author_association: stringOrUndefined(getPath<unknown>(value, ["author_association"])),
     user: summarizeUser(getPath<unknown>(value, ["user"])),
     labels: summarizeLabels(getPath<unknown>(value, ["labels"])),
@@ -394,11 +412,12 @@ async function collectLinkedIssue(
   repo: string,
   number: number,
   token: string,
+  signal: AbortSignal,
 ): Promise<LinkedIssue> {
   try {
     const [issue, comments] = await Promise.all([
-      githubRest<unknown>(`repos/${repo}/issues/${number}`, token),
-      githubRestPaginated<unknown>(`repos/${repo}/issues/${number}/comments`, token, 50),
+      githubRest<unknown>(`repos/${repo}/issues/${number}`, token, signal),
+      githubRestPaginated<unknown>(`repos/${repo}/issues/${number}/comments`, token, 50, signal),
     ]);
     return {
       number,
@@ -406,6 +425,7 @@ async function collectLinkedIssue(
       comments: comments.map(summarizeComment),
     };
   } catch (error: unknown) {
+    if (signal.aborted) throw error;
     return { number, fetchError: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -435,6 +455,7 @@ async function collectOpenPrOverlaps(
   token: string,
   openPulls: unknown[],
   currentLinkedIssues: number[],
+  signal: AbortSignal,
 ): Promise<OpenPrOverlap[]> {
   const currentFiles = new Set<string>(
     (
@@ -442,6 +463,7 @@ async function collectOpenPrOverlaps(
         `repos/${repo}/pulls/${currentPrNumber}/files`,
         token,
         300,
+        signal,
       )
     )
       .map((file) => file.filename)
@@ -477,11 +499,13 @@ async function collectOpenPrOverlaps(
               `repos/${repo}/pulls/${number}/files`,
               token,
               300,
+              signal,
             )
           )
             .map((file) => file.filename)
             .filter((file): file is string => typeof file === "string" && currentFiles.has(file));
-        } catch {
+        } catch (error) {
+          if (signal.aborted) throw error;
           allSameFiles = [];
         }
       }
@@ -529,6 +553,10 @@ export async function writeGitHubReviewContext(
   outputPath: string,
 ): Promise<void> {
   const context = await collectGitHubReviewContext(env);
+  if (!context) throw new Error("GitHub review context is unavailable");
+  if (context.fetchError) {
+    throw new Error(`GitHub review context is incomplete: ${context.fetchError}`);
+  }
   const outputDirectory = path.dirname(outputPath);
   fs.mkdirSync(outputDirectory, { recursive: true });
   const resolvedOutput = path.resolve(outputPath);
