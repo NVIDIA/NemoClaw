@@ -45,8 +45,8 @@ fn telemetry_preserves_intent_and_adds_only_collector_egress() {
     );
     let policy: Value = serde_json::from_str(&rows[3].values["policy_json"]).unwrap();
     let rules = policy["network_policies"].as_object().unwrap();
-    assert_eq!(rules.len(), 1);
-    let endpoint = &rules.values().next().unwrap()["endpoints"][0];
+    assert_eq!(rules.len(), 2);
+    let endpoint = &rules["nemoclaw-otlp"]["endpoints"][0];
     assert_eq!(endpoint["host"], "host.openshell.internal");
     assert_eq!(endpoint["port"], 4318);
     assert_eq!(
@@ -107,7 +107,14 @@ fn hermes_relay_tracing_selects_in_process_runtime_without_new_egress() {
     let rows = targets(&doc, &generations).unwrap();
     let runtime: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
     assert_eq!(runtime["observability"], relay());
-    assert!(!rows[3].values.contains_key("policy_json"));
+    let policy: Value = serde_json::from_str(&rows[3].values["policy_json"]).unwrap();
+    let rules = policy["network_policies"].as_object().unwrap();
+    assert_eq!(rules.len(), 1);
+    assert!(
+        rules
+            .keys()
+            .all(|key| key.starts_with("nemoclaw-inference-"))
+    );
 }
 
 #[test]

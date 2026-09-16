@@ -1,5 +1,5 @@
 {
-  "digest": "a474972574ad39ecdff1723fa99a929d31b7e3b46eb179577511f89efec01973",
+  "digest": "916d4f0dcfe0c9f71a689368054364c1cb8dffb3b1d02aea1e5ab33778a5484b",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -9,45 +9,45 @@
     },
     "spec": {
       "gateway": {
-        "management": "external",
-        "endpoint": "http://127.0.0.1:17671"
+        "endpoint": "http://127.0.0.1:17671",
+        "management": "external"
       },
       "inferenceProviders": [
         {
+          "endpoint": "http://172.20.0.1:11436/v1",
           "name": "local",
-          "provider": "openai",
-          "endpoint": "http://172.20.0.1:11436/v1"
+          "provider": "openai"
         }
       ],
       "sandboxes": [
         {
-          "name": "assistant",
-          "image": {
-            "ref": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd"
-          },
-          "runtime": {
-            "provider": "docker"
-          },
-          "network": {
-            "tier": "isolated"
-          },
           "agents": [
             {
-              "name": "main",
+              "harness": "openclaw",
               "inference": {
                 "routes": [
                   {
                     "name": "primary",
-                    "providerRef": "local",
                     "overrides": {
                       "model": "qwen3.5:0.8b"
-                    }
+                    },
+                    "providerRef": "local"
                   }
                 ]
               },
-              "harness": "openclaw"
+              "name": "main"
             }
-          ]
+          ],
+          "image": {
+            "ref": "nc-native-inference-b3e4ad457@sha256:427d7f46ff377e9d6fe28c28a534441c673226cb1b336c9d1efe740f7a7937a6"
+          },
+          "name": "assistant",
+          "network": {
+            "tier": "isolated"
+          },
+          "runtime": {
+            "provider": "docker"
+          }
         }
       ]
     }

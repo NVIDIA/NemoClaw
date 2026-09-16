@@ -24,7 +24,7 @@ pub fn environment(name: &str, runtime: &str) -> Row {
             ("TMPDIR", "/sandbox/tmp"),
             ("XDG_CACHE_HOME", "/sandbox/.cache"),
             ("NEMOCLAW_AGENT_NAME", name),
-            ("OPENAI_API_KEY", "openshell-placeholder"),
+            ("NEMOCLAW_ANONYMOUS_API_KEY", "unused"),
             ("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt"),
             ("NODE_EXTRA_CA_CERTS", "/etc/ssl/certs/ca-certificates.crt"),
             ("PYTHONDONTWRITEBYTECODE", "1"),

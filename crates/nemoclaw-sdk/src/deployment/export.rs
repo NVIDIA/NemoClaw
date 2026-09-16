@@ -65,7 +65,6 @@ impl Deployment {
                     }
                 }
                 "provider" => export_provider(&mut document, &expected, &observed)?,
-                "route" => export_route(&mut document, &observed)?,
                 "sandbox" => export_sandbox(&client, &document, &mut expected, &observed).await?,
                 _ => {}
             }
@@ -107,18 +106,6 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         (!observed["credential_env"].is_empty()).then(|| Credential {
             env: observed["credential_env"].clone(),
         });
-    Ok(())
-}
-
-fn export_route(document: &mut Document, observed: &Row) -> Result<(), Error> {
-    if observed["provider_name"] != document.inference_provider()?.name {
-        return Err(Error::Conflict(
-            "route references a provider outside this deployment",
-        ));
-    }
-    for agent in &mut document.spec.sandboxes[0].agents {
-        agent.inference.routes[0].overrides.model = observed["model"].clone();
-    }
     Ok(())
 }
 
@@ -174,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn export_preserves_external_provider_references_and_observed_route_model() {
+    fn export_preserves_external_provider_references() {
         let mut document =
             Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes())
                 .unwrap();
@@ -194,20 +181,6 @@ mod tests {
                 .unwrap()
                 .env,
             "NEW_INFERENCE_KEY"
-        );
-        let route = Row::from([
-            (
-                "provider_name".into(),
-                document.spec.inference_providers[0].name.clone(),
-            ),
-            ("model".into(), "updated-model".into()),
-        ]);
-        export_route(&mut document, &route).unwrap();
-        assert_eq!(
-            document.spec.sandboxes[0].agents[0].inference.routes[0]
-                .overrides
-                .model,
-            "updated-model"
         );
         document.validate().unwrap();
     }
@@ -234,20 +207,6 @@ mod tests {
         }
         let mut exported = document.clone();
         export_provider(&mut exported, &expected, &expected).unwrap();
-        assert_eq!(exported, document);
-    }
-
-    #[test]
-    fn export_rejects_a_route_outside_the_deployment_without_rewriting_intent() {
-        let document =
-            Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes())
-                .unwrap();
-        let mut exported = document.clone();
-        let observed = Row::from([
-            ("provider_name".into(), "foreign".into()),
-            ("model".into(), "foreign-model".into()),
-        ]);
-        assert!(export_route(&mut exported, &observed).is_err());
         assert_eq!(exported, document);
     }
 }

@@ -113,6 +113,7 @@ def model_connection(inference=None):
         or not isinstance(connection["api_key_env"], str)
         or (
             connection["api_key_env"]
+            and connection["api_key_env"] != "NEMOCLAW_ANONYMOUS_API_KEY"
             and not re.fullmatch(r"NEMOCLAW_INFERENCE_[A-Z0-9_]+_KEY", connection["api_key_env"])
         )
     ):
@@ -133,6 +134,8 @@ def model_credential(inference=None):
 
 
 def configuration(name, harness="deepagents", model=None, inference=None):
+    if inference is None and os.environ.get("NEMOCLAW_INFERENCE_CONFIG"):
+        inference = json.loads(os.environ["NEMOCLAW_INFERENCE_CONFIG"])
     if harness == "pi":
         if model is None:
             from pi_host import MODEL_PATH

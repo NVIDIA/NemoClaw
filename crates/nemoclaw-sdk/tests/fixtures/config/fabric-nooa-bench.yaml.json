@@ -9,45 +9,45 @@
     },
     "spec": {
       "gateway": {
-        "management": "external",
-        "endpoint": "http://127.0.0.1:17681"
+        "endpoint": "http://127.0.0.1:17681",
+        "management": "external"
       },
       "inferenceProviders": [
         {
+          "endpoint": "http://172.20.0.1:11446/v1",
           "name": "local",
-          "provider": "openai",
-          "endpoint": "http://172.20.0.1:11446/v1"
+          "provider": "openai"
         }
       ],
       "sandboxes": [
         {
-          "name": "assistant",
-          "image": {
-            "ref": "nc-prototype-fabric@sha256:deaa2580e46f5d27105c7051771d36da36c5879ac2fea98e6b22cd651c910260"
-          },
-          "runtime": {
-            "provider": "docker"
-          },
-          "network": {
-            "tier": "isolated"
-          },
           "agents": [
             {
-              "name": "main",
               "harness": "nooa-bench",
               "inference": {
                 "routes": [
                   {
                     "name": "primary",
-                    "providerRef": "local",
                     "overrides": {
                       "model": "fixture-model"
-                    }
+                    },
+                    "providerRef": "local"
                   }
                 ]
-              }
+              },
+              "name": "main"
             }
-          ]
+          ],
+          "image": {
+            "ref": "nc-prototype-fabric@sha256:deaa2580e46f5d27105c7051771d36da36c5879ac2fea98e6b22cd651c910260"
+          },
+          "name": "assistant",
+          "network": {
+            "tier": "isolated"
+          },
+          "runtime": {
+            "provider": "docker"
+          }
         }
       ]
     }

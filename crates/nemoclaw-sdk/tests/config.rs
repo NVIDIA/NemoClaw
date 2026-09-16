@@ -197,7 +197,7 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
             document.spec.sandboxes[0]
                 .image
                 .ref_
-                .starts_with("nc-prototype-fabric@sha256:")
+                .starts_with("nc-native-inference-b3e4ad457@sha256:")
         );
         assert_eq!(
             document.spec.sandboxes[0].agents[0].runtime(),

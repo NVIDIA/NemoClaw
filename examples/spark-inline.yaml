@@ -13,7 +13,7 @@ spec:
     management: managed
     endpoint: http://127.0.0.1:17705
     engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792
+    image: ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a
     networkCIDR: 172.30.125.0/24
   inferenceProviders:
   - name: qwen
@@ -251,7 +251,7 @@ spec:
   sandboxes:
   - name: assistant
     image:
-      ref: nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd
+      ref: nc-native-inference-b3e4ad457@sha256:427d7f46ff377e9d6fe28c28a534441c673226cb1b336c9d1efe740f7a7937a6
     runtime:
       provider: docker
     network:

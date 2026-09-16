@@ -145,6 +145,8 @@ pub(crate) struct RuntimeAgent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeInference {
+    pub provider: String,
+    pub connection: RuntimeConnection,
     #[serde(rename = "webSearch", default, skip_serializing_if = "Option::is_none")]
     pub web_search: Option<RuntimeWebSearch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +162,15 @@ pub(crate) struct RuntimeInference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<RuntimeAuth>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuntimeConnection {
+    pub provider: String,
+    pub model: String,
+    pub base_url: String,
+    pub api_key_env: String,
+}
+
 // Keep the adapter wire contract while deriving authentication from the selected route.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -169,6 +180,25 @@ pub(crate) struct RuntimeAuth {
 }
 impl RuntimeInference {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
+        super::validate_endpoint(&self.connection.base_url, false)?;
+        let profile = crate::openshell::inference_profile(
+            &self.provider,
+            &self.connection.base_url,
+            &self.connection.provider,
+            self.connection.api_key_env != "NEMOCLAW_ANONYMOUS_API_KEY",
+        )
+        .map_err(|_| ConfigError("invalid native inference connection"))?;
+        if profile
+            .credentials
+            .first()
+            .map(|c| c.name.as_str())
+            .unwrap_or("NEMOCLAW_ANONYMOUS_API_KEY")
+            != self.connection.api_key_env
+        {
+            return Err(ConfigError(
+                "inference credential does not match its provider",
+            ));
+        }
         self.tuning.validate(harness)?;
         if let Some(search) = &self.web_search {
             search.validate(
@@ -223,14 +253,32 @@ impl Document {
         let web_search = self.web_search()?;
         let roster =
             web_search.is_some() || agents.len() > 1 || agents.iter().any(|a| a.tools.is_some());
-        Ok((provider.api.is_some()
-            || tuning != &RouteTuning::default()
-            || agent.auth.is_some()
-            || roster
-            || agent.execution.is_some()
-            || agent.observability.is_some()
-            || agent.interfaces.is_some())
-        .then(|| RuntimeInference {
+        let connection = self.inference_connection()?;
+        let authenticated = connection.credential.is_some()
+            || provider
+                .service
+                .as_ref()
+                .is_some_and(|s| s.authentication.is_some())
+            || provider.ollama_proxy.is_some();
+        let profile = crate::openshell::inference_profile(
+            &provider.name,
+            &connection.endpoint,
+            &provider.provider,
+            authenticated,
+        )
+        .map_err(|_| ConfigError("invalid native inference profile"))?;
+        Ok(Some(RuntimeInference {
+            provider: provider.name.clone(),
+            connection: RuntimeConnection {
+                provider: provider.provider.clone(),
+                model: agent.inference.routes[0].overrides.model.clone(),
+                base_url: connection.endpoint,
+                api_key_env: profile
+                    .credentials
+                    .first()
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| "NEMOCLAW_ANONYMOUS_API_KEY".into()),
+            },
             web_search,
             observability: agent.observability.clone(),
             execution: agent.execution.clone(),

@@ -636,10 +636,10 @@
               ]
             },
             "image": {
-              "default": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
+              "default": "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a",
               "enum": [
                 "",
-                "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792"
+                "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a"
               ]
             },
             "management": {
@@ -719,7 +719,7 @@
         "image": {
           "description": "Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway.",
           "type": "string",
-          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792."
+          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a."
         },
         "management": {
           "description": "Whether the SDK manages the gateway or connects to an existing one.",
@@ -914,7 +914,7 @@
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
             }
           ],
-          "default": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd",
+          "default": "nc-native-inference-b3e4ad457@sha256:427d7f46ff377e9d6fe28c28a534441c673226cb1b336c9d1efe740f7a7937a6",
           "description": "Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects the default."
@@ -2077,6 +2077,13 @@
         "strict_tool_names": {
           "description": "Enforce standard MCP tool-name syntax; defaults to true.",
           "type": "boolean"
+        },
+        "versions": {
+          "description": "Supported MCP protocol revisions; omission uses the pinned OpenShell default.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -2257,7 +2264,7 @@
     },
     "Route": {
       "additionalProperties": false,
-      "description": "Primary inference route supplied through OpenShell.",
+      "description": "Native model connection authorized through an attached OpenShell provider.",
       "oneOf": [
         {
           "not": {
@@ -2416,7 +2423,7 @@
         },
         "network": {
           "$ref": "#/$defs/Network",
-          "description": "Sandbox network policy; omission selects isolated inference routing."
+          "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
         },
         "runtime": {
           "$ref": "#/$defs/Runtime",

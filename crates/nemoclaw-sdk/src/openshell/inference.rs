@@ -45,3 +45,12 @@ pub(super) fn inference_environment(row: &Row) -> Result<Row, ObservationError> 
     }
     Ok(env)
 }
+
+pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, ObservationError> {
+    let settings = inference_settings(text, runtime)?.ok_or(ObservationError::Incomplete)?;
+    let mut providers = vec![settings.provider];
+    if settings.web_search.is_some() {
+        providers.push("brave-search".into());
+    }
+    Ok(providers)
+}

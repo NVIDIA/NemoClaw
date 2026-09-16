@@ -33,9 +33,8 @@ pub use validation::{is_fabric_harness, validate_endpoint};
 
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
-pub const DEFAULT_AGENT_IMAGE: &str =
-    "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd";
-pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792";
+pub const DEFAULT_AGENT_IMAGE: &str = "nc-native-inference-b3e4ad457@sha256:427d7f46ff377e9d6fe28c28a534441c673226cb1b336c9d1efe740f7a7937a6";
+pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a";
 
 /// Configuration errors contain fixed diagnostic text, never source values.
 #[derive(Clone, Debug, PartialEq, Eq)]

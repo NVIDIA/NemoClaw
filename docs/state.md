@@ -7,6 +7,17 @@ Keep the desired-state YAML, its matching bundle, and the entire deployment stat
 The CLI defaults to `.nemoclaw` in the working directory; use `--state-dir` to select another directory.
 Separate deployments need separate state directories and deployment UUIDs.
 
+## Native Inference Migration
+
+Intent version 2 uses native provider endpoints and sandbox provider attachments.
+Intent version 1 is rejected before reconciliation; its files are retained unchanged.
+Keep the previous bundle and OpenShell gateway available for export, recovery, or teardown of the old deployment.
+Do not edit the intent version or remove route entries from OpenTofu state manually.
+Create the replacement against a separate gateway running the new pinned revision, with a fresh deployment UUID and state directory.
+Preserve the old gateway endpoint and state until the replacement is verified, then retire the original through its original bundle.
+Upgrading the old gateway first removes the upstream managed-route API and prevents that recovery path.
+Native agent data is not migrated by this procedure.
+
 ## Local Deployment Files
 
 These files are managed by the SDK and OpenTofu.
@@ -72,7 +83,7 @@ There is no current purge command.
 | Resource or data | Result of a completed destroy |
 |---|---|
 | Sandbox and its native files, settings, tokens, and conversations | Deleted |
-| Deployment route and provider registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
+| Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
 | OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
 | Managed vLLM/Ollama process containers | Removed; model storage remains tracked |

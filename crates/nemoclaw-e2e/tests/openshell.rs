@@ -27,11 +27,18 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     let workspace = client.ensure("workspace", &targets[0].values).await;
     assert!(workspace.error().is_none());
     assert!(workspace.state().is_some());
+    assert!(
+        client
+            .ensure("provider_profile", &targets[1].values)
+            .await
+            .error()
+            .is_none()
+    );
     fixture.state.lock().unwrap().lose_create = true;
-    let first = client.ensure("provider", &targets[1].values).await;
+    let first = client.ensure("provider", &targets[2].values).await;
     assert!(first.error().is_some());
     let effects = fixture.state.lock().unwrap().effects;
-    let recovered = client.ensure("provider", &targets[1].values).await;
+    let recovered = client.ensure("provider", &targets[2].values).await;
     assert!(recovered.error().is_none());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let mut provider = recovered.into_parts().0.unwrap();
@@ -59,7 +66,7 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
 }
 
 #[tokio::test]
-async fn sandbox_launch_policy_and_route_identity_survive_read_failures() {
+async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
@@ -88,7 +95,22 @@ async fn sandbox_launch_policy_and_route_identity_survive_read_failures() {
         assert!(client.ensure(&target.kind, row).await.error().is_none());
     }
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(rows[2]["id"], format!("{}/primary", rows[0]["id"]));
+    assert_ne!(rows[2]["id"], rows[0]["id"]);
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .values()
+            .next()
+            .unwrap()
+            .spec
+            .as_ref()
+            .unwrap()
+            .providers,
+        ["local"]
+    );
     fixture.state.lock().unwrap().fail_read = Some(("policy", tonic::Code::NotFound));
     assert!(client.read("sandbox", &rows[3], false).await.is_err());
     fixture.state.lock().unwrap().fail_read = None;
@@ -209,7 +231,7 @@ async fn incomplete_desired_ownership_is_rejected_before_any_create() {
 
 #[tokio::test]
 async fn failed_readback_retains_each_created_identity_until_explicit_recovery() {
-    for failed_kind in ["workspace", "provider", "route", "sandbox"] {
+    for failed_kind in ["workspace", "provider_profile", "provider", "sandbox"] {
         let fixture = Fixture::start().await;
         let mut document = Document::parse(
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
@@ -290,10 +312,7 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
         .unwrap();
     assert_eq!(
         nemoclaw_sdk::openshell::policy_json(spec.policy.as_ref().unwrap()).unwrap(),
-        nemoclaw_sdk::openshell::policy_json(
-            &document.spec.sandboxes[0].network.policy_proto().unwrap()
-        )
-        .unwrap()
+        sandbox["policy_json"]
     );
     assert_eq!(spec.command[0], "/usr/bin/env");
     assert!(

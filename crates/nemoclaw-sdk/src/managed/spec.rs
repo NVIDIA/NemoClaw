@@ -19,9 +19,9 @@ pub const SERVICE_KIND: &str = "inference_service";
 pub const OWNER_LABEL: &str = "nemoclaw.nvidia.com/uid";
 pub const GENERATION_LABEL: &str = "nemoclaw.nvidia.com/generation";
 pub const SPEC_LABEL: &str = "nemoclaw.nvidia.com/runtime-spec";
-pub const SUPERVISOR_IMAGE: &str = "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
+pub const SUPERVISOR_IMAGE: &str = "ghcr.io/nvidia/openshell/supervisor@sha256:5787e5bad644cdaf064d6a40a1671942d72cec4b27e31422ec0e7466fc3c794d";
 pub const SUPERVISOR_SHA256: &str =
-    "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d";
+    "5c6b2120349556bf5d3937c14c67cc8ad640f13020e0b540c4b258504050ced0";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
@@ -259,7 +259,7 @@ impl Spec {
             "[openshell.drivers.docker]\nnetwork_name = {:?}\nssh_socket_path = {:?}\nsupervisor_bin = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
             self.network(),
             format!("{data_path}/ssh"),
-            format!("{data_path}/openshell-sandbox"),
+            format!("{data_path}/openshell-supervisor"),
             format!("{data_path}/tls/jwt/signing.pem"),
             format!("{data_path}/tls/jwt/public.pem"),
             format!("{data_path}/tls/jwt/kid"),

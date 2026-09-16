@@ -8,6 +8,9 @@
     "nemoclaw_provider": {
       "inference": {
         "credential_env": "",
+        "depends_on": [
+          "nemoclaw_provider_profile.inference"
+        ],
         "endpoint": "http://172.20.0.1:11446/v1",
         "generation": "provider-generation",
         "lifecycle": {
@@ -19,16 +22,17 @@
         "workspace": "${nemoclaw_workspace.deployment.name}"
       }
     },
-    "nemoclaw_route": {
-      "primary": {
-        "generation": "workspace-generation",
+    "nemoclaw_provider_profile": {
+      "inference": {
+        "authenticated": "false",
+        "endpoint": "http://172.20.0.1:11446/v1",
+        "generation": "provider-generation",
         "lifecycle": {
           "prevent_destroy": true
         },
-        "model": "qwen3:4b",
-        "name": "primary",
+        "name": "nemoclaw-inference-local",
         "owner": "c4a639f3-2bd3-42ba-8f5d-658d7913b0f9",
-        "provider_name": "${nemoclaw_provider.inference.name}",
+        "provider_type": "",
         "workspace": "${nemoclaw_workspace.deployment.name}"
       }
     },
@@ -37,15 +41,17 @@
         "agent_name": "main",
         "agent_runtime": "fabric-pi",
         "depends_on": [
-          "nemoclaw_route.primary"
+          "nemoclaw_provider.inference"
         ],
         "generation": "sandbox-generation",
         "image": "nc-fabric-pi@sha256:fc53fc5a0c37bd487fc58e41886cd1afe8af387c6c8cf410e632c045a03a20dc",
+        "inference_json": "{\"provider\":\"local\",\"connection\":{\"provider\":\"openai\",\"model\":\"qwen3:4b\",\"base_url\":\"http://172.20.0.1:11446/v1\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\"},\"api\":\"openai-completions\",\"tuning\":{}}",
         "lifecycle": {
           "prevent_destroy": true
         },
         "name": "assistant",
         "owner": "c4a639f3-2bd3-42ba-8f5d-658d7913b0f9",
+        "policy_json": "{\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/app\",\"/bin\",\"/etc\",\"/lib\",\"/lib64\",\"/opt\",\"/proc\",\"/sbin\",\"/usr\"],\"read_write\":[\"/dev/null\",\"/dev/urandom\",\"/home/node\",\"/sandbox\",\"/tmp\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"network_policies\":{\"nemoclaw-inference-local\":{\"binaries\":[{\"path\":\"/opt/fabric/bin/python\"},{\"path\":\"/usr/local/bin/node\"}],\"endpoints\":[{\"access\":\"full\",\"allowed_ips\":[\"172.20.0.1/32\"],\"host\":\"172.20.0.1\",\"path\":\"/v1/**\",\"port\":11446,\"protocol\":\"rest\"}],\"name\":\"nemoclaw-inference-local\"}},\"process\":{\"run_as_group\":\"1000\",\"run_as_user\":\"1000\"},\"version\":1}",
         "workspace": "${nemoclaw_workspace.deployment.name}"
       }
     },

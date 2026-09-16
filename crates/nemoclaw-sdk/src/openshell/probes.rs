@@ -55,7 +55,7 @@ impl OpenShell {
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();
-        if info.gateway_version != "0.0.116"
+        if info.gateway_version != "0.0.117-dev.155+gb3e4ad457"
             || info.compute_drivers.len() != 1
             || (info.compute_drivers[0].name != driver
                 && info.compute_drivers[0]
@@ -74,7 +74,7 @@ impl OpenShell {
             .grpc()
             .get_sandbox(self.request(proto::GetSandboxRequest {
                 name: value(binding, "name").into(),
-                workspace: value(binding, "workspace").into(),
+                workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
             }))
             .await
             .map_err(|error| remote_error(&error))?
@@ -295,20 +295,12 @@ impl OpenShell {
                 ))
             };
         }
-        use crate::config::InferenceApi;
-        let api = inference_settings(
+        inference_settings(
             value(binding, "inference_json"),
             value(binding, "agent_runtime"),
         )?
-        .map(|s| s.api)
-        .unwrap_or_else(|| {
-            InferenceApi::for_harness(value(binding, "agent_runtime").trim_start_matches("fabric-"))
-        });
-        let script = match api {
-            InferenceApi::AnthropicMessages => ANTHROPIC_PROBE,
-            InferenceApi::OpenaiResponses => RESPONSES_PROBE,
-            InferenceApi::OpenaiCompletions => INFERENCE_PROBE,
-        };
+        .ok_or(ObservationError::Incomplete)?;
+        let script = INFERENCE_PROBE;
         let (exit, _) = self
             .exec_bound(
                 binding,
@@ -389,9 +381,16 @@ impl OpenShell {
     }
 }
 
-const INFERENCE_PROBE: &str = r###"fetch('https://inference.local/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.choices)&&b.choices.length>0?0:1)}).catch(()=>process.exit(1))"###;
-const ANTHROPIC_PROBE: &str = r###"fetch('https://inference.local/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':'openshell-placeholder','anthropic-version':'2023-06-01'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.content)&&b.content.length>0?0:1)}).catch(()=>process.exit(1))"###;
-const RESPONSES_PROBE: &str = r###"fetch('https://inference.local/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',input:'Reply OK.',max_output_tokens:16,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.output)&&b.output.length>0?0:1)}).catch(()=>process.exit(1))"###;
+const INFERENCE_PROBE: &str = r###"
+const s=JSON.parse(process.env.NEMOCLAW_INFERENCE_CONFIG), c=s.connection;
+const key=c.api_key_env ? process.env[c.api_key_env] : 'unused';
+if (!key) process.exit(1);
+const anthropic=s.api==='anthropic-messages', responses=s.api==='openai-responses';
+const path=anthropic?'messages':responses?'responses':'chat/completions';
+const headers={'content-type':'application/json',...(anthropic?{'x-api-key':key,'anthropic-version':'2023-06-01'}:{authorization:'Bearer '+key})};
+const body={model:c.model,stream:false,...(responses?{input:'Reply OK.',max_output_tokens:16}:{messages:[{role:'user',content:'Reply OK.'}],max_tokens:1})};
+fetch(c.base_url.replace(/\/$/,'')+'/'+path,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json(),items=anthropic?b.content:responses?b.output:b.choices;process.exit(r.ok&&Array.isArray(items)&&items.length>0?0:1)}).catch(()=>process.exit(1));
+"###;
 
 #[cfg(test)]
 mod tests {

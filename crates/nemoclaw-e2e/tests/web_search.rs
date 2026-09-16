@@ -41,7 +41,7 @@ async fn search_owns_profile_and_provider_preserves_secret_custody_and_rejects_p
     );
     let profile = &targets
         .iter()
-        .find(|t| t.kind == "provider_profile")
+        .find(|t| t.address == "nemoclaw_provider_profile.web_search")
         .unwrap()
         .values;
     fixture.state.lock().unwrap().lose_create = true;

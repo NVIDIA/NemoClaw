@@ -5,7 +5,7 @@
 
 ## Select the Gateway and Workspace
 
-Use the pinned OpenShell 0.0.116 CLI on the client host.
+Use the pinned OpenShell development CLI at the revision in [versions.json](../versions.json) on the client host.
 These selectors choose an existing gateway and deployment; they do not create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
 
@@ -42,7 +42,7 @@ export OPENSHELL_WORKSPACE=REPLACE_WITH_PRINTED_WORKSPACE
 ```
 
 This matches the SDK's [workspace derivation](../crates/nemoclaw-sdk/src/config/mod.rs).
-The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-cli/src/main.rs).
+The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/b3e4ad4579e24dacfb285924876473b50a04b988/crates/openshell-cli/src/main.rs).
 The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
 
@@ -133,7 +133,7 @@ The dashboard uses internal port 19119 behind a sandbox-local forwarder.
 OpenShell forwarding provides host access; none of these listeners publishes a host port automatically.
 The dashboard and its browser TUI share a native session engine and isolated state under `/sandbox/.hermes/profiles/dashboard-home`.
 Fabric invokes the separate HTTP API engine under `/sandbox/.hermes`.
-Both use the same configured OpenShell model route; they do not share active conversations, cancellation, or live steering.
+Both use the same configured native inference connection; they do not share active conversations, cancellation, or live steering.
 Standalone `hermes` terminal sessions also retain native behavior.
 
 ```mermaid
@@ -141,7 +141,7 @@ flowchart LR
     Fabric --> API["Hermes HTTP API"]
     Client["API client via OpenShell"] --> API
     Browser["Browser via OpenShell"] --> Dashboard["Dashboard and browser TUI"]
-    API --> Route["OpenShell inference route"]
+    API --> Route["Native endpoint through OpenShell proxy"]
     Dashboard --> Route
     API --> APIState["API session state"]
     Dashboard --> UIState["Dashboard session state"]

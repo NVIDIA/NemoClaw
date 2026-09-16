@@ -321,7 +321,15 @@ impl Provider for NemoClawProvider {
             Definition::new("inference_storage", &["spec"], &[]),
             Definition::new(
                 "provider_profile",
-                &["workspace", "name", "owner", "generation"],
+                &[
+                    "workspace",
+                    "name",
+                    "owner",
+                    "generation",
+                    "endpoint",
+                    "provider_type",
+                    "authenticated",
+                ],
                 &[],
             ),
             Definition::new("workspace", &["name", "owner", "generation"], &[]),
@@ -338,18 +346,6 @@ impl Provider for NemoClawProvider {
                     "credential_source",
                 ],
                 &["endpoint", "credential_env"],
-            ),
-            Definition::new(
-                "route",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "provider_name",
-                    "model",
-                ],
-                &["provider_name", "model"],
             ),
             Definition::new(
                 "sandbox",

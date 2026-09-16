@@ -12,7 +12,7 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
     for name in [
         "workspace",
         "provider",
-        "route",
+        "provider_profile",
         "sandbox",
         "managed_gateway",
         "inference_service",
@@ -21,6 +21,7 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
     ] {
         assert!(resources.contains_key(name));
     }
+    assert!(!resources.contains_key("route"));
     let schema = provider.schema(&mut diagnostics).unwrap();
     for name in [
         "endpoint",

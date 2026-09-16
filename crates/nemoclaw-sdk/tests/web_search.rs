@@ -46,7 +46,10 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
     );
     assert_eq!(
         graph["resource"]["nemoclaw_sandbox"]["agent"]["depends_on"],
-        json!(["nemoclaw_route.primary", "nemoclaw_provider.web_search"])
+        json!([
+            "nemoclaw_provider.inference",
+            "nemoclaw_provider.web_search"
+        ])
     );
 }
 #[test]
@@ -95,7 +98,7 @@ fn shared_integration_references_grant_only_the_selected_agents() {
     let rows = targets(&doc, &generations).unwrap();
     assert_eq!(
         rows.iter()
-            .filter(|row| row.kind == "provider_profile")
+            .filter(|row| row.address == "nemoclaw_provider_profile.web_search")
             .count(),
         1
     );

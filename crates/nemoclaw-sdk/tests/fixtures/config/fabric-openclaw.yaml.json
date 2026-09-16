@@ -1,5 +1,5 @@
 {
-  "digest": "aea0537b31977469072c9ce07c0f4608690b9dbc22b370db0ffef3c6e8b78a7d",
+  "digest": "c8592b5a3beef5bf646581d57a27f11a2ec324b3cac1cd9683e8165bbe9e3cf2",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -9,45 +9,45 @@
     },
     "spec": {
       "gateway": {
-        "management": "external",
-        "endpoint": "http://127.0.0.1:17681"
+        "endpoint": "http://127.0.0.1:17681",
+        "management": "external"
       },
       "inferenceProviders": [
         {
+          "endpoint": "http://172.20.0.1:11446/v1",
           "name": "local",
-          "provider": "openai",
-          "endpoint": "http://172.20.0.1:11446/v1"
+          "provider": "openai"
         }
       ],
       "sandboxes": [
         {
-          "name": "assistant",
-          "image": {
-            "ref": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd"
-          },
-          "runtime": {
-            "provider": "docker"
-          },
-          "network": {
-            "tier": "isolated"
-          },
           "agents": [
             {
-              "name": "main",
               "harness": "openclaw",
               "inference": {
                 "routes": [
                   {
                     "name": "primary",
-                    "providerRef": "local",
                     "overrides": {
                       "model": "qwen3:4b"
-                    }
+                    },
+                    "providerRef": "local"
                   }
                 ]
-              }
+              },
+              "name": "main"
             }
-          ]
+          ],
+          "image": {
+            "ref": "nc-native-inference-b3e4ad457@sha256:427d7f46ff377e9d6fe28c28a534441c673226cb1b336c9d1efe740f7a7937a6"
+          },
+          "name": "assistant",
+          "network": {
+            "tier": "isolated"
+          },
+          "runtime": {
+            "provider": "docker"
+          }
         }
       ]
     }

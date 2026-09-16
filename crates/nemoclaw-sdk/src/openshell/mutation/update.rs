@@ -10,16 +10,8 @@ impl OpenShell {
         want: &Row,
         live: &Row,
     ) -> Result<(), ObservationError> {
-        match kind {
-            "provider" => self.update_provider(want, live).await?,
-            "route"
-                if ["provider_name", "model"]
-                    .iter()
-                    .any(|key| value(live, key) != value(want, key)) =>
-            {
-                self.set_route(want).await?
-            }
-            _ => {}
+        if kind == "provider" {
+            self.update_provider(want, live).await?;
         }
         Ok(())
     }
@@ -40,7 +32,7 @@ impl OpenShell {
                 .grpc()
                 .get_provider(self.request(proto::GetProviderRequest {
                     name: name.into(),
-                    workspace: workspace.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
                 }))
                 .await
                 .map_err(|error| remote_error(&error))?
@@ -63,7 +55,7 @@ impl OpenShell {
             self.grpc()
                 .update_provider(self.request(proto::UpdateProviderRequest {
                     provider: Some(provider),
-                    workspace: workspace.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
                     ..Default::default()
                 }))
                 .await

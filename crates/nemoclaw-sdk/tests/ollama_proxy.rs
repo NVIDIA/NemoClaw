@@ -46,7 +46,10 @@ fn external_ollama_compiles_only_proxy_and_external_model_observation() {
     assert!(resources["nemoclaw_ollama_external_model"]["inference"].is_object());
     assert_eq!(
         resources["nemoclaw_provider"]["inference"]["depends_on"],
-        json!(["nemoclaw_ollama_proxy.service"])
+        json!([
+            "nemoclaw_provider_profile.inference",
+            "nemoclaw_ollama_proxy.service"
+        ])
     );
     assert!(
         !resources["nemoclaw_provider"]["inference"]["credential_source"]

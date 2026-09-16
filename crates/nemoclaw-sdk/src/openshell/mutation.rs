@@ -33,7 +33,18 @@ impl OpenShell {
             }
             _ => return Err(ObservationError::Query),
         };
+        let native = kind != "nemoclaw-brave";
         let source = value(want, "credential_source");
+        let profile = if native {
+            Some(inference_profile(
+                value(want, "name"),
+                value(want, "endpoint"),
+                kind,
+                !source.is_empty() || !value(want, "credential_env").is_empty(),
+            )?)
+        } else {
+            None
+        };
         let credential = if !source.is_empty() {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);
@@ -60,18 +71,24 @@ impl OpenShell {
                 annotations: credential_metadata::pack(source)?,
                 ..Default::default()
             }),
-            r#type: kind.into(),
-            profile_workspace: if kind == "nemoclaw-brave" {
-                value(want, "workspace").into()
-            } else {
-                String::new()
-            },
+            r#type: profile
+                .as_ref()
+                .map(|p| p.id.clone())
+                .unwrap_or_else(|| kind.into()),
+            profile_workspace: value(want, "workspace").into(),
             config: if endpoint_key.is_empty() {
                 Default::default()
             } else {
                 [(endpoint_key.into(), value(want, "endpoint").into())].into()
             },
-            credentials: [(secret_key.into(), credential)].into(),
+            credentials: match profile {
+                Some(profile) => profile
+                    .credentials
+                    .first()
+                    .map(|c| [(c.name.clone(), credential)].into())
+                    .unwrap_or_default(),
+                None => [(secret_key.into(), credential)].into(),
+            },
             ..Default::default()
         })
     }
@@ -84,7 +101,7 @@ impl OpenShell {
     async fn reconcile_inner(&self, kind: &str, want: &Row) -> Result<Mutation, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
-        let parent = if kind != "workspace" {
+        if kind != "workspace" {
             let parent = self
                 .observe("workspace", "", workspace, false)
                 .await?
@@ -92,10 +109,7 @@ impl OpenShell {
             if value(&parent, "owner") != value(want, "owner") {
                 return Err(ObservationError::BindingMismatch);
             }
-            Some(parent)
-        } else {
-            None
-        };
+        }
         let live = self.observe(kind, workspace, name, false).await?;
         if let Some(row) = &live {
             verify_identity(want, row)?;
@@ -107,7 +121,7 @@ impl OpenShell {
                 self.update_resource(kind, want, &row).await?;
                 row
             }
-            None => self.create_resource(kind, want, parent.as_ref()).await?,
+            None => self.create_resource(kind, want).await?,
         };
         self.readback(kind, want, established).await
     }
@@ -134,19 +148,6 @@ impl OpenShell {
             Err(error) => Ok(Mutation::partial(established, error)),
         }
     }
-    async fn set_route(&self, want: &Row) -> Result<(), ObservationError> {
-        self.inference()
-            .set_inference_route(self.request(proto::SetInferenceRouteRequest {
-                workspace: value(want, "workspace").into(),
-                provider_name: value(want, "provider_name").into(),
-                model_id: value(want, "model").into(),
-                timeout_secs: 120,
-                ..Default::default()
-            }))
-            .await
-            .map_err(|error| remote_error(&error))?;
-        Ok(())
-    }
     async fn delete_bound(&self, kind: &str, want: &Row) -> Result<(), ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
@@ -163,7 +164,7 @@ impl OpenShell {
             "sandbox" => {
                 let mut request = self.request(proto::DeleteSandboxRequest {
                     name: name.into(),
-                    workspace: workspace.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
                 });
                 // Podman's default graceful stop is 45 seconds. Allow cleanup
                 // after that stop without retrying an ambiguous deletion.
@@ -182,15 +183,7 @@ impl OpenShell {
                 .grpc()
                 .delete_provider(self.request(proto::DeleteProviderRequest {
                     name: name.into(),
-                    workspace: workspace.into(),
-                }))
-                .await
-                .map(|_| ()),
-            "route" => self
-                .inference()
-                .delete_inference_route(self.request(proto::DeleteInferenceRouteRequest {
-                    workspace: workspace.into(),
-                    route_name: String::new(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
                 }))
                 .await
                 .map(|_| ()),
@@ -246,14 +239,6 @@ impl Backend for OpenShell {
             "workspace" => &["name", "owner", "generation"],
             "provider_profile" => &["name", "owner", "generation", "workspace"],
             "provider" => &["name", "owner", "generation", "workspace", "endpoint"],
-            "route" => &[
-                "name",
-                "owner",
-                "generation",
-                "workspace",
-                "provider_name",
-                "model",
-            ],
             "sandbox" => &[
                 "name",
                 "owner",
@@ -281,7 +266,7 @@ impl Backend for OpenShell {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        if !destroying || !matches!(kind, "sandbox" | "provider" | "provider_profile" | "route") {
+        if !destroying || !matches!(kind, "sandbox" | "provider" | "provider_profile") {
             return Err(ObservationError::Query);
         }
         tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))

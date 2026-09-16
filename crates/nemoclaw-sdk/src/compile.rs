@@ -69,16 +69,6 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             ],
         ),
         (
-            "route",
-            "primary",
-            "primary",
-            "workspace",
-            vec![
-                ("provider_name", provider.name.clone()),
-                ("model", agent.inference.routes[0].overrides.model.clone()),
-            ],
-        ),
-        (
             "sandbox",
             sandbox.name.as_str(),
             "agent",
@@ -109,10 +99,27 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                     serde_json::to_string(&settings).expect("typed inference settings"),
                 );
             }
-            let policy = crate::openshell::policy_json(
-                &sandbox.policy_proto(document.web_search()?.is_some())?,
+            let mut policy = sandbox.policy_proto(document.web_search()?.is_some())?;
+            let profile = crate::openshell::inference_profile(
+                &provider.name,
+                &connection.endpoint,
+                &provider.provider,
+                false,
             )
-            .map_err(|_| ConfigError("cannot encode sandbox policy"))?;
+            .map_err(|_| ConfigError("invalid native inference policy"))?;
+            if policy.network_policies.contains_key(&profile.id) {
+                return Err(ConfigError("inference policy name is reserved"));
+            }
+            policy.network_policies.insert(
+                profile.id.clone(),
+                openshell_core::proto::NetworkPolicyRule {
+                    name: profile.id,
+                    endpoints: profile.endpoints,
+                    binaries: profile.binaries,
+                },
+            );
+            let policy = crate::openshell::policy_json(&policy)
+                .map_err(|_| ConfigError("cannot encode sandbox policy"))?;
             if !policy.is_empty() {
                 values.insert("policy_json".into(), policy);
             }
@@ -127,6 +134,35 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             values,
         });
     }
+    let mut profile = result
+        .iter()
+        .find(|r| r.kind == "provider")
+        .unwrap()
+        .values
+        .clone();
+    profile.insert(
+        "name".into(),
+        format!("nemoclaw-inference-{}", provider.name),
+    );
+    profile.remove("credential_env");
+    profile.insert(
+        "authenticated".into(),
+        (connection.credential.is_some()
+            || provider
+                .service
+                .as_ref()
+                .is_some_and(|s| s.authentication.is_some())
+            || provider.ollama_proxy.is_some())
+        .to_string(),
+    );
+    result.insert(
+        1,
+        Target {
+            kind: "provider_profile".into(),
+            address: "nemoclaw_provider_profile.inference".into(),
+            values: profile,
+        },
+    );
     if let Some(search) = document.web_search()? {
         for (kind, name) in [
             ("provider_profile", "nemoclaw-brave"),
@@ -251,12 +287,6 @@ pub fn compile(
         if target.values.contains_key("workspace") {
             attributes["workspace"] = json!("${nemoclaw_workspace.deployment.name}");
         }
-        if target.kind == "route" {
-            attributes["provider_name"] = json!("${nemoclaw_provider.inference.name}");
-            if inference.ollama.is_some() {
-                attributes["depends_on"] = json!(["nemoclaw_ollama_model.inference"]);
-            }
-        }
         if let Some(value) = attributes["credential_source"].as_str() {
             attributes["credential_source"] =
                 json!(value.replace("${", "$${").replace("%{", "%%{"));
@@ -270,9 +300,12 @@ pub fn compile(
                 }
             }
             attributes["depends_on"] = if document.web_search()?.is_some() {
-                json!(["nemoclaw_route.primary", "nemoclaw_provider.web_search"])
+                json!([
+                    "nemoclaw_provider.inference",
+                    "nemoclaw_provider.web_search"
+                ])
             } else {
-                json!(["nemoclaw_route.primary"])
+                json!(["nemoclaw_provider.inference"])
             };
         }
         match target.address.as_str() {
@@ -286,6 +319,16 @@ pub fn compile(
                 ]);
             }
             _ => {}
+        }
+        if target.address == "nemoclaw_provider.inference" {
+            let mut dependencies = vec!["nemoclaw_provider_profile.inference"];
+            if inference.ollama.is_some() {
+                dependencies.push("nemoclaw_ollama_model.inference");
+            }
+            if inference.ollama_proxy.is_some() {
+                dependencies.push("nemoclaw_ollama_proxy.service");
+            }
+            attributes["depends_on"] = json!(dependencies);
         }
         if target.address == "nemoclaw_provider.web_search" {
             attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);

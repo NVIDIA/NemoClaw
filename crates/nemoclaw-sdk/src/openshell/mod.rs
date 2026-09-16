@@ -92,7 +92,12 @@ fn provider_row(
     if provider.r#type == "nemoclaw-brave" {
         return profile::provider_row(provider, name, removing);
     }
-    if !matches!(provider.r#type.as_str(), "openai" | "anthropic") {
+    if provider.r#type != format!("nemoclaw-inference-{name}")
+        || provider
+            .metadata
+            .as_ref()
+            .is_none_or(|m| m.workspace.is_empty() || provider.profile_workspace != m.workspace)
+    {
         return Err(ObservationError::Incomplete);
     }
     let credential = provider
@@ -110,7 +115,7 @@ fn provider_row(
     }
     let source = credential_metadata::unpack(&metadata.annotations)?;
     let mut row = base(provider.metadata, name, removing)?;
-    let key = if provider.r#type == "anthropic" {
+    let key = if provider.config.contains_key("ANTHROPIC_BASE_URL") {
         "ANTHROPIC_BASE_URL"
     } else {
         "OPENAI_BASE_URL"
@@ -131,7 +136,7 @@ fn provider_row(
     row.insert("credential_env".into(), credential);
     row.insert(
         "provider_type".into(),
-        if provider.r#type == "anthropic" {
+        if provider.config.contains_key("ANTHROPIC_BASE_URL") {
             "anthropic"
         } else {
             ""
@@ -180,12 +185,7 @@ fn sandbox_row(
         expected_environment.insert(INFERENCE_ENV.into(), inference.clone());
     }
     let policy = policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?;
-    let expected_providers =
-        if inference_settings(&inference, &runtime)?.is_some_and(|s| s.web_search.is_some()) {
-            vec!["brave-search".to_string()]
-        } else {
-            vec![]
-        };
+    let expected_providers = inference::provider_names(&inference, &runtime)?;
     if spec.providers != expected_providers {
         return Err(ObservationError::BindingMismatch);
     }

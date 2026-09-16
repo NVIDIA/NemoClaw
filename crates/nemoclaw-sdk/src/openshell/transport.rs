@@ -81,9 +81,6 @@ impl OpenShell {
     pub(super) fn grpc(&self) -> proto::open_shell_client::OpenShellClient<Channel> {
         proto::open_shell_client::OpenShellClient::new(self.channel.clone())
     }
-    pub(super) fn inference(&self) -> proto::inference_client::InferenceClient<Channel> {
-        proto::inference_client::InferenceClient::new(self.channel.clone())
-    }
     pub(super) fn request<T>(&self, value: T) -> Request<T> {
         let mut request = Request::new(value);
         if let Some(token) = &self.bearer {
@@ -126,7 +123,7 @@ impl OpenShell {
                     self.grpc()
                         .get_provider(self.request(proto::GetProviderRequest {
                             name: name.into(),
-                            workspace: workspace.into(),
+                            workspace_scope: Some(proto::workspace_selector(workspace)),
                         }))
                         .await,
                 )?;
@@ -134,44 +131,12 @@ impl OpenShell {
                     .map(|response| provider_row(response, name, removing))
                     .transpose()?
             }
-            "route" => {
-                let Some(parent) = self.workspace(workspace, removing).await? else {
-                    return Ok(None);
-                };
-                let Some(route) = authoritative(
-                    self.inference()
-                        .get_inference_route(self.request(proto::GetInferenceRouteRequest {
-                            workspace: workspace.into(),
-                            route_name: String::new(),
-                        }))
-                        .await,
-                )?
-                else {
-                    return Ok(None);
-                };
-                if route.provider_name.is_empty() || route.model_id.is_empty() {
-                    return Err(ObservationError::Incomplete);
-                }
-                Some(
-                    [
-                        ("name", name.into()),
-                        ("id", format!("{}/primary", parent["id"])),
-                        ("owner", parent["owner"].clone()),
-                        ("generation", parent["generation"].clone()),
-                        ("provider_name", route.provider_name),
-                        ("model", route.model_id),
-                    ]
-                    .into_iter()
-                    .map(|(k, v)| (k.into(), v))
-                    .collect::<Row>(),
-                )
-            }
             "sandbox" => {
                 let Some(response) = authoritative(
                     self.grpc()
                         .get_sandbox(self.request(proto::GetSandboxRequest {
                             name: name.into(),
-                            workspace: workspace.into(),
+                            workspace_scope: Some(proto::workspace_selector(workspace)),
                         }))
                         .await,
                 )?
@@ -185,7 +150,7 @@ impl OpenShell {
                         .get_sandbox_policy_status(self.request(
                             proto::GetSandboxPolicyStatusRequest {
                                 name: name.into(),
-                                workspace: workspace.into(),
+                                workspace_scope: Some(proto::workspace_selector(workspace)),
                                 ..Default::default()
                             },
                         ))

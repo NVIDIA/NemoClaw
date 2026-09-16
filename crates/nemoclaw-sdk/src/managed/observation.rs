@@ -386,7 +386,7 @@ impl Engine {
                 let supervisor = self
                     .read_file(
                         &container_id,
-                        &format!("{}/openshell-sandbox", volume.mountpoint),
+                        &format!("{}/openshell-supervisor", volume.mountpoint),
                         128 << 20,
                     )
                     .await?

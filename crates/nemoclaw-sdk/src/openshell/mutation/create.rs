@@ -8,20 +8,12 @@ impl OpenShell {
         &self,
         kind: &str,
         want: &Row,
-        parent: Option<&Row>,
     ) -> Result<Row, ObservationError> {
         let id = match kind {
             "workspace" => self.create_workspace(want).await?,
             "provider" => self.create_provider(want).await?,
             "provider_profile" => self.create_profile(want).await?,
             "sandbox" => self.create_sandbox(want).await?,
-            "route" => {
-                self.set_route(want).await?;
-                format!(
-                    "{}/primary",
-                    parent.ok_or(ObservationError::Incomplete)?["id"]
-                )
-            }
             _ => return Err(ObservationError::Query),
         };
         let mut row = want.clone();
@@ -50,7 +42,7 @@ impl OpenShell {
             .grpc()
             .create_provider(self.request(proto::CreateProviderRequest {
                 provider: Some(self.provider(want).await?),
-                workspace: workspace.into(),
+                workspace_scope: Some(proto::workspace_selector(workspace)),
             }))
             .await
             .map_err(|error| remote_error(&error))?
@@ -75,37 +67,29 @@ impl OpenShell {
         }
         let response = self
             .grpc()
-            .create_sandbox(
-                self.request(proto::CreateSandboxRequest {
-                    name: name.into(),
-                    workspace: workspace.into(),
-                    labels,
-                    spec: Some(proto::SandboxSpec {
-                        template: Some(proto::SandboxTemplate {
-                            image: value(want, "image").into(),
-                            ..Default::default()
-                        }),
-                        command: launch_command(
-                            value(want, "agent_runtime"),
-                            row_proxy(want)?.as_ref(),
-                        ),
-                        providers: if inference_settings(
-                            value(want, "inference_json"),
-                            value(want, "agent_runtime"),
-                        )?
-                        .is_some_and(|s| s.web_search.is_some())
-                        {
-                            vec!["brave-search".into()]
-                        } else {
-                            vec![]
-                        },
-                        environment: inference_environment(want)?.into_iter().collect(),
-                        policy: Some(row_policy(want)?),
+            .create_sandbox(self.request(proto::CreateSandboxRequest {
+                name: name.into(),
+                workspace_scope: Some(proto::workspace_selector(workspace)),
+                labels,
+                spec: Some(proto::SandboxSpec {
+                    template: Some(proto::SandboxTemplate {
+                        image: value(want, "image").into(),
                         ..Default::default()
                     }),
+                    command: launch_command(
+                        value(want, "agent_runtime"),
+                        row_proxy(want)?.as_ref(),
+                    ),
+                    providers: inference::provider_names(
+                        value(want, "inference_json"),
+                        value(want, "agent_runtime"),
+                    )?,
+                    environment: inference_environment(want)?.into_iter().collect(),
+                    policy: Some(row_policy(want)?),
                     ..Default::default()
                 }),
-            )
+                ..Default::default()
+            }))
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();

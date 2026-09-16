@@ -356,7 +356,7 @@ impl Engine {
             .filter(|id| !id.is_empty())
             .ok_or(ObservationError::Incomplete)?;
         let bytes = self
-            .read_file(source_id, "/openshell-sandbox", 128 << 20)
+            .read_file(source_id, "/openshell-supervisor", 128 << 20)
             .await?
             .ok_or(ObservationError::Incomplete)?;
         if hash(&bytes) != SUPERVISOR_SHA256 {
@@ -364,8 +364,12 @@ impl Engine {
                 "supervisor source differs from pinned binary",
             ));
         }
-        self.write_files(helper, data_path, &[("openshell-sandbox", &bytes, 0o755)])
-            .await?;
+        self.write_files(
+            helper,
+            data_path,
+            &[("openshell-supervisor", &bytes, 0o755)],
+        )
+        .await?;
         self.api
             .remove_container(source_id, None)
             .await

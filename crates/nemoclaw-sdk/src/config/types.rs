@@ -233,7 +233,7 @@ pub struct Sandbox {
     pub runtime: Runtime,
     #[serde(rename = "network")]
     #[schemars(default)]
-    /// Sandbox network policy; omission selects isolated inference routing.
+    /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
     pub network: Network,
     #[serde(rename = "agents")]
     /// One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent.
@@ -343,7 +343,7 @@ pub struct Inference {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Primary inference route supplied through OpenShell.
+/// Native model connection authorized through an attached OpenShell provider.
 pub struct Route {
     #[serde(rename = "name")]
     /// The primary route name.

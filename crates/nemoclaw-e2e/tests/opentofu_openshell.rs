@@ -82,12 +82,16 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     );
     fixture.state.lock().unwrap().fail_read = None;
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    for kind in ["nemoclaw_sandbox", "nemoclaw_route", "nemoclaw_provider"] {
+    for kind in [
+        "nemoclaw_sandbox",
+        "nemoclaw_provider_profile",
+        "nemoclaw_provider",
+    ] {
         graph["resource"].as_object_mut().unwrap().remove(kind);
     }
     fs::write(directory.path().join("main.tf.json"), graph.to_string()).unwrap();
     success(&["apply", "-auto-approve", "-input=false", "-no-color"]);
     let state = fixture.state.lock().unwrap();
-    assert!(state.sandboxes.is_empty() && state.providers.is_empty() && state.routes.is_empty());
+    assert!(state.sandboxes.is_empty() && state.providers.is_empty() && state.profiles.is_empty());
     assert_eq!(state.workspaces.len(), 1);
 }

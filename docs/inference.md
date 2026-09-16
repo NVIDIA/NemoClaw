@@ -7,6 +7,13 @@ Choose who operates the inference service, then select the API and model used by
 NemoClaw selects one active inference provider per deployment document.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 
+OpenShell's managed inference-route API has been removed at our pinned development revision.
+NemoClaw creates an owned profile binding credentials to the selected host, port, and API path, attaches its provider to the sandbox, and configures the native client with the endpoint and model ID.
+For uncredentialed endpoints, a dummy client key satisfies SDKs that require a nonempty key; no provider credential is stored.
+The model ID is client configuration, not a proxy-enforced model restriction; the attached provider authorizes its configured API path.
+The YAML `routes` field currently names model configuration; it no longer creates an OpenShell route resource.
+See [state migration](state.md#native-inference-migration) before changing an existing deployment.
+
 ## Choose a Service Mode
 
 | Situation | Configuration and owning guide | Example to adapt |
@@ -26,7 +33,7 @@ An accepted example is a configuration contract; [validation records](validation
 ## Choose the Request API
 
 Set `api` on the selected provider, whether inline or referenced, to the request API your endpoint accepts.
-OpenShell routes the request and supplies the provider credential; selecting an API does not translate requests into a different protocol.
+OpenShell authorizes native endpoint access and substitutes the provider credential; selecting an API does not translate requests into a different protocol.
 
 | Harness | API when omitted | Explicit API choices |
 |---|---|---|
@@ -47,19 +54,19 @@ Confirm that the selected harness accepts that API in the table above.
 For a credentialed endpoint, declare an HTTPS URL and an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
 Uncredentialed HTTP inference endpoints must use literal private or loopback addresses.
 
-The endpoint must be reachable from OpenShell's inference route, not just from your client terminal.
+The endpoint must be reachable from the sandbox's OpenShell proxy, not just from your client terminal.
 A loopback URL refers to the network namespace making the request.
 For a local external Ollama daemon, use the [managed proxy](#use-external-ollama-through-a-managed-proxy) contract instead of assuming that the gateway can reach the client's loopback interface.
 
 Use the route's `overrides.model` for the upstream model ID.
-Native agents use OpenShell's configured route and placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
+Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
 Named-provider walkthroughs remain [TBD](#additional-inference-workflows) until their endpoint/API/model combinations are qualified.
 
 ## Build an Image with the Configuration Interface
 
 Explicit API selection, tuning, and authentication require an image built from this revision's Fabric recipe.
-The older default image does not implement the new configuration check and will fail readiness with resources retained.
+Images built for the former `inference.local` route are incompatible; rebuild before creating a native-inference deployment.
 
 Follow the [agent image build prerequisites](build.md#build-agent-images), then run from the repository root:
 
@@ -176,7 +183,7 @@ Use the printed immutable image reference below, choose an available private pro
       digest: REPLACE_WITH_MODEL_DIGEST
 ```
 
-The provider's `endpoint` identifies the external daemon; `ollamaProxy.endpoint` identifies the managed proxy and supplies the OpenShell route's upstream URL.
+The provider's `endpoint` identifies the external daemon; `ollamaProxy.endpoint` identifies the managed proxy and supplies the native inference URL.
 The route's model must name the installed model including its tag, such as `qwen3:4b`.
 The proxy uses the host network and checks that the daemon has no listener on a non-loopback address.
 Do not also declare `service`, `ollama`, or `credential` on this provider.
@@ -254,7 +261,7 @@ inference:
 
 Supply `NOUS_API_KEY` to the applying process through your secret-management mechanism.
 The SDK resolves the reference and supplies the credential to the OpenShell provider.
-Hermes sends requests through `https://inference.local/v1` using a sandbox placeholder key; the real upstream key is not added to its launch environment or exported YAML.
+Hermes sends requests to the selected provider endpoint using an endpoint-bound sandbox placeholder key; the real upstream key is not added to its launch environment or exported YAML.
 Authentication derives its provider from the primary route, including when that provider is inline.
 The selected provider must carry a credential.
 That provider may also use a generated credential from a [managed vLLM service](#authenticate-a-managed-vllm-service) or [Ollama proxy](#use-external-ollama-through-a-managed-proxy).
@@ -271,22 +278,22 @@ Remove the applying process's environment value when finished, and revoke the up
 
 ```mermaid
 flowchart LR
-    A[Hermes: selected API and placeholder key] --> B[OpenShell primary route]
+    A[Hermes: selected API and placeholder key] --> B[OpenShell sandbox proxy]
     C[Credential reference resolved during apply] --> B
     B --> D[Upstream endpoint: real provider key]
 ```
 
 ## Share a Gateway across Deployments
 
-Each deployment UID derives a distinct OpenShell workspace containing its provider, primary inference route, and sandbox.
-Separate YAML files with fresh UIDs and separate state directories can use the same external gateway without sharing that route.
+Each deployment UID derives a distinct OpenShell workspace containing its provider profile, provider registration, and sandbox.
+Separate YAML files with fresh UIDs and separate state directories can use the same external gateway with separate provider attachments.
 Use the gateway operator's authorization for each workspace and [select the matching workspace](interfaces.md#select-the-gateway-and-workspace) for native access.
 Giving two documents the same UID does not create independent deployments.
 
-Use checked `nemoclaw export` to inspect the route against retained intent.
-An ambient OpenShell route edit can produce drift; it is not a NemoClaw reconnect or model-switch procedure.
+Use checked `nemoclaw export` to inspect provider, sandbox, and native agent configuration against retained intent.
+Ambient provider or native-configuration edits can produce drift; they are not a NemoClaw reconnect or model-switch procedure.
 Follow [the change path](usage.md#choose-the-change-path) to update desired state and verify a reply afterward.
-The [compiler](../crates/nemoclaw-sdk/src/compile.rs) and [route mutation](../crates/nemoclaw-sdk/src/openshell/mutation.rs) define workspace ownership.
+The [compiler](../crates/nemoclaw-sdk/src/compile.rs) and [resource mutation](../crates/nemoclaw-sdk/src/openshell/mutation.rs) define workspace ownership.
 
 ## Understand Timeout Budgets
 

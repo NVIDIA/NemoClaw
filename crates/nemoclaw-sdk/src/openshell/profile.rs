@@ -36,6 +36,46 @@ fn definition(owner: &str, generation: &str) -> proto::ProviderProfile {
         ..Default::default()
     }
 }
+fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationError> {
+    let name = want["name"]
+        .strip_prefix("nemoclaw-inference-")
+        .ok_or(ObservationError::Query)?;
+    let authenticated = match want.get("authenticated").map(String::as_str) {
+        Some("true") => true,
+        Some("false") => false,
+        _ => return Err(ObservationError::Query),
+    };
+    let mut profile = inference_profile(
+        name,
+        &want["endpoint"],
+        if want.get("provider_type").is_some_and(|s| s == "anthropic") {
+            "anthropic"
+        } else {
+            "openai"
+        },
+        authenticated,
+    )?;
+    for key in [
+        "owner",
+        "generation",
+        "endpoint",
+        "provider_type",
+        "authenticated",
+    ] {
+        profile.annotations.insert(
+            format!("nemoclaw.nvidia.com/{key}"),
+            want.get(key).cloned().unwrap_or_default(),
+        );
+    }
+    profile
+        .annotations
+        .insert(OWNER.into(), want["owner"].clone());
+    profile
+        .annotations
+        .insert(GENERATION.into(), want["generation"].clone());
+    Ok(profile)
+}
+
 fn row(
     mut profile: proto::ProviderProfile,
     workspace: &str,
@@ -47,7 +87,7 @@ fn row(
         .get(GENERATION)
         .cloned()
         .unwrap_or_default();
-    if name != "nemoclaw-brave"
+    if (!name.starts_with("nemoclaw-inference-") && name != "nemoclaw-brave")
         || profile.id != name
         || profile.resource_version == 0
         || profile.source != "user"
@@ -61,19 +101,44 @@ fn row(
     profile.resource_version = 0;
     profile.source.clear();
     profile.scope.clear();
-    if profile != definition(&owner, &generation) {
+    let mut fields: Row = ["endpoint", "provider_type", "authenticated"]
+        .map(|key| (key.into(), String::new()))
+        .into();
+    let expected = if name.starts_with("nemoclaw-inference-") {
+        fields.extend([
+            ("name".into(), name.into()),
+            ("owner".into(), owner.clone()),
+            ("generation".into(), generation.clone()),
+        ]);
+        for key in ["endpoint", "provider_type", "authenticated"] {
+            fields.insert(
+                key.into(),
+                profile
+                    .annotations
+                    .get(&format!("nemoclaw.nvidia.com/{key}"))
+                    .cloned()
+                    .ok_or(ObservationError::Incomplete)?,
+            );
+        }
+        native_definition(&fields)?
+    } else {
+        definition(&owner, &generation)
+    };
+    if profile != expected {
         return Err(ObservationError::BindingMismatch);
     }
-    Ok([
-        ("id", id),
-        ("name", name.into()),
-        ("workspace", workspace.into()),
-        ("owner", owner),
-        ("generation", generation),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.into(), v))
-    .collect())
+    fields.extend(
+        [
+            ("id", id),
+            ("name", name.into()),
+            ("workspace", workspace.into()),
+            ("owner", owner),
+            ("generation", generation),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.into(), v)),
+    );
+    Ok(fields)
 }
 pub(super) fn provider_row(
     provider: proto::Provider,
@@ -130,7 +195,7 @@ impl OpenShell {
         .transpose()
     }
     pub(super) async fn create_profile(&self, want: &Row) -> Result<String, ObservationError> {
-        if want["name"] != "nemoclaw-brave" {
+        if want["name"] != "nemoclaw-brave" && !want["name"].starts_with("nemoclaw-inference-") {
             return Err(ObservationError::Query);
         }
         let response = self
@@ -138,7 +203,11 @@ impl OpenShell {
             .import_provider_profiles(self.request(proto::ImportProviderProfilesRequest {
                 workspace: want["workspace"].clone(),
                 profiles: vec![proto::ProviderProfileImportItem {
-                    profile: Some(definition(&want["owner"], &want["generation"])),
+                    profile: Some(if want["name"] == "nemoclaw-brave" {
+                        definition(&want["owner"], &want["generation"])
+                    } else {
+                        native_definition(want)?
+                    }),
                     source: "NemoClaw".into(),
                 }],
             }))
