@@ -27,6 +27,7 @@ fn gateway_launch_uses_version_two_configuration_and_supported_process_flags() {
     assert!(config.contains("sandbox_runtime_image = \"ghcr.io/nvidia/openshell/sandbox@sha256:"));
     assert!(config.contains("supervisor_image = \"ghcr.io/nvidia/openshell/supervisor@sha256:"));
     assert!(!config.contains("supervisor_bin"));
+    assert!(!config.contains("ssh_socket_path"));
 }
 #[test]
 fn invalid_placement_network_does_not_panic() {
