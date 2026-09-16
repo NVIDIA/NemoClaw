@@ -312,3 +312,50 @@ fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
         .model = "another-custom-model".into();
     assert_eq!(targets(&document, &generations).unwrap(), before);
 }
+
+#[test]
+fn harness_selection_does_not_determine_service_ownership() {
+    for harness in [
+        "openclaw",
+        "hermes",
+        "deepagents",
+        "codex",
+        "mini-swe-agent",
+        "nooa",
+        "nooa-bench",
+        "remote-agent",
+        "pi",
+    ] {
+        for fixture in [
+            include_str!("../../../examples/vllm.yaml"),
+            include_str!("fixtures/config/managed-ollama.yaml"),
+        ] {
+            let mut document = Document::parse(fixture.as_bytes()).unwrap();
+            document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.into();
+            assert!(
+                document.validate().is_ok(),
+                "{harness}: {:?}",
+                document.validate()
+            );
+        }
+    }
+    let mut claude =
+        Document::parse(include_str!("../../../examples/vllm.yaml").as_bytes()).unwrap();
+    claude.spec.sandboxes[0].harness.as_mut().unwrap().kind = "claude".into();
+    assert!(
+        claude.validate().is_err(),
+        "managed vLLM still requires a compatible API"
+    );
+    claude.spec.inference_providers[0].provider = "anthropic".into();
+    assert!(
+        claude.validate().is_ok(),
+        "ownership does not imply API compatibility of the actual server"
+    );
+    let mut external =
+        Document::parse(include_str!("fixtures/config/fabric-claude.yaml").as_bytes()).unwrap();
+    external.spec.gateway = claude.spec.gateway;
+    assert!(
+        external.validate().is_ok(),
+        "gateway ownership is independent of the harness"
+    );
+}

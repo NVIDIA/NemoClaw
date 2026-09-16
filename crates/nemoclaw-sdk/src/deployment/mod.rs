@@ -63,8 +63,6 @@ pub struct OperationResult {
     pub changes: Vec<Change>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deferred: Vec<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub agent_response: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<String>,
 }
@@ -74,7 +72,6 @@ impl OperationResult {
             outcome: Outcome::Planned,
             changes,
             deferred: Vec::new(),
-            agent_response: String::new(),
             retained: Vec::new(),
         }
     }
@@ -323,10 +320,6 @@ impl Deployment {
                 tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
             }
             client.ready(&sandbox, cancel).await?;
-            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.inference_ready(&sandbox)=>result?}
-            if document.lifecycle_provider()?.service.is_some() {
-                result.agent_response = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.agent_response(&sandbox)=>result?};
-            }
             Ok(())
         }).await?;
         record.succeeded = true;

@@ -707,7 +707,7 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
-async fn unreachable_remote_inference_fails_the_sandbox_probe_without_recreation() {
+async fn apply_preserves_bindings_without_generating_inference() {
     struct Secret;
     impl nemoclaw_sdk::openshell::Secrets for Secret {
         fn resolve(&self, reference: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
@@ -737,18 +737,12 @@ async fn unreachable_remote_inference_fails_the_sandbox_probe_without_recreation
         fixture.state.lock().unwrap().exec_calls.is_empty(),
         "plan ran an active inference probe"
     );
-    let error = deployment.apply(&document, &cancel).await.unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("inference through the sandbox failed")
-    );
+    deployment.apply(&document, &cancel).await.unwrap();
     let state_path = directory.path().join("terraform.tfstate");
     let bound = fs::read(&state_path).unwrap();
     assert!(!String::from_utf8_lossy(&bound).contains("fixture-remote-model-token"));
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
-    fixture.state.lock().unwrap().inference_exit = 0;
     assert!(
         deployment
             .apply(&document, &cancel)
@@ -760,6 +754,19 @@ async fn unreachable_remote_inference_fails_the_sandbox_probe_without_recreation
     assert_eq!(fs::read(&state_path).unwrap(), bound);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .flatten()
+            .any(|arg| arg.contains("inference-probe")
+                || arg.contains("pi-probe")
+                || arg == "probe"
+                || arg == "--message")
+    );
     deployment.destroy(&cancel).await.unwrap();
 }
 

@@ -150,13 +150,19 @@ async fn spark_apply_export_capacity_and_watchdog_recovery_preserve_identity_and
     let deployment = Deployment::new(&directory, &bundle);
     let cancel = CancellationToken::new();
     let initial = deployment.apply(&document, &cancel).await.unwrap();
-    assert!(!initial.agent_response.is_empty());
+    evidence.record(
+        "initialAgentReply",
+        nemoclaw_e2e::verify_agent(&document, &directory).await,
+    );
     evidence.record("initialApply", initial);
     let before = capture(&directory).await;
     evidence.record("before", &before);
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert!(unchanged.changes.is_empty());
-    assert!(!unchanged.agent_response.is_empty());
+    evidence.record(
+        "unchangedAgentReply",
+        nemoclaw_e2e::verify_agent(&document, &directory).await,
+    );
     assert_eq!(before, capture(&directory).await);
     evidence.record("unchangedApply", unchanged);
     let exported = deployment.export(&cancel).await.unwrap();
@@ -236,7 +242,10 @@ async fn spark_apply_export_capacity_and_watchdog_recovery_preserve_identity_and
     evidence.record("stoppedPlan", plan);
     let recovered = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(recovered.changes.len(), 1);
-    assert!(!recovered.agent_response.is_empty());
+    evidence.record(
+        "recoveredAgentReply",
+        nemoclaw_e2e::verify_agent(&document, &directory).await,
+    );
     assert_eq!(before, capture(&directory).await);
     evidence.record("recoveryApply", recovered);
     evidence.record("after", capture(&directory).await);
@@ -298,7 +307,11 @@ async fn spark_image_change_preserves_independent_bindings_and_prepared_data() {
     );
     evidence.record("plan", plan);
     let applied = deployment.apply(&document, &cancel).await.unwrap();
-    assert!(!applied.agent_response.is_empty());
+    assert!(
+        !nemoclaw_e2e::verify_agent(&document, &directory)
+            .await
+            .is_empty()
+    );
     let after = capture(&directory).await;
     assert_eq!(before["receipts"], after["receipts"]);
     for (address, id) in before["ids"].as_object().unwrap() {

@@ -56,13 +56,18 @@ async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure(
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
-async fn managed_hermes_model_lifecycle_preserves_data_and_observes_native_probe() {
+async fn managed_hermes_model_lifecycle_preserves_data_without_generation() {
     lifecycle("hermes", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
 async fn managed_bearer_credentials_survive_export_reapply_and_destroy() {
     lifecycle("hermes", true).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
+async fn managed_pi_model_lifecycle_preserves_data_without_generation() {
+    lifecycle("pi", false).await;
 }
 async fn lifecycle(harness: &str, authenticated: bool) {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
@@ -77,6 +82,7 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     fs::set_permissions(root.join("bin/ssh"), fs::Permissions::from_mode(0o700)).unwrap();
     let gateway = Fixture::start().await;
     gateway.state.lock().unwrap().driver = Some("podman".into());
+    gateway.state.lock().unwrap().inference_exit = 1;
     let document = Document::parse(
         include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
     )
@@ -148,15 +154,18 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     save(root, "control.json", &json!({}));
     run(root, &bundle, "apply", "config.yaml", true).await;
     if authenticated {
-        assert!(
-            gateway
-                .state
-                .lock()
-                .unwrap()
-                .providers
-                .values()
-                .any(|p| p.credentials.get("OPENAI_API_KEY") == Some(&bearer))
-        );
+        {
+            let state = gateway.state.lock().unwrap();
+            let provider = state.providers.values().next().unwrap();
+            assert_eq!(state.providers.len(), 1);
+            let profile = state.profiles.values().next().unwrap();
+            assert_eq!(profile.credentials.len(), 1);
+            assert_eq!(provider.credentials.len(), 1);
+            assert_eq!(
+                provider.credentials.get(&profile.credentials[0].name),
+                Some(&bearer)
+            );
+        }
         for name in [
             "deployment/runtime/terraform.tfstate",
             "deployment/terraform.tfstate",
@@ -202,6 +211,19 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         );
         save(root, "fixture.json", &original);
     }
+    assert!(
+        !gateway
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .flatten()
+            .any(|arg| arg.contains("inference-probe")
+                || arg.contains("pi-probe")
+                || arg == "probe"
+                || arg == "--message")
+    );
     run(root, &bundle, "destroy", "", true).await;
     let after = read(root, "engine.json");
     assert!(after["container"].is_null());

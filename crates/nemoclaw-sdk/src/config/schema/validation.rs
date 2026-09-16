@@ -393,8 +393,6 @@ pub(super) fn constrain(root: &mut Value) {
                 at("spec/gateway/management", json!({"const": "external"}), true),
                 at(runtime, json!({"const": "podman"}), true)
              ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
-            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"enum": ["openclaw", "hermes"]}}), true),
-             "then": {"allOf": [at("spec/gateway/management", json!({"const": "external"}), false), at(provider, forbid(&["service", "ollama"]), false)]}},
             {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
                 {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
              "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),

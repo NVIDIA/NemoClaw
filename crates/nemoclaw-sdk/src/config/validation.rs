@@ -219,13 +219,6 @@ impl Document {
                 let (_, scope) = self.scoped_inference(agent)?;
                 let provider = self.route_provider(route, scope)?;
                 require(
-                    matches!(harness.kind.as_str(), "openclaw" | "hermes")
-                        || (gateway.management == "external"
-                            && provider.service.is_none()
-                            && provider.ollama.is_none()),
-                    "this harness requires external gateway and inference services",
-                )?;
-                require(
                     harness.kind != "pi" || provider.api.is_none(),
                     "Pi selects its API through model metadata; omit provider api",
                 )?;
