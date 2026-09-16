@@ -242,12 +242,19 @@ export function qualifyHermesPortableOperatingAuthority(
   const capturePodman =
     deps.capturePodmanExecutableAuthority ??
     ((socketAuthority, receipt, sourceEnv) =>
-      captureHermesPortablePodmanExecutableAuthority(
-        socketAuthority,
-        receipt.runtimeAuthority,
-        sourceEnv,
-        podmanAuthorityDeps,
-      ));
+      snapshot.successor
+        ? captureHermesPortablePodmanExecutableFileAuthority(
+            socketAuthority,
+            receipt,
+            sourceEnv,
+            podmanAuthorityDeps,
+          )
+        : captureHermesPortablePodmanExecutableAuthority(
+            socketAuthority,
+            receipt.runtimeAuthority,
+            sourceEnv,
+            podmanAuthorityDeps,
+          ));
   const capture = () => {
     const socket = measure("socketAuthority", () =>
       captureSocket(
