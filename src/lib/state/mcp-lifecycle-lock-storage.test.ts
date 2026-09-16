@@ -92,6 +92,17 @@ describe.each(variants)("$mode lock reclamation recovery", ({ read, reclaim, pub
     expect(fs.readdirSync(root)).toEqual(["alpha.lock"]);
   });
 
+  it("removes the reclaimed generation after successful authorization", async () => {
+    expect(await publish(lockPath, owner("stale"))).toBe(true);
+    const expected = await read(lockPath);
+    assert.ok(expected);
+
+    expect(await reclaim(lockPath, expected)).toBe(true);
+
+    expect(await read(lockPath)).toBeNull();
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
   it("preserves a replacement owner that appears after the stale observation", async () => {
     await publish(lockPath, owner("original"));
     const expected = await read(lockPath);
