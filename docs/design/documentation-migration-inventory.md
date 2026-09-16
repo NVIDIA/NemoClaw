@@ -40,7 +40,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 
 | Source | Disposition | Destination and required change | Package | Coverage and evidence |
 |---|---|---|---|---|
-| `get-started/prerequisites.mdx` | Rewrite | `prerequisites.md`: verified bundles, images, tools, credentials, endpoints, and host roles | D03 | Pending audit |
+| `get-started/prerequisites.mdx` | Rewrite | `prerequisites.md`: verified bundles, images, tools, credentials, endpoints, and host roles | D03 | Written: [host roles](../prerequisites.md#identify-each-host), [required inputs](../prerequisites.md#before-the-first-deployment) and existing gateway selection; SDK gateway probes. Clean-host provisioning and first-deployment rehearsal require configured owned resources. |
 | `get-started/quickstart.mdx` | Rewrite | `get-started.md`: OpenClaw YAML-to-interaction walkthrough | D03 | Pending audit |
 | `get-started/quickstart-hermes.mdx` | Rewrite | `get-started.md`, `agents.md`, `interfaces.md`: shared deployment steps plus Hermes requirements | D03, D06 | Pending audit |
 | `get-started/quickstart-langchain-deepagents-code.mdx` | Rewrite | `agents.md`: external gateway/inference path and native entry point; remove alias/installer workflow | D06 | Written: [Deep Agents one-shot request](../agents.md#run-one-deep-agents-request); Fabric access test and revision-scoped live result. Attaching to a hosted conversation remains unimplemented. |
@@ -133,7 +133,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `manage-sandboxes/set-up-wechat.mdx` | Hold | `agents.md`, previous-version channel guide: native pairing and session retention prerequisites | D06 | Pending audit |
 | `manage-sandboxes/set-up-whatsapp.mdx` | Hold | `agents.md`, previous-version channel guide: native pairing and session retention prerequisites | D06 | Pending audit |
 | `manage-sandboxes/transfer-state-manually.mdx` | Rewrite | `state.md`, `migration.md`: verify supported native-data transfer; remove upload/download/backup-all commands | D04 | Pending audit |
-| `manage-sandboxes/uninstall-nemoclaw.mdx` | Rewrite | `usage.md`, `state.md`: deployment destroy versus removal of local bundle; enumerate retained resources without inventing purge | D04 | Pending audit |
+| `manage-sandboxes/uninstall-nemoclaw.mdx` | Rewrite | `usage.md`, `state.md`: deployment destroy versus removal of local bundle; enumerate retained resources without inventing purge | D04 | Written: [local bundle retirement](../build.md#retire-a-local-development-bundle) and [resource retention](../state.md#understand-the-retained-resources); bundle builder and teardown implementation. Full retained-data purge requires an ownership-scoped procedure and qualification. |
 | `manage-sandboxes/update-sandboxes.mdx` | Rewrite | `usage.md`, `migration.md`: image/schema compatibility, refused replacement, parallel deployment | D04 | Pending audit |
 | `manage-sandboxes/workspace-files.mdx` | Rewrite | `state.md`, `agents.md`: current native paths and deletion; no inherited host-mount or backup guarantee | D04, D06 | Pending audit |
 
@@ -152,15 +152,15 @@ Held pages may contain reusable explanations, but their old commands must remain
 | Source | Disposition | Destination and required change | Package | Coverage and evidence |
 |---|---|---|---|---|
 | `network-policy/apply-policy-presets.mdx` | Rewrite | `sandbox-network.md`: isolated preset or full explicit policy; no maintained-preset CLI | D08 | Pending audit |
-| `network-policy/approve-network-requests.mdx` | Hold | `sandbox-network.md`, `migration.md`: external live edits can drift from intent; no current NemoClaw approval workflow | D08 | Pending audit |
+| `network-policy/approve-network-requests.mdx` | Hold | `sandbox-network.md`, `migration.md`: external live edits can drift from intent; no current NemoClaw approval workflow | D08 | Boundary written: [earlier policy workflows](../sandbox-network.md#earlier-policy-workflows); CLI parser and policy checks. Managed approval needs implementation; external policy edits can produce drift. |
 | `network-policy/change-baseline-network-policy.mdx` | Rewrite | `sandbox-network.md`: full explicit policy, defaults, replacement, and data-loss effects | D08 | Pending audit |
 | `network-policy/configure-raw-tls-passthrough.mdx` | Merge | `sandbox-network.md`: retain only fields accepted by the pinned explicit-policy parser; review enforcement tradeoffs | D08 | Written: [TLS and enforcement choices](../sandbox-network.md#choose-tls-inspection-and-enforcement); pinned OpenShell parser/proxy and SDK validation. Live host enforcement requires qualification. |
 | `network-policy/create-custom-policy-presets.mdx` | Rewrite | `sandbox-network.md`: author validated explicit policy instead of preset files | D08 | Pending audit |
 | `network-policy/customize-network-policy.mdx` | Merge | `sandbox-network.md`: one owner for declared policy changes and drift | D08 | Pending audit |
-| `network-policy/explain-network-policy-to-agents.mdx` | Hold | `sandbox-network.md`, `migration.md`: no policy-explain command; do not imply agent-side inspection | D08 | Pending audit |
+| `network-policy/explain-network-policy-to-agents.mdx` | Hold | `sandbox-network.md`, `migration.md`: no policy-explain command; do not imply agent-side inspection | D08 | Boundary written: [earlier policy workflows](../sandbox-network.md#earlier-policy-workflows); CLI parser has no policy-explanation command. Equivalent agent workflow needs implementation. |
 | `network-policy/integration-policy-examples.mdx` | Merge | `sandbox-network.md`: qualify reusable explicit-policy examples individually; old integrations remain held | D08 | Pending audit |
 | `network-policy/replace-live-network-policy.mdx` | Rewrite | `sandbox-network.md`: ordinary apply rejects policy replacement; document supported recreation and preservation steps | D08 | Pending audit |
-| `network-policy/set-up-gmail-with-an-app-password.mdx` | Hold | `agents.md`, previous-version integration guide: credential/mount/access prerequisites lack a complete current workflow | D06, D08 | Pending audit |
+| `network-policy/set-up-gmail-with-an-app-password.mdx` | Hold | `agents.md`, previous-version integration guide: credential/mount/access prerequisites lack a complete current workflow | D06, D08 | Boundary written: [Gmail prerequisites](../agents.md#additional-agent-integrations); current schema has no complete enrollment workflow. Native client, credential delivery, egress and retention require qualification. |
 
 ## Reference — 15 Sources
 
@@ -169,7 +169,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `reference/architecture.mdx` | Rewrite | `overview.md`, `design/architecture.md`: current deployment and state ownership | D02 | Pending audit |
 | `reference/cli-selection-guide.mdx` | Rewrite | `overview.md`, `reference/cli.md`, `agents.md`: NemoClaw, SDK, OpenShell, and native runtime responsibilities | D02 | Pending audit |
 | `reference/commands.mdx` | Rewrite | `reference/cli.md`: current parser/help and process behavior | D02 | Written: [CLI results and failures](../reference/cli.md#output-and-failure); CLI parser/process tests and SDK result type. Old command families remain unavailable. |
-| `reference/configure-runtime-identity.mdx` | Hold | `security.md`, `migration.md`: old identity/policy integration is not part of the current declared contract | D08 | Pending audit |
+| `reference/configure-runtime-identity.mdx` | Hold | `security.md`, `migration.md`: old identity/policy integration is not part of the current declared contract | D08 | Boundary written: [earlier runtime identity](../security.md#earlier-runtime-identity); current schema has no Okta/Entra profile declaration. Accepted implementation and tenant-scoped qualification required. |
 | `reference/enterprise-readiness.mdx` | Rewrite | `overview.md`, `security.md`, `prerequisites.md`: explicit limits; no enterprise qualification inferred from unit tests | D02, D08 | Pending audit |
 | `reference/extension-taxonomy-sdk-readiness.mdx` | Rewrite | `sdk.md`, `provider.md`, `recipes.md`, `agents.md`: actual extension and ownership boundaries | D07 | Pending audit |
 | `reference/headless-lifecycle-package.mdx` | Rewrite | `sdk.md`, `migration.md`: Rust lifecycle SDK versus former TypeScript observe/plan package | D07 | Pending audit |

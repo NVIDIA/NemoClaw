@@ -388,6 +388,7 @@ Native agent capabilities do not by themselves establish a complete NemoClaw dep
 | Workflow | Documentation status |
 |---|---|
 | Messaging channels, including Discord, Google Chat, Teams, Slack, Telegram, WeChat, and WhatsApp | **TBD** — needs verified enrollment, egress, credentials, and data-retention procedures |
+| Gmail with an app password | **TBD** — needs a verified native client, protected credential delivery, egress policy, and file-retention procedure |
 | Managed MCP bridge and server add/update/remove | **TBD** — no equivalent current NemoClaw CLI workflow |
 | Arbitrary OpenClaw or Hermes plugin installation | **TBD** — requires a verified image, configuration, and lifecycle procedure; the declared Brave integration is documented above |
 | Memory search and embedding-service setup | **TBD** — needs evidence for the endpoint, credentials, policy, and native settings |

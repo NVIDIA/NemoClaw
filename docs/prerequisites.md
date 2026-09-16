@@ -35,7 +35,8 @@ The [gateway check](../crates/nemoclaw-sdk/src/openshell/probes.rs) verifies the
 Use [inference API selection](inference.md) to match the endpoint to the agent.
 A successful connection or listed model does not establish that the model can complete an agent turn.
 
-Provisioning an external gateway and configuring OpenShell CLI access from a clean host: **TBD** — the current guide requires operator-provided services and access.
+Provisioning an external gateway and authenticated OpenShell CLI credentials from a clean host: **TBD** — the current guide requires operator-provided services and access.
+For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](interfaces.md#select-the-gateway-and-workspace).
 End-to-end rehearsal of this first-deployment procedure on the current revision: **TBD**.
 
 ## Client and Build Tools
@@ -57,7 +58,7 @@ Use the existing [source-build procedure](build.md) for the documented developme
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API/model, and an immutable sandbox image; see [usage](usage.md) and [inference](inference.md) |
 | Fabric agent image | The documented local build uses Linux ARM64, Docker, uv, and a native C/Rust toolchain; see [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](models.md) and [AMD64 Nemotron configuration](models.md#configure-nemotron-on-an-amd64-gpu-host) |
-| Managed Ollama | Local Unix engine socket and an existing Docker network; see [configuration and credentials](usage.md#configuration-and-credentials) |
+| Managed Ollama | Local Unix engine socket, an existing network supporting published ports, reachable private endpoint, and CPU-sized model; see [managed Ollama](inference.md#run-managed-ollama) |
 | External Ollama with managed proxy | Local Linux Docker host, loopback-only daemon, installed model digest, and a reachable private proxy endpoint; see [proxy setup](inference.md#use-external-ollama-through-a-managed-proxy) |
 | SSH-managed model service | Trusted noninteractive SSH access and the documented model-host tools; see [remote service](remote-service.md) |
 

@@ -99,3 +99,11 @@ If an operation fails, preserve the state directory, resolve the reported observ
 
 Local fixture tests exercise creation, drift detection, and export/reapply behavior.
 They do not establish proxy reachability or kernel enforcement on a live host.
+
+## Earlier Policy Workflows
+
+V1 has no NemoClaw commands for named preset installation, interactive network-request approval, or explaining policy to an agent.
+Use the [isolated preset or complete explicit policy](#choose-a-policy) as declared intent.
+External OpenShell policy edits can conflict with that intent and stop export; they are not a supported bypass for refused replacement.
+Equivalent managed approval/explanation workflows remain **TBD** pending implementation.
+Integration-specific examples, including raw TLS applications, require their own endpoint, credential, and live enforcement qualification.

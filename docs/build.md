@@ -43,6 +43,21 @@ Keep the bundle unchanged while an operation uses it.
 The builder replaces `dist/<platform>`; copy the bundle to a dedicated location before a long live run.
 Repository text uses LF on every platform so checkout newline conversion does not change source-derived provider versions.
 
+## Retire a Local Development Bundle
+
+Removing a source-built bundle only removes local tools; it does not stop deployments, remove images, or revoke credentials.
+There is no v1 `uninstall` command or package-manager installation to reverse in this source-build procedure.
+
+Before removing a bundle, identify every deployment using it and keep a verified copy wherever its original tooling is still needed for recovery or teardown.
+Finish any operation using that bundle.
+If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first and retain its state for surviving resources.
+Then remove that dedicated bundle directory using your host's file manager and remove only its `bin` entry from your shell's `PATH` configuration.
+Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
+
+Do not delete deployment state, model volumes, unrelated tool installations, or shared caches as part of removing the local bundle.
+A complete supported purge of retained runtime data remains [TBD](state.md#deletion-and-retention).
+Rebuild a bundle from the recorded source revision if the removed tools are needed again; compatibility with another revision is not implied.
+
 ## Build a Runtime Image
 
 Runtime image builds require Linux, Docker, and Buildx.
