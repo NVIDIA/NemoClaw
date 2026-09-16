@@ -23,8 +23,6 @@ const OVERLAP_SAME_FILE_SAMPLE_LIMIT = 20;
 const OVERLAP_PATH_CHARACTER_LIMIT = 300;
 const BODY_CHARACTER_LIMIT = 20_000;
 const COMMENT_BODY_CHARACTER_LIMIT = 4_000;
-const TRUSTED_REVIEW_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
-const FOLLOW_UP_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED"]);
 
 export type OpenPrOverlap = {
   number: number;
@@ -69,6 +67,16 @@ export type FollowUpReview = {
     line: number | null;
     body?: string;
   }>;
+};
+
+type TrustedReview = {
+  id: number;
+  state: "APPROVED" | "CHANGES_REQUESTED";
+  reviewedHeadSha: string;
+  submittedAt: string;
+  reviewer: string;
+  authorAssociation: "OWNER" | "MEMBER" | "COLLABORATOR";
+  body?: string;
 };
 
 export function serializePreparedGitHubContext(context: GitHubReviewContext | null): string {
@@ -180,20 +188,22 @@ export async function collectGitHubReviewContext(
     context.pullRequest = summarizePullRequest(rawPullRequest);
     const currentHeadSha =
       stringOrUndefined(getPath<unknown>(rawPullRequest, ["head", "sha"])) ?? "";
-    const selectedReview = selectFollowUpReview(
+    const selectedReviewIds = selectContractReviews(
       reviews,
-      [],
       currentHeadSha,
       env.PR_REVIEW_ADVISOR_REVIEWER_LOGIN,
-    );
-    const reviewComments = selectedReview
-      ? await githubRestPaginated<unknown>(
-          `repos/${repo}/pulls/${prNumber}/reviews/${selectedReview.reviewId}/comments`,
+    ).map(({ id }) => id);
+    const reviewComments: unknown[] = [];
+    for (const reviewId of selectedReviewIds) {
+      reviewComments.push(
+        ...(await githubRestPaginated<unknown>(
+          `repos/${repo}/pulls/${prNumber}/reviews/${reviewId}/comments`,
           token,
           undefined,
           signal,
-        )
-      : [];
+        )),
+      );
+    }
     context.followUpReview = selectFollowUpReview(
       reviews,
       reviewComments,
@@ -243,58 +253,14 @@ export function selectFollowUpReview(
   reviewerLogin?: string,
 ): FollowUpReview | undefined {
   if (!/^[0-9a-f]{40}$/u.test(currentHeadSha)) return undefined;
-  const candidates = recordItems(reviews)
-    .filter((review) => {
-      const state = stringOrUndefined(review.state);
-      const association = stringOrUndefined(review.author_association);
-      const commitId = stringOrUndefined(review.commit_id);
-      const login = stringOrUndefined(getPath<unknown>(review, ["user", "login"]));
-      const userType = stringOrUndefined(getPath<unknown>(review, ["user", "type"]));
-      return (
-        state !== undefined &&
-        FOLLOW_UP_REVIEW_STATES.has(state) &&
-        association !== undefined &&
-        TRUSTED_REVIEW_ASSOCIATIONS.has(association) &&
-        commitId !== undefined &&
-        /^[0-9a-f]{40}$/u.test(commitId) &&
-        commitId !== currentHeadSha &&
-        login !== undefined &&
-        (!reviewerLogin || login === reviewerLogin) &&
-        userType !== "Bot" &&
-        !login.endsWith("[bot]")
-      );
-    })
-    .sort((left, right) => {
-      const leftTime = stringOrDefault(left.submitted_at, "");
-      const rightTime = stringOrDefault(right.submitted_at, "");
-      return rightTime.localeCompare(leftTime) || Number(right.id ?? 0) - Number(left.id ?? 0);
-    });
-  const selected = candidates[0];
-  if (!selected) return undefined;
-
-  const reviewId = selected.id;
-  const state = stringOrUndefined(selected.state);
-  const authorAssociation = stringOrUndefined(selected.author_association);
-  const reviewedHeadSha = stringOrUndefined(selected.commit_id);
-  const submittedAt = stringOrUndefined(selected.submitted_at);
-  const reviewer = stringOrUndefined(getPath<unknown>(selected, ["user", "login"]));
-  if (
-    typeof reviewId !== "number" ||
-    !Number.isSafeInteger(reviewId) ||
-    reviewId <= 0 ||
-    (state !== "APPROVED" && state !== "CHANGES_REQUESTED") ||
-    (authorAssociation !== "OWNER" &&
-      authorAssociation !== "MEMBER" &&
-      authorAssociation !== "COLLABORATOR") ||
-    !reviewedHeadSha ||
-    !submittedAt ||
-    !reviewer
-  ) {
-    return undefined;
-  }
+  const selected = selectContractReviews(reviews, currentHeadSha, reviewerLogin);
+  const first = selected[0];
+  const latest = selected.at(-1);
+  if (!first || !latest) return undefined;
+  const selectedIds = new Set(selected.map(({ id }) => id));
 
   const inlineComments = recordItems(comments)
-    .filter((comment) => comment.pull_request_review_id === reviewId)
+    .filter((comment) => selectedIds.has(Number(comment.pull_request_review_id)))
     .map((comment) => ({
       path: boundedText(comment.path, 512, "review comment path") ?? "",
       line:
@@ -310,15 +276,116 @@ export function selectFollowUpReview(
     .filter(({ path }) => path.length > 0);
 
   return {
-    reviewId,
-    reviewedHeadSha,
-    state,
-    submittedAt,
-    reviewer,
-    authorAssociation,
-    body: boundedText(selected.body, BODY_CHARACTER_LIMIT, "review body"),
+    reviewId: latest.id,
+    reviewedHeadSha: first.reviewedHeadSha,
+    state: selected.some(({ state }) => state === "CHANGES_REQUESTED")
+      ? "CHANGES_REQUESTED"
+      : latest.state,
+    submittedAt: latest.submittedAt,
+    reviewer: [...new Set(selected.map(({ reviewer }) => reviewer))].join(", "),
+    authorAssociation: latest.authorAssociation,
+    body: combinedReviewBody(selected),
     inlineComments,
   };
+}
+
+function selectContractReviews(
+  reviews: unknown[],
+  currentHeadSha: string,
+  reviewerLogin?: string,
+): TrustedReview[] {
+  if (!/^[0-9a-f]{40}$/u.test(currentHeadSha)) return [];
+  const candidates = recordItems(reviews)
+    .map((review): TrustedReview | undefined => {
+      const id = review.id;
+      const state = stringOrUndefined(review.state);
+      const authorAssociation = stringOrUndefined(review.author_association);
+      const reviewedHeadSha = stringOrUndefined(review.commit_id);
+      const submittedAt = stringOrUndefined(review.submitted_at);
+      const reviewer = stringOrUndefined(getPath<unknown>(review, ["user", "login"]));
+      const userType = stringOrUndefined(getPath<unknown>(review, ["user", "type"]));
+      if (
+        typeof id !== "number" ||
+        !Number.isSafeInteger(id) ||
+        id <= 0 ||
+        (state !== "APPROVED" && state !== "CHANGES_REQUESTED") ||
+        (authorAssociation !== "OWNER" &&
+          authorAssociation !== "MEMBER" &&
+          authorAssociation !== "COLLABORATOR") ||
+        !reviewedHeadSha ||
+        !/^[0-9a-f]{40}$/u.test(reviewedHeadSha) ||
+        reviewedHeadSha === currentHeadSha ||
+        !submittedAt ||
+        !reviewer ||
+        userType === "Bot" ||
+        reviewer.endsWith("[bot]")
+      ) {
+        return undefined;
+      }
+      return {
+        id,
+        state,
+        reviewedHeadSha,
+        submittedAt,
+        reviewer,
+        authorAssociation,
+        body: boundedText(review.body, BODY_CHARACTER_LIMIT, "review body"),
+      };
+    })
+    .filter((review): review is TrustedReview => review !== undefined)
+    .sort((left, right) => left.submittedAt.localeCompare(right.submittedAt) || left.id - right.id);
+
+  const byReviewer = new Map<string, TrustedReview[]>();
+  for (const review of candidates) {
+    const reviewerReviews = byReviewer.get(review.reviewer) ?? [];
+    if (review.state === "APPROVED") reviewerReviews.length = 0;
+    else reviewerReviews.push(review);
+    byReviewer.set(review.reviewer, reviewerReviews);
+  }
+  const unresolved = [...byReviewer.values()]
+    .flat()
+    .sort((left, right) => left.submittedAt.localeCompare(right.submittedAt) || left.id - right.id);
+  if (unresolved.length > 0) return unresolved;
+
+  const fallback = reviewerLogin
+    ? candidates.filter(({ reviewer }) => reviewer === reviewerLogin)
+    : candidates;
+  const latest = fallback.at(-1) ?? candidates.at(-1);
+  return latest ? [latest] : [];
+}
+
+function combinedReviewBody(reviews: readonly TrustedReview[]): string | undefined {
+  const withBodies = reviews.filter(({ body }) => body !== undefined);
+  if (withBodies.length === 0) return undefined;
+  if (withBodies.length === 1) return withBodies[0]!.body;
+  const labels = withBodies.map(
+    ({ id, reviewer, reviewedHeadSha }) => `Review ${id} by ${reviewer} on ${reviewedHeadSha}:\n`,
+  );
+  const separatorsLength = 2 * (withBodies.length - 1);
+  let remaining =
+    BODY_CHARACTER_LIMIT -
+    separatorsLength -
+    labels.reduce((total, label) => total + label.length, 0);
+  if (remaining < withBodies.length) {
+    throw new Error("Combined review metadata exceeds the review body limit");
+  }
+  let bodiesRemaining = withBodies.length;
+  return withBodies
+    .map(({ body }, index) => {
+      const allocation = Math.floor(remaining / bodiesRemaining);
+      remaining -= allocation;
+      bodiesRemaining -= 1;
+      return labels[index]! + boundedReviewExcerpt(body!, allocation);
+    })
+    .join("\n\n");
+}
+
+function boundedReviewExcerpt(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  if (limit === 1) return "…";
+  const retained = limit - 1;
+  const headLength = Math.ceil(retained / 2);
+  return `${value.slice(0, headLength)}…${value.slice(value.length - (retained - headLength))}`;
 }
 
 function summarizePullRequest(value: unknown): unknown {
