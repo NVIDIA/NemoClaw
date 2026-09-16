@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 export const MARKER = "/* nemoclaw compact tool catalog (#2600) */";
+export const NATIVE_LLAMACPP_MARKER =
+  "/* nemoclaw llama.cpp compact native tool catalog (#11105) */";
 const ALL_CUSTOM_TOOLS_PATTERN =
   "\t\t\tconst allCustomTools = [...customTools, ...clientToolDefs];";
 const EFFECTIVE_TOOLS_PATTERN = "\t\tconst effectiveTools = [...tools, ...filteredBundledTools];";
@@ -48,6 +50,21 @@ const NATIVE_TOOL_SEARCH_PATTERN_SETS = [
     "replayAllowedToolNames: toolSearchRunPlan.replayAllowedToolNames",
   ],
 ] as const;
+const CURRENT_NATIVE_TOOL_SEARCH_PATTERNS = NATIVE_TOOL_SEARCH_PATTERN_SETS[1];
+const NATIVE_DIRECT_TOOL_PATTERN = [
+  "function isDirectVisibleCatalogTool(tool, directToolNames) {",
+  "\tconst classified = classifyTool(tool);",
+  '\treturn classified.source === "openclaw" && (directToolNames.has(tool.name) || isCoreCodingSurfaceToolName(tool.name) && classified.sourceName === "core");',
+  "}",
+].join("\n");
+const NATIVE_DIRECT_TOOL_REPLACEMENT = [
+  NATIVE_LLAMACPP_MARKER,
+  "function isDirectVisibleCatalogTool(tool, directToolNames) {",
+  "\tconst classified = classifyTool(tool);",
+  '\tconst hideCoreCodingSurface = (process.env.NEMOCLAW_UPSTREAM_PROVIDER ?? "").trim() === "llama-cpp-local";',
+  '\treturn classified.source === "openclaw" && (directToolNames.has(tool.name) || !hideCoreCodingSurface && isCoreCodingSurfaceToolName(tool.name) && classified.sourceName === "core");',
+  "}",
+].join("\n");
 
 const EFFECTIVE_TOOLS_REPLACEMENT = [
   EFFECTIVE_TOOLS_PATTERN,
@@ -187,7 +204,13 @@ const CATALOG_HELPER_AND_ASSIGNMENT = [
   "\t\t\tconst allCustomTools = nemoClawCreateToolCatalog(nemoClawCatalogSourceTools);",
 ].join("\n");
 
-type PatchStatus = "patched" | "already-patched" | "native-tool-search" | "skipped-built-in";
+type PatchStatus =
+  | "patched"
+  | "already-patched"
+  | "native-tool-search"
+  | "patched-native-llamacpp"
+  | "native-llamacpp-compat"
+  | "skipped-built-in";
 
 type PatchSelectionResult = {
   patched: boolean;
@@ -253,6 +276,52 @@ function hasNativeToolSearch(source: string): boolean {
   return NATIVE_TOOL_SEARCH_PATTERN_SETS.some((patterns) =>
     patterns.every((pattern) => source.includes(pattern)),
   );
+}
+
+function hasCurrentNativeToolSearch(source: string): boolean {
+  return CURRENT_NATIVE_TOOL_SEARCH_PATTERNS.every((pattern) => source.includes(pattern));
+}
+
+function patchNativeLlamacppCatalogCompat(distDir: string): {
+  patched: boolean;
+  file: string;
+} {
+  const candidates = fs
+    .readdirSync(distDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^local-model-lean-.*\.js$/.test(entry.name))
+    .map((entry) => path.join(distDir, entry.name))
+    .filter((file) => {
+      const source = fs.readFileSync(file, "utf-8");
+      return source.includes(NATIVE_DIRECT_TOOL_PATTERN) || source.includes(NATIVE_LLAMACPP_MARKER);
+    });
+  if (candidates.length !== 1) {
+    throw new Error(
+      `Expected exactly one native llama.cpp tool-catalog compatibility target, found ${candidates.length}`,
+    );
+  }
+
+  const target = candidates[0];
+  const source = fs.readFileSync(target, "utf-8");
+  if (source.includes(NATIVE_LLAMACPP_MARKER)) {
+    if (source.includes(NATIVE_DIRECT_TOOL_PATTERN)) {
+      throw new Error(`${target}: native llama.cpp marker is present but original target remains`);
+    }
+    if (!source.includes(NATIVE_DIRECT_TOOL_REPLACEMENT)) {
+      throw new Error(`${target}: native llama.cpp compatibility patch shape is incomplete`);
+    }
+    return { patched: false, file: target };
+  }
+
+  const count = countOccurrences(source, NATIVE_DIRECT_TOOL_PATTERN);
+  if (count !== 1) {
+    throw new Error(`${target}: expected exactly one native direct-tool target, found ${count}`);
+  }
+  const text = source.replace(NATIVE_DIRECT_TOOL_PATTERN, NATIVE_DIRECT_TOOL_REPLACEMENT);
+  if (!text.includes(NATIVE_LLAMACPP_MARKER) || text.includes(NATIVE_DIRECT_TOOL_PATTERN)) {
+    throw new Error(`${target}: native llama.cpp compatibility patch verification failed`);
+  }
+  fs.writeFileSync(target, text);
+  return { patched: true, file: target };
 }
 
 export function patchSelectionText(source: string, filePath: string): PatchSelectionResult {
@@ -338,6 +407,14 @@ export function patchOpenClawToolCatalog(distDir: string): {
   }
   if (result.skippedBuiltIn) {
     return { status: "skipped-built-in", file: target, version };
+  }
+  if (result.status === "native-tool-search" && hasCurrentNativeToolSearch(source)) {
+    const compat = patchNativeLlamacppCatalogCompat(resolvedDist);
+    return {
+      status: compat.patched ? "patched-native-llamacpp" : "native-llamacpp-compat",
+      file: compat.file,
+      version,
+    };
   }
   return { status: result.status ?? "already-patched", file: target, version };
 }

@@ -1603,9 +1603,8 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Run the compact tool catalog shim for OpenClaw selection runtimes that still
-# need it. OpenClaw 2026.9.1 ships a built-in catalog surface, so the script
-# skips cleanly after classifying the compiled tool-catalog shape.
+# Patch legacy catalogs, and keep OpenClaw 2026.9.1's native catalog compact
+# only for managed llama.cpp. Other providers retain upstream behavior.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
     /usr/local/lib/node_modules/openclaw/dist \

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MARKER } from "../../../scripts/patch-openclaw-tool-catalog.mts";
+import { MARKER, NATIVE_LLAMACPP_MARKER } from "../../../scripts/patch-openclaw-tool-catalog.mts";
 
 const PATCH_SCRIPT = path.join(
   import.meta.dirname,
@@ -156,6 +156,28 @@ function currentNativeToolSearchFixtureSource() {
   ].join("\n");
 }
 
+function currentNativeDirectToolFixtureSource() {
+  return [
+    "function classifyTool(tool) { return { source: 'openclaw', sourceName: 'core', tool }; }",
+    "function isCoreCodingSurfaceToolName(name) { return name === 'read'; }",
+    "function isDirectVisibleCatalogTool(tool, directToolNames) {",
+    "\tconst classified = classifyTool(tool);",
+    '\treturn classified.source === "openclaw" && (directToolNames.has(tool.name) || isCoreCodingSurfaceToolName(tool.name) && classified.sourceName === "core");',
+    "}",
+    "export function visible(tool, env = {}, directToolNames = []) {",
+    "\tconst previous = process.env.NEMOCLAW_UPSTREAM_PROVIDER;",
+    "\tif (Object.hasOwn(env, 'NEMOCLAW_UPSTREAM_PROVIDER')) process.env.NEMOCLAW_UPSTREAM_PROVIDER = env.NEMOCLAW_UPSTREAM_PROVIDER;",
+    "\telse delete process.env.NEMOCLAW_UPSTREAM_PROVIDER;",
+    "\ttry { return isDirectVisibleCatalogTool(tool, new Set(directToolNames)); }",
+    "\tfinally {",
+    "\t\tif (previous === undefined) delete process.env.NEMOCLAW_UPSTREAM_PROVIDER;",
+    "\t\telse process.env.NEMOCLAW_UPSTREAM_PROVIDER = previous;",
+    "\t}",
+    "}",
+    "",
+  ].join("\n");
+}
+
 function makeFixture(opts: { version?: string; allCustomToolsLine?: string } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tool-catalog-patch-"));
   const dist = path.join(root, "dist");
@@ -189,7 +211,7 @@ function parseToolResult(result: any) {
 }
 
 describe("OpenClaw compact tool catalog patch", () => {
-  it("patches compatible selection runtimes once and fails closed on shape drift", () => {
+  it("patches compatible selection runtimes once and fails closed on shape drift", async () => {
     const fixture = makeFixture();
     try {
       const first = runPatch(fixture.dist);
@@ -248,12 +270,30 @@ describe("OpenClaw compact tool catalog patch", () => {
       fs.rmSync(path.join(currentNative.dist, "selection-empty.js"));
       fs.rmSync(currentNative.selectionPath);
       const builtinPath = path.join(currentNative.dist, "builtin-openclaw-fixture.js");
+      const localModelPath = path.join(currentNative.dist, "local-model-lean-fixture.js");
       fs.writeFileSync(builtinPath, currentNativeToolSearchFixtureSource());
+      fs.writeFileSync(localModelPath, currentNativeDirectToolFixtureSource());
       const result = runPatch(currentNative.dist);
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("native-tool-search");
-      expect(result.stdout).toContain("builtin-openclaw-fixture.js");
+      expect(result.stdout).toContain("patched-native-llamacpp");
+      expect(result.stdout).toContain("local-model-lean-fixture.js");
       expect(fs.readFileSync(builtinPath, "utf-8")).not.toContain(MARKER);
+      expect(fs.readFileSync(localModelPath, "utf-8")).toContain(NATIVE_LLAMACPP_MARKER);
+
+      const mod = await importSelection(localModelPath);
+      expect(mod.visible({ name: "read" })).toBe(true);
+      expect(mod.visible({ name: "read" }, { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" })).toBe(
+        false,
+      );
+      expect(
+        mod.visible({ name: "sessions_yield" }, { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" }, [
+          "sessions_yield",
+        ]),
+      ).toBe(true);
+
+      const second = runPatch(currentNative.dist);
+      expect(second.status, `${second.stdout}${second.stderr}`).toBe(0);
+      expect(second.stdout).toContain("native-llamacpp-compat");
     } finally {
       fs.rmSync(currentNative.root, { recursive: true, force: true });
     }

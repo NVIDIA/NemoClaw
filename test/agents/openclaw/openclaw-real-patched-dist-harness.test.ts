@@ -522,11 +522,17 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           `Patch 6 applied to OpenClaw ${version}`,
           "Patch 6",
         );
+        requireRuntimeIncludes(
+          dockerPatch.stdout,
+          "OpenClaw compact tool catalog patched-native-llamacpp",
+          "managed llama.cpp compact tool catalog patch",
+        );
         [
           "nemoclaw: env-gated bypass",
           "nemoclaw: OpenShell host gateway for web_fetch trusted env proxy",
           "nemoclaw: route unconfigured strict fetch through sandbox egress proxy",
           'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',
+          "nemoclaw llama.cpp compact native tool catalog (#11105)",
         ].forEach((marker) => {
           const grep = grepRealDist(dist, marker);
           requireSpawnSuccess(grep, `find real-dist marker ${marker}`);

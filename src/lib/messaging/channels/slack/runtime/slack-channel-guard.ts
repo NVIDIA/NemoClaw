@@ -173,7 +173,7 @@
     return normalized.indexOf("/@openclaw/slack/") !== -1 && normalized.endsWith(".js");
   }
 
-  function hasNativeDeniedMentionFeedback(source) {
+  function hasNativeChannelDeniedMentionFeedback(source) {
     return (
       source.indexOf("async function authorizeSlackInboundMessage") !== -1 &&
       source.indexOf("params.explicitBotMention") !== -1 &&
@@ -181,6 +181,51 @@
       source.indexOf("chat.postEphemeral") !== -1 &&
       source.indexOf('return drop("channel-not-allowed")') !== -1
     );
+  }
+
+  function patchNativeDeniedSenderGate(source, filename) {
+    if (!hasNativeChannelDeniedMentionFeedback(source)) return null;
+    if (
+      source.indexOf("explicitlyMentionedBotUser") === -1 ||
+      source.indexOf("explicitlyMentionedBotSubteam") === -1
+    ) {
+      throw new Error(
+        "OpenClaw Slack mention-state shape not recognized in " +
+          filename +
+          "; expected explicitlyMentionedBotUser/explicitlyMentionedBotSubteam before the sender gate",
+      );
+    }
+
+    var senderGate =
+      'if (isRoomish && senderGate?.allowed === false) return drop("unauthorized-sender");';
+    var senderGateCount = source.split(senderGate).length - 1;
+    if (senderGateCount !== 1) {
+      throw new Error(
+        "OpenClaw Slack sender deny gate shape not recognized in " +
+          filename +
+          "; expected exactly one gate, found " +
+          senderGateCount,
+      );
+    }
+
+    var next = source.replace(
+      senderGate,
+      [
+        "if (isRoomish && senderGate?.allowed === false) {",
+        "\tawait __nemoclawNotifyDeniedSlackMention({ ctx, message, senderId, " +
+          'explicitMention: opts.source === "app_mention" || explicitlyMentionedBotUser || explicitlyMentionedBotSubteam }); ' +
+          "// " +
+          CALL_MARKER +
+          " (#4752)",
+        '\treturn drop("unauthorized-sender");',
+        "}",
+      ].join("\n"),
+    );
+    var prepareAnchor = /((?:export\s+)?async function prepareSlackMessage\(params\) \{)/;
+    if (!prepareAnchor.test(next)) {
+      throw new Error("OpenClaw Slack prepareSlackMessage definition not found in " + filename);
+    }
+    return next.replace(prepareAnchor, buildDeniedMentionFeedbackHelperSource() + "$1");
   }
 
   function patchSlackPrepareSource(source, filename) {
@@ -191,11 +236,12 @@
     ) {
       return source;
     }
-    // OpenClaw 2026.9.1 moved channel authorization ahead of
-    // prepareSlackMessage and now provides its own bounded, explicit-mention
-    // denial notice. Preserve that reviewed native implementation instead of
-    // trying to match the retired in-function channel-users gate.
-    if (hasNativeDeniedMentionFeedback(source)) return source;
+    // OpenClaw 2026.9.1 provides bounded feedback when a whole channel is
+    // denied, but its later per-sender gate still drops an explicit mention
+    // silently. Patch only that sender gate and preserve the native channel
+    // denial implementation.
+    var nativePatched = patchNativeDeniedSenderGate(source, filename);
+    if (nativePatched !== null) return nativePatched;
     if (source.indexOf(DENY_LOG_SIGNATURE) === -1) {
       throw new Error(
         "OpenClaw Slack prepare module shape not recognized in " +
