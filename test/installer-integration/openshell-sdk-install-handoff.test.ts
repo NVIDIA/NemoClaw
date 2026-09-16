@@ -43,7 +43,7 @@ function packPublicDependency(
   return [
     `node_modules/${name}`,
     {
-      ...sourceLock.packages[`node_modules/${name}`],
+      ...(sourceLock.packages[`node_modules/${name}`] as Record<string, unknown>),
       resolved: `file:${path.join(root, result.filename!)}`,
       integrity: result.integrity,
     },
