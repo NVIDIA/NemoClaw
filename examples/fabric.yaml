@@ -23,10 +23,10 @@ spec:
         provider: docker
       network:
         tier: isolated
+      harness:
+        kind: deepagents
       agents:
         - name: main
-          harness:
-            kind: deepagents
           inference:
             routes:
               - name: primary

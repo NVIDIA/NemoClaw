@@ -52,10 +52,10 @@ spec:
                           path: /docs/**
                 binaries:
                   - path: /usr/bin/curl
+      harness:
+        kind: openclaw
       agents:
         - name: main
-          harness:
-            kind: openclaw
           inference:
             routes:
               - name: primary

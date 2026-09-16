@@ -35,12 +35,11 @@ spec:
             contextWindow: 8192
   sandboxes:
     - name: assistant
+      harnessRef: assistant
       agents:
         - name: researcher
-          harnessRef: assistant
           inferenceRef: smart-and-fast
         - name: writer
-          harnessRef: assistant
           inference:
             routes:
               - name: fast

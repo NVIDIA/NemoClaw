@@ -21,7 +21,7 @@ fn execution_settings_reach_the_runtime_and_round_trip_with_many_agents() {
         json!({"timeoutSeconds":600,"heartbeatEvery":"0m"}),
     ] {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["agents"][0]["harness"]["execution"] = execution.clone();
+        value["spec"]["sandboxes"][0]["harness"]["execution"] = execution.clone();
         let mut reader = value["spec"]["sandboxes"][0]["agents"][0].clone();
         reader["tools"] = json!({"allow":["read"]});
         for name in ["reader", "reviewer", "auditor"] {
@@ -48,11 +48,11 @@ fn execution_settings_reach_the_runtime_and_round_trip_with_many_agents() {
             json!({"timeoutSeconds":1200});
         assert!(
             parse(&value).is_err(),
-            "agents must agree on harness execution settings"
+            "agent-level harness settings are forbidden"
         );
         assert!(
-            schema.is_valid(&value),
-            "cross-agent agreement is checked by the parser"
+            !schema.is_valid(&value),
+            "the schema rejects agent-level harness settings"
         );
     }
 }
@@ -72,14 +72,14 @@ fn malformed_execution_fails_before_planning() {
         json!({"heartbeatEvery":"1m","extra":true}),
     ] {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["agents"][0]["harness"]["execution"] = execution;
+        value["spec"]["sandboxes"][0]["harness"]["execution"] = execution;
         assert!(parse(&value).is_err());
         assert!(!schema.is_valid(&value));
     }
     let mut value = input();
-    let agent = &mut value["spec"]["sandboxes"][0]["agents"][0];
-    agent["harness"]["kind"] = json!("hermes");
-    agent["harness"]["execution"] = json!({"timeoutSeconds":900});
+    let sandbox = &mut value["spec"]["sandboxes"][0];
+    sandbox["harness"]["kind"] = json!("hermes");
+    sandbox["harness"]["execution"] = json!({"timeoutSeconds":900});
     assert!(parse(&value).is_err());
     assert!(!schema.is_valid(&value));
 }

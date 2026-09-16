@@ -70,7 +70,7 @@ async fn execution_settings_cli_export_reapply_and_drift() {
         let mut document =
             Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
                 .unwrap();
-        document.spec.sandboxes[0].agents[0]
+        document.spec.sandboxes[0]
             .harness
             .as_mut()
             .unwrap()
@@ -87,7 +87,7 @@ async fn execution_settings_cli_export_reapply_and_drift() {
 async fn observability_cli_export_reapply_and_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document.spec.sandboxes[0].agents[0]
+    document.spec.sandboxes[0]
         .harness
         .as_mut()
         .unwrap()
@@ -349,13 +349,13 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     }
     if document.inference_provider().unwrap().api.is_some()
         || document.spec.sandboxes[0].agents[0].auth.is_some()
-        || document.spec.sandboxes[0].agents[0]
+        || document.spec.sandboxes[0]
             .harness
             .as_mut()
             .unwrap()
             .execution
             .is_some()
-        || document.spec.sandboxes[0].agents[0]
+        || document.spec.sandboxes[0]
             .harness
             .as_mut()
             .unwrap()
@@ -384,14 +384,14 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
                 .any(|cmd| cmd.ends_with(&["--inference".into(), original.clone()]))
         );
         let mut changed = document.clone();
-        if let Some(execution) = &mut changed.spec.sandboxes[0].agents[0]
+        if let Some(execution) = &mut changed.spec.sandboxes[0]
             .harness
             .as_mut()
             .unwrap()
             .execution
         {
             execution.timeout_seconds = Some(1200);
-        } else if let Some(observability) = &mut changed.spec.sandboxes[0].agents[0]
+        } else if let Some(observability) = &mut changed.spec.sandboxes[0]
             .harness
             .as_mut()
             .unwrap()

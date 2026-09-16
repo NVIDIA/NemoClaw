@@ -49,7 +49,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             vec![
                 ("image", sandbox.image.ref_.clone()),
                 ("agent_name", agent.name.clone()),
-                ("agent_runtime", document.agent_harness(agent)?.runtime()),
+                ("agent_runtime", document.sandbox_harness()?.runtime()),
             ],
         ),
     ] {
@@ -74,7 +74,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             }
             let mut policy = sandbox.policy_proto(
                 document.web_search()?.is_some(),
-                document.agent_harness(agent)?.observability.as_ref(),
+                document.sandbox_harness()?.observability.as_ref(),
             )?;
             for provider in document.selected_inference_providers()? {
                 let connection = document.provider_connection(provider)?;

@@ -27,10 +27,10 @@ spec:
         provider: docker
       network:
         tier: isolated
+      harness:
+        kind: hermes
       agents:
         - name: main
-          harness:
-            kind: hermes
           auth:
             method: api-key
           inference:

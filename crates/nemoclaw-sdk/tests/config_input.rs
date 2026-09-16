@@ -110,7 +110,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
         "/spec/gateway/endpoint",
         "/spec/inferenceProviders/0/name",
         "/spec/inferenceProviders/0/provider",
-        "/spec/sandboxes/0/agents/0/harness",
+        "/spec/sandboxes/0/harness",
     ] {
         let mut invalid = baseline.clone();
         let (parent, key) = path.rsplit_once('/').unwrap();

@@ -10,7 +10,7 @@ fn hermes_accepts_managed_gateway_and_inference() {
         include_str!("../../../examples/managed-ollama.yaml"),
     ] {
         let mut value: Value = serde_saphyr::from_str(source).unwrap();
-        value["spec"]["sandboxes"][0]["agents"][0]["harness"]["kind"] = "hermes".into();
+        value["spec"]["sandboxes"][0]["harness"]["kind"] = "hermes".into();
         let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice())
             .expect("Hermes native server supports managed services");
         assert_eq!(

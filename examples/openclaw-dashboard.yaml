@@ -25,14 +25,14 @@ spec:
         provider: docker
       network:
         tier: isolated
+      harness:
+        kind: openclaw
+        interfaces:
+          dashboard:
+            port: 18800
+            bind: 127.0.0.1
       agents:
         - name: main
-          harness:
-            kind: openclaw
-            interfaces:
-              dashboard:
-                port: 18800
-                bind: 127.0.0.1
           inference:
             routes:
               - name: primary

@@ -24,10 +24,10 @@ spec:
         provider: docker
       network:
         tier: isolated
+      harness:
+        kind: codex
       agents:
         - name: main
-          harness:
-            kind: codex
           inference:
             routes:
               - name: primary

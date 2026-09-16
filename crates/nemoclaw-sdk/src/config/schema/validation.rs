@@ -122,12 +122,12 @@ pub(super) fn constrain(root: &mut Value) {
         }),
     );
     defs["Sandbox"]["allOf"] = json!([{
-        "if": {"properties": {"agents": {"minItems": 2}}, "required": ["agents"]},
-        "then": {"properties": {"agents": {"items": {"properties": {"harness": {"properties": {"kind": {"const": "openclaw"}}}}}}}}
-    }]);
-    defs["Agent"]["allOf"] = json!([{
-        "if": {"required": ["tools"]},
-        "then": {"properties": {"harness": {"properties": {"kind": {"const": "openclaw"}}}}}
+        "if": {"anyOf": [
+            at("agents", json!({"minItems":2}), true),
+            at("agents", json!({"contains":{"required":["tools"]}}), true),
+            at("agents", json!({"contains":at("inference/routes",json!({"minItems":2}),true)}), true)
+        ]},
+        "then": at("harness/kind",json!({"const":"openclaw"}),false)
     }]);
     optional_string(
         &mut defs["Image"],
@@ -194,11 +194,11 @@ pub(super) fn constrain(root: &mut Value) {
     }
     property(&mut defs["Harness"], "kind", json!({"enum": c::HARNESSES}));
     property(
-        &mut defs["Agent"],
+        &mut defs["Sandbox"],
         "harnessRef",
         json!({"pattern": c::SLUG}),
     );
-    defs["Agent"]["allOf"]
+    defs["Sandbox"]["allOf"]
         .as_array_mut()
         .unwrap()
         .push(json!({"oneOf": [
@@ -219,10 +219,6 @@ pub(super) fn constrain(root: &mut Value) {
     );
     defs["Inference"]["if"] = json!({"properties":{"routes":{"minItems":2}},"required":["routes"]});
     defs["Inference"]["then"] = json!({"required":["default"]});
-    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({
-        "if": at("inference/routes",json!({"minItems":2}),true),
-        "then": at("harness/kind",json!({"const":"openclaw"}),false)
-    }));
     defs["Route"]["oneOf"] = json!([
         {"required":["providerRef"],"not":{"required":["provider"]}},
         {"required":["provider"],"not":{"required":["providerRef"]}}
@@ -390,26 +386,26 @@ pub(super) fn constrain(root: &mut Value) {
         let route = format!("{agent}/inference/routes/[]/overrides");
         let service = format!("{provider}/service");
         let rules = json!([
-            {"if": at(&format!("{agent}/harness/kind"), json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
+            {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
             {"if": at("spec/gateway/management", json!({"const": "managed"}), true),
              "then": at(runtime, json!({"enum": ["", "docker"]}), false)},
             {"if": {"allOf": [at(&service, json!({}), true), {"anyOf": [
                 at("spec/gateway/management", json!({"const": "external"}), true),
                 at(runtime, json!({"const": "podman"}), true)
              ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
-            {"if": at(&format!("{agent}/harness/kind"), json!({"not": {"enum": ["openclaw", "hermes"]}}), true),
+            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"enum": ["openclaw", "hermes"]}}), true),
              "then": {"allOf": [at("spec/gateway/management", json!({"const": "external"}), false), at(provider, forbid(&["service", "ollama"]), false)]}},
             {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
-                {"allOf": [at(&format!("{agent}/harness/kind"), json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
+                {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
              "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),
              "else": at(&format!("{provider}/provider"), json!({"const": "openai"}), false)},
-            {"if": at(&format!("{agent}/harness/kind"), json!({"const": "claude"}), true), "then": at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), false)},
-            {"if": at(&format!("{agent}/harness/kind"), json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
-            {"if": at(&format!("{agent}/harness/kind"), json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
-            {"if": at(&format!("{agent}/harness/kind"), json!({"not": {"const": "openclaw"}}), true),
+            {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "claude"}), true), "then": at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), false)},
+            {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
+            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
+            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"const": "openclaw"}}), true),
              "then": at(&route, forbid(&["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]), false)},
-            {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at(&format!("{agent}/harness/kind"), json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["ollamaProxy"]},{"required":["service"],"properties":{"service":{"required":["authentication"]}}}]}), true)]}},
-            {"if": at(&format!("{agent}/harness/kind"), json!({"not": {"const": "pi"}}), true),
+            {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["ollamaProxy"]},{"required":["service"],"properties":{"service":{"required":["authentication"]}}}]}), true)]}},
+            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"const": "pi"}}), true),
              "then": at(&route, forbid(&["piModel"]), false)},
             {"if": at(&format!("{provider}/ollama"), json!({}), true),
              "then": at(&format!("{route}/model"), json!({"pattern": c::OLLAMA_MODEL}), false)}
@@ -417,7 +413,7 @@ pub(super) fn constrain(root: &mut Value) {
         root["allOf"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"if":{"allOf":[selection,at(&format!("{agent}/harness/kind"),json!({}),true)]},"then":{"allOf":rules}}));
+            .push(json!({"if":{"allOf":[selection,at("spec/sandboxes/[]/harness/kind",json!({}),true)]},"then":{"allOf":rules}}));
     }
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
@@ -425,7 +421,7 @@ pub(super) fn constrain(root: &mut Value) {
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, OpenClaw-only multiple choices, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
-        "The parser resolves harnessRef from enclosing harnesses and requires identical resolved harness settings across agents in a sandbox. Shared definitions reuse configuration, not runtime processes across sandboxes.",
+        "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; only OpenClaw currently supports multiple agents. Shared definitions reuse configuration across sandboxes.",
         "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
         "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
         "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed inference dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",

@@ -29,10 +29,10 @@ spec:
       image:
         # Replace with the digest from a current OpenClaw image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: openclaw
       agents:
         - name: researcher
-          harness:
-            kind: openclaw
           integrationRefs: [search]
           inference:
             routes:
@@ -41,8 +41,6 @@ spec:
                 overrides:
                   model: qwen3:4b
         - name: writer
-          harness:
-            kind: openclaw
           integrationRefs: [search]
           inference:
             routes:

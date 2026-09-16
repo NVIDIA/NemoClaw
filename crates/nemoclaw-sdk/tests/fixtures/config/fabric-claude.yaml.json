@@ -1,5 +1,5 @@
 {
-  "digest": "f72279f4b9860262faac505e1fe2d31f7662eb1ae86336d1bf2ac8b2aeddb1f3",
+  "digest": "9cbc4d349cf587649454523a7e989b408610dc77b9aac45d0087b3e11ca48f2d",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -23,9 +23,6 @@
         {
           "agents": [
             {
-              "harness": {
-                "kind": "claude"
-              },
               "inference": {
                 "routes": [
                   {
@@ -40,6 +37,9 @@
               "name": "main"
             }
           ],
+          "harness": {
+            "kind": "claude"
+          },
           "image": {
             "ref": "nc-prototype-fabric@sha256:ad0f0a9bdef6b1d1efd77b850cff8137d257fee03aa29e3b6980d81cd52fb3fb"
           },

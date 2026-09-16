@@ -83,7 +83,7 @@ fn ambiguous_defaults_duplicate_choices_and_unsupported_harnesses_are_rejected()
     duplicate["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][1]["name"] =
         json!("primary");
     let mut hermes = choices();
-    hermes["spec"]["sandboxes"][0]["agents"][0]["harness"]["kind"] = json!("hermes");
+    hermes["spec"]["sandboxes"][0]["harness"]["kind"] = json!("hermes");
     for value in [missing, unknown, duplicate, hermes] {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
