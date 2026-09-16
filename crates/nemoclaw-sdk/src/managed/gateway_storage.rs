@@ -5,7 +5,7 @@
 mod tests;
 
 use super::{
-    GATEWAY_KIND, SUPERVISOR_IMAGE, SUPERVISOR_SHA256, Spec,
+    GATEWAY_KIND, Spec,
     keys::CREDENTIAL_KEY_PATH,
     observation::{verify_labels, verify_network, verify_volume},
 };
@@ -299,7 +299,6 @@ impl Engine {
         }
         self.credential_key(spec, helper_id, data_path, false, true)
             .await?;
-        self.copy_supervisor(spec, helper_id, data_path).await?;
         self.write_files(
             helper_id,
             data_path,
@@ -310,69 +309,5 @@ impl Engine {
             )],
         )
         .await
-    }
-    async fn copy_supervisor(
-        &self,
-        spec: &Spec,
-        helper: &str,
-        data_path: &str,
-    ) -> Result<(), Error> {
-        if self.image(SUPERVISOR_IMAGE).await?.is_none() {
-            self.pull_image(SUPERVISOR_IMAGE).await?;
-        }
-        let name = format!("{}-supervisor-source", spec.name);
-        let mut source = self.container(&name).await?;
-        if source.is_none() {
-            let config:ContainerCreateBody=serde_json::from_value(json!({"Image":SUPERVISOR_IMAGE,"Labels":spec.labels()?,"HostConfig":{"NetworkMode":"none"}})).map_err(|_|Error::State("invalid supervisor extraction specification"))?;
-            let created = self
-                .api
-                .create_container(
-                    Some(CreateContainerOptions {
-                        name: Some(name),
-                        ..Default::default()
-                    }),
-                    config,
-                )
-                .await
-                .map_err(|error| remote(&error))?;
-            source = self.container(&created.id).await?;
-        }
-        let source = source.ok_or(ObservationError::Incomplete)?;
-        let config = source.config.as_ref().ok_or(ObservationError::Incomplete)?;
-        if config.image.as_deref() != Some(SUPERVISOR_IMAGE)
-            || source.state.as_ref().and_then(|state| state.running) != Some(false)
-        {
-            return Err(Error::Conflict(
-                "supervisor extraction identity is unobservable",
-            ));
-        }
-        verify_labels(
-            &spec.labels()?,
-            config.labels.as_ref().ok_or(ObservationError::Incomplete)?,
-        )?;
-        let source_id = source
-            .id
-            .as_deref()
-            .filter(|id| !id.is_empty())
-            .ok_or(ObservationError::Incomplete)?;
-        let bytes = self
-            .read_file(source_id, "/openshell-supervisor", 128 << 20)
-            .await?
-            .ok_or(ObservationError::Incomplete)?;
-        if hash(&bytes) != SUPERVISOR_SHA256 {
-            return Err(Error::Conflict(
-                "supervisor source differs from pinned binary",
-            ));
-        }
-        self.write_files(
-            helper,
-            data_path,
-            &[("openshell-supervisor", &bytes, 0o755)],
-        )
-        .await?;
-        self.api
-            .remove_container(source_id, None)
-            .await
-            .map_err(|error| remote(&error))
     }
 }

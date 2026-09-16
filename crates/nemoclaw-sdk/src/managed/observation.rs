@@ -4,7 +4,7 @@
 #[path = "observation_tests.rs"]
 mod tests;
 
-use super::{GATEWAY_KIND, GENERATION_LABEL, OWNER_LABEL, SERVICE_KIND, SUPERVISOR_SHA256, Spec};
+use super::{GATEWAY_KIND, GENERATION_LABEL, OWNER_LABEL, SERVICE_KIND, Spec};
 use crate::{Error, ObservationError, docker::Engine};
 use bollard::models::{ContainerInspectResponse, NetworkInspect, Volume};
 use serde_json::{Value, json};
@@ -383,21 +383,6 @@ impl Engine {
                     .await?
                     .ok_or(ObservationError::Incomplete)?;
                 actual = gateway_identity(&actual, &signing, &encryption)?;
-                let supervisor = self
-                    .read_file(
-                        &container_id,
-                        &format!("{}/openshell-supervisor", volume.mountpoint),
-                        128 << 20,
-                    )
-                    .await?
-                    .ok_or(ObservationError::Incomplete)?;
-                let digest: String = Sha256::digest(supervisor)
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect();
-                if digest != SUPERVISOR_SHA256 {
-                    return Err(Error::Conflict("gateway supervisor artifact changed"));
-                }
             }
             if !id.is_empty() && id != actual {
                 return Err(ObservationError::BindingMismatch.into());

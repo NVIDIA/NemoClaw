@@ -24,6 +24,9 @@ fn gateway_launch_uses_version_two_configuration_and_supported_process_flags() {
     assert!(config.starts_with("[openshell]\nversion = 2\n"));
     assert!(config.contains("compute_driver = \"docker\""));
     assert!(!config.contains("ttl_secs = 0"));
+    assert!(config.contains("sandbox_runtime_image = \"ghcr.io/nvidia/openshell/sandbox@sha256:"));
+    assert!(config.contains("supervisor_image = \"ghcr.io/nvidia/openshell/supervisor@sha256:"));
+    assert!(!config.contains("supervisor_bin"));
 }
 #[test]
 fn invalid_placement_network_does_not_panic() {
