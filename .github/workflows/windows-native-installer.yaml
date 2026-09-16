@@ -185,23 +185,68 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The helper-proof consumption controls failed.' }
           & python -m unittest discover -s "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer" -p 'test_materialize_compiled_executable.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'The compiled artifact materialization controls failed.' }
-      - name: Reuse only the exact reviewed OpenShell host binaries
+      - name: Check out the pinned OpenShell host source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/OpenShell
+          ref: bcd517bbe08cc80860c9be57699390cd32e8445f
+          path: openshell
+          persist-credentials: false
+      - name: Build and test the current OpenShell derivative
+        working-directory: openshell
         shell: pwsh
+        env:
+          RUSTUP_TOOLCHAIN: 1.95.0-aarch64-pc-windows-msvc
         run: |
+          $ErrorActionPreference = 'Stop'
           $work = "$env:RUNNER_TEMP\finished-windows"
-          $msi = "$work\host-source.msi"
-          Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 `
-            -Uri 'https://media.githubusercontent.com/media/NVIDIA/NemoClaw/8856ce6f0263ca55427924e64605b700a7bed6b5/NemoClaw-0.1.0-windows-arm64.msi' -OutFile $msi
-          if ((Get-Item -LiteralPath $msi).Length -ne 259973780 -or `
-              (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant() -cne '2eadf86ba80fbfbb0b84803c32835fcfff0a33a19e2629ead346610db8fb6a8c') {
-            throw 'The immutable native-host source MSI failed verification.'
+          $patch = "$env:GITHUB_WORKSPACE\candidate\packaging\windows\openshell-2721-node-ui.patch"
+          $revision = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $revision -cne 'bcd517bbe08cc80860c9be57699390cd32e8445f') { throw 'Unexpected OpenShell source.' }
+          $status = & git status --porcelain
+          if ($LASTEXITCODE -ne 0 -or $status) { throw 'The OpenShell checkout is not clean.' }
+          $patchHash = (Get-FileHash -LiteralPath $patch -Algorithm SHA256).Hash.ToLowerInvariant()
+          & git apply --check -- $patch
+          if ($LASTEXITCODE -ne 0) { throw 'The current OpenShell derivative no longer applies exactly.' }
+          & git apply -- $patch
+          if ($LASTEXITCODE -ne 0) { throw 'Applying the current OpenShell derivative failed.' }
+          $sourceDiff = & git diff --binary
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot record the patched source.' }
+          $env:CARGO_TARGET_DIR = "$work\openshell-target"
+          if (Test-Path -LiteralPath $env:CARGO_TARGET_DIR) { throw 'OpenShell must build into a fresh target directory.' }
+          . .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc -LogDir "$work\openshell-logs"
+          Assert-NativeTestTarget 'aarch64-pc-windows-msvc'
+          Invoke-VsCargo -RustTarget 'aarch64-pc-windows-msvc' `
+            -CargoArgs 'cargo test --locked --release --target aarch64-pc-windows-msvc -p openshell-driver-mxc --lib -- --test-threads=1' `
+            -LogName 'mxc-driver-tests.log'
+          $afterDiff = & git diff --binary
+          if ($LASTEXITCODE -ne 0 -or ($sourceDiff -join "`n") -cne ($afterDiff -join "`n") -or `
+              (Get-FileHash -LiteralPath $patch -Algorithm SHA256).Hash.ToLowerInvariant() -cne $patchHash) {
+            throw 'OpenShell source or its derivative patch changed during the build.'
           }
-          $extractor = "$env:ProgramFiles\7-Zip\7z.exe"
-          if (-not (Test-Path -LiteralPath $extractor -PathType Leaf)) { throw 'The Windows CI image is missing its explicit7-Zip extraction tool.' }
-          & python "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\extract-openshell-host.py" `
-            --msi $msi --seven-zip $extractor --source-root "$env:GITHUB_WORKSPACE\candidate" --source-revision $env:GITHUB_SHA `
-            --output "$work\openshell-binaries" --scratch "$work\native-extract"
-          if ($LASTEXITCODE -ne 0) { throw 'The two-file native host extraction failed.' }
+          $output = "$work\openshell-binaries"
+          New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
+          $files = foreach ($name in @('openshell.exe', 'openshell-gateway.exe')) {
+            $binary = Join-Path $env:CARGO_TARGET_DIR "aarch64-pc-windows-msvc\release\$name"
+            $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+            $copy = Join-Path $output $name
+            Copy-Item -LiteralPath $binary -Destination $copy -ErrorAction Stop
+            if ((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) { throw 'OpenShell build copy changed.' }
+            @{ file = $name; bytes = (Get-Item -LiteralPath $copy).Length; sha256 = $hash }
+          }
+          @{
+            schemaVersion = 1
+            classification = 'ci-built-openshell-host-binaries'
+            requestedSourceRevision = $env:GITHUB_SHA
+            openshellRevision = $revision
+            derivativePatchSha256 = $patchHash
+            rustToolchain = $env:RUSTUP_TOOLCHAIN
+            rustTarget = 'aarch64-pc-windows-msvc'
+            workflowRunId = $env:GITHUB_RUN_ID
+            workflowRunAttempt = $env:GITHUB_RUN_ATTEMPT
+            files = @($files)
+            currentPackageQualification = $false
+          } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$output\openshell-build.json" -Encoding utf8NoBOM
       - name: Prepare native host files without any legacy agent tree
         shell: pwsh
         run: |
@@ -383,7 +428,7 @@ jobs:
         shell: pwsh
         run: |
           $package = "$env:RUNNER_TEMP\finished-windows\package"
-          $paths = @('build/BootstrapperPayloads.wxs','build/payload/mxc/wxc-host-prep.exe') + @(Get-ChildItem -LiteralPath "$package\build\bootstrapper" -File | ForEach-Object { 'build/bootstrapper/' + $_.Name })
+          $paths = @('build/BootstrapperPayloads.wxs','build/payload/mxc/wxc-host-prep.exe','build/payload/mxc/wxc-exec.exe') + @(Get-ChildItem -LiteralPath "$package\build\bootstrapper" -File | ForEach-Object { 'build/bootstrapper/' + $_.Name })
           $files = @($paths | ForEach-Object { $file = Join-Path $package $_; @{file=$_;bytes=(Get-Item -LiteralPath $file).Length;sha256=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()} })
           [IO.File]::WriteAllText("$package\migration-inputs.json", (@{schemaVersion=1;sourceRevision=$env:GITHUB_SHA;files=$files}|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
       - name: Preserve same-build UI bytes for separate setup regression
@@ -396,6 +441,7 @@ jobs:
             ${{ runner.temp }}/finished-windows/package/build/BootstrapperPayloads.wxs
             ${{ runner.temp }}/finished-windows/package/build/bootstrapper/*
             ${{ runner.temp }}/finished-windows/package/build/payload/mxc/wxc-host-prep.exe
+            ${{ runner.temp }}/finished-windows/package/build/payload/mxc/wxc-exec.exe
           if-no-files-found: error
       - name: Preserve finished build and helper proof evidence
         if: ${{ always() }}
@@ -417,8 +463,8 @@ jobs:
             ${{ runner.temp }}/finished-windows/package/*.json
             ${{ runner.temp }}/finished-windows/package/build/*.log
             ${{ runner.temp }}/finished-windows/*.log
-            ${{ runner.temp }}/finished-windows/openshell-binaries/openshell-reuse.json
-            ${{ runner.temp }}/finished-windows/native-extract/*.log
+            ${{ runner.temp }}/finished-windows/openshell-binaries/openshell-build.json
+            ${{ runner.temp }}/finished-windows/openshell-logs/*.log
             ${{ runner.temp }}/finished-windows/system-drive-helper/build-receipt.json
             ${{ runner.temp }}/finished-windows/system-drive-helper/build.log
             ${{ runner.temp }}/finished-windows/system-drive-proof/
@@ -774,7 +820,7 @@ jobs:
       - name: Verify retained preparation errors and Setup diagnostics
         shell: pwsh
         run: |
-          & dotnet run --project packaging/windows/tests/host-preparation-diagnostics/HostPreparation.Diagnostics.Controls.csproj
+          & dotnet run --project packaging/windows/tests/host-preparation-diagnostics/HostPreparation.Diagnostics.Controls.csproj -- "$env:RUNNER_TEMP\system-drive-inputs\package\bin\arm64\wxc-exec.exe"
           if ($LASTEXITCODE -ne 0) { throw 'The preparation diagnostic controls failed.' }
       - name: Verify the actual system root and contained Node access
         shell: pwsh

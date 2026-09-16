@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createNativeDiagnosticCapture,
   createNativeSessionDiagnostics,
@@ -240,36 +242,39 @@ describe("native session diagnostic secrecy and final errors", () => {
 
   it("keeps a real timeout as failure and terminates the owned child", async () => {
     await withChild(async (script) => {
-      let output = "";
-      await expect(
-        (await runner).run(
-          process.execPath,
-          [script, "timeout"],
-          process.env,
-          "controlled timeout",
-          400,
-          {
-            capture(_name, chunk) {
-              output += chunk;
-            },
-          },
-        ),
-      ).rejects.toThrow(/timed out/u);
-      const pid = Number(/CHILD_PID=(\d+)/u.exec(output)?.[1]);
-      expect(pid).toBeGreaterThan(0);
-      const deadline = performance.now() + 3000;
-      let exited = false;
-      while (performance.now() < deadline) {
-        try {
-          process.kill(pid, 0);
-        } catch (error) {
-          expect(error).toMatchObject({ code: "ESRCH" });
-          exited = true;
-          break;
+      const spawned = vi.spyOn(childProcess, "spawn");
+      syncBuiltinESMExports();
+      try {
+        await expect(
+          (await runner).run(
+            process.execPath,
+            [script, "timeout"],
+            process.env,
+            "controlled timeout",
+            400,
+          ),
+        ).rejects.toThrow(/timed out/u);
+        // The deadline can expire before Node prints. Observe the actual child handle.
+        expect(spawned).toHaveBeenCalledTimes(1);
+        const pid = spawned.mock.results[0]?.value?.pid;
+        expect(pid).toBeGreaterThan(0);
+        const deadline = performance.now() + 3000;
+        let exited = false;
+        while (performance.now() < deadline) {
+          try {
+            process.kill(pid, 0);
+          } catch (error) {
+            expect(error).toMatchObject({ code: "ESRCH" });
+            exited = true;
+            break;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
         }
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        expect(exited).toBe(true);
+      } finally {
+        spawned.mockRestore();
+        syncBuiltinESMExports();
       }
-      expect(exited).toBe(true);
     });
   });
 

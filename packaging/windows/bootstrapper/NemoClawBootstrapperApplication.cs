@@ -30,6 +30,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     private string? executingPackageId;
     private readonly string preparationAttempt = Guid.NewGuid().ToString("N");
     private NativePreparationFailure? preparationFailure;
+    private string? preparationTier;
     private readonly NativePresentationUpdates stepProgressUpdates = new();
     private readonly NativePresentationUpdates overallProgressUpdates = new();
     private LaunchAction plannedAction = LaunchAction.Unknown;
@@ -86,7 +87,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             {
                 this.window = new MainWindow();
                 this.ownerWindow = this.window;
-                this.window.InstallRequested += (_, _) => this.BeginPlan(LaunchAction.Install);
+                this.window.InstallRequested += (_, _) => _ = this.BeginPlanAsync(LaunchAction.Install);
                 this.window.RepairRequested += (_, _) => _ = this.BeginMaintenanceAsync(LaunchAction.Repair);
                 this.window.UninstallRequested += (_, _) => _ = this.BeginMaintenanceAsync(LaunchAction.Uninstall);
                 this.window.ReplacePreviewRequested += (_, _) => _ = this.ReplacePreviousPreviewAsync();
@@ -132,6 +133,15 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         this.DetectPackageComplete += this.OnDetectPackageComplete;
         this.DetectComplete += this.OnDetectComplete;
         this.PlanComplete += this.OnPlanComplete;
+        this.PlanPackageBegin += (_, args) =>
+        {
+            try
+            {
+                if (NativeHostPreparation.SkipPackage(args.PackageId, this.preparationTier, this.plannedAction == LaunchAction.Uninstall))
+                    args.State = RequestState.None;
+            }
+            catch (InvalidOperationException) { args.Cancel = true; }
+        };
         this.ApplyBegin += (_, _) => this.Ui(() => this.window?.ShowProgress("Preparing your changes", "Windows is preparing the selected changes to NemoClaw on this PC."));
         this.CacheAcquireProgress += (_, args) =>
         {
@@ -221,10 +231,10 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             requested = this.installed ? LaunchAction.Repair : LaunchAction.Install;
         }
         if (requested is LaunchAction.Repair or LaunchAction.Uninstall) _ = this.PrepareHeadlessMaintenanceAsync(requested);
-        else this.BeginPlan(requested);
+        else _ = this.BeginPlanAsync(requested);
     }
 
-    private void BeginPlan(LaunchAction action)
+    private async Task BeginPlanAsync(LaunchAction action)
     {
         if (this.plannedAction != LaunchAction.Unknown)
         {
@@ -233,7 +243,25 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
         this.plannedAction = action;
         this.Ui(() => this.window?.ShowProgress("Preparing your installation", "Checking the files and changes needed on this PC."));
-        this.Engine.Plan(action);
+        try
+        {
+            if (action is LaunchAction.Install or LaunchAction.Repair)
+            {
+                this.preparationTier = await NativeHostPreparation.ProbeAsync(Path.Combine(AppContext.BaseDirectory, "NemoClaw.MxcProbe.exe"));
+                this.Engine.Log(LogLevel.Standard, "MXC preparation tier: " + this.preparationTier);
+                this.Ui(() => this.window?.ShowProgress("Preparing your installation", "Detected isolation: " + this.preparationTier));
+            }
+            this.Engine.Plan(action);
+        }
+        catch (Exception)
+        {
+            this.result = 1;
+            this.plannedAction = LaunchAction.Unknown;
+            this.preparationTier = null;
+            this.Engine.Log(LogLevel.Error, "MXC capability inspection failed; no installation plan was applied.");
+            this.Ui(() => this.window?.ShowFailure("Setup could not verify the packaged MXC isolation capabilities. No installation changes were started.", this.BundleLogPath()));
+            this.StopDispatchersForHeadless();
+        }
     }
 
     private async Task BeginMaintenanceAsync(LaunchAction action)
@@ -264,7 +292,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
                 if (action == LaunchAction.Uninstall) NativeDesktopIntegration.RemoveOwned(NativeSetupOperations.InstalledLauncher());
                 this.window?.ShowSuccess(action);
             }
-            else this.BeginPlan(action);
+            else await this.BeginPlanAsync(action);
         }
         catch (Exception error)
         {
@@ -317,7 +345,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         try
         {
             await NativeMaintenance.StopSharedInferenceAsync();
-            this.BeginPlan(action);
+            await this.BeginPlanAsync(action);
         }
         catch (Exception)
         {

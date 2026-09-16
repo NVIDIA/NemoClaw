@@ -262,7 +262,7 @@ try {
     $runtimeTuple = @($assembly.runtime.runtimeId, $assembly.runtime.manifestSha256, $assembly.runtime.sourceRevision,
         $assembly.runtime.nodeSha256, $assembly.runtime.nodeVersion) -join ' '
     Invoke-BuildTool $WixPath @('build', '-arch', 'arm64', '-d', "ProductVersion=$ProductVersion", '-d', "SourceRoot=$SourceRoot",
-        '-d', "MsiPath=$msi", '-d', "WxcHostPrepPath=$(Join-Path $payload 'mxc\wxc-host-prep.exe')",
+        '-d', "MsiPath=$msi", '-d', "WxcHostPrepPath=$(Join-Path $payload 'mxc\wxc-host-prep.exe')", '-d', "WxcExecPath=$(Join-Path $payload 'mxc\wxc-exec.exe')",
         '-d', 'SystemDriveMetadataPreparation=true', '-d', "SystemDrivePrepPath=$SystemDrivePrepPath", '-d', "SystemDrivePrepSha256=$systemDriveSha",
         '-d', "RuntimeImageFinalization=$($imageDelivery.ToString().ToLowerInvariant())", '-d', "RuntimeFinalizerPath=$helper",
         '-d', "RuntimeFinalizerSha256=$helperSha", '-d', "RuntimeTuple=$runtimeTuple", '-d', "RuntimeId=$($assembly.runtime.runtimeId)",

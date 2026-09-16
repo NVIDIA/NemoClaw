@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,8 @@ import { interactiveWorkloadSource } from "./run-installed-native-console-agent.
 import type { NativeOptions } from "./native-options.mts";
 import { hermesDashboardPythonSource } from "./native-hermes-dashboard.mts";
 import { renderFactory, staticWorkerSource } from "../distribution/build-native-workers.mts";
+import { probeSource } from "./run-installed-native-turn.mts";
+import { gatewaySource } from "./run-installed-native-web-ui.mts";
 import {
   nativeHermesToolEnvironment,
   nativeHermesCompatibility,
@@ -25,6 +28,23 @@ import {
   nativeRuntimeWorkerCommand,
   validateNativeRuntimeReceipt,
 } from "./native-runtime.mts";
+
+test("prebuilt OpenClaw factories materialize the exported workers as valid JavaScript", () => {
+  const root = fileURLToPath(new URL("./", import.meta.url));
+  for (const [file, name, factory] of [
+    ["run-installed-native-turn.mts", "probeSource", probeSource],
+    ["run-installed-native-web-ui.mts", "gatewaySource", gatewaySource],
+  ] as const) {
+    const source = renderFactory(root, file, name);
+    assert.equal(source, factory());
+    const parsed = spawnSync(process.execPath, ["--check", "--input-type=module"], {
+      input: source,
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(parsed.status, 0, parsed.stderr);
+  }
+});
 
 function heldHermesRuntime(agent: "hermes" | "pi" = "hermes") {
   const install = "C:\\Program Files\\NVIDIA\\NemoClaw";
