@@ -196,6 +196,7 @@ function makeHealthyVmGatewayEnv(prefix: string): Record<string, string> {
   writeExecutable(path.join(localBin, "openshell"), [
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
+    '  "gateway list") printf \'[{"name":"nemoclaw","endpoint":"https://127.0.0.1:8080","active":true}]\'; exit 0 ;;',
     '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
     '  "sandbox exec") printf "NEMOCLAW_DCODE_PROBE=no-runtime\\n"; exit 0 ;;',
     '  "sandbox ssh-config") for sandbox_ref in "$@"; do :; done; printf "Host openshell-%s\\n  HostName 127.0.0.1\\n  User sandbox\\n" "$sandbox_ref"; exit 0 ;;',
@@ -260,6 +261,7 @@ function makeVmRestoreToEnv(
     "esac",
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
+    '  "gateway list") printf \'[{"name":"nemoclaw","endpoint":"https://127.0.0.1:8080","active":true}]\'; exit 0 ;;',
     `  "sandbox get") [ "$3 $4" = "-g nemoclaw" ] || exit 91; for sandbox_ref in "$@"; do :; done; if [ -f ${JSON.stringify(cloneIdentityCapturedMarker)} ]; then clone_identity=${JSON.stringify(revalidatedCloneIdentity)}; else touch ${JSON.stringify(cloneIdentityCapturedMarker)}; clone_identity=${JSON.stringify(cloneIdentity)}; fi; printf "Name: %s\\nId: %s\\nPhase: Ready\\n" "$sandbox_ref" "$clone_identity"; exit 0 ;;`,
     `  "sandbox list") if [ -n "\${3:-}" ] && [ "$3 $4" != "-g nemoclaw" ]; then exit 91; fi; if [ -f ${JSON.stringify(cloneReadyMarker)} ]; then printf "NAME STATUS\\nalpha Ready\\nclone-1 Ready\\n"; else printf "NAME STATUS\\nalpha Ready\\n"; fi; exit 0 ;;`,
     '  "sandbox exec")',

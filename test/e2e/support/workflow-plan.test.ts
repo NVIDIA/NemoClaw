@@ -34,9 +34,7 @@ import {
 } from "../../../tools/e2e/workflow-plan.mts";
 import { runOnboardProcessAsync } from "../../helpers/onboard-child-process-harness";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { listTargets } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
-import { liveTargetSupport } from "../registry/runtime-support.ts";
 import { expectedWorkflowPlanCiOutput } from "./workflow-plan-test-assertions.ts";
 
 const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
@@ -101,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(85);
+    expect(plan.coverageMatrix).toHaveLength(83);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -144,14 +142,9 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(50);
+    expect(catalogueIds).toHaveLength(49);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining([
-        "bootstrap-install-smoke",
-        "gateway-guard-recovery",
-        "rebuild-hermes",
-        "rebuild-openclaw",
-      ]),
+      expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
@@ -181,21 +174,10 @@ describe("E2E workflow plan", () => {
     expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   });
 
-  it("keeps multiple inert declarations visibly unresolved without treating them as evidence (#9167)", () => {
-    const plan = buildE2eWorkflowPlan({
-      targets: "ubuntu-repo-cloud-hermes,ubuntu-repo-cloud-hermes-slack",
-    });
-
-    expect(plan.matrix).toHaveLength(2);
-    expect(plan.matrix.every((row) => !row.supported)).toBe(true);
-    expect(plan.coverageMatrix).toEqual([
-      expect.objectContaining({ id: "ubuntu-repo-cloud-hermes", agentRuntime: "unresolved" }),
-      expect.objectContaining({
-        id: "ubuntu-repo-cloud-hermes-slack",
-        agentRuntime: "unresolved",
-      }),
-    ]);
-    expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
+  it("rejects removed typed-registry placeholders (#11407)", () => {
+    expect(() => buildE2eWorkflowPlan({ targets: "ubuntu-repo-cloud-hermes" })).toThrow(
+      "Unknown target 'ubuntu-repo-cloud-hermes'",
+    );
   });
 
   it("includes staging only when the execution plan selects it (#9167)", () => {
@@ -286,16 +268,11 @@ describe("E2E workflow plan", () => {
 
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
-      jobs: "gateway-guard-recovery,hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
+      jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
     });
 
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          id: "gateway-guard-recovery",
-          host_packages: "",
-          install_non_interactive: true,
-        }),
         expect.objectContaining({
           id: "hermes-slack",
           display_name: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
@@ -676,6 +653,20 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each([
+    "src/lib/actions/sandbox/gateway-state.ts",
+    "src/lib/onboard/runtime-provider/docker.ts",
+  ])("selects stopped-phase survival coverage when %s changes", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "sandbox-survival",
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "sandbox-survival",
+    );
+  });
+
   it.each(["src/lib/onboard/dashboard-forward-control.ts", "src/lib/onboard/dashboard-runtime.ts"])(
     "selects both Hermes onboarding scenarios when %s changes",
     (changedFile) => {
@@ -686,6 +677,21 @@ describe("E2E workflow plan", () => {
       );
     },
   );
+
+  it.each([
+    "src/lib/adapters/openshell/command-execution.ts",
+    "src/lib/adapters/openshell/forward-cli.ts",
+    "src/lib/adapters/openshell/forward-runtime.ts",
+    "src/lib/adapters/openshell/forward.ts",
+  ])("selects OpenClaw and Hermes forward lifecycles when %s changes (#9808)", (changedFile) => {
+    const targetIds = catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id);
+
+    expect(targetIds).toEqual([
+      "dashboard-remote-bind",
+      "double-onboard-hermes",
+      "onboard-resume-hermes",
+    ]);
+  });
 
   it.each(["double-onboard-hermes", "onboard-resume-hermes"])(
     "prepares Hermes swap for the %s execution",
@@ -1208,18 +1214,8 @@ describe("E2E workflow plan", () => {
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
     expect(complete.stdout).not.toContain("llama-cpp-dgx-spark-qualification");
-    expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
-    const inertDeclarationCount = listTargets().filter(
-      (target) => !liveTargetSupport(target).supported,
-    ).length;
-    expect(complete.stdout).toContain(
-      `The ${inertDeclarationCount} inert typed declarations above`,
-    );
-    expect(complete.stdout).toContain(
-      "| `brev-launchable-cloud-openclaw` | unresolved | unresolved | unresolved | platform 'brev-launchable' is not wired for live fixtures; install 'launchable' is not wired for live fixtures |",
-    );
-    expect(complete.stdout).toContain("#8285");
-    expect(complete.stdout).toContain("#8286");
+    expect(complete.stdout).not.toContain("Unsupported or unresolved typed declarations");
+    expect(complete.stdout).not.toContain("inert typed declarations");
   });
 
   it("keeps CI and readable summary output modes separate", () => {

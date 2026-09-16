@@ -78,7 +78,7 @@ type SandboxDestroyExecutionInput = {
   expectedContainerIdentityFingerprint?: string;
   expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
-  verifyForwardPortsReleased?: () => boolean;
+  verifyForwardPortsReleased?: () => boolean | Promise<boolean>;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
@@ -291,9 +291,11 @@ export async function executeSandboxDestroy({
           };
         }
         try {
-          const actual = sandbox
-            ? identityProvider.cleanup.captureDestroyIdentity?.({ sandbox, sandboxName })
-            : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
+          const captureBySandbox = identityProvider.cleanup.captureDestroyIdentity;
+          const actual =
+            sandbox?.openshellDriver?.trim() && captureBySandbox
+              ? captureBySandbox({ sandbox, sandboxName })
+              : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
           if (!actual) {
             return {
               status: "probe-failed",
@@ -624,7 +626,7 @@ export async function executeSandboxDestroy({
     if (!forcedLocalCleanup) {
       let portsReleased = false;
       try {
-        portsReleased = verifyForwardPortsReleased();
+        portsReleased = await verifyForwardPortsReleased();
       } catch {
         portsReleased = false;
       }

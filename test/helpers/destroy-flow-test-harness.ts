@@ -27,6 +27,7 @@ export type DestroyHarness = {
   captureOpenshellSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
+  prepareSandboxDestroy: typeof import("../../src/lib/actions/sandbox/destroy-preflight").prepareSandboxDestroy;
   dockerCaptureSpy: MockInstance;
   dockerRunSpy: MockInstance;
   errorSpy: MockInstance;
@@ -81,6 +82,7 @@ export type DestroyHarness = {
 };
 
 type DestroyHarnessOptions = {
+  callThroughGatewaySelection?: boolean;
   agent?: "openclaw" | "hermes";
   deleteError?: Error;
   deleteOutput?: string;
@@ -580,18 +582,26 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       defaultIdentityResult;
     return result as ReturnType<typeof dockerRun.dockerRun>;
   });
-  const selectGatewaySpy = vi
-    .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")
-    .mockImplementation(() => undefined);
+  const selectGatewaySpy = vi.spyOn(destroyGateway, "selectGatewayForSandboxDestroy");
+  if (!options.callThroughGatewaySelection)
+    selectGatewaySpy.mockImplementation(async () => undefined);
   const resolveGatewayRuntimeProviderIdSpy = vi
     .spyOn(destroyGateway, "resolveGatewayCleanupRuntimeProviderId")
     .mockImplementation(
-      (_gatewayName: string, registeredProviderId?: string | null) =>
-        registeredProviderId ?? options.recoveredGatewayRuntimeProviderId ?? null,
+      (
+        _gatewayName: string,
+        registeredProviderId?: string | null,
+        deps?: { configuredRuntimeProviderId?: string | null },
+      ) =>
+        registeredProviderId ??
+        options.recoveredGatewayRuntimeProviderId ??
+        deps?.configuredRuntimeProviderId ??
+        process.env.NEMOCLAW_GATEWAY_RUNTIME?.trim().toLowerCase() ??
+        null,
     );
   const cleanupGatewaySpy = vi
     .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
-    .mockImplementation(() => undefined);
+    .mockImplementation(async () => undefined);
   const shouldCleanupGatewaySpy = vi.spyOn(
     destroyGatewayCleanup,
     "shouldCleanupGatewayAfterConfirmedFinalDestroy",
@@ -698,6 +708,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     dockerCaptureSpy,
     dockerRunSpy,
     destroySandbox: requireSource(destroyModulePath).destroySandbox,
+    prepareSandboxDestroy: requireSource("./destroy-preflight.js").prepareSandboxDestroy,
     errorSpy,
     events,
     executeSandboxDestroySpy,

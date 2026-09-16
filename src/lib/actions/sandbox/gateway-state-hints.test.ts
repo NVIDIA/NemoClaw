@@ -55,8 +55,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
     const dockerHealth = requireDist("./docker-health.js");
     const gatewaySelect = requireDist("./gateway-select.js");
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
     captureOpenshellSpy = vi.spyOn(openshellRuntime, "captureOpenshell");
     mockSandboxPhase("Ready");
     getNamedGatewayLifecycleStateSpy = vi
