@@ -66,8 +66,34 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect the [model lifecycle](models.md) and correct capacity/startup conditions before explicit recovery |
 
-A symptom-to-log-location guide with verified collection commands for every harness and backend: **TBD**.
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
+
+## Read Native Service Logs
+
+For a reachable sandbox, [select its gateway and workspace](interfaces.md#select-the-gateway-and-workspace) on the client host.
+Run the command for its harness from any directory, replacing `assistant` with the declared sandbox name.
+These commands read native process output without restarting it.
+Logs can contain prompts, responses, and native errors that have not passed through the SDK's secret redaction; inspect them privately before sharing excerpts.
+
+OpenClaw writes gateway stdout and stderr to its retained native home:
+
+```sh
+openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.openclaw/gateway.log
+```
+
+Hermes writes its Fabric-owned API process output separately from dashboard sessions:
+
+```sh
+openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.hermes/api.log
+```
+
+Expect the latest process output, which may be empty before the process emits a message.
+A missing file can mean startup stopped before opening the log; it does not establish that the sandbox or its data is absent.
+Use the original apply error and the [failure table](#identify-the-failure) to choose recovery.
+Do not replay an uncertain native invocation merely to reproduce a log entry.
+The [OpenClaw](../image/fabric/openclaw_adapter.py) and [Hermes](../image/fabric/hermes_adapter.py) adapters define these paths and append behavior.
+
+Collection procedures for other harnesses, Hermes dashboard logs, and an inaccessible sandbox: **TBD** pending evidence for each process and access path.
 
 ## Traces and Web Search
 

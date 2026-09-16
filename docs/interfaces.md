@@ -3,6 +3,49 @@
 
 # Access Agent Interfaces
 
+## Select the Gateway and Workspace
+
+Use the pinned OpenShell 0.0.116 CLI on the client host.
+These selectors choose an existing gateway and deployment; they do not create services or provision credentials.
+Run them in every terminal used for forwarding or sandbox commands, from any directory.
+
+For an existing authenticated gateway profile supplied by its operator:
+
+```sh
+unset OPENSHELL_GATEWAY_ENDPOINT
+export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME
+```
+
+The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML.
+Its stored authentication must grant access to the deployment workspace.
+The endpoint override takes precedence over the profile, which is why this example clears it.
+NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
+Provisioning a new authenticated profile, including its issuer or mTLS client certificates, remains **TBD** pending a qualified operator procedure.
+
+For an existing plaintext loopback gateway instead, select its actual endpoint directly:
+
+```sh
+unset OPENSHELL_GATEWAY
+export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
+```
+
+Replace the example port with the one in your YAML.
+Use this variant only when that gateway is already listening on the client host's loopback interface.
+Do not replace an authenticated remote endpoint with plaintext or disable TLS verification to make access work.
+
+The workspace name comes from `metadata.uid`, not the deployment or sandbox name.
+Paste the exact UID from the applied YAML at the prompt:
+
+```sh
+python3 -c 'import hashlib; uid = input("Deployment metadata.uid: ").strip(); print("nc-" + hashlib.sha256(uid.encode()).hexdigest()[:16])'
+export OPENSHELL_WORKSPACE=REPLACE_WITH_PRINTED_WORKSPACE
+```
+
+This matches the SDK's [workspace derivation](../crates/nemoclaw-sdk/src/config/mod.rs).
+The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-cli/src/main.rs).
+The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
+On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
+
 ## OpenClaw Dashboard
 
 Declare OpenClaw dashboard settings on the first agent in a sandbox.
@@ -37,7 +80,7 @@ Readiness verifies the native settings and performs an authenticated gateway hea
 
 ## Connect through OpenShell
 
-Use an OpenShell 0.0.116 CLI configured for the deployment's gateway and workspace, with that gateway's required authentication.
+First [select the gateway and workspace](#select-the-gateway-and-workspace).
 From the client host, forward the same local and target ports:
 
 ```sh
@@ -75,7 +118,7 @@ This version has no token-rotation command; use a new deployment when replacing 
 
 Configuration drift, a missing token, invalid file permissions, or failed authenticated health checks stop readiness or export.
 NemoClaw retains established resource identities and does not overwrite the native configuration to hide drift.
-Inspect the owned gateway logs and retained files, restore the intended settings and credential permissions, and reapply.
+Inspect the [native logs](troubleshooting.md#read-native-service-logs) and retained files, restore the intended settings and credential permissions, and reapply.
 
 Offline fixtures exercise the real native gateway and local protocol endpoints.
 They do not establish browser compatibility or qualify a public dashboard deployment.
@@ -141,7 +184,7 @@ Use a fresh deployment UID and state directory when changing images or interface
 The [managed Hermes example](../examples/managed-hermes.yaml) uses managed Ollama and disables the dashboard.
 Apply using the [desired-state workflow](usage.md).
 
-With an authenticated OpenShell CLI configured for the deployment's gateway and workspace, run each desired forward in a separate terminal:
+After [selecting the gateway and workspace](#select-the-gateway-and-workspace), run each desired forward in a separate terminal:
 
 ```sh
 openshell forward service assistant --target-port 18800 --local 127.0.0.1:18800

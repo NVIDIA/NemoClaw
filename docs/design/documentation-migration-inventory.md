@@ -9,9 +9,12 @@ The baseline for current behavior is v1 revision `089a4bffb07c8386b0487bb1c6d776
 Read old source with `git show 97745a7ad9649f851704493e4b670b3674f875aa:docs/PATH`.
 
 Source paths in the tables are relative to the old `docs/` directory.
-Destination paths are relative to the proposed new `docs/` directory; some destinations do not exist yet.
+Destination paths are relative to `docs/`.
 Work package IDs refer to the plan.
-These dispositions are planning decisions to review in D00, not completed migrations or product commitments.
+Disposition describes how an old topic maps to v1; it does not report completion.
+Coverage below records authoring closure separately from remaining qualification or implementation gates.
+**Pending audit** means the current owner still needs topic-level reconciliation.
+**Written** means the supported procedure or explicit limitation is documented; any named gate remains open.
 
 - **Rewrite:** the reader task continues, but the procedure or contract changes substantially.
 - **Merge:** retain relevant facts in the named canonical owner after checking current behavior.
@@ -24,183 +27,183 @@ Held pages may contain reusable explanations, but their old commands must remain
 
 ## About and Home — 6 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `index.mdx` | Rewrite | `README.md`, `get-started.md`, `resources.md`: task entry points and version-aware agent access | D02, D08 |
-| `about/overview.mdx` | Rewrite | `overview.md`: desired-state product and present capabilities | D02 |
-| `about/how-it-works.mdx` | Rewrite | `overview.md`: deployment flow; link `design/architecture.md` for internals | D02 |
-| `about/ecosystem.mdx` | Merge | `overview.md`, `agents.md`: NemoClaw/OpenShell/Fabric/OpenClaw ownership | D02, D06 |
-| `about/ecosystem-hermes.mdx` | Merge | `overview.md`, `agents.md`: Hermes ownership and native access | D02, D06 |
-| `about/ecosystem-deepagents.mdx` | Merge | `overview.md`, `agents.md`: Deep Agents ownership and external-service requirements | D02, D06 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `index.mdx` | Rewrite | `README.md`, `get-started.md`, `resources.md`: task entry points and version-aware agent access | D02, D08 | Pending audit |
+| `about/overview.mdx` | Rewrite | `overview.md`: desired-state product and present capabilities | D02 | Pending audit |
+| `about/how-it-works.mdx` | Rewrite | `overview.md`: deployment flow; link `design/architecture.md` for internals | D02 | Pending audit |
+| `about/ecosystem.mdx` | Merge | `overview.md`, `agents.md`: NemoClaw/OpenShell/Fabric/OpenClaw ownership | D02, D06 | Pending audit |
+| `about/ecosystem-hermes.mdx` | Merge | `overview.md`, `agents.md`: Hermes ownership and native access | D02, D06 | Pending audit |
+| `about/ecosystem-deepagents.mdx` | Merge | `overview.md`, `agents.md`: Deep Agents ownership and external-service requirements | D02, D06 | Pending audit |
 
 ## Getting Started — 7 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `get-started/prerequisites.mdx` | Rewrite | `prerequisites.md`: verified bundles, images, tools, credentials, endpoints, and host roles | D03 |
-| `get-started/quickstart.mdx` | Rewrite | `get-started.md`: OpenClaw YAML-to-interaction walkthrough | D03 |
-| `get-started/quickstart-hermes.mdx` | Rewrite | `get-started.md`, `agents.md`, `interfaces.md`: shared deployment steps plus Hermes requirements | D03, D06 |
-| `get-started/quickstart-langchain-deepagents-code.mdx` | Rewrite | `agents.md`: external gateway/inference path and native entry point; remove alias/installer workflow | D06 |
-| `get-started/quickstart-pi.mdx` | Rewrite | `agents.md`: Pi model metadata, native access, external services, and session lifetime | D06 |
-| `get-started/dgx-station-preparation.mdx` | Hold | `prerequisites.md`: do not inherit DGX Station qualification or setup scripts from main | D03 |
-| `get-started/windows-preparation.mdx` | Rewrite | `prerequisites.md`: distinguish Windows client bundle evidence from WSL, engine, and GPU deployment support | D03 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `get-started/prerequisites.mdx` | Rewrite | `prerequisites.md`: verified bundles, images, tools, credentials, endpoints, and host roles | D03 | Pending audit |
+| `get-started/quickstart.mdx` | Rewrite | `get-started.md`: OpenClaw YAML-to-interaction walkthrough | D03 | Pending audit |
+| `get-started/quickstart-hermes.mdx` | Rewrite | `get-started.md`, `agents.md`, `interfaces.md`: shared deployment steps plus Hermes requirements | D03, D06 | Pending audit |
+| `get-started/quickstart-langchain-deepagents-code.mdx` | Rewrite | `agents.md`: external gateway/inference path and native entry point; remove alias/installer workflow | D06 | Pending audit |
+| `get-started/quickstart-pi.mdx` | Rewrite | `agents.md`: Pi model metadata, native access, external services, and session lifetime | D06 | Pending audit |
+| `get-started/dgx-station-preparation.mdx` | Hold | `prerequisites.md`: do not inherit DGX Station qualification or setup scripts from main | D03 | Pending audit |
+| `get-started/windows-preparation.mdx` | Rewrite | `prerequisites.md`: distinguish Windows client bundle evidence from WSL, engine, and GPU deployment support | D03 | Pending audit |
 
 ## Agent Configuration — 4 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `configure-agents/configure-agent-heartbeats.mdx` | Rewrite | `agents.md`: first-agent execution defaults, native heartbeat semantics, image/replacement requirements | D06 |
-| `configure-agents/configure-memory-search.mdx` | Hold | `agents.md`: native setting; embedding endpoint, egress, credentials, and persistence need a qualified procedure | D06 |
-| `configure-agents/progressive-tool-disclosure.mdx` | Rewrite | `agents.md`: shared disclosure mode, read-only allowlist, roster ownership, and replacement | D06 |
-| `configure-agents/understand-context-compaction.mdx` | Hold | `agents.md`: verify pinned native defaults; do not carry main-specific tuning or patches as current behavior | D06 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `configure-agents/configure-agent-heartbeats.mdx` | Rewrite | `agents.md`: first-agent execution defaults, native heartbeat semantics, image/replacement requirements | D06 | Pending audit |
+| `configure-agents/configure-memory-search.mdx` | Hold | `agents.md`: native setting; embedding endpoint, egress, credentials, and persistence need a qualified procedure | D06 | Pending audit |
+| `configure-agents/progressive-tool-disclosure.mdx` | Rewrite | `agents.md`: shared disclosure mode, read-only allowlist, roster ownership, and replacement | D06 | Pending audit |
+| `configure-agents/understand-context-compaction.mdx` | Hold | `agents.md`: verify pinned native defaults; do not carry main-specific tuning or patches as current behavior | D06 | Pending audit |
 
 ## Deployment — 6 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `deployment/deploy-to-headless-server.mdx` | Rewrite | `usage.md`, `interfaces.md`, `remote-service.md`: separate client access, gateway placement, and SSH model service | D03, D05 |
-| `deployment/gateway-lifecycle-authority.mdx` | Rewrite | `usage.md`: managed/external ownership and retained gateway identity | D04 |
-| `deployment/install-openclaw-plugins.mdx` | Hold | `agents.md`: native plugin ownership; old managed Dockerfile/custom-image workflow does not transfer | D06 |
-| `deployment/register-external-component.mdx` | Rewrite | `usage.md`, `migration.md`: supported external gateway/inference declarations; no general component registry equivalence | D04 |
-| `deployment/sandbox-hardening.mdx` | Rewrite | `security.md`, `sandbox-network.md`: current image/process/policy controls with host-qualified enforcement | D08 |
-| `deployment/set-up-mcp-bridge.mdx` | Hold | `agents.md`, `migration.md`: no current NemoClaw bridge-management workflow | D06 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `deployment/deploy-to-headless-server.mdx` | Rewrite | `usage.md`, `interfaces.md`, `remote-service.md`: separate client access, gateway placement, and SSH model service | D03, D05 | Written: [client selectors](../interfaces.md#select-the-gateway-and-workspace) and [SSH service placement](../remote-service.md); pinned OpenShell parser and SDK target validation. New authenticated-profile provisioning requires operator qualification. |
+| `deployment/gateway-lifecycle-authority.mdx` | Rewrite | `usage.md`: managed/external ownership and retained gateway identity | D04 | Pending audit |
+| `deployment/install-openclaw-plugins.mdx` | Hold | `agents.md`: native plugin ownership; old managed Dockerfile/custom-image workflow does not transfer | D06 | Pending audit |
+| `deployment/register-external-component.mdx` | Rewrite | `usage.md`, `migration.md`: supported external gateway/inference declarations; no general component registry equivalence | D04 | Pending audit |
+| `deployment/sandbox-hardening.mdx` | Rewrite | `security.md`, `sandbox-network.md`: current image/process/policy controls with host-qualified enforcement | D08 | Pending audit |
+| `deployment/set-up-mcp-bridge.mdx` | Hold | `agents.md`, `migration.md`: no current NemoClaw bridge-management workflow | D06 | Pending audit |
 
 ## Inference — 33 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `inference/choose-compatible-inference-api.mdx` | Rewrite | `inference.md`: explicit API and harness compatibility; no automatic protocol translation | D05 |
-| `inference/choose-inference-provider.mdx` | Rewrite | `inference.md`: endpoint/API/credential selection and management modes; distinguish configuration from vendor qualification | D05 |
-| `inference/choose-local-inference-server.mdx` | Rewrite | `inference.md`, `models.md`: managed Ollama/vLLM versus external service ownership | D05 |
-| `inference/choose-model.mdx` | Rewrite | `models.md`: model revision, capacity, API, context, and qualification; remove old catalog assumptions | D05 |
-| `inference/configure-inference-timeouts.mdx` | Rewrite | `agents.md`, `inference.md`: execution timeout versus startup, readiness, and provider budgets | D05, D06 |
-| `inference/configure-model-capabilities.mdx` | Rewrite | `inference.md`: supported OpenClaw reasoning fields and Pi native metadata; no inferred vision qualification | D05 |
-| `inference/configure-model-limits.mdx` | Rewrite | `inference.md`: agent context/output limits versus managed-server capacity; harness-specific constraints | D05 |
-| `inference/custom-endpoint-security.mdx` | Merge | `security.md`, `inference.md`: current HTTPS/private-address rules and credential routing | D05, D08 |
-| `inference/declarative-agents-manifest.mdx` | Rewrite | `agents.md`, `migration.md`: desired-state agents, shared primary route, roster restrictions; old manifest is not the new schema | D04, D06 |
-| `inference/how-inference-routing-works.mdx` | Rewrite | `inference.md`: Fabric/native-agent → OpenShell → configured provider; credential boundary | D05 |
-| `inference/model-capability-audit.mdx` | Merge | `models.md`, `validation/README.md`: evidence vocabulary; retain old results only with original revision | D05 |
-| `inference/set-up-anthropic-compatible-endpoint.mdx` | Merge | `inference.md`: explicit `anthropic-messages` configuration and matching harnesses | D05 |
-| `inference/set-up-llama-cpp.mdx` | Hold | `inference.md`, `migration.md`: old managed installation is unavailable; any external endpoint example needs API qualification | D05 |
-| `inference/set-up-model-router.mdx` | Hold | `inference.md`, `migration.md`: no equivalent managed router or model-pool lifecycle | D05 |
-| `inference/set-up-nvidia-nim.mdx` | Hold | `inference.md`, `migration.md`: no equivalent managed NIM setup; qualify an external endpoint separately | D05 |
-| `inference/set-up-ollama.mdx` | Rewrite | `inference.md`, `usage.md`: managed container/network/storage/model contract and recovery | D05 |
-| `inference/set-up-openai-compatible-endpoint.mdx` | Merge | `inference.md`: API selection, endpoint and credential references, real verification | D05 |
-| `inference/set-up-sub-agent.mdx` | Rewrite | `agents.md`, `migration.md`: distinguish declared OpenClaw agents sharing one route from old auxiliary-model/direct-credential setup | D06 |
-| `inference/set-up-vllm-on-two-dgx-sparks.mdx` | Hold | `remote-service.md`, `migration.md`: SSH service placement and same-host two-daemon evidence do not qualify distributed inference | D05 |
-| `inference/set-up-vllm-on-two-dgx-stations.mdx` | Hold | `remote-service.md`, `migration.md`: no inherited multi-node profile or hardware qualification | D05 |
-| `inference/set-up-vllm.mdx` | Rewrite | `inference.md`, `models.md`, `recipes.md`: immutable runtime, model revision, service limits, memory supervision | D05 |
-| `inference/switch-models.mdx` | Rewrite | `usage.md`, `inference.md`: change desired route model; identify runtime restart and conversation effects by harness | D04, D05 |
-| `inference/switch-providers.mdx` | Rewrite | `usage.md`, `inference.md`: plan current endpoint/provider changes; distinguish route update from sandbox replacement | D04, D05 |
-| `inference/understand-provider-validation.mdx` | Rewrite | `inference.md`, `troubleshooting.md`: configuration checks, observations, active probes, failure preservation | D05 |
-| `inference/use-anthropic.mdx` | Merge | `inference.md`: candidate named-provider example; publish vendor-specific success claims only after qualification | D05 |
-| `inference/use-google-gemini.mdx` | Merge | `inference.md`: qualify the intended compatible API; do not retain old native catalog/probe promises | D05 |
-| `inference/use-hermes-provider.mdx` | Merge | `inference.md`: current Hermes provider auth reference; no interactive login promise | D05 |
-| `inference/use-nvidia-endpoints.mdx` | Merge | `inference.md`: candidate endpoint example with explicit model/API evidence | D05 |
-| `inference/use-openai.mdx` | Merge | `inference.md`: candidate completions/Responses examples scoped by harness and evidence | D05 |
-| `inference/use-openrouter.mdx` | Merge | `inference.md`: candidate compatible endpoint example without inherited catalog validation | D05 |
-| `inference/use-shared-gateway-routes.mdx` | Rewrite | `usage.md`, `inference.md`: deployment-owned routes and drift; no ambient reconnect/repoint workflow | D04, D05 |
-| `inference/verify-inference-route.mdx` | Rewrite | `inference.md`, `troubleshooting.md`: distinguish declared settings, observed route, and actual agent reply | D05 |
-| `inference/view-active-inference-route.mdx` | Rewrite | `usage.md`, `inference.md`: checked export and documented observations; remove `inference get` commands | D04, D05 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `inference/choose-compatible-inference-api.mdx` | Rewrite | `inference.md`: explicit API and harness compatibility; no automatic protocol translation | D05 | Pending audit |
+| `inference/choose-inference-provider.mdx` | Rewrite | `inference.md`: endpoint/API/credential selection and management modes; distinguish configuration from vendor qualification | D05 | Pending audit |
+| `inference/choose-local-inference-server.mdx` | Rewrite | `inference.md`, `models.md`: managed Ollama/vLLM versus external service ownership | D05 | Pending audit |
+| `inference/choose-model.mdx` | Rewrite | `models.md`: model revision, capacity, API, context, and qualification; remove old catalog assumptions | D05 | Pending audit |
+| `inference/configure-inference-timeouts.mdx` | Rewrite | `agents.md`, `inference.md`: execution timeout versus startup, readiness, and provider budgets | D05, D06 | Pending audit |
+| `inference/configure-model-capabilities.mdx` | Rewrite | `inference.md`: supported OpenClaw reasoning fields and Pi native metadata; no inferred vision qualification | D05 | Pending audit |
+| `inference/configure-model-limits.mdx` | Rewrite | `inference.md`: agent context/output limits versus managed-server capacity; harness-specific constraints | D05 | Pending audit |
+| `inference/custom-endpoint-security.mdx` | Merge | `security.md`, `inference.md`: current HTTPS/private-address rules and credential routing | D05, D08 | Pending audit |
+| `inference/declarative-agents-manifest.mdx` | Rewrite | `agents.md`, `migration.md`: desired-state agents, shared primary route, roster restrictions; old manifest is not the new schema | D04, D06 | Pending audit |
+| `inference/how-inference-routing-works.mdx` | Rewrite | `inference.md`: Fabric/native-agent → OpenShell → configured provider; credential boundary | D05 | Pending audit |
+| `inference/model-capability-audit.mdx` | Merge | `models.md`, `validation/README.md`: evidence vocabulary; retain old results only with original revision | D05 | Pending audit |
+| `inference/set-up-anthropic-compatible-endpoint.mdx` | Merge | `inference.md`: explicit `anthropic-messages` configuration and matching harnesses | D05 | Pending audit |
+| `inference/set-up-llama-cpp.mdx` | Hold | `inference.md`, `migration.md`: old managed installation is unavailable; any external endpoint example needs API qualification | D05 | Pending audit |
+| `inference/set-up-model-router.mdx` | Hold | `inference.md`, `migration.md`: no equivalent managed router or model-pool lifecycle | D05 | Pending audit |
+| `inference/set-up-nvidia-nim.mdx` | Hold | `inference.md`, `migration.md`: no equivalent managed NIM setup; qualify an external endpoint separately | D05 | Pending audit |
+| `inference/set-up-ollama.mdx` | Rewrite | `inference.md`, `usage.md`: managed container/network/storage/model contract and recovery | D05 | Pending audit |
+| `inference/set-up-openai-compatible-endpoint.mdx` | Merge | `inference.md`: API selection, endpoint and credential references, real verification | D05 | Pending audit |
+| `inference/set-up-sub-agent.mdx` | Rewrite | `agents.md`, `migration.md`: distinguish declared OpenClaw agents sharing one route from old auxiliary-model/direct-credential setup | D06 | Pending audit |
+| `inference/set-up-vllm-on-two-dgx-sparks.mdx` | Hold | `remote-service.md`, `migration.md`: SSH service placement and same-host two-daemon evidence do not qualify distributed inference | D05 | Pending audit |
+| `inference/set-up-vllm-on-two-dgx-stations.mdx` | Hold | `remote-service.md`, `migration.md`: no inherited multi-node profile or hardware qualification | D05 | Pending audit |
+| `inference/set-up-vllm.mdx` | Rewrite | `inference.md`, `models.md`, `recipes.md`: immutable runtime, model revision, service limits, memory supervision | D05 | Pending audit |
+| `inference/switch-models.mdx` | Rewrite | `usage.md`, `inference.md`: change desired route model; identify runtime restart and conversation effects by harness | D04, D05 | Pending audit |
+| `inference/switch-providers.mdx` | Rewrite | `usage.md`, `inference.md`: plan current endpoint/provider changes; distinguish route update from sandbox replacement | D04, D05 | Pending audit |
+| `inference/understand-provider-validation.mdx` | Rewrite | `inference.md`, `troubleshooting.md`: configuration checks, observations, active probes, failure preservation | D05 | Pending audit |
+| `inference/use-anthropic.mdx` | Merge | `inference.md`: candidate named-provider example; publish vendor-specific success claims only after qualification | D05 | Pending audit |
+| `inference/use-google-gemini.mdx` | Merge | `inference.md`: qualify the intended compatible API; do not retain old native catalog/probe promises | D05 | Pending audit |
+| `inference/use-hermes-provider.mdx` | Merge | `inference.md`: current Hermes provider auth reference; no interactive login promise | D05 | Pending audit |
+| `inference/use-nvidia-endpoints.mdx` | Merge | `inference.md`: candidate endpoint example with explicit model/API evidence | D05 | Pending audit |
+| `inference/use-openai.mdx` | Merge | `inference.md`: candidate completions/Responses examples scoped by harness and evidence | D05 | Pending audit |
+| `inference/use-openrouter.mdx` | Merge | `inference.md`: candidate compatible endpoint example without inherited catalog validation | D05 | Pending audit |
+| `inference/use-shared-gateway-routes.mdx` | Rewrite | `usage.md`, `inference.md`: deployment-owned routes and drift; no ambient reconnect/repoint workflow | D04, D05 | Pending audit |
+| `inference/verify-inference-route.mdx` | Rewrite | `inference.md`, `troubleshooting.md`: distinguish declared settings, observed route, and actual agent reply | D05 | Pending audit |
+| `inference/view-active-inference-route.mdx` | Rewrite | `usage.md`, `inference.md`: checked export and documented observations; remove `inference get` commands | D04, D05 | Pending audit |
 
 ## Sandbox Operations — 26 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `manage-sandboxes/add-channels-after-onboarding.mdx` | Hold | `agents.md`, `migration.md`: native enrollment; schema lacks complete channel prerequisites | D06 |
-| `manage-sandboxes/add-mcp-server.mdx` | Hold | `agents.md`, `migration.md`: no current `mcp add` lifecycle | D06 |
-| `manage-sandboxes/backup-restore.mdx` | Rewrite | `state.md`, `migration.md`: no snapshot equivalent; distinguish configuration export and separate native-data backup | D04 |
-| `manage-sandboxes/enable-channels-during-onboarding.mdx` | Hold | `agents.md`, `migration.md`: no onboarding or managed channel provisioning | D06 |
-| `manage-sandboxes/gateway-lifecycle-control.mdx` | Rewrite | `usage.md`, `agents.md`: distinguish managed OpenShell gateway from native agent gateway | D04, D06 |
-| `manage-sandboxes/install-plugins-hermes.mdx` | Hold | `agents.md`: native ownership; verify image, egress, credential, and persistence prerequisites before a how-to | D06 |
-| `manage-sandboxes/lifecycle.mdx` | Rewrite | `usage.md`: plan/apply/export/destroy, retained bindings, and recovery | D04 |
-| `manage-sandboxes/manage-mcp-servers.mdx` | Hold | `agents.md`, `migration.md`: no managed add/update/remove lifecycle | D06 |
-| `manage-sandboxes/manage-messaging-channels.mdx` | Hold | `agents.md`, `migration.md`: no managed enable/disable/status lifecycle | D06 |
-| `manage-sandboxes/messaging-channels.mdx` | Hold | `agents.md`: retain native ownership explanation without claiming fixture-based channel support | D06 |
-| `manage-sandboxes/recover-rebuild-sandboxes.mdx` | Rewrite | `usage.md`, `troubleshooting.md`: explicit reconciliation; no rebuild, adoption, pruning, or ambiguous mutation retry | D04 |
-| `manage-sandboxes/run-deep-agents-code.mdx` | Rewrite | `agents.md`: current native access and sessions; remove launch/use aliases and managed MCP assumptions | D06 |
-| `manage-sandboxes/run-pi.mdx` | Rewrite | `agents.md`: native access, route metadata, runtime restarts, and lost in-memory conversations | D06 |
-| `manage-sandboxes/run-sandboxes.mdx` | Rewrite | `usage.md`, `interfaces.md`: separate deployment state directories and native forwarding | D03, D04 |
-| `manage-sandboxes/runtime-controls.mdx` | Rewrite | `agents.md`, `usage.md`: declarative settings versus native settings and drift/replacement rules | D04, D06 |
-| `manage-sandboxes/set-up-discord.mdx` | Hold | `agents.md`, previous-version channel guide: require a qualified native procedure | D06 |
-| `manage-sandboxes/set-up-google-chat.mdx` | Hold | `agents.md`, previous-version channel guide: webhook, credentials, and exposure are not provisioned | D06 |
-| `manage-sandboxes/set-up-microsoft-teams.mdx` | Hold | `agents.md`, previous-version channel guide: no managed webhook/channel equivalent | D06 |
-| `manage-sandboxes/set-up-slack.mdx` | Hold | `agents.md`, previous-version channel guide: native tokens, egress, and persistence need qualification | D06 |
-| `manage-sandboxes/set-up-telegram.mdx` | Hold | `agents.md`, previous-version channel guide: native enrollment and token prerequisites | D06 |
-| `manage-sandboxes/set-up-wechat.mdx` | Hold | `agents.md`, previous-version channel guide: native pairing and session retention prerequisites | D06 |
-| `manage-sandboxes/set-up-whatsapp.mdx` | Hold | `agents.md`, previous-version channel guide: native pairing and session retention prerequisites | D06 |
-| `manage-sandboxes/transfer-state-manually.mdx` | Rewrite | `state.md`, `migration.md`: verify supported native-data transfer; remove upload/download/backup-all commands | D04 |
-| `manage-sandboxes/uninstall-nemoclaw.mdx` | Rewrite | `usage.md`, `state.md`: deployment destroy versus removal of local bundle; enumerate retained resources without inventing purge | D04 |
-| `manage-sandboxes/update-sandboxes.mdx` | Rewrite | `usage.md`, `migration.md`: image/schema compatibility, refused replacement, parallel deployment | D04 |
-| `manage-sandboxes/workspace-files.mdx` | Rewrite | `state.md`, `agents.md`: current native paths and deletion; no inherited host-mount or backup guarantee | D04, D06 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `manage-sandboxes/add-channels-after-onboarding.mdx` | Hold | `agents.md`, `migration.md`: native enrollment; schema lacks complete channel prerequisites | D06 | Pending audit |
+| `manage-sandboxes/add-mcp-server.mdx` | Hold | `agents.md`, `migration.md`: no current `mcp add` lifecycle | D06 | Pending audit |
+| `manage-sandboxes/backup-restore.mdx` | Rewrite | `state.md`, `migration.md`: no snapshot equivalent; distinguish configuration export and separate native-data backup | D04 | Pending audit |
+| `manage-sandboxes/enable-channels-during-onboarding.mdx` | Hold | `agents.md`, `migration.md`: no onboarding or managed channel provisioning | D06 | Pending audit |
+| `manage-sandboxes/gateway-lifecycle-control.mdx` | Rewrite | `usage.md`, `agents.md`: distinguish managed OpenShell gateway from native agent gateway | D04, D06 | Pending audit |
+| `manage-sandboxes/install-plugins-hermes.mdx` | Hold | `agents.md`: native ownership; verify image, egress, credential, and persistence prerequisites before a how-to | D06 | Pending audit |
+| `manage-sandboxes/lifecycle.mdx` | Rewrite | `usage.md`: plan/apply/export/destroy, retained bindings, and recovery | D04 | Pending audit |
+| `manage-sandboxes/manage-mcp-servers.mdx` | Hold | `agents.md`, `migration.md`: no managed add/update/remove lifecycle | D06 | Pending audit |
+| `manage-sandboxes/manage-messaging-channels.mdx` | Hold | `agents.md`, `migration.md`: no managed enable/disable/status lifecycle | D06 | Pending audit |
+| `manage-sandboxes/messaging-channels.mdx` | Hold | `agents.md`: retain native ownership explanation without claiming fixture-based channel support | D06 | Pending audit |
+| `manage-sandboxes/recover-rebuild-sandboxes.mdx` | Rewrite | `usage.md`, `troubleshooting.md`: explicit reconciliation; no rebuild, adoption, pruning, or ambiguous mutation retry | D04 | Pending audit |
+| `manage-sandboxes/run-deep-agents-code.mdx` | Rewrite | `agents.md`: current native access and sessions; remove launch/use aliases and managed MCP assumptions | D06 | Pending audit |
+| `manage-sandboxes/run-pi.mdx` | Rewrite | `agents.md`: native access, route metadata, runtime restarts, and lost in-memory conversations | D06 | Pending audit |
+| `manage-sandboxes/run-sandboxes.mdx` | Rewrite | `usage.md`, `interfaces.md`: separate deployment state directories and native forwarding | D03, D04 | Written: [separate state](../usage.md) and [workspace access](../interfaces.md#select-the-gateway-and-workspace); SDK bindings and pinned OpenShell selectors. |
+| `manage-sandboxes/runtime-controls.mdx` | Rewrite | `agents.md`, `usage.md`: declarative settings versus native settings and drift/replacement rules | D04, D06 | Pending audit |
+| `manage-sandboxes/set-up-discord.mdx` | Hold | `agents.md`, previous-version channel guide: require a qualified native procedure | D06 | Pending audit |
+| `manage-sandboxes/set-up-google-chat.mdx` | Hold | `agents.md`, previous-version channel guide: webhook, credentials, and exposure are not provisioned | D06 | Pending audit |
+| `manage-sandboxes/set-up-microsoft-teams.mdx` | Hold | `agents.md`, previous-version channel guide: no managed webhook/channel equivalent | D06 | Pending audit |
+| `manage-sandboxes/set-up-slack.mdx` | Hold | `agents.md`, previous-version channel guide: native tokens, egress, and persistence need qualification | D06 | Pending audit |
+| `manage-sandboxes/set-up-telegram.mdx` | Hold | `agents.md`, previous-version channel guide: native enrollment and token prerequisites | D06 | Pending audit |
+| `manage-sandboxes/set-up-wechat.mdx` | Hold | `agents.md`, previous-version channel guide: native pairing and session retention prerequisites | D06 | Pending audit |
+| `manage-sandboxes/set-up-whatsapp.mdx` | Hold | `agents.md`, previous-version channel guide: native pairing and session retention prerequisites | D06 | Pending audit |
+| `manage-sandboxes/transfer-state-manually.mdx` | Rewrite | `state.md`, `migration.md`: verify supported native-data transfer; remove upload/download/backup-all commands | D04 | Pending audit |
+| `manage-sandboxes/uninstall-nemoclaw.mdx` | Rewrite | `usage.md`, `state.md`: deployment destroy versus removal of local bundle; enumerate retained resources without inventing purge | D04 | Pending audit |
+| `manage-sandboxes/update-sandboxes.mdx` | Rewrite | `usage.md`, `migration.md`: image/schema compatibility, refused replacement, parallel deployment | D04 | Pending audit |
+| `manage-sandboxes/workspace-files.mdx` | Rewrite | `state.md`, `agents.md`: current native paths and deletion; no inherited host-mount or backup guarantee | D04, D06 | Pending audit |
 
 ## Monitoring — 5 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `monitoring/manage-deepagents-trace-export.mdx` | Hold | `migration.md`: no declared collector lifecycle; preserve old instructions by version | D06 |
-| `monitoring/monitor-sandbox-activity.mdx` | Rewrite | `troubleshooting.md`, `sdk.md`: supported diagnostics, native logs/access, and SDK progress; no doctor/status/debug equivalence | D04, D07 |
-| `monitoring/set-up-deepagents-trace-export.mdx` | Hold | `migration.md`: OTLP/LangSmith setup is not a current declared workflow | D06 |
-| `monitoring/understand-deepagents-trace-export.mdx` | Hold | `migration.md`, `security.md`: previous trace privacy guidance remains versioned; no new telemetry claim | D06, D08 |
-| `monitoring/verify-deepagents-trace-export.mdx` | Hold | `migration.md`: no current end-to-end trace qualification | D06 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `monitoring/manage-deepagents-trace-export.mdx` | Hold | `migration.md`: no declared collector lifecycle; preserve old instructions by version | D06 | Pending audit |
+| `monitoring/monitor-sandbox-activity.mdx` | Rewrite | `troubleshooting.md`, `sdk.md`: supported diagnostics, native logs/access, and SDK progress; no doctor/status/debug equivalence | D04, D07 | Written: [native logs](../troubleshooting.md#read-native-service-logs), CLI diagnostics and SDK progress; adapter paths and SDK progress type. Other harness/dashboard log procedures require process-specific evidence. |
+| `monitoring/set-up-deepagents-trace-export.mdx` | Hold | `migration.md`: OTLP/LangSmith setup is not a current declared workflow | D06 | Pending audit |
+| `monitoring/understand-deepagents-trace-export.mdx` | Hold | `migration.md`, `security.md`: previous trace privacy guidance remains versioned; no new telemetry claim | D06, D08 | Pending audit |
+| `monitoring/verify-deepagents-trace-export.mdx` | Hold | `migration.md`: no current end-to-end trace qualification | D06 | Pending audit |
 
 ## Network Policy — 10 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `network-policy/apply-policy-presets.mdx` | Rewrite | `sandbox-network.md`: isolated preset or full explicit policy; no maintained-preset CLI | D08 |
-| `network-policy/approve-network-requests.mdx` | Hold | `sandbox-network.md`, `migration.md`: external live edits can drift from intent; no current NemoClaw approval workflow | D08 |
-| `network-policy/change-baseline-network-policy.mdx` | Rewrite | `sandbox-network.md`: full explicit policy, defaults, replacement, and data-loss effects | D08 |
-| `network-policy/configure-raw-tls-passthrough.mdx` | Merge | `sandbox-network.md`: retain only fields accepted by the pinned explicit-policy parser; review enforcement tradeoffs | D08 |
-| `network-policy/create-custom-policy-presets.mdx` | Rewrite | `sandbox-network.md`: author validated explicit policy instead of preset files | D08 |
-| `network-policy/customize-network-policy.mdx` | Merge | `sandbox-network.md`: one owner for declared policy changes and drift | D08 |
-| `network-policy/explain-network-policy-to-agents.mdx` | Hold | `sandbox-network.md`, `migration.md`: no policy-explain command; do not imply agent-side inspection | D08 |
-| `network-policy/integration-policy-examples.mdx` | Merge | `sandbox-network.md`: qualify reusable explicit-policy examples individually; old integrations remain held | D08 |
-| `network-policy/replace-live-network-policy.mdx` | Rewrite | `sandbox-network.md`: ordinary apply rejects policy replacement; document supported recreation and preservation steps | D08 |
-| `network-policy/set-up-gmail-with-an-app-password.mdx` | Hold | `agents.md`, previous-version integration guide: credential/mount/access prerequisites lack a complete current workflow | D06, D08 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `network-policy/apply-policy-presets.mdx` | Rewrite | `sandbox-network.md`: isolated preset or full explicit policy; no maintained-preset CLI | D08 | Pending audit |
+| `network-policy/approve-network-requests.mdx` | Hold | `sandbox-network.md`, `migration.md`: external live edits can drift from intent; no current NemoClaw approval workflow | D08 | Pending audit |
+| `network-policy/change-baseline-network-policy.mdx` | Rewrite | `sandbox-network.md`: full explicit policy, defaults, replacement, and data-loss effects | D08 | Pending audit |
+| `network-policy/configure-raw-tls-passthrough.mdx` | Merge | `sandbox-network.md`: retain only fields accepted by the pinned explicit-policy parser; review enforcement tradeoffs | D08 | Pending audit |
+| `network-policy/create-custom-policy-presets.mdx` | Rewrite | `sandbox-network.md`: author validated explicit policy instead of preset files | D08 | Pending audit |
+| `network-policy/customize-network-policy.mdx` | Merge | `sandbox-network.md`: one owner for declared policy changes and drift | D08 | Pending audit |
+| `network-policy/explain-network-policy-to-agents.mdx` | Hold | `sandbox-network.md`, `migration.md`: no policy-explain command; do not imply agent-side inspection | D08 | Pending audit |
+| `network-policy/integration-policy-examples.mdx` | Merge | `sandbox-network.md`: qualify reusable explicit-policy examples individually; old integrations remain held | D08 | Pending audit |
+| `network-policy/replace-live-network-policy.mdx` | Rewrite | `sandbox-network.md`: ordinary apply rejects policy replacement; document supported recreation and preservation steps | D08 | Pending audit |
+| `network-policy/set-up-gmail-with-an-app-password.mdx` | Hold | `agents.md`, previous-version integration guide: credential/mount/access prerequisites lack a complete current workflow | D06, D08 | Pending audit |
 
 ## Reference — 15 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `reference/architecture.mdx` | Rewrite | `overview.md`, `design/architecture.md`: current deployment and state ownership | D02 |
-| `reference/cli-selection-guide.mdx` | Rewrite | `overview.md`, `reference/cli.md`, `agents.md`: NemoClaw, SDK, OpenShell, and native runtime responsibilities | D02 |
-| `reference/commands.mdx` | Rewrite | `reference/cli.md`: current parser/help and process behavior | D02 |
-| `reference/configure-runtime-identity.mdx` | Hold | `security.md`, `migration.md`: old identity/policy integration is not part of the current declared contract | D08 |
-| `reference/enterprise-readiness.mdx` | Rewrite | `overview.md`, `security.md`, `prerequisites.md`: explicit limits; no enterprise qualification inferred from unit tests | D02, D08 |
-| `reference/extension-taxonomy-sdk-readiness.mdx` | Rewrite | `sdk.md`, `provider.md`, `recipes.md`, `agents.md`: actual extension and ownership boundaries | D07 |
-| `reference/headless-lifecycle-package.mdx` | Rewrite | `sdk.md`, `migration.md`: Rust lifecycle SDK versus former TypeScript observe/plan package | D07 |
-| `reference/host-files-and-state.mdx` | Rewrite | `state.md`: deployment directories, intent/bindings/runtime state, bundle, tokens, and persistent volumes | D04 |
-| `reference/network-policies.mdx` | Merge | `sandbox-network.md`, `reference/configuration.md`: procedural owner plus generated fields | D08 |
-| `reference/pi-commands.mdx` | Merge | `reference/cli.md`, `agents.md`: shared CLI and Pi-native access | D02, D06 |
-| `reference/pi-support.mdx` | Rewrite | `agents.md`, `prerequisites.md`: current external-service requirements, API metadata, and evidence limits | D06 |
-| `reference/platform-support.mdx` | Rewrite | `prerequisites.md`: client/runtime/engine/GPU matrix backed by revision-specific evidence | D03 |
-| `reference/system-readiness.mdx` | Rewrite | `prerequisites.md`, `troubleshooting.md`: verifiable preflight steps; no `host probe` command | D03, D04 |
-| `reference/troubleshoot-mcp-servers.mdx` | Hold | `migration.md`, previous-version MCP guide: current CLI lacks managed MCP lifecycle | D06 |
-| `reference/troubleshooting.mdx` | Rewrite | `troubleshooting.md`: errors and recovery from current code; remove legacy repair commands | D04 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `reference/architecture.mdx` | Rewrite | `overview.md`, `design/architecture.md`: current deployment and state ownership | D02 | Pending audit |
+| `reference/cli-selection-guide.mdx` | Rewrite | `overview.md`, `reference/cli.md`, `agents.md`: NemoClaw, SDK, OpenShell, and native runtime responsibilities | D02 | Pending audit |
+| `reference/commands.mdx` | Rewrite | `reference/cli.md`: current parser/help and process behavior | D02 | Written: [CLI results and failures](../reference/cli.md#output-and-failure); CLI parser/process tests and SDK result type. Old command families remain unavailable. |
+| `reference/configure-runtime-identity.mdx` | Hold | `security.md`, `migration.md`: old identity/policy integration is not part of the current declared contract | D08 | Pending audit |
+| `reference/enterprise-readiness.mdx` | Rewrite | `overview.md`, `security.md`, `prerequisites.md`: explicit limits; no enterprise qualification inferred from unit tests | D02, D08 | Pending audit |
+| `reference/extension-taxonomy-sdk-readiness.mdx` | Rewrite | `sdk.md`, `provider.md`, `recipes.md`, `agents.md`: actual extension and ownership boundaries | D07 | Pending audit |
+| `reference/headless-lifecycle-package.mdx` | Rewrite | `sdk.md`, `migration.md`: Rust lifecycle SDK versus former TypeScript observe/plan package | D07 | Pending audit |
+| `reference/host-files-and-state.mdx` | Rewrite | `state.md`: deployment directories, intent/bindings/runtime state, bundle, tokens, and persistent volumes | D04 | Pending audit |
+| `reference/network-policies.mdx` | Merge | `sandbox-network.md`, `reference/configuration.md`: procedural owner plus generated fields | D08 | Pending audit |
+| `reference/pi-commands.mdx` | Merge | `reference/cli.md`, `agents.md`: shared CLI and Pi-native access | D02, D06 | Pending audit |
+| `reference/pi-support.mdx` | Rewrite | `agents.md`, `prerequisites.md`: current external-service requirements, API metadata, and evidence limits | D06 | Pending audit |
+| `reference/platform-support.mdx` | Rewrite | `prerequisites.md`: client/runtime/engine/GPU matrix backed by revision-specific evidence | D03 | Pending audit |
+| `reference/system-readiness.mdx` | Rewrite | `prerequisites.md`, `troubleshooting.md`: verifiable preflight steps; no `host probe` command | D03, D04 | Pending audit |
+| `reference/troubleshoot-mcp-servers.mdx` | Hold | `migration.md`, previous-version MCP guide: current CLI lacks managed MCP lifecycle | D06 | Pending audit |
+| `reference/troubleshooting.mdx` | Rewrite | `troubleshooting.md`: errors and recovery from current code; remove legacy repair commands | D04 | Pending audit |
 
 ## Resources — 4 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `resources/agent-skills.mdx` | Rewrite | `resources.md`: version-aware Markdown, search/MCP, starter prompt, and routing skill | D08 |
-| `resources/community-contributions.mdx` | Merge | `resources.md`: contribution destinations and current accepted product boundary | D08 |
-| `resources/engineer-agentic-documentation.mdx` | Merge | `CONTRIBUTING.md`: retain applicable contributor guidance; archive main-specific automation description | D01 |
-| `resources/license.mdx` | Rewrite | `resources.md`, component notices: original and derived-source licenses, including Qwen3.8 attribution | D08 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `resources/agent-skills.mdx` | Rewrite | `resources.md`: version-aware Markdown, search/MCP, starter prompt, and routing skill | D08 | Pending audit |
+| `resources/community-contributions.mdx` | Merge | `resources.md`: contribution destinations and current accepted product boundary | D08 | Pending audit |
+| `resources/engineer-agentic-documentation.mdx` | Merge | `CONTRIBUTING.md`: retain applicable contributor guidance; archive main-specific automation description | D01 | Pending audit |
+| `resources/license.mdx` | Rewrite | `resources.md`, component notices: original and derived-source licenses, including Qwen3.8 attribution | D08 | Pending audit |
 
 ## Security — 9 Sources
 
-| Source | Disposition | Destination and required change | Package |
-|---|---|---|---|
-| `security/best-practices.mdx` | Rewrite | `security.md`: current controls and limits by owner, environment, and qualification | D08 |
-| `security/configure-corporate-ca-trust.mdx` | Rewrite | `security.md`: distinguish gateway mTLS, endpoint trust, image trust, and native runtime trust; no inherited CA-import automation | D08 |
-| `security/credential-rotation.mdx` | Rewrite | `security.md`: unchanged-reference rotation is not automatically detected; native interface token replacement and upstream revocation | D08 |
-| `security/credential-storage.mdx` | Rewrite | `security.md`: environment/file references, child-process access, gateway persistence, native token lifetimes, and redaction | D08 |
-| `security/filesystem-controls.mdx` | Merge | `sandbox-network.md`, `security.md`: exact filesystem policy, shared sandbox boundaries, and Landlock mode | D08 |
-| `security/gateway-authentication-controls.mdx` | Rewrite | `security.md`, `interfaces.md`: OpenShell mTLS/bearer versus native agent tokens and pairing | D08 |
-| `security/openclaw-controls.mdx` | Rewrite | `security.md`, `agents.md`: pinned native controls versus NemoClaw-owned roster/tools; no blanket protection claims | D08 |
-| `security/process-controls.mdx` | Merge | `sandbox-network.md`, `security.md`: current process policy, image settings, and enforcement evidence | D08 |
-| `security/tcb-boundary.mdx` | Rewrite | `security.md`, `overview.md`: SDK/provider/OpenTofu, engines, OpenShell, Fabric, native agents, recipes, and models | D02, D08 |
+| Source | Disposition | Destination and required change | Package | Coverage and evidence |
+|---|---|---|---|---|
+| `security/best-practices.mdx` | Rewrite | `security.md`: current controls and limits by owner, environment, and qualification | D08 | Pending audit |
+| `security/configure-corporate-ca-trust.mdx` | Rewrite | `security.md`: distinguish gateway mTLS, endpoint trust, image trust, and native runtime trust; no inherited CA-import automation | D08 | Pending audit |
+| `security/credential-rotation.mdx` | Rewrite | `security.md`: unchanged-reference rotation is not automatically detected; native interface token replacement and upstream revocation | D08 | Pending audit |
+| `security/credential-storage.mdx` | Rewrite | `security.md`: environment/file references, child-process access, gateway persistence, native token lifetimes, and redaction | D08 | Pending audit |
+| `security/filesystem-controls.mdx` | Merge | `sandbox-network.md`, `security.md`: exact filesystem policy, shared sandbox boundaries, and Landlock mode | D08 | Pending audit |
+| `security/gateway-authentication-controls.mdx` | Rewrite | `security.md`, `interfaces.md`: OpenShell mTLS/bearer versus native agent tokens and pairing | D08 | Pending audit |
+| `security/openclaw-controls.mdx` | Rewrite | `security.md`, `agents.md`: pinned native controls versus NemoClaw-owned roster/tools; no blanket protection claims | D08 | Pending audit |
+| `security/process-controls.mdx` | Merge | `sandbox-network.md`, `security.md`: current process policy, image settings, and enforcement evidence | D08 | Pending audit |
+| `security/tcb-boundary.mdx` | Rewrite | `security.md`, `overview.md`: SDK/provider/OpenTofu, engines, OpenShell, Fabric, native agents, recipes, and models | D02, D08 | Pending audit |
 
 ## History and Publication Inputs
 

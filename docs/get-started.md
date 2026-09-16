@@ -114,24 +114,7 @@ See [unchanged apply and recovery](usage.md#updates-and-recovery) before using i
 
 ## 5. Access the Agent
 
-The workspace name is derived from the deployment UUID, not `metadata.name` or the sandbox name.
-Print it with this command and paste the `metadata.uid` from your prepared YAML at the prompt:
-
-```sh
-python3 -c 'import hashlib; uid = input("Deployment metadata.uid: ").strip(); print("nc-" + hashlib.sha256(uid.encode()).hexdigest()[:16])'
-```
-
-This matches the SDK's [workspace derivation](../crates/nemoclaw-sdk/src/config/mod.rs).
-Configure your OpenShell CLI for this gateway and the printed workspace before forwarding.
-Set the workspace in each terminal used for access, replacing the placeholder with the printed value:
-
-```sh
-export OPENSHELL_WORKSPACE=REPLACE_WITH_PRINTED_WORKSPACE
-```
-
-The pinned OpenShell CLI accepts `OPENSHELL_WORKSPACE` or the global `--workspace` option.
-Use your operator-provided authenticated gateway profile through `--gateway` or `OPENSHELL_GATEWAY`; its endpoint must match the YAML.
-Provisioning that profile and its authentication from a clean host remains **TBD**.
+[Select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) in each terminal used for native access.
 Follow [Connect through OpenShell](interfaces.md#connect-through-openshell) to forward port `18800`, retrieve the sandbox-local token privately, and approve your browser's pairing request if prompted.
 Keep the forward bound to loopback.
 

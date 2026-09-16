@@ -44,6 +44,20 @@ Export writes YAML to stdout or the selected output file.
 Errors go to stderr with a nonzero exit status.
 Help and version output are plain text.
 
+The [SDK result type](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines the JSON fields:
+
+| Field | Meaning |
+|---|---|
+| `outcome` | `planned`, `succeeded`, or `destroyed` |
+| `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness or inference checks |
+| `deferred` | Checks or changes deferred by planning; omitted when empty |
+| `agentResponse` | Native agent reply from the managed vLLM apply path; omitted when empty, including paths that only perform an API probe |
+| `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
+
+Use [inference verification](../inference.md#verify-the-result) to interpret a successful result.
+The CLI returns 0 on success, 1 on an operation or output failure, and 2 for argument-parser errors.
+The exit status determines whether stdout is a successful result; do not treat an empty output stream as an empty plan.
+
 An export observation failure does not replace an existing file selected by `--output`.
 Shell redirection can truncate a file before the CLI runs; check success before using redirected output.
 See [recovery](../usage.md#updates-and-recovery) for interrupted operations and preserved state.
