@@ -210,7 +210,7 @@ describe("NemoClawConfig v1", () => {
     mutate(context);
     const { value } = context;
     expect(() => validateNemoClawConfig(value)).toThrow(
-      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted or fixed managed vLLM route",
     );
   });
 
@@ -234,7 +234,7 @@ describe("NemoClawConfig v1", () => {
     const { value, reviewer } = threeAgentConfig();
     reviewer.inference.routes[0]!.overrides.model = "other";
     expect(() => validateNemoClawConfig(value)).toThrow(
-      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted or fixed managed vLLM route",
     );
   });
 
@@ -944,7 +944,71 @@ function managedServingConfig() {
   return { value, provider, route };
 }
 
+function managedRosterConfig(overrides: Record<string, unknown> = {}) {
+  const fixture = managedServingConfig();
+  Object.assign(fixture.route.overrides, overrides);
+  const agents = fixture.value.spec.sandboxes[0]!.agents;
+  agents.push(
+    ...["researcher", "reviewer"].map((name) => ({
+      ...structuredClone(agents[0]!),
+      name,
+      tools: { allow: ["read"] },
+    })),
+  );
+  return { ...fixture, agents };
+}
+
 describe("fixed managed serving public contract", () => {
+  it("round trips a read-only roster with shared fixed serving and tuning (#11859)", () => {
+    const { value, agents } = managedRosterConfig({
+      maxTokens: 8192,
+      reasoning: true,
+      reasoningEffort: "high",
+    });
+    Object.assign(agents[0]!, { execution: { timeoutSeconds: 900, heartbeatEvery: "5m" } });
+    expect(validateNemoClawConfig(YAML.parse(renderInput(value).yaml))).toEqual(value);
+  });
+
+  it.each([
+    ["provider", { providerRef: "another-provider" }],
+    ["model", { overrides: { model: "other", contextWindow: 65536 } }],
+    ["context", { overrides: { model: "managed-model", contextWindow: 32768 } }],
+    ["tuning", { overrides: { model: "managed-model", contextWindow: 65536, reasoning: true } }],
+  ])("rejects a later managed agent's divergent %s (#11859)", (_label, change) => {
+    const { value, agents } = managedRosterConfig();
+    Object.assign(agents[2]!.inference.routes[0]!, change);
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "sharing its hosted or fixed managed vLLM route",
+    );
+  });
+
+  it.each([
+    { execution: { timeoutSeconds: 900 } },
+    { interfaces: { dashboard: { port: 19000 } } },
+    {
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "reviewer",
+          sampleRate: 1,
+        },
+      },
+    },
+    { auth: { method: "api-key", providerRef: "managed-vllm" } },
+  ])("rejects primary-owned settings on a managed secondary %j (#11859)", (change) => {
+    const { value, agents } = managedRosterConfig();
+    Object.assign(agents[2]!, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it("rejects a shared context that differs from the fixed serving contract (#11859)", () => {
+    const { value } = managedRosterConfig({ contextWindow: 32768 });
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "does not match the sandbox runtime or route model",
+    );
+  });
+
   it("round trips an immutable catalog reference and nondefault published port", () => {
     const { value } = managedServingConfig();
     expect(validateNemoClawConfig(YAML.parse(renderInput(value).yaml))).toEqual(value);
@@ -1051,6 +1115,19 @@ function ollamaConfig(model = "qwen3.5:9b") {
 }
 
 describe("attached Ollama serving public contract", () => {
+  it("keeps Ollama rosters unsupported (#11859)", () => {
+    const value = ollamaConfig();
+    const agents = value.spec.sandboxes[0]!.agents;
+    agents.push({
+      ...structuredClone(agents[0]!),
+      name: "researcher",
+      ...{ tools: { allow: ["read"] } },
+    });
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "sharing its hosted or fixed managed vLLM route",
+    );
+  });
+
   it.each(["qwen3.5:9b", "qwen2.5:0.5b"])(
     "round trips the selected model %s and external daemon (#11857)",
     (model) => {
