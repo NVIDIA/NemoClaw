@@ -3,6 +3,7 @@
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import { createSdkOpenShellSandboxStateLifecycle } from "../../adapters/openshell/sandbox-lifecycle-sdk";
+import { createCliOpenShellSandboxStateLifecycle } from "../../adapters/openshell/sandbox-state-lifecycle-cli";
 import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -191,7 +192,10 @@ export function createPodmanRuntimeProviderBundle(
   const captureSandboxLifecycle =
     options.captureSandboxLifecycle ??
     (async (args: string[], environment: NodeJS.ProcessEnv) => {
-      const sdkLifecycle = createSdkOpenShellSandboxStateLifecycle({ env: environment });
+      const sdkLifecycle = createSdkOpenShellSandboxStateLifecycle({
+        env: environment,
+        fallback: createCliOpenShellSandboxStateLifecycle(environment),
+      });
       const request = {
         sandboxName: String(args[4]),
         target: { kind: "named" as const, gatewayName: String(args[3]) },

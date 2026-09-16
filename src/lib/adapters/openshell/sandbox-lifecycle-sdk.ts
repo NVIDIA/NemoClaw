@@ -4,17 +4,17 @@
 import { isValidName } from "../../name-validation";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";
 
-type MutateOpenShellSandboxRequest = Readonly<{
+export type MutateOpenShellSandboxRequest = Readonly<{
   sandboxName: string;
   target: Extract<OpenShellGatewayTarget, { kind: "named" }>;
   timeoutMs?: number;
 }>;
 
-type OpenShellSandboxMutationSubmission =
+export type OpenShellSandboxMutationSubmission =
   | Readonly<{ kind: "accepted" }>
   | Readonly<{ kind: "failed"; error: OpenShellSandboxError }>;
 
-interface OpenShellSandboxStateLifecycle {
+export interface OpenShellSandboxStateLifecycle {
   startSandbox(request: MutateOpenShellSandboxRequest): Promise<OpenShellSandboxMutationSubmission>;
   stopSandbox(request: MutateOpenShellSandboxRequest): Promise<OpenShellSandboxMutationSubmission>;
 }
@@ -36,6 +36,7 @@ type SdkClient = Readonly<{
 export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
   connect?: (target: OpenShellGatewayTarget) => Promise<SdkClient>;
   env?: NodeJS.ProcessEnv;
+  fallback?: OpenShellSandboxStateLifecycle;
   homeDir?: string;
   loadSdk?: () => Promise<unknown>;
 }>;
@@ -85,6 +86,7 @@ async function mutate(
   action: "start" | "stop",
   request: MutateOpenShellSandboxRequest,
   connect: (target: OpenShellGatewayTarget) => Promise<SdkClient>,
+  fallback?: OpenShellSandboxStateLifecycle,
 ): Promise<OpenShellSandboxMutationSubmission> {
   if (
     !isValidName(request.sandboxName) ||
@@ -111,6 +113,13 @@ async function mutate(
     );
     return { kind: "accepted" };
   } catch (error) {
+    if (
+      !controller.signal.aborted &&
+      (error as NodeJS.ErrnoException | undefined)?.code === "ERR_MODULE_NOT_FOUND" &&
+      fallback
+    ) {
+      return action === "start" ? fallback.startSandbox(request) : fallback.stopSandbox(request);
+    }
     return { kind: "failed", error: lifecycleError(error, controller.signal.aborted) };
   } finally {
     clearTimeout(timeout);
@@ -136,7 +145,7 @@ export function createSdkOpenShellSandboxStateLifecycle(
       })) as SdkClient;
     });
   return {
-    startSandbox: (request) => mutate("start", request, connect),
-    stopSandbox: (request) => mutate("stop", request, connect),
+    startSandbox: (request) => mutate("start", request, connect, deps.fallback),
+    stopSandbox: (request) => mutate("stop", request, connect, deps.fallback),
   };
 }

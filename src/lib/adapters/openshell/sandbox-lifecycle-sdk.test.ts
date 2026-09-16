@@ -63,4 +63,24 @@ describe("OpenShell SDK sandbox lifecycle", () => {
       error: { kind: "authentication", message: "OpenShell denied access." },
     });
   });
+
+  it("falls back only when the reviewed SDK package is unavailable", async () => {
+    const fallback = {
+      startSandbox: vi.fn(async () => ({ kind: "accepted" as const })),
+      stopSandbox: vi.fn(async () => ({ kind: "accepted" as const })),
+    };
+    const missing = Object.assign(new Error("missing reviewed SDK"), {
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+      connect: async () => Promise.reject(missing),
+      fallback,
+    });
+
+    await expect(lifecycle.stopSandbox({ sandboxName: "alpha", target })).resolves.toEqual({
+      kind: "accepted",
+    });
+    expect(fallback.stopSandbox).toHaveBeenCalledWith({ sandboxName: "alpha", target });
+    expect(fallback.startSandbox).not.toHaveBeenCalled();
+  });
 });
