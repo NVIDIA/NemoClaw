@@ -41,7 +41,7 @@ interface RunnerCall {
 }
 
 type FakeRunnerResponse = Partial<
-  Pick<ShellProbeResult, "exitCode" | "signal" | "stderr" | "stdout">
+  Pick<ShellProbeResult, "exitCode" | "signal" | "stderr" | "stdout" | "timedOut">
 >;
 
 class FakeRunner implements CommandRunner {
@@ -70,7 +70,7 @@ class FakeRunner implements CommandRunner {
       command: [command.command, ...command.args],
       exitCode: response?.exitCode === undefined ? this.exitCode : response.exitCode,
       signal: response?.signal === undefined ? this.signal : response.signal,
-      timedOut: false,
+      timedOut: response?.timedOut ?? false,
       stdout: response?.stdout ?? this.stdout,
       stderr: response?.stderr ?? this.stderr,
       artifacts: {
@@ -794,6 +794,71 @@ describe("E2E fixture clients", () => {
     await expect(sandbox.waitForInitialOpenClawPairing("assistant")).rejects.toThrow(
       "wait for initial OpenClaw CLI pairing in assistant failed: exit=1",
     );
+  });
+
+  it("initial cleanup verifies the requested gateway before deleting a sandbox", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "Gateway: nemoclaw\nStatus: Connected\n" });
+    const sandbox = new SandboxClient(runner);
+    const options = { env: { OPENSHELL_GATEWAY: "nemoclaw" }, timeoutMs: 60000 };
+    await sandbox.cleanupSandboxBeforeOnboard("assistant", options);
+    expect(runner.calls.map(({ args }) => args)).toEqual([
+      ["gateway", "info", "-g", "nemoclaw"],
+      ["sandbox", "delete", "assistant"],
+    ]);
+    expect(runner.calls[0].options).toMatchObject(options);
+  });
+
+  it("initial cleanup accepts only the requested absent gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({
+      exitCode: 1,
+      stderr:
+        "Error:   × Unknown gateway 'nemoclaw'.\n  │ Register it first: openshell gateway add <endpoint> --name nemoclaw\n  │ Or list available gateways: openshell gateway select",
+    });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).resolves.toBeUndefined();
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it.each([
+    { exitCode: 1, stderr: "permission denied" },
+    { exitCode: 1, stderr: "connection refused" },
+    { exitCode: 1, stderr: "No active gateway." },
+    { exitCode: 1, stderr: "Unknown gateway 'other'." },
+    { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.\npermission denied" },
+    { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.", stdout: "unexpected output" },
+    { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.", timedOut: true },
+    { exitCode: null, stderr: "Unknown gateway 'nemoclaw'.", signal: "SIGTERM" as const },
+    { exitCode: 0, stdout: "Gateway: other" },
+    { exitCode: 0, stdout: "Gateway: nemoclaw\nGateway: other" },
+    { exitCode: 0, stdout: "Gateway: nemoclaw\nError: connection refused" },
+    { exitCode: 0, stdout: "Gateway: nemoclaw", stderr: "permission denied" },
+    { exitCode: 0, stdout: "" },
+  ])("initial cleanup rejects an unverified gateway observation: %j", async (response) => {
+    const runner = new FakeRunner();
+    runner.enqueue(response);
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.hasGatewayForInitialCleanup("nemoclaw")).rejects.toThrow();
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it("initial cleanup retains deletion failures for a verified gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "Gateway: nemoclaw\n" });
+    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).rejects.toThrow(
+      "permission denied",
+    );
+    expect(runner.calls).toHaveLength(2);
+  });
+
+  it("terminal cleanup rejects an absent gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "Unknown gateway 'nemoclaw'." });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow("Unknown gateway");
   });
 
   it("sandbox client removes an OpenShell sandbox with caller cleanup options", async () => {

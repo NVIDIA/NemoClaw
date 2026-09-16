@@ -396,7 +396,10 @@ describe("live test progress", () => {
     const cleanupGatewayRegistration = vi.fn(async () => undefined);
     const openshell = vi.fn<SandboxClient["openshell"]>(async () => successfulProbe());
     const host = { cleanupGatewayRegistration, command } as unknown as HostCliClient;
-    const sandbox = { openshell } as unknown as SandboxClient;
+    const sandbox = {
+      openshell,
+      hasGatewayForInitialCleanup: vi.fn(async () => true),
+    } as unknown as SandboxClient;
     const activityFinishes: ReturnType<typeof vi.fn>[] = [];
     const progress = {
       activity: vi.fn(() => {
@@ -460,13 +463,32 @@ describe("live test progress", () => {
       .mockResolvedValueOnce(failedProbe("no such sandbox"))
       .mockResolvedValue(successfulProbe());
     const host = { cleanupGatewayRegistration, command } as unknown as HostCliClient;
-    const sandbox = { openshell } as unknown as SandboxClient;
+    const sandbox = {
+      openshell,
+      hasGatewayForInitialCleanup: vi.fn(async () => true),
+    } as unknown as SandboxClient;
 
     await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).resolves.toBeUndefined();
 
     expect(command).toHaveBeenCalledTimes(2);
     expect(openshell).toHaveBeenCalledTimes(3);
     expect(cleanupGatewayRegistration).toHaveBeenCalledOnce();
+  });
+
+  it("skips sandbox deletion but retains forward cleanup when the gateway is absent", async () => {
+    const host = {
+      command: vi.fn(async () => successfulProbe()),
+      cleanupGatewayRegistration: vi.fn(async () => undefined),
+    } as unknown as HostCliClient;
+    const sandbox = {
+      openshell: vi.fn(async () => successfulProbe()),
+      hasGatewayForInitialCleanup: vi.fn(async () => false),
+    } as unknown as SandboxClient;
+    await cleanupTurnSandboxes(host, sandbox, fakeInference());
+    expect(host.command).toHaveBeenCalledTimes(2);
+    expect(sandbox.openshell).toHaveBeenCalledOnce();
+    expect(sandbox.openshell).toHaveBeenCalledWith(["forward", "stop", "8642"], expect.any(Object));
+    expect(host.cleanupGatewayRegistration).toHaveBeenCalledOnce();
   });
 
   it("aborts pre-clean on a nonzero command and identifies its redacted artifact", async () => {
@@ -477,6 +499,7 @@ describe("live test progress", () => {
     } as unknown as HostCliClient;
     const sandbox = {
       openshell: vi.fn<SandboxClient["openshell"]>(async () => successfulProbe()),
+      hasGatewayForInitialCleanup: vi.fn(async () => true),
     } as unknown as SandboxClient;
 
     await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).rejects.toThrow(

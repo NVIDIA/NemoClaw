@@ -365,6 +365,11 @@ export async function cleanupTurnSandboxes(
   inference: AgentTurnInference,
   progress?: AgentTurnProgress,
 ): Promise<void> {
+  const cleanupEnv = env(OPENCLAW_SANDBOX, "openclaw", inference);
+  const gatewayPresent = await sandbox.hasGatewayForInitialCleanup(
+    cleanupEnv.OPENSHELL_GATEWAY ?? "nemoclaw",
+    { env: cleanupEnv, timeoutMs: 60_000 },
+  );
   for (const [name, agent] of [
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
@@ -374,18 +379,20 @@ export async function cleanupTurnSandboxes(
       () => cleanupTurnSandbox(host, name, agent, inference, progress),
       progress,
     );
-    await runCleanupStep(
-      `delete ${agent} sandbox`,
-      () =>
-        sandbox.openshell(["sandbox", "delete", name], {
-          artifactName: `cleanup-${agent}-delete`,
-          env: env(name, agent, inference),
-          onOutput: progress?.onOutput,
-          timeoutMs: 60_000,
-        }),
-      progress,
-      isMissingSandboxResult,
-    );
+    if (gatewayPresent) {
+      await runCleanupStep(
+        `delete ${agent} sandbox`,
+        () =>
+          sandbox.openshell(["sandbox", "delete", name], {
+            artifactName: `cleanup-${agent}-delete`,
+            env: env(name, agent, inference),
+            onOutput: progress?.onOutput,
+            timeoutMs: 60_000,
+          }),
+        progress,
+        isMissingSandboxResult,
+      );
+    }
   }
   await runCleanupStep(
     "stop Hermes API forward",

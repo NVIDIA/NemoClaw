@@ -127,6 +127,65 @@ export class SandboxClient {
     });
   }
 
+  /** Initial cleanup may run before onboarding registers the isolated job's gateway. */
+  async hasGatewayForInitialCleanup(
+    gatewayName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<boolean> {
+    validateSandboxName(gatewayName);
+    const result = await this.openshell(["gateway", "info", "-g", gatewayName], {
+      ...options,
+      artifactName: `${options.artifactName ?? "precleanup"}-gateway-info`,
+    });
+    const lines = result.stderr
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => line.trim());
+    const diagnostic = lines
+      .shift()
+      ?.replace(/^Error:\s*/u, "")
+      .replace(/^×\s*/u, "");
+    const missing = diagnostic === `Unknown gateway '${gatewayName}'.`;
+    const guidanceOnly = lines.every(
+      (line) =>
+        line === `│ Register it first: openshell gateway add <endpoint> --name ${gatewayName}` ||
+        line === "│ Or list available gateways: openshell gateway select",
+    );
+    if (
+      result.exitCode === 1 &&
+      !result.timedOut &&
+      result.signal === null &&
+      result.stdout.trim() === "" &&
+      missing &&
+      guidanceOnly
+    )
+      return false;
+    assertExitZero(result, `inspect initial cleanup gateway ${gatewayName}`);
+    const declarations = [...result.stdout.matchAll(/^\s*Gateway:\s+(.+?)\s*$/gmu)];
+    if (
+      result.timedOut ||
+      result.signal !== null ||
+      result.stderr.trim() !== "" ||
+      /^\s*Error:/mu.test(result.stdout) ||
+      declarations.length !== 1 ||
+      declarations[0][1] !== gatewayName
+    ) {
+      throw new Error(`Initial cleanup could not verify gateway ${gatewayName}`);
+    }
+    return true;
+  }
+
+  async cleanupSandboxBeforeOnboard(
+    name: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    validateSandboxName(name);
+    const gatewayName = options.env?.OPENSHELL_GATEWAY ?? "nemoclaw";
+    if (await this.hasGatewayForInitialCleanup(gatewayName, options)) {
+      await this.cleanupSandbox(name, options);
+    }
+  }
+
   async cleanupSandbox(name: string, options: ShellProbeRunOptions = {}): Promise<void> {
     validateSandboxName(name);
     const result = await this.openshell(["sandbox", "delete", name], {
