@@ -22,6 +22,23 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         assert!(resources.contains_key(name));
     }
     assert!(!resources.contains_key("route"));
+    let profile = resources["provider_profile"]
+        .schema(&mut diagnostics)
+        .unwrap();
+    for name in ["endpoint", "authenticated"] {
+        assert!(
+            matches!(
+                profile.block.attributes[name].constraint,
+                tf_provider::schema::AttributeConstraint::OptionalComputed
+            ),
+            "native inference fields must be optional for the Brave profile"
+        );
+    }
+    let inference = resources["provider"].schema(&mut diagnostics).unwrap();
+    assert!(matches!(
+        inference.block.attributes["endpoint"].constraint,
+        tf_provider::schema::AttributeConstraint::Required
+    ));
     let schema = provider.schema(&mut diagnostics).unwrap();
     for name in [
         "endpoint",
