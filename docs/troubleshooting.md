@@ -66,6 +66,11 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
+Terminal startup errors report the OpenShell sandbox phase and the main process exit code, or `unknown` when OpenShell supplied no code.
+Error, completed, stopped, and deleting phases fail immediately and retain resources.
+The SDK excludes raw backend condition text from these diagnostics because it may contain credentials.
+The [current main-process environment blocker](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) can stop startup before native log files exist.
+
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
 
 ## Read Native Service Logs

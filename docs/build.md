@@ -6,9 +6,14 @@
 Build from the repository root with Rust 1.98.1, pinned in [rust-toolchain.toml](../rust-toolchain.toml), and Protocol Buffers compiler 36.1.
 Native builds also require a C toolchain for TLS dependencies.
 Set `PROTOC` to the compiler’s path if it is outside `PATH`.
-[versions.json](../versions.json) records tool versions and download checksums.
+[versions.json](../versions.json) records tool versions, download checksums, and the SDK's default agent, gateway, sandbox runtime, and supervisor image pins.
+The SDK generates its artifact constants from that manifest at build time.
 
 ## Build a Native Bundle
+
+Use a separate `target` directory in each worktree; do not symlink it to another checkout or share `CARGO_TARGET_DIR` between revisions.
+The bundle builder uses the current worktree's `target` directory.
+Share downloaded dependencies through Cargo's cache instead of sharing compiled workspace artifacts.
 
 Run the bundle builder:
 
@@ -77,6 +82,7 @@ docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
+Examples that omit `image` use the SDK's default OpenClaw pin from `versions.json`; that image must still exist on the selected compute daemon.
 The sandbox compute daemon must have access to that exact image.
 Build metadata records the exported digest separately under the target's `containerimage.digest` key.
 The commands build and load local images; they do not publish images or launch a deployment.
