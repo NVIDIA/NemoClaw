@@ -63,7 +63,6 @@ export function bindHermesPortableOnboardingLifecycleLock(
 }
 import {
   assertCurrentHermesPortableContainer,
-  configureHermesPortableRestartPolicy,
   enrollHermesPortableContainer,
   probeHermesPortableAuthenticatedHealth,
   type HermesPortableAuthenticatedHealthCapture,
@@ -387,7 +386,14 @@ export function createHermesPortableReadyRunner(
       scopeHermesPortableReadyExecArgs(args, sandboxName, gatewayName) ??
       (args[0] === "sandbox" && args[1] === "delete" && args.length === 3 && args[2] === sandboxName
         ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
-        : null);
+        : args.length === 5 &&
+            args[0] === "sandbox" &&
+            args[1] === "delete" &&
+            args[2] === "-g" &&
+            args[3] === gatewayName &&
+            args[4] === sandboxName
+          ? args
+          : null);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
     return capture(scoped);
   };
@@ -1071,12 +1077,8 @@ function requireConfiguredReceiptSnapshot(
 }
 
 function requireConfiguredContainerReady(container: HermesPortableContainerInspection): void {
-  if (
-    !container.authority.running ||
-    container.paused ||
-    container.authority.restartPolicy !== "unless-stopped"
-  ) {
-    fail("exact container is not running with the committed restart policy");
+  if (!container.authority.running || container.paused) {
+    fail("exact container is not running and unpaused");
   }
 }
 
@@ -1576,7 +1578,6 @@ export async function runHermesPortableOnboardingTransaction<T>(
       repairRegistryGatewayPort(configuringSnapshot.receipt, liveIdentity.liveIdentityFingerprint),
       liveIdentity.liveIdentityFingerprint,
     );
-    configureHermesPortableRestartPolicy(configuringSnapshot.receipt, containerDeps);
     const beforeRegistry = registryDisposition(configuringSnapshot.receipt);
     if (beforeRegistry.kind === "conflict") {
       fail(`registry conflicts with configuring authority: ${beforeRegistry.detail}`);

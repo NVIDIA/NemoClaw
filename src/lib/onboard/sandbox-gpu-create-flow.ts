@@ -457,6 +457,7 @@ export async function runSandboxGpuCreateFlow(
               input.sandboxName,
               failure,
               {
+                gatewayName: input.gatewayName,
                 runOpenshell: deps.runOpenshell,
                 sleep: deps.sleep,
               },
