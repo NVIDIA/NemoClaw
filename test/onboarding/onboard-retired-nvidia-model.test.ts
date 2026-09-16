@@ -12,7 +12,7 @@ describe("recovered NVIDIA model onboarding", () => {
     const retiredModel = "minimaxai/minimax-m3";
     const replacement = "nvidia/nemotron-3-super-120b-a12b";
     const warn = vi.fn();
-    const validateReplacement = vi.fn(async () => ({ ok: true as const }));
+    const validateReplacement = vi.fn(async (_model: unknown) => ({ ok: true as const }));
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
@@ -31,7 +31,7 @@ describe("recovered NVIDIA model onboarding", () => {
             requestedModel,
             recoveredModel,
             true,
-            null,
+            undefined,
           );
           await validateReplacement(selectedModel);
           state.model = selectedModel;
