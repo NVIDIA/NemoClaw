@@ -3,19 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
-import {
-  SANDBOX_SURVIVAL_CLEANUP_RESERVE_MS,
-  SANDBOX_SURVIVAL_READINESS_WORST_CASE_MS,
-  SANDBOX_SURVIVAL_TEST_TIMEOUT_MS,
-} from "../fixtures/sandbox-survival-budget.ts";
 
 describe("bounded polling", () => {
-  it("reserves cleanup time after all sandbox-survival readiness waits", () => {
-    expect(
-      SANDBOX_SURVIVAL_READINESS_WORST_CASE_MS + SANDBOX_SURVIVAL_CLEANUP_RESERVE_MS,
-    ).toBeLessThanOrEqual(SANDBOX_SURVIVAL_TEST_TIMEOUT_MS);
-  });
-
   it("numbers artifacts and returns the accepted attempt", async () => {
     const probe = vi.fn(async (attempt: number) => attempt);
     const result = await pollUntil({

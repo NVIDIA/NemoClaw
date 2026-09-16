@@ -97,6 +97,8 @@ export interface SandboxMarker {
   value: string;
 }
 
+export const SANDBOX_MARKER_COMMAND_TIMEOUT_MS = 30_000;
+
 function statusProbeEnv(): NodeJS.ProcessEnv {
   return buildAvailabilityProbeEnv();
 }
@@ -415,7 +417,7 @@ export class StateValidationPhaseFixture {
         {
           artifactName: `state-marker-write-${path.basename(marker.path)}`,
           env: statusProbeEnv(),
-          timeoutMs: 30_000,
+          timeoutMs: SANDBOX_MARKER_COMMAND_TIMEOUT_MS,
         },
       );
       if (result.exitCode !== 0) {
@@ -436,7 +438,7 @@ export class StateValidationPhaseFixture {
         {
           artifactName: `${artifactPrefix}-${path.basename(marker.path)}`,
           env: statusProbeEnv(),
-          timeoutMs: 30_000,
+          timeoutMs: SANDBOX_MARKER_COMMAND_TIMEOUT_MS,
         },
       );
       const actual = result.stdout.trim();
