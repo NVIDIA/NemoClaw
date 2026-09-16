@@ -94,6 +94,13 @@ function twoAgentConfig() {
   return { value, primary, secondary };
 }
 
+function threeAgentConfig() {
+  const context = twoAgentConfig();
+  const reviewer = { ...structuredClone(context.secondary), name: "reviewer" };
+  context.value.spec.sandboxes[0]!.agents.push(reviewer);
+  return { ...context, reviewer };
+}
+
 describe("NemoClawConfig v1", () => {
   it.each(["researcher", "reviewer-2", "a", "a".repeat(32)])(
     "accepts secondary agent %s on the primary hosted route (#11434)",
@@ -104,6 +111,12 @@ describe("NemoClawConfig v1", () => {
       expect(validateNemoClawConfig(value)).toEqual(value);
     },
   );
+
+  it("accepts an ordered read-only roster on the primary hosted route (#11854)", () => {
+    const { value, primary } = threeAgentConfig();
+    Object.assign(primary, { tools: { disclosure: "direct" } });
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
 
   it.each(["main", "primary", "0agent", "with_underscore", "with.dot", "agent-", "a".repeat(33)])(
     "rejects unrepresentable secondary name %s (#11434)",
@@ -155,9 +168,9 @@ describe("NemoClawConfig v1", () => {
       },
     },
     {
-      field: "count",
+      field: "duplicate name",
       mutate: ({ value, secondary }) => {
-        value.spec.sandboxes[0]!.agents.push({ ...secondary, name: "third" });
+        value.spec.sandboxes[0]!.agents.push(structuredClone(secondary));
       },
     },
     {
@@ -183,7 +196,15 @@ describe("NemoClawConfig v1", () => {
     mutate(context);
     const { value } = context;
     expect(() => validateNemoClawConfig(value)).toThrow(
-      "/spec/sandboxes/0/agents must pair primary with one read-only OpenClaw agent sharing its hosted route",
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
+    );
+  });
+
+  it("rejects a divergent route anywhere in a read-only roster (#11854)", () => {
+    const { value, reviewer } = threeAgentConfig();
+    reviewer.inference.routes[0]!.overrides.model = "other";
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
     );
   });
 

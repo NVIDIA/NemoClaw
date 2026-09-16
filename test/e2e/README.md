@@ -387,9 +387,9 @@ This preserves the locked dependency versions and avoids npm resolving a new pee
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
-The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
-After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
-It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
+The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
+After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
+It compares the ordered agent roster, sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
 The exported effective policy comes from the SDK configuration response and is compared with the
