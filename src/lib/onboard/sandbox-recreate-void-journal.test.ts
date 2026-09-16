@@ -325,6 +325,90 @@ describe("sandbox recreate recovery from a void journal", () => {
     ).toEqual({ action: "continue_create" });
   });
 
+  it("resumes a deleted N1x journal recorded before acceptance left the fingerprint (#11886)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recreate-journal-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("../state/registry");
+      registry.registerSandbox({
+        name: "alpha",
+        agent: "openclaw",
+        createdAt: ISO,
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl: null,
+        endpointSource: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        openshellDriver: "docker",
+        deferredN1xManagedVllmAccepted: true,
+      });
+      const sourceEntry = registry.getSandbox("alpha") as SandboxEntry;
+      const {
+        pendingRouteReservation: _pendingRouteReservation,
+        reservationSessionId: _reservationSessionId,
+        provider: _provider,
+        model: _model,
+        endpointUrl: _endpointUrl,
+        endpointSource: _endpointSource,
+        credentialEnv: _credentialEnv,
+        preferredInferenceApi: _preferredInferenceApi,
+        hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
+        hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
+        gatewayName: _gatewayName,
+        gatewayPort: _gatewayPort,
+        messaging: _messaging,
+        ...legacyDurableEntry
+      } = sourceEntry;
+      const legacyFingerprint = fingerprintSandboxRecreateValue(legacyDurableEntry);
+      expect(
+        registry.reserveSandboxInferenceRoute("alpha", {
+          provider: "vllm-local",
+          model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          openshellDriver: "docker",
+          reservationSessionId: "session-n1x-rebuild",
+        }),
+      ).toBe(true);
+      const reservedEntry = registry.getSandbox("alpha") as SandboxEntry;
+      const legacyTransaction = {
+        ...transactionAt("deleted", sourceEntry),
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sourceRegistryFingerprint: legacyFingerprint,
+      };
+
+      expect(fingerprintSandboxRegistryEntry(sourceEntry)).not.toBe(legacyFingerprint);
+      expect(reservedEntry.deferredN1xManagedVllmAccepted).toBeUndefined();
+      expect(
+        planSandboxRecreateRecovery(legacyTransaction, ABSENT_SOURCE, reservedEntry, {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+        }),
+      ).toEqual({ action: "continue_create" });
+      expect(
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          { ...reservedEntry, pendingRouteReservation: false },
+          { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        ),
+      ).toMatchObject({ action: "reject" });
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("keeps accepting the registered replacement over a restart (#10473)", () => {
     expect(
       planSandboxRecreateRecovery(

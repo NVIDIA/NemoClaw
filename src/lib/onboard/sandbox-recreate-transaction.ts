@@ -3,6 +3,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
+import { isN1xManagedVllmProviderModel } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type {
@@ -230,16 +231,32 @@ export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
   ]);
 }
 
+function fingerprintLegacyDeferredN1xSandboxEntry(entry: SandboxEntry): string | null {
+  if (
+    entry.pendingRouteReservation !== true ||
+    entry.deferredN1xManagedVllmAccepted !== undefined ||
+    !isN1xManagedVllmProviderModel(entry.provider, entry.model) ||
+    entry.openshellDriver !== "docker"
+  ) {
+    return null;
+  }
+  return fingerprintDurableSandboxEntry({ ...entry, deferredN1xManagedVllmAccepted: true }, [
+    ...ROUTE_RESERVATION_FIELDS.filter((field) => field !== "deferredN1xManagedVllmAccepted"),
+    ...RECEIPT_BOUND_PROJECTION_FIELDS,
+  ]);
+}
+
 /**
- * Accept a source row against a journal written before `messaging` left the
- * durable fingerprint.
+ * Accept a source row against the narrowly scoped durable-fingerprint formats
+ * written before route-reservation projections changed.
  *
  * Such a journal recorded a digest that still covered the messaging projection,
  * so recomputing it the new way never matches. Because a journal parked past the
  * delete boundary outlives an upgrade, refusing it would strand a rebuild whose
  * source sandbox is already deleted. The compatibility digest reproduces the
- * exact pre-#10473 field set, so it accepts only what the previous release
- * already accepted.
+ * exact legacy field sets, so it accepts only what previous releases already
+ * accepted. The N1x compatibility digest is additionally gated on an active
+ * reservation for the exact managed-vLLM route.
  */
 function sandboxRecreateSourceRowMatches(
   entry: SandboxEntry | null,
@@ -247,6 +264,7 @@ function sandboxRecreateSourceRowMatches(
 ): boolean {
   if (!entry) return recordedFingerprint === fingerprintSandboxRecreateValue(null);
   if (fingerprintSandboxRegistryEntry(entry) === recordedFingerprint) return true;
+  if (fingerprintLegacyDeferredN1xSandboxEntry(entry) === recordedFingerprint) return true;
   return (
     fingerprintDurableSandboxEntry(entry, [
       ...ROUTE_RESERVATION_FIELDS,
