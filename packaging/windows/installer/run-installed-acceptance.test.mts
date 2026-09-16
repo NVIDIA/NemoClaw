@@ -233,7 +233,9 @@ ConvertTo-Json -InputObject @($results) -Compress
           }),
           encoding: "utf8",
           windowsHide: true,
-          timeout: 30_000,
+          // Windows PowerShell 5.1 takes ~29.5s for the real registry matrix on
+          // the ARM64 runner and crosses 30s when migration runs in parallel.
+          timeout: shell === "powershell.exe" ? 45_000 : 30_000,
         },
       );
       assert.equal(result.error, undefined);
