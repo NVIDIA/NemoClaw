@@ -31,12 +31,6 @@ on:
         required: true
         default: false
         type: boolean
-      repair_publish:
-        description: Publish the validated repair through the protected environment
-        required: true
-        default: false
-        type: boolean
-
 permissions: {}
 
 env:
@@ -534,134 +528,6 @@ jobs:
           if-no-files-found: error
           retention-days: 31
 
-  publish:
-    name: Publish with protected compare-and-swap authority
-    needs:
-      - select
-      - validate
-      - reviewed-dependency
-    if: ${{ needs.validate.result == 'success' && inputs.repair_publish && vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true' }}
-    concurrency:
-      group: advisor-repair-publish-${{ inputs.pr_number }}
-      cancel-in-progress: false
-    environment: advisor-repair-publish
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      actions: read
-      contents: write
-      pull-requests: read
-    env:
-      SELECTION_DIR: ${{ github.workspace }}/.repair/selection
-      SOURCE_REPOSITORY: ${{ github.workspace }}/source
-      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
-      VALIDATED_DIR: ${{ github.workspace }}/.repair/validated
-    steps:
-      - name: Checkout trusted publisher code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: NVIDIA/NemoClaw
-          ref: ${{ github.workflow_sha }}
-          path: trusted
-          persist-credentials: false
-          lfs: false
-          submodules: false
-
-      - name: Checkout exact source tree as inert data
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: NVIDIA/NemoClaw
-          ref: ${{ needs.select.outputs.source-head-sha }}
-          path: source
-          fetch-depth: 0
-          persist-credentials: false
-          lfs: false
-          submodules: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24.18.1"
-
-      - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
-
-      - name: Download the reviewed private dependency
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ needs.reviewed-dependency.outputs.artifact-id }}
-          path: ${{ runner.temp }}/openshell-sdk
-          merge-multiple: true
-
-      - name: Install trusted dependencies
-        working-directory: ${{ env.TRUSTED_CHECKOUT }}
-        run: GITHUB_EVENT_NAME=pull_request bash .github/actions/ci-install-dependencies.sh none
-
-      - name: Download exact selection
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ needs.select.outputs.artifact-id }}
-          path: ${{ env.SELECTION_DIR }}
-          merge-multiple: true
-
-      - name: Download exact validated artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ needs.validate.outputs.artifact-id }}
-          path: ${{ env.VALIDATED_DIR }}
-          merge-multiple: true
-
-      - id: prepare
-        name: Reconstruct the exact validated GitHub commit
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PATCH_FILE: ${{ env.VALIDATED_DIR }}/repair.patch
-          RECEIPT_FILE: ${{ env.VALIDATED_DIR }}/validation.json
-          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
-          WORK_DIRECTORY: ${{ runner.temp }}/published-candidate
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-publish.mts" prepare
-
-      - name: Re-read exact live PR and review state
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-        run: |
-          set -euo pipefail
-          output="$RUNNER_TEMP/live-state"
-          mkdir -p "$output"
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" >"$output/pull.json"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
-            --paginate --slurp | jq '[.[][]]' >"$output/comments.json"
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments?per_page=100" \
-            --paginate --slurp | jq '[.[][]]' >"$output/review-comments.json"
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
-            --paginate --slurp | jq '[.[][]]' >"$output/reviews.json"
-          jq -n --slurpfile pull "$output/pull.json" --slurpfile comments "$output/comments.json" \
-            --slurpfile reviewComments "$output/review-comments.json" \
-            '{pull:$pull[0], comments:$comments[0], reviewComments:$reviewComments[0]}' \
-            >"$output/state.json"
-
-      - name: Bind protected approval to the exact repair and live state
-        env:
-          AUTHORIZATION_FILE: ${{ runner.temp }}/live-state/publication-authorization.json
-          GITHUB_TOKEN: ${{ github.token }}
-          PREPARED_SHA: ${{ steps.prepare.outputs.prepared-sha }}
-          REVIEWS_FILE: ${{ runner.temp }}/live-state/reviews.json
-          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
-          STATE_FILE: ${{ runner.temp }}/live-state/state.json
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-publish.mts" authorize
-
-      - id: publish
-        name: Compare-and-swap the verified commit onto the PR branch
-        env:
-          AUTHORIZATION_FILE: ${{ runner.temp }}/live-state/publication-authorization.json
-          GITHUB_TOKEN: ${{ github.token }}
-          PREPARED_SHA: ${{ steps.prepare.outputs.prepared-sha }}
-          REVIEWS_FILE: ${{ runner.temp }}/live-state/reviews.json
-          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
-          STATE_FILE: ${{ runner.temp }}/live-state/state.json
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-publish.mts" publish
-
   audit:
     name: Record bounded repair outcome
     if: ${{ always() }}
@@ -671,7 +537,6 @@ jobs:
       - resolve
       - reviewed-dependency
       - validate
-      - publish
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions: {}
@@ -681,7 +546,6 @@ jobs:
           ATTEMPT_KEY: ${{ needs.select.outputs.attempt-key }}
           CLAIM_RESULT: ${{ needs.claim.result }}
           DEPENDENCY_RESULT: ${{ needs.reviewed-dependency.result }}
-          PUBLISH_RESULT: ${{ needs.publish.result }}
           RESOLVE_RESULT: ${{ needs.resolve.result }}
           REPAIR_OUTCOME: ${{ needs.resolve.outputs.outcome }}
           SELECT_RESULT: ${{ needs.select.result }}
@@ -697,5 +561,5 @@ jobs:
             echo "- Repair outcome: ${REPAIR_OUTCOME:-unavailable}"
             echo "- Validation dependency: $DEPENDENCY_RESULT"
             echo "- Validate: $VALIDATE_RESULT"
-            echo "- Publish: $PUBLISH_RESULT"
+            echo "- Publish: unavailable pending trusted-main exact-head validation"
           } >>"$GITHUB_STEP_SUMMARY"

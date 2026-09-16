@@ -136,7 +136,8 @@ describe("PR Review Advisor trusted validation", () => {
     expect(readme).toContain("only the public npm registry is");
     expect(readme).toContain("runner teardown is the terminal");
     expect(readme).toContain("normal Advisor review workflow posts advisory comments only");
-    expect(readme).toContain("manual repair publisher can update");
+    expect(readme).toContain("manual repair workflow also cannot");
+    expect(readme).toContain("Publication is intentionally unavailable");
     const validator = fs.readFileSync(
       path.join(process.cwd(), "tools/pr-review-advisor/repair-validate.mts"),
       "utf8",

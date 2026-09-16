@@ -1,445 +1,116 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   establishRestoredSandboxGatewayPairing,
   type RestoreGatewayPairingDeps,
   restartRestoredSandboxGateway,
-  waitForRestoredSandboxGatewaySupervisor,
 } from "./restore-gateway-pairing";
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+function pairingHarness(overrides: Partial<RestoreGatewayPairingDeps> = {}) {
+  const order: string[] = [];
+  const restartRestoredSandboxGateway = vi.fn(async () => {
+    order.push("restart");
+  });
+  const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
+  const approveRestoredClonePairing = vi.fn(() => {
+    order.push("approve");
+    return "approved-one" as const;
+  });
+  const verifyGatewayPairing = vi.fn(() => {
+    order.push("verify");
+    return { ok: true as const };
+  });
+  const deps: RestoreGatewayPairingDeps = {
+    restartRestoredSandboxGateway,
+    warmupScopeUpgrade,
+    approveRestoredClonePairing,
+    verifyGatewayPairing,
+    ...overrides,
+  };
+  return {
+    approveRestoredClonePairing,
+    deps,
+    order,
+    restartRestoredSandboxGateway,
+    verifyGatewayPairing,
+    warmupScopeUpgrade,
+  };
+}
 
-describe("establishRestoredSandboxGatewayPairing", () => {
-  it("restarts the restored gateway before warm-up and after approval (#7431)", async () => {
-    const order: string[] = [];
-    const restartRestoredSandboxGateway = vi.fn(async () => {
-      order.push("restart");
-    });
-    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    const approveRestoredClonePairing = vi.fn(() => {
-      order.push("approve");
-      return "approved-one" as const;
-    });
-    const verifyGatewayPairing = vi.fn(() => {
-      order.push("verify");
-      return { ok: true as const };
-    });
+describe("establishRestoredSandboxGatewayPairing native lifecycle", () => {
+  it("restarts before warm-up and after native pairing approval", async () => {
+    const h = pairingHarness();
 
-    await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxGateway,
-      warmupScopeUpgrade,
-      approveRestoredClonePairing,
-      verifyGatewayPairing,
-    });
+    await establishRestoredSandboxGatewayPairing("beta", h.deps);
 
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledWith("beta");
-    expect(warmupScopeUpgrade).toHaveBeenCalledWith("beta");
-    expect(approveRestoredClonePairing).toHaveBeenCalledWith("beta");
-    expect(verifyGatewayPairing).toHaveBeenCalledWith("beta");
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
-    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
-    expect(order).toEqual(["restart", "warmup", "approve", "restart", "verify"]);
+    expect(h.order).toEqual(["restart", "warmup", "approve", "restart", "verify"]);
   });
 
-  it("keeps the ordinary verifier as the sole success condition (#7431)", async () => {
-    const restartRestoredSandboxGateway = vi.fn(async () => undefined);
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
-    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
-
-    await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxGateway,
-      warmupScopeUpgrade,
-      approveRestoredClonePairing,
-      verifyGatewayPairing,
-    });
-
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
-    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
-  });
-
-  it("approves once when the first verifier publishes the clone scope upgrade (#7834)", async () => {
-    const order: string[] = [];
-    const restartRestoredSandboxGateway = vi.fn(async () => {
-      order.push("restart");
-    });
-    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    const approveRestoredClonePairing = vi
-      .fn<RestoreGatewayPairingDeps["approveRestoredClonePairing"]>(() => {
-        order.push("approve");
-        return "approved-one" as const;
-      })
-      .mockImplementationOnce(() => {
-        order.push("approve");
-        return "list-pending-unavailable" as const;
-      });
-    const verifyGatewayPairing = vi
-      .fn<RestoreGatewayPairingDeps["verifyGatewayPairing"]>(() => {
-        order.push("verify");
-        return { ok: true as const };
-      })
-      .mockImplementationOnce(() => {
-        order.push("verify");
-        return {
+  it("uses the native verifier as the success condition", async () => {
+    const h = pairingHarness({
+      approveRestoredClonePairing: vi
+        .fn()
+        .mockReturnValueOnce("list-pending-unavailable" as const)
+        .mockReturnValueOnce("approved-one" as const),
+      verifyGatewayPairing: vi
+        .fn()
+        .mockReturnValueOnce({
           ok: false as const,
           failureLayer: "scope-upgrade-pending" as const,
-        };
-      });
-
-    await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxGateway,
-      warmupScopeUpgrade,
-      approveRestoredClonePairing,
-      verifyGatewayPairing,
+        })
+        .mockReturnValueOnce({ ok: true as const }),
     });
 
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(3);
-    expect(approveRestoredClonePairing).toHaveBeenCalledTimes(2);
-    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
-    expect(order).toEqual([
-      "restart",
-      "warmup",
-      "approve",
-      "restart",
-      "verify",
-      "approve",
-      "restart",
-      "verify",
-    ]);
+    await establishRestoredSandboxGatewayPairing("beta", h.deps);
+
+    expect(h.restartRestoredSandboxGateway).toHaveBeenCalledTimes(3);
+    expect(h.deps.approveRestoredClonePairing).toHaveBeenCalledTimes(2);
+    expect(h.deps.verifyGatewayPairing).toHaveBeenCalledTimes(2);
   });
 
-  it("fails before pairing when the restored gateway cannot restart (#7431)", async () => {
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn();
-    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
-
-    const failure = await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxGateway: vi.fn(() => {
-        throw new Error("raw gateway output must stay private");
+  it("stops before pairing when native restart fails", async () => {
+    const h = pairingHarness({
+      restartRestoredSandboxGateway: vi.fn(async () => {
+        throw new Error("native restart failed");
       }),
-      warmupScopeUpgrade,
-      approveRestoredClonePairing,
-      verifyGatewayPairing,
-    }).catch((err: unknown) => err);
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain("unexpected-failure");
-    expect((failure as Error).message).not.toContain("raw gateway output");
-    expect(warmupScopeUpgrade).not.toHaveBeenCalled();
-    expect(approveRestoredClonePairing).not.toHaveBeenCalled();
-    expect(verifyGatewayPairing).not.toHaveBeenCalled();
-  });
-
-  it("classifies a transient-looking restart failure without retrying authorization (#7431)", async () => {
-    const restartSandboxGateway = vi
-      .fn()
-      .mockReturnValueOnce({
-        ok: false as const,
-        failureLayer: "health timeout",
-        detail: "raw transient output must stay private",
-      })
-      .mockReturnValueOnce({
-        ok: true as const,
-        restarted: true as const,
-        healthPassed: true as const,
-        forwardRecovered: true,
-      });
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn();
-    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
-
-    const failure = await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxGateway: (sandboxName) =>
-        restartRestoredSandboxGateway(sandboxName, {
-          restartSandboxGateway,
-          checkAndRecoverSandboxProcesses: vi.fn(),
-        }),
-      warmupScopeUpgrade,
-      approveRestoredClonePairing,
-      verifyGatewayPairing,
-    }).catch((err: unknown) => err);
-
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain("health timeout");
-    expect((failure as Error).message).not.toContain("raw transient output");
-    expect(restartSandboxGateway).toHaveBeenCalledOnce();
-    expect(warmupScopeUpgrade).not.toHaveBeenCalled();
-    expect(approveRestoredClonePairing).not.toHaveBeenCalled();
-    expect(verifyGatewayPairing).not.toHaveBeenCalled();
-  });
-
-  it("fails without verification when the post-approval gateway restart fails (#7431)", async () => {
-    const order: string[] = [];
-    const restartRestoredSandboxGateway = vi
-      .fn()
-      .mockImplementationOnce(() => order.push("restart:initial"))
-      .mockImplementationOnce(() => {
-        order.push("restart:approved");
-        throw new Error("gateway did not restart after approval");
-      });
-    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    const approveRestoredClonePairing = vi.fn(() => {
-      order.push("approve");
-      return "approved-one" as const;
-    });
-    const verifyGatewayPairing = vi.fn(() => {
-      order.push("verify");
-      return { ok: true as const };
     });
 
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway,
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow("unexpected-failure");
-    expect(order).toEqual(["restart:initial", "warmup", "approve", "restart:approved"]);
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(verifyGatewayPairing).not.toHaveBeenCalled();
-  });
-
-  it("fails when the pairing warm-up does not complete (#7431)", async () => {
-    const warmupScopeUpgrade = vi.fn(() => {
-      throw new Error("gateway not up");
-    });
-    const approveRestoredClonePairing = vi.fn();
-    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
-
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway: vi.fn(async () => undefined),
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow("unexpected-failure");
-    expect(approveRestoredClonePairing).not.toHaveBeenCalled();
-    expect(verifyGatewayPairing).not.toHaveBeenCalled();
-  });
-
-  it("fails after one ordinary verifier without retrying the handshake (#7431)", async () => {
-    const restartRestoredSandboxGateway = vi.fn();
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
-    const verifyGatewayPairing = vi.fn(() => ({
-      ok: false as const,
-      failureLayer: "scope-upgrade-pending" as const,
-    }));
-
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway,
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow(
-      "authenticated gateway verification run failed (scope-upgrade-pending; approval=approve-failed)",
+    await expect(establishRestoredSandboxGatewayPairing("beta", h.deps)).rejects.toThrow(
+      "unexpected-failure",
     );
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
-    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
-  });
-
-  it("does not retry a different verification failure after an unreadable approval list (#7834)", async () => {
-    const restartRestoredSandboxGateway = vi.fn();
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn(() => "list-failed" as const);
-    const verifyGatewayPairing = vi.fn(() => ({
-      ok: false as const,
-      failureLayer: "device-pairing-required" as const,
-    }));
-
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway,
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow(
-      "authenticated gateway verification run failed (device-pairing-required; approval=list-failed)",
-    );
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
-    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
-  });
-
-  it("does not retry a scope upgrade after malformed clone pending state (#7834)", async () => {
-    const restartRestoredSandboxGateway = vi.fn();
-    const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn(() => "list-failed" as const);
-    const verifyGatewayPairing = vi.fn(() => ({
-      ok: false as const,
-      failureLayer: "scope-upgrade-pending" as const,
-    }));
-
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway,
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
-      }),
-    ).rejects.toThrow(
-      "authenticated gateway verification run failed (scope-upgrade-pending; approval=list-failed)",
-    );
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
-    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
+    expect(h.warmupScopeUpgrade).not.toHaveBeenCalled();
+    expect(h.approveRestoredClonePairing).not.toHaveBeenCalled();
   });
 });
 
 describe("restartRestoredSandboxGateway", () => {
-  it("requires the managed supervisor proof before restored clone state can be applied (#7818)", () => {
-    const waitForManagedGatewaySupervisor = vi.fn(() => true);
-
-    expect(
-      waitForRestoredSandboxGatewaySupervisor("beta", {
-        restartSandboxGateway: vi.fn(),
-        checkAndRecoverSandboxProcesses: vi.fn(),
-        waitForManagedGatewaySupervisor,
-      }),
-    ).toBe(true);
-    expect(waitForManagedGatewaySupervisor).toHaveBeenCalledWith("beta");
-  });
-
-  it("restarts through the existing supervisor-mediated gateway lifecycle (#7431)", async () => {
+  it("uses the native restart path exactly once", async () => {
     const restartSandboxGateway = vi.fn(async () => ({
       ok: true as const,
       restarted: true as const,
       healthPassed: true as const,
       forwardRecovered: true,
     }));
-    const checkAndRecoverSandboxProcesses = vi.fn(async () => ({
-      checked: false,
-      recovered: false,
-      forwardRecovered: false,
-    }));
 
-    await restartRestoredSandboxGateway("beta", {
-      restartSandboxGateway,
-      checkAndRecoverSandboxProcesses,
-    });
+    await restartRestoredSandboxGateway("beta", { restartSandboxGateway });
 
-    expect(restartSandboxGateway).toHaveBeenCalledWith("beta", { quiet: true });
-    expect(checkAndRecoverSandboxProcesses).not.toHaveBeenCalled();
-  });
-
-  it("transactionally relaunches an exactly missing restored supervisor (#7818)", async () => {
-    const restartSandboxGateway = vi.fn(async () => ({
-      ok: false as const,
-      failureLayer: "supervisor not running" as const,
-      detail: "SUPERVISOR_NOT_RUNNING",
-    }));
-    const checkAndRecoverSandboxProcesses = vi.fn(
-      (
-        _sandboxName: string,
-        _options?: {
-          quiet?: boolean;
-          isSandboxGatewayRunningImpl?: (sandboxName: string) => Promise<boolean | null>;
-        },
-      ) =>
-        Promise.resolve({
-          checked: true,
-          recovered: true,
-          forwardRecovered: true,
-        }),
-    );
-
-    await restartRestoredSandboxGateway("beta", {
-      restartSandboxGateway,
-      checkAndRecoverSandboxProcesses,
-    });
-
-    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledWith("beta", {
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("beta", {
       quiet: true,
-      isSandboxGatewayRunningImpl: expect.any(Function),
     });
-    const recoveryOptions = checkAndRecoverSandboxProcesses.mock.calls[0]?.[1];
-    await expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("beta")).resolves.toBe(false);
   });
 
-  it("waits for a newly created clone supervisor before retrying restart (#7818)", async () => {
-    const restartSandboxGateway = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false as const,
-        failureLayer: "supervisor not running" as const,
-        detail: "SUPERVISOR_NOT_RUNNING",
-      })
-      .mockResolvedValueOnce({
-        ok: true as const,
-        restarted: true as const,
-        healthPassed: true as const,
-        forwardRecovered: true,
-      });
-    const checkAndRecoverSandboxProcesses = vi.fn(async () => ({
-      checked: false,
-      recovered: false,
-      forwardRecovered: false,
-    }));
-    const waitForManagedGatewaySupervisor = vi.fn(() => true);
-
-    await restartRestoredSandboxGateway("beta", {
-      restartSandboxGateway,
-      checkAndRecoverSandboxProcesses,
-      waitForManagedGatewaySupervisor,
-    });
-
-    expect(waitForManagedGatewaySupervisor).toHaveBeenCalledWith("beta");
-    expect(restartSandboxGateway).toHaveBeenCalledTimes(2);
-    expect(checkAndRecoverSandboxProcesses).not.toHaveBeenCalled();
-  });
-
-  it("preserves the supervisor classification when relaunch is not fully proven (#7818)", async () => {
-    const restartSandboxGateway = vi.fn(async () => ({
-      ok: false as const,
-      failureLayer: "supervisor not running" as const,
-      detail: "SUPERVISOR_NOT_RUNNING",
-    }));
-    const checkAndRecoverSandboxProcesses = vi.fn(async () => ({
-      checked: true,
-      recovered: true,
-      forwardRecovered: false,
-      forwardRecoveryFailed: true,
-    }));
-
+  it("propagates only the native failure classification", async () => {
     await expect(
       restartRestoredSandboxGateway("beta", {
-        restartSandboxGateway,
-        checkAndRecoverSandboxProcesses,
-      }),
-    ).rejects.toThrow("supervisor not running");
-  });
-
-  it("propagates only the classified gateway restart failure (#7431)", async () => {
-    let failure: unknown;
-    try {
-      await restartRestoredSandboxGateway("beta", {
         restartSandboxGateway: async () => ({
           ok: false,
-          failureLayer: "health timeout",
-          detail: "raw gateway output must stay private",
+          failureLayer: "native agent command",
+          detail: "raw native output must stay private",
         }),
-        checkAndRecoverSandboxProcesses: vi.fn(),
-      });
-    } catch (err) {
-      failure = err;
-    }
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toBe("health timeout");
-    expect((failure as Error).message).not.toContain("raw gateway output");
+      }),
+    ).rejects.toThrow("native agent command");
   });
 });

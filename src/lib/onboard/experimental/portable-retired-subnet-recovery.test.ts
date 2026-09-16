@@ -132,6 +132,7 @@ function preparationDeps(
 ) {
   return {
     platform: "linux" as const,
+    architecture: "x64" as const,
     home,
     uid: 1001,
     systemctl: () => result(),

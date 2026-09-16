@@ -112,6 +112,7 @@ async function publishValidatedTree(input: {
 }): Promise<string> {
   const commitSha = await createVerifiedCommit({
     allowExecutableFiles: true,
+    allowGitlinks: true,
     baseSha: input.entry.base_sha,
     finalTree: input.finalTree,
     headSha: input.entry.head_sha,

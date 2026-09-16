@@ -34,7 +34,7 @@ const checkoutCases = Object.entries(workflow.jobs).flatMap(([jobName, job]) =>
 const jobEnvironmentCases = Object.entries(workflow.jobs).map(
   ([jobName, job]) => [jobName, job.env] as const,
 );
-const trustedExecutionJobs = ["select", "claim", "resolve", "validate", "publish"];
+const trustedExecutionJobs = ["select", "claim", "resolve", "validate"];
 const trustedToolCases = trustedExecutionJobs.flatMap((jobName) =>
   repairToolSteps(workflow.jobs[jobName]).map((step, index) => [jobName, index, step] as const),
 );
@@ -46,17 +46,19 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(workflow.permissions).toEqual({});
     expect(workflow.jobs.select.if).toContain("refs/heads/main");
     expect(workflow.jobs.select.if).toContain("repository_egress_authorized");
-    expect(workflow.jobs.publish.if).toContain("inputs.repair_publish");
-    expect(workflow.jobs.publish.if).toContain("PR_REVIEW_ADVISOR_REPAIR_ENABLED");
+    expect(workflow.jobs).not.toHaveProperty("publish");
+    expect(serialized(workflow.jobs.audit)).toContain(
+      "Publish: unavailable pending trusted-main exact-head validation",
+    );
+    expect(JSON.stringify(workflow)).not.toContain('"contents":"write"');
   });
 
-  // source-shape-contract: security -- Model credentials and protected branch-write authority must remain in separate jobs with a credential-free validator between them
-  it("separates model access, candidate execution, and protected write authority (#10791)", () => {
+  // source-shape-contract: security -- Model credentials must remain separate from credential-free candidate validation, while branch-write authority stays unavailable
+  it("separates model access from credential-free candidate validation (#10791)", () => {
     const claim = workflow.jobs.claim;
     const resolve = workflow.jobs.resolve;
     const reviewedDependency = workflow.jobs["reviewed-dependency"];
     const validate = workflow.jobs.validate;
-    const publish = workflow.jobs.publish;
 
     expect(claim.permissions).toEqual({ checks: "write", contents: "read" });
     expect(claim.needs).toBe("select");
@@ -81,18 +83,16 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(workflow.jobs.select.needs).toContain("reviewed-dependency");
     expect(resolve.needs).toContain("reviewed-dependency");
     expect(validate.needs).toContain("reviewed-dependency");
-    expect(publish.needs).toContain("reviewed-dependency");
     expect(workflow.jobs.select.permissions).not.toHaveProperty("packages");
     expect(resolve.permissions).not.toHaveProperty("packages");
     expect(validate.permissions).not.toHaveProperty("packages");
-    expect(publish.permissions).not.toHaveProperty("packages");
-    const dependencyConsumers = [workflow.jobs.select, resolve, validate, publish]
+    const dependencyConsumers = [workflow.jobs.select, resolve, validate]
       .map(serialized)
       .join("\n");
     expect(
       dependencyConsumers.match(/needs[.]reviewed-dependency[.]outputs[.]artifact-id/gu),
-    ).toHaveLength(4);
-    expect(dependencyConsumers.match(/ci-install-dependencies[.]sh none/gu)).toHaveLength(4);
+    ).toHaveLength(3);
+    expect(dependencyConsumers.match(/ci-install-dependencies[.]sh none/gu)).toHaveLength(3);
     expect(dependencyConsumers).not.toMatch(/NODE_AUTH_TOKEN[^}]*github[.]token/u);
     expect(validate.permissions).toEqual({ actions: "read", contents: "read" });
     expect(serialized(validate)).not.toMatch(
@@ -100,22 +100,6 @@ describe("manual PR Review Advisor repair workflow", () => {
     );
     expect(serialized(validate)).toContain("needs.reviewed-dependency.outputs.artifact-id");
     expect(serialized(validate)).toContain("repair-validate.mts");
-
-    expect(publish.environment).toBe("advisor-repair-publish");
-    expect(publish.concurrency).toEqual({
-      group: "advisor-repair-publish-${{ inputs.pr_number }}",
-      "cancel-in-progress": false,
-    });
-    expect(publish.permissions).toEqual({
-      actions: "read",
-      contents: "write",
-      "pull-requests": "read",
-    });
-    expect(serialized(publish)).not.toMatch(/secrets[.]|OPENAI_API_KEY/u);
-    expect(serialized(publish)).toContain("needs.validate.outputs.artifact-id");
-    expect(serialized(publish)).toContain("repair-publish.mts");
-    expect(serialized(publish)).toContain('repair-publish.mts\\\" authorize');
-    expect(serialized(publish)).toContain("publication-authorization.json");
   });
 
   it.each(checkoutCases)("keeps checkout %s/%i inert (#10791)", (_jobName, _index, checkout) => {
@@ -150,20 +134,18 @@ describe("manual PR Review Advisor repair workflow", () => {
     },
   );
 
-  // source-shape-contract: security -- Immutable artifact IDs prevent name-based substitution across the model, validator, and publisher trust promotions
-  it("uses immutable artifact IDs across both trust promotions (#10791)", () => {
+  // source-shape-contract: security -- Immutable artifact IDs prevent name-based substitution across the model and validator trust promotion
+  it("uses immutable artifact IDs across candidate validation (#10791)", () => {
     const select = serialized(workflow.jobs.select);
     const resolve = serialized(workflow.jobs.resolve);
     const validate = serialized(workflow.jobs.validate);
-    const publish = serialized(workflow.jobs.publish);
 
     expect(select).toContain("repair-select.mts");
     expect(select).toContain("artifact-ids");
     expect(select).toContain("steps.artifact-ids.outputs.artifact-ids");
     expect(resolve).toContain("needs.select.outputs.artifact-id");
     expect(validate).toContain("needs.resolve.outputs.artifact-id");
-    expect(publish).toContain("needs.validate.outputs.artifact-id");
-    expect([resolve, validate, publish].join("\n")).not.toContain('"pattern":');
+    expect([resolve, validate].join("\n")).not.toContain('"pattern":');
   });
 
   // source-shape-contract: security -- The one-shot claim must inspect every check-run page before allowing another model attempt
@@ -212,8 +194,8 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(cleanupUpload?.with?.["retention-days"]).toBe(1);
   });
 
-  // source-shape-contract: security -- Protected publication inputs must remain available for validation throughout GitHub's approval window
-  it("retains protected publication inputs through the approval window (#10791)", () => {
+  // source-shape-contract: security -- Validation evidence must remain available throughout the maintainer review window
+  it("retains validation evidence through the review window (#10791)", () => {
     const selection = (workflow.jobs.select.steps ?? []).find((step) =>
       String(step.with?.name ?? "").startsWith("advisor-repair-selection-"),
     );
@@ -233,11 +215,11 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(dependency?.with?.["retention-days"]).toBe(31);
   });
 
-  // source-shape-contract: security -- A model-declared no-repair outcome must never cross into candidate execution or protected publication
+  // source-shape-contract: security -- A model-declared no-repair outcome must never cross into candidate validation
   it("records blocked outcomes without validating or publishing them (#10791)", () => {
     expect(workflow.jobs.resolve.outputs?.outcome).toContain("steps.export.outputs.outcome");
     expect(workflow.jobs.validate.if).toContain("needs.resolve.outputs.outcome == 'proposed'");
-    expect(workflow.jobs.publish.if).toContain("needs.validate.result == 'success'");
+    expect(workflow.jobs).not.toHaveProperty("publish");
     expect(serialized(workflow.jobs.audit)).toContain("needs.resolve.outputs.outcome");
   });
 
@@ -249,7 +231,7 @@ describe("manual PR Review Advisor repair workflow", () => {
   );
 
   // source-shape-contract: security -- Job-level repair paths must use a context GitHub permits while compiling the workflow
-  it.each(["resolve", "reviewed-dependency", "validate", "publish"])(
+  it.each(["resolve", "reviewed-dependency", "validate"])(
     "uses isolated workspace paths for the %s job (#10791)",
     (jobName) => {
       expect(JSON.stringify(workflow.jobs[jobName].env)).toContain("github.workspace");

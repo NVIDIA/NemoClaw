@@ -15,6 +15,7 @@ import {
 } from "../advisors/json.mts";
 
 export const MAX_PREPARED_GITHUB_CONTEXT_BYTES = 5 * 1024 * 1024;
+export const GITHUB_CONTEXT_DEADLINE_MS = 120_000;
 const OPEN_PR_OVERLAP_LIMIT = 80;
 const OPEN_PR_OVERLAP_CONCURRENCY = 6;
 const OVERLAP_LINKED_ISSUE_LIMIT = 50;
@@ -22,6 +23,8 @@ const OVERLAP_SAME_FILE_SAMPLE_LIMIT = 20;
 const OVERLAP_PATH_CHARACTER_LIMIT = 300;
 const BODY_CHARACTER_LIMIT = 20_000;
 const COMMENT_BODY_CHARACTER_LIMIT = 4_000;
+const TRUSTED_REVIEW_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const FOLLOW_UP_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED"]);
 
 export type OpenPrOverlap = {
   number: number;
@@ -50,6 +53,22 @@ export type GitHubReviewContext = {
   issueReferenceLines?: string[];
   linkedIssues?: LinkedIssue[];
   openPrOverlaps?: OpenPrOverlap[];
+  followUpReview?: FollowUpReview;
+};
+
+export type FollowUpReview = {
+  reviewId: number;
+  reviewedHeadSha: string;
+  state: "APPROVED" | "CHANGES_REQUESTED";
+  submittedAt: string;
+  reviewer: string;
+  authorAssociation: "OWNER" | "MEMBER" | "COLLABORATOR";
+  body?: string;
+  inlineComments: Array<{
+    path: string;
+    line: number | null;
+    body?: string;
+  }>;
 };
 
 export function serializePreparedGitHubContext(context: GitHubReviewContext | null): string {
@@ -122,6 +141,7 @@ export function readPreparedGitHubContext(
 
 export async function collectGitHubReviewContext(
   env: NodeJS.ProcessEnv,
+  options: { signal?: AbortSignal } = {},
 ): Promise<GitHubReviewContext | null> {
   const repo = env.TARGET_REPO || env.GITHUB_REPOSITORY;
   const prNumber = Number.parseInt(
@@ -139,17 +159,47 @@ export async function collectGitHubReviewContext(
   const token = env.GH_TOKEN || env.GITHUB_TOKEN;
   if (!repo || !Number.isFinite(prNumber) || prNumber <= 0 || !token) return null;
 
+  const signal = options.signal ?? AbortSignal.timeout(GITHUB_CONTEXT_DEADLINE_MS);
   const context: GitHubReviewContext = { repo, prNumber };
   try {
-    const [rawPullRequest, openPulls] = await Promise.all([
-      githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
+    const [rawPullRequest, openPulls, reviews] = await Promise.all([
+      githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token, signal),
       githubRestPaginated<unknown>(
         `repos/${repo}/pulls?state=open&sort=updated&direction=desc`,
         token,
         100,
+        signal,
+      ),
+      githubRestPaginated<unknown>(
+        `repos/${repo}/pulls/${prNumber}/reviews`,
+        token,
+        undefined,
+        signal,
       ),
     ]);
     context.pullRequest = summarizePullRequest(rawPullRequest);
+    const currentHeadSha =
+      stringOrUndefined(getPath<unknown>(rawPullRequest, ["head", "sha"])) ?? "";
+    const selectedReview = selectFollowUpReview(
+      reviews,
+      [],
+      currentHeadSha,
+      env.PR_REVIEW_ADVISOR_REVIEWER_LOGIN,
+    );
+    const reviewComments = selectedReview
+      ? await githubRestPaginated<unknown>(
+          `repos/${repo}/pulls/${prNumber}/reviews/${selectedReview.reviewId}/comments`,
+          token,
+          undefined,
+          signal,
+        )
+      : [];
+    context.followUpReview = selectFollowUpReview(
+      reviews,
+      reviewComments,
+      currentHeadSha,
+      env.PR_REVIEW_ADVISOR_REVIEWER_LOGIN,
+    );
     const prTitle = stringOrUndefined(getPath<unknown>(rawPullRequest, ["title"])) || "";
     const prBody = stringOrUndefined(getPath<unknown>(rawPullRequest, ["body"])) || "";
     const prText = [
@@ -166,7 +216,7 @@ export async function collectGitHubReviewContext(
       .map((line) => boundedText(line, 2_000, "issue-reference line") as string)
       .slice(0, 20);
     context.linkedIssues = await Promise.all(
-      issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token)),
+      issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token, signal)),
     );
     context.openPrOverlaps = await collectOpenPrOverlaps(
       repo,
@@ -174,11 +224,101 @@ export async function collectGitHubReviewContext(
       token,
       openPulls,
       issueNumbers,
+      signal,
     );
   } catch (error: unknown) {
-    context.fetchError = error instanceof Error ? error.message : String(error);
+    context.fetchError = signal.aborted
+      ? "GitHub context collection timed out before every required page was fetched"
+      : error instanceof Error
+        ? error.message
+        : String(error);
   }
   return context;
+}
+
+export function selectFollowUpReview(
+  reviews: unknown[],
+  comments: unknown[],
+  currentHeadSha: string,
+  reviewerLogin?: string,
+): FollowUpReview | undefined {
+  if (!/^[0-9a-f]{40}$/u.test(currentHeadSha)) return undefined;
+  const candidates = recordItems(reviews)
+    .filter((review) => {
+      const state = stringOrUndefined(review.state);
+      const association = stringOrUndefined(review.author_association);
+      const commitId = stringOrUndefined(review.commit_id);
+      const login = stringOrUndefined(getPath<unknown>(review, ["user", "login"]));
+      const userType = stringOrUndefined(getPath<unknown>(review, ["user", "type"]));
+      return (
+        state !== undefined &&
+        FOLLOW_UP_REVIEW_STATES.has(state) &&
+        association !== undefined &&
+        TRUSTED_REVIEW_ASSOCIATIONS.has(association) &&
+        commitId !== undefined &&
+        /^[0-9a-f]{40}$/u.test(commitId) &&
+        commitId !== currentHeadSha &&
+        login !== undefined &&
+        (!reviewerLogin || login === reviewerLogin) &&
+        userType !== "Bot" &&
+        !login.endsWith("[bot]")
+      );
+    })
+    .sort((left, right) => {
+      const leftTime = stringOrDefault(left.submitted_at, "");
+      const rightTime = stringOrDefault(right.submitted_at, "");
+      return rightTime.localeCompare(leftTime) || Number(right.id ?? 0) - Number(left.id ?? 0);
+    });
+  const selected = candidates[0];
+  if (!selected) return undefined;
+
+  const reviewId = selected.id;
+  const state = stringOrUndefined(selected.state);
+  const authorAssociation = stringOrUndefined(selected.author_association);
+  const reviewedHeadSha = stringOrUndefined(selected.commit_id);
+  const submittedAt = stringOrUndefined(selected.submitted_at);
+  const reviewer = stringOrUndefined(getPath<unknown>(selected, ["user", "login"]));
+  if (
+    typeof reviewId !== "number" ||
+    !Number.isSafeInteger(reviewId) ||
+    reviewId <= 0 ||
+    (state !== "APPROVED" && state !== "CHANGES_REQUESTED") ||
+    (authorAssociation !== "OWNER" &&
+      authorAssociation !== "MEMBER" &&
+      authorAssociation !== "COLLABORATOR") ||
+    !reviewedHeadSha ||
+    !submittedAt ||
+    !reviewer
+  ) {
+    return undefined;
+  }
+
+  const inlineComments = recordItems(comments)
+    .filter((comment) => comment.pull_request_review_id === reviewId)
+    .map((comment) => ({
+      path: boundedText(comment.path, 512, "review comment path") ?? "",
+      line:
+        typeof comment.line === "number" && Number.isSafeInteger(comment.line) && comment.line > 0
+          ? comment.line
+          : typeof comment.original_line === "number" &&
+              Number.isSafeInteger(comment.original_line) &&
+              comment.original_line > 0
+            ? comment.original_line
+            : null,
+      body: boundedText(comment.body, COMMENT_BODY_CHARACTER_LIMIT, "review comment"),
+    }))
+    .filter(({ path }) => path.length > 0);
+
+  return {
+    reviewId,
+    reviewedHeadSha,
+    state,
+    submittedAt,
+    reviewer,
+    authorAssociation,
+    body: boundedText(selected.body, BODY_CHARACTER_LIMIT, "review body"),
+    inlineComments,
+  };
 }
 
 function summarizePullRequest(value: unknown): unknown {
@@ -189,6 +329,8 @@ function summarizePullRequest(value: unknown): unknown {
     body: boundedText(getPath<unknown>(value, ["body"]), BODY_CHARACTER_LIMIT, "pull-request body"),
     state: stringOrUndefined(getPath<unknown>(value, ["state"])),
     draft: getPath<unknown>(value, ["draft"]),
+    mergeable: getPath<unknown>(value, ["mergeable"]),
+    mergeable_state: stringOrUndefined(getPath<unknown>(value, ["mergeable_state"])),
     author_association: stringOrUndefined(getPath<unknown>(value, ["author_association"])),
     user: summarizeUser(getPath<unknown>(value, ["user"])),
     labels: summarizeLabels(getPath<unknown>(value, ["labels"])),
@@ -270,11 +412,12 @@ async function collectLinkedIssue(
   repo: string,
   number: number,
   token: string,
+  signal: AbortSignal,
 ): Promise<LinkedIssue> {
   try {
     const [issue, comments] = await Promise.all([
-      githubRest<unknown>(`repos/${repo}/issues/${number}`, token),
-      githubRestPaginated<unknown>(`repos/${repo}/issues/${number}/comments`, token, 50),
+      githubRest<unknown>(`repos/${repo}/issues/${number}`, token, signal),
+      githubRestPaginated<unknown>(`repos/${repo}/issues/${number}/comments`, token, 50, signal),
     ]);
     return {
       number,
@@ -282,6 +425,7 @@ async function collectLinkedIssue(
       comments: comments.map(summarizeComment),
     };
   } catch (error: unknown) {
+    if (signal.aborted) throw error;
     return { number, fetchError: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -311,6 +455,7 @@ async function collectOpenPrOverlaps(
   token: string,
   openPulls: unknown[],
   currentLinkedIssues: number[],
+  signal: AbortSignal,
 ): Promise<OpenPrOverlap[]> {
   const currentFiles = new Set<string>(
     (
@@ -318,6 +463,7 @@ async function collectOpenPrOverlaps(
         `repos/${repo}/pulls/${currentPrNumber}/files`,
         token,
         300,
+        signal,
       )
     )
       .map((file) => file.filename)
@@ -353,11 +499,13 @@ async function collectOpenPrOverlaps(
               `repos/${repo}/pulls/${number}/files`,
               token,
               300,
+              signal,
             )
           )
             .map((file) => file.filename)
             .filter((file): file is string => typeof file === "string" && currentFiles.has(file));
-        } catch {
+        } catch (error) {
+          if (signal.aborted) throw error;
           allSameFiles = [];
         }
       }
@@ -405,6 +553,10 @@ export async function writeGitHubReviewContext(
   outputPath: string,
 ): Promise<void> {
   const context = await collectGitHubReviewContext(env);
+  if (!context) throw new Error("GitHub review context is unavailable");
+  if (context.fetchError) {
+    throw new Error(`GitHub review context is incomplete: ${context.fetchError}`);
+  }
   const outputDirectory = path.dirname(outputPath);
   fs.mkdirSync(outputDirectory, { recursive: true });
   const resolvedOutput = path.resolve(outputPath);

@@ -28,7 +28,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
-      "test": "separates model access, candidate execution, and protected write authority (#10791)",
+      "test": "separates model access from credential-free candidate validation (#10791)",
       "category": "security"
     },
     {
@@ -38,7 +38,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
-      "test": "uses immutable artifact IDs across both trust promotions (#10791)",
+      "test": "uses immutable artifact IDs across candidate validation (#10791)",
       "category": "security"
     },
     {
@@ -53,7 +53,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
-      "test": "retains protected publication inputs through the approval window (#10791)",
+      "test": "retains validation evidence through the review window (#10791)",
       "category": "security"
     },
     {
@@ -84,6 +84,46 @@
     {
       "file": "test/e2e/support/e2e-expected-state.test.ts",
       "test": "rejects an unknown state with an actionable inventory",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "rejects a target whose %s has no executable route (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "rejects unresolved execution coverage (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "compiles a run plan from executable target behavior",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-matrix.test.ts",
+      "test": "fails loudly when a platform has no default runner mapping",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "should reject duplicate target IDs",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "should reject target IDs that are unsafe for workflow regex filters and artifact paths",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "contains only the four executable typed targets (#11407)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "rejects dangling expected-state references (#11407)",
       "category": "compatibility"
     },
     {

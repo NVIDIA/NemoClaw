@@ -132,6 +132,29 @@ function createConflictFixture(): {
   return { baseSha, headSha, repository };
 }
 
+function addSharedGitlink(fixture: ReturnType<typeof createConflictFixture>): void {
+  const gitlinkPath = "nemoclaw-blueprint/router/llm-router";
+  const targetSha = git(fixture.repository, ["rev-list", "--max-parents=0", "HEAD"]);
+  git(fixture.repository, ["checkout", "pull-request"]);
+  git(fixture.repository, [
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `160000,${targetSha},${gitlinkPath}`,
+  ]);
+  git(fixture.repository, ["commit", "-m", "test: add shared gitlink on pull request"]);
+  git(fixture.repository, ["checkout", "main"]);
+  git(fixture.repository, [
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `160000,${targetSha},${gitlinkPath}`,
+  ]);
+  git(fixture.repository, ["commit", "-m", "test: add shared gitlink on main"]);
+  fixture.headSha = git(fixture.repository, ["rev-parse", "pull-request"]);
+  fixture.baseSha = git(fixture.repository, ["rev-parse", "main"]);
+}
+
 function createMovedFileConflictFixture(): ReturnType<typeof createConflictFixture> {
   const repository = temporaryDirectory();
   git(repository, ["init", "--initial-branch=main"]);
@@ -465,8 +488,9 @@ describe("PR merge conflict fixer", () => {
     ).toThrow(/draft/u);
   });
 
-  it("preserves executable files in a two-parent verified commit before the atomic head update (#7542)", async () => {
+  it("preserves executable files and updated gitlinks in a two-parent verified commit before the atomic head update (#7542)", async () => {
     const fixture = createConflictFixture();
+    addSharedGitlink(fixture);
     for (let index = 0; index < 100; index += 1) {
       write(fixture.repository, `stale-main/${index}.txt`, `main ${index}\n`);
     }
@@ -478,6 +502,11 @@ describe("PR merge conflict fixer", () => {
     const finalTree = createResolutionPatch(fixture, patchPath, (repository) => {
       fs.chmodSync(path.join(repository, "conflict.txt"), 0o755);
       git(repository, ["add", "conflict.txt"]);
+      git(repository, [
+        "update-index",
+        "--cacheinfo",
+        `160000,${entry.head_sha},nemoclaw-blueprint/router/llm-router`,
+      ]);
     });
     const commitSha = "c".repeat(40);
     const requests: Array<{ body: unknown; method: string; path: string }> = [];
@@ -556,6 +585,7 @@ describe("PR merge conflict fixer", () => {
     expect(treeBody.tree.map((item) => item.path)).toEqual([
       "clean-merge.txt",
       "conflict.txt",
+      "nemoclaw-blueprint/router/llm-router",
       "pr-deleted.txt",
     ]);
     expect(treeBody.tree.find((item) => item.path === "pr-deleted.txt")).toEqual({
@@ -565,6 +595,14 @@ describe("PR merge conflict fixer", () => {
       type: "blob",
     });
     expect(treeBody.tree.find((item) => item.path === "conflict.txt")?.mode).toBe("100755");
+    expect(
+      treeBody.tree.find((item) => item.path === "nemoclaw-blueprint/router/llm-router"),
+    ).toEqual({
+      mode: "160000",
+      path: "nemoclaw-blueprint/router/llm-router",
+      sha: entry.head_sha,
+      type: "commit",
+    });
     expect(treeBody.tree.some((item) => item.path.startsWith("stale-main/"))).toBe(false);
     const blobRequests = requests.filter((item) => item.path.endsWith("/git/blobs"));
     expect(

@@ -3,7 +3,10 @@
 
 import { withSelectedOpenShellCommandOptions } from "./command-argv";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
-import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
+import {
+  assertNoOpenShellGatewayEndpointOverride,
+  OpenShellGatewayEndpointOverrideError,
+} from "./gateway-scope";
 import type { OpenShellGatewayObservation, OpenShellGatewayObserver } from "./gateway-observer";
 import { isValidName } from "../../sandbox-name-contract";
 import { stripAnsi as stripOpenShellCliAnsi } from "./client";
@@ -33,6 +36,14 @@ function gatewayError(result: CapturedOpenShellCommandResult): OpenShellSandboxE
 function gatewayName(output: string): string | null {
   const names = [...output.matchAll(/^\s*Gateway:\s+(.+?)\s*$/gm)].map((match) => match[1].trim());
   return names.length === 1 && isValidName(names[0]) ? names[0] : null;
+}
+
+function reportsMissingNamedGateway(output: string, name: string): boolean {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `^\\s*(?:Error:\\s*)?(?:×\\s*)?Unknown gateway ['"]${escapedName}['"]\\.\\s*$`,
+    "imu",
+  ).test(output);
 }
 
 function hasGatewayDeclaration(output: string): boolean {
@@ -98,7 +109,7 @@ export function createCliOpenShellGatewayObserver(
         const missing = /\bNo (?:active )?gateway(?: configured)?\b|No gateway metadata found/i;
         const statusError = gatewayError(status);
         const infoError = gatewayError(info);
-        const absentInfo = missing.test(infoText);
+        const absentInfo = missing.test(infoText) || reportsMissingNamedGateway(infoText, name);
         const absentStatus = missing.test(statusText);
         // Only known absence and unreachable responses describe resource state. Other failures are not absence.
         for (const [error, absent, legacy] of [
@@ -172,7 +183,14 @@ export function createCliOpenShellGatewayObserver(
             (state === "missing_named" && absentStatus),
           diagnostic,
         };
-      } catch {
+      } catch (error) {
+        if (error instanceof OpenShellGatewayEndpointOverrideError) {
+          return failed({
+            kind: "transport",
+            reason: "endpoint_override",
+            message: error.message,
+          });
+        }
         return failed({
           kind: "command",
           reason: "failed",

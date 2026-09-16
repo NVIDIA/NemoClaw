@@ -84,7 +84,11 @@ describe("shared E2E workflow boundary", () => {
   it("ratchets shared setup, tagged test execution, and aggregation", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       const job = workflow.jobs["shared-e2e"];
+      job.needs = ["generate-matrix"];
       job.env!.CHECK_DOC_LINKS_REMOTE = "1";
+      job.steps = job.steps!.filter(
+        (step) => step.name !== "Download reviewed OpenShell SDK archive",
+      );
       job.steps!.find((step) => step.name === "Run tagged credential-free test")!.run =
         "echo skipped";
       workflow.jobs["report-to-pr"].needs = workflow.jobs["report-to-pr"].needs!.filter(
@@ -94,7 +98,9 @@ describe("shared E2E workflow boundary", () => {
 
     expect(errors).toEqual(
       expect.arrayContaining([
+        "shared E2E job must depend on matrix generation and reviewed SDK packaging",
         "shared E2E job must set CHECK_DOC_LINKS_REMOTE to 0",
+        "shared E2E job must download the run-scoped reviewed SDK archive",
         'step \'Run tagged credential-free test\' run script must include npx vitest run --project "${TEST_PROJECT}" "${TEST_FILE}"',
         "step 'Run tagged credential-free test' run script must include --tags-filter=e2e/credential-free",
         "report-to-pr job must wait for shared-e2e",

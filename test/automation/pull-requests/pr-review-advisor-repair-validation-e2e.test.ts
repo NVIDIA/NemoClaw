@@ -33,7 +33,21 @@ import { test } from "../../e2e/fixtures/workflow-e2e-test.ts";
 const TARGET = "pr-review-advisor-repair-validation-e2e";
 const PI_IMAGE =
   "ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd";
+const CREDENTIAL_SENTINEL = "advisor-repair-live-credential-sentinel-10791";
+const HOST_CREDENTIAL_NAMES = [
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "NVIDIA_API_KEY",
+  "NODE_AUTH_TOKEN",
+  "OPENAI_API_KEY",
+  "POST_MERGE_DOCS_API_KEY",
+  "PR_REVIEW_ADVISOR_API_KEY",
+] as const;
 const liveTest = process.env.E2E_TARGET_ID === TARGET ? test : test.skip;
+
+function credentialBoundaryCommand(cwdExitCode: number): string {
+  return `node -e "const marker='${CREDENTIAL_SENTINEL}';if(Object.values(process.env).some((value)=>value?.includes(marker)))process.exit(93);if(process.cwd()!=='/sandbox/repo')process.exit(${cwdExitCode})"`;
+}
 
 function run(command: string, args: string[], cwd: string): string {
   return execFileSync(command, args, {
@@ -107,7 +121,7 @@ liveTest(
     meta: {
       e2ePhases: [
         "install the reviewed OpenShell runtime",
-        "run the trusted validation plan in /sandbox/repo",
+        "run the trusted validation plan with host credential sentinels in /sandbox/repo",
         "verify the sealed validation receipt",
         "release the validation sandbox and gateway",
       ],
@@ -129,8 +143,8 @@ liveTest(
         fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
       ) as Record<string, unknown> & { scripts: Record<string, string> };
       packageManifest.scripts = {
-        "check:diff": "node -e \"if(process.cwd()!=='/sandbox/repo')process.exit(91)\"",
-        "test:changed": "node -e \"if(process.cwd()!=='/sandbox/repo')process.exit(92)\"",
+        "check:diff": credentialBoundaryCommand(91),
+        "test:changed": credentialBoundaryCommand(92),
       };
       fs.writeFileSync(
         path.join(candidateDirectory, "package.json"),
@@ -185,8 +199,12 @@ liveTest(
         killSignal: "SIGKILL",
       });
 
-      progress.phase("run the trusted validation plan in /sandbox/repo");
+      progress.phase(
+        "run the trusted validation plan with host credential sentinels in /sandbox/repo",
+      );
       let preparedDependencies = false;
+      const validationEnvironment = { ...process.env };
+      for (const name of HOST_CREDENTIAL_NAMES) validationEnvironment[name] = CREDENTIAL_SENTINEL;
       await validateAndSealRepair({
         selection: selected,
         candidate,
@@ -199,7 +217,7 @@ liveTest(
               candidateDirectory: directory,
               commands,
               env: {
-                ...process.env,
+                ...validationEnvironment,
                 OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
                 PI_IMAGE,
                 SANDBOX_NAME: `advisor-validation-e2e-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,

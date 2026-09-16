@@ -79,9 +79,11 @@ function treeEntry(
   tree: string,
   filePath: string,
   allowExecutableFiles: boolean,
+  allowGitlinks: boolean,
 ): GitTreeEntry {
   const entry = optionalTreeEntry(repository, tree, filePath);
   if (!entry) throw new Error(`Git tree does not contain ${filePath}`);
+  if (allowGitlinks && entry.mode === "160000" && entry.type === "commit") return entry;
   const allowedModes = allowExecutableFiles ? new Set(["100644", "100755"]) : new Set(["100644"]);
   if (!allowedModes.has(entry.mode) || entry.type !== "blob")
     throw new Error(`Git tree entry has an unsupported regular-file mode: ${filePath}`);
@@ -95,6 +97,7 @@ function parentContainsBlob(repository: string, parent: string, entry: GitTreeEn
 
 export async function createGitHubTree(input: {
   allowExecutableFiles?: boolean;
+  allowGitlinks?: boolean;
   baseSha: string;
   finalTree: string;
   headSha: string;
@@ -110,6 +113,7 @@ export async function createGitHubTree(input: {
       sourceTree,
       change.path,
       input.allowExecutableFiles ?? false,
+      input.allowGitlinks ?? false,
     );
     if (change.status === "D") {
       entries.push({ ...entry, sha: null });
@@ -150,6 +154,7 @@ export async function createGitHubTree(input: {
 
 export async function createVerifiedCommit(input: {
   allowExecutableFiles?: boolean;
+  allowGitlinks?: boolean;
   baseSha?: string;
   finalTree: string;
   headSha: string;
@@ -168,6 +173,7 @@ export async function createVerifiedCommit(input: {
   );
   const tree = await createGitHubTree({
     allowExecutableFiles: input.allowExecutableFiles,
+    allowGitlinks: input.allowGitlinks,
     baseSha: input.baseSha ?? input.headSha,
     finalTree: input.finalTree,
     headSha: input.headSha,

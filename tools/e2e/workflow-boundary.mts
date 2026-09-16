@@ -52,6 +52,11 @@ import {
 } from "./gateway-runtime.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+  validateReviewedOpenShellSdkInstallAction,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
+import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
 } from "./trusted-hermes-swap-workflow-boundary.mts";
@@ -242,7 +247,7 @@ const RUNNER_ROUTING_SCRIPT = [
   "  fi",
   '  larger_runner="${LARGER_RUNNER_LABEL}"',
   "fi",
-  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger}\')"',
+  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"security-posture-hermes":$larger}\')"',
   'printf \'runner_routing=%s\\n\' "${runner_routing}" >> "${GITHUB_OUTPUT}"',
 ].join("\n");
 const ROUTED_JOB_RUNNER_EXPRESSIONS = {
@@ -1317,6 +1322,40 @@ function validateCatalogueOwnedJobs(errors: string[], jobs: WorkflowRecord): voi
   }
 }
 
+function validateExternalGatewayHealthSdkInstall(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "external-gateway-health";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) return;
+  const jobSteps = asSteps(job.steps);
+  const sdkDownload = requireJobStep(
+    errors,
+    jobName,
+    jobSteps,
+    "Download reviewed OpenShell SDK archive",
+  );
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("external-gateway-health job must download the run-scoped reviewed SDK archive");
+  }
+  const sdkInstall = requireJobStep(
+    errors,
+    jobName,
+    jobSteps,
+    REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+  );
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+    errors.push("external-gateway-health job must install the reviewed SDK with the shared action");
+  }
+}
+
 function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
   return asSteps(job.steps).some(
     (step) => asRecord(step.env).NVIDIA_INFERENCE_API_KEY !== undefined,
@@ -1429,8 +1468,8 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   if (job.name !== "Shared E2E (${{ matrix.execution_id }})") {
     errors.push("shared E2E job name must expose the test ID");
   }
-  if (job.needs !== "generate-matrix") {
-    errors.push("shared E2E job must depend on generate-matrix");
+  if (!isDeepStrictEqual(job.needs, ["generate-matrix", "package-openshell-sdk"])) {
+    errors.push("shared E2E job must depend on matrix generation and reviewed SDK packaging");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.test_matrix != '[]' }}") {
     errors.push("shared E2E job must run only for a non-empty test matrix");
@@ -1498,6 +1537,25 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   requireFullShaAction(errors, checkout, "shared E2E checkout");
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("shared E2E checkout must disable persisted credentials");
+  }
+
+  const sdkDownload = requireJobStep(
+    errors,
+    SHARED_E2E_JOB_ID,
+    steps,
+    "Download reviewed OpenShell SDK archive",
+  );
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("shared E2E job must download the run-scoped reviewed SDK archive");
   }
 
   const runVitest = requireJobStep(
@@ -1752,7 +1810,7 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     ])
   ) {
     errors.push(
-      "hermes-e2e job must depend on publication, generate-matrix, and reviewed OpenShell SDK validation",
+      "hermes-e2e job must depend on publication, generate-matrix validation, and reviewed SDK packaging",
     );
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
@@ -1818,19 +1876,23 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     "Download reviewed OpenShell SDK archive",
   );
   if (
-    asRecord(sdkDownload?.with).name !== "${{ needs.package-openshell-sdk.outputs.artifact_name }}"
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
   ) {
-    errors.push("hermes-e2e SDK download must use the reviewed package artifact");
+    errors.push("hermes-e2e job must download the run-scoped reviewed SDK archive");
   }
-  if (asRecord(sdkDownload?.with).path !== "${{ runner.temp }}/openshell-sdk") {
-    errors.push("hermes-e2e SDK download must use the isolated runner SDK directory");
+  const sdkInstall = requireJobStep(errors, jobName, steps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+    errors.push(
+      "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
+    );
   }
-  requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install reviewed OpenShell SDK archive without package credentials",
-  );
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {
@@ -3204,6 +3266,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateStagingBrevLaunchableIdentityJob(errors, jobs);
   validateCatalogueOwnedJobs(errors, jobs);
+  validateExternalGatewayHealthSdkInstall(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
 
@@ -3351,6 +3414,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   return [
+    ...validateReviewedOpenShellSdkInstallAction(),
     ...validateDockerHubAuthAction(),
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
