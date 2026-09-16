@@ -136,6 +136,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/lib/reviewed-npm-identity.mts", mode: "100755" },
   { path: "scripts/lib/sandbox-init.sh", mode: "100755" },
   { path: "scripts/lib/sandbox-rlimits.sh", mode: "100644" },
+  { path: "scripts/managed-startup-hold.sh", mode: "100755" },
   { path: "scripts/patch-bundled-npm-brace-expansion.mts", mode: "100755" },
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
   { path: "scripts/upgrade-bundled-npm.mts", mode: "100755" },

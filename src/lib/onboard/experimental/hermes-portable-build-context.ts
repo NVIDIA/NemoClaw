@@ -79,6 +79,7 @@ const LOCAL_COPY_SOURCES = [
   "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-init.sh",
   "scripts/lib/sandbox-rlimits.sh",
+  "scripts/managed-startup-hold.sh",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
   "scripts/upgrade-bundled-npm.mts",
