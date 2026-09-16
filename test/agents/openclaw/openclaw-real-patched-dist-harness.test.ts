@@ -37,6 +37,11 @@ const PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS = path.join(
   "scripts",
   "patch-openclaw-managed-transport-diagnostics.mts",
 );
+const PATCH_OPENCLAW_TOOL_CATALOG = path.join(
+  REPO_ROOT,
+  "scripts",
+  "patch-openclaw-tool-catalog.mts",
+);
 const PATCH_OPENCLAW_NPM12_PACK_JSON = path.join(
   REPO_ROOT,
   "scripts",
@@ -522,10 +527,16 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           `Patch 6 applied to OpenClaw ${version}`,
           "Patch 6",
         );
+        const toolCatalogPatch = spawnSync(
+          nodeRuntime.executable,
+          [PATCH_OPENCLAW_TOOL_CATALOG, dist],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(toolCatalogPatch, "apply managed llama.cpp compact tool catalog patch");
         requireRuntimeIncludes(
-          dockerPatch.stdout,
+          toolCatalogPatch.stdout,
           "OpenClaw compact tool catalog patched-native-llamacpp",
-          "managed llama.cpp compact tool catalog patch",
+          "managed llama.cpp compact tool catalog patch output",
         );
         [
           "nemoclaw: env-gated bypass",
