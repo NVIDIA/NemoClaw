@@ -58,6 +58,7 @@ const REGISTRY_TARGET_PHASES = [
   "onboard the registry-selected sandbox",
   "execute the target lifecycle boundary",
   "verify the expected sandbox state",
+  "validate the exported sandbox configuration",
   "run target-specific cloud checks",
   "record target completion evidence",
 ] as const;
@@ -78,6 +79,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
     },
     async ({
       artifacts,
+      configExportValidation,
       environment,
       host,
       lifecycle,
@@ -157,6 +159,9 @@ for (const [targetIndex, target] of listTargets().entries()) {
       progress.phase("verify the expected sandbox state");
       const validation = await stateValidation.from(target.expectedStateId, instance);
 
+      progress.phase("validate the exported sandbox configuration");
+      const configExport = await configExportValidation.from(target, instance);
+
       progress.phase("run target-specific cloud checks");
       const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
@@ -175,6 +180,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
         id: target.id,
         expectedStateId: validation.state.id,
         probes: validation.probes.map((probe) => probe.id),
+        configExport: {
+          expectation: configExport.expectation,
+          classification: configExport.classification,
+          contract: configExport.contract,
+          elapsedMs: configExport.elapsedMs,
+        },
         pendingRuntimeSuites: target.suiteIds,
         dcodeBaseImage,
         lifecycle: lifecycleResult

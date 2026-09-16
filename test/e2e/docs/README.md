@@ -49,6 +49,14 @@ Live execution happens through shared fixtures:
 - `onboard` performs supported onboarding profiles.
 - `lifecycle` performs supported post-onboard mutations.
 - `stateValidation` probes host-observable expected state.
+- `configExportValidation` runs after state validation. Each typed target declares
+  one config export expectation:
+  - `required` must match the target manifest, live sandbox registry, and
+    effective network policy.
+  - `expected-refusal` must return its declared category without creating a
+    file.
+  - `no-usable-sandbox` must record an expected preflight or onboarding
+    failure. It does not invoke config export.
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
 - The automatic `progress` fixture reports the ordered semantic phase plan for
@@ -65,6 +73,19 @@ Live execution happens through shared fixtures:
 
 The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
+
+Before it validates deployment semantics, the config export fixture rejects
+known fixture secrets and internal credential transport markers. It creates
+the export in a private temporary directory. It registers cleanup before it
+invokes the CLI and removes the directory before it writes retained evidence.
+
+The `config-export-evidence.v1.json` artifact binds each result to the source
+revision, CLI version, and compiled CLI entry-point hash. Each record includes
+elapsed time and a structured command outcome when the fixture invokes the
+CLI. Successful `required` evidence includes the validated export bytes and
+their SHA-256 hash. Failure evidence omits export bytes. Its failure stage
+distinguishes transport errors from export failures. Evidence diagnostics are
+bounded and redacted.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
@@ -94,11 +115,12 @@ protects the registry-target catalogue when collection includes
 omits it does not run this guard.
 
 Every typed-registry declaration must have executable platform, install,
-runtime, and onboarding routes plus resolved coverage metadata. A declared
-lifecycle route must also be executable. Registry construction rejects invalid
-declarations. Proposed combinations belong in planning issues until their live
-fixtures exist; they must not be added as empty skipped tests. Selecting a
-removed or unknown target ID fails and lists the available IDs.
+runtime, and onboarding routes plus resolved coverage metadata and a config
+export expectation. A declared lifecycle route must also be executable.
+Registry construction rejects invalid declarations. Proposed combinations
+belong in planning issues until their live fixtures exist; they must not be
+added as empty skipped tests. Selecting a removed or unknown target ID fails
+and lists the available IDs.
 
 ## Run Live E2E Locally
 

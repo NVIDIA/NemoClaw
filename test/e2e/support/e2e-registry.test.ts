@@ -61,6 +61,22 @@ describe("deterministic target registry", () => {
     ).toThrow("Unknown expected_state id 'missing-expected-state'");
   });
 
+  it("reports a coverage gap when a target omits its config export expectation (#11485)", () => {
+    const registered = listTargets()[0]!;
+    const targetWithoutExpectation = {
+      ...registered,
+      configExport: undefined,
+    } as unknown as typeof registered;
+
+    let rejected = false;
+    try {
+      buildTargetRegistry([targetWithoutExpectation]);
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
+  });
+
   it.each(listTargets())(
     "resolves $id to a valid repository manifest (#11407)",
     ({ manifestPath }) => {

@@ -157,6 +157,7 @@ describe("E2E fixture primitives", () => {
       "environment.result.json",
       "onboarding.result.json",
       "state-validation.result.json",
+      "config-export-evidence.v1.json",
       "cloud-onboard-trace-timing-summary.json",
     ];
     const shellEvidenceFiles = [
