@@ -7,7 +7,10 @@ import fs from "node:fs";
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
-import { createCliOpenShellSandboxObserverFromRunner } from "../../adapters/openshell/sandbox-observer-cli";
+import {
+  createCliOpenShellSandboxLifecycleFromRunner,
+  createCliOpenShellSandboxObserverFromRunner,
+} from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
@@ -1439,7 +1442,7 @@ function selectRecreateGatewayAuthority(
   return requested ? createOnboardRecreateGatewayAuthorityRevalidator(target) : undefined;
 }
 
-function deleteJournaledRecreateSource(input: {
+async function deleteJournaledRecreateSource(input: {
   readonly runtime: Pick<
     import("../sandbox-recreate-transaction").SandboxRecreateRuntime,
     "beginDelete" | "journaledGatewayName"
@@ -1447,18 +1450,22 @@ function deleteJournaledRecreateSource(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
-}): void {
+}): Promise<void> {
   if (input.runtime.beginDelete() !== "source") return;
-  input.runOpenshell(
-    [
-      "sandbox",
-      "delete",
-      "-g",
-      input.runtime.journaledGatewayName ?? input.gatewayName,
-      input.sandboxName,
-    ],
-    { ignoreError: true },
-  );
+  const gatewayName = input.runtime.journaledGatewayName ?? input.gatewayName;
+  const result = await createCliOpenShellSandboxLifecycleFromRunner(
+    input.runOpenshell,
+  ).deleteSandbox({
+    sandboxName: input.sandboxName,
+    target: { kind: "named", gatewayName },
+  });
+  if (
+    result.kind === "failed" &&
+    result.error.kind === "command" &&
+    result.error.reason === "invalid_request"
+  ) {
+    throw new Error(result.error.message);
+  }
 }
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
@@ -2276,7 +2283,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           redact,
         });
         revalidateSandboxIdentity(true, `deleting sandbox '${sandboxName}'`);
-        deleteJournaledRecreateSource({
+        await deleteJournaledRecreateSource({
           runtime: recreateRuntime,
           sandboxName,
           gatewayName: GATEWAY_NAME,

@@ -128,7 +128,8 @@
     "@nvidia/openshell-sdk": "0.0.116"
   },
   "bundleDependencies": [
-    "p-retry"
+    "p-retry",
+    "@nvidia/openshell-sdk"
   ],
   "files": [
     ".version",
@@ -138,6 +139,7 @@
     "agents/nemocua/Dockerfile",
     "agents/nemocua/policy-additions.yaml",
     "bin/",
+    "ci/reviewed-npm-audit.json",
     "dist/",
     "src/lib/messaging/channels/**/policy/*.{yaml,yml}",
     "src/lib/messaging/channels/**/provider-profile/*.{yaml,yml}",

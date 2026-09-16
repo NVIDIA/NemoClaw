@@ -65,7 +65,7 @@ describe("CLI dispatch", () => {
 
         expect(r.code, r.out).toBe(0);
         const log = fs.readFileSync(openshellLog, "utf8");
-        const deleteIdx = indexOfArg(log, "sandbox delete alpha");
+        const deleteIdx = indexOfArg(log, "sandbox delete -g nemoclaw alpha");
         expect(deleteIdx).toBeGreaterThan(-1);
 
         const expectedDetachLines = [
@@ -80,7 +80,9 @@ describe("CLI dispatch", () => {
         expectedDetachLines.forEach((line) => {
           const idx = indexOfArg(log, line);
           expect(idx, `${line} should appear in openshell log`).toBeGreaterThan(-1);
-          expect(idx, `${line} should precede 'sandbox delete alpha'`).toBeLessThan(deleteIdx);
+          expect(idx, `${line} should precede the owner-scoped sandbox delete`).toBeLessThan(
+            deleteIdx,
+          );
         });
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
