@@ -4,6 +4,7 @@
 import {
   captureHostCommand,
   captureOpenShellHostCommand,
+  openShellSandboxNeedsLifecycleStart,
 } from "../../actions/sandbox/doctor-host-command";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import {
@@ -78,6 +79,12 @@ export interface DockerRuntimeProviderDependencies {
     gatewayName: string,
     environment: NodeJS.ProcessEnv,
   ) => ReturnType<typeof captureOpenShellHostCommand>;
+  /** True only when OpenShell reports a phase that requires a lifecycle start. */
+  readonly sandboxNeedsLifecycleStart: (
+    sandboxName: string,
+    gatewayName: string,
+    environment: NodeJS.ProcessEnv,
+  ) => boolean;
   readonly captureHostCommand: (
     command: string,
     args: string[],
@@ -248,6 +255,15 @@ function resolveDependencies(
           environment,
           DOCKER_OPERATION_TIMEOUT_MS,
         )),
+    sandboxNeedsLifecycleStart:
+      overrides.sandboxNeedsLifecycleStart ??
+      ((sandboxName, gatewayName, environment) =>
+        openShellSandboxNeedsLifecycleStart(
+          sandboxName,
+          gatewayName,
+          environment,
+          DOCKER_OPERATION_TIMEOUT_MS,
+        )),
     captureHostCommand:
       overrides.captureHostCommand ??
       ((command, args, timeout) => captureHostCommand(command, args, timeout)),
@@ -400,10 +416,30 @@ async function startDockerSandboxUnlocked(
     return { exitCode: 0 };
   }
 
-  if (
-    containers.some((container) => isAtRestStatus(container.status)) &&
-    !containers.some((container) => isGpuBackupSibling(container.name))
-  ) {
+  // Docker container status alone does not decide whether the sandbox needs a
+  // lifecycle start: OpenShell owns the sandbox phase, and a container can run
+  // while its sandbox is still `Stopped` — for example after something started
+  // the container behind OpenShell's back. Reporting "already running" for that
+  // pair skips the only operation that advances the phase, so every later
+  // `start` waits out the readiness timeout and the sandbox never recovers
+  // (#11790). Read the phase only when no container is at rest; an at-rest
+  // container already needs the same start and the extra probe would be waste.
+  const containerAtRest = containers.some((container) => isAtRestStatus(container.status));
+  const stoppedPhaseWithRunningContainer =
+    !containerAtRest &&
+    containers.length > 0 &&
+    deps.sandboxNeedsLifecycleStart(
+      input.sandboxName,
+      input.sandbox.gatewayName ?? "nemoclaw",
+      input.environment,
+    );
+  const hasGpuBackupSibling = containers.some((container) => isGpuBackupSibling(container.name));
+  if (stoppedPhaseWithRunningContainer || (containerAtRest && !hasGpuBackupSibling)) {
+    if (stoppedPhaseWithRunningContainer) {
+      input.log(
+        `  Sandbox '${input.sandboxName}' is still stopped while its container runs; starting it through OpenShell.`,
+      );
+    }
     const result = deps.captureSandboxLifecycle(
       "start",
       input.sandboxName,

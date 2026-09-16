@@ -170,9 +170,51 @@ it.each([
     "Unified advisor blocker gate must validate exact-attempt specialist evidence",
   ],
   [
+    "coordinator shadow dependency",
+    "needs: [require-green-checks, build-advisor-runtime, review-specialists, advisor-blockers]",
+    "needs: [require-green-checks, build-advisor-runtime, review-specialists]",
+    "Unified advisor coordinator shadow must remain read-only and exact-head bound",
+  ],
+  [
+    "coordinator shadow evidence",
+    'run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"',
+    'run: echo "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"',
+    "Unified advisor coordinator shadow must consume exact-attempt trusted evidence",
+  ],
+  [
+    "coordinator upload step",
+    "- name: Upload coordinator shadow decision",
+    "- name: Upload coordinator result",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "coordinator upload action",
+    "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: pr-review-coordinator-shadow-",
+    "uses: actions/download-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: pr-review-coordinator-shadow-",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "coordinator upload name",
+    "name: pr-review-coordinator-shadow-${{ github.run_attempt }}",
+    "name: pr-review-coordinator-result-${{ github.run_attempt }}",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "coordinator upload path",
+    "path: artifacts/pr-review-coordinator-shadow/decision.json",
+    "path: artifacts/pr-review-coordinator-shadow/missing.json",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
+    "coordinator upload absence",
+    "path: artifacts/pr-review-coordinator-shadow/decision.json\n          if-no-files-found: error",
+    "path: artifacts/pr-review-coordinator-shadow/decision.json\n          if-no-files-found: warn",
+    "Unified advisor coordinator shadow must retain its decision artifact",
+  ],
+  [
     "publisher after blocker gate",
-    "needs: [require-green-checks, review-specialists, advisor-blockers]",
-    "needs: [require-green-checks, review-specialists]",
+    "needs: [require-green-checks, review-specialists, advisor-blockers, coordinator-shadow]",
+    "needs: [require-green-checks, review-specialists, coordinator-shadow]",
     "Unified advisor publisher must run after a red blocker gate",
   ],
   [
