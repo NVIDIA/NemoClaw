@@ -3,7 +3,7 @@
 
 # Plan the User Documentation Migration
 
-Status: proposed work plan, based on the repository on 2026-09-15.
+Status: supported user-guide authoring and topic reconciliation complete; qualification and release gates remain open.
 This plan changes documentation; it does not approve new product capabilities or declare a release ready.
 
 Build the next-version guide around a complete desired-state deployment journey, then reconcile every previous page and published route with that guide.
@@ -26,7 +26,8 @@ Page count is therefore not a measure of published route coverage.
 
 The [source inventory](documentation-migration-inventory.md) assigns every non-changelog MDX source a disposition, destination, and work package.
 It also identifies release history and supporting publication inputs.
-These are proposed editorial dispositions; a held feature has no promised implementation date.
+The inventory now separates source disposition from authoring coverage, cites current owners/evidence, and names remaining gates.
+A held feature has no promised implementation date.
 
 The branch already has useful [task guides](../README.md), [generated configuration reference](../reference/configuration.md), [examples](../../examples/), and [qualification evidence](../validation/README.md).
 Extend those owners and extract overloaded sections where needed.
@@ -126,10 +127,15 @@ D01 can run alongside content work after the URL and tooling decisions.
 
 ## When to Do the Work
 
+The supported D02–D08 authoring work is complete, including the source-based documentation skill and SDK examples.
+All 125 baseline topics and the additional publication/new-surface inputs have been reconciled in the [inventory](documentation-migration-inventory.md).
+This does not mark M2, M3, or M4 release acceptance complete: current-revision first-deployment/browser, data-continuity, platform/provider, distribution, and publication checks remain as listed under [remaining gates and sequence](documentation-migration-inventory.md#remaining-gates-and-sequence).
+Schedule each qualification task when its candidate artifacts and explicitly owned resources are available; perform D09 cutover only after the release owner accepts the results.
+
 No target release date or staffing commitment was supplied for this plan.
-With one primary contributor and timely specialist review, reserve roughly **6–9 working weeks**, plus external blockers.
+The original planning allowance was roughly **6–9 working weeks** with one primary contributor and timely specialist review, plus external blockers.
 More contributors can shorten independent packages, but the first-deployment rehearsal and release-candidate review remain sequential gates.
-Replace this allowance with calendar dates after D00.
+Use the remaining gates to make a new staffing/calendar estimate; the original allowance is not a forecast of work still outstanding.
 
 | Milestone | Timing and dependency | Required result |
 |---|---|---|
