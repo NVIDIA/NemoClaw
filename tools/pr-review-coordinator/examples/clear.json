@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "pullRequest": {
+    "number": 123,
+    "state": "OPEN",
+    "draft": false,
+    "author": "contributor",
+    "reviewer": "nemoclaw-review-coordinator",
+    "headSha": "1111111111111111111111111111111111111111",
+    "baseSha": "2222222222222222222222222222222222222222"
+  },
+  "advisor": {
+    "identity": "exact-head",
+    "headSha": "1111111111111111111111111111111111111111",
+    "baseSha": "2222222222222222222222222222222222222222",
+    "status": "clear",
+    "findings": []
+  },
+  "readiness": {
+    "requiredChecks": "pass",
+    "mergeability": "mergeable",
+    "commitsVerified": true,
+    "productScope": "accepted"
+  },
+  "history": {
+    "frozenContractKeys": [],
+    "writes": []
+  }
+}

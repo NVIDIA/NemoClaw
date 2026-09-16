@@ -3225,6 +3225,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           mergePolicyMessagingChannels,
           detectUnconfiguredMessagingChannels:
             messagingChannelSetup.detectUnconfiguredMessagingChannels,
+          inspectGatewayCredential: registration.inspectGatewayCredential,
           verifyCompatibleEndpointSandboxSmoke: (options) =>
             verifyCompatibleEndpointSandboxSmoke({
               ...options,
@@ -3239,8 +3240,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           startRecordedStep,
           setupPoliciesWithSelection,
           recordStepComplete,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates,
         },
         finalization: {
           stagedLegacyKeys,
