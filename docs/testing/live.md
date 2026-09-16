@@ -60,7 +60,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 
 Use a dedicated immutable bundle copy for a long live run.
 Rebuilding `dist` replaces development artifacts and is not safe while an operation still uses that directory.
-[Agent fixture instructions](../agents.md) cover native messaging and Fabric's offline harness qualification.
+[Agent fixture instructions](../agents.md#runtime-lifecycle) cover Fabric's offline harness qualification.
 
 The optional `fabric_live` test accepts absolute `NEMOCLAW_LIVE_FABRIC_CONFIG`, `NEMOCLAW_LIVE_FABRIC_STATE`, and `NEMOCLAW_TEST_BUNDLE` paths.
 Use a dedicated UID and state directory with an external gateway and inference endpoint.

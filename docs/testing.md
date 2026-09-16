@@ -41,14 +41,15 @@ npm --prefix image run typecheck
 ```
 
 Use `ruff format .` through the same pinned uv invocation and `npm --prefix image run format` to apply formatting.
-The scope includes image Python/TypeScript, the native fixture code, and their two host runners.
+The scope includes image Python/TypeScript, the native fixture code, and the Fabric adapter experiment runner.
 Standalone TypeScript fixtures use `.mts` and Node's native type stripping; they need no transpiler or generated JavaScript files.
 The host type check covers OpenClaw fixtures; the Pi build checks its model code and fixture against installed upstream declarations.
 OpenClaw's private bundles ship no declarations, so [small fixture declarations](../test/openclaw.d.ts) describe the consumed API shapes and native tests verify those boundaries.
 Upstream sources and model-specific recipe code retain their own conventions and checks.
 
 The [image workflow](../.github/workflows/images.yml) runs these checks on changes targeting `v1`, builds all ten agent images plus the proxy, and exercises native adapters against isolated local protocol fixtures.
-It also runs OpenClaw messaging, tools, execution, search, and tracing checks.
+It also runs OpenClaw tools, execution, search, and tracing checks.
+Native messaging belongs to OpenClaw; NemoClaw tests that its adapter preserves unrelated native configuration and rejects drift in deployment-owned settings.
 These fixtures use no live credentials, send no external messages, and do not qualify GPU inference or live OpenShell deployments.
 
 ## CLI Tests

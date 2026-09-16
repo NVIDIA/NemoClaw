@@ -379,23 +379,22 @@ An uncertain invocation result stops that runtime and is never replayed automati
 Agent configuration readiness does not invoke the model.
 
 Managed vLLM service apply additionally checks an actual agent reply; other paths use the configured API probe.
-Native settings survive configuration checks and recreation when their state volume is retained.
+The adapter preserves unrelated native configuration and rejects conflicts in deployment-owned settings.
 
-Qualification commands:
+With the [offline fixture prerequisites](testing/fixtures.md#inference-api-fixtures), run from the repository root:
 
 ```sh
 docker buildx bake check
-python3 tools/openclaw-native-test.py --image nc-fabric:openclaw
-python3 tools/fabric-adapter-experiment.py --harness codex
+python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inference-api openai-responses
 ```
 
 The check targets provide their verified source and dependencies inside disposable build stages.
-The native messaging and harness tests use disposable containers and retained evidence under `.local`.
+The harness tests use disposable containers and retain evidence under `.local`.
 They do not send external messages.
-[Native messaging evidence](validation/rust-native-openclaw-linux-arm64.json) and [harness evidence](validation/rust-fabric-adapters-linux-arm64.json) distinguish protocol fixtures from complete live inference qualification.
+[Harness evidence](validation/rust-fabric-adapters-linux-arm64.json) distinguishes protocol fixtures from complete live inference qualification.
+The [historical native messaging result](validation/rust-native-openclaw-linux-arm64.json) records the retired Telegram fixture with its source hashes; current tests leave messaging-channel pairing and message delivery to OpenClaw.
 
 Real messaging deployment still needs generic egress, mounted secrets, and retained sandbox storage that this desired-state schema does not provision.
-The Docker fixture supplies those prerequisites locally.
 Use native OpenClaw commands through OpenShell sandbox access; there is no NemoClaw invocation or channel-management API.
 
 A Fabric SDK `run` starts a new runtime rather than attaching to the one hosted by NemoClaw.

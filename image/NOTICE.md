@@ -14,11 +14,7 @@ The local OpenClaw adapter is part of this Apache-2.0 repository.
 It is not an adapter supplied by upstream Fabric.
 Original source headers are retained.
 
-The native messaging fixture uses fake Telegram and inference endpoints inside a container with networking disabled.
-It sends no external messages.
-Its configuration and recreation phases exercise real native OpenClaw processes.
-
-The other harness fixtures also use local protocol servers with networking disabled.
+The harness fixtures use local protocol servers with networking disabled.
 Fixture evidence does not establish model quality or live inference.
 
 The Pi recipe applies the local `fabric/patch_pi.py` correction to the verified Fabric source.
