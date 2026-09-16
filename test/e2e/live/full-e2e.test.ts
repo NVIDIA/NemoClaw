@@ -4,9 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-import { GATEWAY_STOP_SCRIPT } from "../../../src/lib/tunnel/gateway-stop-script.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -343,7 +341,7 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
-  const stopGateway = await input.sandbox.execShell(
+  const prepareRecovery = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
 /usr/local/bin/openclaw completion --shell bash --write-state --install --yes
@@ -355,10 +353,9 @@ ${
     ? "bash -lc 'openclaw doctor --fix --yes --non-interactive && /usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
     : ""
 }
-sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
-${GATEWAY_STOP_SCRIPT}`),
+sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256`),
     {
-      artifactName: "phase-4-stop-openclaw-gateway-before-launch",
+      artifactName: "phase-4-prepare-stop-start-recovery",
       env: env(),
       redactionValues: input.redactionValues,
       timeoutMs: 120_000,
@@ -367,16 +364,26 @@ ${GATEWAY_STOP_SCRIPT}`),
   const afterNativeFix = securityPostureEnabled()
     ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-fix")
     : null;
+  const prepared =
+    !prepareRecovery.timedOut &&
+    prepareRecovery.exitCode === 0 &&
+    (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix));
+  const stop = prepared
+    ? await repoNemoclaw(
+        input.host,
+        [SANDBOX_NAME, "stop"],
+        "phase-4-stop-before-launch",
+        {},
+        120_000,
+      )
+    : null;
   expect(
-    !stopGateway.timedOut &&
-      stopGateway.exitCode === 0 &&
-      (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix)),
-    [stopGateway, afterNativeFix]
+    prepared && stop !== null && !stop.timedOut && stop.exitCode === 0,
+    [prepareRecovery, afterNativeFix, stop]
       .filter((result) => result !== null)
       .map(resultText)
       .join("\n"),
   ).toBe(true);
-  await sleep(3_000);
 
   const recovery = await repoNemoclaw(
     input.host,
