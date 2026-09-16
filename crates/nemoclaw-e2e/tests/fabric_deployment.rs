@@ -155,7 +155,7 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .rev()
             .find(|command| command.get(2).is_some_and(|arg| arg == "configure"))
             .unwrap();
-        let model: serde_json::Value = serde_json::from_str(configured.last().unwrap()).unwrap();
+        let model: serde_json::Value = serde_json::from_str(&configured[5]).unwrap();
         assert_eq!(model["model"], "another-custom-model");
         assert!(
             calls

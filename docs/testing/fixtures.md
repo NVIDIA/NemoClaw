@@ -37,7 +37,7 @@ They use only the local gRPC fixture:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test deployment --test fabric_deployment -- --ignored
+  cargo test -p nemoclaw-e2e --test deployment --test fabric_deployment --test multiple_providers -- --ignored
 ```
 
 CI runs the fixture lifecycle tests with `--test-threads=2`.
@@ -45,6 +45,7 @@ Each Fabric harness is an independent ignored test with its own temporary state 
 To qualify one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
+The multiple-provider fixture also verifies two independent deployments, each sandbox’s selected provider attachments, export/reapply, and drift in one deployment without changes to the other.
 The fixture returns protocol responses; it does not establish live agent inference.
 
 ## Ollama and Platform Fixtures
