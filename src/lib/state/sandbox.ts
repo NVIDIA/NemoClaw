@@ -2565,18 +2565,31 @@ async function restoreSandboxStateInternal(
 
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
   const configFile = tempSshConfig.file;
+  let restoreArchiveDirectory: string | undefined;
+  let restoreArchivePath: string | undefined;
   try {
-    let restoreTar: Buffer | undefined;
     if (localDirs.length > 0) {
-      // Upload via tar pipe
+      const stagingAuthorityError = await validateSnapshotRestoreMutation(backupPath, options);
+      if (stagingAuthorityError) return failRestoreContract(stagingAuthorityError);
+      restoreArchiveDirectory = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-restore-"));
+      restoreArchivePath = path.join(restoreArchiveDirectory, "state.tar");
+      const archiveFd = openSync(
+        restoreArchivePath,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+        0o600,
+      );
       // NC-2227-04: Removed -h flag from restore as well — no symlink following.
-      const tarResult = spawnSync("tar", buildRestoreTarArgs(backupPath, localDirs), {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 60000,
-        maxBuffer: 256 * 1024 * 1024,
-      });
+      let tarResult: ReturnType<typeof spawnSync>;
+      try {
+        tarResult = spawnSync("tar", buildRestoreTarArgs(backupPath, localDirs), {
+          stdio: ["ignore", archiveFd, "pipe"],
+          timeout: 60000,
+        });
+      } finally {
+        closeSync(archiveFd);
+      }
 
-      if (tarResult.status !== 0 || !tarResult.stdout) {
+      if (tarResult.status !== 0 || tarResult.error || tarResult.signal) {
         return {
           success: false,
           restoredDirs,
@@ -2585,7 +2598,6 @@ async function restoreSandboxStateInternal(
           failedFiles: localFiles.map((f) => f.path),
         };
       }
-      restoreTar = tarResult.stdout;
     }
 
     const mutationAuthorityError = await validateSnapshotRestoreMutation(backupPath, options);
@@ -2620,14 +2632,19 @@ async function restoreSandboxStateInternal(
       }
     }
 
-    if (restoreTar !== undefined) {
+    if (restoreArchivePath !== undefined) {
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
-      const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
-        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-        input: restoreTar,
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 120000,
-      });
+      const archiveFd = openSync(restoreArchivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      let sshResult: ReturnType<typeof spawnSync>;
+      try {
+        sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
+          ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+          stdio: [archiveFd, "pipe", "pipe"],
+          timeout: 120000,
+        });
+      } finally {
+        closeSync(archiveFd);
+      }
 
       if (sshResult.status === 0) {
         const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
@@ -2707,6 +2724,9 @@ async function restoreSandboxStateInternal(
       }
     }
   } finally {
+    if (restoreArchiveDirectory) {
+      rmSync(restoreArchiveDirectory, { recursive: true, force: true });
+    }
     try {
       tempSshConfig.cleanup();
     } catch {

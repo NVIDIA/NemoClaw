@@ -31,6 +31,31 @@ describe("messaging provider installed-runtime paths", () => {
     }
   });
 
+  it("does not discover WeChat from the retired managed npm project tree (#11766)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-retired-runtime-"));
+    const stateDir = path.join(dir, "state");
+    const retiredRoot = path.join(
+      stateDir,
+      "npm",
+      "projects",
+      "legacy",
+      "node_modules",
+      "@tencent-weixin",
+      "openclaw-weixin",
+    );
+
+    try {
+      fs.mkdirSync(retiredRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(retiredRoot, "package.json"),
+        JSON.stringify({ name: "@tencent-weixin/openclaw-weixin", version: "2.4.3" }),
+      );
+      expect(resolveInstalledWechatPluginRoot(stateDir)).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("generates a standalone WeChat proof with the sandbox-local policy relay", () => {
     const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {
       encoding: "utf8",

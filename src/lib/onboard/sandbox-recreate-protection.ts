@@ -41,7 +41,6 @@ export interface JournalBoundPreUpgradeBackupResult<Runtime> {
 export interface SandboxRecreateProtectionOptions {
   sandboxName: string;
   sandboxEntry: SandboxEntry | null;
-  customOpenClawImage: boolean;
   note(message: string): void;
 }
 

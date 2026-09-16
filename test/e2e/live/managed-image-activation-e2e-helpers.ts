@@ -317,6 +317,7 @@ function managedActivationNativeStateReadbackScript(agent: ShippedManagedImageAg
     ? "HOME=/sandbox openclaw plugins inspect managed-activation-native --runtime --json >/dev/null"
     : [
         "HERMES_HOME=/sandbox/.hermes hermes plugins list >/tmp/managed-activation-native-plugins",
+        "grep -Fq 'managed-activation-native' /tmp/managed-activation-native-plugins",
         "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/managed-activation-native/__init__.py",
         "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, managed_activation_native'",
       ].join("\n");
@@ -610,6 +611,7 @@ async function qualifyAgent(
     sandboxName,
     trustedSandboxShellScript(
       [
+        "set -eu",
         `umask 077; printf '%s\\n' ${shellQuote(marker)} > /sandbox/.nemoclaw-managed-activation-marker; sync`,
         managedActivationNativeStateScript(agent),
       ]
@@ -636,6 +638,7 @@ async function qualifyAgent(
     sandboxName,
     trustedSandboxShellScript(
       [
+        "set -eu",
         'marker="$(cat /sandbox/.nemoclaw-managed-activation-marker)"',
         managedActivationNativeStateReadbackScript(agent),
         'printf "%s\\n" "$marker"',

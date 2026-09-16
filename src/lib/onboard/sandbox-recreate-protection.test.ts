@@ -31,7 +31,6 @@ describe("createSandboxRecreateProtection", () => {
       {
         sandboxName: "my-assistant",
         sandboxEntry,
-        customOpenClawImage: true,
         note,
       },
       {
@@ -110,7 +109,6 @@ describe("createSandboxRecreateProtection", () => {
         {
           sandboxName: "my-assistant",
           sandboxEntry: { name: "my-assistant" },
-          customOpenClawImage: false,
           note: vi.fn(),
         },
         {

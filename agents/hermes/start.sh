@@ -2201,6 +2201,7 @@ wait_for_hermes_gateway_internal() {
       if [ -s /tmp/gateway.log ]; then
         sed 's/^/[gateway-log:] /' /tmp/gateway.log >&2
       fi
+      [ "$gateway_status" -ne 0 ] || return 1
       return "$gateway_status"
     fi
     sleep 1
@@ -2832,7 +2833,6 @@ prepare_hermes_root_runtime_dir() {
 }
 
 prepare_hermes_native_lazy_install_target() {
-  local target_metadata
   if [ -L "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ]; then
     echo "[SECURITY] Refusing Hermes startup because the native lazy-install target is a symbolic link" >&2
     return 1
@@ -2847,10 +2847,32 @@ prepare_hermes_native_lazy_install_target() {
     echo "[SECURITY] Refusing Hermes startup because the native lazy-install target is not a real directory" >&2
     return 1
   fi
-  chown sandbox:sandbox -- "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" 2>/dev/null || true
-  chmod 2770 -- "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" 2>/dev/null || true
-  target_metadata="$(stat -c '%U:%G:%a' -- "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" 2>/dev/null)" || target_metadata=""
-  if [ "$target_metadata" != "sandbox:sandbox:2770" ]; then
+  if ! "$_HERMES_PYTHON" -I - "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" <<'PY'; then
+import os
+import pwd
+import stat
+import sys
+
+target = sys.argv[1]
+flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+fd = os.open(target, flags)
+try:
+    before = os.fstat(fd)
+    if not stat.S_ISDIR(before.st_mode):
+        raise RuntimeError("native lazy-install target is not a directory")
+    sandbox = pwd.getpwnam("sandbox")
+    os.fchown(fd, sandbox.pw_uid, sandbox.pw_gid)
+    os.fchmod(fd, 0o2770)
+    after = os.fstat(fd)
+    if (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)) != (
+        sandbox.pw_uid,
+        sandbox.pw_gid,
+        0o2770,
+    ):
+        raise RuntimeError("native lazy-install target metadata was not applied")
+finally:
+    os.close(fd)
+PY
     echo "[SECURITY] Refusing Hermes startup because the native lazy-install target must be sandbox:sandbox with mode 2770" >&2
     return 1
   fi

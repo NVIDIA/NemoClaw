@@ -47,6 +47,10 @@ const ALLOWED_ENV = new Set([
 ]);
 // One-way compatibility bridges for the exact additive skills metadata change
 // in #11248 and native plugin/package restore ownership in #11766.
+// Support the two persisted manifest generations through the current and next
+// LKG upgrade window. Remove them under #11357 once release qualification no
+// longer admits receipts created before #11766 and the historical rootless
+// lifecycle fixture has advanced past both hashes.
 const REVIEWED_INSTALLED_MANIFESTS = new Set([
   "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
   "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",

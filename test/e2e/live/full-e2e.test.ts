@@ -299,7 +299,9 @@ async function exerciseNativeOpenClawPluginLifecycle(
     ["/usr/local/bin/openclaw", "plugins", "inspect", "weather", "--json"],
     { artifactName: "phase-4-native-plugin-absent", env: env(), timeoutMs: 30_000 },
   );
-  expect(absent.exitCode, resultText(absent)).not.toBe(0);
+  expect(`exit=${absent.exitCode}\n${resultText(absent)}`).toMatch(
+    /^exit=1\n[\s\S]*(?:weather.*(?:not found|unknown)|(?:not found|unknown).*weather)/iu,
+  );
 }
 
 async function inspectNativeNetwork(sandbox: SandboxClient, artifactName: string) {
