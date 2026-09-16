@@ -151,17 +151,6 @@ export async function resolveSelectedGatewayServiceStopCommand(
 export function createDockerDriverGatewayStart(
   deps: DockerDriverGatewayStartDeps,
 ): DockerDriverGatewayStart {
-  const stateOwnership = createDockerDriverGatewayStateOwnership({
-    getDockerDriverGatewayPid: deps.getDockerDriverGatewayPid,
-    getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
-    isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
-    isPidAlive: deps.isPidAlive,
-    platform: deps.platform,
-    readProcessEnvironment: deps.readDockerDriverGatewayProcessEnvironment,
-    resolveOpenShellGatewayBinary: deps.resolveOpenShellGatewayBinary,
-    runCaptureEx: deps.runner.runCaptureEx,
-  });
-
   async function startDockerDriverGateway({
     exitOnFailure = true,
     output,
@@ -173,6 +162,24 @@ export function createDockerDriverGatewayStart(
     runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   } = {}): Promise<void> {
+    const stateOwnership = createDockerDriverGatewayStateOwnership({
+      getDockerDriverGatewayPid: deps.getDockerDriverGatewayPid,
+      getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
+      isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
+      isPidAlive: deps.isPidAlive,
+      platform: deps.platform,
+      onMacOSProcessEnvironmentUnavailable: () =>
+        (output?.warn ?? console.warn)(
+          "macOS gateway ownership could not be read. This check requires /usr/bin/python3. " +
+            "Run /usr/bin/python3 --version; if unavailable, install Apple Command Line Tools with " +
+            "xcode-select --install, then retry nemoclaw onboard --resume. " +
+            "If Python is available, inspect the gateway process manually before moving its state.",
+        ),
+      readProcessEnvironment: deps.readDockerDriverGatewayProcessEnvironment,
+      resolveOpenShellGatewayBinary: deps.resolveOpenShellGatewayBinary,
+      runCaptureEx: deps.runner.runCaptureEx,
+    });
+
     if (runtimeSelection && runtimeSelection.gatewayName !== deps.gatewayName()) {
       throw new Error(
         `Docker-driver gateway target '${deps.gatewayName()}' does not match runtime selection '${runtimeSelection.gatewayName}'`,

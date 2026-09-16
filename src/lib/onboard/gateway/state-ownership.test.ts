@@ -96,57 +96,47 @@ describe("docker-driver gateway selected-state ownership", () => {
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);
   });
 
-  it("proves macOS selected-state ownership from one unambiguous process environment", () => {
-    const processCapture = vi.fn(() => ({
-      stdout: [
-        "/opt/homebrew/opt/openshell/bin/openshell-gateway",
-        `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${gatewayIdForStateDir("/another/state")}`,
-        `OPENSHELL_DB_URL=sqlite:${path.join(STATE_DIR, "openshell.db")}`,
-      ].join(" "),
+  it("preserves whitespace in structured macOS selected-state evidence", () => {
+    const stateDir = "/Users/Nvidia User/.nemoclaw/gateways/8080";
+    const capture = vi.fn(() => ({
+      stdout: JSON.stringify({ OPENSHELL_DB_URL: `sqlite:${stateDir}/openshell.db` }),
       exitCode: 0,
       timedOut: false,
     }));
     const ownership = makeOwnership({
       platform: "darwin",
+      getDockerDriverGatewayStateDir: () => stateDir,
+      getDockerDriverGatewayPid: () => 4242,
       readProcessEnvironment: () => null,
-      runCaptureEx: processCapture,
+      runCaptureEx: capture,
     });
-
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(true);
-    expect(processCapture).toHaveBeenCalledWith(["ps", "eww", "-p", "4242", "-o", "command="]);
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
+    expect(capture).toHaveBeenCalledWith(
+      ["/usr/bin/python3", "-I", "-c", expect.any(String), "4242"],
+      {
+        timeout: 5000,
+        maxBuffer: 64 * 1024,
+      },
+    );
   });
 
   it.each([
-    ["the process query fails", { stdout: "", exitCode: 1, timedOut: false }],
-    [
-      "the selected-state key is duplicated",
-      {
-        stdout:
-          "/opt/homebrew/bin/openshell-gateway " +
-          `OPENSHELL_DB_URL=sqlite:${path.join(STATE_DIR, "openshell.db")} ` +
-          "OPENSHELL_DB_URL=sqlite:/another/gateway/openshell.db",
-        exitCode: 0,
-        timedOut: false,
-      },
-    ],
-    [
-      "the process query returns multiple records",
-      {
-        stdout:
-          "/opt/homebrew/bin/openshell-gateway OPENSHELL_DB_URL=sqlite:/first\n" +
-          "/opt/homebrew/bin/openshell-gateway OPENSHELL_DB_URL=sqlite:/second\n",
-        exitCode: 0,
-        timedOut: false,
-      },
-    ],
-  ])("fails closed on macOS when %s", (_case, processResult) => {
+    { stdout: "", exitCode: 1, timedOut: false },
+    { stdout: "null", exitCode: 0, timedOut: false },
+    { stdout: "{}", exitCode: 0, timedOut: false },
+    { stdout: "invalid", exitCode: 0, timedOut: false },
+    { stdout: '{"OPENSHELL_DB_URL":123}', exitCode: 0, timedOut: false },
+    { stdout: "", exitCode: null, timedOut: true },
+  ])("withholds recovery permissions when macOS evidence is unavailable: %j", (result) => {
     const ownership = makeOwnership({
       platform: "darwin",
+      getDockerDriverGatewayPid: () => 4242,
       readProcessEnvironment: () => null,
-      runCaptureEx: () => processResult,
+      runCaptureEx: () => result,
     });
-
     expect(ownership.isDockerDriverGatewayPidUsingSelectedState(4242)).toBe(false);
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(true);
   });
 
   it("fails closed when the process scan times out", () => {

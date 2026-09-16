@@ -46,7 +46,12 @@ describe("gateway lifecycle late binding", () => {
 
   async function captureFailedStartRecovery(
     ownsSelectedState: boolean,
-    options: { processEnvironmentSource?: "proc" | "ps"; platform?: NodeJS.Platform } = {},
+    options: {
+      processEnvironmentSource?: "proc" | "native";
+      platform?: NodeJS.Platform;
+      missingPython?: boolean;
+      scan?: "replacement" | "empty";
+    } = {},
   ) {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
@@ -71,18 +76,28 @@ describe("gateway lifecycle late binding", () => {
         ? gatewayIdForStateDir(stateDir)
         : "another-gateway",
     };
-    const readProcessEnvironment = vi.fn(() =>
-      options.processEnvironmentSource === "ps" ? null : selectedStateEnvironment,
+    const readProcessEnvironment = vi.fn((pid: number) =>
+      pid === 6555
+        ? { NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(stateDir) }
+        : options.processEnvironmentSource === "native"
+          ? null
+          : selectedStateEnvironment,
     );
     const runCapture = vi.fn(() => "");
     const runCaptureEx = vi.fn((args: readonly string[]) =>
-      args[0] === "ps"
+      args[0] === "/usr/bin/python3"
         ? {
-            stdout: `${serviceExecutablePath} NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${selectedStateEnvironment.NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE}`,
-            exitCode: 0,
+            stdout: options.missingPython ? "" : JSON.stringify(selectedStateEnvironment),
+            exitCode: options.missingPython ? null : 0,
             timedOut: false,
           }
-        : { stdout: "", exitCode: null, timedOut: true },
+        : options.scan
+          ? {
+              stdout: options.scan === "replacement" ? "6555\n" : "",
+              exitCode: options.scan === "replacement" ? 0 : 1,
+              timedOut: false,
+            }
+          : { stdout: "", exitCode: null, timedOut: true },
     );
     const checkGatewayPortAvailable = vi
       .fn()
@@ -188,7 +203,7 @@ describe("gateway lifecycle late binding", () => {
             error: (message) => lines.push(message),
             log: vi.fn(),
             step: vi.fn(),
-            warn: vi.fn(),
+            warn: (message) => lines.push(message),
           },
         }),
       ).rejects.toThrow(/failed to start within/);
@@ -236,7 +251,7 @@ describe("gateway lifecycle late binding", () => {
   it("passes a Homebrew stop command after macOS process state proof (#11720)", async () => {
     const result = await captureFailedStartRecovery(true, {
       platform: "darwin",
-      processEnvironmentSource: "ps",
+      processEnvironmentSource: "native",
     });
 
     expect(result.output).toContain("brew services stop openshell && nemoclaw onboard --resume");
@@ -244,8 +259,39 @@ describe("gateway lifecycle late binding", () => {
     expect(result.serviceTargetCalls).toBe(2);
     expect(result.processEnvironmentCalls).toContainEqual([5444]);
     expect(result.runCaptureExCalls).toContainEqual([
-      ["ps", "eww", "-p", "5444", "-o", "command="],
+      ["/usr/bin/python3", "-I", "-c", expect.any(String), "5444"],
+      { timeout: 5000, maxBuffer: 64 * 1024 },
     ]);
+  });
+
+  it("explains missing macOS Python while withholding unsafe recovery commands", async () => {
+    const result = await captureFailedStartRecovery(true, {
+      platform: "darwin",
+      processEnvironmentSource: "native",
+      missingPython: true,
+    });
+    expect(result.output).toContain("/usr/bin/python3 --version");
+    expect(result.output).toContain("xcode-select --install");
+    expect(result.output).not.toContain("brew services stop openshell");
+    expect(result.output).not.toContain("mv ");
+  });
+
+  it("withholds a state move when the complete scan finds a replacement gateway", async () => {
+    const result = await captureFailedStartRecovery(false, { scan: "replacement" });
+    expect(result.output).toContain(
+      "could not confirm that the standalone gateway process stopped",
+    );
+    expect(result.output).not.toContain("mv ");
+    expect(result.processEnvironmentCalls).toContainEqual([6555]);
+  });
+
+  it("offers a state move after a complete empty process scan", async () => {
+    const result = await captureFailedStartRecovery(false, { scan: "empty" });
+    expect(result.output).toContain("mv ");
+    expect(result.output).not.toContain(
+      "could not confirm that the standalone gateway process stopped",
+    );
+    expect(result.runCaptureExCalls).toContainEqual([["pgrep", "-f", expect.any(String)]]);
   });
 
   it("returns a stop command when one stable service owns the selected port and state", async () => {

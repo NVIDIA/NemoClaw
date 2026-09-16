@@ -10,6 +10,8 @@ import {
 import { readDockerDriverGatewayProcessEnvironment } from "../docker-driver-gateway-process-identity";
 import { HOST_GATEWAY_PGREP_PATTERN } from "../host-gateway-process";
 
+import { readDarwinGatewayProcessEnvironment } from "./darwin-process-environment";
+
 interface ProcessScanResult {
   stdout: string;
   exitCode: number | null;
@@ -26,6 +28,7 @@ interface DockerDriverGatewayStateOwnershipDeps {
   ): boolean;
   isPidAlive(pid: number): boolean;
   platform?: NodeJS.Platform;
+  onMacOSProcessEnvironmentUnavailable?(): void;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
   resolveOpenShellGatewayBinary(): string | null;
   runCaptureEx(args: readonly string[]): ProcessScanResult;
@@ -49,38 +52,21 @@ export function processEnvironmentUsesSelectedGatewayState(
   return false;
 }
 
-function processEnvironmentFromPsOutput(stdout: string): Record<string, string> | null {
-  const lines = stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
-  if (lines.length !== 1) return null;
-
-  const environment: Record<string, string> = {};
-  for (const key of [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV, "OPENSHELL_DB_URL"]) {
-    const prefix = `${key}=`;
-    const values = lines[0]
-      .split(/\s+/)
-      .filter((token) => token.startsWith(prefix))
-      .map((token) => token.slice(prefix.length));
-    if (values.length > 1) return null;
-    if (values.length === 1) environment[key] = values[0];
-  }
-  return Object.keys(environment).length > 0 ? environment : null;
-}
-
 export function createDockerDriverGatewayStateOwnership(
   deps: DockerDriverGatewayStateOwnershipDeps,
 ): DockerDriverGatewayStateOwnership {
+  let reportedUnavailable = false;
   const readProcessEnvironment = (pid: number) => {
     const environment = (deps.readProcessEnvironment ?? readDockerDriverGatewayProcessEnvironment)(
       pid,
     );
     if (environment || (deps.platform ?? process.platform) !== "darwin") return environment;
-    try {
-      const result = deps.runCaptureEx(["ps", "eww", "-p", String(pid), "-o", "command="]);
-      if (result.timedOut || result.exitCode !== 0) return null;
-      return processEnvironmentFromPsOutput(result.stdout);
-    } catch {
-      return null;
+    const nativeEnvironment = readDarwinGatewayProcessEnvironment(pid, deps.runCaptureEx);
+    if (!nativeEnvironment && !reportedUnavailable) {
+      reportedUnavailable = true;
+      deps.onMacOSProcessEnvironmentUnavailable?.();
     }
+    return nativeEnvironment;
   };
 
   function isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean {
