@@ -267,7 +267,7 @@ Supported sandboxes use hosted external inference or the native NVIDIA hosted pr
 A managed OpenClaw sandbox can also use the verified managed local vLLM configuration.
 The managed vLLM export runs only on Linux x86_64 and requires its fixed managed serving identity and complete live runtime evidence.
 A managed OpenClaw sandbox can also export the verified local Ollama route on native Linux with the Docker driver.
-The export records the external Ollama daemon port, the NemoClaw-managed authentication proxy port, and the `qwen3.5:9b` model digest.
+The export records the external Ollama daemon port, the NemoClaw-managed authentication proxy port, and the verified selected model name and SHA-256 digest.
 It requires the managed proxy credential but never exports that credential or its value.
 It fails unless the live daemon, proxy, model, and sandbox route match the retained configuration.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
@@ -1429,7 +1429,7 @@ Host-side config, inference, gateway recovery, snapshot, policy, channel, and sa
 
 Repair a stopped in-sandbox gateway and re-establish host-side forwards without opening an SSH session. Use this after a sandbox crash or whenever `$$nemoclaw <name> status` reports that the sandbox container or agent gateway is not running.
 
-For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness. It leaves a running or paused container unchanged. If Docker cannot start the container, `recover` continues to the readiness check and reports the resulting failure.
+For a stopped, non-paused Docker-driver container, `recover` starts the sandbox through OpenShell before it waits for readiness. If the container already runs while OpenShell reports `Stopped`, `recover` still starts the sandbox through OpenShell to repair the phase. It leaves paused containers and running sandboxes in other phases unchanged. If OpenShell cannot start a stopped container, recovery starts the container directly when needed, then continues to the readiness check and reports the resulting failure.
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
@@ -1635,7 +1635,7 @@ A `pending` or `configuring` receipt instead directs you to resume Portable onbo
 
 </AgentOnly>
 
-Starting an already-running sandbox skips the container start and still runs the gateway and forward health checks. A paused container is unpaused. If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
+When the container runs and OpenShell reports `Stopped`, `start` starts the sandbox through OpenShell to repair the phase. A running sandbox in another phase skips the container start and still runs the gateway and forward health checks. A paused container is unpaused. If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
 <AgentOnly variant="openclaw,hermes">
   Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox
@@ -2063,7 +2063,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 
 ### `$$nemoclaw <name> destroy`
 
-Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox. This removes the sandbox from the registry. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis. For Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive. It also preserves a replacement onboarding session when the captured session identity changed. If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity. For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
+Stop managed local inference resources, remove runtime-provider-owned resources created during onboarding, and delete the sandbox. This removes the sandbox from the registry. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis. For Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive. It also preserves a replacement onboarding session when the captured session identity changed. If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity. For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
 
 If `destroy` warns that it could not identify or stop a listener for the deleted sandbox:
 
@@ -2099,6 +2099,9 @@ If Docker reports another OpenShell-managed container, removal fails, or NemoCla
 Correct the reported Docker state, then rerun `destroy`.
 If Docker cannot complete the inspection, correct the reported Docker error before you rerun `destroy`.
 For common recovery steps, refer to [Docker is not running](troubleshooting#docker-is-not-running) and [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux).
+
+If onboarding fails before NemoClaw records a runtime provider, keep the original `NEMOCLAW_GATEWAY_RUNTIME` selection set when you rerun `destroy`.
+Recorded sandbox or gateway ownership takes precedence over that fallback and must agree when both are present.
 
 If `destroy` reports conflicting, incomplete, or malformed identity data, inspect the matching containers:
 
@@ -2561,6 +2564,11 @@ $$nemoclaw my-assistant mcp list [--json]
 
 Add an MCP Streamable HTTP server to a sandbox. Pass `--url` for the MCP endpoint and the required single `--env KEY` bearer credential for the sandbox-side MCP client. Pass repeatable `--deny-tool <name-or-glob>` options to block matching `tools/call` requests at the OpenShell proxy. The generated deny rules match tool names only and do not inspect arguments. Pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit an exact RFC1918, CGNAT, or IPv6 unique local destination for the current command. The declaration must equal the normalized host from `--url`. For managed MCP, use a DNS hostname for an IPv6 unique local address because NemoClaw has not qualified direct IPv6-literal MCP URLs. You can supply exact hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options. NemoClaw records the resulting exact trust intent and address pins, so restart, rebuild, and restore do not depend on the ambient environment. NemoClaw registers that credential in an OpenShell provider, installs a generated OpenShell `protocol: mcp` policy for the target endpoint, attaches the provider to the running sandbox, and writes only an OpenShell resolver placeholder for the recorded key into the agent configuration. Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoClaw process arguments. Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`. All endpoints must use HTTPS. The full URL and path are persisted and displayed, so URLs cannot contain userinfo, query strings, fragments, known secret-shaped path material, percent-escaped or glob-style paths, or port zero. Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores, and endpoint hostnames must use canonical lowercase DNS labels. NemoClaw rejects invalid names and endpoints before it writes lifecycle state or changes OpenShell resources. NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit. OpenShell `0.0.116` evaluates that policy before replacing the attached provider placeholder in the allowed request header. NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile and binds the dedicated provider to that endpoint with `credential_binding.provider`. OpenShell withholds the credential before the binding is active and outside the bound host, port, and path. The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener. After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one credential key matching the recorded key. If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request. Neither outcome fails the committed add, and `--no-probe` skips this check. For full setup details, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server).
 
+The generated policy is also binary-scoped: the selected agent's adapter binaries are allowed, while an interactive `/usr/bin/curl` request to the same endpoint is denied.
+Use `mcp status <server>` to inspect policy readiness and run the supported bounded in-sandbox reachability check.
+The command verifies credential resolution only when it reports a verified verdict; other probe outcomes are inconclusive.
+A failed shell `curl` is not evidence that the managed MCP route is broken.
+
 <AgentOnly variant="hermes">
 
 Hermes includes the stable credential handle from the readiness check in the resolver placeholder and preserves it through inspection, rollback, and lifecycle reconciliation while OpenShell still reports it.
@@ -2911,7 +2919,15 @@ $$nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
 
 ### `$$nemoclaw <name> sessions export [keys...]`
 
-Export an OpenClaw sandbox's session history from the running sandbox to the host. The command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` files, plus optional `<sessionId>.trajectory.jsonl` files. It never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping. By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload. With no positional keys, the command exports every non-internal session for the agent; if only internal warm-up sessions exist, the command reports that there are no sessions to bundle and writes no artifact. Internal `nemoclaw-onboard-warmup-*` sessions are excluded from export-all output, but passing an explicit warm-up session key still exports that session for debugging. Pass one or more keys, as aliases or canonical `agent:<id>:<rest>` keys, to filter.
+Export an OpenClaw sandbox's session history from the running sandbox to the host.
+The command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only matching `<sessionId>.jsonl` files and optional `<sessionId>.trajectory.jsonl` files.
+It never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
+For a registered sandbox, session lookup, transfer, and staging cleanup use its recorded OpenShell gateway.
+NemoClaw reports success only after the OpenShell transfer process, artifact verification, host publication, transfer-process cleanup, and lifecycle-lock release.
+By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
+With no positional keys, the command exports every non-internal session for the agent; if only internal warm-up sessions exist, it writes no artifact.
+Internal `nemoclaw-onboard-warmup-*` sessions are excluded from export-all output, but passing an explicit warm-up session key still exports that session for debugging.
+Pass one or more keys, as aliases or canonical `agent:<id>:<rest>` keys, to filter.
 
 ```bash
 $$nemoclaw my-assistant sessions export
@@ -2937,7 +2953,13 @@ The export keeps its original success or failure result, so a cleanup warning af
 
 ### `$$nemoclaw <name> sessions export`
 
-Export a Hermes sandbox's session history from the running sandbox to the host. The command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging`, then downloads the resulting single JSONL stream to the host. Hermes stores session history in a SQLite database, so the command refuses positional keys, `--format tar`, and `--include-trajectory` with a clear error when the sandbox is Hermes. `--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value. The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
+Export a Hermes sandbox's session history from the running sandbox to the host.
+The command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging`, then downloads the resulting single JSONL stream to the host.
+For a registered sandbox, export, transfer, and staging cleanup use its recorded OpenShell gateway.
+NemoClaw reports success only after the OpenShell transfer process, artifact verification, host publication, transfer-process cleanup, and lifecycle-lock release.
+Hermes stores session history in a SQLite database, so the command refuses positional keys, `--format tar`, and `--include-trajectory` with a clear error.
+`--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
+The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
 
 ```bash
 $$nemoclaw my-assistant sessions export

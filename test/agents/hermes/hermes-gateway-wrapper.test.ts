@@ -34,6 +34,7 @@ function runUnmodifiedWrapperWithTrustedPython(
   const realHermes = path.join(dir, "hermes.real");
   fs.copyFileSync(WRAPPER, wrapper);
   fs.copyFileSync(VALIDATOR, validator);
+  fs.writeFileSync(path.join(dir, ".env"), "API_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=8642\n");
   fs.writeFileSync(realHermes, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
   const candidates = `(${trustedPythonCandidates.map((value) => JSON.stringify(value)).join(", ")},)`;
   const driver = [
@@ -74,6 +75,23 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toContain("process environment");
     expect(run.stderr).toContain("SLACK_BOT_TOKEN");
     expect(run.stderr).not.toContain("xoxb-real-1234567890");
+    expect(run.realInvoked).toBe(false);
+  });
+
+  it("refuses gateway restart when the env file changes during validation", () => {
+    const validatorScript = `#!/usr/bin/env python3
+import pathlib
+import sys
+if sys.argv[1] == "env-file":
+    pathlib.Path(sys.argv[2]).write_text("SLACK_BOT_TOKEN=xoxb-mutated-secret\\n")
+raise SystemExit(0)
+`;
+    const run = runWrapper(["gateway", "restart"], {}, { validatorScript });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("env file changed during secret-boundary validation");
+    expect(run.stderr).toContain("SECRET_BOUNDARY_REFUSED");
+    expect(run.stderr).not.toContain("xoxb-mutated-secret");
     expect(run.realInvoked).toBe(false);
   });
 
@@ -131,6 +149,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       {
         validatorScript: [
           "import json, os, sys",
+          "if sys.argv[1] == 'env-file': raise SystemExit(0)",
           "logical_env = json.load(sys.stdin)",
           "assert logical_env.get('PIP_CONFIG_FILE') == '/sandbox/pip.conf'",
           "assert logical_env.get('LD_PRELOAD') == '/sandbox/hostile.so'",
@@ -325,7 +344,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     },
   );
 
-  it("invokes the runtime-env validator with python3 -I (isolated mode)", () => {
+  it("invokes the env-file validator with python3 -I before the runtime guard", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-"));
     try {
       const argvLog = path.join(dir, "argv.log");
@@ -339,7 +358,8 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
-      expect(argv[argv.length - 1]).toBe("runtime-env-json");
+      expect(argv[argv.length - 2]).toBe("env-file");
+      expect(path.basename(argv[argv.length - 1] as string)).toBe(".env");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

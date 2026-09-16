@@ -453,6 +453,120 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
   });
 });
 
+describe("Docker provider start with a running container", () => {
+  const runningContainer = {
+    name: "openshell-default--alpha-id",
+    running: true,
+    status: "Up 10 minutes (healthy)",
+  };
+
+  function startWithPhase(
+    phase: string | null,
+    overrides: Partial<DockerRuntimeProviderDependencies> = {},
+  ) {
+    const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "started" }));
+    const sandboxNeedsLifecycleStart = vi.fn(() => phase === "Stopped");
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle,
+      sandboxNeedsLifecycleStart,
+      findLabeledSandboxContainers: () => [runningContainer],
+      recoverPortableSandbox: async () => ({ kind: "not-installed" }),
+      recoverSandbox: () => ({ recovered: true, via: "started-running-original" }),
+      withLifecycleLock: async (_sandboxName, operation) => operation(),
+      ...overrides,
+    } as Partial<DockerRuntimeProviderDependencies>);
+    return { captureSandboxLifecycle, provider, sandboxNeedsLifecycleStart };
+  }
+
+  it("starts a sandbox still reported Stopped while its container runs (#11790)", async () => {
+    const { captureSandboxLifecycle, provider } = startWithPhase("Stopped");
+    const input = openClawLifecycleInput({ HOME: "/test-home" });
+
+    expect(await supportedLifecycle(provider).start(input)).toEqual({ exitCode: 0 });
+    // Without this the container keeps running, the phase never leaves Stopped,
+    // and the readiness wait in `start` times out on every later attempt.
+    expect(captureSandboxLifecycle).toHaveBeenCalledWith("start", "alpha", "nemoclaw", {
+      HOME: "/test-home",
+    });
+  });
+
+  it("still reports a Ready sandbox as already running (#11790)", async () => {
+    const { captureSandboxLifecycle, provider, sandboxNeedsLifecycleStart } =
+      startWithPhase("Ready");
+
+    expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
+      exitCode: 0,
+    });
+    expect(sandboxNeedsLifecycleStart).toHaveBeenCalledWith(
+      "alpha",
+      "nemoclaw",
+      expect.any(Object),
+    );
+    expect(captureSandboxLifecycle).not.toHaveBeenCalled();
+  });
+
+  it("does not start the sandbox when the phase cannot be observed", async () => {
+    const { captureSandboxLifecycle, provider } = startWithPhase(null);
+
+    expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
+      exitCode: 0,
+    });
+    expect(captureSandboxLifecycle).not.toHaveBeenCalled();
+  });
+
+  it("starts a running Stopped sandbox even when a GPU backup sibling exists", async () => {
+    const { captureSandboxLifecycle, provider } = startWithPhase("Stopped", {
+      findLabeledSandboxContainers: () => [
+        runningContainer,
+        { name: "alpha-nemoclaw-gpu-backup-1234", running: true, status: "Up 10 minutes" },
+      ],
+    } as Partial<DockerRuntimeProviderDependencies>);
+
+    expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
+      exitCode: 0,
+    });
+    expect(captureSandboxLifecycle).toHaveBeenCalledWith(
+      "start",
+      "alpha",
+      "nemoclaw",
+      expect.any(Object),
+    );
+  });
+
+  it("fails closed when OpenShell cannot start the Stopped sandbox", async () => {
+    const { provider } = startWithPhase("Stopped", {
+      captureSandboxLifecycle: () => ({ status: 1, output: "sandbox phase is Error" }),
+    } as Partial<DockerRuntimeProviderDependencies>);
+
+    expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
+      exitCode: 1,
+      message: "  OpenShell could not start sandbox 'alpha' (exit 1): sandbox phase is Error.",
+    });
+  });
+
+  it("does not probe the phase when a container is already at rest", async () => {
+    const { captureSandboxLifecycle, provider, sandboxNeedsLifecycleStart } = startWithPhase(
+      "Stopped",
+      {
+        findLabeledSandboxContainers: () => [
+          {
+            name: "openshell-default--alpha-id",
+            running: false,
+            status: "Exited (0) 1 second ago",
+          },
+        ],
+        recoverSandbox: poison,
+      } as Partial<DockerRuntimeProviderDependencies>,
+    );
+
+    expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
+      exitCode: 0,
+    });
+    expect(captureSandboxLifecycle).toHaveBeenCalledOnce();
+    expect(sandboxNeedsLifecycleStart).not.toHaveBeenCalled();
+  });
+});
+
 describe("Docker network command bounds", () => {
   it("uses the selected socket, output limit, and forced timeout for provisioning (#11606)", () => {
     const dockerRun = vi.spyOn(dockerCommands, "dockerRun").mockReturnValue({

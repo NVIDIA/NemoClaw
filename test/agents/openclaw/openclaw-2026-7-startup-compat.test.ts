@@ -136,7 +136,7 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "export HOME=/root",
-        `STEP_DOWN_PREFIX_GATEWAY=(${JSON.stringify(stepDown)})`,
+        `STEP_DOWN_PREFIX_SANDBOX=(${JSON.stringify(stepDown)})`,
         `OPENCLAW=${JSON.stringify(gateway)}`,
         "_DASHBOARD_PORT=18789",
         "arm_openclaw_gateway_supervisor_cleanup() { :; }",
@@ -144,7 +144,7 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         "capture_openclaw_pid_start_identity() { printf -v \"$2\" '%s' test-identity; }",
         "record_gateway_pid() { :; }",
         safeTmpHelpers(source),
-        // Model the root-created gateway-owned log as unavailable to the
+        // Model the root-created sandbox-owned log as unavailable to the
         // launcher until the privilege-transition fixture runs.
         '_nemoclaw_safe_create_tmp_file() { : >"$1"; chmod 000 "$1"; }',
         launchProcess,
