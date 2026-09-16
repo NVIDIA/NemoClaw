@@ -175,8 +175,9 @@ A port probe that cannot verify availability also aborts.
 Free an unrelated listener, or set `MSTEAMS_PORT` or `TEAMS_PORT` to a free port.
 
 Before a rebuild, NemoClaw checks the messaging plan before backup and checks it again after MCP preparation, before deletion.
-A registry or Microsoft Teams host-port conflict leaves the original sandbox intact.
-Resolve any conflict, then rerun the operation.
+A registry or Microsoft Teams host-port conflict stops rebuild before sandbox deletion.
+NemoClaw attempts to restore MCP changes made during preparation.
+Resolve the conflict and any reported MCP recovery failure, then rerun the operation.
 `$$nemoclaw status` reports cross-sandbox overlaps within the selected OpenShell gateway's sandbox registry.
 
 After recreation, NemoClaw verifies the replacement's required webhook forward.

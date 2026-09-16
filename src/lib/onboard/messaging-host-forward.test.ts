@@ -99,7 +99,7 @@ function makeCompactTeamsPlan(): SandboxMessagingPlan {
 }
 
 describe("ensureMessagingHostForwardIfConfigured", () => {
-  it("observes ownership through the frozen gateway and workspace", async () => {
+  it("uses the supplied gateway and workspace to check listener ownership", async () => {
     const checkPortAvailable = vi.fn(async () => ({
       ok: false,
       process: "openshell",
