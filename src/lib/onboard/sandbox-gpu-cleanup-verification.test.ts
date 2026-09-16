@@ -35,7 +35,7 @@ function sequence<T>(input: T | T[]) {
   return () => values.shift() ?? last;
 }
 
-function scenario({
+async function scenario({
   list,
   containers = ABSENT,
   deletion = { status: 0 },
@@ -51,20 +51,20 @@ function scenario({
   const runOpenshell = vi.fn((args: string[]) => (args[1] === "delete" ? deletion : nextList()));
   const queryContainers = vi.fn(nextContainers);
   const sleep = vi.fn();
-  const result = cleanupNativeGpuAttemptForFallback(
+  const result = await cleanupNativeGpuAttemptForFallback(
     "alpha",
-    { runOpenshell, queryContainers, sleep },
+    { gatewayName: "nemoclaw", runOpenshell, queryContainers, sleep },
     options,
   );
   return { queryContainers, result, runOpenshell, sleep };
 }
 
 describe("cleanupNativeGpuAttemptForFallback", () => {
-  it("proves a strict pre-progress rejection absent without deleting a mutable name (#10155)", () => {
+  it("proves a strict pre-progress rejection absent without deleting a mutable name (#10155)", async () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "" }));
     const queryContainers = vi.fn(() => ABSENT);
 
-    const result = cleanupNativeGpuFailureForFallback(
+    const result = await cleanupNativeGpuFailureForFallback(
       "alpha",
       {
         ok: false,
@@ -74,7 +74,7 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
         fallbackEligible: true,
         nativeCreateRejectedBeforeProgress: true,
       },
-      { runOpenshell, queryContainers },
+      { gatewayName: "nemoclaw", runOpenshell, queryContainers },
     );
 
     expect(result).toEqual({
@@ -92,10 +92,10 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(queryContainers).toHaveBeenCalledTimes(STABLE_ABSENCE_CHECKS);
   });
 
-  it("blocks a pre-progress retry when a same-name sandbox appears without deleting it (#10155)", () => {
+  it("blocks a pre-progress retry when a same-name sandbox appears without deleting it (#10155)", async () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "alpha Ready" }));
 
-    const result = cleanupNativeGpuFailureForFallback(
+    const result = await cleanupNativeGpuFailureForFallback(
       "alpha",
       {
         ok: false,
@@ -105,7 +105,7 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
         fallbackEligible: true,
         nativeCreateRejectedBeforeProgress: true,
       },
-      { runOpenshell, queryContainers: () => ABSENT },
+      { gatewayName: "nemoclaw", runOpenshell, queryContainers: () => ABSENT },
     );
 
     expect(result).toMatchObject({
@@ -120,10 +120,10 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     );
   });
 
-  it("never turns an exact owner-cleanup handoff into a mutable-name delete", () => {
+  it("never turns an exact owner-cleanup handoff into a mutable-name delete", async () => {
     const runOpenshell = vi.fn();
 
-    const result = cleanupNativeGpuFailureForFallback(
+    const result = await cleanupNativeGpuFailureForFallback(
       "alpha",
       {
         ok: false,
@@ -138,7 +138,7 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
           runtimeId: "runtime-id-alpha",
         },
       },
-      { runOpenshell },
+      { gatewayName: "nemoclaw", runOpenshell },
     );
 
     expect(result).toEqual({
@@ -152,8 +152,8 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("uses the documented fail-closed cleanup limits by default", () => {
-    const { result, runOpenshell, sleep } = scenario({
+  it("uses the documented fail-closed cleanup limits by default", async () => {
+    const { result, runOpenshell, sleep } = await scenario({
       list: { status: 0, stdout: "alpha Ready" },
     });
 
@@ -168,8 +168,8 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(sleep).toHaveBeenCalledWith(CLEANUP_POLL_INTERVAL_MS / 1_000);
   });
 
-  it("requires two stable sandbox and labeled-container absence checks", () => {
-    const { result, runOpenshell, queryContainers } = scenario({
+  it("requires two stable sandbox and labeled-container absence checks", async () => {
+    const { result, runOpenshell, queryContainers } = await scenario({
       list: { status: 0, stdout: "" },
       options: { maxAttempts: 3, stableAbsenceChecks: 2 },
     });
@@ -177,15 +177,15 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(result).toEqual(SAFE_CLEANUP);
     expect(runOpenshell).toHaveBeenNthCalledWith(
       1,
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
     expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "list")).toHaveLength(2);
     expect(queryContainers).toHaveBeenCalledTimes(2);
   });
 
-  it("waits through propagated presence before proving two stable absence checks", () => {
-    const { result, runOpenshell, queryContainers, sleep } = scenario({
+  it("waits through propagated presence before proving two stable absence checks", async () => {
+    const { result, runOpenshell, queryContainers, sleep } = await scenario({
       list: [
         { status: 0, stdout: "alpha Ready" },
         { status: 0, stdout: "alpha Ready" },
@@ -203,8 +203,8 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(sleep).toHaveBeenCalledWith(1);
   });
 
-  it("permits fallback after a nonzero delete only when two checks prove complete absence", () => {
-    const { result } = scenario({
+  it("permits fallback after a nonzero delete only when two checks prove complete absence", async () => {
+    const { result } = await scenario({
       list: { status: 0, stdout: "" },
       deletion: { status: 1, stderr: "delete denied" },
       options: { maxAttempts: 2, stableAbsenceChecks: 2 },
@@ -215,8 +215,8 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(result.reason).toBeNull();
   });
 
-  it("permits fallback after a transient gateway list failure recovers to stable absence", () => {
-    const { result, runOpenshell, queryContainers, sleep } = scenario({
+  it("permits fallback after a transient gateway list failure recovers to stable absence", async () => {
+    const { result, runOpenshell, queryContainers, sleep } = await scenario({
       list: [
         { status: 1, stderr: "gateway unavailable" },
         { status: 0, stdout: "" },
@@ -231,8 +231,8 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
-  it("exhausts the fixed poll bound when gateway absence cannot be proven", () => {
-    const { result, runOpenshell, queryContainers, sleep } = scenario({
+  it("exhausts the fixed poll bound when gateway absence cannot be proven", async () => {
+    const { result, runOpenshell, queryContainers, sleep } = await scenario({
       list: { status: 1, stderr: "gateway unavailable" },
     });
 
@@ -281,8 +281,8 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
       { sandboxPresent: true },
       "still present",
     ],
-  ] as const)("%s (fail-closed cleanup)", (_title, input, expected, reason) => {
-    const { result } = scenario({ ...input, options: { maxAttempts: 2 } });
+  ] as const)("%s (fail-closed cleanup)", async (_title, input, expected, reason) => {
+    const { result } = await scenario({ ...input, options: { maxAttempts: 2 } });
 
     expect(result).toMatchObject({ safe: false, ...expected });
     expect(result.reason).toContain(reason);
