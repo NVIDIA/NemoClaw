@@ -505,6 +505,7 @@ describe("CLI dispatch", () => {
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
     const bashLog = path.join(home, "docker.log");
+    const deletedMarker = path.join(home, "alpha-deleted");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -527,10 +528,19 @@ describe("CLI dispatch", () => {
       [
         "#!/bin/sh",
         `log_file=${JSON.stringify(openshellLog)}`,
+        `deleted_marker=${JSON.stringify(deletedMarker)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
-        '  printf "NAME STATUS\\nbeta Ready\\n"',
+        '  if [ -e "$deleted_marker" ]; then',
+        '    output="NAME STATUS\\nbeta Ready"',
+        "  else",
+        '    output="NAME STATUS\\nalpha Ready\\nbeta Ready"',
+        "  fi",
+        '  printf "%s\\n" "$output" >> "$log_file"',
+        '  printf "%s\\n" "$output"',
         "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+        '  : > "$deleted_marker"',
         "fi",
         'printf \'%s\\n\' "$*" >> "$log_file"',
         "exit 0",

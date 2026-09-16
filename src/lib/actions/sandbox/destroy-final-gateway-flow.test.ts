@@ -121,4 +121,23 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     expect(warnOutput(harness)).toContain("openshell sandbox list -g nemoclaw-19080");
     expect(warnOutput(harness)).toContain("openshell gateway remove nemoclaw-19080");
   });
+
+  it("reports a sandbox registered between the initial and final cleanup checks", async () => {
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+      finalGatewayRegisteredSandboxCount: 1,
+    });
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
+    expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
+    expect(warnOutput(harness)).toContain(
+      "the local sandbox registry no longer confirms this was the last sandbox",
+    );
+  });
 });

@@ -238,16 +238,18 @@ function reportFinalGatewayLeftRunning(
   gatewayName: string,
   verdict: Extract<
     FinalDestroyGatewayCleanupVerdict,
-    { status: "live-list-unavailable" | "live-sandboxes" }
+    { status: "live-list-unavailable" | "live-sandboxes" | "not-final" }
   >,
   cleanupRequested: boolean,
 ): void {
   const cause =
-    verdict.status === "live-list-unavailable"
-      ? "'openshell sandbox list' failed, so NemoClaw could not confirm that no sandbox remains"
-      : `OpenShell still reports ${verdict.sandboxNames.length === 1 ? "sandbox" : "sandboxes"} ${verdict.sandboxNames
-          .map((name) => `'${name}'`)
-          .join(", ")}`;
+    verdict.status === "not-final"
+      ? "the local sandbox registry no longer confirms this was the last sandbox"
+      : verdict.status === "live-list-unavailable"
+        ? "'openshell sandbox list' failed, so NemoClaw could not confirm that no sandbox remains"
+        : `OpenShell still reports ${verdict.sandboxNames.length === 1 ? "sandbox" : "sandboxes"} ${verdict.sandboxNames
+            .map((name) => `'${name}'`)
+            .join(", ")}`;
   console.warn(
     `  ${YW}⚠${R} Shared NemoClaw gateway left running${cleanupRequested ? "; --cleanup-gateway was not applied" : ""}: ${cause}.`,
   );
@@ -1274,7 +1276,7 @@ async function destroySandboxUnlocked(
       }
     } else if (finalGatewayCleanup.status === "cleanup") {
       reportGatewayPreserved(cleanupGatewayName);
-    } else if (finalGatewayCleanup.status !== "not-final") {
+    } else {
       reportFinalGatewayLeftRunning(
         cleanupGatewayName,
         finalGatewayCleanup,

@@ -102,6 +102,7 @@ type DestroyHarnessOptions = {
   detachedProviders?: string[];
   endpointUrl?: string;
   executeSandboxDestroyResult?: SandboxDestroyExecutionResult;
+  finalGatewayRegisteredSandboxCount?: number;
   finalizeMcpBridgeError?: string;
   finalizeMcpError?: string;
   imageTag?: string | null;
@@ -703,7 +704,19 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     dockerRunSpy,
     destroySandbox: (sandboxName, destroyOptions) =>
       requireSource(destroyModulePath).destroySandbox(sandboxName, destroyOptions, {
-        finalGatewayCleanup: { sleep: finalGatewaySleepSpy },
+        finalGatewayCleanup: {
+          sleep: finalGatewaySleepSpy,
+          ...(options.finalGatewayRegisteredSandboxCount === undefined
+            ? {}
+            : {
+                listSandboxes: () => ({
+                  sandboxes: Array.from(
+                    { length: options.finalGatewayRegisteredSandboxCount ?? 0 },
+                    (_, index) => ({ name: `late-sb-${index}` }),
+                  ),
+                }),
+              }),
+        },
       }),
     prepareSandboxDestroy: requireSource("./destroy-preflight.js").prepareSandboxDestroy,
     errorSpy,
