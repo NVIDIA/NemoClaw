@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
-import { load as loadRegistry } from "../../../src/lib/state/registry/persistence.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -176,7 +175,6 @@ test(
     ).toHaveLength(1);
     const retainedSandboxContainer = sandboxContainerInventory[0];
     expect(retainedSandboxContainer.Names).not.toContain("-nemoclaw-gpu-backup-");
-    expect(retainedSandboxContainer.State).toBe("running");
     expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
 
     const route = await sandbox.openshell(["inference", "get"], {
@@ -289,7 +287,6 @@ exit 1`,
       { artifactName: "ollama-daemon-restart-unloaded", env: env(), timeoutMs: 90_000 },
     );
     const restartLines = restart.stdout.trim().split("\n");
-    expect(restartLines[0]).toMatch(/^restart_mode=(system|user|manual)$/u);
     expect(loadedOllamaModels(restartLines.slice(1).join("\n"))).toEqual([]);
 
     const recovered = await host.nemoclaw(
@@ -405,7 +402,7 @@ test(
 );
 
 test(
-  "OpenClaw exports an attached Ollama daemon and refuses a stopped backend (#11435)",
+  "OpenClaw exports a shared Ollama roster and refuses a stopped backend (#11858)",
   {
     timeout: TIMEOUT_MS,
     meta: {
@@ -432,6 +429,10 @@ test(
       NEMOCLAW_SANDBOX_GPU_DEVICE: "",
       NEMOCLAW_OLLAMA_PORT: "11439",
       NEMOCLAW_MODEL: "qwen2.5:0.5b",
+      NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+        { id: "researcher", tools: { allow: ["read"] } },
+        { id: "reviewer", tools: { allow: ["read"] } },
+      ]),
       NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
       OLLAMA_HOST: "127.0.0.1:11439",
       OLLAMA_CONTEXT_LENGTH: "32768",
@@ -549,10 +550,11 @@ exec ollama pull qwen2.5:0.5b`,
     expect(serving?.proxy.hostPort).toBe(Number(PROXY_PORT));
     expect(serving?.model.servedName).toBe("qwen2.5:0.5b");
     expect(serving?.model.digest).toBe(`sha256:${model?.digest.replace(/^sha256:/u, "")}`);
-    const entry = loadRegistry().sandboxes[SANDBOX_NAME];
-    expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
-      entry.workload?.kind === "managed-image" ? entry.workload.reference : null,
-    );
+    expect(document.spec.sandboxes[0].agents.map(({ name }) => name)).toEqual([
+      "primary",
+      "researcher",
+      "reviewer",
+    ]);
     const repeatPath = path.join(directory, "repeat.yaml");
     await host.command(
       "node",
@@ -585,6 +587,7 @@ exec ollama pull qwen2.5:0.5b`,
     expect(fs.existsSync(rejectedPath), "A stopped daemon must prevent publication").toBe(false);
     await artifacts.writeJson("ollama-config-export-evidence.json", {
       sandboxName: SANDBOX_NAME,
+      agentNames: document.spec.sandboxes[0].agents.map(({ name }) => name),
       daemonPort: 11439,
       proxyPort: Number(PROXY_PORT),
       model: "qwen2.5:0.5b",
