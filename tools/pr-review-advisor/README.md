@@ -43,7 +43,11 @@ primitives and exposes only sandbox runtime initialization as a CLI command. Bot
 lifecycle and credential-boundary helpers in `tools/openshell-agent/runtime.mts`, which are also
 used by the merge-conflict fixer.
 
-Provider failures, timeouts, missing specialist artifacts, blocker findings, unresolved E2E recommendations, and malformed evidence fail closed. GitHub context collection has one 120-second deadline across all required API reads. A timeout or partial result prevents context artifact publication. Workflow logs retain orchestration diagnostics.
+Provider failures, timeouts, missing specialist artifacts, blocker findings, unresolved E2E recommendations, and malformed evidence fail closed. GitHub context collection has one 120-second deadline across all required API reads. A timeout or partial result prevents context artifact publication. Workflow logs retain orchestration diagnostics. Hosted failed specialist execution attempts to recover artifacts before sandbox cleanup. When the model session returns an invalid result, its artifact retains `failure.json`, `failed-analysis.txt`, and the native session when available. These files are diagnostic evidence, not completed review receipts. Recovery failure does not suppress the original error or skip cleanup.
+
+Hosted specialist failures also retain `job-failure.json` with step outcomes and run identity. A PR revision that changes before checkout is classified as `superseded`; the SHA check still rejects that revision. Setup failures may have only this host receipt. No automatic infrastructure retry is added.
+
+Findings submission requires a recorded E2E recommendation result. The bounded terminal repair can record missing E2E recommendations before submitting findings. A repair that still omits required evidence fails closed.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its comment
 links to the specialist reviews and does not dispatch or report pass/fail for E2E jobs.

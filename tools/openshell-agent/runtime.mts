@@ -464,11 +464,12 @@ export function execOpenShellSandboxAsync(
 
 export function downloadOpenShellPath(
   env: NodeJS.ProcessEnv,
-  input: { destination: string; name: string; source: string },
+  input: { destination: string; name: string; source: string; timeoutMs?: number },
   tools: OpenShellTools = defaultOpenShellTools,
 ): void {
   tools.run("openshell", ["sandbox", "download", input.name, input.source, input.destination], {
     env: credentialFreeEnvironment(env),
+    timeout: input.timeoutMs,
   });
 }
 

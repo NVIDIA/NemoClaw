@@ -332,6 +332,7 @@ jobs:
       # fetch/validation logic lives in the trusted, unit-tested helper and is
       # executed only from $ADVISOR_DIR (github.workflow_sha checkout).
       - name: Prepare isolated analysis workspace
+        id: prepare-analysis
         if: ${{ github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '')) }}
         env:
           TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}
@@ -355,6 +356,7 @@ jobs:
           done < <(find "$ADVISOR_WORKDIR" -type l -print0)
 
       - name: Download trusted advisor runtime
+        id: download-runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pr-review-advisor-runtime-${{ github.run_id }}
@@ -392,6 +394,16 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
+
+      - name: Preserve specialist failure status
+        if: ${{ failure() }}
+        env:
+          ADVISOR_PREPARATION_CLASSIFICATION: ${{ steps.prepare-analysis.outputs.classification }}
+          ADVISOR_PREPARATION_OUTCOME: ${{ steps.prepare-analysis.outcome }}
+          ADVISOR_RUNTIME_OUTCOME: ${{ steps.download-runtime.outcome }}
+          ADVISOR_ANALYSIS_OUTCOME: ${{ steps.specialist-analysis.outcome }}
+          EXPECTED_HEAD_SHA: ${{ needs.require-green-checks.outputs.head_sha }}
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/failure-artifacts.mts"
 
       - name: Upload specialist review
         id: upload-specialist-session

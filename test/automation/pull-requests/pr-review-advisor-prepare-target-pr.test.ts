@@ -163,7 +163,7 @@ describe("prepareTargetPr", () => {
         },
         options,
       ),
-    ).toThrow(/Fetched pull ref does not match/u);
+    ).toThrow(/Review superseded: fetched pull ref .* does not match the triggering PR head SHA/u);
   });
 
   it("validates before touching git", () => {
