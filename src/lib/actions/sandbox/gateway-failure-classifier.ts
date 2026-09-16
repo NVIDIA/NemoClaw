@@ -70,7 +70,17 @@ function defaultDockerInfo(): boolean {
     timeout: DOCKER_TIMEOUT_MS,
   });
   const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout.toString("utf8");
-  return result.status === 0 && parseDockerDaemonObservation(stdout).reachable;
+  if (result.status !== 0) {
+    return false;
+  }
+
+  try {
+    JSON.parse(stdout);
+  } catch {
+    return false;
+  }
+
+  return parseDockerDaemonObservation(stdout).reachable;
 }
 
 export function isDockerDaemonReachable(): boolean {
