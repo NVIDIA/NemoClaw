@@ -83,6 +83,10 @@ Record every additional E2E recommendation, including optional coverage, with pr
 
 This is an investigation-only specialist turn. Do not invent a finding ID, merge recommendation, or GitHub comment. After writing the human-readable analysis, call \`${RECORD_ADVISOR_FINDINGS_TOOL}\` exactly once as the terminal action. Record only P0/P1 issues that require a repository change; the trusted host derives exact-head IDs. For each blocker, name one exact repository path and disclose every applicable exclusion. Use an empty finding list with a concrete reason when no blocker remains. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
 
+const FOLLOW_UP_PROMPT = `This is a bounded follow-up review. Treat the trusted human review as the frozen review contract. Read the exact follow-up delta first, recheck every contract item against the current files, and inspect only that delta plus the caller, callee, recovery, security, and test seams it materially changes. Do not restart the original full review.
+
+A new blocker is eligible only when the follow-up delta introduces it or new repository evidence proves a concrete material failure that could not reasonably have been established in the frozen review. Never turn optional hardening, cleanup, wording, test-shape, or design preferences into a new blocker. Keep an unresolved contract item in the blocker ledger and omit resolved items. If every contract item is resolved and the delta introduces no material blocker, record a clear ledger so the separate maintainer workflow can proceed to readiness and approval.`;
+
 export function buildSpecialistInvestigateTurn(
   interest: AdvisorInterest,
   context: InvestigateTurnContext,
@@ -98,7 +102,7 @@ export function buildSpecialistInvestigateTurn(
       E2E_RECEIPT_TOOL,
     ],
     requiredToolNames: [...(fullTurn.requiredToolNames ?? []), E2E_RECEIPT_TOOL],
-    requiredReadOneOfPaths: [context.diffPath],
+    requiredReadOneOfPaths: [context.followUp?.diffPath ?? context.diffPath],
     terminalSubmitToolName: RECORD_ADVISOR_FINDINGS_TOOL,
     terminalSubmitRepairPrompt:
       `Commit the complete blocker ledger now by calling ${RECORD_ADVISOR_FINDINGS_TOOL}. ` +
@@ -106,6 +110,8 @@ export function buildSpecialistInvestigateTurn(
     prompt: `Review the ${specialist.label} area.
 
 ${COMMON_PROMPT}
+
+${context.followUp ? FOLLOW_UP_PROMPT : ""}
 
 Assignment:
 ${specialist.prompt}`,

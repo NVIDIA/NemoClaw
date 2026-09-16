@@ -10,7 +10,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEFAULT_ADVISOR_MODEL } from "../advisors/provider-constants.mts";
 import { ADVISOR_PI_IMAGE, LOCAL_OPENSHELL_GATEWAY_ENDPOINT } from "./runtime-constants.mts";
-import { prepareAdvisorSandboxInputs } from "./openshell.mts";
+import { collectGitHubReviewContext, serializePreparedGitHubContext } from "./github-context.mts";
+import { prepareAdvisorSandboxInputs, writeExclusive } from "./openshell.mts";
 import {
   defaultAdvisorSpecialistLifecycle,
   redactAdvisorDiagnostic,
@@ -80,7 +81,7 @@ function makeOwnedTemporaryDirectoriesWritable(root: string): void {
 
 export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   ...defaultAdvisorSpecialistLifecycle,
-  prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
+  prepare: (env) => prepareAdvisorSandboxInputs(env),
 };
 
 const gitEnvironment: NodeJS.ProcessEnv = {
@@ -328,6 +329,7 @@ function specialistEnvironment(
   snapshot: string,
   refs: { baseRef: string; headRef: string },
   specialist: AdvisorSpecialist,
+  github?: { contextPath: string; prNumber: number; repo: string; reviewerLogin: string },
 ): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -343,6 +345,14 @@ function specialistEnvironment(
     PR_REVIEW_ADVISOR_INTEREST: specialist.interest,
     PR_REVIEW_ADVISOR_MODEL: DEFAULT_ADVISOR_MODEL,
     RUNNER_TEMP: runnerTemp,
+    ...(github
+      ? {
+          PR_NUMBER: String(github.prNumber),
+          PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: github.contextPath,
+          PR_REVIEW_ADVISOR_REVIEWER_LOGIN: github.reviewerLogin,
+          TARGET_REPO: github.repo,
+        }
+      : {}),
   };
 }
 
@@ -355,12 +365,16 @@ export async function runLocalReview(input: {
   advisorDirectory?: string;
   publication?: LocalReviewPublication;
   removeTemporaryRoot?: typeof fs.rmSync;
+  baseRef?: string;
+  publicationRoot?: string;
+  github?: { contextPath: string; prNumber: number; repo: string; reviewerLogin: string };
   signals?: {
     listen: (handler: (signal: NodeJS.Signals) => void) => () => void;
     restore: (signal: NodeJS.Signals) => void;
   };
 }): Promise<string> {
   const source = fs.realpathSync(input.source);
+  const publicationRoot = fs.realpathSync(input.publicationRoot ?? source);
   if (!input.lifecycle && !process.env.PR_REVIEW_ADVISOR_API_KEY)
     throw new Error("PR_REVIEW_ADVISOR_API_KEY is required for local review");
   const root =
@@ -370,7 +384,7 @@ export async function runLocalReview(input: {
   const output = path.join(root, "output");
   const runnerTemp = path.join(root, "runner");
   const lifecycle = input.lifecycle ?? defaultLocalReviewLifecycle;
-  const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
+  const destination = path.join(publicationRoot, LOCAL_OUTPUT_DIRECTORY);
   let activeCleanup: (() => Promise<void>) | undefined;
   let staged: StagedPublication | undefined;
   let receivedSignal: NodeJS.Signals | undefined;
@@ -396,7 +410,9 @@ export async function runLocalReview(input: {
   try {
     fs.mkdirSync(output, { recursive: true });
     fs.mkdirSync(runnerTemp, { recursive: true });
-    const base = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
+    const base = input.baseRef
+      ? gitValue(source, ["rev-parse", "--verify", input.baseRef + "^{commit}"])
+      : gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
     const refs = (input.prepareSnapshot ?? createLocalReviewSnapshot)(source, snapshot, base);
     const specialists = input.specialists ?? ADVISOR_SPECIALISTS;
     if (specialists.length > 0) {
@@ -409,6 +425,7 @@ export async function runLocalReview(input: {
           snapshot,
           refs,
           specialists[0]!,
+          input.github,
         ),
       );
     }
@@ -422,6 +439,7 @@ export async function runLocalReview(input: {
           snapshot,
           refs,
           specialist,
+          input.github,
         ),
         lifecycle,
         prepare: false,
@@ -434,7 +452,7 @@ export async function runLocalReview(input: {
       if (receivedSignal) break;
     }
     staged = stageArtifacts(
-      source,
+      publicationRoot,
       path.join(output, "artifacts"),
       destination,
       input.publication ?? defaultLocalReviewPublication,
@@ -478,10 +496,140 @@ export async function runLocalReview(input: {
   return destination;
 }
 
+type PullRequestTarget = {
+  baseSha: string;
+  headSha: string;
+  number: number;
+  repo: string;
+};
+
+function gh(args: readonly string[], cwd?: string): string {
+  return execFileSync("gh", [...args], {
+    cwd,
+    encoding: "utf8",
+    env: process.env,
+    maxBuffer: Number.POSITIVE_INFINITY,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function pullRequestTarget(repo: string, number: number): PullRequestTarget {
+  const value = JSON.parse(gh(["api", `repos/${repo}/pulls/${number}`])) as {
+    base?: { sha?: unknown };
+    draft?: unknown;
+    head?: { sha?: unknown };
+    number?: unknown;
+    state?: unknown;
+  };
+  if (value.state !== "open") throw new Error(`Pull request ${repo}#${number} is not open`);
+  if (value.draft === true) throw new Error(`Pull request ${repo}#${number} is a draft`);
+  const baseSha = value.base?.sha;
+  const headSha = value.head?.sha;
+  if (
+    value.number !== number ||
+    typeof baseSha !== "string" ||
+    typeof headSha !== "string" ||
+    !/^[0-9a-f]{40}$/u.test(baseSha) ||
+    !/^[0-9a-f]{40}$/u.test(headSha)
+  )
+    throw new Error(`Pull request ${repo}#${number} has an invalid GitHub boundary`);
+  return { baseSha, headSha, number, repo };
+}
+
+function parseRequestedReviewArguments(
+  args: readonly string[],
+): { number: number; repo: string } | null {
+  if (args.length === 0) return null;
+  if (
+    (args.length !== 2 && args.length !== 4) ||
+    args[0] !== "--pr" ||
+    !/^\d+$/u.test(args[1] ?? "") ||
+    (args.length === 4 && (args[2] !== "--repo" || !/^[^/\s]+\/[^/\s]+$/u.test(args[3] ?? "")))
+  )
+    throw new Error("Usage: npm run review:local [-- --pr <number> [--repo OWNER/REPO]]");
+  const number = Number(args[1]);
+  if (!Number.isSafeInteger(number) || number <= 0) throw new Error("PR number must be positive");
+  return { number, repo: args[3] ?? "NVIDIA/NemoClaw" };
+}
+
+async function runRequestedPullRequestReview(
+  publicationRoot: string,
+  request: { number: number; repo: string },
+): Promise<string> {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), `nemoclaw-requested-review-${request.number}-`),
+  );
+  const targetDirectory = path.join(root, "target");
+  const contextPath = path.join(root, "github-context.json");
+  try {
+    const before = pullRequestTarget(request.repo, request.number);
+    const token = gh(["auth", "token"]);
+    if (!token) throw new Error("GitHub CLI did not return an authentication token");
+    const reviewerLogin = gh(["api", "user", "--jq", ".login"]);
+    if (!reviewerLogin) throw new Error("GitHub CLI did not return the authenticated login");
+    const context = await collectGitHubReviewContext({
+      ...process.env,
+      GH_TOKEN: token,
+      PR_NUMBER: String(request.number),
+      TARGET_REPO: request.repo,
+      PR_REVIEW_ADVISOR_REVIEWER_LOGIN: reviewerLogin,
+    });
+    if (!context || context.fetchError)
+      throw new Error(
+        `Could not collect complete GitHub review context${context?.fetchError ? `: ${context.fetchError}` : ""}`,
+      );
+    const serializedContext = serializePreparedGitHubContext(context);
+    writeExclusive(contextPath, serializedContext);
+    const contextHead = (context.pullRequest as { head?: { sha?: unknown } } | undefined)?.head
+      ?.sha;
+    const contextBase = (context.pullRequest as { base?: { sha?: unknown } } | undefined)?.base
+      ?.sha;
+    if (contextHead !== before.headSha || contextBase !== before.baseSha)
+      throw new Error("Pull request changed while collecting local review context; run it again");
+    git(path.dirname(targetDirectory), [
+      "clone",
+      "--no-hardlinks",
+      "--no-checkout",
+      `https://github.com/${request.repo}.git`,
+      targetDirectory,
+    ]);
+    git(targetDirectory, ["fetch", "origin", `refs/pull/${request.number}/head`]);
+    git(targetDirectory, ["checkout", "--detach", "--force", before.headSha]);
+    const checkedOutHead = gitValue(targetDirectory, ["rev-parse", "HEAD"]);
+    const after = pullRequestTarget(request.repo, request.number);
+    if (
+      checkedOutHead !== before.headSha ||
+      after.headSha !== before.headSha ||
+      after.baseSha !== before.baseSha
+    )
+      throw new Error("Pull request changed while preparing the local review; run it again");
+    git(targetDirectory, ["cat-file", "-e", before.baseSha + "^{commit}"]);
+    return await runLocalReview({
+      source: targetDirectory,
+      publicationRoot,
+      baseRef: before.baseSha,
+      github: {
+        contextPath,
+        prNumber: request.number,
+        repo: request.repo,
+        reviewerLogin,
+      },
+    });
+  } finally {
+    makeOwnedTemporaryDirectoriesWritable(root);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
-  if (process.argv.length !== 3)
+  if (process.argv.length < 3)
     throw new Error("Trusted local review implementation requires one contributor checkout path");
-  console.log("Local specialist reviews: " + (await runLocalReview({ source: process.argv[2]! })));
+  const source = process.argv[2]!;
+  const requestedReview = parseRequestedReviewArguments(process.argv.slice(3));
+  const output = requestedReview
+    ? await runRequestedPullRequestReview(source, requestedReview)
+    : await runLocalReview({ source });
+  console.log("Local specialist reviews: " + output);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

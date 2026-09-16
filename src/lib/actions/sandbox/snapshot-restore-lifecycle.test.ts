@@ -684,10 +684,6 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       sawProgress: true,
       forcedReady: true,
     });
-    f.waitForRestoredSandboxGatewaySupervisorMock.mockImplementation(() => {
-      events.push("supervisor-ready");
-      return true;
-    });
     f.restoreSandboxStateMock.mockImplementation(() => {
       events.push("snapshot-restored");
       return {
@@ -702,11 +698,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
-    expect(f.waitForRestoredSandboxGatewaySupervisorMock).toHaveBeenCalledWith("beta");
-    expect(events).toEqual(["supervisor-ready", "snapshot-restored"]);
+    expect(f.waitForRestoredSandboxGatewaySupervisorMock).not.toHaveBeenCalled();
+    expect(events).toEqual(["snapshot-restored"]);
   });
 
-  it("leaves snapshot state untouched when the clone supervisor never becomes ready (#7818)", async () => {
+  it("restores snapshot state without a NemoClaw supervisor gate", async () => {
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -731,10 +727,10 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await expect(
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    ).resolves.toBeUndefined();
 
-    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
-    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
+    expect(f.waitForRestoredSandboxGatewaySupervisorMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).toHaveBeenCalled();
   });
 
   it("removes a pending clone registration when finalization fails before snapshot restore", async () => {
