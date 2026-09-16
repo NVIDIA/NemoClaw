@@ -84,6 +84,14 @@ describe("sandbox BuildKit prebuild", () => {
     },
   );
 
+  it("lets an explicit context override DOCKER_HOST", () => {
+    const env = { DOCKER_HOST: "unix:///alternate.sock", DOCKER_CONTEXT: "default" };
+
+    expect(dockerContextIsDefaultFromBuild(env)).toBe(true);
+    expect(dockerBuildSubprocessEnv(env)).toMatchObject({ DOCKER_CONTEXT: "default" });
+    expect(dockerBuildSubprocessEnv(env)).not.toHaveProperty("DOCKER_HOST");
+  });
+
   afterEach(() => {
     mocks.dockerSpawn.mockReset();
     vi.unstubAllEnvs();
@@ -133,17 +141,17 @@ describe("sandbox BuildKit prebuild", () => {
     expect(env).not.toHaveProperty("BUILDX_BUILDER");
   });
 
-  it("keeps Docker host precedence over an ambient Docker context", () => {
+  it("keeps Docker context precedence over an ambient Docker host", () => {
     vi.stubEnv("DOCKER_HOST", "unix:///selected-docker.sock");
     vi.stubEnv("DOCKER_CONTEXT", "ambient-remote");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ambient");
 
     const env = dockerBuildSubprocessEnv();
     expect(env).toMatchObject({
-      DOCKER_HOST: "unix:///selected-docker.sock",
+      DOCKER_CONTEXT: "ambient-remote",
       DOCKER_CONFIG: "/home/user/.docker-ambient",
     });
-    expect(env).not.toHaveProperty("DOCKER_CONTEXT");
+    expect(env).not.toHaveProperty("DOCKER_HOST");
   });
 
   it("never enables a local-image handoff for a remote gateway", () => {
