@@ -308,6 +308,27 @@ describe("explicit MCP migration", () => {
     expect(mocks.register).not.toHaveBeenCalled();
   });
 
+  it("rejects ambiguous credential targets before native registration or legacy cleanup", async () => {
+    const secondEntry = {
+      ...entry,
+      server: "gitlab",
+      env: ["GITLAB_TOKEN"],
+      providerName: "alpha-mcp-gitlab",
+      providerId: "gitlab-provider-id",
+      policyName: "mcp-bridge-gitlab",
+    };
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: { github: entry, gitlab: secondEntry },
+      sources: { native: {}, legacy: { github: entry, gitlab: secondEntry } },
+    });
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      /cannot safely choose between credentials for an indistinguishable endpoint/,
+    );
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+  });
+
   it("previews a valid committed registry-only row for explicit migration", async () => {
     mocks.inspectLegacy.mockReturnValue({
       bridges: {},

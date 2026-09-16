@@ -8,6 +8,7 @@ import {
   replaceOpenShellRuntimeSelectionEnv,
 } from "../../gateway-runtime-action";
 import type { SandboxEntry } from "../../state/registry";
+import { findAmbiguousMcpCredentialTarget } from "../../domain/mcp-credential-target";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
@@ -101,16 +102,13 @@ export function assertNoAmbiguousMcpCredentialTarget(
   url: string,
   providerName: string | undefined,
 ): void {
-  const conflict = Object.values(bridges).find(
-    (entry) =>
-      entry.server !== server &&
-      entry.url === url &&
-      entry.providerName !== providerName &&
-      (entry.providerName !== undefined || providerName !== undefined),
-  );
-  if (!conflict) return;
+  const ambiguous = findAmbiguousMcpCredentialTarget([
+    ...Object.values(bridges),
+    { server, url, providerName },
+  ]);
+  if (!ambiguous) return;
   throw new McpBridgeError(
-    `MCP server '${server}' targets the same URL as credential-bound server '${conflict.server}'. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. Use one managed server definition for this URL or a distinct endpoint.`,
+    `MCP server '${ambiguous.entry.server}' targets the same URL as credential-bound server '${ambiguous.conflict.server}'. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. Use one managed server definition for this URL or a distinct endpoint.`,
     2,
   );
 }

@@ -3,6 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 
+import { findAmbiguousMcpCredentialTarget } from "../../domain/mcp-credential-target";
 import { readConfigFile } from "../../state/config-io";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as registry from "../../state/registry";
@@ -274,6 +275,13 @@ export async function migrateMcpBridges(
     const entries = Object.values(legacyEntries).sort((left, right) =>
       left.server.localeCompare(right.server),
     );
+    const ambiguousTarget = findAmbiguousMcpCredentialTarget(entries);
+    if (ambiguousTarget) {
+      throw new McpBridgeError(
+        `Legacy MCP server '${ambiguousTarget.entry.server}' targets the same URL as credential-bound server '${ambiguousTarget.conflict.server}'. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. No source was changed.`,
+        2,
+      );
+    }
     const conflicts = entries.filter((entry) => {
       const native = observed.sources.native[entry.server];
       return native && !sameRegistration(native, entry);
