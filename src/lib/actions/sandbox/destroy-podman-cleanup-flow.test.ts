@@ -113,7 +113,7 @@ it("uses selected Podman authority when failed onboarding has no registry row or
       ok: true,
       alreadyGone: false,
       deleteOutput: "",
-      deleteResult: { status: 0, stdout: "", stderr: "" },
+      deleteResult: { kind: "accepted", diagnostic: "", exitCode: 0 },
       detachOutcome: { detached: [], failures: [] },
       forcedLocalCleanup: false,
     },
