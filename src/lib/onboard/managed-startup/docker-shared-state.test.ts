@@ -33,6 +33,7 @@ function result(): DockerGpuPatchResult {
 function transaction(): DockerManagedStartupTransaction {
   return {
     agent: "openclaw",
+    bootstrapIdentity: "b".repeat(64),
     containerId: "new",
     image: IMMUTABLE_IMAGE,
   };
@@ -84,6 +85,8 @@ describe("Docker managed-startup shared-state finalization", () => {
           "--commit-shared-state-transaction",
           "--agent",
           "openclaw",
+          "--bootstrap-identity",
+          "b".repeat(64),
         ]);
         return { status: 0 };
       });
@@ -157,6 +160,8 @@ describe("Docker managed-startup shared-state finalization", () => {
           "--rollback-shared-state-transaction",
           "--agent",
           "openclaw",
+          "--bootstrap-identity",
+          "b".repeat(64),
           "--read-only-receipt",
         ]);
         return { status: 0 };

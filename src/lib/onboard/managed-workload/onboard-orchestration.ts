@@ -29,6 +29,12 @@ import {
   buildManagedStartupOnboardProfile,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
+export {
+  applyDockerManagedStartupRootRequest,
+  resolveDockerManagedStartupContainer,
+  type DockerManagedStartupTransaction,
+  finalizeDockerManagedStartupSharedState,
+} from "../runtime-provider/access";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
   managedStartupStateRoots,

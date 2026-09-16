@@ -2515,6 +2515,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       launch: {
         createArgv: materializedCreateArgv,
         intendedSandboxStartupCommand,
+        managedBootstrapIdentity,
+        managedStartupRootApplyRequest,
         prebuild,
         sandboxEnv,
         sandboxStartupCommand,
@@ -2579,7 +2581,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     runForNewSandboxCreate(agentCreateInput.hermesPortableLifecycle || resumingVerifiedCreate, () =>
       recreateRuntime.advance("creating"),
     );
-    const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch();
     const recoveredHermesLifecycleGeneration = readHermesPortableLifecycleGeneration({
       enabled: agentCreateInput.hermesPortableLifecycle,
       sandboxName,
@@ -2618,6 +2619,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
     let managedBootstrapCreateRoute: PendingSandboxCreateIdentity["route"] | null = null;
+    let managedStartupTransaction: ReturnType<
+      typeof managedWorkloadOnboard.applyDockerManagedStartupRootRequest
+    > = null;
     const allowNotReadyAfterFinalHandoff = (): boolean =>
       allowsNotReadyCreatedSandboxRevalidation({
         managedBootstrapCreateFinished,
@@ -2929,16 +2933,39 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           ),
         retainedSandboxRecoveryRetryOwner: postCreateRecoveryRetryOwner,
         cleanupTemporarySources: cleanupSandboxCreateSources,
-        runVerifiedCreateEffects: runDeferredProviderEffects
-          ? async (_identity, _exactIdentity, boundary) => {
-              const context: VerifiedSandboxCreateEffectsContext = {
-                ...boundary,
-                revalidateSandboxIdentity: (operation) =>
-                  revalidateVerifiedCreateIdentity(boundary, operation),
-              };
-              await runDeferredProviderEffects(context);
-            }
-          : undefined,
+        runVerifiedCreateEffects:
+          managedStartupRootApplyRequest || runDeferredProviderEffects
+            ? async (identity, _exactIdentity, boundary) => {
+                const context: VerifiedSandboxCreateEffectsContext = {
+                  ...boundary,
+                  revalidateSandboxIdentity: (operation) =>
+                    revalidateVerifiedCreateIdentity(boundary, operation),
+                };
+                if (managedStartupRootApplyRequest) {
+                  context.revalidateSandboxIdentity(
+                    `applying managed startup profile for sandbox '${sandboxName}'`,
+                  );
+                  if (!managedBootstrapIdentity) {
+                    throw new Error("Managed startup launch has no exact bootstrap identity.");
+                  }
+                  const containerId = managedWorkloadOnboard.resolveDockerManagedStartupContainer({
+                    sandboxName,
+                    sandboxId: identity.sandboxId,
+                  });
+                  managedStartupTransaction =
+                    managedWorkloadOnboard.applyDockerManagedStartupRootRequest({
+                      bootstrapIdentity: managedBootstrapIdentity,
+                      containerId,
+                      request: managedStartupRootApplyRequest,
+                    });
+                  managedBootstrapCreateFinished = true;
+                  context.revalidateSandboxIdentity(
+                    `confirming managed startup profile for sandbox '${sandboxName}'`,
+                  );
+                }
+                if (runDeferredProviderEffects) await runDeferredProviderEffects(context);
+              }
+            : undefined,
         create: async (verifyCreatedSandbox) => {
           const created = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
@@ -3002,6 +3029,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
+          if (managedStartupTransaction) {
+            const sharedState = managedWorkloadOnboard.finalizeDockerManagedStartupSharedState({
+              transaction: managedStartupTransaction,
+              supervisorReady: true,
+            });
+            if (!sharedState.supervisorReady || sharedState.failure) {
+              throw sharedState.failure ?? new Error("Managed startup shared-state commit failed.");
+            }
+            managedStartupTransaction = null;
+          }
           persistFinalHandoffAcknowledgement(created.runtimePatch);
           return created;
         },
@@ -3110,7 +3147,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         allowManagedBootstrapNotReady: () =>
           allowsManagedBootstrapNotReady(
-            managedBootstrap !== null,
+            managedStartupRootApplyRequest !== null,
             requireVerifiedCreateBoundary().route,
             pendingCreateIdentity,
           ),
@@ -3166,7 +3203,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
       }
-      if (managedBootstrap || !["none", "native-only"].includes(gpuRoutePlan)) {
+      if (managedStartupRootApplyRequest || !["none", "native-only"].includes(gpuRoutePlan)) {
         throw new Error(
           "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
         );

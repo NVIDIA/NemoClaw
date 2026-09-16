@@ -1691,13 +1691,15 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     internalWriteHermesCompatHash();
     return;
   }
-  if (argv.length === 3 && argv[0] === "--apply-root-stdin") {
-    const expectedAgent = exactAgent(readCliAgent(argv, 3));
+  if ((argv.length === 3 || argv.length === 5) && argv[0] === "--apply-root-stdin") {
+    const expectedAgent = exactAgent(readCliAgent(argv, argv.length));
     const request = parseManagedStartupRootApplyRequest(readBoundedRootApplyStdin());
     if (request.agent !== expectedAgent) {
       fail(`root application request targets ${request.agent}, expected ${expectedAgent}`);
     }
-    const result = await applyManagedStartupRootRequest(request);
+    const result = await applyManagedStartupRootRequest(request, process.env, {
+      bootstrapIdentity: argv.length === 5 ? readCliBootstrapIdentity(argv) : null,
+    });
     console.log(
       result.transactionPending
         ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}; transaction pending`

@@ -285,6 +285,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-startup-hold.sh"),
+    path.join(stagedScriptsDir, "managed-startup-hold.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-config-guard.py"),
     path.join(stagedScriptsDir, "openclaw-config-guard.py"),
   );

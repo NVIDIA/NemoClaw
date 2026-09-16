@@ -13,7 +13,6 @@ import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
-import { MANAGED_STARTUP_PROFILE_ENV } from "./managed-startup/transport";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   buildSandboxRuntimeEnvArgs,
@@ -283,7 +282,7 @@ describe("prepareSandboxCreateLaunch", () => {
   });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
-    "launches %s directly with its bounded startup profile",
+    "holds %s until its exact bounded startup profile is applied",
     (agentName) => {
       const request = createManagedStartupRootApplyRequest({
         agent: agentName,
@@ -310,9 +309,19 @@ describe("prepareSandboxCreateLaunch", () => {
         ...result.envArgs,
         "/usr/local/bin/nemoclaw-start",
       ]);
-      expect(result.sandboxStartupCommand).toEqual(result.intendedSandboxStartupCommand);
-      expect(result.envArgs).toContain(`${MANAGED_STARTUP_PROFILE_ENV}=${request.encodedProfile}`);
-      expect(result.createArgv.join("\n")).not.toContain("nemoclaw-managed-startup-hold");
+      expect(result.sandboxStartupCommand).toEqual([
+        "env",
+        ...result.envArgs,
+        "/usr/local/bin/nemoclaw-managed-startup-hold",
+        "--agent",
+        agentName,
+        "--profile-fingerprint",
+        request.profileFingerprint,
+        "--bootstrap-identity",
+        expect.stringMatching(/^[a-f0-9]{64}$/u),
+        "--",
+      ]);
+      expect(result.envArgs.join("\n")).not.toContain(request.encodedProfile);
     },
   );
 

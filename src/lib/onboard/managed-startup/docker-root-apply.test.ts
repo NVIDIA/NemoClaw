@@ -7,6 +7,7 @@ import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-ma
 import {
   applyDockerManagedStartupRootRequest,
   getDockerManagedStartupFailureTransaction,
+  resolveDockerManagedStartupContainer,
 } from "./docker-root-apply";
 import { encodeManagedStartupProfile } from "./profile";
 import {
@@ -17,6 +18,7 @@ import { MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY } from "./shared-state-tra
 
 const CONTAINER_ID = "b".repeat(64);
 const IMAGE_ID = `sha256:${"c".repeat(64)}`;
+const BOOTSTRAP_IDENTITY = "d".repeat(64);
 
 function requestFor(agent: "openclaw" | "hermes" | "langchain-deepagents-code") {
   return createManagedStartupRootApplyRequest({
@@ -54,6 +56,62 @@ function successfulSpawnResult() {
 }
 
 describe("Docker managed-startup root applicator", () => {
+  it("binds root application to the exact OpenShell sandbox label identity", () => {
+    expect(
+      resolveDockerManagedStartupContainer(
+        { sandboxName: "alpha", sandboxId: "sandbox-uuid" },
+        {
+          inspect: vi.fn(() => ({
+            status: "observed" as const,
+            malformedRows: 0,
+            rows: [
+              {
+                id: CONTAINER_ID,
+                managedBy: "openshell",
+                workspace: "default",
+                sandboxId: "sandbox-uuid",
+              },
+            ],
+          })),
+        },
+      ),
+    ).toBe(CONTAINER_ID);
+  });
+
+  it.each([
+    { status: "probe-failed" as const, detail: "unavailable" },
+    { status: "observed" as const, malformedRows: 1, rows: [] },
+  ])("rejects an unavailable or malformed Docker identity observation", (observation) => {
+    expect(() =>
+      resolveDockerManagedStartupContainer(
+        { sandboxName: "alpha", sandboxId: "sandbox-uuid" },
+        { inspect: vi.fn(() => observation) },
+      ),
+    ).toThrow(/Could not inspect/u);
+  });
+
+  it("rejects extra or mismatched Docker identity rows", () => {
+    expect(() =>
+      resolveDockerManagedStartupContainer(
+        { sandboxName: "alpha", sandboxId: "sandbox-uuid" },
+        {
+          inspect: vi.fn(() => ({
+            status: "observed" as const,
+            malformedRows: 0,
+            rows: [
+              {
+                id: CONTAINER_ID,
+                managedBy: "openshell",
+                workspace: "default",
+                sandboxId: "different",
+              },
+            ],
+          })),
+        },
+      ),
+    ).toThrow(/did not select one exact/u);
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "pins exact container/image identity and uses fixed root stdin for %s",
     (agent) => {
@@ -63,10 +121,15 @@ describe("Docker managed-startup root applicator", () => {
 
       expect(
         applyDockerManagedStartupRootRequest(
-          { containerId: CONTAINER_ID, request },
+          { bootstrapIdentity: BOOTSTRAP_IDENTITY, containerId: CONTAINER_ID, request },
           { dockerCapture, dockerSpawnSync, environment: {} },
         ),
-      ).toEqual({ agent, containerId: CONTAINER_ID, image: IMAGE_ID });
+      ).toEqual({
+        agent,
+        bootstrapIdentity: BOOTSTRAP_IDENTITY,
+        containerId: CONTAINER_ID,
+        image: IMAGE_ID,
+      });
 
       expect(dockerCapture).toHaveBeenCalledWith(["inspect", "--type", "container", CONTAINER_ID], {
         ignoreError: false,
@@ -97,6 +160,8 @@ describe("Docker managed-startup root applicator", () => {
         "--apply-root-stdin",
         "--agent",
         agent,
+        "--bootstrap-identity",
+        BOOTSTRAP_IDENTITY,
       ]);
       expect(argv.join(" ")).not.toContain(request.encodedProfile);
       expect(parseManagedStartupRootApplyRequest(options.input)).toEqual(request);
@@ -127,7 +192,11 @@ describe("Docker managed-startup root applicator", () => {
     const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
 
     applyDockerManagedStartupRootRequest(
-      { containerId: CONTAINER_ID, request: requestFor("openclaw") },
+      {
+        bootstrapIdentity: BOOTSTRAP_IDENTITY,
+        containerId: CONTAINER_ID,
+        request: requestFor("openclaw"),
+      },
       {
         dockerCapture: vi.fn(() => stableInspect()),
         dockerSpawnSync,
@@ -153,7 +222,11 @@ describe("Docker managed-startup root applicator", () => {
     const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
 
     applyDockerManagedStartupRootRequest(
-      { containerId: CONTAINER_ID, request: requestFor("openclaw") },
+      {
+        bootstrapIdentity: BOOTSTRAP_IDENTITY,
+        containerId: CONTAINER_ID,
+        request: requestFor("openclaw"),
+      },
       {
         dockerCapture: vi.fn(() => stableInspect()),
         dockerSpawnSync,
@@ -178,7 +251,7 @@ describe("Docker managed-startup root applicator", () => {
       .mockReturnValueOnce(successfulSpawnResult());
 
     applyDockerManagedStartupRootRequest(
-      { containerId: CONTAINER_ID, request },
+      { bootstrapIdentity: BOOTSTRAP_IDENTITY, containerId: CONTAINER_ID, request },
       { dockerCapture: vi.fn(() => stableInspect()), dockerSpawnSync },
     );
 
@@ -195,7 +268,7 @@ describe("Docker managed-startup root applicator", () => {
 
     expect(
       applyDockerManagedStartupRootRequest(
-        { containerId: CONTAINER_ID, request },
+        { bootstrapIdentity: BOOTSTRAP_IDENTITY, containerId: CONTAINER_ID, request },
         { dockerCapture: vi.fn(() => stableInspect()), dockerSpawnSync },
       ),
     ).toBeNull();
@@ -216,7 +289,7 @@ describe("Docker managed-startup root applicator", () => {
     let failure: unknown;
     try {
       applyDockerManagedStartupRootRequest(
-        { containerId: CONTAINER_ID, request },
+        { bootstrapIdentity: BOOTSTRAP_IDENTITY, containerId: CONTAINER_ID, request },
         { dockerCapture: vi.fn(() => stableInspect()), dockerSpawnSync },
       );
     } catch (error) {
@@ -230,6 +303,7 @@ describe("Docker managed-startup root applicator", () => {
     );
     expect(getDockerManagedStartupFailureTransaction(failure)).toEqual({
       agent: "hermes",
+      bootstrapIdentity: BOOTSTRAP_IDENTITY,
       containerId: CONTAINER_ID,
       image: IMAGE_ID,
     });
@@ -246,7 +320,7 @@ describe("Docker managed-startup root applicator", () => {
     let failure: unknown;
     try {
       applyDockerManagedStartupRootRequest(
-        { containerId: CONTAINER_ID, request },
+        { bootstrapIdentity: BOOTSTRAP_IDENTITY, containerId: CONTAINER_ID, request },
         { dockerCapture: vi.fn(() => stableInspect()), dockerSpawnSync },
       );
     } catch (error) {
@@ -258,6 +332,7 @@ describe("Docker managed-startup root applicator", () => {
     );
     expect(getDockerManagedStartupFailureTransaction(failure)).toEqual({
       agent: "hermes",
+      bootstrapIdentity: BOOTSTRAP_IDENTITY,
       containerId: CONTAINER_ID,
       image: IMAGE_ID,
     });
@@ -296,7 +371,7 @@ describe("Docker managed-startup root applicator", () => {
 
     expect(() =>
       applyDockerManagedStartupRootRequest(
-        { containerId, request: requestFor("openclaw") },
+        { bootstrapIdentity: BOOTSTRAP_IDENTITY, containerId, request: requestFor("openclaw") },
         { dockerCapture: vi.fn(() => inspect), dockerSpawnSync },
       ),
     ).toThrow(error);

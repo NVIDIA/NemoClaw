@@ -127,8 +127,10 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
   );
   const corporateCa = Buffer.from(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM, "utf8").toString("base64");
   const finalCommand = [
-    "id -u > /tmp/nemoclaw-native-startup-uid",
-    "exec /usr/bin/tail -f /dev/null",
+    `/usr/local/bin/node /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs --agent ${input.agent}`,
+    ". /run/nemoclaw/managed-startup-runtime.env",
+    "unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64",
+    "exec /usr/local/bin/nemoclaw-start /bin/sh -c 'id -u > /tmp/nemoclaw-native-startup-uid; exec /usr/bin/tail -f /dev/null'",
   ].join("\n");
   let containerId = "";
   try {
@@ -142,14 +144,12 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "--user",
       "root",
       "--entrypoint",
-      "/usr/bin/env",
+      "/bin/bash",
       "--env",
       `${MANAGED_STARTUP_PROFILE_ENV}=${encodedProfile}`,
       "--env",
       `${MANAGED_STARTUP_CA_ENV}=${corporateCa}`,
       input.image,
-      "/usr/local/bin/nemoclaw-start",
-      "/bin/sh",
       "-c",
       finalCommand,
     ]).stdout.trim();

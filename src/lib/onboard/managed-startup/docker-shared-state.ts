@@ -66,12 +66,17 @@ function cleanupReceiptBestEffort(receiptPath: string): void {
   }
 }
 
-function transactionCommand(action: "commit" | "rollback", agent: string): string[] {
+function transactionCommand(
+  action: "commit" | "rollback",
+  transaction: DockerManagedStartupTransaction,
+): string[] {
   return [
     MANAGED_STARTUP_RUNTIME_EXECUTABLE,
     `--${action}-shared-state-transaction`,
     "--agent",
-    agent,
+    transaction.agent,
+    "--bootstrap-identity",
+    transaction.bootstrapIdentity,
   ];
 }
 
@@ -164,7 +169,7 @@ function rollbackManagedStartupSharedState(
         "--entrypoint",
         "/usr/local/bin/node",
         transaction.image,
-        ...transactionCommand("rollback", transaction.agent),
+        ...transactionCommand("rollback", transaction),
         "--read-only-receipt",
       ],
       DOCKER_MUTATION_OPTIONS,
@@ -246,7 +251,7 @@ export function finalizeDockerManagedStartupSharedState(
         "HOME=/root",
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "/usr/local/bin/node",
-        ...transactionCommand("commit", transaction.agent),
+        ...transactionCommand("commit", transaction),
       ],
       DOCKER_MUTATION_OPTIONS,
     );

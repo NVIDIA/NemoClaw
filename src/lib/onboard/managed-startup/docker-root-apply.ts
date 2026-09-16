@@ -3,7 +3,11 @@
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { dockerCapture } from "../../adapters/docker/run";
-import { isImmutableDockerImageId } from "../openshell-docker-sandbox-containers";
+import {
+  inspectDockerSandboxNameLabeledContainers,
+  isImmutableDockerImageId,
+  OPENSHELL_MANAGED_BY_VALUE,
+} from "../openshell-docker-sandbox-containers";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
   type ManagedStartupRootApplyRequest,
@@ -35,6 +39,7 @@ interface DockerManagedStartupInspect {
 
 export interface DockerManagedStartupTransaction {
   readonly agent: ManagedStartupRootApplyRequest["agent"];
+  readonly bootstrapIdentity: string;
   readonly containerId: string;
   readonly image: string;
 }
@@ -43,6 +48,35 @@ export interface DockerManagedStartupRootApplyDeps {
   readonly dockerCapture?: typeof dockerCapture;
   readonly dockerSpawnSync?: typeof dockerSpawnSync;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
+}
+
+/** Resolve the one Docker runtime owned by an exact OpenShell sandbox identity. */
+export function resolveDockerManagedStartupContainer(
+  input: {
+    readonly sandboxName: string;
+    readonly sandboxId: string;
+  },
+  deps: {
+    readonly inspect?: typeof inspectDockerSandboxNameLabeledContainers;
+  } = {},
+): string {
+  const observation = (deps.inspect ?? inspectDockerSandboxNameLabeledContainers)(
+    input.sandboxName,
+  );
+  if (observation.status !== "observed" || observation.malformedRows !== 0) {
+    throw new Error("Could not inspect one exact managed-startup Docker container.");
+  }
+  const matches = observation.rows.filter(
+    (row) =>
+      row.managedBy === OPENSHELL_MANAGED_BY_VALUE &&
+      row.workspace === "default" &&
+      row.sandboxId === input.sandboxId &&
+      FULL_CONTAINER_ID_RE.test(row.id),
+  );
+  if (matches.length !== 1 || observation.rows.length !== 1) {
+    throw new Error("OpenShell sandbox identity did not select one exact Docker container.");
+  }
+  return matches[0]!.id;
 }
 
 export function getDockerManagedStartupFailureTransaction(
@@ -112,6 +146,7 @@ function inspectExactContainer(
 
 export function applyDockerManagedStartupRootRequest(
   input: {
+    readonly bootstrapIdentity: string;
     readonly containerId: string;
     readonly request: ManagedStartupRootApplyRequest;
   },
@@ -119,9 +154,13 @@ export function applyDockerManagedStartupRootRequest(
 ): DockerManagedStartupTransaction | null {
   const capture = deps.dockerCapture ?? dockerCapture;
   const spawn = deps.dockerSpawnSync ?? dockerSpawnSync;
+  if (!/^[a-f0-9]{64}$/u.test(input.bootstrapIdentity)) {
+    throw new Error("Managed startup requires one exact bootstrap identity.");
+  }
   const pinned = inspectExactContainer(input.containerId, capture);
   const transaction = {
     agent: input.request.agent,
+    bootstrapIdentity: input.bootstrapIdentity,
     containerId: pinned.containerId,
     image: pinned.image,
   } satisfies DockerManagedStartupTransaction;
@@ -146,6 +185,8 @@ export function applyDockerManagedStartupRootRequest(
     "--apply-root-stdin",
     "--agent",
     input.request.agent,
+    "--bootstrap-identity",
+    input.bootstrapIdentity,
   ];
   const receiptProbeArgv = [
     "exec",

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
+
 import type { AgentDefinition } from "../agent/definition-types";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
@@ -8,9 +10,11 @@ import {
   type SandboxRuntimeEnvArgsInput,
 } from "./docker-startup-command-env";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
-import { MANAGED_STARTUP_EXECUTABLE } from "./managed-startup/hold";
+import {
+  MANAGED_STARTUP_EXECUTABLE,
+  MANAGED_STARTUP_HOLD_EXECUTABLE,
+} from "./managed-startup/hold";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
-import { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./managed-startup/transport";
 import {
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildInput,
@@ -53,6 +57,8 @@ export interface SandboxCreateLaunch {
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
   intendedSandboxStartupCommand: string[];
+  managedBootstrapIdentity: string | null;
+  managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
@@ -96,14 +102,6 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     allowHermesApiPortOverride: true,
     env,
   });
-  const managedStartup = input.managedStartupRootApplyRequest;
-  if (managedStartup) {
-    envArgs.push(`${MANAGED_STARTUP_PROFILE_ENV}=${managedStartup.encodedProfile}`);
-    if (managedStartup.corporateCaB64) {
-      envArgs.push(`${MANAGED_STARTUP_CA_ENV}=${managedStartup.corporateCaB64}`);
-    }
-  }
-
   const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
   // Remove host-infrastructure credentials that the generic allowlist
   // permits for host-side processes but that must not enter the sandbox.
@@ -118,7 +116,25 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
   const intendedSandboxStartupCommand = ["env", ...envArgs, MANAGED_STARTUP_EXECUTABLE];
-  const sandboxStartupCommand = intendedSandboxStartupCommand;
+  const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
+  const managedBootstrapIdentity = managedStartupRootApplyRequest
+    ? randomBytes(32).toString("hex")
+    : null;
+  const sandboxStartupCommand =
+    managedStartupRootApplyRequest && managedBootstrapIdentity
+      ? [
+          "env",
+          ...envArgs,
+          MANAGED_STARTUP_HOLD_EXECUTABLE,
+          "--agent",
+          managedStartupRootApplyRequest.agent,
+          "--profile-fingerprint",
+          managedStartupRootApplyRequest.profileFingerprint,
+          "--bootstrap-identity",
+          managedBootstrapIdentity,
+          "--",
+        ]
+      : intendedSandboxStartupCommand;
   const createArgs = [...input.createArgs];
   const openshellArgs = ["sandbox", "create", ...createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
@@ -138,6 +154,8 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     sandboxEnv,
     sandboxStartupCommand,
     intendedSandboxStartupCommand,
+    managedBootstrapIdentity,
+    managedStartupRootApplyRequest,
   };
 }
 
