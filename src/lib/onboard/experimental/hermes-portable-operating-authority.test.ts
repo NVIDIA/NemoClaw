@@ -189,7 +189,6 @@ describe("Hermes Portable schema-8 operation authority", () => {
       vi.stubEnv("XDG_CONFIG_HOME", path.join(root, ".config"));
       vi.stubEnv("XDG_RUNTIME_DIR", `/run/user/${String(uid())}`);
       vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
-      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE", "1");
       const env = kind === "process" ? process.env : { ...process.env };
       const captureSocket = vi
         .spyOn(podmanAdapter, "capturePodmanSocketAuthority")
@@ -245,7 +244,6 @@ describe("Hermes Portable schema-8 operation authority", () => {
     const env = {
       ...environment(),
       NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-      NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: "1",
     };
     vi.spyOn(podmanAdapter, "capturePodmanSocketAuthority").mockReturnValue(socket("99"));
     vi.spyOn(openshellAdapter, "captureHermesPortableOpenShellExecutableAuthority").mockReturnValue(

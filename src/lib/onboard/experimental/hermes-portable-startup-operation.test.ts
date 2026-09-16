@@ -72,7 +72,6 @@ describe("Portable startup evidence lifetime", () => {
 
   it.each([
     {},
-    { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
     {
       NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: "1",
     },
@@ -91,6 +90,44 @@ describe("Portable startup evidence lifetime", () => {
       { stateDir },
     );
   });
+
+  it("enables bounded reuse for the Portable profile by default (#11574)", async () => {
+    await withMcpLifecycleLock(
+      "alpha",
+      () =>
+        withHermesPortableStartupOperation(
+          "alpha",
+          stateDir,
+          () => {
+            expect(currentHermesPortableStartupOperation("alpha")).toBeDefined();
+          },
+          { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        ),
+      { stateDir },
+    );
+  });
+
+  it.each(["0", "invalid"])(
+    "keeps Portable reuse disabled for gate value %s (#11574)",
+    async (gate) => {
+      await withMcpLifecycleLock(
+        "alpha",
+        () =>
+          withHermesPortableStartupOperation(
+            "alpha",
+            stateDir,
+            () => {
+              expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+            },
+            {
+              NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+              NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: gate,
+            },
+          ),
+        { stateDir },
+      );
+    },
+  );
 
   it.each([60_000, -1, Number.NaN, Number.POSITIVE_INFINITY])(
     "permanently expires evidence at invalid or exhausted time %s (#11574)",

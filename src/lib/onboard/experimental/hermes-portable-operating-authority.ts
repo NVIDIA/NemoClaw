@@ -8,7 +8,10 @@ import {
   type HermesPortableStartupOperation,
 } from "./hermes-portable-startup-operation";
 
-export { currentHermesPortableStartupOperation } from "./hermes-portable-startup-operation";
+export {
+  currentHermesPortableStartupOperation,
+  hermesPortableStartupReuseGateEnabled,
+} from "./hermes-portable-startup-operation";
 
 import {
   assertHermesPortableOpenShellExecutableFileAuthority,

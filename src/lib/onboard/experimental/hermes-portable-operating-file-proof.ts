@@ -47,8 +47,9 @@ export function createHermesPortableOperatingFileProof(
       throw new Error("Hermes portable operating executable resolution changed during startup");
     }
     for (const proof of [openshell, podman]) {
-      proof.guardCommand("before");
-      proof.guardCommand("after");
+      // A checkpoint dispatches no child. One metadata capture already guards
+      // its own before/after filesystem boundary.
+      proof.assertCheckpointCurrent();
     }
   };
 }

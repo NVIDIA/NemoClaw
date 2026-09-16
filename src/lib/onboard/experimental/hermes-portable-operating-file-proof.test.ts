@@ -74,6 +74,14 @@ describe("Portable retained executable proofs", () => {
     expect(f.readFile).not.toHaveBeenCalled();
   });
 
+  it("rehashes both retained executables at the shared checkpoint interval (#11574)", () => {
+    const f = fixture();
+    Array.from({ length: 63 }, () => f.assertCurrent());
+    expect(f.readFile).not.toHaveBeenCalled();
+    f.assertCurrent();
+    expect(f.readFile).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["inode", "ctime", "directoryInode"] as const)(
     "rejects and latches %s changes even if the original identity returns (#11574)",
     (field) => {
