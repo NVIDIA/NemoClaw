@@ -60,11 +60,9 @@ describe("optional managed image security scans", () => {
 
   // source-shape-contract: security -- Repository, event, and ref checks must prevent candidate-controlled workflows from receiving the Pulse credentials
   it("limits scan credentials to trusted manual publications", () => {
-    expect(scanJob.if).toContain("inputs.run_security_scans");
-    expect(scanJob.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
-    expect(scanJob.if).toContain("github.event_name == 'workflow_dispatch'");
-    expect(scanJob.if).toContain("github.ref == 'refs/heads/main'");
-    expect(scanJob.if).not.toContain("refs/tags");
+    expect(scanJob.if?.replace(/\s+/gu, " ").trim()).toBe(
+      "${{ inputs.run_security_scans && github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}",
+    );
     expect(scanJob.permissions).toEqual({ contents: "read" });
     expect(scanJob["runs-on"]).toBe("linux-amd64-cpu4");
     expect(managedWorkflow.on.workflow_call?.secrets).toEqual({
