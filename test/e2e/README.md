@@ -822,8 +822,12 @@ filesystem boundary, not a particular internal `EXDEV` system call or fallback.
 
 The live assertions stop at the boundary outcomes: v1 after onboarding,
 distinct source and target devices, a successful real install, v1-exdev after a
-real gateway restart, v2 after recreation, and registered cleanup. The target
-does not rewrite OpenShell commands or assert terminal wording. Its one
+real gateway restart, v2 after recreation, and registered cleanup. The OpenClaw
+2026.7.1 container compatibility patch replaces the Node process image after
+native shutdown while preserving its PID, so restart discards cached ESM plugin
+modules. Deterministic process tests cover fresh module loading, invocation and
+environment handoff, and native behavior outside the OpenShell Linux boundary.
+The target does not rewrite OpenShell commands or assert terminal wording. Its
 forward-specific setup check proves the restarted listener belongs to the exact
 canonical OpenShell command before targeted termination, then bounds port
 release before recreation. Fast tests own the listener matching and
