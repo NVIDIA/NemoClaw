@@ -94,6 +94,27 @@ export function assertNoDerivedResourceCollision(
   }
 }
 
+/** Reject credential-bound aliases whose requests have no distinct network selector. */
+export function assertNoAmbiguousMcpCredentialTarget(
+  bridges: Readonly<Record<string, McpSourceEntry>>,
+  server: string,
+  url: string,
+  providerName: string | undefined,
+): void {
+  const conflict = Object.values(bridges).find(
+    (entry) =>
+      entry.server !== server &&
+      entry.url === url &&
+      entry.providerName !== providerName &&
+      (entry.providerName !== undefined || providerName !== undefined),
+  );
+  if (!conflict) return;
+  throw new McpBridgeError(
+    `MCP server '${server}' targets the same URL as credential-bound server '${conflict.server}'. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. Use one managed server definition for this URL or a distinct endpoint.`,
+    2,
+  );
+}
+
 export async function ensureSandboxGatewaySelected(
   sandboxName: string,
   runtimeSelection: OpenShellRuntimeSelection,

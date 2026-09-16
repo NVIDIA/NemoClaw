@@ -890,12 +890,12 @@ test(
     await expectMcpCliFailure(
       host,
       OPENCLAW_SANDBOX_NAME,
-      ["add", SERVER_NAME, "--url", mcpUrl, "--env", "FAKE_MCP_SECRET"],
-      /already exists/,
-      "mcp-negative-duplicate-server",
+      ["add", "credential-alias", "--url", mcpUrl, "--env", "ALIAS_MCP_SECRET"],
+      /cannot safely choose between credentials for an indistinguishable endpoint/,
+      "mcp-negative-ambiguous-credential-alias",
       {
         ...buildAvailabilityProbeEnv(),
-        FAKE_MCP_SECRET: HOST_SECRET,
+        ALIAS_MCP_SECRET: HOST_SECRET,
       },
     );
 
