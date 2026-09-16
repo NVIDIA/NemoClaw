@@ -35,7 +35,7 @@ NemoClaw ownership from the location of the issue.
 
 - [Implementation discovery](../_shared/implementation-discovery.md) for locating current owners and behavior evidence.
 - [Code change considerations](../_shared/code-change-considerations.md) for ownership and nontrivial design choices.
-- [Test evidence selection](../_shared/test-evidence-selection.md) when acceptance needs new, changed, or removed test coverage.
+- [E2E selection and authoring](../../references/e2e-authoring.md) when acceptance needs new, changed, or removed test coverage.
 - [Root-cause and state checks](../_shared/root-cause-and-state-checks.md) for related defect paths or sensitive operations.
 - [Security rubric](../_shared/security-rubric.md) for affected trust boundaries and required security evidence.
 - [GitHub access](../_shared/git-github-hard-stop.md) for GitHub reads or authorized writes.

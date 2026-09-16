@@ -38,8 +38,11 @@ response alone or weaken the reference's concurrency and recovery rules.
 Open code-changing or sensitive-path PRs as drafts. Record available review context without claiming
 unobserved approval. Do not select labels or request maintainer reviews in this workflow.
 When the diff changes live E2E evidence, require the implementation handoff to apply
-[Test evidence selection](../_shared/test-evidence-selection.md) and identify what stayed live, moved,
-or was removed. Route an incomplete handoff back to implementation before publication.
+[E2E selection and authoring](../../references/e2e-authoring.md). Require a disposition for each
+changed assertion, its semantic outcome and distinct regression or lack of a product contract, and
+its lower-layer owner when moved. For each retained live contract, require the real boundary,
+canonical live test, and smallest live assertion. Require the handoff to explain why semantic
+coverage remains complete. Route an incomplete handoff back to implementation before publication.
 Follow [GitHub access](../_shared/git-github-hard-stop.md) for access errors and
 [Writing and review](../_shared/documentation-writing-review.md) for PR text.
 

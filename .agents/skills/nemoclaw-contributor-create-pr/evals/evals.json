@@ -536,14 +536,15 @@
   },
   {
     "id": "require-live-e2e-disposition-before-publication",
-    "question": "Publish my NemoClaw branch. It removes live E2E assertions and says only that unit tests cover them, but the implementation handoff does not identify the retained live contract or canonical test owners.",
+    "question": "Publish my NemoClaw branch. The implementation handoff labels the live E2E assertions as stayed, moved, or removed and names a unit-test owner, but it omits the distinct regressions and smallest retained live assertions.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "Publication requires an implementation disposition for changed live evidence before it can claim that semantic coverage remains complete.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Does not infer the live contract from a generic unit-test claim.",
       "Routes the change back to implementation for a stayed, moved, or removed disposition for every changed live assertion.",
-      "Requires each retained live contract to identify its real boundary, semantic outcome and distinct regression, lower-layer evidence owner, canonical live test, and smallest live assertion.",
+      "Requires each assertion to identify its semantic outcome and distinct regression or state that it protects no product contract, plus its lower-layer owner when moved.",
+      "Requires each retained live contract to identify its real boundary, canonical live test, and smallest live assertion.",
       "Requires a rationale showing why the recorded dispositions leave semantic coverage complete.",
       "Does not publish until every required field is recorded and the handoff identifies distinct retained live evidence or proves that no live contract remains."
     ]

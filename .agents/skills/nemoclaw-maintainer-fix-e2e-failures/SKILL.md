@@ -37,7 +37,7 @@ Repeat these steps continuously while the loop remains authorized:
 1. Refresh `origin/main`. List automatic E2E runs for that commit SHA and later `main` commit SHAs.
 2. Inspect only new or changed runs. Load `nemoclaw-maintainer-classify-ci-failure` to read one failed job's bounded logs and optional retained artifact before identifying the earliest actionable product, test, workflow, runner, or cleanup failure.
 3. Group failures that share the same causal signature. Do not equate a job name with a root cause.
-4. Apply [Test evidence selection](../_shared/test-evidence-selection.md) before repairing a test failure. Keep live evidence only for a distinct live contract.
+4. Apply [E2E selection and authoring](../../references/e2e-authoring.md) before repairing a test failure. Keep live evidence only for a distinct live contract.
 5. Reconcile each group with open PRs before editing. If another maintainer owns it, record that PR and take the next unowned group.
 6. Prefer a peer E2E maintenance PR that needs review or a final merge decision before starting another fix.
 7. Select one unowned root cause. Claim it before the product fix with a draft PR whose initial diff contains evidence for only that root cause.
@@ -90,7 +90,7 @@ Approving a first-time contributor's ordinary `pull_request` workflow after trus
 
 Never weaken, skip, delete, relabel, or narrow semantic coverage to make a failure disappear. A
 classified repair may move deterministic evidence or remove duplicate or incidental evidence only
-under the shared test-evidence contract. Do not freeze `main`, block unrelated merges, or ask other
+under the E2E selection and authoring contract. Do not freeze `main`, block unrelated merges, or ask other
 maintainers to wait.
 
 ## Close Obsolete Work
