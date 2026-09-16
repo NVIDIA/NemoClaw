@@ -1574,8 +1574,18 @@ jobs:
           node-version: 24.18.1
           architecture: arm64
 
+      - name: Resolve the reviewed npm Git Bash scratch path
+        id: reviewed-npm-temp
+        shell: bash
+        run: |
+          path="$(cygpath -u "$RUNNER_TEMP")"
+          [[ "$path" == /* ]]
+          printf 'path=%s\n' "$path" >> "$GITHUB_OUTPUT"
+
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
+        env:
+          RUNNER_TEMP: ${{ steps.reviewed-npm-temp.outputs.path }}
 
       - name: Record actual installation and dashboard CPU and file I/O
         shell: powershell
@@ -1684,8 +1694,18 @@ jobs:
           node-version: 24.18.1
           architecture: arm64
 
+      - name: Resolve the reviewed npm Git Bash scratch path
+        id: reviewed-npm-temp
+        shell: bash
+        run: |
+          path="$(cygpath -u "$RUNNER_TEMP")"
+          [[ "$path" == /* ]]
+          printf 'path=%s\n' "$path" >> "$GITHUB_OUTPUT"
+
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
+        env:
+          RUNNER_TEMP: ${{ steps.reviewed-npm-temp.outputs.path }}
 
       - name: Exercise actual browser request channel cleanup
         shell: powershell
