@@ -25,7 +25,11 @@ fn a_different_model_uses_generic_serving_without_recipe_settings() {
     ] {
         assert!(!args.iter().any(|a| a == flag));
     }
-    doc.spec.sandboxes[0].agents[0].inference.routes[0]
+    doc.spec.sandboxes[0].agents[0]
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
         .overrides
         .model = "Qwen/Qwen3-0.6B".into();
     doc.validate().unwrap();

@@ -22,6 +22,7 @@ Empty or zero selects a default only where stated.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
 - The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
+- The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.
 - The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing and multiple selected definitions, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
@@ -58,7 +59,8 @@ Paths:
 | `auth` | [AgentAuth](#agentauth) | No | — | Hermes API-key authentication through the routed provider. The provider must declare a credential reference. |
 | `execution` | [AgentExecution](#agentexecution) | No | — | OpenClaw timeout and heartbeat defaults. Declare only on the first agent in a shared sandbox. |
 | `harness` | string | Yes | — | Agent harness. Harnesses other than openclaw require external gateway and inference services. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
-| `inference` | [Inference](#inference) | Yes | — | Primary inference route for this agent. |
+| `inference` | [Inference](#inference) | No | — | Inline inference configuration. Exactly one of inference or inferenceRef is required. |
+| `inferenceRef` | string | No | — | Name of an enclosing inference configuration. Excludes inline inference. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrationRefs` | array of string | No | — | Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions. Constraints: items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access, declared only on the first agent in a sandbox. |
@@ -189,8 +191,10 @@ Guide: [Inline model recipes](../recipes.md).
 Paths:
 
 - `spec.inferenceProviders[].service.recipe.compatibility`
+- `spec.inferences.{key}.routes[].provider.service.recipe.compatibility`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.compatibility`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.compatibility`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.compatibility`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -209,8 +213,10 @@ Guide: [Inline model recipes](../recipes.md).
 Paths:
 
 - `spec.inferenceProviders[].service.recipe.serving.compilation`
+- `spec.inferences.{key}.routes[].provider.service.recipe.serving.compilation`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.serving.compilation`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.serving.compilation`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.serving.compilation`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -231,10 +237,12 @@ Paths:
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
 - `spec.inferenceProviders[].credential`
+- `spec.inferences.{key}.routes[].provider.credential`
 - `spec.integrations.{key}.credential`
 - `spec.sandboxes[].agents[].inference.routes[].provider.credential`
 - `spec.sandboxes[].agents[].integrations.{key}.credential`
 - `spec.sandboxes[].inferenceProviders[].credential`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
 - `spec.sandboxes[].integrations.{key}.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -297,10 +305,14 @@ Paths:
 
 - `spec.inferenceProviders[].ollama.network.management`
 - `spec.inferenceProviders[].ollamaProxy.model.management`
+- `spec.inferences.{key}.routes[].provider.ollama.network.management`
+- `spec.inferences.{key}.routes[].provider.ollamaProxy.model.management`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama.network.management`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollamaProxy.model.management`
 - `spec.sandboxes[].inferenceProviders[].ollama.network.management`
 - `spec.sandboxes[].inferenceProviders[].ollamaProxy.model.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.network.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy.model.management`
 - `spec.sandboxes[].network.proxy.management`
 
 Accepted input: string.
@@ -316,8 +328,10 @@ Guide: [Resource ownership](../usage.md#resource-ownership).
 Paths:
 
 - `spec.inferenceProviders[].ollama.network`
+- `spec.inferences.{key}.routes[].provider.ollama.network`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama.network`
 - `spec.sandboxes[].inferenceProviders[].ollama.network`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.network`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -333,8 +347,10 @@ Guide: [Inference configuration](../inference.md).
 Paths:
 
 - `spec.inferenceProviders[].ollamaProxy.model`
+- `spec.inferences.{key}.routes[].provider.ollamaProxy.model`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollamaProxy.model`
 - `spec.sandboxes[].inferenceProviders[].ollamaProxy.model`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy.model`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -350,8 +366,10 @@ Guide: [Inline model recipes](../recipes.md).
 Paths:
 
 - `spec.inferenceProviders[].service.recipe.snapshot.files[]`
+- `spec.inferences.{key}.routes[].provider.service.recipe.snapshot.files[]`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.snapshot.files[]`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.snapshot.files[]`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.snapshot.files[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -463,7 +481,9 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
+- `spec.inferences.{key}`
 - `spec.sandboxes[].agents[].inference`
+- `spec.sandboxes[].inferences.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -478,8 +498,10 @@ Guide: [Inference configuration](../inference.md).
 Paths:
 
 - `spec.inferenceProviders[].api`
+- `spec.inferences.{key}.routes[].provider.api`
 - `spec.sandboxes[].agents[].inference.routes[].provider.api`
 - `spec.sandboxes[].inferenceProviders[].api`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.api`
 
 Accepted input: string.
 
@@ -494,8 +516,10 @@ Guide: [Inference configuration](../inference.md).
 Paths:
 
 - `spec.inferenceProviders[]`
+- `spec.inferences.{key}.routes[].provider`
 - `spec.sandboxes[].agents[].inference.routes[].provider`
 - `spec.sandboxes[].inferenceProviders[]`
+- `spec.sandboxes[].inferences.{key}.routes[].provider`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -518,8 +542,10 @@ Guide: [Inline model recipes](../recipes.md).
 Paths:
 
 - `spec.inferenceProviders[].service.recipe`
+- `spec.inferences.{key}.routes[].provider.service.recipe`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe`
 - `spec.sandboxes[].inferenceProviders[].service.recipe`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -577,6 +603,14 @@ Paths:
 - `spec.inferenceProviders[].service.model.management`
 - `spec.inferenceProviders[].service.placement.network.management`
 - `spec.inferenceProviders[].service.storage.management`
+- `spec.inferences.{key}.routes[].provider.ollama.management`
+- `spec.inferences.{key}.routes[].provider.ollama.model.management`
+- `spec.inferences.{key}.routes[].provider.ollama.storage.management`
+- `spec.inferences.{key}.routes[].provider.ollamaProxy.management`
+- `spec.inferences.{key}.routes[].provider.service.management`
+- `spec.inferences.{key}.routes[].provider.service.model.management`
+- `spec.inferences.{key}.routes[].provider.service.placement.network.management`
+- `spec.inferences.{key}.routes[].provider.service.storage.management`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama.management`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama.model.management`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama.storage.management`
@@ -593,6 +627,14 @@ Paths:
 - `spec.sandboxes[].inferenceProviders[].service.model.management`
 - `spec.sandboxes[].inferenceProviders[].service.placement.network.management`
 - `spec.sandboxes[].inferenceProviders[].service.storage.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.model.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.storage.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.model.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.placement.network.management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.storage.management`
 
 Accepted input: string.
 
@@ -607,8 +649,10 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 Paths:
 
 - `spec.inferenceProviders[].ollama`
+- `spec.inferences.{key}.routes[].provider.ollama`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama`
 - `spec.sandboxes[].inferenceProviders[].ollama`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -633,6 +677,10 @@ Paths:
 - `spec.inferenceProviders[].ollama.storage`
 - `spec.inferenceProviders[].service.placement.network`
 - `spec.inferenceProviders[].service.storage`
+- `spec.inferences.{key}.routes[].provider.ollama.model`
+- `spec.inferences.{key}.routes[].provider.ollama.storage`
+- `spec.inferences.{key}.routes[].provider.service.placement.network`
+- `spec.inferences.{key}.routes[].provider.service.storage`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama.model`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama.storage`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.placement.network`
@@ -641,6 +689,10 @@ Paths:
 - `spec.sandboxes[].inferenceProviders[].ollama.storage`
 - `spec.sandboxes[].inferenceProviders[].service.placement.network`
 - `spec.sandboxes[].inferenceProviders[].service.storage`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.model`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.storage`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.placement.network`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.storage`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -655,8 +707,10 @@ Guide: [Resource ownership](../usage.md#resource-ownership).
 Paths:
 
 - `spec.inferenceProviders[].management`
+- `spec.inferences.{key}.routes[].provider.management`
 - `spec.sandboxes[].agents[].inference.routes[].provider.management`
 - `spec.sandboxes[].inferenceProviders[].management`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.management`
 
 Accepted input: string or string.
 
@@ -671,8 +725,10 @@ Guide: [Inline model recipes](../recipes.md).
 Paths:
 
 - `spec.inferenceProviders[].service.recipe.snapshot`
+- `spec.inferences.{key}.routes[].provider.service.recipe.snapshot`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.snapshot`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.snapshot`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.snapshot`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -689,8 +745,10 @@ Guide: [Managed models](../models.md).
 Paths:
 
 - `spec.inferenceProviders[].service.memory`
+- `spec.inferences.{key}.routes[].provider.service.memory`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.memory`
 - `spec.sandboxes[].inferenceProviders[].service.memory`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.memory`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -727,8 +785,10 @@ Guide: [Managed models](../models.md).
 Paths:
 
 - `spec.inferenceProviders[].service.model`
+- `spec.inferences.{key}.routes[].provider.service.model`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.model`
 - `spec.sandboxes[].inferenceProviders[].service.model`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.model`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -761,8 +821,10 @@ Guide: [Resource ownership](../usage.md#resource-ownership).
 Paths:
 
 - `spec.inferenceProviders[].ollama.network`
+- `spec.inferences.{key}.routes[].provider.ollama.network`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollama.network`
 - `spec.sandboxes[].inferenceProviders[].ollama.network`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.network`
 
 Accepted input: string or [ExternalNetwork](#externalnetwork).
 
@@ -777,8 +839,10 @@ Guide: [Inference configuration](../inference.md).
 Paths:
 
 - `spec.inferenceProviders[].ollamaProxy`
+- `spec.inferences.{key}.routes[].provider.ollamaProxy`
 - `spec.sandboxes[].agents[].inference.routes[].provider.ollamaProxy`
 - `spec.sandboxes[].inferenceProviders[].ollamaProxy`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -842,7 +906,9 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
+- `spec.inferences.{key}.routes[].overrides`
 - `spec.sandboxes[].agents[].inference.routes[].overrides`
+- `spec.sandboxes[].inferences.{key}.routes[].overrides`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1076,7 +1142,9 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
+- `spec.inferences.{key}.routes[].overrides.reasoningEffort`
 - `spec.sandboxes[].agents[].inference.routes[].overrides.reasoningEffort`
+- `spec.sandboxes[].inferences.{key}.routes[].overrides.reasoningEffort`
 
 Accepted input: string.
 
@@ -1105,8 +1173,10 @@ Guide: [Inline model recipes](../recipes.md).
 Paths:
 
 - `spec.inferenceProviders[].service.recipe.resources`
+- `spec.inferences.{key}.routes[].provider.service.recipe.resources`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.resources`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.resources`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.resources`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1124,8 +1194,10 @@ Guide: [Inline model recipes](../recipes.md).
 Paths:
 
 - `spec.inferenceProviders[].service.recipe.reuse`
+- `spec.inferences.{key}.routes[].provider.service.recipe.reuse`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.reuse`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.reuse`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.reuse`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1140,7 +1212,9 @@ Guide: [Inference configuration](../inference.md).
 
 Paths:
 
+- `spec.inferences.{key}.routes[]`
 - `spec.sandboxes[].agents[].inference.routes[]`
+- `spec.sandboxes[].inferences.{key}.routes[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1178,6 +1252,7 @@ Paths:
 | `agents` | array of [Agent](#agent) | Yes | — | One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent. Constraints: minimum items 1. |
 | `image` | [Image](#image) | No | — | Sandbox agent image; omission selects the SDK default. |
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions. |
+| `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agents through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
@@ -1208,8 +1283,10 @@ Guide: [Managed models](../models.md).
 Paths:
 
 - `spec.inferenceProviders[].service`
+- `spec.inferences.{key}.routes[].provider.service`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service`
 - `spec.sandboxes[].inferenceProviders[].service`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1236,8 +1313,10 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 Paths:
 
 - `spec.inferenceProviders[].service.authentication`
+- `spec.inferences.{key}.routes[].provider.service.authentication`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.authentication`
 - `spec.sandboxes[].inferenceProviders[].service.authentication`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.authentication`
 
 Accepted input: string.
 
@@ -1252,8 +1331,10 @@ Guide: [Managed models](../models.md).
 Paths:
 
 - `spec.inferenceProviders[].service.container`
+- `spec.inferences.{key}.routes[].provider.service.container`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.container`
 - `spec.sandboxes[].inferenceProviders[].service.container`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.container`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1269,8 +1350,10 @@ Guide: [Managed models](../models.md).
 Paths:
 
 - `spec.inferenceProviders[].service.hardware`
+- `spec.inferences.{key}.routes[].provider.service.hardware`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.hardware`
 - `spec.sandboxes[].inferenceProviders[].service.hardware`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.hardware`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1288,8 +1371,10 @@ Guide: [Managed models](../models.md).
 Paths:
 
 - `spec.inferenceProviders[].service.container.ipc`
+- `spec.inferences.{key}.routes[].provider.service.container.ipc`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.container.ipc`
 - `spec.sandboxes[].inferenceProviders[].service.container.ipc`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.container.ipc`
 
 Accepted input: string.
 
@@ -1304,8 +1389,10 @@ Guide: [SSH model service](../remote-service.md).
 Paths:
 
 - `spec.inferenceProviders[].service.placement`
+- `spec.inferences.{key}.routes[].provider.service.placement`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.placement`
 - `spec.sandboxes[].inferenceProviders[].service.placement`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.placement`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1322,8 +1409,10 @@ Guide: [SSH model service](../remote-service.md).
 Paths:
 
 - `spec.inferenceProviders[].service.publication`
+- `spec.inferences.{key}.routes[].provider.service.publication`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.publication`
 - `spec.sandboxes[].inferenceProviders[].service.publication`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.publication`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1339,8 +1428,10 @@ Guide: [Managed models](../models.md).
 Paths:
 
 - `spec.inferenceProviders[].service.serving`
+- `spec.inferences.{key}.routes[].provider.service.serving`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.serving`
 - `spec.sandboxes[].inferenceProviders[].service.serving`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.serving`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1365,8 +1456,10 @@ Guide: [Inline model recipes](../recipes.md).
 Paths:
 
 - `spec.inferenceProviders[].service.recipe.serving`
+- `spec.inferences.{key}.routes[].provider.service.recipe.serving`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.serving`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.serving`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.serving`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1395,6 +1488,7 @@ Paths:
 |---|---|---|---|---|
 | `gateway` | [Gateway](#gateway) | Yes | — | OpenShell gateway connection or managed gateway settings. |
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements. |
+| `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness. Constraints: minimum items 1; maximum items 1. |
 
@@ -1424,10 +1518,14 @@ Paths:
 
 - `spec.inferenceProviders[].service.recipe.preparation`
 - `spec.inferenceProviders[].service.recipe.verification`
+- `spec.inferences.{key}.routes[].provider.service.recipe.preparation`
+- `spec.inferences.{key}.routes[].provider.service.recipe.verification`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.preparation`
 - `spec.sandboxes[].agents[].inference.routes[].provider.service.recipe.verification`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.preparation`
 - `spec.sandboxes[].inferenceProviders[].service.recipe.verification`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.preparation`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.recipe.verification`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|

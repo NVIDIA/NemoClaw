@@ -248,7 +248,7 @@ impl Document {
     pub(crate) fn runtime_inference(&self) -> Result<Option<RuntimeInference>, ConfigError> {
         let agent = &self.spec.sandboxes[0].agents[0];
         let provider = self.inference_provider()?;
-        let tuning = &agent.inference.routes[0].overrides.tuning;
+        let tuning = &self.agent_inference(agent)?.routes[0].overrides.tuning;
         let agents = &self.spec.sandboxes[0].agents;
         let web_search = self.web_search()?;
         let roster =
@@ -271,7 +271,10 @@ impl Document {
             provider: provider.name.clone(),
             connection: RuntimeConnection {
                 provider: provider.provider.clone(),
-                model: agent.inference.routes[0].overrides.model.clone(),
+                model: self.agent_inference(agent)?.routes[0]
+                    .overrides
+                    .model
+                    .clone(),
                 base_url: connection.endpoint,
                 api_key_env: profile
                     .credentials

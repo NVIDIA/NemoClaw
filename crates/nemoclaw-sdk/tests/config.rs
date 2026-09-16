@@ -237,7 +237,11 @@ fn pi_preserves_yaml_model_ids_and_explicit_custom_metadata() {
     let custom = Document::parse(input.as_bytes()).unwrap();
     for name in ["qwen3:4b", "my-custom-model", "gpt-4o-mini"] {
         let mut document = custom.clone();
-        document.spec.sandboxes[0].agents[0].inference.routes[0]
+        document.spec.sandboxes[0].agents[0]
+            .inference
+            .as_mut()
+            .unwrap()
+            .routes[0]
             .overrides
             .model = name.into();
         document.validate().unwrap();
@@ -245,7 +249,11 @@ fn pi_preserves_yaml_model_ids_and_explicit_custom_metadata() {
         assert_eq!(Document::parse(yaml.as_bytes()).unwrap(), document);
     }
     let mut catalog = custom;
-    let route = &mut catalog.spec.sandboxes[0].agents[0].inference.routes[0];
+    let route = &mut catalog.spec.sandboxes[0].agents[0]
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0];
     route.overrides.model = "gpt-4o-mini".into();
     route.overrides.pi_model = None;
     catalog.validate().unwrap();

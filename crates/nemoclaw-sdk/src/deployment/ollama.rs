@@ -189,7 +189,9 @@ impl Deployment {
             }
             crate::ollama::Models::new(&document.inference_provider()?.endpoint)?
                 .ready(
-                    &document.spec.sandboxes[0].agents[0].inference.routes[0]
+                    &document
+                        .agent_inference(&document.spec.sandboxes[0].agents[0])?
+                        .routes[0]
                         .overrides
                         .model,
                 )
@@ -253,7 +255,9 @@ impl Deployment {
             ("endpoint".into(), provider.endpoint.clone()),
             (
                 "model".into(),
-                document.spec.sandboxes[0].agents[0].inference.routes[0]
+                document
+                    .agent_inference(&document.spec.sandboxes[0].agents[0])?
+                    .routes[0]
                     .overrides
                     .model
                     .clone(),

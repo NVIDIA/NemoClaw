@@ -137,7 +137,10 @@ async fn export_sandbox(
         expected.insert(
             "pi_model_config".into(),
             serde_json::to_string(
-                &document.spec.sandboxes[0].agents[0].inference.routes[0].overrides,
+                &document
+                    .agent_inference(&document.spec.sandboxes[0].agents[0])?
+                    .routes[0]
+                    .overrides,
             )
             .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
         );

@@ -154,19 +154,8 @@ impl Document {
             "exactly one sandbox is required",
         )?;
         let provider = self.inference_provider()?;
-        for definition in self
-            .spec
-            .inference_providers
-            .iter()
-            .chain(&self.spec.sandboxes[0].inference_providers)
-            .chain(
-                self.spec.sandboxes[0]
-                    .agents
-                    .iter()
-                    .flat_map(|a| &a.inference.routes)
-                    .filter_map(|r| r.provider.as_ref()),
-            )
-        {
+        self.validate_inference_references()?;
+        for definition in self.provider_definitions() {
             validate_provider(definition, gateway)?;
         }
         let sandbox = &self.spec.sandboxes[0];
@@ -206,7 +195,8 @@ impl Document {
             require(
                 sandbox.agents.len() == 1
                     || (agent.harness == "openclaw"
-                        && agent.inference == sandbox.agents[0].inference),
+                        && self.agent_inference(agent)?
+                            == self.agent_inference(&sandbox.agents[0])?),
                 "multiple agents require OpenClaw and identical inference settings",
             )?;
             require(
@@ -279,10 +269,10 @@ impl Document {
                 )?;
             }
             require(
-                agent.inference.routes.len() == 1,
+                self.agent_inference(agent)?.routes.len() == 1,
                 "this slice requires exactly one primary route",
             )?;
-            let route = &agent.inference.routes[0];
+            let route = &self.agent_inference(agent)?.routes[0];
             require(
                 route.name == "primary" && MODEL.is_match(&route.overrides.model),
                 "primary route must reference the declared provider and valid model",
@@ -459,4 +449,8 @@ fn validate_provider(provider: &InferenceProvider, gateway: &Gateway) -> Result<
         "inference credentials require HTTPS",
     )?;
     Ok(())
+}
+
+pub(super) fn valid_model(model: &str) -> bool {
+    MODEL.is_match(model)
 }

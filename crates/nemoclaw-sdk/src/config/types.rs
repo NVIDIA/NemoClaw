@@ -42,6 +42,10 @@ pub struct Metadata {
 pub struct Spec {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
+    /// Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.
+    pub inferences: std::collections::BTreeMap<String, Inference>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
     /// Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access.
     pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(rename = "gateway")]
@@ -208,6 +212,10 @@ pub struct ManagedOllama {
 #[serde(default, deny_unknown_fields)]
 /// The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.
 pub struct Sandbox {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.
+    pub inferences: std::collections::BTreeMap<String, Inference>,
     #[serde(
         rename = "inferenceProviders",
         default,
@@ -313,9 +321,18 @@ pub struct Agent {
     #[serde(rename = "harness")]
     /// Agent harness. Harnesses other than openclaw require external gateway and inference services.
     pub harness: String,
-    #[serde(rename = "inference")]
-    /// Primary inference route for this agent.
-    pub inference: Inference,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Inference")]
+    /// Inline inference configuration. Exactly one of inference or inferenceRef is required.
+    pub inference: Option<Inference>,
+    #[serde(
+        rename = "inferenceRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Name of an enclosing inference configuration. Excludes inline inference.
+    pub inference_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentAuth")]
     /// Hermes API-key authentication through the routed provider. The provider must declare a credential reference.

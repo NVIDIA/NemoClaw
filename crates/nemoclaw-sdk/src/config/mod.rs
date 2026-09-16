@@ -14,6 +14,7 @@ pub use ollama_proxy::*;
 mod inference;
 mod interfaces;
 mod providers;
+mod references;
 pub use agent_inference::*;
 pub use execution::*;
 pub use interfaces::*;
@@ -82,31 +83,50 @@ impl Document {
         }
         // The agent owns values inside its opaque model object, including null.
         // Keep the existing null policy everywhere else in deployment intent.
+        fn omit_model_metadata(inference: &mut serde_json::Value) {
+            if let Some(routes) = inference
+                .get_mut("routes")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for route in routes {
+                    if let Some(overrides) = route
+                        .get_mut("overrides")
+                        .and_then(serde_json::Value::as_object_mut)
+                        && overrides
+                            .get("piModel")
+                            .is_some_and(serde_json::Value::is_object)
+                    {
+                        overrides.remove("piModel");
+                    }
+                }
+            }
+        }
+        fn omit_shared_metadata(scope: &mut serde_json::Value) {
+            if let Some(inferences) = scope
+                .get_mut("inferences")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                for inference in inferences.values_mut() {
+                    omit_model_metadata(inference);
+                }
+            }
+        }
         let mut structural = tree.clone();
-        if let Some(sandboxes) = structural
-            .pointer_mut("/spec/sandboxes")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for sandbox in sandboxes {
-                if let Some(agents) = sandbox
-                    .get_mut("agents")
-                    .and_then(serde_json::Value::as_array_mut)
-                {
-                    for agent in agents {
-                        if let Some(routes) = agent
-                            .pointer_mut("/inference/routes")
-                            .and_then(serde_json::Value::as_array_mut)
-                        {
-                            for route in routes {
-                                if let Some(overrides) = route
-                                    .get_mut("overrides")
-                                    .and_then(serde_json::Value::as_object_mut)
-                                    && overrides
-                                        .get("piModel")
-                                        .is_some_and(serde_json::Value::is_object)
-                                {
-                                    overrides.remove("piModel");
-                                }
+        if let Some(spec) = structural.get_mut("spec") {
+            omit_shared_metadata(spec);
+            if let Some(sandboxes) = spec
+                .get_mut("sandboxes")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for sandbox in sandboxes {
+                    omit_shared_metadata(sandbox);
+                    if let Some(agents) = sandbox
+                        .get_mut("agents")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        for agent in agents {
+                            if let Some(inference) = agent.get_mut("inference") {
+                                omit_model_metadata(inference);
                             }
                         }
                     }

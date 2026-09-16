@@ -123,6 +123,28 @@
         }
       ],
       "description": "One Fabric harness and its inference route.",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "inferenceRef"
+            ]
+          },
+          "required": [
+            "inference"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "inference"
+            ]
+          },
+          "required": [
+            "inferenceRef"
+          ]
+        }
+      ],
       "properties": {
         "auth": {
           "$ref": "#/$defs/AgentAuth",
@@ -150,7 +172,12 @@
         },
         "inference": {
           "$ref": "#/$defs/Inference",
-          "description": "Primary inference route for this agent."
+          "description": "Inline inference configuration. Exactly one of inference or inferenceRef is required."
+        },
+        "inferenceRef": {
+          "description": "Name of an enclosing inference configuration. Excludes inline inference.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
         },
         "integrationRefs": {
           "description": "Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions.",
@@ -191,8 +218,7 @@
       },
       "required": [
         "name",
-        "harness",
-        "inference"
+        "harness"
       ],
       "type": "object"
     },
@@ -2406,6 +2432,16 @@
           },
           "type": "array"
         },
+        "inferences": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Inference"
+          },
+          "description": "Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
+        },
         "integrations": {
           "additionalProperties": {
             "$ref": "#/$defs/Integration"
@@ -3062,6 +3098,16 @@
             "$ref": "#/$defs/InferenceProvider"
           },
           "type": "array"
+        },
+        "inferences": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Inference"
+          },
+          "description": "Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
         },
         "integrations": {
           "additionalProperties": {
@@ -6822,6 +6868,7 @@
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
+    "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
     "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing and multiple selected definitions, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."

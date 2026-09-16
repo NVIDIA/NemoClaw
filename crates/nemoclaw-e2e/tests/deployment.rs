@@ -144,7 +144,7 @@ async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope
         lifecycle(&document.yaml().unwrap()).await;
         let sandbox = &mut document.spec.sandboxes[0];
         let provider = sandbox.inference_providers.remove(0);
-        let route = &mut sandbox.agents[0].inference.routes[0];
+        let route = &mut sandbox.agents[0].inference.as_mut().unwrap().routes[0];
         route.provider_ref = None;
         route.provider = Some(provider);
         lifecycle(&document.yaml().unwrap()).await;
@@ -205,7 +205,11 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
     assert_eq!(record["pending"], true);
     let mut changed = document.clone();
-    changed.spec.sandboxes[0].agents[0].inference.routes[0]
+    changed.spec.sandboxes[0].agents[0]
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
         .overrides
         .model = "changed".into();
     assert!(deployment.apply(&changed, &cancel).await.is_err());

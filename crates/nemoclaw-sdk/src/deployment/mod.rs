@@ -232,8 +232,12 @@ impl Deployment {
         let agent = &document.spec.sandboxes[0].agents[0];
         if !fresh
             && agent.harness == "pi"
-            && agent.inference.routes[0].overrides
-                != record.document.spec.sandboxes[0].agents[0].inference.routes[0].overrides
+            && document.agent_inference(agent)?.routes[0].overrides
+                != record
+                    .document
+                    .agent_inference(&record.document.spec.sandboxes[0].agents[0])?
+                    .routes[0]
+                    .overrides
         {
             changes.push(Change {
                 resource: format!("fabric_runtime.{}", agent.name),
@@ -263,7 +267,7 @@ impl Deployment {
             sandbox.insert("id".into(), binding.id.clone());
             sandbox.insert(
                 "pi_model_config".into(),
-                serde_json::to_string(&agent.inference.routes[0].overrides)
+                serde_json::to_string(&document.agent_inference(agent)?.routes[0].overrides)
                     .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
             );
             tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, true)=>result?}
@@ -299,7 +303,7 @@ impl Deployment {
         if agent.harness == "pi" {
             sandbox.insert(
                 "pi_model_config".into(),
-                serde_json::to_string(&agent.inference.routes[0].overrides)
+                serde_json::to_string(&document.agent_inference(agent)?.routes[0].overrides)
                     .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
             );
             tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}

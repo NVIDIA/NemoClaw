@@ -73,6 +73,22 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"propertyNames": {"pattern": c::SLUG}}),
         );
     }
+    for name in ["Spec", "Sandbox"] {
+        property(
+            &mut defs[name],
+            "inferences",
+            json!({"propertyNames": {"pattern": c::SLUG}}),
+        );
+    }
+    property(
+        &mut defs["Agent"],
+        "inferenceRef",
+        json!({"pattern": c::SLUG}),
+    );
+    defs["Agent"]["oneOf"] = json!([
+        {"required": ["inference"], "not": {"required": ["inferenceRef"]}},
+        {"required": ["inferenceRef"], "not": {"required": ["inference"]}}
+    ]);
     property(
         &mut defs["Agent"],
         "integrationRefs",
@@ -378,6 +394,7 @@ pub(super) fn constrain(root: &mut Value) {
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
+        "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
         "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing and multiple selected definitions, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
