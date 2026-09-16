@@ -263,6 +263,7 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
       executor,
       cleanupDeps: cleanupDeps({ inspectMutableConfigPerms: inspect }),
     });
+    await vi.waitFor(() => expect(signalEvents.listenerCount(signal)).toBe(1));
     signalEvents.emit(signal);
     const result = await pending;
 
@@ -304,6 +305,7 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
       executor,
       cleanupDeps: cleanupDeps({ inspectMutableConfigPerms: inspect }),
     });
+    await vi.waitFor(() => expect(signalEvents.listenerCount("SIGINT")).toBe(1));
     signalEvents.emit("SIGINT");
     child.signalCode = "SIGINT";
     childEvents.emit("close", null, "SIGINT");

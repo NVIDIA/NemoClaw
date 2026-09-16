@@ -14,8 +14,6 @@ import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
-import { listTargets } from "../registry/registry.ts";
-import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const COLLECTION_ENV = [
@@ -119,21 +117,6 @@ function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">)
 
 function linesForFile(lines: readonly string[], file: string): string[] {
   return lines.filter((line) => line.startsWith(`[e2e-live] test/e2e/live/${file} >`));
-}
-
-/**
- * A registered target ID. `wired: true` selects one the live fixtures support;
- * `wired: false` selects a declared placeholder the live matrix skips.
- */
-function declaredTargetId({ wired }: { wired: boolean }): string {
-  const match = listTargets().find(
-    (registered) => liveTargetSupport(registered).supported === wired,
-  );
-  return match?.id ?? missingDeclaredTarget(wired);
-}
-
-function missingDeclaredTarget(wired: boolean): never {
-  throw new Error(`registry declares no ${wired ? "wired" : "not wired"} target`);
 }
 
 describe("live E2E target gating", () => {
@@ -344,22 +327,30 @@ describe("live E2E target gating", () => {
       context
         .expect(`${unsafe.stdout}${unsafe.stderr}`)
         .toContain("Selected target ID 'unsafe/id'");
+
+      const removed = await listLiveTests({
+        enabled: true,
+        env: { TARGET_ID: "ubuntu-repo-cloud-hermes" },
+        files: [file],
+      });
+
+      context.expect(removed.status, removed.stdout).not.toBe(0);
+      context
+        .expect(`${removed.stdout}${removed.stderr}`)
+        .toContain("Unknown target 'ubuntu-repo-cloud-hermes'");
     },
   );
 
-  it.concurrent.for([{ wired: true }, { wired: false }])(
-    "collects registry targets when wired is $wired for a declared TARGET_ID (#8286)",
+  it.concurrent(
+    "collects an executable registry target selected by TARGET_ID (#11407)",
     collectorTimeoutOptions(),
-    async ({ wired }, context) => {
+    async (context) => {
       const listLiveTests = liveTestLister(context);
       const file = "registry-targets.test.ts";
 
-      // The check rejects only ids the registry does not declare, so a wired id
-      // and a declared placeholder both still collect. Collecting at least one
-      // test proves the file was evaluated rather than skipped outright.
       const result = await listLiveTests({
         enabled: true,
-        env: { TARGET_ID: declaredTargetId({ wired }) },
+        env: { TARGET_ID: "ubuntu-repo-cloud-openclaw" },
         files: [file],
       });
 

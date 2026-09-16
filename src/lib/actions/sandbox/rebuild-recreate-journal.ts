@@ -25,6 +25,8 @@ import {
 } from "../../onboard/sandbox-recreate-probe";
 import {
   advanceSandboxRecreateTransaction,
+  assertSandboxRecreateSourceProof,
+  sandboxRecreateSourceProof,
   beginSandboxRecreateDelete,
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
@@ -37,6 +39,7 @@ import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import type {
   CheckpointGatewayAuthority,
   CheckpointSandboxRecreatePhase,
+  CheckpointSandboxRecreateTransaction,
 } from "../../state/onboard-checkpoint-types";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -602,6 +605,18 @@ export function fingerprintRebuildRecreateTargetIntent(
 }
 
 export const observeRebuildSandbox = observeSandboxOnGateway;
+
+export function assertRebuildRecoverySource(
+  transaction: CheckpointSandboxRecreateTransaction,
+  target: SandboxRecreateTarget,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
+  assertSandboxRecreateSourceProof(sandboxRecreateSourceProof(transaction), {
+    ...target,
+    registryEntry: registry.getSandbox(target.sandboxName),
+    observation: observeRebuildSandbox(target, undefined, runtimeSelection),
+  });
+}
 
 export interface OpenRebuildRecreateJournalInput {
   readonly target: RebuildRecreateJournalTarget;

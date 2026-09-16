@@ -144,7 +144,7 @@ export interface RebuildManifest {
     /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
     retired?: boolean;
   };
-  /** Source-derived MCP state retained only while a rebuild transaction is recoverable. */
+  /** Source-derived MCP state, including an explicit empty observation, retained during recovery. */
   rebuildMcpHandoff?: {
     entries: RebuildMcpHandoffEntry[];
     runtimeSelection: OpenShellRuntimeSelection;
@@ -319,7 +319,7 @@ export interface SnapshotRestoreOptions {
    */
   readonly authority?: SnapshotRestoreAuthority;
   /** Internal provider fence invoked at the same last-safe mutation edge. */
-  readonly validateBeforeMutation?: () => void;
+  readonly validateBeforeMutation?: () => void | Promise<void>;
 }
 
 export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
@@ -340,7 +340,7 @@ interface InternalRestoreOptions {
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   runtimeSelection?: OpenShellRuntimeSelection;
   authority?: SnapshotRestoreAuthority;
-  validateBeforeMutation?: () => void;
+  validateBeforeMutation?: () => void | Promise<void>;
 }
 
 export interface TarValidationResult {
@@ -508,7 +508,6 @@ function isRebuildMcpHandoff(
       (key) => key === "entries" || key === "runtimeSelection" || key === "retired",
     ) &&
     Array.isArray(value.entries) &&
-    value.entries.length > 0 &&
     value.entries.length <= 256 &&
     value.entries.every(isRebuildMcpHandoffEntry) &&
     new Set(value.entries.map((entry) => entry.server)).size === value.entries.length &&
@@ -2392,23 +2391,28 @@ export function captureSnapshotRestoreAuthority(
   }
 }
 
-export function validateSnapshotRestoreMutation(
+export async function validateSnapshotRestoreMutation(
   backupPath: string,
   options: Pick<SnapshotRestoreOptions, "authority" | "validateBeforeMutation">,
-): string | null {
-  if (options.authority) {
-    const current = captureSnapshotRestoreAuthority(backupPath);
-    if (
-      !current ||
-      current.backupPath !== options.authority.backupPath ||
-      current.contentSha256 !== options.authority.contentSha256
-    ) {
-      return "Selected snapshot content changed before filesystem mutation";
+): Promise<string | null> {
+  const validateContent = (): string | null => {
+    if (options.authority) {
+      const current = captureSnapshotRestoreAuthority(backupPath);
+      if (
+        !current ||
+        current.backupPath !== options.authority.backupPath ||
+        current.contentSha256 !== options.authority.contentSha256
+      ) {
+        return "Selected snapshot content changed before filesystem mutation";
+      }
     }
-  }
-  try {
-    options.validateBeforeMutation?.();
     return null;
+  };
+  const contentError = validateContent();
+  if (contentError) return contentError;
+  try {
+    await options.validateBeforeMutation?.();
+    return validateContent();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return `Runtime authority changed before filesystem mutation: ${detail}`;
@@ -2418,11 +2422,11 @@ export function validateSnapshotRestoreMutation(
 /**
  * Restore state directories into a sandbox from a prior backup.
  */
-export function restoreSandboxState(
+export async function restoreSandboxState(
   sandboxName: string,
   backupPath: string,
   options: SnapshotRestoreOptions = {},
-): RestoreResult {
+): Promise<RestoreResult> {
   const target = registry.getSandbox(sandboxName);
   if (!target) {
     return {
@@ -2444,11 +2448,11 @@ export function restoreSandboxState(
   });
 }
 
-export function restoreRecreatedSandboxState(
+export async function restoreRecreatedSandboxState(
   sandboxName: string,
   backupPath: string,
   options: RecreatedSandboxRestoreOptions,
-): RestoreResult {
+): Promise<RestoreResult> {
   return restoreSandboxStateInternal(sandboxName, backupPath, {
     targetAgentType: options.targetAgentType,
     ...(options.allowCustomImageWholeStateFileRestore
@@ -2467,11 +2471,11 @@ export function restoreRecreatedSandboxState(
   });
 }
 
-function restoreSandboxStateInternal(
+async function restoreSandboxStateInternal(
   sandboxName: string,
   backupPath: string,
   options: InternalRestoreOptions,
-): RestoreResult {
+): Promise<RestoreResult> {
   _log(`restoreSandboxState: sandbox=${sandboxName}, backupPath=${backupPath}`);
   const selectedSshEnv = options.runtimeSelection
     ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
@@ -2668,7 +2672,7 @@ function restoreSandboxStateInternal(
   }
 
   if (cleanupStateDirs.length === 0 && localFiles.length === 0) {
-    const mutationAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
+    const mutationAuthorityError = await validateSnapshotRestoreMutation(backupPath, options);
     if (mutationAuthorityError) {
       return failRestoreContract(mutationAuthorityError);
     }
@@ -2769,7 +2773,7 @@ function restoreSandboxStateInternal(
       restoreTar = tarResult.stdout;
     }
 
-    const mutationAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
+    const mutationAuthorityError = await validateSnapshotRestoreMutation(backupPath, options);
     if (mutationAuthorityError) {
       return failRestoreContract(mutationAuthorityError);
     }
@@ -2957,7 +2961,7 @@ function writeManifest(
   }
 }
 
-export const __test = { writeManifest };
+export const __test = { writeManifest, readManifest };
 
 function readBoundRebuildHandoff(filePath: string): string | null {
   let descriptor: number | null = null;

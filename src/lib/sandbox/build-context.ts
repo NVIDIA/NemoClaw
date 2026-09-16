@@ -380,6 +380,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-npm12-pack-json.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-chat-send.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-chat-send.mts"),
   );
@@ -407,11 +411,6 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
-  );
-  fs.mkdirSync(path.join(stagedScriptsDir, "openclaw"), { recursive: true });
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
-    path.join(stagedScriptsDir, "openclaw", "patch-gateway-daemon-dialback.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "extract-semver.sh"),
@@ -445,6 +444,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "reviewed-npm-identity.mts"),
+    path.join(stagedScriptsDir, "lib", "reviewed-npm-identity.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "bundled-npm-package.mts"),

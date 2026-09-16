@@ -105,35 +105,14 @@ function listenerPids(output: string): number[] {
 }
 
 function classifyEndpointBinding(
-  outputs: readonly string[],
+  endpoints: readonly (string | null)[],
   expectedEndpoint: string,
 ): RuntimeProviderOwnedGatewayReadinessObservation["endpointBinding"] {
-  const expected = new URL(expectedEndpoint);
-  let observed = false;
-  for (const output of outputs) {
-    for (const match of output.matchAll(/^\s*(?:Gateway endpoint|Server):(.*)$/gimu)) {
-      observed = true;
-      let endpoint: URL;
-      try {
-        endpoint = new URL(match[1]?.trim() ?? "");
-      } catch {
-        return "mismatch";
-      }
-      if (
-        endpoint.protocol !== expected.protocol ||
-        endpoint.hostname !== expected.hostname ||
-        endpoint.port !== expected.port ||
-        endpoint.username !== "" ||
-        endpoint.password !== "" ||
-        endpoint.pathname !== "/" ||
-        endpoint.search !== "" ||
-        endpoint.hash !== ""
-      ) {
-        return "mismatch";
-      }
-    }
-  }
-  return observed ? "match" : "unknown";
+  const expected = new URL(expectedEndpoint).origin;
+  if (!endpoints.length) return "unknown";
+  return endpoints.every((endpoint) => endpoint !== null && endpoint === expected)
+    ? "match"
+    : "mismatch";
 }
 
 function isRunningProcess(
@@ -227,7 +206,7 @@ export function observeNativePodmanGatewayReadiness(
         ? "compatible"
         : "drift";
   return Object.freeze({
-    endpointBinding: classifyEndpointBinding(input.managedGatewayOutputs, input.expectedEndpoint),
+    endpointBinding: classifyEndpointBinding(input.managedGatewayEndpoints, input.expectedEndpoint),
     listenerScan: Object.freeze({
       pids: Object.freeze(pids),
       unverifiedPids: Object.freeze(unverifiedPids),
