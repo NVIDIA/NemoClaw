@@ -650,6 +650,7 @@ class SelectedNodeControls(unittest.TestCase):
         record = self.contract()
         record["browserHost"] = "native-edge-cdp"
         record.pop("chromium")
+        record.pop("agentBrowser")
         (self.root / "nemoclaw-hermes-node.json").write_text(json.dumps(record))
         endpoint = "ws://127.0.0.1:51234/devtools/browser/01234567-abcd"
         with mock.patch.dict(os.environ, {"BROWSER_CDP_URL": endpoint}, clear=True):
