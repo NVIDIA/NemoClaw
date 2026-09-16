@@ -2,13 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
-import * as importedPortBoundary from "../../../nemoclaw/dist/shared/port-boundary.cjs";
-
-const sourceOrGeneratedPortBoundary = importedPortBoundary as typeof importedPortBoundary & {
-  default?: typeof importedPortBoundary;
-};
-const { parseServicePortOverride } =
-  sourceOrGeneratedPortBoundary.default ?? sourceOrGeneratedPortBoundary;
+import { parseServicePortOverride } from "./service-port-boundary";
 
 /**
  * Central port configuration — override any port via environment variables.

@@ -83,6 +83,7 @@ describe("local model installer gate", () => {
   it.each([
     ["vLLM", "NEMOCLAW_VLLM_PORT", "08000"],
     ["Hermes dashboard", "NEMOCLAW_HERMES_DASHBOARD_PORT", "09120"],
+    ["Hermes API", "NEMOCLAW_HERMES_API_PORT", "08642"],
   ])("rejects a noncanonical %s port before installer work", (_label, envName, value) => {
     const result = runInstallerMain(["--local-model-runtime=vllm"], { [envName]: value });
     const output = `${result.stdout}${result.stderr}`;

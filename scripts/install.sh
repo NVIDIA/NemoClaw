@@ -248,7 +248,7 @@ resolve_canonical_service_port_override() {
 }
 
 validate_forwarded_service_port_overrides() {
-  local env_name raw
+  local env_name raw port
   local -a env_names=(
     NEMOCLAW_GATEWAY_PORT
     NEMOCLAW_DASHBOARD_PORT
@@ -265,6 +265,13 @@ validate_forwarded_service_port_overrides() {
     [[ -n "$raw" ]] || continue
     resolve_canonical_service_port_override "$env_name" "$raw" >/dev/null
   done
+  raw="${NEMOCLAW_HERMES_API_PORT:-}"
+  if [[ -n "$raw" ]]; then
+    port="$(resolve_canonical_service_port_override NEMOCLAW_HERMES_API_PORT "$raw")"
+    if [[ "$port" -lt 8642 || "$port" -gt 8652 ]]; then
+      error "NEMOCLAW_HERMES_API_PORT must be an integer from 8642 through 8652."
+    fi
+  fi
 }
 
 resolve_nemoclaw_gateway_port() {

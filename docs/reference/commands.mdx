@@ -4031,7 +4031,7 @@ The experimental voice gateway has no Hermes or Deep Agents Code equivalent.
 
 ## Environment Variables
 
-NemoClaw reads the following environment variables to configure service ports, onboarding behavior, and lifecycle defaults. Set them before running `$$nemoclaw onboard` or any command that starts services. For `NEMOCLAW_GATEWAY_PORT`, `NEMOCLAW_DASHBOARD_PORT`, `NEMOCLAW_VLLM_PORT`, `NEMOCLAW_OLLAMA_PORT`, `NEMOCLAW_OLLAMA_PROXY_PORT`, and the three runtime-adapter port overrides, the value after whitespace trimming must use canonical decimal notation with no leading zero and be from 1024 through 65535.
+NemoClaw reads the following environment variables to configure service ports, onboarding behavior, and lifecycle defaults. Set them before running `$$nemoclaw onboard` or any command that starts services. For `NEMOCLAW_GATEWAY_PORT`, `NEMOCLAW_DASHBOARD_PORT`, `NEMOCLAW_HERMES_API_PORT`, `NEMOCLAW_HERMES_DASHBOARD_PORT`, `NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT`, `NEMOCLAW_VLLM_PORT`, `NEMOCLAW_OLLAMA_PORT`, `NEMOCLAW_OLLAMA_PROXY_PORT`, and the three runtime-adapter port overrides, the value after whitespace trimming must use canonical decimal notation with no leading zero. Service ports must be from 1024 through 65535; `NEMOCLAW_HERMES_API_PORT` must be from 8642 through 8652.
 
 ### CLI Logging
 
@@ -4107,6 +4107,8 @@ For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, w
 | ------------------------------- | ------- | ----------------------------------------- |
 | `NEMOCLAW_DASHBOARD_PORT`       | 18789   | Hermes built-in dashboard forward port    |
 | `NEMOCLAW_HERMES_API_PORT`      | 8642    | Hermes OpenAI-compatible API forward port |
+| `NEMOCLAW_HERMES_DASHBOARD_PORT` | 9119    | Hermes dashboard service port             |
+| `NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT` | 19119 | Hermes dashboard backend port        |
 | `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0       | Optional Hermes in-browser TUI tab        |
 
 </AgentOnly>
