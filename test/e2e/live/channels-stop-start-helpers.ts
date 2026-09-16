@@ -837,6 +837,7 @@ export async function runChannelsStopStartTarget({
     sandboxName: SANDBOX_NAME,
     agent: AGENT,
     apiKey,
+    extra: AGENT === "hermes" ? { NEMOCLAW_DASHBOARD_PORT: "18795" } : undefined,
   });
   const env =
     AGENT === "hermes"
