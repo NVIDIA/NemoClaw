@@ -460,3 +460,4 @@ moduleRuntime._extensions[".ts"] = (module, filename) => {
 };
 
 moduleRuntime._extensions[".cts"] = moduleRuntime._extensions[".ts"];
+moduleRuntime._extensions[".mts"] = moduleRuntime._extensions[".ts"];

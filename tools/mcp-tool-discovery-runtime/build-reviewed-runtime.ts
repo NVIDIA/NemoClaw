@@ -38,7 +38,7 @@ try {
   await import("./build-runtime.ts");
   await build({
     absWorkingDir: repoRoot,
-    entryPoints: ["src/lib/onboard/managed-startup/image-runtime.ts"],
+    entryPoints: ["tools/mcp-tool-discovery-runtime/managed-startup-direct-entry.ts"],
     bundle: true,
     platform: "node",
     target: "node22",

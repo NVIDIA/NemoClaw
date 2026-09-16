@@ -215,7 +215,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "a76019b7db84e1aada095ea0cc028b684914ef54e04d6a84561c79918f3392c5",
+      expectedHash: "2669d32158b2ee9f907f2bbd7e7131c773fb07e87804062ac34b3dcf99d19568",
       relativePath: "managed-startup-direct-image-runtime.bundle",
     },
     {
@@ -246,6 +246,21 @@ describe("MCP tool discovery image contract", () => {
     expect(actualHash, relativePath).toBe(
       reviewedRuntimeHashOverrides[relativePath] ?? expectedHash,
     );
+  });
+
+  it("executes the direct managed-startup runtime entrypoint", () => {
+    const bundle = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+    );
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-startup-runtime-"));
+    const executable = path.join(fixture, "managed-startup-image-runtime.cjs");
+    fs.copyFileSync(bundle, executable);
+    const result = spawnSync(process.execPath, [executable], { encoding: "utf8" });
+    fs.rmSync(fixture, { recursive: true, force: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("usage: managed-startup-image-runtime");
   });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {
