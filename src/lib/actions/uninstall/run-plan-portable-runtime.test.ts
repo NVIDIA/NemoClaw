@@ -742,6 +742,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     "%s after a scoped delete uses bounded exact-name verification (#9189)",
     async (_case, absentAttempt, expectedExit, expectedSleeps) => {
       let getCalls = 0;
+      const logs: string[] = [];
       const sleep = vi.fn();
       const runHandlers = new Map<string, () => RunResult>([
         ["openshell status -g nemoclaw", () => ok("Status: Connected\nGateway: nemoclaw\n")],
@@ -783,7 +784,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
           existsSync: () => false,
           hasPortableRuntimeCleanup: () => true,
           isTty: false,
-          log: vi.fn(),
+          log: (line) => logs.push(line),
           rmSync: vi.fn(),
           run,
           runDocker: vi.fn(() => ok()),
@@ -796,6 +797,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       expect(getCalls).toBe(expectedExit === 0 ? absentAttempt : 5);
       expect(sleep).toHaveBeenCalledTimes(expectedSleeps);
       expect(runPortableCleanup).toHaveBeenCalledOnce();
+      expect(logs.includes("Deleted OpenShell sandbox 'alpha'")).toBe(expectedExit === 0);
     },
   );
 
