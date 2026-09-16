@@ -7,6 +7,9 @@ These records qualify specific behaviors, revisions, and environments of NemoCla
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
+Current native inference qualification is [blocked by OpenShell main-process environment propagation](rust-native-inference-linux-arm64.md).
+The record separates passing schema and protocol fixtures from the failed live attempt.
+
 | Contract | Evidence |
 |---|---|
 | SDK and CLI plan/apply/export/destroy; ownership, identity, drift, partial creation, failed observations, interrupted destroy | Workspace behavioral tests and real OpenTofu protocol/lifecycle tests in [native platform qualification](rust-native-platforms.json) |

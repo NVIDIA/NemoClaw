@@ -7,6 +7,9 @@ Choose who operates the inference service, then select the API and model used by
 A sandbox can attach up to 32 inference providers selected by its agents.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 
+Live deployment with the current OpenShell pin is [blocked by a main-process environment propagation bug](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker).
+The configuration below is implemented and fixture-tested; it is not yet qualified end to end with that pin.
+
 OpenShell's managed inference-route API has been removed at our pinned development revision.
 For each selected provider, NemoClaw creates an owned profile binding credentials to its host, port, and API path, attaches the provider to the sandbox, and configures native model connections.
 For uncredentialed endpoints, a dummy client key satisfies SDKs that require a nonempty key; no provider credential is stored.
