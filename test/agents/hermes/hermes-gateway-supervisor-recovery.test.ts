@@ -126,6 +126,82 @@ function runHermesStartupReadiness(gatewayInitStatus: 0 | 1) {
   ]);
 }
 
+function runHermesInternalReadiness(options: {
+  uid?: number;
+  roleAfterPoll?: number;
+  listenerAfterPoll?: number;
+  live?: boolean;
+  healthCode?: number;
+}) {
+  const source = fs.readFileSync(START_SCRIPT, "utf-8");
+  return runBashHarness(
+    [
+      "POLL=0; SECONDS=0; INTERNAL_PORT=18642",
+      ': > "$HEALTH_TRACE"',
+      `id() { printf '%s' ${options.uid ?? 0}; }`,
+      `hermes_tracked_role_is_current() { [ "$3" = "${options.uid ? "current" : "gateway"}" ] && [ "$POLL" -ge ${options.roleAfterPoll ?? 0} ]; }`,
+      `hermes_tracked_service_owns_listener() { printf "listener:%s:%s\\n" "$POLL" "$3"; [ "$POLL" -ge ${options.listenerAfterPoll ?? 0} ]; }`,
+      `gateway_control_pid_is_live() { return ${options.live === false ? 1 : 0}; }`,
+      `curl() { printf "health:%s\\n" "$POLL" >> "$HEALTH_TRACE"; printf '%s' ${options.healthCode ?? 200}; }`,
+      'wait() { printf "unexpected-wait:%s\\n" "$1"; return 99; }',
+      'sleep() { POLL=$((POLL + 1)); SECONDS=$((SECONDS + 30)); [ "$POLL" -le 3 ] || exit 99; }',
+      extractShellFunction(source, "wait_for_hermes_gateway_internal"),
+      "rc=0; wait_for_hermes_gateway_internal 4242 || rc=$?",
+      'cat "$HEALTH_TRACE"',
+      'printf "result:%s\\npolls:%s\\n" "$rc" "$POLL"',
+    ],
+    (tmpDir) => ({ HEALTH_TRACE: path.join(tmpDir, "health.log") }),
+  );
+}
+
+describe("Hermes internal gateway readiness", () => {
+  it.each([
+    [0, "gateway", 200],
+    [1000, "current", 401],
+  ] as const)(
+    "retries role and listener checks before accepting readiness for uid %s",
+    (uid, user, healthCode) => {
+      const result = runHermesInternalReadiness({
+        uid,
+        healthCode,
+        roleAfterPoll: 1,
+        listenerAfterPoll: 2,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe(
+        `listener:1:${user}\nlistener:2:${user}\nhealth:2\nresult:0\npolls:2\n`,
+      );
+      expect(result.stderr).toBe("");
+    },
+  );
+
+  it("reaches the deadline without waiting on or probing an unproven live gateway", () => {
+    const result = runHermesInternalReadiness({ roleAfterPoll: 100 });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("result:1\npolls:3\n");
+    expect(result.stderr).toContain("did not become healthy");
+  });
+
+  it("fails immediately when the gateway exits before readiness", () => {
+    const result = runHermesInternalReadiness({ roleAfterPoll: 100, live: false });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("result:1\npolls:0\n");
+    expect(result.stderr).toContain("exited before internal health became ready");
+  });
+
+  it("rejects an unhealthy response from a proven gateway", () => {
+    const result = runHermesInternalReadiness({ healthCode: 503 });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("health:0\nhealth:1\nhealth:2\nresult:1\npolls:3\n");
+    expect(result.stdout).not.toContain("unexpected-wait");
+    expect(result.stderr).toContain("did not become healthy");
+  });
+});
+
 describe("Hermes PID 1 supervisor recovery", () => {
   it("publishes startup readiness through isolated Python when gateway-control init fails", () => {
     const result = runHermesStartupReadiness(1);
