@@ -32,6 +32,10 @@ import type {
   ManagedBootstrapPreparedTransaction,
 } from "./adapter";
 import {
+  OPENSHELL_MAIN_PROCESS_SPEC_ENV,
+  openshellMainProcessSpecEnvValue,
+} from "../docker-startup-command-env";
+import {
   createFilePodmanBootstrapJournalStore,
   PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
   type PodmanBootstrapJournal,
@@ -298,6 +302,10 @@ describe("Podman managed-bootstrap runtime surface", () => {
               "OPENSHELL_SANDBOX_UID=",
               "OPENSHELL_SANDBOX_GID=",
               "OPENSHELL_SANDBOX_COMMAND=stale",
+              `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${openshellMainProcessSpecEnvValue(
+                ["/usr/local/bin/nemoclaw-managed-hold", "--bootstrap-identity", IDENTITY],
+                true,
+              )}`,
               "PATH=/usr/bin",
             ],
           },
@@ -312,9 +320,47 @@ describe("Podman managed-bootstrap runtime surface", () => {
       "OPENSHELL_SANDBOX_UID=",
       "OPENSHELL_SANDBOX_GID=",
       "PATH=/usr/bin",
-      "OPENSHELL_SANDBOX_COMMAND=/usr/local/bin/nemoclaw-start",
+      `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${openshellMainProcessSpecEnvValue(
+        ["/usr/local/bin/nemoclaw-start"],
+        true,
+      )}`,
       "NEMOCLAW_MANAGED_BOOTSTRAP_DROP_CAPABILITIES=0x32",
     ]);
+  });
+
+  it.each([
+    ["missing", []],
+    ["malformed", [`${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=not-json`]],
+    [
+      "duplicate",
+      [
+        `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${openshellMainProcessSpecEnvValue(
+          ["/usr/local/bin/nemoclaw-managed-hold"],
+          false,
+        )}`,
+        `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${openshellMainProcessSpecEnvValue(
+          ["/usr/local/bin/nemoclaw-managed-hold"],
+          false,
+        )}`,
+      ],
+    ],
+  ])("rejects %s main-process metadata before rendering a replacement", (_label, environment) => {
+    expect(() =>
+      renderPodmanReplacementEnvironment(
+        {
+          Config: {
+            User: "0:0",
+            Labels: { "openshell.managed": "true" },
+            Env: environment,
+          },
+        },
+        {
+          plan: { profile: { agent: "openclaw", fingerprint: "a".repeat(64) } },
+          bootstrapIdentity: IDENTITY,
+          intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
+        } as never,
+      ),
+    ).toThrow();
   });
 
   it("reproduces the OpenShell supervisor image mount on the bootstrap replacement", () => {
