@@ -49,7 +49,8 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 ## OpenClaw Dashboard
 
 Declare `interfaces` inside the selected OpenClaw harness configuration.
-All agents share its native gateway and must resolve to identical harness settings; use [a shared harness definition](configuration-references.md#reference-a-harness-configuration) to declare them once.
+The sandbox selects this configuration once, and all its agents share the native gateway.
+Use [a shared harness definition](configuration-references.md#reference-a-harness-configuration) to reuse the settings.
 
 ```yaml
 interfaces:

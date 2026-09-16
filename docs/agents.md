@@ -3,7 +3,7 @@
 
 # Agent Runtimes and Native Access
 
-OpenClaw runs through Fabric, using `harness: {kind: openclaw}`.
+OpenClaw runs through Fabric, using `sandboxes[].harness: {kind: openclaw}`.
 The default sandbox image is the pinned Fabric OpenClaw image.
 Fabric owns the agent process inside the sandbox, while OpenShell owns isolation and inference routing.
 
@@ -19,14 +19,15 @@ See [inference configuration](inference.md) for API selection, OpenClaw route tu
 ## Configure the Shared Harness
 
 Each sandbox runs one harness runtime.
-Select its configuration inline with `harness: {kind: openclaw}` or through `harnessRef` from enclosing `harnesses` definitions.
-All agents in a sandbox must resolve to identical harness settings.
+Each sandbox must select exactly one configuration: inline `harness: {kind: openclaw}` or `harnessRef` from visible `harnesses` definitions.
+Every agent is an instance of the sandbox-selected harness implementation; multiple agents may share one runtime process.
+Agents retain their own inference choices, tools, and integrations.
 Execution defaults, tracing, and native interfaces belong inside that configuration; they no longer belong to the first agent.
 A shared definition reuses settings, not a running process across sandboxes.
 See [shared harness definitions](configuration-references.md#reference-a-harness-configuration) for an example.
 
-The former scalar `harness` and agent-level `execution`, `observability`, and `interfaces` fields are rejected.
-Move those settings under the typed harness object when authoring a new deployment.
+Agent-level `harness` and `harnessRef`, the former scalar `harness`, and agent-level `execution`, `observability`, and `interfaces` fields are rejected.
+Move the harness selection to the sandbox and keep execution, observability, and interfaces inside the typed harness configuration.
 Use the matching previous bundle for retained deployments; editing YAML does not migrate their state or native data.
 
 ## Choose Native Access
@@ -170,7 +171,7 @@ Use a whole number followed by `s`, `m`, or `h`.
 See the [execution field reference](reference/configuration.md#agentexecution) for bounds.
 
 Execution settings apply to the shared OpenClaw gateway defaults.
-All agents in a sandbox must select identical harness settings; use a shared `harnessRef` to avoid repeating them.
+Select these settings once on the sandbox; use `harnessRef` to reuse a named configuration.
 Other harnesses and empty `execution` objects are rejected.
 Export preserves explicit settings and leaves omitted fields absent.
 
@@ -282,12 +283,11 @@ spec:
         env: BRAVE_API_KEY
   sandboxes:
     - name: assistant
+      harness: {kind: openclaw}
       agents:
         - name: researcher
-          harness: {kind: openclaw}
           integrationRefs: [search]
         - name: writer
-          harness: {kind: openclaw}
           integrationRefs: [search]
 ```
 
@@ -296,7 +296,6 @@ For one agent, put the definition directly under its `integrations` field:
 ```yaml
 agents:
   - name: researcher
-    harness: {kind: openclaw}
     integrations:
       search:
         kind: webSearch

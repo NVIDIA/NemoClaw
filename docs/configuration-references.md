@@ -34,7 +34,7 @@ Paths below are relative to `spec`; `agents[]` is inside `sandboxes[]` and `rout
 |---|---|---|---|
 | Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; at most one with managed inference dependencies |
 | Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw supports named choices with an explicit default; other harnesses require one choice |
-| Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Agent `harness` or `harnessRef` | One runtime per sandbox; all agents must select identical settings |
+| Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration per sandbox; all agents use that implementation |
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
 
 Inference providers are list entries with a `name`; inferences, harnesses, and integrations are maps keyed by name.
@@ -48,7 +48,7 @@ See [Hermes authentication](inference.md#authenticate-hermes-through-the-provide
 
 ## Reference a Harness Configuration
 
-Define runtime settings once and select them from each agent:
+Define runtime settings once and select them from the sandbox:
 
 ```yaml
 spec:
@@ -62,20 +62,20 @@ spec:
           port: 18800
   sandboxes:
     - name: assistant
+      harnessRef: assistant
       agents:
         - name: researcher
-          harnessRef: assistant
           inferenceRef: chat
         - name: writer
-          harnessRef: assistant
           inferenceRef: chat
 ```
 
 This fragment assumes a `chat` inference definition and omits other required deployment fields.
-Put `harnesses` under the sandbox to limit visibility to its agents.
+Put `harnesses` under the sandbox to keep the definitions local to that sandbox.
 Use `harness: {kind: openclaw}` for an inline configuration without additional settings.
 Execution defaults, observability, and interfaces belong inside the harness configuration.
-Every agent in a sandbox must select identical harness settings.
+Each sandbox requires exactly one of `harness` or `harnessRef`; agents cannot select a harness.
+Every agent is an instance of the selected implementation, and multiple agents may share one runtime process.
 Sharing a definition reuses configuration; each sandbox owns its runtime process.
 
 ## Reference an Inference Configuration
@@ -97,12 +97,11 @@ spec:
             model: qwen3:4b
   sandboxes:
     - name: assistant
+      harness: {kind: openclaw}
       agents:
         - name: researcher
-          harness: {kind: openclaw}
           inferenceRef: chat
         - name: writer
-          harness: {kind: openclaw}
           inferenceRef: chat
 ```
 
@@ -124,9 +123,9 @@ spec:
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
     - name: assistant
+      harness: {kind: openclaw}
       agents:
         - name: researcher
-          harness: {kind: openclaw}
           inference:
             routes:
               - name: primary
