@@ -37,7 +37,7 @@ pub fn runtime_targets(
     } else {
         Vec::new()
     };
-    if let Some(service) = document.spec.inference_providers[0].service.as_ref() {
+    if let Some(service) = document.inference_provider()?.service.as_ref() {
         let spec = Spec {
             layout: 0,
             kind: SERVICE_KIND.into(),
@@ -79,7 +79,8 @@ pub fn compile_runtime(
             GATEWAY_KIND => attrs["depends_on"] = json!(["nemoclaw_gateway_storage.runtime"]),
             SERVICE_KIND => {
                 attrs["depends_on"] = if document.spec.gateway.management == "managed"
-                    && document.spec.inference_providers[0]
+                    && document
+                        .inference_provider()?
                         .service
                         .as_ref()
                         .is_some_and(|s| s.placement.is_none())

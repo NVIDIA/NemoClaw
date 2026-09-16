@@ -38,7 +38,7 @@ pub struct Metadata {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The configuration requires one inference provider and one sandbox.
+/// The configuration requires one selected inference provider and one sandbox.
 pub struct Spec {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
@@ -47,8 +47,13 @@ pub struct Spec {
     #[serde(rename = "gateway")]
     /// OpenShell gateway connection or managed gateway settings.
     pub gateway: Gateway,
-    #[serde(rename = "inferenceProviders")]
-    /// Exactly one external endpoint, managed Ollama server, or managed vLLM service.
+    #[serde(
+        rename = "inferenceProviders",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(default)]
+    /// Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(rename = "sandboxes")]
     /// Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness.
@@ -203,6 +208,14 @@ pub struct ManagedOllama {
 #[serde(default, deny_unknown_fields)]
 /// The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.
 pub struct Sandbox {
+    #[serde(
+        rename = "inferenceProviders",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(default)]
+    /// Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions.
+    pub inference_providers: Vec<InferenceProvider>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
     /// Named inline integration definitions visible only to this sandbox's agents. Names must not collide with deployment definitions.
@@ -335,9 +348,18 @@ pub struct Route {
     #[serde(rename = "name")]
     /// The primary route name.
     pub name: String,
-    #[serde(rename = "providerRef")]
-    /// Must equal the declared inference provider name.
-    pub provider_ref: String,
+    #[serde(
+        rename = "providerRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Name of an enclosing inference provider. Exactly one of providerRef or provider is required.
+    pub provider_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "InferenceProvider")]
+    /// Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition.
+    pub provider: Option<InferenceProvider>,
     #[serde(rename = "overrides")]
     /// Model selection, optional OpenClaw tuning, and optional Pi model metadata.
     pub overrides: Overrides,

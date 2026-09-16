@@ -14,7 +14,7 @@ pub fn supports(kind: &str) -> bool {
     matches!(kind, PROXY | STORAGE | MODEL)
 }
 pub fn specification(document: &Document, generations: &Generations) -> Result<ServiceSpec, Error> {
-    let provider = &document.spec.inference_providers[0];
+    let provider = document.inference_provider()?;
     let proxy = provider
         .ollama_proxy
         .as_ref()

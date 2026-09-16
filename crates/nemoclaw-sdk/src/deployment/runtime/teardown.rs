@@ -7,7 +7,7 @@ use super::*;
 // retained document and resource graph intact; narrow only subprocess secrets.
 fn destroy_environment(document: &Document) -> Document {
     let mut environment = document.clone();
-    for provider in &mut environment.spec.inference_providers {
+    for provider in environment.provider_definitions_mut() {
         provider.credential = None;
     }
     for sandbox in &mut environment.spec.sandboxes {
@@ -274,7 +274,7 @@ fn validate_teardown_state(
             "unfinished apply may have unbound effects; reconcile its original configuration before destroy",
         ));
     }
-    if record.document.spec.inference_providers[0].ollama.is_some()
+    if record.document.inference_provider()?.ollama.is_some()
         && bindings.contains_key("nemoclaw_ollama.service")
         && !bindings.contains_key(crate::deployment::ollama::STORAGE)
     {

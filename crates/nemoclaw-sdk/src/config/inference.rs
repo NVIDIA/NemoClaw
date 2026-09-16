@@ -12,11 +12,7 @@ pub struct InferenceConnection {
 impl Document {
     pub fn has_runtime(&self) -> bool {
         self.spec.gateway.management == "managed"
-            || self
-                .spec
-                .inference_providers
-                .iter()
-                .any(|p| p.service.is_some())
+            || self.inference_provider().is_ok_and(|p| p.service.is_some())
     }
     /// Validate the document and resolve its inference connection.
     /// Managed inference retains its publication; external inference uses its explicit URL.
@@ -27,9 +23,7 @@ impl Document {
     /// cannot be resolved. This operation does not contact external services.
     pub fn inference_connection(&self) -> Result<InferenceConnection, ConfigError> {
         self.validate()?;
-        let [provider] = self.spec.inference_providers.as_slice() else {
-            return Err(ConfigError("exactly one inference provider is required"));
-        };
+        let provider = self.inference_provider()?;
         let endpoint = match &provider.service {
             None => provider
                 .ollama_proxy

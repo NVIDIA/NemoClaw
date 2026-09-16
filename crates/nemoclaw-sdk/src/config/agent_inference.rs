@@ -82,8 +82,6 @@ pub enum AuthMethod {
 pub struct AgentAuth {
     /// API-key authentication. Interactive login is not supported.
     pub method: AuthMethod,
-    /// Must equal the primary route's providerRef. Secret values stay in OpenShell.
-    pub provider_ref: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
@@ -160,7 +158,14 @@ pub(crate) struct RuntimeInference {
     pub api: InferenceApi,
     pub tuning: RouteTuning,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth: Option<AgentAuth>,
+    pub auth: Option<RuntimeAuth>,
+}
+// Keep the adapter wire contract while deriving authentication from the selected route.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RuntimeAuth {
+    pub method: AuthMethod,
+    pub provider_ref: String,
 }
 impl RuntimeInference {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
@@ -212,7 +217,7 @@ impl RuntimeInference {
 impl Document {
     pub(crate) fn runtime_inference(&self) -> Result<Option<RuntimeInference>, ConfigError> {
         let agent = &self.spec.sandboxes[0].agents[0];
-        let provider = &self.spec.inference_providers[0];
+        let provider = self.inference_provider()?;
         let tuning = &agent.inference.routes[0].overrides.tuning;
         let agents = &self.spec.sandboxes[0].agents;
         let web_search = self.web_search()?;
@@ -245,7 +250,10 @@ impl Document {
                 .api
                 .unwrap_or(InferenceApi::for_harness(&agent.harness)),
             tuning: tuning.clone(),
-            auth: agent.auth.clone(),
+            auth: agent.auth.as_ref().map(|auth| RuntimeAuth {
+                method: auth.method.clone(),
+                provider_ref: provider.name.clone(),
+            }),
         }))
     }
 }

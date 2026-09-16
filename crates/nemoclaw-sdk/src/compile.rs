@@ -29,7 +29,7 @@ fn generation<'a>(generations: &'a Generations, kind: &str) -> Result<&'a str, C
 pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Target>, ConfigError> {
     document.validate()?;
     let workspace = document.workspace();
-    let provider = &document.spec.inference_providers[0];
+    let provider = document.inference_provider()?;
     let connection = document.inference_connection()?;
     let sandbox = &document.spec.sandboxes[0];
     let agent = &sandbox.agents[0];
@@ -207,7 +207,7 @@ pub fn compile(
 ) -> Result<Value, ConfigError> {
     let targets = targets(document, generations)?;
     let gateway = &document.spec.gateway;
-    let inference = &document.spec.inference_providers[0];
+    let inference = document.inference_provider()?;
     let mut provider = json!({"endpoint":gateway.endpoint});
     if let Some(c) = &gateway.credential {
         provider["credential_env"] = json!(c.env);

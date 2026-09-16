@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: inline-inference
+  uid: ef59d17e-569c-45a4-afd4-98b531e2f9d6
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17681
+  sandboxes:
+    - name: assistant
+      agents:
+        - name: researcher
+          harness: openclaw
+          inference:
+            routes:
+              - name: primary
+                provider:
+                  name: local
+                  provider: openai
+                  endpoint: http://172.20.0.1:11446/v1
+                overrides:
+                  model: qwen3:4b

@@ -91,7 +91,7 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     if authenticated {
         value["spec"]["inferenceProviders"][0]["service"]["authentication"] = "bearer".into();
-        value["spec"]["sandboxes"][0]["agents"][0]["auth"] = json!({"method":"api-key","providerRef":value["spec"]["inferenceProviders"][0]["name"]});
+        value["spec"]["sandboxes"][0]["agents"][0]["auth"] = json!({"method":"api-key"});
     }
     save(root, "config.yaml", &value);
     let parsed = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();

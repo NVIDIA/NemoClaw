@@ -32,7 +32,6 @@ spec:
           harness: hermes
           auth:
             method: api-key
-            providerRef: local
           inference:
             routes:
               - name: primary

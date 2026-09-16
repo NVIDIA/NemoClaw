@@ -150,46 +150,25 @@ impl Document {
             "gateway credentials require HTTPS",
         )?;
         require(
-            self.spec.inference_providers.len() == 1 && self.spec.sandboxes.len() == 1,
-            "this slice requires exactly one inference provider and one sandbox",
+            self.spec.sandboxes.len() == 1,
+            "exactly one sandbox is required",
         )?;
-        let provider = &self.spec.inference_providers[0];
-        let management = if provider.service.is_some() || provider.ollama.is_some() {
-            Management::Managed
-        } else {
-            Management::External
-        };
-        require(
-            provider
-                .management
-                .is_none_or(|declared| declared == management),
-            "inference management must match service or Ollama (managed) or endpoint alone (external)",
-        )?;
-        require(
-            SLUG.is_match(&provider.name)
-                && constraints::PROVIDERS.contains(&provider.provider.as_str()),
-            "provider requires a lowercase name and openai or anthropic implementation",
-        )?;
-        if let Some(service) = &provider.service {
-            require(
-                provider.endpoint.is_empty()
-                    && provider.ollama.is_none()
-                    && provider.credential.is_none(),
-                "managed service excludes endpoint, Ollama, and external credentials",
-            )?;
-            require(
-                gateway.management == "managed" || service.placement.is_some(),
-                "service requires a managed gateway or explicit placement",
-            )?;
-            service.validate()?;
-        } else {
-            validate_endpoint(&provider.endpoint, false)?;
+        let provider = self.inference_provider()?;
+        for definition in self
+            .spec
+            .inference_providers
+            .iter()
+            .chain(&self.spec.sandboxes[0].inference_providers)
+            .chain(
+                self.spec.sandboxes[0]
+                    .agents
+                    .iter()
+                    .flat_map(|a| &a.inference.routes)
+                    .filter_map(|r| r.provider.as_ref()),
+            )
+        {
+            validate_provider(definition, gateway)?;
         }
-        credential(&provider.credential)?;
-        require(
-            provider.credential.is_none() || !provider.endpoint.starts_with("http:"),
-            "inference credentials require HTTPS",
-        )?;
         let sandbox = &self.spec.sandboxes[0];
         require(
             SLUG.is_match(&sandbox.name) && IMAGE.is_match(&sandbox.image.ref_),
@@ -287,10 +266,9 @@ impl Document {
                     "Hermes Relay tracing cannot be combined with native Hermes interfaces",
                 )?;
             }
-            if let Some(auth) = &agent.auth {
+            if agent.auth.is_some() {
                 require(
                     agent.harness == "hermes"
-                        && auth.provider_ref == provider.name
                         && (provider.credential.is_some()
                             || provider.ollama_proxy.is_some()
                             || provider
@@ -306,9 +284,7 @@ impl Document {
             )?;
             let route = &agent.inference.routes[0];
             require(
-                route.name == "primary"
-                    && route.provider_ref == provider.name
-                    && MODEL.is_match(&route.overrides.model),
+                route.name == "primary" && MODEL.is_match(&route.overrides.model),
                 "primary route must reference the declared provider and valid model",
             )?;
             route.overrides.tuning.validate(&agent.harness)?;
@@ -443,4 +419,44 @@ impl Service {
         )?;
         crate::backends::validation::validate(self)
     }
+}
+
+fn validate_provider(provider: &InferenceProvider, gateway: &Gateway) -> Result<(), ConfigError> {
+    let management = if provider.service.is_some() || provider.ollama.is_some() {
+        Management::Managed
+    } else {
+        Management::External
+    };
+    require(
+        provider
+            .management
+            .is_none_or(|declared| declared == management),
+        "inference management must match service or Ollama (managed) or endpoint alone (external)",
+    )?;
+    require(
+        SLUG.is_match(&provider.name)
+            && constraints::PROVIDERS.contains(&provider.provider.as_str()),
+        "provider requires a lowercase name and openai or anthropic implementation",
+    )?;
+    if let Some(service) = &provider.service {
+        require(
+            provider.endpoint.is_empty()
+                && provider.ollama.is_none()
+                && provider.credential.is_none(),
+            "managed service excludes endpoint, Ollama, and external credentials",
+        )?;
+        require(
+            gateway.management == "managed" || service.placement.is_some(),
+            "service requires a managed gateway or explicit placement",
+        )?;
+        service.validate()?;
+    } else {
+        validate_endpoint(&provider.endpoint, false)?;
+    }
+    credential(&provider.credential)?;
+    require(
+        provider.credential.is_none() || !provider.endpoint.starts_with("http:"),
+        "inference credentials require HTTPS",
+    )?;
+    Ok(())
 }

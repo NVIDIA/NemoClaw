@@ -38,7 +38,8 @@ impl Deployment {
                     .clone(),
             );
             let observed = if crate::ollama::proxy::supports(&target.kind) {
-                let proxy = document.spec.inference_providers[0]
+                let proxy = document
+                    .inference_provider()?
                     .ollama_proxy
                     .as_ref()
                     .ok_or(Error::State("missing proxy settings"))?;
@@ -93,24 +94,24 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         }
         return Ok(());
     }
-    if document.spec.inference_providers[0].service.is_some() {
+    if document.inference_provider()?.service.is_some() {
         if observed["endpoint"] != document.inference_endpoint()?
             || !observed["credential_env"].is_empty()
         {
             return Err(Error::Conflict("managed inference registration drifted"));
         }
     } else {
-        document.spec.inference_providers[0].endpoint = observed["endpoint"].clone();
+        document.inference_provider_mut()?.endpoint = observed["endpoint"].clone();
     }
-    document.spec.inference_providers[0].credential = (!observed["credential_env"].is_empty())
-        .then(|| Credential {
+    document.inference_provider_mut()?.credential =
+        (!observed["credential_env"].is_empty()).then(|| Credential {
             env: observed["credential_env"].clone(),
         });
     Ok(())
 }
 
 fn export_route(document: &mut Document, observed: &Row) -> Result<(), Error> {
-    if observed["provider_name"] != document.spec.inference_providers[0].name {
+    if observed["provider_name"] != document.inference_provider()?.name {
         return Err(Error::Conflict(
             "route references a provider outside this deployment",
         ));

@@ -87,11 +87,7 @@ pub(super) fn constrain(root: &mut Value) {
     }
     property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
     property(&mut defs["Credential"], "env", json!({"pattern": c::ENV}));
-    for (name, field) in [
-        ("Spec", "inferenceProviders"),
-        ("Spec", "sandboxes"),
-        ("Inference", "routes"),
-    ] {
+    for (name, field) in [("Spec", "sandboxes"), ("Inference", "routes")] {
         property(
             defs.get_mut(name).unwrap(),
             field,
@@ -178,13 +174,12 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"minimum": 1, "maximum": n::POLICY_BODY_MAX}),
         );
     }
-    property(
-        &mut defs["AgentAuth"],
-        "providerRef",
-        json!({"pattern": c::SLUG}),
-    );
     property(&mut defs["Agent"], "harness", json!({"enum": c::HARNESSES}));
     property(&mut defs["Route"], "name", json!({"const": "primary"}));
+    defs["Route"]["oneOf"] = json!([
+        {"required":["providerRef"],"not":{"required":["provider"]}},
+        {"required":["provider"],"not":{"required":["providerRef"]}}
+    ]);
     property(
         &mut defs["Route"],
         "providerRef",
@@ -312,43 +307,78 @@ pub(super) fn constrain(root: &mut Value) {
     ]}}));
     service_constraints(defs);
 
-    let provider = "spec/inferenceProviders/[]";
-    let agent = "spec/sandboxes/[]/agents/[]";
-    let runtime = "spec/sandboxes/[]/runtime/provider";
-    let route = format!("{agent}/inference/routes/[]/overrides");
-    let service = format!("{provider}/service");
-    root["allOf"] = json!([
-        {"if": at(&format!("{agent}/harness"), json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
-        {"if": at("spec/gateway/management", json!({"const": "managed"}), true),
-         "then": at(runtime, json!({"enum": ["", "docker"]}), false)},
-        {"if": {"allOf": [at(&service, json!({}), true), {"anyOf": [
-            at("spec/gateway/management", json!({"const": "external"}), true),
-            at(runtime, json!({"const": "podman"}), true)
-         ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"enum": ["openclaw", "hermes"]}}), true),
-         "then": {"allOf": [at("spec/gateway/management", json!({"const": "external"}), false), at(provider, forbid(&["service", "ollama"]), false)]}},
-        {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
-            {"allOf": [at(&format!("{agent}/harness"), json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
-         "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),
-         "else": at(&format!("{provider}/provider"), json!({"const": "openai"}), false)},
-        {"if": at(&format!("{agent}/harness"), json!({"const": "claude"}), true), "then": at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), false)},
-        {"if": at(&format!("{agent}/harness"), json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "openclaw"}}), true),
-         "then": at(&route, forbid(&["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]), false)},
-        {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at(&format!("{agent}/harness"), json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["ollamaProxy"]},{"required":["service"],"properties":{"service":{"required":["authentication"]}}}]}), true)]}},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "pi"}}), true),
-         "then": at(&route, forbid(&["piModel"]), false)},
-        {"if": at(&format!("{provider}/ollama"), json!({}), true),
-         "then": at(&format!("{route}/model"), json!({"pattern": c::OLLAMA_MODEL}), false)}
-    ]);
+    root["allOf"] = json!([]);
+    let route_path = "spec/sandboxes/[]/agents/[]/inference/routes/[]";
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at(route_path, json!({"required":["providerRef"]}), true),
+        "then": {"anyOf":[
+            at("spec/inferenceProviders", json!({"minItems":1}), true),
+            at("spec/sandboxes/[]/inferenceProviders", json!({"minItems":1}), true)
+        ]}
+    }));
+    for (provider, selection) in [
+        (
+            "spec/inferenceProviders/[]",
+            json!({"allOf": [
+                at("spec/inferenceProviders", json!({"minItems":1,"maxItems":1}), true),
+                at("spec/sandboxes/[]/inferenceProviders", json!({"maxItems":0}), false),
+                at(route_path, json!({"required":["providerRef"]}), true)
+            ]}),
+        ),
+        (
+            "spec/sandboxes/[]/inferenceProviders/[]",
+            json!({"allOf": [
+                at("spec/inferenceProviders", json!({"maxItems":0}), false),
+                at("spec/sandboxes/[]/inferenceProviders", json!({"minItems":1,"maxItems":1}), true),
+                at(route_path, json!({"required":["providerRef"]}), true)
+            ]}),
+        ),
+        (
+            "spec/sandboxes/[]/agents/[]/inference/routes/[]/provider",
+            at(route_path, json!({"required":["provider"]}), true),
+        ),
+    ] {
+        let agent = "spec/sandboxes/[]/agents/[]";
+        let runtime = "spec/sandboxes/[]/runtime/provider";
+        let route = format!("{agent}/inference/routes/[]/overrides");
+        let service = format!("{provider}/service");
+        let rules = json!([
+            {"if": at(&format!("{agent}/harness"), json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
+            {"if": at("spec/gateway/management", json!({"const": "managed"}), true),
+             "then": at(runtime, json!({"enum": ["", "docker"]}), false)},
+            {"if": {"allOf": [at(&service, json!({}), true), {"anyOf": [
+                at("spec/gateway/management", json!({"const": "external"}), true),
+                at(runtime, json!({"const": "podman"}), true)
+             ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
+            {"if": at(&format!("{agent}/harness"), json!({"not": {"enum": ["openclaw", "hermes"]}}), true),
+             "then": {"allOf": [at("spec/gateway/management", json!({"const": "external"}), false), at(provider, forbid(&["service", "ollama"]), false)]}},
+            {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
+                {"allOf": [at(&format!("{agent}/harness"), json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
+             "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),
+             "else": at(&format!("{provider}/provider"), json!({"const": "openai"}), false)},
+            {"if": at(&format!("{agent}/harness"), json!({"const": "claude"}), true), "then": at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), false)},
+            {"if": at(&format!("{agent}/harness"), json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
+            {"if": at(&format!("{agent}/harness"), json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
+            {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "openclaw"}}), true),
+             "then": at(&route, forbid(&["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]), false)},
+            {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at(&format!("{agent}/harness"), json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["ollamaProxy"]},{"required":["service"],"properties":{"service":{"required":["authentication"]}}}]}), true)]}},
+            {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "pi"}}), true),
+             "then": at(&route, forbid(&["piModel"]), false)},
+            {"if": at(&format!("{provider}/ollama"), json!({}), true),
+             "then": at(&format!("{route}/model"), json!({"pattern": c::OLLAMA_MODEL}), false)}
+        ]);
+        root["allOf"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"if":selection,"then":{"allOf":rules}}));
+    }
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
-        "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
+        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing and multiple selected definitions, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);

@@ -13,6 +13,7 @@ pub use observability::*;
 pub use ollama_proxy::*;
 mod inference;
 mod interfaces;
+mod providers;
 pub use agent_inference::*;
 pub use execution::*;
 pub use interfaces::*;
@@ -168,10 +169,10 @@ impl Document {
                 tls.key.env.as_str(),
             ]);
         }
-        for provider in &self.spec.inference_providers {
-            if let Some(c) = &provider.credential {
-                names.push(c.env.as_str());
-            }
+        if let Ok(provider) = self.inference_provider()
+            && let Some(c) = &provider.credential
+        {
+            names.push(c.env.as_str());
         }
         for binding in self.spec.sandboxes[0]
             .integration_bindings(&self.spec.integrations)
@@ -197,7 +198,7 @@ impl Document {
                 ),
             );
         }
-        for provider in &mut self.spec.inference_providers {
+        for provider in self.provider_definitions_mut() {
             if let Some(service) = &mut provider.service {
                 service.defaults();
             }

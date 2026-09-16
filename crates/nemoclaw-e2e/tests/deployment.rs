@@ -124,6 +124,33 @@ async fn web_search_cli_export_reapply_and_destroy() {
     lifecycle(&document.yaml().unwrap()).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope() {
+    for input in [
+        include_str!("../../../examples/fabric-openclaw.yaml"),
+        include_str!("../../../examples/hermes-auth.yaml"),
+    ] {
+        let mut document = Document::parse(input.as_bytes()).unwrap();
+        document.spec.sandboxes[0].inference_providers =
+            std::mem::take(&mut document.spec.inference_providers);
+        document.spec.inference_providers.push(
+            serde_json::from_value(serde_json::json!({
+                "name":"unused", "provider":"openai", "endpoint":"https://unused.example.test/v1",
+                "credential":{"env":"UNUSED_KEY"}
+            }))
+            .unwrap(),
+        );
+        lifecycle(&document.yaml().unwrap()).await;
+        let sandbox = &mut document.spec.sandboxes[0];
+        let provider = sandbox.inference_providers.remove(0);
+        let route = &mut sandbox.agents[0].inference.routes[0];
+        route.provider_ref = None;
+        route.provider = Some(provider);
+        lifecycle(&document.yaml().unwrap()).await;
+    }
+}
+
 async fn lifecycle(input: &str) {
     lifecycle_with_ownership(input, false).await;
 }
@@ -187,7 +214,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, if has_search { 6 } else { 4 });
     if declare_ownership {
-        document.spec.inference_providers[0].management =
+        document.inference_provider_mut().unwrap().management =
             Some(nemoclaw_sdk::config::Management::External);
         document.spec.sandboxes[0]
             .network
@@ -306,7 +333,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         fixture.state.lock().unwrap().exec_exit = 0;
         assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     }
-    if document.spec.inference_providers[0].api.is_some()
+    if document.inference_provider().unwrap().api.is_some()
         || document.spec.sandboxes[0].agents[0].auth.is_some()
         || document.spec.sandboxes[0].agents[0].execution.is_some()
         || document.spec.sandboxes[0].agents[0].observability.is_some()
@@ -338,8 +365,8 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         } else if let Some(observability) = &mut changed.spec.sandboxes[0].agents[0].observability {
             observability.otlp.as_mut().unwrap().sample_rate = 1.into();
         } else {
-            changed.spec.inference_providers[0].api = Some(
-                if document.spec.inference_providers[0].api
+            changed.inference_provider_mut().unwrap().api = Some(
+                if document.inference_provider().unwrap().api
                     == Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions)
                 {
                     nemoclaw_sdk::config::InferenceApi::OpenaiResponses
