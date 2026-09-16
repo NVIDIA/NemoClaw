@@ -76,6 +76,19 @@ describe("cloud inference sandbox credential scan", () => {
     expect(scan(root)).toBe("");
   });
 
+  it("skips the gateway-owned OpenClaw authentication database", () => {
+    const root = createScanRoot();
+    const protectedRoot = path.join(root, "openclaw-gateway-state");
+    writeFixture(protectedRoot, "state/openclaw.sqlite", "nvapi-protected-gateway-canary\n");
+    fs.chmodSync(protectedRoot, 0o000);
+
+    try {
+      expect(scan(root)).toBe("");
+    } finally {
+      fs.chmodSync(protectedRoot, 0o700);
+    }
+  });
+
   it.each([
     ["NVIDIA", "nvapi-nemoclaw-credential-boundary-canary"],
     ["GitHub", `ghp_${"a".repeat(36)}`],

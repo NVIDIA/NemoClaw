@@ -210,7 +210,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       );
       fs.writeFileSync(
         path.join(runtimeDir, "conversation-runtime.js"),
-        "export const issuePairingChallenge = true;\n",
+        "export const issuePairingChallenge = () => true;\n",
       );
       fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
@@ -220,7 +220,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       );
 
       const result = spawnSync(process.execPath, ["--input-type=module"], {
-        input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nconst runtime = await loadConversationRuntime();\nconsole.log(runtime.issuePairingChallenge);\n`,
+        input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nconst runtime = await loadConversationRuntime();\nconsole.log(typeof runtime.issuePairingChallenge);\n`,
         encoding: "utf8",
         env: {
           ...process.env,
@@ -230,7 +230,70 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("true");
+      expect(result.stdout).toContain("function");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adapts the OpenClaw 2026.9.1 split channel-pairing runtime", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-split-pairing-"));
+    try {
+      const packageRoot = path.join(tmp, "openclaw-package");
+      const packageBin = path.join(packageRoot, "bin");
+      const pathBin = path.join(tmp, "path-bin");
+      const runtimeDir = path.join(packageRoot, "dist/plugin-sdk");
+      fs.mkdirSync(packageBin, { recursive: true });
+      fs.mkdirSync(pathBin, { recursive: true });
+      fs.mkdirSync(runtimeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({ name: "openclaw", type: "module" }),
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "conversation-runtime.js"),
+        "export const upsertChannelPairingRequest = async (params) => ({ code: params.id + '-CODE', created: true });\n",
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "channel-pairing.js"),
+        [
+          "export function createChannelPairingChallengeIssuer(bound) {",
+          "  return async (challenge) => {",
+          "    const stored = await bound.upsertPairingRequest({ id: challenge.senderId, meta: challenge.meta });",
+          "    await challenge.sendPairingReply(stored.code);",
+          "    return stored;",
+          "  };",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
+
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}
+const runtime = await loadConversationRuntime();
+let reply = "";
+const paired = await runtime.issuePairingChallenge({
+  channel: "discord",
+  accountId: "default",
+  senderId: "U1",
+  senderIdLine: "Discord user id: U1",
+  meta: { channelId: "D1" },
+  upsertPairingRequest: ({ id, meta }) => runtime.upsertChannelPairingRequest({ channel: "discord", accountId: "default", id, meta }),
+  sendPairingReply: async (text) => { reply = text; },
+});
+console.log(JSON.stringify({ paired, reply }));
+`,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${pathBin}:${process.env.PATH ?? ""}` },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        paired: { code: "U1-CODE", created: true },
+        reply: "U1-CODE",
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

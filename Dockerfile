@@ -1104,7 +1104,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
                     --working-directory "$OPENCLAW_PACK_DIR")"; \
                 OPENCLAW_PACK_PATH="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$OPENCLAW_REMEDIATION_JSON")"; \
             fi; \
-            npm install -g --no-audit --no-fund --no-progress --ignore-scripts "$OPENCLAW_PACK_PATH"; \
+            npm install -g --no-audit --no-fund --no-progress --ignore-scripts --allow-git=root "$OPENCLAW_PACK_PATH"; \
             case "$OPENCLAW_VERSION" in \
                 2026.4.24) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
                 2026.3.11) ;; \

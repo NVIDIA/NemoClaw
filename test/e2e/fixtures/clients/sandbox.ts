@@ -21,7 +21,7 @@ const sandboxNameContract = (
 const { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } = sandboxNameContract;
 
 const SANDBOX_ALREADY_ABSENT =
-  /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/i;
+  /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox|Unknown gateway ['"][^'"]+['"]|No active gateway/i;
 const INITIAL_OPENCLAW_PAIRING_TIMEOUT_MS = 60_000;
 const OPENCLAW_STATE_DIR = "/sandbox/.openclaw";
 
@@ -210,6 +210,16 @@ export class SandboxClient {
     assertExitZero(result, "openshell sandbox list");
     if (!outputContainsSandbox(result, name)) {
       throw new Error(`openshell sandbox list did not include '${name}'.`);
+    }
+    return result;
+  }
+
+  async expectAbsent(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    validateSandboxName(name);
+    const result = await this.list({ env: openshellProbeEnv(), ...options });
+    assertExitZero(result, "openshell sandbox list");
+    if (outputContainsSandbox(result, name)) {
+      throw new Error(`openshell sandbox list still included '${name}'.`);
     }
     return result;
   }

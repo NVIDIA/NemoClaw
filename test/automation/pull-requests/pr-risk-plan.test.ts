@@ -1018,7 +1018,7 @@ describe("deterministic PR risk plan", () => {
     "tools/e2e/workflow-plan.mts",
     "tools/e2e/workflow-boundary.mts",
     "tools/e2e/job-map.txt",
-    "test/e2e/registry/runtime-support.ts",
+    "test/e2e/registry/execution.ts",
     "test/e2e/risk-signal-reporter.ts",
     "test/e2e/fixtures/security-posture.ts",
     "test/e2e/lib/redact-text.py",

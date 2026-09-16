@@ -219,9 +219,11 @@ export async function assertOpenClawStateRoot(
 // for `type -P openclaw` and intentionally ignores functions/aliases. The invalid
 // state is an active OpenClaw package without `dist/plugin-sdk/conversation-runtime.js`;
 // this pairing migration fails closed for that installer/package drift instead of
-// searching secondary global installs. Support tests cover shell-function shadows
-// and the no-runtime path. Remove this locator once OpenClaw exposes a stable
-// CLI/import for issuing pairing challenges from E2E probes.
+// searching secondary global installs. OpenClaw 2026.9.1 moved challenge issuance
+// to `dist/plugin-sdk/channel-pairing.js`, so the loader adapts that public split
+// export to the legacy helper shape used by these probes. Support tests cover both
+// layouts, shell-function shadows, and the no-runtime path. Remove this locator once
+// OpenClaw exposes a stable CLI for issuing pairing challenges from E2E probes.
 export const LOAD_CONVERSATION_RUNTIME_SOURCE = String.raw`
 import fs from "node:fs";
 import path from "node:path";
@@ -256,7 +258,35 @@ async function loadConversationRuntime() {
   if (binaryRoot) candidates.push(binaryRoot);
   for (const root of [...new Set(candidates)]) {
     const runtime = path.join(root, "dist/plugin-sdk/conversation-runtime.js");
-    if (fs.existsSync(runtime)) return import(pathToFileURL(runtime).href);
+    if (!fs.existsSync(runtime)) continue;
+    const conversation = await import(pathToFileURL(runtime).href);
+    const channelPairingPath = path.join(root, "dist/plugin-sdk/channel-pairing.js");
+    const directIssuer =
+      typeof conversation.issuePairingChallenge === "function"
+        ? conversation.issuePairingChallenge
+        : null;
+    const channelPairing =
+      directIssuer || !fs.existsSync(channelPairingPath)
+        ? null
+        : await import(pathToFileURL(channelPairingPath).href);
+    const createSplitIssuer =
+      typeof channelPairing?.createChannelPairingChallengeIssuer === "function"
+        ? channelPairing.createChannelPairingChallengeIssuer
+        : null;
+    const splitIssuer = createSplitIssuer
+      ? async (params) => {
+          const { channel, accountId, upsertPairingRequest, ...challenge } = params;
+          const issueChallenge = createSplitIssuer({ channel, accountId, upsertPairingRequest });
+          return issueChallenge(challenge);
+        }
+      : null;
+    return directIssuer
+      ? conversation
+      : splitIssuer
+        ? { ...conversation, issuePairingChallenge: splitIssuer }
+        : Promise.reject(
+            new Error("OpenClaw pairing challenge runtime not found under active package: " + root),
+          );
   }
   throw new Error("OpenClaw conversation runtime not found; checked: " + candidates.join(", "));
 }

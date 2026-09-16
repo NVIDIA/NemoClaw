@@ -1478,15 +1478,17 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(fixtureBase.calls).toContain(
           `npm pack openclaw@${LEGACY_REBUILD_OPENCLAW_VERSION} --pack-destination`,
         );
-        expect(fixtureBase.calls).toContain("npm install -g --ignore-scripts ");
+        expect(fixtureBase.calls).toContain("npm install -g --ignore-scripts --allow-git=root ");
         expect(fixtureBase.calls).toContain("openclaw-remediated.tgz");
         expect(fixtureBase.calls).not.toContain('"archivePath"');
         expect(fixtureBase.calls).toMatch(
-          /npm install -g --ignore-scripts \S+\/openclaw-remediated\.tgz/u,
+          /npm install -g --ignore-scripts --allow-git=root \S+\/openclaw-remediated\.tgz/u,
         );
         expect(fixtureBase.calls).not.toContain("postinstall-bundled-plugins.mjs");
         expect(gatewayFixtureBase.result.status).toBe(0);
-        expect(gatewayFixtureBase.calls).toContain("npm install -g --ignore-scripts ");
+        expect(gatewayFixtureBase.calls).toContain(
+          "npm install -g --ignore-scripts --allow-git=root ",
+        );
         expect(gatewayFixtureBase.calls).toContain("postinstall-bundled-plugins.mjs");
       });
 

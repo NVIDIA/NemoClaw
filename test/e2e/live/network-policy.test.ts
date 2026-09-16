@@ -202,15 +202,22 @@ const candidates = fs
   .readdirSync(distDir)
   .filter((name) => /^openclaw-tools-(?!serve-config-).+\.js$/.test(name))
   .sort();
-if (candidates.length !== 1) {
-  fail("expected one OpenClaw tools module, found " + candidates.join(", "));
+const factories = [];
+for (const candidate of candidates) {
+  const mod = await import(pathToFileURL(path.join(distDir, candidate)).href);
+  const factory = mod.createOpenClawTools || mod.t;
+  if (typeof factory === "function") factories.push(factory);
 }
-
-const mod = await import(pathToFileURL(path.join(distDir, candidates[0])).href);
-const createOpenClawTools = mod.t || mod.createOpenClawTools;
-if (typeof createOpenClawTools !== "function") {
-  fail("OpenClaw tools export is missing");
+const uniqueFactories = [...new Set(factories)];
+if (uniqueFactories.length !== 1) {
+  fail(
+    "expected one OpenClaw tools implementation across " +
+      candidates.join(", ") +
+      "; found " +
+      uniqueFactories.length,
+  );
 }
+const createOpenClawTools = uniqueFactories[0];
 const tools = createOpenClawTools({
   config,
   sandboxed: true,

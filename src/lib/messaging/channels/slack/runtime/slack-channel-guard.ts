@@ -173,6 +173,16 @@
     return normalized.indexOf("/@openclaw/slack/") !== -1 && normalized.endsWith(".js");
   }
 
+  function hasNativeDeniedMentionFeedback(source) {
+    return (
+      source.indexOf("async function authorizeSlackInboundMessage") !== -1 &&
+      source.indexOf("params.explicitBotMention") !== -1 &&
+      source.indexOf("SLACK_CHANNEL_ACCESS_DOCS_URL") !== -1 &&
+      source.indexOf("chat.postEphemeral") !== -1 &&
+      source.indexOf('return drop("channel-not-allowed")') !== -1
+    );
+  }
+
   function patchSlackPrepareSource(source, filename) {
     if (source.indexOf("async function prepareSlackMessage") === -1) return source;
     if (
@@ -181,6 +191,11 @@
     ) {
       return source;
     }
+    // OpenClaw 2026.9.1 moved channel authorization ahead of
+    // prepareSlackMessage and now provides its own bounded, explicit-mention
+    // denial notice. Preserve that reviewed native implementation instead of
+    // trying to match the retired in-function channel-users gate.
+    if (hasNativeDeniedMentionFeedback(source)) return source;
     if (source.indexOf(DENY_LOG_SIGNATURE) === -1) {
       throw new Error(
         "OpenClaw Slack prepare module shape not recognized in " +

@@ -482,12 +482,14 @@
       "fast": [
         "test/cli/sandbox-status-text.test.ts",
         "src/lib/onboard/created-sandbox-finalization.test.ts",
+        "src/lib/onboard/gateway-reuse.test.ts",
         "src/lib/onboard/machine/core-flow-phases.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-route-publication.test.ts",
         "src/lib/onboard/sandbox-registration.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/onboarding/onboard-finalization-dashboard-forward.test.ts"
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
+        "test/onboarding/onboard-sandbox-recreation.test.ts"
       ]
     },
     {
@@ -844,7 +846,9 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/gateway-state-probe-recovery-start.test.ts",
         "src/lib/actions/sandbox/process-recovery-managed-startup.test.ts",
+        "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

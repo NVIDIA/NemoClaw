@@ -149,7 +149,9 @@ async function precleanSandbox(host: HostCliClient, hosted: HostedInferenceConfi
 }
 
 function isMissingSandboxCleanupOutput(text: string): boolean {
-  return /does not exist|not found|Run 'nemoclaw onboard'|no such sandbox/i.test(text);
+  return /does not exist|not found|Run 'nemoclaw onboard'|no such sandbox|Unknown gateway ['"][^'"]+['"]|No active gateway/i.test(
+    text,
+  );
 }
 
 function isPreContractEndpointValidationRateLimit(result: ShellProbeResult): boolean {

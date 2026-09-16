@@ -6149,6 +6149,28 @@ directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_
 file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
 
 
+def ensure_top_level_directory(parent_descriptor, name, uid, gid, mode, prior_gids, prior_modes, label):
+    try:
+        metadata = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        os.mkdir(name, mode, dir_fd=parent_descriptor)
+        descriptor = os.open(name, directory_flags, dir_fd=parent_descriptor)
+        try:
+            os.fchown(descriptor, uid, gid)
+            os.fchmod(descriptor, mode)
+            metadata = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != uid
+        or metadata.st_gid not in prior_gids
+        or stat.S_IMODE(metadata.st_mode) not in prior_modes
+        or metadata.st_mode & 0o022
+    ):
+        raise OSError(f"unsafe {label}")
+
+
 def prepare_directory(parent_descriptor, name, uid, gid, mode, prior_gids, prior_modes, label):
     try:
         os.mkdir(name, mode, dir_fd=parent_descriptor)
@@ -6199,6 +6221,34 @@ try:
         or stat.S_IMODE(parent.st_mode) != 0o1755
     ):
         raise OSError("unsafe protected OpenClaw gateway-state parent")
+
+    # The managed runtime intentionally drops DAC override before this helper
+    # runs. Validate or create the two top-level entries without traversing
+    # their private contents, then inspect and normalize them as their gateway
+    # owner. The Python process is disposable; the parent shell stays root.
+    ensure_top_level_directory(
+        parent_fd,
+        entry_name,
+        gateway_uid,
+        gateway_gid,
+        0o700,
+        {gateway_gid, sandbox_gid},
+        {0o700, 0o2750},
+        "protected OpenClaw gateway-state directory",
+    )
+    ensure_top_level_directory(
+        parent_fd,
+        observer_entry_name,
+        gateway_uid,
+        sandbox_gid,
+        0o2750,
+        {sandbox_gid},
+        {0o2750},
+        "protected OpenClaw pairing-observer directory",
+    )
+    os.setgroups(sorted({gateway_gid, sandbox_gid}))
+    os.setgid(gateway_gid)
+    os.setuid(gateway_uid)
 
     gateway_fd = prepare_directory(
         parent_fd,

@@ -70,30 +70,6 @@ function readBooleanBuildFlag(env: Env, name: string): boolean {
   return readOptionalEnumEnv(env, name, BOOLEAN_BUILD_FLAG_VALUES) === "1";
 }
 
-// Local Ollama small-context compaction policy (NemoClaw #5468).
-//
-// OpenClaw 2026.5.x auto-compaction reserves `reserveTokensFloor` tokens at the
-// tail of the context window for reply generation (default 20_000, see the
-// pinned openclaw package's pi-settings), then clamps that reserve so at least
-// OPENCLAW_MIN_PROMPT_BUDGET_TOKENS (8_000) of the window stays available for
-// prompt content. NemoClaw floors a Local Ollama runtime window to 16_384
-// (ollama-runtime-context.ts), so the default 20k reserve is clamped down and
-// the prompt budget is pinned at ~8k — too small for OpenClaw's base prompt +
-// tool catalogue (~7.4k tokens). The first user turn overflows and preemptive
-// compaction, with no prior history to compact, fails with
-// "Auto-compaction could not recover this turn".
-//
-// Below SMALL_OLLAMA_CONTEXT_THRESHOLD we lower both reserveTokens and
-// reserveTokensFloor to the model's own reply budget (maxTokens) so the prompt
-// budget becomes `contextWindow - reserve` and the first turn fits. Above the
-// threshold OpenClaw's default reserve already leaves an ample prompt budget, so
-// its safeguard is left untouched. Both keys must be set: OpenClaw applies
-// max(reserveTokens, reserveTokensFloor), so lowering the floor alone would let
-// the 20k default pull the reserve back up.
-const OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR = 20_000;
-const OPENCLAW_MIN_PROMPT_BUDGET_TOKENS = 8_000;
-const SMALL_OLLAMA_CONTEXT_THRESHOLD =
-  OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_PROMPT_BUDGET_TOKENS;
 const LOCAL_OLLAMA_UPSTREAM_PROVIDER = "ollama-local";
 const MANAGED_INFERENCE_PROVIDER_KEY = "inference";
 const MANAGED_INFERENCE_HOSTNAME = "inference.local";
@@ -738,27 +714,6 @@ function decodeJsonEnv(env: Env, name: string, defaultValue: string): any {
   return JSON.parse(Buffer.from(raw, "base64").toString("utf-8"));
 }
 
-// Build the agents.defaults.compaction override for a Local Ollama small-context
-// window, or undefined when it does not apply. See the policy constants above.
-export function buildLocalOllamaSmallContextCompaction(
-  upstreamProvider: string | undefined,
-  contextWindow: number,
-  maxTokens: number,
-): JsonObject | undefined {
-  if ((upstreamProvider || "").trim() !== LOCAL_OLLAMA_UPSTREAM_PROVIDER) {
-    return undefined;
-  }
-  if (!Number.isFinite(contextWindow) || contextWindow > SMALL_OLLAMA_CONTEXT_THRESHOLD) {
-    return undefined;
-  }
-  // Reserve the model's reply budget, but never so much that the remaining
-  // prompt budget drops below OpenClaw's own minimum — mirrors OpenClaw's clamp
-  // so a pathological maxTokens cannot make the window worse than the default.
-  const maxReserve = Math.max(0, contextWindow - OPENCLAW_MIN_PROMPT_BUDGET_TOKENS);
-  const reserveTokens = Math.max(0, Math.min(maxTokens, maxReserve));
-  return { reserveTokens, reserveTokensFloor: reserveTokens };
-}
-
 function isManagedInferenceLocalRoute(
   providerKey: string | undefined,
   inferenceBaseUrl: string,
@@ -902,6 +857,13 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (providerKey === "ollama" || providerKey === "ollama-local") {
     inferenceCompat.supportsUsageInStreaming ??= true;
   }
+  // NemoClaw exposes managed llama.cpp through the custom `inference`
+  // provider ID, so OpenClaw cannot infer its built-in llama.cpp schema
+  // projection from the provider name. Select the upstream compatibility
+  // profile explicitly before tool schemas reach llama-server's GBNF parser.
+  if ((env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim() === "llama-cpp-local") {
+    inferenceCompat.toolSchemaProfile ??= "llamacpp";
+  }
 
   const normalizedUrl = normalizeUrlForParse(chatUiUrl);
   const parsed = parseUrl(normalizedUrl);
@@ -1040,14 +1002,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     agentDefaults.subagents = extraAgentsPayload.defaults.subagents;
   }
 
-  const smallOllamaCompaction = buildLocalOllamaSmallContextCompaction(
-    env.NEMOCLAW_UPSTREAM_PROVIDER,
-    contextWindow,
-    maxTokens,
-  );
-  if (smallOllamaCompaction) {
-    agentDefaults.compaction = smallOllamaCompaction;
-  }
+  // OpenClaw 2026.9.1 retired the configurable reserveTokens and
+  // reserveTokensFloor fields. Its agent runtime now clamps the effective
+  // reserve against the selected model's context budget, preserving at least
+  // half the window (up to 8k tokens) for prompts. Do not emit the old Local
+  // Ollama override: the pinned runtime owns the same small-context safeguard.
   const managedInferenceCompaction = buildManagedInferenceSafeguardCompaction(
     providerKey,
     env.NEMOCLAW_UPSTREAM_PROVIDER,
@@ -1128,7 +1087,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
     tools.web.search = { enabled: true, provider: webSearchProvider };
     config.plugins.entries[webSearchProvider] = {
       enabled: true,
-      config: { webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` } },
+      config: {
+        webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` },
+      },
     };
   }
 

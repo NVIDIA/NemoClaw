@@ -34,14 +34,39 @@ const WHATSAPP_QR_COMPACT = path.join(
 // channel gate that mirrors the real dist's deny-log line and exposes the same
 // in-scope identifiers the patch references.
 function prepareModuleSource(
-  options: { moduleType?: "commonjs" | "esm"; withMentionState?: boolean; denyLine?: string } = {},
+  options: {
+    moduleType?: "commonjs" | "esm";
+    withMentionState?: boolean;
+    denyLine?: string;
+    nativeDeniedMentionFeedback?: boolean;
+  } = {},
 ): string {
   const moduleType = options.moduleType ?? "commonjs";
+  const nativeDeniedMentionFeedback = [
+    'const SLACK_CHANNEL_ACCESS_DOCS_URL = "https://docs.openclaw.ai/channels/slack";',
+    "async function authorizeSlackInboundMessage(params) {",
+    "\tconst { drop } = params;",
+    "\tif (params.explicitBotMention) {",
+    "\t\tawait params.ctx.app.client.chat.postEphemeral({ text: SLACK_CHANNEL_ACCESS_DOCS_URL });",
+    "\t\tparams.onVisibleDrop?.();",
+    "\t}",
+    '\treturn drop("channel-not-allowed");',
+    "}",
+    "async function prepareSlackMessage(params) {",
+    "\treturn authorizeSlackInboundMessage({",
+    "\t\t...params,",
+    '\t\texplicitBotMention: params.opts.source === "app_mention",',
+    "\t\tdrop: () => null,",
+    "\t});",
+    "}",
+    "module.exports = { prepareSlackMessage };",
+    "",
+  ].join("\n");
   const withMentionState = options.withMentionState ?? true;
   const denyLine =
     options.denyLine ??
     "logVerbose(`Blocked unauthorized slack sender ${senderId} (not in channel users)`);";
-  return [
+  const legacyDeniedMentionFeedback = [
     "function logVerbose() {}",
     `${moduleType === "esm" ? "export " : ""}async function prepareSlackMessage(params) {`,
     "\tconst { ctx, account, message, opts } = params;",
@@ -64,11 +89,19 @@ function prepareModuleSource(
     moduleType === "commonjs" ? "module.exports = { prepareSlackMessage };" : "",
     "",
   ].join("\n");
+  return options.nativeDeniedMentionFeedback
+    ? nativeDeniedMentionFeedback
+    : legacyDeniedMentionFeedback;
 }
 
 function writeSlackPackage(
   root: string,
-  options: { moduleType?: "commonjs" | "esm"; withMentionState?: boolean; denyLine?: string } = {},
+  options: {
+    moduleType?: "commonjs" | "esm";
+    withMentionState?: boolean;
+    denyLine?: string;
+    nativeDeniedMentionFeedback?: boolean;
+  } = {},
 ): string {
   const pkgDir = path.join(root, "node_modules", "@openclaw", "slack");
   const distDir = path.join(pkgDir, "dist");
@@ -316,6 +349,20 @@ describe("OpenClaw Slack denial-feedback patch", () => {
   it("loads as a no-op when no @openclaw/slack module is required", () => {
     const result = runGuardRequire();
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("preserves OpenClaw 2026.9.1 native denied-mention feedback", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-native-deny-"));
+    const prepareFile = writeSlackPackage(tmp, { nativeDeniedMentionFeedback: true });
+    try {
+      const original = fs.readFileSync(prepareFile, "utf8");
+      const result = runGuardRequire(prepareFile);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(prepareFile, "utf8")).toBe(original);
+      expect(original).not.toContain("__nemoclawNotifyDeniedSlackMention");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("fails loudly when the deny-gate shape changes", () => {

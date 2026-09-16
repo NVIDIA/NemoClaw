@@ -290,7 +290,7 @@ async function expectSandboxCredentialBoundary(
     [
       "sh",
       "-lc",
-      "find /sandbox -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print",
+      "find /sandbox -path /sandbox/.nemoclaw/openclaw-gateway-state -prune -o -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print",
     ],
     {
       artifactName: "phase-3-sandbox-auth-profiles-probe",
