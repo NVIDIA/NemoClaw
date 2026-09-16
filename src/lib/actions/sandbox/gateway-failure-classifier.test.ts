@@ -7,7 +7,7 @@ const getSandboxMock = vi.fn();
 const dockerRunMock = vi.fn((_args: readonly string[], _options?: Record<string, unknown>) => ({
   status: 0,
   stderr: "",
-  stdout: "Server: Docker",
+  stdout: '{"ServerVersion":"29.0.0"}',
 }));
 
 vi.mock("../../adapters/docker/run", () => ({
@@ -159,7 +159,11 @@ describe("isDockerRuntimeDown", () => {
   beforeEach(() => {
     getSandboxMock.mockReset();
     dockerRunMock.mockReset();
-    dockerRunMock.mockReturnValue({ status: 0, stderr: "", stdout: "Server: Docker" });
+    dockerRunMock.mockReturnValue({
+      status: 0,
+      stderr: "",
+      stdout: '{"ServerVersion":"29.0.0"}',
+    });
   });
 
   it("rejects Docker client output when the daemon request fails (#11715)", () => {
@@ -178,11 +182,23 @@ describe("isDockerRuntimeDown", () => {
     expect(isDockerDaemonReachable()).toBe(true);
     getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
     expect(isDockerRuntimeDown("alpha")).toBe(false);
-    expect(dockerRunMock).toHaveBeenCalledWith(["info"], {
+    expect(dockerRunMock).toHaveBeenCalledWith(["info", "--format", "{{json .}}"], {
       ignoreError: true,
       suppressOutput: true,
       timeout: 3000,
     });
+  });
+
+  it("rejects a successful Docker info response without server evidence (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 0,
+      stderr: "",
+      stdout: '{"ServerVersion":"","ServerErrors":["daemon unavailable"]}',
+    });
+
+    expect(isDockerDaemonReachable()).toBe(false);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
   });
 
   it("does not invoke Docker for a native Podman sandbox", () => {
