@@ -50,6 +50,11 @@ struct AttachVirtualDiskParameters {
     reserved: u32,
 }
 #[repr(C)]
+struct AttributeTag {
+    attributes: u32,
+    tag: u32,
+}
+#[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct Luid {
     low: u32,
@@ -88,8 +93,25 @@ unsafe extern "system" {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn CloseHandle(handle: RawHandle) -> i32;
+    #[link_name = "CreateFileW"]
+    fn StoreCreateFileW(
+        path: *const u16,
+        access: u32,
+        share: u32,
+        security: *const c_void,
+        disposition: u32,
+        flags: u32,
+        template: RawHandle,
+    ) -> RawHandle;
     fn GetCurrentProcess() -> RawHandle;
+    fn GetFileInformationByHandleEx(
+        handle: RawHandle,
+        class: u32,
+        value: *mut c_void,
+        size: u32,
+    ) -> i32;
     fn GetLastError() -> u32;
+    fn LocalFree(memory: *mut c_void) -> *mut c_void;
     fn SetLastError(error: u32);
 }
 #[link(name = "advapi32")]
@@ -104,12 +126,153 @@ unsafe extern "system" {
         previous: *mut TokenPrivileges,
         return_length: *mut u32,
     ) -> i32;
+    fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        value: *const u16,
+        revision: u32,
+        descriptor: *mut *mut c_void,
+        size: *mut u32,
+    ) -> i32;
+    fn GetSecurityDescriptorDacl(
+        descriptor: *const c_void,
+        present: *mut i32,
+        dacl: *mut *mut c_void,
+        defaulted: *mut i32,
+    ) -> i32;
+    fn SetSecurityInfo(
+        handle: RawHandle,
+        kind: u32,
+        information: u32,
+        owner: *const c_void,
+        group: *const c_void,
+        dacl: *const c_void,
+        sacl: *const c_void,
+    ) -> u32;
+}
+struct Handle(RawHandle);
+impl Drop for Handle {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0) };
+    }
+}
+struct LocalMemory(*mut c_void);
+impl Drop for LocalMemory {
+    fn drop(&mut self) {
+        unsafe { LocalFree(self.0) };
+    }
 }
 struct VirtualDisk(RawHandle);
 impl Drop for VirtualDisk {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.0) };
     }
+}
+
+fn open_mount_point(path: &Path, access: u32) -> Result<Handle, Error> {
+    const DIRECTORY: u32 = 0x10;
+    const REPARSE: u32 = 0x400;
+    const INVALID: isize = -1;
+    let path = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let handle = unsafe {
+        StoreCreateFileW(
+            path.as_ptr(),
+            access,
+            7,
+            null(),
+            3,
+            0x0200_0000 | 0x0020_0000,
+            null_mut(),
+        )
+    };
+    if handle.is_null() || handle as isize == INVALID {
+        LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
+        return Err(Error::Native("runtime-image-mount-permissions"));
+    }
+    let handle = Handle(handle);
+    let mut tag = AttributeTag {
+        attributes: 0,
+        tag: 0,
+    };
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle.0,
+            9,
+            (&mut tag as *mut AttributeTag).cast(),
+            std::mem::size_of::<AttributeTag>() as u32,
+        )
+    } == 0
+        || tag.attributes & DIRECTORY == 0
+        || tag.attributes & REPARSE != 0
+    {
+        LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
+        return Err(Error::Native("runtime-image-mount-permissions"));
+    }
+    Ok(handle)
+}
+
+fn authorize_mount_point(path: &Path) -> Result<(), Error> {
+    // The immutable volume already grants these package SIDs read/execute on
+    // its roots. Grant the same access on the host mount point before it
+    // becomes a reparse point, without making any Program Files parent public.
+    const SDDL: &str = concat!(
+        "D:P",
+        "(A;OICI;FA;;;SY)",
+        "(A;OICI;FA;;;BA)",
+        "(A;OICI;0x1200a9;;;AU)",
+        "(A;OICI;0x1200a9;;;AC)",
+        "(A;OICI;0x1200a9;;;S-1-15-2-2)"
+    );
+    let handle = open_mount_point(path, 0x0004_0000)?;
+    let value = SDDL
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut descriptor = null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            value.as_ptr(),
+            1,
+            &mut descriptor,
+            null_mut(),
+        )
+    } == 0
+        || descriptor.is_null()
+    {
+        LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
+        return Err(Error::Native("runtime-image-mount-permissions"));
+    }
+    let _descriptor = LocalMemory(descriptor);
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut dacl = null_mut();
+    if unsafe {
+        GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted)
+    } == 0
+        || present == 0
+        || dacl.is_null()
+    {
+        LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
+        return Err(Error::Native("runtime-image-mount-permissions"));
+    }
+    let status = unsafe {
+        SetSecurityInfo(
+            handle.0,
+            1,
+            0x8000_0004,
+            null(),
+            null(),
+            dacl,
+            null(),
+        )
+    };
+    LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+    if status != 0 {
+        return Err(Error::Native("runtime-image-mount-permissions"));
+    }
+    Ok(())
 }
 
 pub(crate) fn diagnostic_status() -> u32 {
@@ -370,6 +533,7 @@ impl WindowsStore {
             return Ok(());
         }
         std::fs::create_dir_all(&mount).map_err(|_| Error::Native("runtime-image-mount"))?;
+        authorize_mount_point(&mount)?;
         attach_virtual_disk(&image)?;
         let image_text = image.to_str().ok_or(Error::Identity)?;
         // DiskPart's folder-mount grammar takes the empty directory path itself;
@@ -765,5 +929,125 @@ impl NativeStore for WindowsStore {
             return Err(Error::ForeignTransaction);
         }
         self.remove_retired(previous)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[repr(C)]
+    struct Acl {
+        revision: u8,
+        reserved: u8,
+        size: u16,
+        count: u16,
+        reserved2: u16,
+    }
+    #[repr(C)]
+    struct AceHeader {
+        kind: u8,
+        flags: u8,
+        size: u16,
+    }
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn ConvertSidToStringSidW(sid: *const c_void, value: *mut *mut u16) -> i32;
+        fn GetAce(acl: *const Acl, index: u32, ace: *mut *mut c_void) -> i32;
+        fn GetSecurityDescriptorControl(
+            descriptor: *const c_void,
+            control: *mut u16,
+            revision: *mut u32,
+        ) -> i32;
+        fn GetSecurityInfo(
+            handle: RawHandle,
+            kind: u32,
+            information: u32,
+            owner: *mut *mut c_void,
+            group: *mut *mut c_void,
+            dacl: *mut *mut Acl,
+            sacl: *mut *mut Acl,
+            descriptor: *mut *mut c_void,
+        ) -> u32;
+    }
+
+    fn sid_string(sid: *const c_void) -> String {
+        let mut value = null_mut();
+        assert!(!sid.is_null());
+        assert_ne!(unsafe { ConvertSidToStringSidW(sid, &mut value) }, 0);
+        let _memory = LocalMemory(value.cast());
+        let mut length = 0;
+        while length < 184 && unsafe { *value.add(length) } != 0 {
+            length += 1;
+        }
+        assert!(length < 184);
+        String::from_utf16(unsafe { std::slice::from_raw_parts(value, length) }).unwrap()
+    }
+
+    #[test]
+    fn image_mount_point_grants_only_protected_read_to_appcontainers() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "nemoclaw-runtime-image-mount-{}-{nonce:x}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        authorize_mount_point(&path).unwrap();
+        {
+            let handle = open_mount_point(&path, 0x0002_0000).unwrap();
+            let mut dacl = null_mut();
+            let mut descriptor = null_mut();
+            assert_eq!(
+                unsafe {
+                    GetSecurityInfo(
+                        handle.0,
+                        1,
+                        4,
+                        null_mut(),
+                        null_mut(),
+                        &mut dacl,
+                        null_mut(),
+                        &mut descriptor,
+                    )
+                },
+                0
+            );
+            let _descriptor = LocalMemory(descriptor);
+            assert!(!dacl.is_null());
+            let mut control = 0;
+            let mut revision = 0;
+            assert_ne!(
+                unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) },
+                0
+            );
+            assert_ne!(control & 0x1000, 0);
+            let mut grants = BTreeMap::new();
+            for index in 0..u32::from(unsafe { (*dacl).count }) {
+                let mut ace = null_mut();
+                assert_ne!(unsafe { GetAce(dacl, index, &mut ace) }, 0);
+                let header = unsafe { &*ace.cast::<AceHeader>() };
+                assert_eq!(header.kind, 0);
+                assert_eq!(header.flags & 0x0b, 0x03);
+                assert!(header.size >= 16);
+                let bytes = ace.cast::<u8>();
+                let mask = unsafe { bytes.add(4).cast::<u32>().read_unaligned() };
+                let sid = sid_string(unsafe { bytes.add(8).cast() });
+                assert!(grants.insert(sid, mask).is_none());
+            }
+            assert_eq!(
+                grants,
+                BTreeMap::from([
+                    ("S-1-5-18".into(), 0x001f_01ff),
+                    ("S-1-5-32-544".into(), 0x001f_01ff),
+                    ("S-1-5-11".into(), 0x0012_00a9),
+                    ("S-1-15-2-1".into(), 0x0012_00a9),
+                    ("S-1-15-2-2".into(), 0x0012_00a9),
+                ])
+            );
+        }
+        std::fs::remove_dir(&path).unwrap();
     }
 }

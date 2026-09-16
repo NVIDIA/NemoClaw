@@ -136,6 +136,7 @@ fn failure_exit_code(error: &str) -> i32 {
         "Native(\"runtime-image-host-compression\")" => 118,
         "Native(\"runtime-image-attach\")" => 119,
         "Native(\"runtime-image-privilege\")" => 121,
+        "Native(\"runtime-image-mount-permissions\")" => 122,
         _ => 120,
     }
 }
@@ -273,6 +274,10 @@ mod tests {
         assert_eq!(failure_exit_code("Native(\"runtime-image-diskpart\")"), 113);
         assert_eq!(failure_exit_code("Native(\"runtime-image-mount\")"), 115);
         assert_eq!(failure_exit_code("Native(\"runtime-image-detach\")"), 116);
+        assert_eq!(
+            failure_exit_code("Native(\"runtime-image-mount-permissions\")"),
+            122
+        );
         assert_eq!(failure_exit_code("Native(\"other\")"), 120);
     }
 }

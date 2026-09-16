@@ -1779,8 +1779,8 @@ jobs:
               --nocapture --test-threads=1 --skip runtime_lease:: 2>&1 | Tee-Object -FilePath $log
             $result = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
-          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 17 passed; 0 failed; 0 ignored;') {
-            throw 'The sixteen transaction/manifest and native SHA256 controls did not all pass.'
+          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 18 passed; 0 failed; 0 ignored;') {
+            throw 'The seventeen transaction, manifest, mount ACL and native SHA256 controls did not all pass.'
           }
 
       - name: Build and exercise actual isolated MSI transactions
