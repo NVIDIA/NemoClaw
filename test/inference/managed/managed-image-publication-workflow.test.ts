@@ -494,8 +494,15 @@ describe("complete managed-image publication workflow", () => {
 
     expect(prBuilder.needs).toEqual(["pr-reviewed-npm-audit", "publication-identity"]);
     expect(publicationIdentity.if).toBeUndefined();
+    expect(publicationIdentity.permissions).toEqual({ contents: "read" });
+    expect(step(publicationIdentity, "Checkout publication revision").with).toEqual({
+      ref: "${{ github.event.pull_request.head.sha || github.sha }}",
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
     expect(publicationIdentity.outputs).toEqual({
       cohort: "${{ steps.identity.outputs.cohort }}",
+      release: "${{ steps.release.outputs.value }}",
     });
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
@@ -504,7 +511,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
+    expect(releaseIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
@@ -760,7 +767,7 @@ describe("complete managed-image publication workflow", () => {
         "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
     );
-    expect(activation.needs).toBe("pr-build-and-entrypoint");
+    expect(activation.needs).toEqual(["pr-build-and-entrypoint", "publication-identity"]);
     expect(activation.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
     );
@@ -778,6 +785,11 @@ describe("complete managed-image publication workflow", () => {
       /npm ci --ignore-scripts --no-audit --no-fund[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
+    const bindIdentity = step(activation, "Bind CLI to publication release");
+    expect(bindIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
+    expect(steps.indexOf(bindIdentity)).toBeLessThan(
+      steps.indexOf(step(activation, "Build exact candidate CLI")),
+    );
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
     const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
@@ -1042,7 +1054,7 @@ fi
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
     expect(dependencies.run).toContain("npm ci --ignore-scripts --no-audit --no-fund");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
+    expect(releaseIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('--build-arg "TARGETARCH=${target_arch}"');
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
@@ -1175,7 +1187,10 @@ fi
         String(candidate.with?.name ?? "").startsWith("managed-image-"),
     );
 
-    expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
+    expect(identity?.outputs).toEqual({
+      cohort: "${{ steps.identity.outputs.cohort }}",
+      release: "${{ steps.release.outputs.value }}",
+    });
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(publisher.outputs).toBeUndefined();
     expect(JSON.stringify(workflow)).not.toContain('rm -rf -- "$ANONYMOUS_CONFIG"');
