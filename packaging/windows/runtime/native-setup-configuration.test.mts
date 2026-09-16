@@ -88,6 +88,7 @@ test("Hermes compatibility paths and prebuilt command bind the live sealed lease
     compatibility.launcher,
     "--",
     runtime.node,
+    "--preserve-symlinks-main",
     worker,
   ]);
   for (const changed of [

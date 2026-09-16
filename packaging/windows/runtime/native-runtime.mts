@@ -306,7 +306,7 @@ export function nativeRuntimeWorkerCommand(runtime: NativeRuntimeLaunchLease, wo
     path.win32.isAbsolute(relative)
   )
     throw new Error("The Hermes worker does not belong to the held sealed runtime.");
-  return [compatibility.launcher, "--", runtime.node, workload];
+  return [compatibility.launcher, "--", runtime.node, "--preserve-symlinks-main", workload];
 }
 
 export function nativeHermesToolEnvironment(

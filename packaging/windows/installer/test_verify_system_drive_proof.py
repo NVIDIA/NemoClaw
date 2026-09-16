@@ -159,6 +159,7 @@ class SystemDriveProofTests(unittest.TestCase):
                 "platform": "win32",
                 "architecture": "arm64",
                 "node": "22.23.2",
+                "preservedMainPath": True,
                 "allowedRead": True,
                 "preauthorizedRead": True,
                 "deniedRead": True,
@@ -359,6 +360,7 @@ class SystemDriveProofTests(unittest.TestCase):
     def test_guest_access_and_cleanup_cannot_be_skipped(self):
         for field in (
             "allowedRead",
+            "preservedMainPath",
             "preauthorizedRead",
             "deniedRead",
             "ownedWrite",

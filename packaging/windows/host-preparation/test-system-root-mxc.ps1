@@ -240,11 +240,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 const [result,denied,preauthorized]=process.argv.slice(2);
 if(process.platform!=='win32'||process.arch!=='arm64'||process.versions.node!=='22.23.2')throw Error('Unexpected Node');
+if(!process.execArgv.includes('--preserve-symlinks-main'))throw Error('The sealed-worker main-path control is missing');
 if(fs.readFileSync(path.join(process.cwd(),'input.txt'),'utf8')!=='owned read')throw Error('Allowed read failed');
 if(fs.readFileSync(path.join(preauthorized,'input.txt'),'utf8')!=='preauthorized read')throw Error('Preauthorized read failed');
 let deniedRead=false;try{fs.readFileSync(denied)}catch(error){deniedRead=['EACCES','EPERM'].includes(error.code)}
 if(!deniedRead)throw Error('Unlisted file read was not denied');
-fs.writeFileSync(result,JSON.stringify({schemaVersion:1,marker:'NEMOCLAW_SYSTEM_METADATA_MXC_OK',platform:process.platform,architecture:process.arch,node:process.versions.node,pid:process.pid,allowedRead:true,preauthorizedRead:true,deniedRead:true,ownedWrite:true}));
+fs.writeFileSync(result,JSON.stringify({schemaVersion:1,marker:'NEMOCLAW_SYSTEM_METADATA_MXC_OK',platform:process.platform,architecture:process.arch,node:process.versions.node,pid:process.pid,preservedMainPath:true,allowedRead:true,preauthorizedRead:true,deniedRead:true,ownedWrite:true}));
 console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
 '@,[Text.UTF8Encoding]::new($false))
     # Match the existing Personal Node request used by the OpenShell derivative.
@@ -263,7 +264,7 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     $receipt.childEnvironmentKeys=@($childEnvironment.Keys)
     $policy=Join-Path $output 'policy.json'
     $request=[ordered]@{version='0.6.0-alpha';containerId=$container;containment='processcontainer'
-        process=@{commandLine='"'+$NodePath+'" "'+$worker+'" "'+$result+'" "'+$denied+'" "'+$preauthorized+'"';cwd=$work;timeout=30000;env=@($childEnvironment.GetEnumerator()|ForEach-Object {$_.Key+'='+$_.Value})}
+        process=@{commandLine='"'+$NodePath+'" "--preserve-symlinks-main" "'+$worker+'" "'+$result+'" "'+$denied+'" "'+$preauthorized+'"';cwd=$work;timeout=30000;env=@($childEnvironment.GetEnumerator()|ForEach-Object {$_.Key+'='+$_.Value})}
         processContainer=@{leastPrivilege=$false;capabilities=@('privateNetworkClientServer','internetClient')};ui=@{disable=$false}
         network=@{defaultPolicy='allow';allowedHosts=@();blockedHosts=@();allowLocalNetwork=$true};filesystem=@{readonlyPaths=@($NodePath,$preauthorized);readwritePaths=@($work)}
         lifecycle=@{destroyOnExit=$false;preservePolicy=$false}}
@@ -275,7 +276,7 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     $mxcStopped=$commands[$commands.Count-1].stopped
     $guest=Get-Content -LiteralPath $result -Raw|ConvertFrom-Json
     if($guest.marker  -cne  'NEMOCLAW_SYSTEM_METADATA_MXC_OK'  -or  $guest.allowedRead  -ne  $true  -or
-        $guest.preauthorizedRead  -ne  $true  -or  $guest.deniedRead  -ne  $true  -or  $guest.ownedWrite  -ne  $true){throw 'The actual MXC file-access controls failed.'}
+        $guest.preservedMainPath  -ne  $true  -or  $guest.preauthorizedRead  -ne  $true  -or  $guest.deniedRead  -ne  $true  -or  $guest.ownedWrite  -ne  $true){throw 'The actual MXC file-access controls failed.'}
     $mxcLog = [regex]::Replace((Get-Content -LiteralPath (Join-Path $output 'mxc-native.log') -Raw), '\[\d+\][ \t]*', '')
     if($mxcLog -notmatch '(?m)^selected isolation tier:\s*appcontainer-dacl\s*$'){throw 'The system-root-dependent AppContainer DACL tier was not exercised.'}
     if($mxcLog -match 'Win32k mitigation applied to child process'){throw 'The existing Personal Node UI compatibility setting was not honored.'}

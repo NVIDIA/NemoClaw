@@ -350,7 +350,13 @@ def verify(
         and guest.get("node") == "22.23.2"
         and all(
             guest.get(field) is True
-            for field in ("allowedRead", "preauthorizedRead", "deniedRead", "ownedWrite")
+            for field in (
+                "preservedMainPath",
+                "allowedRead",
+                "preauthorizedRead",
+                "deniedRead",
+                "ownedWrite",
+            )
         ),
         "Actual contained Node and preauthorized-image read/deny/write controls did not pass.",
     )
