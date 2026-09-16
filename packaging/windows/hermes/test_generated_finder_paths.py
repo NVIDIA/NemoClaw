@@ -95,6 +95,10 @@ class GeneratedFinderPaths(unittest.TestCase):
         ):
             metadata.relocate_finder(foreign, self.source)
 
+    def test_current_adapter_pin_matches_reviewed_source(self):
+        hook = Path(metadata.__file__).with_name(metadata.HOOK).read_bytes()
+        self.assertEqual(metadata.CURRENT_ADAPTER_SHA256, hashlib.sha256(hook).hexdigest())
+
 
 class CanonicalAdapterUpgrade(unittest.TestCase):
     def setUp(self):
