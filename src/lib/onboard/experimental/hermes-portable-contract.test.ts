@@ -120,14 +120,14 @@ describe("Hermes portable startup contract", () => {
     (expectedVersion) => {
       const agent = copyAgent();
       setExpectedManifestVersion(agent, expectedVersion);
+      const input = {
+        agent,
+        sandboxName: SANDBOX,
+        startupArgv: startupArgv(),
+      };
+      const contract = resolveHermesPortableStartupContract(input);
 
-      expect(() =>
-        resolveHermesPortableStartupContract({
-          agent,
-          sandboxName: SANDBOX,
-          startupArgv: startupArgv(),
-        }),
-      ).not.toThrow();
+      expect(assertCurrentHermesPortableStartupContract(contract, input)).toEqual(contract);
     },
   );
 
