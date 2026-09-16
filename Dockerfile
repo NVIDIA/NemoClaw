@@ -1341,7 +1341,7 @@ RUN set -eu; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
-# OpenClaw 2026.7.1 chat.send: preserve submitted run lineage through queued
+# Patch OpenClaw chat.send gateway behavior: preserve run lineage through queued
 # turns and suppress empty or premature final events. The patch script owns
 # implementation details. Remove after upstream openclaw/openclaw#70164 and
 # openclaw/openclaw#50298 are fixed, or the affected OpenClaw is no longer shipped.
@@ -1349,7 +1349,7 @@ RUN set -eu; \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Reload sandbox ESM plugins via native process replacement; removal criteria in script.
+# Reload sandbox ESM plugins via native process replacement.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts \
     /usr/local/lib/node_modules/openclaw/dist
