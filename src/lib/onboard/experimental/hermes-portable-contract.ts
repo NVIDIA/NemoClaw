@@ -32,7 +32,8 @@ const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/u;
 const PORT = /^(?:[1-9][0-9]{0,4})$/u;
 const PLACEHOLDER_KEYS = /^[A-Z_][A-Z0-9_]*(?:,[A-Z_][A-Z0-9_]*)*$/u;
 const SHELL_PAYLOAD = /(?:[`;|]|&&|\$\()/u;
-const REVIEWED_HERMES_VERSIONS = new Set(["0.20.6", "0.21.3"]);
+const CURRENT_HERMES_VERSION = "0.20.6";
+const TARGET_HERMES_VERSION = "0.21.3";
 const ALLOWED_ENV = new Set([
   "HTTP_PROXY",
   "HTTPS_PROXY",
@@ -64,6 +65,10 @@ function fail(message: string): never {
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function isReviewedHermesVersion(version: string | undefined): boolean {
+  return version === CURRENT_HERMES_VERSION || version === TARGET_HERMES_VERSION;
 }
 
 function canonical(value: unknown): unknown {
@@ -343,7 +348,7 @@ export function resolveHermesPortableStartupContract(
   }
   if (
     manifest.name !== "hermes" ||
-    !REVIEWED_HERMES_VERSIONS.has(manifest.expectedVersion ?? "") ||
+    !isReviewedHermesVersion(manifest.expectedVersion) ||
     manifest.gatewayCommand !== "hermes gateway run" ||
     manifest.runtime.interactive_command !== "hermes" ||
     manifest.healthProbe?.url !== "http://localhost:8642/health" ||
