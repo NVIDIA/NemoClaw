@@ -82,7 +82,7 @@
                   "endpoint": {
                     "type": "string",
                     "maxLength": 2048,
-                    "pattern": "^https://[^\\s]+$"
+                    "pattern": "^https?://[^\\s]+$"
                   },
                   "credential": {
                     "type": "object",

@@ -397,23 +397,7 @@ describe("OpenClaw MCP adapter registration", () => {
       tools: { alsoAllow: ["bundle-mcp"] },
     });
     expect(mocks.writeSandboxConfig.mock.calls[0]?.[2]).not.toHaveProperty("plugins");
-  });
-
-  it("waits for PID 1 config authority before reading or writing OpenClaw config", async () => {
-    const entry: McpSourceEntry = {
-      ...baseEntry,
-      agent: "openclaw",
-      adapter: "openclaw-config",
-    };
-    mocks.waitForManagedGatewaySupervisor.mockReturnValue(false);
-
-    await expect(
-      registerOpenClawAdapter("alpha", entry, runtimeSelection, {}, false, "v12"),
-    ).rejects.toThrow("OpenClaw managed gateway supervisor is not ready for config mutation");
-
-    expect(mocks.waitForManagedGatewaySupervisor).toHaveBeenCalledExactlyOnceWith("alpha");
-    expect(mocks.readSandboxConfig).not.toHaveBeenCalled();
-    expect(mocks.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(mocks.waitForManagedGatewaySupervisor).not.toHaveBeenCalled();
   });
 });
 

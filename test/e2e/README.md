@@ -426,7 +426,7 @@ Each entry owns these target properties:
 
 Host preparation is the reviewed E2E runner preparation mode.
 `none` makes no runner-level change.
-`hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap for the Hermes image rebuild.
+`hermes-swap` provisions swap for the remaining measured Hermes execution lanes.
 Targets that require cloudflared set `cloudflared: true` in the catalogue.
 The reusable workflow installs the pinned amd64 Debian package after validating its SHA-256 digest and package metadata.
 The installation step does not receive a catalogue profile credential.
@@ -955,8 +955,6 @@ lanes:
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - the Anthropic-compatible `hermes-inference-switch` mode;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
-- `rebuild-hermes`;
-- `rebuild-hermes-stale-base`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
 The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
@@ -1274,14 +1272,12 @@ request resets that observation window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 11 routed workflow lane identities / 13
+telemetry for 9 routed workflow lane identities / 11
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
 - `common-egress-agent` with the `openclaw-balanced-weather`,
   `openclaw-open-reference`, and `hermes-open-reference` shards
-- `rebuild-hermes`
-- `rebuild-hermes-stale-base`
 - `mcp-bridge` with the `hermes` shard
 - `mcp-bridge` with the `deepagents` shard
 - `channels-stop-start` with the `hermes` shard
@@ -1306,9 +1302,7 @@ Each execution writes one bounded, ordered v2 time series to the canonical
 - an `initialize` endpoint after commit-bound artifact restoration; the rebuild
   jobs initialize after their fixed-capacity swap;
 - a distinct `scenario-start` for every test handled by the execution;
-- a `periodic` sample on an approximately 15-second fixed cadence for
-  `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
-  60-second fixed cadence for every other execution;
+- a `periodic` sample on an approximately 60-second fixed cadence;
 - a `phase` sample before each semantic phase transition and when the final
   phase stops; and
 - a `finalize` endpoint from an `always()` step immediately before artifact
@@ -1323,14 +1317,8 @@ catch-up burst. Each successful append also prints one bounded
 The v2 ledger accepts at most 256 samples. Ordinary sampling stops once 255
 records exist to reserve the last slot for `finalize`. A missing, historical-v1,
 already-finalized, full, or invalid ledger permanently disables comparison
-sampling for that test progress instance. The two Hermes rebuild lanes use their
-shorter cadence to improve Docker/BuildKit peak-RSS evidence without changing
-the ledger bound, schema, privacy contract, or reserved final slot. In
-`rebuild-hermes` and `rebuild-hermes-stale-base`, where legacy phase resource
-evidence is configured, the workflow establishes its 32 GiB swap before
-`initialize` so the ledger sees one stable swap capacity. If canonical sampling
-becomes unavailable, the existing five-minute full snapshot becomes the
-best-effort fallback.
+sampling for that test progress instance. If canonical sampling becomes unavailable,
+the existing five-minute full snapshot becomes the best-effort fallback.
 That full profile may run `ps`, `docker stats`, and `docker system df`
 sequentially with a 15-second timeout each, or 45 seconds in the worst case;
 canonical sampling suppresses this heavier collection while it remains active.

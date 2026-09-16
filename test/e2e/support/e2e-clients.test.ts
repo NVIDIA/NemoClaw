@@ -32,7 +32,7 @@ import type {
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
 import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
-import { sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
+import { precleanSandbox, sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
 interface RunnerCall {
   command: string;
@@ -1260,6 +1260,25 @@ describe("E2E fixture clients", () => {
     expect(resultText(result)).toContain("assistant");
     expect(outputContainsSandbox(result, "assistant")).toBe(true);
     expect(outputContainsSandbox(result, "assist")).toBe(false);
+  });
+
+  it("precleans shared live fixtures through OpenShell only", async () => {
+    const command = vi.fn(async () => ({ exitCode: 0, stderr: "", stdout: "" }));
+    const host = {
+      command,
+      openshellCommandPath: "openshell",
+    } as unknown as HostCliClient;
+
+    await precleanSandbox(host, "e2e-cleanup", {}, [], "shared-preclean");
+
+    expect(command).toHaveBeenCalledOnce();
+    expect(command).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "delete", "e2e-cleanup"],
+      expect.objectContaining({
+        artifactName: "shared-preclean-openshell-sandbox-delete",
+      }),
+    );
   });
 
   it("assertExitZero reports non-zero and signaled commands", () => {

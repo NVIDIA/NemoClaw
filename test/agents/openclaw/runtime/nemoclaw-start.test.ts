@@ -2985,7 +2985,7 @@ describe("Telegram diagnostics (#2766)", () => {
     const endMarker =
       kind === "non-root"
         ? "  # Start gateway in background, auto-pair, then wait"
-        : "# Start the gateway as the 'gateway' user.";
+        : "# Start the gateway as the native sandbox agent user.";
     const end = src.indexOf(endMarker, start);
     if (start === -1 || end === -1 || end <= start) {
       throw new Error(`Expected ${kind} pre-gateway setup block in scripts/nemoclaw-start.sh`);
