@@ -128,6 +128,29 @@ function restoreTmpArtifacts(paths: string[], backups: Record<string, string>): 
 }
 
 describe("scripts/lib/sandbox-init.sh", () => {
+  describe("process observation", () => {
+    it("uses the configured proc root for listener ownership", () => {
+      const procRoot = mkdtempSync(join(tmpdir(), "sandbox-init-proc-"));
+      try {
+        const result = runWithLib(
+          [
+            'mkdir -p "$TEST_PROC_ROOT/net" "$TEST_PROC_ROOT/$$/fd"',
+            "printf '%s\\n' '0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 4242' >\"$TEST_PROC_ROOT/net/tcp\"",
+            ': >"$TEST_PROC_ROOT/net/tcp6"',
+            'ln -s "socket:[4242]" "$TEST_PROC_ROOT/$$/fd/3"',
+            '_NEMOCLAW_PROC_ROOT="$TEST_PROC_ROOT"',
+            'gateway_control_pid_owns_tcp_listener "$$" 8080',
+            "printf 'owned\\n'",
+          ].join("\n"),
+          { env: { TEST_PROC_ROOT: procRoot } },
+        );
+        expect(result.stdout).toBe("owned");
+      } finally {
+        rmSync(procRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("Python startup isolation", () => {
     it("ignores inherited PYTHONPATH in read_messaging_plan_channels", () => {
       const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-python-"));
@@ -730,10 +753,6 @@ EOF
         join(libDir, "sandbox-init.sh"),
         "export NEMOCLAW_TEST_SANDBOX_INIT_LOADED=1\n",
       );
-      writeFileSync(
-        join(libDir, "gateway-supervisor.sh"),
-        "export NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED=1\n",
-      );
       const wrapperPath = join(scriptDir, "nemoclaw-start.sh");
       writeFileSync(
         wrapperPath,
@@ -741,14 +760,14 @@ EOF
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           src.slice(start, end),
-          'printf "INIT_LOADED=%s SUPERVISOR_LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}" "${NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED:-0}"',
+          'printf "INIT_LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}"',
         ].join("\n"),
         { mode: 0o700 },
       );
 
       try {
         const result = execFileSync("bash", [wrapperPath], { encoding: "utf-8" }).trim();
-        expect(result).toBe("INIT_LOADED=1 SUPERVISOR_LOADED=1");
+        expect(result).toBe("INIT_LOADED=1");
       } finally {
         rmSync(workDir, { recursive: true, force: true });
       }

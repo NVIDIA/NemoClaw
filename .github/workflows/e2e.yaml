@@ -400,7 +400,7 @@ jobs:
             fi
             larger_runner="${LARGER_RUNNER_LABEL}"
           fi
-          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger}')"
+          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"security-posture-hermes":$larger}')"
           printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
       - id: candidate_authorization
@@ -3401,19 +3401,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        run: |
-          set -euo pipefail
-          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print | sort)
-          test "${#archives[@]}" -ge 1
-          test "${#archives[@]}" -le 2
-          for archive in "${archives[@]}"; do
-            env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-              npm cache add "$archive" --offline --ignore-scripts
-          done
-          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-            npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
-          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-            node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6
 
       - name: Install OpenShell CLI
         run: env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3820,7 +3808,7 @@ jobs:
       E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "openshell-credential-generation-window"
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs"
+      E2E_OBSERVABLE_OUTCOME: "Stable-handle refresh, revocation, detach, re-add, and valid rebuild preserve authorization epochs; expired inference credentials block rebuild before source deletion"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -5086,20 +5074,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print | sort)
-          test "${#archives[@]}" -ge 1
-          test "${#archives[@]}" -le 2
-          for archive in "${archives[@]}"; do
-            env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-              npm cache add "$archive" --offline --ignore-scripts
-          done
-          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-            npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
-          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-            node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef

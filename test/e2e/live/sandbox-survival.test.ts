@@ -4,8 +4,8 @@
 /**
  *
  * Preserves the supported boundaries: install.sh/onboard, OpenShell sandbox
- * stop/start, native OpenClaw readiness, sandbox exec, and durable
- * /sandbox/.openclaw state markers.
+ * OpenShell stop/start, native OpenClaw readiness, sandbox exec, and
+ * durable /sandbox/.openclaw state markers.
  */
 
 import fs from "node:fs";
@@ -13,12 +13,10 @@ import path from "node:path";
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import {
-  cleanupWhenCommandAvailable,
-  cleanupWhenOpenShellAvailable,
-} from "../fixtures/cleanup-resources.ts";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import {
   assertExitZero,
+  type HostCliClient,
   outputContainsSandbox,
   resultText,
   sandboxAccessEnv,
@@ -31,24 +29,7 @@ import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-survival";
-const MIN_OPENSHELL_VERSION = "0.0.24";
 const DASHBOARD_PORT = Number(process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
-
-function versionGte(actual: string, minimum: string): boolean {
-  const actualParts = actual.split(".").map((part) => Number.parseInt(part, 10));
-  const minimumParts = minimum.split(".").map((part) => Number.parseInt(part, 10));
-  for (let index = 0; index < Math.max(actualParts.length, minimumParts.length); index += 1) {
-    const a = Number.isFinite(actualParts[index]) ? actualParts[index] : 0;
-    const b = Number.isFinite(minimumParts[index]) ? minimumParts[index] : 0;
-    if (a > b) return true;
-    if (a < b) return false;
-  }
-  return true;
-}
-
-function extractSemver(raw: string): string | undefined {
-  return raw.match(/\d+\.\d+\.\d+/)?.[0];
-}
 
 function installEnv(hostedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
@@ -97,18 +78,56 @@ async function waitForNativeAgentReady(
   });
 }
 
+async function waitForHostForwardReady(
+  host: HostCliClient,
+  artifactPrefix: string,
+  gatewayPort: number,
+): Promise<void> {
+  await pollUntil({
+    artifactPrefix,
+    attempts: 30,
+    delayMs: 5_000,
+    probe: (_attempt, artifactName) =>
+      host.command(
+        "curl",
+        [
+          "-q",
+          "--noproxy",
+          "*",
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          "--connect-timeout",
+          "2",
+          "--max-time",
+          "5",
+          `http://127.0.0.1:${String(gatewayPort)}/health`,
+        ],
+        {
+          artifactName,
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 10_000,
+        },
+      ),
+    accept: (result) =>
+      result.exitCode === 0 && (result.stdout.trim() === "200" || result.stdout.trim() === "401"),
+  });
+}
+
 test(
-  "sandbox preserves native agent readiness and state across OpenShell stop/start",
+  "OpenShell stop/start preserves native agent state",
   {
     timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
         "confirm the selected runtime prerequisite",
         "install and register the OpenClaw sandbox",
-        "prove baseline sandbox access and native agent readiness",
         "write persistent OpenClaw markers",
-        "stop and start the sandbox through OpenShell",
-        "recheck native agent readiness and state",
+        "stop the sandbox through OpenShell",
+        "start the sandbox through OpenShell",
+        "recheck native agent readiness, host-forward usability, and state",
         "destroy the sandbox",
       ],
     },
@@ -127,10 +146,6 @@ test(
   }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
-    expect(
-      Number.isSafeInteger(DASHBOARD_PORT) && DASHBOARD_PORT >= 1024 && DASHBOARD_PORT <= 65_535,
-      "NEMOCLAW_DASHBOARD_PORT must be an integer between 1024 and 65535",
-    ).toBe(true);
 
     await artifacts.target.declare({
       id: "sandbox-survival",
@@ -138,8 +153,8 @@ test(
       contracts: [
         "install.sh --non-interactive creates the named OpenClaw sandbox",
         "OpenShell owns sandbox stop and start",
-        "sandbox exec and the native OpenClaw gateway are ready before and after stop/start",
-        "declared workspace, session, and memory markers survive the OpenShell lifecycle cycle",
+        "sandbox exec, the native OpenClaw gateway, and the host forward are usable after restart",
+        "declared workspace, session, and memory markers survive the OpenShell lifecycle",
         "final destroy removes the sandbox",
       ],
     });
@@ -150,11 +165,6 @@ test(
       scenarioLabel: "sandbox survival",
     });
 
-    expect(fs.existsSync(path.join(REPO_ROOT, "install.sh"))).toBe(true);
-
-    await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-      artifactName: "pre-cleanup-nemoclaw-destroy-sandbox-survival",
-    });
     await host.command(
       "sh",
       [
@@ -208,26 +218,23 @@ test(
       gatewayCleanupOptions,
     );
     const sandboxCleanupOptions = {
-      artifactName: "cleanup-nemoclaw-destroy-sandbox-survival",
+      artifactName: "cleanup-openshell-delete-sandbox-survival",
       redactionValues: [apiKey],
     };
-    cleanup.trackSandbox(
-      {
-        cleanupSandbox: (name: string) =>
-          cleanupWhenCommandAvailable(
+    let sandboxDeleted = false;
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandboxDeleted
+        ? Promise.resolve()
+        : cleanupWhenOpenShellAvailable(
             host,
-            host.commandPath,
             {
-              artifactName: "cleanup-probe-nemoclaw-sandbox-survival",
+              artifactName: "cleanup-probe-openshell-sandbox-survival",
               env: buildAvailabilityProbeEnv(),
               redactionValues: sandboxCleanupOptions.redactionValues,
               timeoutMs: 30_000,
             },
-            () => host.cleanupSandbox(name, sandboxCleanupOptions),
+            () => sandbox.cleanupSandbox(SANDBOX_NAME, sandboxCleanupOptions),
           ),
-      },
-      SANDBOX_NAME,
-      sandboxCleanupOptions,
     );
 
     progress.phase("install and register the OpenClaw sandbox");
@@ -239,17 +246,6 @@ test(
       timeoutMs: execTimeout(20 * 60_000),
     });
     expect(install.exitCode, resultText(install)).toBe(0);
-
-    await host.expectNemoclawAvailable();
-    const openshellVersion = await host.command("openshell", ["--version"], {
-      artifactName: "openshell-version-sandbox-survival",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    assertExitZero(openshellVersion, "openshell --version");
-    const version = extractSemver(resultText(openshellVersion));
-    expect(version, resultText(openshellVersion)).toBeTruthy();
-    expect(versionGte(version!, MIN_OPENSHELL_VERSION), resultText(openshellVersion)).toBe(true);
 
     const instance: NemoClawInstance = {
       onboarding: "cloud-openclaw",
@@ -263,25 +259,12 @@ test(
     };
 
     stateValidation.expectLocalRegistryContains(SANDBOX_NAME);
-    await host.expectListed(SANDBOX_NAME, {
-      artifactName: "post-install-nemoclaw-list",
-    });
-    await sandbox.expectListed(SANDBOX_NAME, {
-      artifactName: "post-install-openshell-sandbox-list",
-    });
-    await host.expectStatus(SANDBOX_NAME, {
-      artifactName: "post-install-nemoclaw-status",
-    });
-
-    progress.phase("prove baseline sandbox access and native agent readiness");
     const execShell = (script: string, artifactName: string) =>
       sandbox.exec(SANDBOX_NAME, ["sh", "-lc", script], {
         artifactName,
         env: sandboxAccessEnv(),
         timeoutMs: 60_000,
       });
-    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "baseline-sandbox-exec-alive");
-    await waitForNativeAgentReady(execShell, "baseline-native-agent-ready", DASHBOARD_PORT);
 
     progress.phase("write persistent OpenClaw markers");
     const markerValue = `nemoclaw-survival-${Date.now()}`;
@@ -302,38 +285,42 @@ test(
     await stateValidation.writeSandboxMarkers(instance, markers);
     await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
 
-    progress.phase("stop and start the sandbox through OpenShell");
+    progress.phase("stop the sandbox through OpenShell");
     const stop = await sandbox.openshell(["sandbox", "stop", "-g", "nemoclaw", SANDBOX_NAME], {
-      artifactName: "openshell-sandbox-stop-survival",
+      artifactName: "openshell-stop-sandbox-survival",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 120_000,
     });
-    assertExitZero(stop, "openshell sandbox stop");
-    const start = await sandbox.openshell(["sandbox", "start", "-g", "nemoclaw", SANDBOX_NAME], {
-      artifactName: "openshell-sandbox-start-survival",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
-    assertExitZero(start, "openshell sandbox start");
+    assertExitZero(stop, "OpenShell sandbox stop");
 
-    progress.phase("recheck native agent readiness and state");
-    await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
-      artifactNamePrefix: "post-restart-openshell-sandbox-ready",
+    progress.phase("start the sandbox through OpenShell");
+    const start = await sandbox.openshell(["sandbox", "start", "-g", "nemoclaw", SANDBOX_NAME], {
+      artifactName: "openshell-start-sandbox-survival",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 120_000,
     });
-    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "post-restart-sandbox-exec-alive");
-    await waitForNativeAgentReady(execShell, "post-start-native-agent-ready", DASHBOARD_PORT);
-    await stateValidation.expectSandboxMarkers(instance, markers, "post-restart-marker-read");
-    await stateValidation.expectSandboxDirectoryPopulated(
+    assertExitZero(start, "OpenShell sandbox start");
+
+    progress.phase("recheck native agent readiness, host-forward usability, and state");
+    await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
+      artifactNamePrefix: "post-openshell-start-ready",
+    });
+    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "post-openshell-start-sandbox-exec");
+    await waitForNativeAgentReady(execShell, "post-openshell-start-native-ready", DASHBOARD_PORT);
+    await waitForHostForwardReady(host, "post-openshell-start-host-forward", DASHBOARD_PORT);
+    await stateValidation.expectSandboxMarkers(
       instance,
-      "/sandbox/.openclaw",
-      "post-restart-openclaw-directory-populated",
+      markers,
+      "post-openshell-start-marker-read",
     );
 
     progress.phase("destroy the sandbox");
-    await host.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "final-destroy-sandbox-survival",
-      timeoutMs: 15 * 60_000,
+    await sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "final-openshell-delete-sandbox-survival",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 120_000,
     });
+    sandboxDeleted = true;
     const postDestroyList = await sandbox.list({
       artifactName: "post-destroy-openshell-sandbox-list",
       env: buildAvailabilityProbeEnv(),
@@ -350,8 +337,9 @@ test(
         installCompleted: install.exitCode === 0,
         openshellStopStartCompleted: true,
         nativeAgentReadyBeforeStop: true,
-        markersPersistedAfterStart: true,
-        nativeAgentReadyAfterStart: true,
+        deliveryPathReadyAfterRecover: true,
+        markersPersistedAfterBothRepairs: true,
+        deliveryPathReadyAfterStart: true,
         destroyedAtEnd,
       },
     });

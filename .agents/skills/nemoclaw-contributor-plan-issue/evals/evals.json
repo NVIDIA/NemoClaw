@@ -3,11 +3,12 @@
     "id": "positive-explicit-plan",
     "question": "Plan NVIDIA/NemoClaw issue #8378. Identify the current owner, related work, acceptance examples, and the first independently valuable slice.",
     "expected_skill": "nemoclaw-contributor-plan-issue",
-    "ground_truth": "The planning workflow fetches the issue and current checkout, names implementation ownership and related work, then proposes complete capability slices with acceptance and test evidence without editing code or GitHub.",
+    "ground_truth": "The planning workflow fetches the issue and current checkout, decides which component owns the behavior, and proposes only the smallest accepted local change with acceptance evidence.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-plan-issue`.",
       "Reads current source, tests, workflows, active guidance, related work, and relevant history.",
-      "Names current behavior and implementation ownership, related work, delivery order, stop conditions, and security-boundary evidence.",
+      "Names the current consumer, behavior owner, recommended ownership disposition, local change boundary, related work, delivery order, and stop conditions.",
+      "Proposes local code only when current evidence establishes a NemoClaw-owned defect, integration, or temporary bridge.",
       "For every capability slice, includes dependencies and decisions, acceptance examples, a test plan, and deferred scope.",
       "Does not implement code or publish a pull request."
     ]
@@ -19,7 +20,9 @@
     "ground_truth": "The bare planning request returns a concise evidence-based plan without implementing or writing to GitHub.",
     "expected_behavior": [
       "Identifies the requested outcome, scope authority, current behavior owner, and material related work.",
+      "Recommends an evidence-backed ownership disposition before proposing repository work.",
       "Provides observable acceptance, relevant validation, delivery order, and unresolved decisions.",
+      "Records the accepted boundary and the condition that requires re-planning.",
       "Includes security evidence when a trust boundary is affected.",
       "Uses a format proportional to the issue, without mandatory empty headings.",
       "Does not implement or publish work."
@@ -135,6 +138,55 @@
       "Stops before producing an evidence-based issue plan.",
       "Asks the user to configure GitHub access for the current environment.",
       "Does not use curl, another HTTP client, web search, or a different endpoint."
+    ]
+  },
+  {
+    "id": "upstream-ownership-first",
+    "question": "Plan NVIDIA/NemoClaw issue #8378. Before proposing local code, determine whether an existing upstream or native capability owns the behavior and whether NemoClaw needs more than a thin integration.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "The planner verifies the current contracts and makes an explicit ownership disposition before it proposes a local capability slice.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Identifies the current consumer and the component that owns the underlying behavior.",
+      "Verifies a material upstream capability against current authoritative source, documentation, or contract tests.",
+      "Prefers removal, configuration, or a thin integration when an existing upstream or native capability satisfies the outcome.",
+      "Does not treat the issue location as proof that NemoClaw owns the implementation."
+    ]
+  },
+  {
+    "id": "temporary-bridge-exit",
+    "question": "Plan NVIDIA/NemoClaw issue #8378. If the accepted outcome needs a temporary NemoClaw bridge for a missing upstream contract, define its ownership and deletion conditions.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "A temporary local bridge is justified by a current consumer and includes an accountable owner, upstream gap, and observable removal trigger.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Verifies that the accepted outcome has a current consumer before proposing a bridge.",
+      "Names the missing upstream contract, accountable owner, and observable removal trigger.",
+      "Keeps the local bridge to the smallest complete integration slice."
+    ]
+  },
+  {
+    "id": "foreign-failure-boundary",
+    "question": "Plan NVIDIA/NemoClaw issue #8378 without adding defenses for hypothetical failures that current NemoClaw behavior does not cause and no accepted contract assigns to NemoClaw.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "The planner distinguishes a NemoClaw defect from another owner's failure and excludes unowned defensive scope.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Identifies whether current NemoClaw behavior causes the named failure.",
+      "Defers or declines a local mitigation when another component owns the failure and no accepted contract assigns it to NemoClaw.",
+      "Records the excluded failure class in the scope boundary."
+    ]
+  },
+  {
+    "id": "current-priority-is-evidence",
+    "question": "Plan NVIDIA/NemoClaw issue #8378 using the project's current priorities without turning today's feature posture into permanent NemoClaw policy.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "The planner uses current accepted project direction to decide this issue while keeping reusable skill guidance durable.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Checks current repository guidance and accepted decisions for the project's present direction.",
+      "Uses that direction as issue-specific planning evidence.",
+      "Does not claim that a temporary feature freeze or integration priority is permanent product policy."
     ]
   },
   {
