@@ -8,6 +8,7 @@ import type { PortableDemoLifecycleContext } from "./portable-demo-lifecycle";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 import {
   currentHermesPortableStartupOperation,
+  hermesPortableStartupReuseGateEnabled,
   type HermesPortableStartupOperation,
 } from "./hermes-portable-startup-operation";
 
@@ -27,8 +28,7 @@ function currentScope(sandboxName: string, deps: HermesPortableLifecycleDeps) {
   const scope = currentHermesPortableStartupOperation(sandboxName);
   return (env.NEMOCLAW_EXPERIMENTAL_PROFILE === undefined ||
     env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable") &&
-    (env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE === undefined ||
-      env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE === "1") &&
+    hermesPortableStartupReuseGateEnabled(env) &&
     scope?.stateDir === path.join(deps.stateDir ?? defaultPortableDemoStateDir(env), "state") &&
     deps.startupTimeoutMs === undefined
     ? scope

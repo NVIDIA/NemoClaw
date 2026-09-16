@@ -14,7 +14,10 @@ import type {
   HermesPortableConfiguredReceipt,
   readHermesPortableLifecycleReceipt,
 } from "./hermes-portable-receipt";
-import { currentHermesPortableStartupOperation } from "./hermes-portable-startup-operation";
+import {
+  currentHermesPortableStartupOperation,
+  hermesPortableStartupReuseGateEnabled,
+} from "./hermes-portable-startup-operation";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
 interface StartupReuseDeps {
@@ -43,7 +46,7 @@ export async function tryReuseHermesPortableOllamaStartup(
   if (
     intent !== "connect-probe-only" ||
     env.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" ||
-    env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE !== "1" ||
+    !hermesPortableStartupReuseGateEnabled(env) ||
     !scope ||
     scope.stateDir !== path.join(stateDir, "state")
   ) {

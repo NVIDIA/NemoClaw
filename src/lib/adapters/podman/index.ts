@@ -83,6 +83,7 @@ export interface PodmanExecutableOperationProof {
   readonly executablePath: string;
   readonly assertMetadataAuthority: () => void;
   readonly assertContentAuthority: () => void;
+  readonly assertCheckpointCurrent: () => void;
   readonly guardCommand: (phase: "before" | "after") => void;
 }
 
@@ -106,22 +107,32 @@ export function createPodmanExecutableOperationProof(
     assertWithLatch(() => assertPodmanExecutableMetadataAuthority(authority, deps));
   const assertContentAuthority = () =>
     assertWithLatch(() => assertPodmanExecutableAuthority(authority, deps));
+  const assertNextDispatch = () => {
+    const shouldRehash = commandCount + 1 === EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
+    if (shouldRehash) assertContentAuthority();
+    else assertMetadataAuthority();
+  };
+  const completeDispatch = () => {
+    commandCount = (commandCount + 1) % EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
+  };
   const proof = Object.freeze({
     authority,
     executablePath: authority.executablePath,
     assertMetadataAuthority,
     assertContentAuthority,
+    assertCheckpointCurrent: () => {
+      try {
+        assertNextDispatch();
+      } finally {
+        completeDispatch();
+      }
+    },
     guardCommand: (phase: "before" | "after") => {
       try {
-        const shouldRehash =
-          phase === "before" &&
-          commandCount + 1 === EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
-        if (shouldRehash) assertContentAuthority();
+        if (phase === "before") assertNextDispatch();
         else assertMetadataAuthority();
       } finally {
-        if (phase === "after") {
-          commandCount = (commandCount + 1) % EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
-        }
+        if (phase === "after") completeDispatch();
       }
     },
   });

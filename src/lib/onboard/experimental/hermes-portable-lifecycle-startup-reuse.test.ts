@@ -66,7 +66,6 @@ describe("Portable lifecycle startup handoff", () => {
       env: {
         ...fixture.deps.env,
         NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-        NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: "1",
       },
     };
     const context = {

@@ -24,7 +24,6 @@ describe("Portable inference startup reuse", () => {
     harness.input.stateDir = stateDir;
     harness.input.env = {
       NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-      NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: "1",
     };
     const inspectReadinessRuntime = vi.fn(() => ({
       kind: "running-current" as "running-current" | "stopped",
@@ -115,7 +114,7 @@ describe("Portable inference startup reuse", () => {
     expect(h.overrides.prepareRecoveryEntry).toHaveBeenCalledOnce();
   });
 
-  it.each(["0", undefined])("keeps reuse=%s on full recovery (#11574)", async (gate) => {
+  it.each(["0", "invalid"])("keeps reuse=%s on full recovery (#11574)", async (gate) => {
     const h = setup();
     Object.assign(h.input.env, { NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE: gate });
     await expect(h.run()).resolves.toBe("reused");
