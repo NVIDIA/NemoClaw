@@ -277,6 +277,7 @@ const ExportInferenceSchema = Type.Union([
       model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
       api: Type.Literal("openai-completions"),
       serving: NemoClawManagedVllmServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
     },
     { additionalProperties: false },
   ),

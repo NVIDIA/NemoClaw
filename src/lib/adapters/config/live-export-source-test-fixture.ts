@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { vi } from "vitest";
 
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
@@ -244,4 +245,29 @@ export function openAiProviderProfile() {
 
 export function nativeNvidiaProvider() {
   return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
+}
+
+export function braveProvider() {
+  const readCredential = vi.fn(() => {
+    throw new Error(readFailureCanary);
+  });
+  const credentials = Object.defineProperty({}, "BRAVE_API_KEY", {
+    enumerable: true,
+    get: readCredential,
+  });
+  return {
+    readCredential,
+    provider: {
+      metadata: {
+        id: "brave-id",
+        name: "alpha-brave-search",
+        workspace: "default",
+        resourceVersion: 9n,
+      },
+      type: "brave",
+      profileWorkspace: "default",
+      credentials,
+      config: {},
+    },
+  };
 }

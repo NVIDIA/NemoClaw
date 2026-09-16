@@ -5,19 +5,7 @@ import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { resolveSandboxContainerOwner } from "./container-owner";
 
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const TERMINAL_OPEN_SHELL_SANDBOX_PHASES = new Set(["Error", "Failed"]);
-
-function stripAnsi(value = ""): string {
-  return String(value).replace(ANSI_RE, "");
-}
-
-export type SpawnLikeResult = {
-  error?: Error;
-  status: number | null;
-  stdout?: string;
-  stderr?: string;
-};
 
 export type DestroyGatewayCleanupDecision = "cleanup" | "preserve" | "prompt";
 
@@ -46,45 +34,6 @@ export type LiveSandboxProbeSnapshot = {
   liveList: LiveSandboxListSnapshot;
   dockerContainersBySandboxName: ReadonlyMap<string, DockerSandboxContainerSnapshot>;
 };
-
-export function isMissingSandboxDeleteOutput(output = ""): boolean {
-  return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(
-    stripAnsi(output),
-  );
-}
-
-/**
- * True when a `sandbox delete` failure is a gateway transport error (the
- * OpenShell gateway at 127.0.0.1:8080 is not listening) rather than a real
- * delete rejection. When the gateway process is down every gateway call gets a
- * connection-refused/transport error, which used to make `destroy` fatal with
- * no bypass (#6046).
- */
-export function isGatewayUnreachableDeleteOutput(output = ""): boolean {
-  return /connection refused|os error (?:61|111)|tcp connect error|error trying to connect|transport error|failed to connect to|connect(?:ion)? timed out|deadline has elapsed|connection reset/i.test(
-    stripAnsi(output),
-  );
-}
-
-export function getSandboxDeleteOutcome(deleteResult: SpawnLikeResult): {
-  output: string;
-  alreadyGone: boolean;
-  gatewayUnreachable: boolean;
-  timedOut?: true;
-} {
-  const output = `${deleteResult.stdout || ""}${deleteResult.stderr || ""}`.trim();
-  const failed = deleteResult.status !== 0;
-  const timedOut =
-    failed && (deleteResult.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-  const alreadyGone = failed && !timedOut && isMissingSandboxDeleteOutput(output);
-  return {
-    output,
-    alreadyGone,
-    gatewayUnreachable:
-      failed && !alreadyGone && (timedOut || isGatewayUnreachableDeleteOutput(output)),
-    ...(timedOut ? { timedOut: true as const } : {}),
-  };
-}
 
 export function shouldStopHostServicesAfterDestroy(input: {
   deleteSucceededOrAlreadyGone: boolean;
