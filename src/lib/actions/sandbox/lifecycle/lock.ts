@@ -31,9 +31,15 @@ export async function withSandboxLifecycleLock<T>(
   options: McpLifecycleLockOptions = {},
 ): Promise<T> {
   return await withCurrentPortableHostFence(async () => {
-    const resolved = resolveLifecycleLockOptions(sandboxName, options);
+    const portable = resolveHermesPortableLifecycleLockOptions(sandboxName);
+    const resolved =
+      options.stateDir !== undefined ? options : portable ? { ...options, ...portable } : options;
+    const startupEnv =
+      portable && process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === undefined
+        ? { ...process.env, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" }
+        : process.env;
     const scoped = () =>
-      withHermesPortableStartupOperation(sandboxName, resolved.stateDir, operation);
+      withHermesPortableStartupOperation(sandboxName, resolved.stateDir, operation, startupEnv);
     return Object.keys(resolved).length === 0
       ? await withMcpLifecycleLock(sandboxName, scoped)
       : await withMcpLifecycleLock(sandboxName, scoped, resolved);
