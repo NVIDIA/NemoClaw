@@ -43,7 +43,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `get-started/prerequisites.mdx` | Rewrite | `prerequisites.md`: verified bundles, images, tools, credentials, endpoints, and host roles | D03 | Pending audit |
 | `get-started/quickstart.mdx` | Rewrite | `get-started.md`: OpenClaw YAML-to-interaction walkthrough | D03 | Pending audit |
 | `get-started/quickstart-hermes.mdx` | Rewrite | `get-started.md`, `agents.md`, `interfaces.md`: shared deployment steps plus Hermes requirements | D03, D06 | Pending audit |
-| `get-started/quickstart-langchain-deepagents-code.mdx` | Rewrite | `agents.md`: external gateway/inference path and native entry point; remove alias/installer workflow | D06 | Pending audit |
+| `get-started/quickstart-langchain-deepagents-code.mdx` | Rewrite | `agents.md`: external gateway/inference path and native entry point; remove alias/installer workflow | D06 | Written: [Deep Agents one-shot request](../agents.md#run-one-deep-agents-request); Fabric access test and revision-scoped live result. Attaching to a hosted conversation remains unimplemented. |
 | `get-started/quickstart-pi.mdx` | Rewrite | `agents.md`: Pi model metadata, native access, external services, and session lifetime | D06 | Pending audit |
 | `get-started/dgx-station-preparation.mdx` | Hold | `prerequisites.md`: do not inherit DGX Station qualification or setup scripts from main | D03 | Pending audit |
 | `get-started/windows-preparation.mdx` | Rewrite | `prerequisites.md`: distinguish Windows client bundle evidence from WSL, engine, and GPU deployment support | D03 | Pending audit |
@@ -52,7 +52,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 
 | Source | Disposition | Destination and required change | Package | Coverage and evidence |
 |---|---|---|---|---|
-| `configure-agents/configure-agent-heartbeats.mdx` | Rewrite | `agents.md`: first-agent execution defaults, native heartbeat semantics, image/replacement requirements | D06 | Pending audit |
+| `configure-agents/configure-agent-heartbeats.mdx` | Rewrite | `agents.md`: first-agent execution defaults, native heartbeat semantics, image/replacement requirements | D06 | Written: [execution and heartbeat settings](../agents.md#openclaw-execution-settings); schema, adapter and native tests. Omitted heartbeat uses native defaults; no inherited scheduler support claim. |
 | `configure-agents/configure-memory-search.mdx` | Hold | `agents.md`: native setting; embedding endpoint, egress, credentials, and persistence need a qualified procedure | D06 | Pending audit |
 | `configure-agents/progressive-tool-disclosure.mdx` | Rewrite | `agents.md`: shared disclosure mode, read-only allowlist, roster ownership, and replacement | D06 | Pending audit |
 | `configure-agents/understand-context-compaction.mdx` | Hold | `agents.md`: verify pinned native defaults; do not carry main-specific tuning or patches as current behavior | D06 | Pending audit |
@@ -121,7 +121,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `manage-sandboxes/manage-messaging-channels.mdx` | Hold | `agents.md`, `migration.md`: no managed enable/disable/status lifecycle | D06 | Pending audit |
 | `manage-sandboxes/messaging-channels.mdx` | Hold | `agents.md`: retain native ownership explanation without claiming fixture-based channel support | D06 | Pending audit |
 | `manage-sandboxes/recover-rebuild-sandboxes.mdx` | Rewrite | `usage.md`, `troubleshooting.md`: explicit reconciliation; no rebuild, adoption, pruning, or ambiguous mutation retry | D04 | Pending audit |
-| `manage-sandboxes/run-deep-agents-code.mdx` | Rewrite | `agents.md`: current native access and sessions; remove launch/use aliases and managed MCP assumptions | D06 | Pending audit |
+| `manage-sandboxes/run-deep-agents-code.mdx` | Rewrite | `agents.md`: current native access and sessions; remove launch/use aliases and managed MCP assumptions | D06 | Written: [Deep Agents one-shot request](../agents.md#run-one-deep-agents-request); Fabric SDK test and live evidence. Separate runtime, shared workspace, and no automatic replay are explicit. |
 | `manage-sandboxes/run-pi.mdx` | Rewrite | `agents.md`: native access, route metadata, runtime restarts, and lost in-memory conversations | D06 | Pending audit |
 | `manage-sandboxes/run-sandboxes.mdx` | Rewrite | `usage.md`, `interfaces.md`: separate deployment state directories and native forwarding | D03, D04 | Written: [separate state](../usage.md) and [workspace access](../interfaces.md#select-the-gateway-and-workspace); SDK bindings and pinned OpenShell selectors. |
 | `manage-sandboxes/runtime-controls.mdx` | Rewrite | `agents.md`, `usage.md`: declarative settings versus native settings and drift/replacement rules | D04, D06 | Pending audit |
@@ -201,7 +201,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `security/credential-storage.mdx` | Rewrite | `security.md`: environment/file references, child-process access, gateway persistence, native token lifetimes, and redaction | D08 | Pending audit |
 | `security/filesystem-controls.mdx` | Merge | `sandbox-network.md`, `security.md`: exact filesystem policy, shared sandbox boundaries, and Landlock mode | D08 | Pending audit |
 | `security/gateway-authentication-controls.mdx` | Rewrite | `security.md`, `interfaces.md`: OpenShell mTLS/bearer versus native agent tokens and pairing | D08 | Pending audit |
-| `security/openclaw-controls.mdx` | Rewrite | `security.md`, `agents.md`: pinned native controls versus NemoClaw-owned roster/tools; no blanket protection claims | D08 | Pending audit |
+| `security/openclaw-controls.mdx` | Rewrite | `security.md`, `agents.md`: pinned native controls versus NemoClaw-owned roster/tools; no blanket protection claims | D08 | Written: [native initialization and checked fields](../agents.md#native-controls-at-initialization); OpenClaw/Hermes adapters. Integration procedures remain qualification gates. |
 | `security/process-controls.mdx` | Merge | `sandbox-network.md`, `security.md`: current process policy, image settings, and enforcement evidence | D08 | Pending audit |
 | `security/tcb-boundary.mdx` | Rewrite | `security.md`, `overview.md`: SDK/provider/OpenTofu, engines, OpenShell, Fabric, native agents, recipes, and models | D02, D08 | Pending audit |
 

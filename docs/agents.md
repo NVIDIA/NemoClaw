@@ -25,13 +25,68 @@ That procedure uses the OpenClaw dashboard; it is not a dashboard guide for ever
 |---|---|
 | OpenClaw | Optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns a native gateway with a session per declared agent |
 | Hermes | [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui); API and dashboard conversations are separate |
+| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-request); starts a separate runtime using the deployment's route |
 | Pi | Native model metadata and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
 | Other Fabric harnesses | Fabric hosts the native process; a complete user-facing first-message/access procedure for each harness is **TBD** |
 
-Use the deployment's gateway and workspace for OpenShell access; [the quickstart](get-started.md#5-access-the-agent) explains how to identify the workspace.
+Use the deployment's gateway and workspace for OpenShell access; [interface selection](interfaces.md#select-the-gateway-and-workspace) explains how to identify them.
 NemoClaw has no `launch`, `connect`, or invocation command.
 Do not start a separate Fabric SDK `run` expecting to attach to the runtime already hosted by the deployment.
 Native channel/plugin capabilities need their own prerequisites; see [integration gaps](#additional-agent-integrations).
+
+### Run One Deep Agents Request
+
+Use an already applied `harness: deepagents` deployment with an external gateway and inference endpoint, a compatible current image, and an API/model you can invoke.
+Follow its [harness matrix entry](reference/fabric-harnesses.md) and the shared [deployment procedure](usage.md) to create it first.
+This call starts a separate Fabric runtime inside the sandbox and sends a real model request, which can incur charges.
+It shares `/sandbox/workspace` with the hosted runtime and can use the agent's tools; it writes invocation artifacts to `/sandbox/sdk-smoke`.
+Use an idle sandbox you own and preserve any files you need before running it.
+It does not attach to or resume the hosted runtime's conversation.
+
+After [selecting the gateway and workspace](interfaces.md#select-the-gateway-and-workspace), run this from any directory on the client host.
+Replace `assistant` with the sandbox name and the final `main` with the declared agent name:
+
+```sh
+openshell sandbox exec -n assistant --timeout 360 --no-tty -- /opt/fabric/bin/python -c '
+import asyncio, json, sys
+sys.path.insert(0, "/opt/nemoclaw")
+from fabric import configuration
+from nemo_fabric import Fabric, FabricConfig
+config = configuration(sys.argv[1], "deepagents")
+config["runtime"]["artifacts"] = "/sandbox/sdk-smoke"
+result = asyncio.run(Fabric().run(
+    FabricConfig.model_validate(config),
+    input="Reply with exactly the word FOUR.",
+    base_dir="/sandbox",
+))
+print(json.dumps(result.to_mapping()))
+' main
+```
+
+Verify JSON `status: "succeeded"`, no non-null `error`, and an actual `output.response` containing the requested reply.
+A zero process exit or echoed prompt alone does not prove a successful agent response.
+If execution fails or the connection is lost, inspect the returned error and retained invocation artifacts before deciding whether another model/tool call is safe; do not automatically replay an uncertain invocation.
+Retire the sandbox using [deployment destroy](usage.md#destroy), which deletes its workspace and invocation artifacts.
+
+This follows the [native access test](../crates/nemoclaw-e2e/tests/fabric_live.rs) and [retained Linux ARM64 result](validation/rust-fabric-live-linux-arm64.json) at revision `b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`.
+That result confirmed a short Deep Agents reply through OpenShell and preservation of the hosted runtime identity; it does not qualify conversation recovery or every model/tool combination.
+
+## Native Controls at Initialization
+
+The adapters write these settings when first creating native configuration:
+
+| Runtime | Initial settings and meaning |
+|---|---|
+| OpenClaw | Nested native sandbox mode `off`; execution host `gateway` and mode `full`, inside the OpenShell sandbox; coding tool profile |
+| OpenClaw | Memory search, cron, update checks, and automatic updates disabled |
+| Hermes | Local terminal backend in `/sandbox/workspace`, manual approvals, and `agent.max_turns: 8` |
+
+The nested OpenClaw sandbox setting does not disable the outer OpenShell sandbox.
+These defaults do not guarantee that arbitrary native tools are harmless or supply missing integration prerequisites.
+The [OpenClaw adapter](../image/fabric/openclaw_adapter.py) checks reserved gateway, inference, execution, and declared integration settings.
+With a declared roster/tool policy it also compares the full owned agent and tool sections; other native fields are not all checked for drift.
+The [Hermes adapter](../image/fabric/hermes_adapter.py) compares the generated top-level configuration sections, including terminal, approval, and turn settings.
+Readiness rejects conflicts in those checked fields; it does not continuously rewrite native configuration or enforce every initialization default.
 
 ## Multiple OpenClaw Agents and Tool Restrictions
 
@@ -91,9 +146,9 @@ execution:
   heartbeatEvery: 30m
 ```
 
-`timeoutSeconds` limits an agent turn and defaults to 600 seconds when omitted.
+`timeoutSeconds` sets the native agent-turn and provider-request budgets and defaults to 600 seconds when omitted.
 Fabric's outer deadline includes time for the gateway response and cleanup.
-Startup, readiness, and managed-inference probes retain separate budgets.
+Startup, readiness, and managed-inference probes retain [separate budgets](inference.md#understand-timeout-budgets).
 
 Omitting `heartbeatEvery` leaves OpenClaw's native heartbeat defaults in place.
 An explicit interval uses an isolated heartbeat session; `0m` disables heartbeat.
