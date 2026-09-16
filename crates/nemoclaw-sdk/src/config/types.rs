@@ -38,7 +38,7 @@ pub struct Metadata {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The configuration requires one selected inference provider and one sandbox.
+/// The configuration requires one sandbox and at least one selected inference provider. At most one selected provider may have managed inference dependencies.
 pub struct Spec {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]

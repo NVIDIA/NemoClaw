@@ -274,7 +274,7 @@ fn validate_teardown_state(
             "unfinished apply may have unbound effects; reconcile its original configuration before destroy",
         ));
     }
-    if record.document.inference_provider()?.ollama.is_some()
+    if record.document.lifecycle_provider()?.ollama.is_some()
         && bindings.contains_key("nemoclaw_ollama.service")
         && !bindings.contains_key(crate::deployment::ollama::STORAGE)
     {

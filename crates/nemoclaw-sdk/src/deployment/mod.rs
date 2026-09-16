@@ -162,8 +162,8 @@ impl Deployment {
                 "unfinished apply has different intent; reapply its original configuration",
             ));
         }
-        if (document.inference_provider()?.ollama.is_some()
-            || document.inference_provider()?.ollama_proxy.is_some())
+        if (document.lifecycle_provider()?.ollama.is_some()
+            || document.lifecycle_provider()?.ollama_proxy.is_some())
             && record
                 .generations
                 .get("ollama")
@@ -310,7 +310,7 @@ impl Deployment {
         }
         client.ready(&sandbox, cancel).await?;
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.inference_ready(&sandbox)=>result?}
-        if document.inference_provider()?.service.is_some() {
+        if document.lifecycle_provider()?.service.is_some() {
             result.agent_response = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.agent_response(&sandbox)=>result?};
         }
         record.succeeded = true;
@@ -335,7 +335,7 @@ impl Deployment {
             }
             let observed = if crate::ollama::proxy::supports(&target.kind) {
                 let config = document
-                    .inference_provider()?
+                    .lifecycle_provider()?
                     .ollama_proxy
                     .as_ref()
                     .ok_or(Error::State("missing proxy settings"))?;

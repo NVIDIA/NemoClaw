@@ -189,10 +189,12 @@ impl Document {
                 tls.key.env.as_str(),
             ]);
         }
-        if let Ok(provider) = self.inference_provider()
-            && let Some(c) = &provider.credential
-        {
-            names.push(c.env.as_str());
+        if let Ok(providers) = self.selected_inference_providers() {
+            for provider in providers {
+                if let Some(credential) = &provider.credential {
+                    names.push(credential.env.as_str());
+                }
+            }
         }
         for binding in self.spec.sandboxes[0]
             .integration_bindings(&self.spec.integrations)

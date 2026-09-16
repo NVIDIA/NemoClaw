@@ -35,8 +35,20 @@ impl Document {
         }
     }
 
-    /// Resolve the single provider selected by routes, preserving its declaration scope.
+    /// Resolve the provider for the first agent's initial model choice.
     pub fn inference_provider(&self) -> Result<&InferenceProvider, ConfigError> {
+        let agent = self
+            .spec
+            .sandboxes
+            .first()
+            .and_then(|sandbox| sandbox.agents.first())
+            .ok_or(ConfigError("at least one agent is required"))?;
+        let (inference, sandbox_visible) = self.scoped_inference(agent)?;
+        self.route_provider(inference.default_route()?, sandbox_visible)
+    }
+
+    /// Providers selected anywhere in the sandbox, deduplicated by definition identity.
+    pub fn selected_inference_providers(&self) -> Result<Vec<&InferenceProvider>, ConfigError> {
         let [sandbox] = self.spec.sandboxes.as_slice() else {
             return Err(ConfigError("exactly one sandbox is required"));
         };
@@ -55,20 +67,75 @@ impl Document {
                 ));
             }
         }
-        let mut selected: Option<&InferenceProvider> = None;
+        let mut selected = std::collections::BTreeMap::new();
         for agent in &sandbox.agents {
             let (inference, sandbox_visible) = self.scoped_inference(agent)?;
             for route in &inference.routes {
                 let provider = self.route_provider(route, sandbox_visible)?;
-                if selected.is_some_and(|previous| !std::ptr::eq(previous, provider)) {
+                if let Some(previous) = selected.insert(&provider.name, provider)
+                    && !std::ptr::eq(previous, provider)
+                {
                     return Err(ConfigError(
-                        "a sandbox supports only one selected inference provider definition",
+                        "selected provider definitions must have distinct names",
                     ));
                 }
-                selected = Some(provider);
             }
         }
-        selected.ok_or(ConfigError("at least one agent is required"))
+        if selected.is_empty() || selected.len() > 32 {
+            return Err(ConfigError(
+                "a sandbox requires between one and 32 selected providers",
+            ));
+        }
+        Ok(selected.into_values().collect())
+    }
+
+    // Managed inference currently has one lifecycle per deployment. The initial
+    // provider supplies the no-op external case; it need not own a managed service.
+    pub(crate) fn lifecycle_provider(&self) -> Result<&InferenceProvider, ConfigError> {
+        let providers = self.selected_inference_providers()?;
+        let mut managed = providers.into_iter().filter(|provider| {
+            provider.service.is_some()
+                || provider.ollama.is_some()
+                || provider.ollama_proxy.is_some()
+        });
+        let selected = managed.next();
+        if managed.next().is_some() {
+            return Err(ConfigError(
+                "a deployment supports at most one provider with managed inference dependencies",
+            ));
+        }
+        selected.map_or_else(|| self.inference_provider(), Ok)
+    }
+
+    pub(crate) fn provider_model<'a>(
+        &'a self,
+        provider: &InferenceProvider,
+    ) -> Result<&'a str, ConfigError> {
+        for agent in &self.spec.sandboxes[0].agents {
+            let (inference, scope) = self.scoped_inference(agent)?;
+            for route in &inference.routes {
+                if std::ptr::eq(self.route_provider(route, scope)?, provider) {
+                    return Ok(&route.overrides.model);
+                }
+            }
+        }
+        Err(ConfigError("provider has no selected model"))
+    }
+
+    pub(crate) fn selected_provider_mut(
+        &mut self,
+        name: &str,
+    ) -> Result<&mut InferenceProvider, ConfigError> {
+        let selected = self
+            .selected_inference_providers()?
+            .into_iter()
+            .find(|provider| provider.name == name)
+            .ok_or(ConfigError("provider is not selected"))?;
+        let index = self
+            .provider_definitions()
+            .position(|provider| std::ptr::eq(provider, selected))
+            .unwrap();
+        Ok(self.provider_definitions_mut().nth(index).unwrap())
     }
 
     /// Edit the selected definition in its authored scope without rewriting references.

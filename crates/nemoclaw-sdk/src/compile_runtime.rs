@@ -37,7 +37,7 @@ pub fn runtime_targets(
     } else {
         Vec::new()
     };
-    if let Some(service) = document.inference_provider()?.service.as_ref() {
+    if let Some(service) = document.lifecycle_provider()?.service.as_ref() {
         let spec = Spec {
             layout: 0,
             kind: SERVICE_KIND.into(),
@@ -80,7 +80,7 @@ pub fn compile_runtime(
             SERVICE_KIND => {
                 attrs["depends_on"] = if document.spec.gateway.management == "managed"
                     && document
-                        .inference_provider()?
+                        .lifecycle_provider()?
                         .service
                         .as_ref()
                         .is_some_and(|s| s.placement.is_none())

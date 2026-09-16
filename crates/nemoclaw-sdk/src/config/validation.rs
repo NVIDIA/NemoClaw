@@ -154,7 +154,8 @@ impl Document {
             "exactly one sandbox is required",
         )?;
         self.validate_harness_references()?;
-        let provider = self.inference_provider()?;
+        let selected_providers = self.selected_inference_providers()?;
+        self.lifecycle_provider()?;
         self.validate_inference_references()?;
         for definition in self.provider_definitions() {
             validate_provider(definition, gateway)?;
@@ -183,7 +184,9 @@ impl Document {
         )?;
         if let Some(search) = web_search {
             require(
-                provider.name != "brave-search",
+                selected_providers
+                    .iter()
+                    .all(|provider| provider.name != "brave-search"),
                 "brave-search is reserved for web search",
             )?;
             search.validate(
@@ -215,45 +218,47 @@ impl Document {
                 "agent requires a supported harness",
             )?;
             require(
-                matches!(
-                    self.agent_harness(agent)?.kind.as_str(),
-                    "openclaw" | "hermes"
-                ) || (gateway.management == "external"
-                    && provider.service.is_none()
-                    && provider.ollama.is_none()),
-                "this harness requires external gateway and inference services",
-            )?;
-            require(
-                self.agent_harness(agent)?.kind != "pi" || provider.api.is_none(),
-                "Pi selects its API through model metadata; omit provider api",
-            )?;
-            let api = provider
-                .api
-                .unwrap_or(InferenceApi::for_harness(&self.agent_harness(agent)?.kind));
-            require(
-                api.supported(&self.agent_harness(agent)?.kind)
-                    && (api == InferenceApi::AnthropicMessages)
-                        == (provider.provider == "anthropic"),
-                "API must match the provider implementation and be supported by the harness",
-            )?;
-            if agent.auth.is_some() {
-                require(
-                    self.agent_harness(agent)?.kind == "hermes"
-                        && (provider.credential.is_some()
-                            || provider.ollama_proxy.is_some()
-                            || provider
-                                .service
-                                .as_ref()
-                                .is_some_and(|s| s.authentication.is_some())),
-                    "Hermes API-key auth must reference the routed provider with a credential",
-                )?;
-            }
-            require(
                 self.agent_inference(agent)?.routes.len() == 1
                     || self.agent_harness(agent)?.kind == "openclaw",
                 "multiple model choices require OpenClaw",
             )?;
             for route in &self.agent_inference(agent)?.routes {
+                let (_, scope) = self.scoped_inference(agent)?;
+                let provider = self.route_provider(route, scope)?;
+                require(
+                    matches!(
+                        self.agent_harness(agent)?.kind.as_str(),
+                        "openclaw" | "hermes"
+                    ) || (gateway.management == "external"
+                        && provider.service.is_none()
+                        && provider.ollama.is_none()),
+                    "this harness requires external gateway and inference services",
+                )?;
+                require(
+                    self.agent_harness(agent)?.kind != "pi" || provider.api.is_none(),
+                    "Pi selects its API through model metadata; omit provider api",
+                )?;
+                let api = provider
+                    .api
+                    .unwrap_or(InferenceApi::for_harness(&self.agent_harness(agent)?.kind));
+                require(
+                    api.supported(&self.agent_harness(agent)?.kind)
+                        && (api == InferenceApi::AnthropicMessages)
+                            == (provider.provider == "anthropic"),
+                    "API must match the provider implementation and be supported by the harness",
+                )?;
+                if agent.auth.is_some() {
+                    require(
+                        self.agent_harness(agent)?.kind == "hermes"
+                            && (provider.credential.is_some()
+                                || provider.ollama_proxy.is_some()
+                                || provider
+                                    .service
+                                    .as_ref()
+                                    .is_some_and(|s| s.authentication.is_some())),
+                        "Hermes API-key auth must reference the routed provider with a credential",
+                    )?;
+                }
                 route
                     .overrides
                     .tuning
@@ -279,12 +284,7 @@ impl Document {
                 }
                 if provider.ollama.is_some() || provider.ollama_proxy.is_some() {
                     require(
-                        route.overrides.model
-                            == self
-                                .agent_inference(&sandbox.agents[0])?
-                                .default_route()?
-                                .overrides
-                                .model,
+                        route.overrides.model == self.provider_model(provider)?,
                         "managed Ollama and its proxy support one selected model",
                     )?;
                 }

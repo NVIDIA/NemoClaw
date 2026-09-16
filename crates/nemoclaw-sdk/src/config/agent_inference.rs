@@ -311,19 +311,14 @@ impl Document {
         route: &Route,
     ) -> Result<RuntimeModel, ConfigError> {
         let harness = self.agent_harness(agent)?;
-        let provider = self.inference_provider()?;
-        let connection = self.inference_connection()?;
-        let authenticated = connection.credential.is_some()
-            || provider
-                .service
-                .as_ref()
-                .is_some_and(|service| service.authentication.is_some())
-            || provider.ollama_proxy.is_some();
+        let (_, scope) = self.scoped_inference(agent)?;
+        let provider = self.route_provider(route, scope)?;
+        let connection = self.provider_connection(provider)?;
         let profile = crate::openshell::inference_profile(
             &provider.name,
             &connection.endpoint,
             &provider.provider,
-            authenticated,
+            provider.authenticated(),
         )
         .map_err(|_| ConfigError("invalid native inference profile"))?;
         Ok(RuntimeModel {

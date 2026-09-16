@@ -458,3 +458,58 @@ async fn agent_roster_refresh_verifies_native_policy_without_mutation() {
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
+    let fixture = Fixture::start().await;
+    let mut value: serde_json::Value = serde_json::to_value(
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap(),
+    )
+    .unwrap();
+    value["spec"]["gateway"]["endpoint"] = serde_json::json!(fixture.endpoint);
+    value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"oracle", "provider":"openai", "endpoint":"http://172.20.0.1:19999/v1"}));
+    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    inference["default"] = serde_json::json!("primary");
+    inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart-model"}}));
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let targets = targets(&document, &generations).unwrap();
+    for target in targets.iter().filter(|target| target.kind != "sandbox") {
+        assert!(
+            client
+                .ensure(&target.kind, &target.values)
+                .await
+                .error()
+                .is_none()
+        );
+    }
+    let desired = &targets
+        .iter()
+        .find(|target| target.kind == "sandbox")
+        .unwrap()
+        .values;
+    let mutation = client.ensure("sandbox", desired).await;
+    assert!(mutation.error().is_none());
+    let row = mutation.into_parts().0.unwrap();
+    let key = format!(
+        "{}/{}",
+        document.workspace(),
+        document.spec.sandboxes[0].name
+    );
+    {
+        let mut state = fixture.state.lock().unwrap();
+        let sandbox = state
+            .sandboxes
+            .get_mut(&key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap();
+        assert_eq!(sandbox.providers, vec!["local", "oracle"]);
+        sandbox.providers.pop();
+    }
+    assert!(client.read("sandbox", &row, false).await.is_err());
+}

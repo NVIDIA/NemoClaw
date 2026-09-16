@@ -9,7 +9,7 @@ pub(super) const STORAGE: &str = "nemoclaw_ollama_storage.models";
 const SERVICE: &str = "nemoclaw_ollama.service";
 const MODEL: &str = "nemoclaw_ollama_model.inference";
 fn specification(document: &Document, generations: &Generations) -> Result<ServiceSpec, Error> {
-    let provider = document.inference_provider()?;
+    let provider = document.lifecycle_provider()?;
     let config = provider
         .ollama
         .as_ref()
@@ -40,7 +40,7 @@ pub(super) fn extend_allowed(
     generations: &Generations,
     allowed: &mut BTreeMap<String, Row>,
 ) -> Result<(), Error> {
-    if document.inference_provider()?.ollama.is_none() {
+    if document.lifecycle_provider()?.ollama.is_none() {
         return Ok(());
     }
     let spec = specification(document, generations)?;
@@ -64,7 +64,7 @@ impl Deployment {
         generations: &Generations,
         bindings: &BTreeMap<String, StateBinding>,
     ) -> Result<(), Error> {
-        if let Some(proxy) = &document.inference_provider()?.ollama_proxy {
+        if let Some(proxy) = &document.lifecycle_provider()?.ollama_proxy {
             let spec = crate::ollama::proxy::specification(document, generations)?;
             crate::ollama::proxy::verify_model(spec.proxy.as_ref().unwrap()).await?;
             return self
@@ -78,7 +78,7 @@ impl Deployment {
                 )
                 .await;
         }
-        let Some(config) = &document.inference_provider()?.ollama else {
+        let Some(config) = &document.lifecycle_provider()?.ollama else {
             return Ok(());
         };
         self.engines
@@ -100,7 +100,7 @@ impl Deployment {
         apply: bool,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
-        let Some(config) = &document.inference_provider()?.ollama else {
+        let Some(config) = &document.lifecycle_provider()?.ollama else {
             return Ok((Vec::new(), false));
         };
         let bindings = store.bindings()?;
@@ -180,21 +180,15 @@ impl Deployment {
             let service = self
                 .engines
                 .resolve(&config.engine)?
-                .bound_ollama(&observed.id, &document.inference_provider()?.endpoint)
+                .bound_ollama(&observed.id, &document.lifecycle_provider()?.endpoint)
                 .await?;
             if !service.running {
                 return Err(Error::Conflict(
                     "Ollama stopped during recovery; explicit apply required",
                 ));
             }
-            crate::ollama::Models::new(&document.inference_provider()?.endpoint)?
-                .ready(
-                    &document
-                        .agent_inference(&document.spec.sandboxes[0].agents[0])?
-                        .default_route()?
-                        .overrides
-                        .model,
-                )
+            crate::ollama::Models::new(&document.lifecycle_provider()?.endpoint)?
+                .ready(document.provider_model(document.lifecycle_provider()?)?)
                 .await
         };
         tokio::select! { () = cancel.cancelled() => return Err(Error::Cancelled), result = ready => result? }
@@ -206,7 +200,7 @@ impl Deployment {
         generations: &Generations,
         bindings: &BTreeMap<String, StateBinding>,
     ) -> Result<(), Error> {
-        let provider = document.inference_provider()?;
+        let provider = document.lifecycle_provider()?;
         let Some(config) = &provider.ollama else {
             return Ok(());
         };
@@ -256,11 +250,8 @@ impl Deployment {
             (
                 "model".into(),
                 document
-                    .agent_inference(&document.spec.sandboxes[0].agents[0])?
-                    .default_route()?
-                    .overrides
-                    .model
-                    .clone(),
+                    .provider_model(document.lifecycle_provider()?)?
+                    .to_owned(),
             ),
         ]
         .into();

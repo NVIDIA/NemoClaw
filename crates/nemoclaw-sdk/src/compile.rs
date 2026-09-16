@@ -3,7 +3,7 @@
 
 use crate::{
     backend::Row,
-    config::{ConfigError, Document},
+    config::{ConfigError, Document, InferenceProvider},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -30,7 +30,6 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
     document.validate()?;
     let workspace = document.workspace();
     let provider = document.inference_provider()?;
-    let connection = document.inference_connection()?;
     let sandbox = &document.spec.sandboxes[0];
     let agent = &sandbox.agents[0];
     let mut result = Vec::new();
@@ -41,32 +40,6 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             "deployment",
             "workspace",
             vec![],
-        ),
-        (
-            "provider",
-            provider.name.as_str(),
-            "inference",
-            "provider",
-            vec![
-                ("endpoint", connection.endpoint.clone()),
-                (
-                    "credential_env",
-                    connection
-                        .credential
-                        .as_ref()
-                        .map(|c| c.env.clone())
-                        .unwrap_or_default(),
-                ),
-                (
-                    "provider_type",
-                    if provider.provider == "anthropic" {
-                        "anthropic"
-                    } else {
-                        ""
-                    }
-                    .into(),
-                ),
-            ],
         ),
         (
             "sandbox",
@@ -103,24 +76,27 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                 document.web_search()?.is_some(),
                 document.agent_harness(agent)?.observability.as_ref(),
             )?;
-            let profile = crate::openshell::inference_profile(
-                &provider.name,
-                &connection.endpoint,
-                &provider.provider,
-                false,
-            )
-            .map_err(|_| ConfigError("invalid native inference policy"))?;
-            if policy.network_policies.contains_key(&profile.id) {
-                return Err(ConfigError("inference policy name is reserved"));
+            for provider in document.selected_inference_providers()? {
+                let connection = document.provider_connection(provider)?;
+                let profile = crate::openshell::inference_profile(
+                    &provider.name,
+                    &connection.endpoint,
+                    &provider.provider,
+                    false,
+                )
+                .map_err(|_| ConfigError("invalid native inference policy"))?;
+                if policy.network_policies.contains_key(&profile.id) {
+                    return Err(ConfigError("inference policy name is reserved"));
+                }
+                policy.network_policies.insert(
+                    profile.id.clone(),
+                    openshell_core::proto::NetworkPolicyRule {
+                        name: profile.id,
+                        endpoints: profile.endpoints,
+                        binaries: profile.binaries,
+                    },
+                );
             }
-            policy.network_policies.insert(
-                profile.id.clone(),
-                openshell_core::proto::NetworkPolicyRule {
-                    name: profile.id,
-                    endpoints: profile.endpoints,
-                    binaries: profile.binaries,
-                },
-            );
             let policy = crate::openshell::policy_json(&policy)
                 .map_err(|_| ConfigError("cannot encode sandbox policy"))?;
             if !policy.is_empty() {
@@ -137,35 +113,12 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             values,
         });
     }
-    let mut profile = result
-        .iter()
-        .find(|r| r.kind == "provider")
-        .unwrap()
-        .values
-        .clone();
-    profile.insert(
-        "name".into(),
-        format!("nemoclaw-inference-{}", provider.name),
-    );
-    profile.remove("credential_env");
-    profile.insert(
-        "authenticated".into(),
-        (connection.credential.is_some()
-            || provider
-                .service
-                .as_ref()
-                .is_some_and(|s| s.authentication.is_some())
-            || provider.ollama_proxy.is_some())
-        .to_string(),
-    );
-    result.insert(
-        1,
-        Target {
-            kind: "provider_profile".into(),
-            address: "nemoclaw_provider_profile.inference".into(),
-            values: profile,
-        },
-    );
+    result.splice(1..1, inference_targets(document, provider, generations)?);
+    for selected in document.selected_inference_providers()? {
+        if !std::ptr::eq(selected, provider) {
+            result.extend(inference_targets(document, selected, generations)?);
+        }
+    }
     if let Some(search) = document.web_search()? {
         for (kind, name) in [
             ("provider_profile", "nemoclaw-brave"),
@@ -194,6 +147,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             });
         }
     }
+    let provider = document.lifecycle_provider()?;
     if provider
         .service
         .as_ref()
@@ -212,7 +166,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         };
         result
             .iter_mut()
-            .find(|r| r.address == "nemoclaw_provider.inference")
+            .find(|r| r.kind == "provider" && r.values["name"] == provider.name)
             .unwrap()
             .values
             .insert("credential_source".into(), source.json()?);
@@ -226,7 +180,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         };
         result
             .iter_mut()
-            .find(|r| r.address == "nemoclaw_provider.inference")
+            .find(|r| r.kind == "provider" && r.values["name"] == provider.name)
             .unwrap()
             .values
             .insert("credential_source".into(), source.json()?);
@@ -238,6 +192,65 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
     Ok(result)
 }
 
+fn inference_targets(
+    document: &Document,
+    provider: &InferenceProvider,
+    generations: &Generations,
+) -> Result<[Target; 2], ConfigError> {
+    let connection = document.provider_connection(provider)?;
+    let logical = if std::ptr::eq(provider, document.inference_provider()?) {
+        "inference".into()
+    } else {
+        format!("inference_{}", provider.name)
+    };
+    let values: Row = [
+        ("workspace".into(), document.workspace()),
+        ("name".into(), provider.name.clone()),
+        ("owner".into(), document.metadata.uid.clone()),
+        (
+            "generation".into(),
+            generation(generations, "provider")?.into(),
+        ),
+        ("endpoint".into(), connection.endpoint),
+        (
+            "credential_env".into(),
+            connection
+                .credential
+                .as_ref()
+                .map(|credential| credential.env.clone())
+                .unwrap_or_default(),
+        ),
+        (
+            "provider_type".into(),
+            if provider.provider == "anthropic" {
+                "anthropic".into()
+            } else {
+                String::new()
+            },
+        ),
+    ]
+    .into();
+    let mut profile = values.clone();
+    profile.insert(
+        "name".into(),
+        format!("nemoclaw-inference-{}", provider.name),
+    );
+    profile.remove("credential_env");
+    profile.insert("authenticated".into(), provider.authenticated().to_string());
+    Ok([
+        Target {
+            kind: "provider_profile".into(),
+            address: format!("nemoclaw_provider_profile.{logical}"),
+            values: profile,
+        },
+        Target {
+            kind: "provider".into(),
+            address: format!("nemoclaw_provider.{logical}"),
+            values,
+        },
+    ])
+}
+
 /// Compile only data. No filesystem access, backend calls, or runtime effects.
 pub fn compile(
     document: &Document,
@@ -246,7 +259,7 @@ pub fn compile(
 ) -> Result<Value, ConfigError> {
     let targets = targets(document, generations)?;
     let gateway = &document.spec.gateway;
-    let inference = document.inference_provider()?;
+    let inference = document.lifecycle_provider()?;
     let mut provider = json!({"endpoint":gateway.endpoint});
     if let Some(c) = &gateway.credential {
         provider["credential_env"] = json!(c.env);
@@ -281,10 +294,15 @@ pub fn compile(
             json!(["nemoclaw_ollama_storage.models"]);
         resources["nemoclaw_ollama_model"] = json!({"inference":{
             "service_id":"${nemoclaw_ollama.service.id}","endpoint":inference.endpoint,
-            "model":document.agent_inference(&document.spec.sandboxes[0].agents[0])?.default_route()?.overrides.model,
+            "model":document.provider_model(inference)?,
             "lifecycle":{"prevent_destroy":true}
         }});
     }
+    let provider_dependencies: Vec<_> = targets
+        .iter()
+        .filter(|target| target.kind == "provider")
+        .map(|target| target.address.clone())
+        .collect();
     for target in targets {
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
         if target.values.contains_key("workspace") {
@@ -302,34 +320,24 @@ pub fn compile(
                     attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
             }
-            attributes["depends_on"] = if document.web_search()?.is_some() {
-                json!([
-                    "nemoclaw_provider.inference",
-                    "nemoclaw_provider.web_search"
-                ])
-            } else {
-                json!(["nemoclaw_provider.inference"])
-            };
+            attributes["depends_on"] = json!(provider_dependencies);
         }
-        match target.address.as_str() {
-            "nemoclaw_provider.inference" if inference.ollama_proxy.is_some() => {
-                attributes["depends_on"] = json!(["nemoclaw_ollama_proxy.service"]);
-            }
-            "nemoclaw_ollama_proxy.service" => {
-                attributes["depends_on"] = json!([
-                    "nemoclaw_ollama_proxy_storage.credentials",
-                    "nemoclaw_ollama_external_model.inference"
-                ]);
-            }
-            _ => {}
+        if target.address == "nemoclaw_ollama_proxy.service" {
+            attributes["depends_on"] = json!([
+                "nemoclaw_ollama_proxy_storage.credentials",
+                "nemoclaw_ollama_external_model.inference"
+            ]);
         }
-        if target.address == "nemoclaw_provider.inference" {
-            let mut dependencies = vec!["nemoclaw_provider_profile.inference"];
-            if inference.ollama.is_some() {
-                dependencies.push("nemoclaw_ollama_model.inference");
-            }
-            if inference.ollama_proxy.is_some() {
-                dependencies.push("nemoclaw_ollama_proxy.service");
+        if target.kind == "provider" && target.address != "nemoclaw_provider.web_search" {
+            let logical = target.address.split_once('.').unwrap().1;
+            let mut dependencies = vec![format!("nemoclaw_provider_profile.{logical}")];
+            if target.values["name"] == inference.name {
+                if inference.ollama.is_some() {
+                    dependencies.push("nemoclaw_ollama_model.inference".into());
+                }
+                if inference.ollama_proxy.is_some() {
+                    dependencies.push("nemoclaw_ollama_proxy.service".into());
+                }
             }
             attributes["depends_on"] = json!(dependencies);
         }

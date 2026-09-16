@@ -4,11 +4,11 @@
 # Configure Inference APIs, Limits, and Authentication
 
 Choose who operates the inference service, then select the API and model used by the agent.
-NemoClaw selects one active inference provider per deployment document.
+A sandbox can attach up to 32 inference providers selected by its agents.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 
 OpenShell's managed inference-route API has been removed at our pinned development revision.
-NemoClaw creates an owned profile binding credentials to the selected host, port, and API path, attaches its provider to the sandbox, and configures the native client with the endpoint and model ID.
+For each selected provider, NemoClaw creates an owned profile binding credentials to its host, port, and API path, attaches the provider to the sandbox, and configures native model connections.
 For uncredentialed endpoints, a dummy client key satisfies SDKs that require a nonempty key; no provider credential is stored.
 The model ID is client configuration, not a proxy-enforced model restriction; the attached provider authorizes its configured API path.
 The YAML `routes` field currently names model configuration; it no longer creates an OpenShell route resource.
@@ -16,7 +16,7 @@ See [state migration](state.md#native-inference-migration) before changing an ex
 
 ## Give an Agent Multiple Model Choices
 
-OpenClaw agents can select different models from the same provider.
+OpenClaw agents can select different models from one or more providers.
 Declare named `inference.routes` and set `inference.default` to the initial choice when there is more than one route.
 Omitting `default` selects the sole route; duplicate names and missing defaults are errors.
 Use `inferenceRef` to reuse the whole selection without repeating it.
@@ -36,8 +36,32 @@ Other harnesses keep one choice.
 `reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
 Native reasoning changes remain a harness operation.
 Managed Ollama and its proxy currently manage one selected model; vLLM choices must use its declared served model.
-Distinct models require an externally operated endpoint serving them.
+Additional models can use external providers alongside that managed provider.
 Changing model choices changes the sandbox launch specification and requires a fresh deployment.
+
+## Combine Local and Hosted Providers
+
+The [multiple-provider example](../examples/multiple-providers.yaml) gives a researcher a hosted smart model and a local fast model; the writer selects only the local model.
+Each route selects its own `provider` or `providerRef`, with that provider's API and credential reference.
+The sandbox attaches the union of those selections, deduplicated by definition identity.
+Unused definitions add no resources, credential requirements, or network grants.
+Selected definitions must have distinct provider names.
+
+Replace the example endpoints, model IDs, deployment UID, and image for your environment.
+The local server and hosted API must already exist and satisfy the [external endpoint prerequisites](#prepare-an-external-endpoint).
+Set `ORACLE_API_KEY` on the applying host; requests to a real hosted API may incur charges.
+Use the [deployment workflow](usage.md) with fresh state, then verify each configured model through its native agent interface.
+
+OpenShell receives a distinct provider credential key for each credentialed registration; the sandbox receives placeholders rather than the resolved upstream keys.
+Every attached provider is available at the sandbox boundary.
+OpenClaw's per-agent model-selection policy is not separate credential or network isolation: use separate deployments and sandboxes for that boundary.
+NemoClaw observes the full attachment set and rejects missing or unexpected attachments.
+
+One selected provider may have managed inference dependencies: a vLLM service, managed Ollama, or an Ollama proxy.
+Other selected providers must be external endpoints.
+That managed lifecycle belongs to its provider even when the first agent's default model uses another provider.
+Multiple independently managed inference lifecycles in one document are rejected; this version still supports one sandbox per document.
+The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures; live multi-provider qualification remains separate.
 
 ## Choose a Service Mode
 

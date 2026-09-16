@@ -48,7 +48,20 @@ pub(super) fn inference_environment(row: &Row) -> Result<Row, ObservationError> 
 
 pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, ObservationError> {
     let settings = inference_settings(text, runtime)?.ok_or(ObservationError::Incomplete)?;
+    let mut selected = std::collections::BTreeSet::new();
+    for agent in &settings.agents {
+        if let Some(inference) = &agent.inference {
+            selected.extend(
+                inference
+                    .models
+                    .values()
+                    .map(|model| model.provider.clone()),
+            );
+        }
+    }
+    selected.remove(&settings.provider);
     let mut providers = vec![settings.provider];
+    providers.extend(selected);
     if settings.web_search.is_some() {
         providers.push("brave-search".into());
     }

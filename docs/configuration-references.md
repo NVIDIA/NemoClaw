@@ -32,14 +32,14 @@ Paths below are relative to `spec`; `agents[]` is inside `sandboxes[]` and `rout
 
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
-| Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | One selected definition across all agents in the sandbox |
+| Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; at most one with managed inference dependencies |
 | Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw supports named choices with an explicit default; other harnesses require one choice |
 | Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Agent `harness` or `harnessRef` | One runtime per sandbox; all agents must select identical settings |
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
 
 Inference providers are list entries with a `name`; inferences, harnesses, and integrations are maps keyed by name.
 Inline providers also require `name`, which identifies the OpenShell provider registration.
-The schema currently supports exactly one sandbox; OpenClaw agents can select different models from its provider.
+The schema currently supports exactly one sandbox; OpenClaw agents can select models from different providers.
 See [multiple model choices](inference.md#give-an-agent-multiple-model-choices) for defaults and current service limits.
 Multiple OpenClaw agents can reference the same provider and integration; distinct inline instances are not shared implicitly.
 
@@ -169,14 +169,15 @@ No single active configuration exercises every schema branch:
 | Alternative | Example or guide | Why separate |
 |---|---|---|
 | Inline provider or integration | [Inline provider](../examples/inline-inference.yaml), [inline integration](agents.md#brave-web-search) | A consumer cannot both inline and reference the same definition |
-| Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | The deployment selects only one inference provider definition |
+| Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | A provider selects one service mode; at most one selected provider may have managed dependencies |
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
 | Hermes authentication, interfaces, or Relay | [Authentication](../examples/hermes-auth.yaml), [interfaces](../examples/hermes-interfaces.yaml), [Relay](agents.md#hermes-relay-tracing) | Multiple-agent sandboxes require OpenClaw; Hermes Relay also excludes Hermes interfaces |
 | Pi model metadata | [Pi example](../examples/fabric-pi.yaml) | Specific to Pi; other harnesses reject it |
 | Model preparation recipe | [Spark recipe](../examples/spark-inline.yaml) | Separate model, image, and hardware contract |
 | External gateway credentials and mTLS | [Gateway fields](reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
 
-Additional named provider definitions are allowed, but unselected definitions do not exercise another provider's runtime.
+The [multiple-provider example](../examples/multiple-providers.yaml) combines selected local and hosted endpoints.
+Unselected definitions do not exercise another provider's runtime.
 
 ## Other Configuration Objects
 

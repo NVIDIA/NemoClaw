@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{ConfigError, Credential, Document};
+use super::{ConfigError, Credential, Document, InferenceProvider};
 
 /// Upstream connection as used by OpenShell routing, independent of the sandbox
 /// engine. Credentials remain references. Resolution performs no reachability probe.
@@ -12,7 +12,7 @@ pub struct InferenceConnection {
 impl Document {
     pub fn has_runtime(&self) -> bool {
         self.spec.gateway.management == "managed"
-            || self.inference_provider().is_ok_and(|p| p.service.is_some())
+            || self.lifecycle_provider().is_ok_and(|p| p.service.is_some())
     }
     /// Validate the document and resolve its inference connection.
     /// Managed inference retains its publication; external inference uses its explicit URL.
@@ -23,7 +23,13 @@ impl Document {
     /// cannot be resolved. This operation does not contact external services.
     pub fn inference_connection(&self) -> Result<InferenceConnection, ConfigError> {
         self.validate()?;
-        let provider = self.inference_provider()?;
+        self.provider_connection(self.inference_provider()?)
+    }
+
+    pub(crate) fn provider_connection(
+        &self,
+        provider: &InferenceProvider,
+    ) -> Result<InferenceConnection, ConfigError> {
         let endpoint = match &provider.service {
             None => provider
                 .ollama_proxy
@@ -42,5 +48,16 @@ impl Document {
             endpoint,
             credential: provider.credential.clone(),
         })
+    }
+}
+
+impl InferenceProvider {
+    pub(crate) fn authenticated(&self) -> bool {
+        self.credential.is_some()
+            || self
+                .service
+                .as_ref()
+                .is_some_and(|service| service.authentication.is_some())
+            || self.ollama_proxy.is_some()
     }
 }

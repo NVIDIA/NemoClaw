@@ -14,7 +14,7 @@ pub fn supports(kind: &str) -> bool {
     matches!(kind, PROXY | STORAGE | MODEL)
 }
 pub fn specification(document: &Document, generations: &Generations) -> Result<ServiceSpec, Error> {
-    let provider = document.inference_provider()?;
+    let provider = document.lifecycle_provider()?;
     let proxy = provider
         .ollama_proxy
         .as_ref()
@@ -38,11 +38,8 @@ pub fn specification(document: &Document, generations: &Generations) -> Result<S
             upstream: provider.endpoint.clone(),
             endpoint: proxy.endpoint.clone(),
             model: document
-                .agent_inference(&document.spec.sandboxes[0].agents[0])?
-                .default_route()?
-                .overrides
-                .model
-                .clone(),
+                .provider_model(document.lifecycle_provider()?)?
+                .to_owned(),
             digest: proxy.model.digest.clone(),
         }),
     };
