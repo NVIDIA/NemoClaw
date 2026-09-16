@@ -98,6 +98,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
@@ -1371,7 +1372,7 @@ describe("Hermes portable lifecycle", () => {
   });
 
   it.each(["Ready", "Stopped", "Error"] as const)(
-    "removes one exact %s sandbox and rejects a same-name replacement on retry (#9608)",
+    "removes one exact %s sandbox with its injected environment and rejects a same-name replacement on retry (#9608)",
     async (phase) => {
       const receipt = activeReceipt();
       const { deps, podman } = lifecycleDeps(receipt, phase === "Ready");
@@ -1379,6 +1380,7 @@ describe("Hermes portable lifecycle", () => {
       let sandboxPresent = true;
       let containerPresent = true;
       let replacement = false;
+      let policyReadCount = 0;
       const live = `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: ${phase}\n`;
       podman.mockImplementation((args: readonly string[]) => {
         switch (args[0]) {
@@ -1396,6 +1398,7 @@ describe("Hermes portable lifecycle", () => {
         const command = args.slice(0, 2).join(":");
         switch (command) {
           case "policy:get":
+            vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", ["", "ambient"][policyReadCount++] ?? "");
             return { status: 0, stdout: POLICY, stderr: "" };
           case "sandbox:list":
             return {

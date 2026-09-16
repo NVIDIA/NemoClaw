@@ -1149,6 +1149,7 @@ describe("socket-free MXC action contract", () => {
       await expect(
         executeSandboxDestroy({
           force: false,
+          deleteGatewayName: "nemoclaw",
           runOpenshell,
           sandbox: entry,
           sandboxConfirmedAbsent: false,
@@ -1174,12 +1175,18 @@ describe("socket-free MXC action contract", () => {
       });
 
       expect(registerSandbox).toHaveBeenCalledWith(entry);
-      expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", sandboxName], {
-        ignoreError: true,
-        killSignal: "SIGKILL",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
-      });
+      expect(runOpenshell).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", "nemoclaw", sandboxName],
+        {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          killSignal: "SIGKILL",
+          maxBuffer: 1024 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
+          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+        },
+      );
       const prepareDestroyIndex = state.events.indexOf(`prepare-destroy:${sandboxName}`);
       expect(prepareDestroyIndex).toBeGreaterThanOrEqual(0);
       expect(recordEvent.mock.invocationCallOrder[prepareDestroyIndex]).toBeLessThan(

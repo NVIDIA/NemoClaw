@@ -658,6 +658,12 @@ describe("GPU E2E helpers", () => {
     expect(env({}, { NEMOCLAW_MODEL: "workflow/model" }).NEMOCLAW_MODEL).toBe("workflow/model");
   });
 
+  it("keeps the export scenario's selected model over the workflow default (#11857)", () => {
+    expect(
+      env({ NEMOCLAW_MODEL: "qwen2.5:0.5b" }, { NEMOCLAW_MODEL: GPU_MODEL }).NEMOCLAW_MODEL,
+    ).toBe("qwen2.5:0.5b");
+  });
+
   it("forwards the workflow-owned trace directory through availability probes", () => {
     expect(env({}, { NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-traces" }).NEMOCLAW_TRACE_DIR).toBe(
       "/tmp/nemoclaw-traces",

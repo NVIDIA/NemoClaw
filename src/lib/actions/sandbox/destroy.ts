@@ -868,6 +868,7 @@ async function destroySandboxUnlocked(
       force: normalized.force === true,
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
+      deleteGatewayName: cleanupGatewayName,
       runOpenshell,
       ...(mcpRuntimeSelection ? { mcpRuntimeSelection } : {}),
       sandbox,
@@ -1003,7 +1004,7 @@ async function destroySandboxUnlocked(
   // gateway. Gate that teardown on the *confirmed* delete state only — never on
   // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
   // not shut down services for a sandbox we never confirmed deleted (#6046).
-  const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
+  const deleteSucceededOrAlreadyGone = deleteResult.kind !== "failed" || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
   }
