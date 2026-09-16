@@ -282,6 +282,9 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   const coordinatorEvaluation = coordinatorSteps.find(
     (step) => step.name === "Evaluate read-only coordinator decision",
   );
+  const coordinatorUpload = coordinatorSteps.find(
+    (step) => step.name === "Upload coordinator shadow decision",
+  );
   const coordinatorCondition =
     "${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.require-green-checks.outputs.pr_number != '' && needs.build-advisor-runtime.result == 'success' && needs.review-specialists.result == 'success' }}";
   if (
@@ -314,6 +317,15 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     coordinator.env?.PR_NUMBER !== "${{ needs.require-green-checks.outputs.pr_number }}"
   ) {
     errors.push("Unified advisor coordinator shadow must consume exact-attempt trusted evidence");
+  }
+  if (
+    coordinatorUpload?.uses !==
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" ||
+    coordinatorUpload.with?.name !== "pr-review-coordinator-shadow-${{ github.run_attempt }}" ||
+    coordinatorUpload.with?.path !== "artifacts/pr-review-coordinator-shadow/decision.json" ||
+    coordinatorUpload.with?.["if-no-files-found"] !== "error"
+  ) {
+    errors.push("Unified advisor coordinator shadow must retain its decision artifact");
   }
   const publisher = advisor.jobs?.publish ?? {};
   if (
