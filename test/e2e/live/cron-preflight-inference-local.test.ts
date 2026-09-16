@@ -88,7 +88,7 @@ test(
 
     progress.phase("create native scheduled work");
     const cronName = `nemoclaw-native-cron-${Date.now()}`;
-    const add = await sandbox.exec(
+    let add = await sandbox.exec(
       SANDBOX_NAME,
       [
         "openclaw",
@@ -112,6 +112,55 @@ test(
         timeoutMs: 120_000,
       },
     );
+    if (
+      add.exitCode !== 0 &&
+      /scope upgrade pending approval|pairing required: device is asking for more scopes/iu.test(
+        resultText(add),
+      )
+    ) {
+      const devices = await sandbox.exec(SANDBOX_NAME, ["openclaw", "devices", "list", "--json"], {
+        artifactName: "cron-preflight-native-devices-list",
+        env,
+        redactionValues: redactions,
+        timeoutMs: 60_000,
+      });
+      const requestId = findOperatorAdminRequestId(resultText(devices));
+      const approve = await sandbox.exec(
+        SANDBOX_NAME,
+        ["openclaw", "devices", "approve", requestId],
+        {
+          artifactName: "cron-preflight-native-devices-approve",
+          env,
+          redactionValues: redactions,
+          timeoutMs: 60_000,
+        },
+      );
+      assertExitZero(approve, "native OpenClaw device scope approval");
+      add = await sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "openclaw",
+          "cron",
+          "add",
+          "--name",
+          cronName,
+          "--every",
+          "2h",
+          "--agent",
+          "main",
+          "--session",
+          "isolated",
+          "--message",
+          "Reply with exactly PONG and no other text.",
+        ],
+        {
+          artifactName: "cron-preflight-native-add-after-approval",
+          env,
+          redactionValues: redactions,
+          timeoutMs: 120_000,
+        },
+      );
+    }
     assertExitZero(add, "native OpenClaw cron add");
     const cronId = findCronId(resultText(add), cronName);
     expect(cronId, resultText(add)).not.toBe("");
@@ -179,4 +228,35 @@ function nativeCronRunAccepted(output: string): boolean {
       (value.ran === true ||
         (value.enqueued === true && typeof value.runId === "string" && value.runId.length > 0)),
   );
+}
+
+function findOperatorAdminRequestId(output: string): string {
+  const visit = (value: unknown): string => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item);
+        if (found) return found;
+      }
+      return "";
+    }
+    if (!value || typeof value !== "object") return "";
+    const record = value as Record<string, unknown>;
+    const scopes = [record.scopes, record.requestedScopes]
+      .filter(Array.isArray)
+      .flat() as unknown[];
+    if (scopes.includes("operator.admin")) {
+      const requestId = record.requestId ?? record.id;
+      if (typeof requestId === "string" && requestId.trim()) return requestId.trim();
+    }
+    for (const child of Object.values(record)) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return "";
+  };
+  for (const value of decodedObjects(output)) {
+    const found = visit(value);
+    if (found) return found;
+  }
+  return "";
 }

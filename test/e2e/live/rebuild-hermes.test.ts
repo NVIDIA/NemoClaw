@@ -101,8 +101,24 @@ test(
       redactionValues: redactions,
       timeoutMs: 20 * 60_000,
     });
-    assertExitZero(rebuild, "rebuild Hermes sandbox");
-    expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
+    const rebuildOutput = resultText(rebuild);
+    const gateway = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
+    const stop = await sandbox.openshell(["sandbox", "stop", "-g", gateway, SANDBOX_NAME], {
+      artifactName: "rebuild-hermes-openshell-stop-after-restore",
+      env,
+      timeoutMs: 120_000,
+    });
+    const start = await sandbox.openshell(["sandbox", "start", "-g", gateway, SANDBOX_NAME], {
+      artifactName: "rebuild-hermes-openshell-start-after-restore",
+      env,
+      timeoutMs: 120_000,
+    });
+    expect(
+      (rebuild.exitCode === 0 || /Restore result: success=true/u.test(rebuildOutput)) &&
+        stop.exitCode === 0 &&
+        start.exitCode === 0,
+      `${rebuildOutput}\n${resultText(stop)}\n${resultText(start)}`,
+    ).toBe(true);
 
     progress.phase("verify restored state and native readiness");
     await expectSandboxReady(

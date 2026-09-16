@@ -221,17 +221,20 @@ test(
       artifactName: "cleanup-openshell-delete-sandbox-survival",
       redactionValues: [apiKey],
     };
+    let sandboxDeleted = false;
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-      cleanupWhenOpenShellAvailable(
-        host,
-        {
-          artifactName: "cleanup-probe-openshell-sandbox-survival",
-          env: buildAvailabilityProbeEnv(),
-          redactionValues: sandboxCleanupOptions.redactionValues,
-          timeoutMs: 30_000,
-        },
-        () => sandbox.cleanupSandbox(SANDBOX_NAME, sandboxCleanupOptions),
-      ),
+      sandboxDeleted
+        ? Promise.resolve()
+        : cleanupWhenOpenShellAvailable(
+            host,
+            {
+              artifactName: "cleanup-probe-openshell-sandbox-survival",
+              env: buildAvailabilityProbeEnv(),
+              redactionValues: sandboxCleanupOptions.redactionValues,
+              timeoutMs: 30_000,
+            },
+            () => sandbox.cleanupSandbox(SANDBOX_NAME, sandboxCleanupOptions),
+          ),
     );
 
     progress.phase("install and register the OpenClaw sandbox");
@@ -317,6 +320,7 @@ test(
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 120_000,
     });
+    sandboxDeleted = true;
     const postDestroyList = await sandbox.list({
       artifactName: "post-destroy-openshell-sandbox-list",
       env: buildAvailabilityProbeEnv(),
