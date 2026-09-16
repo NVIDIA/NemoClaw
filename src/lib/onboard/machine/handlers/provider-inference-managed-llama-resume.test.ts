@@ -138,7 +138,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     const { deps, calls } = createDeps({
       setupNim: vi.fn(async () => ({
         ...baseSelection,
-        provider: "vllm",
+        provider: "vllm-local",
         model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         endpointUrl: "http://host.openshell.internal:8000/v1",
         credentialEnv: null,
@@ -157,7 +157,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     expect(persistedUpdates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          provider: "vllm",
+          provider: "vllm-local",
           servingProfileProvenance: vllmProfile,
         }),
       ]),

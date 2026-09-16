@@ -123,7 +123,7 @@ function resolveSelectedServingProfileProvenance(
   if (selection.servingProfileProvenance !== undefined) {
     return selection.servingProfileProvenance;
   }
-  return selection.provider === "vllm" && current?.recipe.backend === "vllm" ? current : null;
+  return selection.provider === "vllm-local" && current?.recipe.backend === "vllm" ? current : null;
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
