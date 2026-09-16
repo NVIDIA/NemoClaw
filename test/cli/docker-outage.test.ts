@@ -55,7 +55,7 @@ describe("Docker daemon outage classification (#4428)", () => {
       { mode: 0o755 },
     );
     const dockerInfoBody = dockerInfoOk
-      ? 'echo "24.0.0"; exit 0'
+      ? 'echo \'{"ServerVersion":"24.0.0"}\'; exit 0'
       : 'echo "Cannot connect to the Docker daemon" >&2; exit 1';
     fs.writeFileSync(
       path.join(localBin, "docker"),

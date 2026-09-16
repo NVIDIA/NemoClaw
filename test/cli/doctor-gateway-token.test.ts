@@ -24,7 +24,7 @@ function writeDockerInspectFailureStub(setup: DoctorTestSetup, hostCalls: string
     [
       "#!/usr/bin/env bash",
       `printf 'docker:%s\\n' "$*" >> ${JSON.stringify(hostCalls)}`,
-      'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+      'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
       'if [ "$1" = "inspect" ]; then echo "Error: No such object: $3" >&2; exit 1; fi',
       'if [ "$1" = "port" ]; then exit 1; fi',
       "exit 0",
@@ -157,7 +157,7 @@ describe("CLI dispatch", () => {
         [
           "#!/usr/bin/env bash",
           `printf '%s\\n' "$*" >> ${JSON.stringify(dockerCalls)}`,
-          'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+          'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
           'if [ "$1" = "inspect" ]; then echo "Error: No such object: $3" >&2; exit 1; fi',
           "exit 0",
         ].join("\n"),

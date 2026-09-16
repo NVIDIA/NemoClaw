@@ -107,7 +107,7 @@ describe("CLI dispatch", () => {
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'docker %s\\n\' "$*" >> "$marker_file"',
-        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+        'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
         'if [ "$1" = "ps" ]; then',
         `  printf 'container-id\\topenshell-${sandboxName}\\n'`,
         "  exit 0",
