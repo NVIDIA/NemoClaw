@@ -4,6 +4,10 @@
 import { randomBytes } from "node:crypto";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import {
+  createCliOpenShellSandboxLookup,
+  type CliOpenShellSandboxLookup,
+} from "../../adapters/openshell/sandbox-observer-cli";
 import type {
   OpenShellSandboxBufferedCommandCompletion,
   OpenShellSandboxBufferedCommandExecutor,
@@ -15,10 +19,10 @@ import {
 import {
   buildOpenShellRuntimeSelectionEnv,
   captureOpenshell,
+  OPENSHELL_PROBE_TIMEOUT_MS,
   type OpenShellRuntimeSelection,
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
   type CommandTransportDependencies,
   DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
@@ -268,6 +272,7 @@ const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER = "/sandbox/.openclaw/.nemoclaw-post-u
 const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-v2";
 const OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT =
   "nemoclaw-openclaw-post-upgrade-doctor-release-v1";
+const OPENCLAW_POST_UPGRADE_DOCTOR_ABORT_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-abort-v1";
 const OPENCLAW_POST_UPGRADE_DOCTOR_READY = "/tmp/nemoclaw-post-upgrade-doctor-ready";
 const OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-ready-v1";
 const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 12 * 60_000;
@@ -275,7 +280,15 @@ const OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS = 3 * 60_000;
 
 export type OpenClawPostRestoreDoctorResult =
   | { ok: true; window: OpenClawPostRestoreDoctorWindow }
-  | { ok: false; stage: "mark" | "stop" | "doctor" | "release" | "restart"; detail: string };
+  | {
+      ok: false;
+      stage: "mark" | "stop" | "doctor" | "release" | "restart" | "abort";
+      detail: string;
+    };
+
+export type OpenClawPostRestoreDoctorAbortResult =
+  | { ok: true }
+  | { ok: false; stage: "abort"; detail: string };
 
 export interface OpenClawPostRestoreDoctorWindow {
   readonly sandboxName: string;
@@ -285,6 +298,7 @@ export interface OpenClawPostRestoreDoctorWindow {
 interface OpenClawPostRestoreDoctorDeps {
   captureOpenshell: typeof captureOpenshell;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
+  lookupSandbox?: CliOpenShellSandboxLookup;
   now: () => number;
   sleep: typeof sleepSeconds;
 }
@@ -295,6 +309,22 @@ const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   now: Date.now,
   sleep: sleepSeconds,
 };
+
+function captureOpenClawDoctorLifecycle(
+  deps: OpenClawPostRestoreDoctorDeps,
+  args: string[],
+  options: Parameters<typeof captureOpenshell>[1],
+): ReturnType<typeof captureOpenshell> {
+  try {
+    return deps.captureOpenshell(args, options);
+  } catch (error) {
+    return {
+      status: null,
+      output: "",
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
+}
 
 export function buildOpenClawPostUpgradeDoctorMarkerCommand(): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
@@ -359,6 +389,33 @@ export function buildOpenClawPostUpgradeDoctorReleaseCommand(): string {
   ].join("; ");
 }
 
+export function buildOpenClawPostUpgradeDoctorAbortCommand(): string {
+  const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
+  const markerContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  const releaseContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT);
+  const abortContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_ABORT_CONTENT);
+  const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
+  const readyContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT);
+  return [
+    "set -e",
+    `if [ ! -e ${marker} ] && [ ! -L ${marker} ]; then [ ! -e ${ready} ] && [ ! -L ${ready} ] || exit 50; exit 0; fi`,
+    `[ -f ${marker} ] && [ ! -L ${marker} ] || exit 50`,
+    `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
+    `[ "$marker_owner" = "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] || exit 51`,
+    `marker_value="$(cat ${marker})"`,
+    `case "$marker_value" in ${markerContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT.length + 1)} ;; ${releaseContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT.length + 1)} ;; ${abortContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_ABORT_CONTENT.length + 1)} ;; *) exit 52 ;; esac`,
+    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = "600 1 $marker_size" ] || exit 51`,
+    `if [ -e ${ready} ] || [ -L ${ready} ]; then [ -f ${ready} ] && [ ! -L ${ready} ] || exit 53; [ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 54; [ "$(stat -c '%a %h %s' ${ready} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT.length + 1)}' ] || exit 54; [ "$(cat ${ready})" = ${readyContent} ] || exit 55; fi`,
+    'dir="/sandbox/.openclaw"',
+    'tmp="$(mktemp "$dir/.nemoclaw-post-upgrade-doctor.XXXXXX")" || exit 56',
+    "trap 'rm -f -- \"$tmp\"' EXIT",
+    'chmod 600 "$tmp"',
+    `printf '%s\\n' ${abortContent} >"$tmp"`,
+    `mv -f -- "$tmp" ${marker}`,
+    "trap - EXIT",
+  ].join("; ");
+}
+
 function buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName: string): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
   const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
@@ -369,6 +426,146 @@ function buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName: string): str
     `code="$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${healthUrl} 2>/dev/null || true)"`,
     'case "$code" in 200|401) exit 0 ;; *) exit 42 ;; esac',
   ].join("; ");
+}
+
+function openClawDoctorSandboxLookup(
+  deps: OpenClawPostRestoreDoctorDeps,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): CliOpenShellSandboxLookup {
+  if (deps.lookupSandbox) return deps.lookupSandbox;
+  return createCliOpenShellSandboxLookup({
+    capture: (args, options) =>
+      deps.captureOpenshell(args, withSelectedOpenShellCommandOptions(options, runtimeSelection)),
+    defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+}
+
+async function isOpenClawDoctorSandboxStopped(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  deps: OpenClawPostRestoreDoctorDeps,
+): Promise<boolean> {
+  try {
+    const observed = await openClawDoctorSandboxLookup(
+      deps,
+      runtimeSelection,
+    )({
+      sandboxName,
+      target: runtimeSelection
+        ? namedOpenShellGateway(runtimeSelection.gatewayName)
+        : selectedOpenShellGateway(),
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    if (!observed.result.ok || observed.result.value.state !== "present") return false;
+    const sandbox = observed.result.value.sandbox;
+    return sandbox.phase === "Stopped" || sandbox.readiness === "terminal";
+  } catch {
+    return false;
+  }
+}
+
+async function waitForOpenClawDoctorSandboxStopped(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  deps: OpenClawPostRestoreDoctorDeps,
+): Promise<boolean> {
+  const deadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+  return await waitUntilAsync(
+    async () => await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps),
+    {
+      deadlineMs,
+      initialIntervalMs: 3_000,
+      maxIntervalMs: 3_000,
+      backoffFactor: 1,
+      now: deps.now,
+      sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
+    },
+  );
+}
+
+/**
+ * Abort an armed maintenance gate and prove that no gateway can race later
+ * recovery. The abort marker is consumed by startup both before doctor and
+ * while waiting in the offline gate, so this transition is idempotent.
+ */
+export async function abortOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<OpenClawPostRestoreDoctorAbortResult> {
+  const { sandboxName, runtimeSelection } = window;
+  const commandOptions = {
+    localDockerFallbackPolicy: "never" as const,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  };
+  const lifecycleOptions = withSelectedOpenShellCommandOptions(
+    {
+      ignoreError: true,
+      includeStderr: true,
+      killProcessTreeOnTimeout: true,
+      killSignal: "SIGKILL" as const,
+      timeout: OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS,
+    },
+    runtimeSelection,
+  );
+
+  const publishAbort = async (): Promise<boolean> => {
+    try {
+      const result = await deps.executeSandboxExecCommand(
+        sandboxName,
+        buildOpenClawPostUpgradeDoctorAbortCommand(),
+        30_000,
+        commandOptions,
+      );
+      return result?.status === 0;
+    } catch {
+      return false;
+    }
+  };
+
+  let abortPublished = await publishAbort();
+  if (
+    !abortPublished &&
+    (await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps))
+  ) {
+    // A start command can report failure after the sandbox actually remained
+    // stopped. Start it only after proving that state so startup can consume
+    // the abort request, then retry the fail-closed marker transition.
+    captureOpenClawDoctorLifecycle(deps, ["sandbox", "start", sandboxName], lifecycleOptions);
+  }
+  if (!abortPublished) {
+    const publishDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+    abortPublished = await waitUntilAsync(publishAbort, {
+      deadlineMs: publishDeadlineMs,
+      initialIntervalMs: 3_000,
+      maxIntervalMs: 3_000,
+      backoffFactor: 1,
+      now: deps.now,
+      sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
+    });
+  }
+  const stop = captureOpenClawDoctorLifecycle(
+    deps,
+    ["sandbox", "stop", sandboxName],
+    lifecycleOptions,
+  );
+  const stopped =
+    stop.status === 0 ||
+    (await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps));
+  if (!abortPublished) {
+    return {
+      ok: false,
+      stage: "abort",
+      detail: stopped
+        ? "sandbox stopped, but the post-upgrade maintenance abort marker was not reconciled"
+        : "could not publish the maintenance abort or prove the sandbox stopped",
+    };
+  }
+  if (stopped) return { ok: true };
+  return {
+    ok: false,
+    stage: "abort",
+    detail: "could not prove the aborted post-upgrade sandbox stopped",
+  };
 }
 
 /**
@@ -410,42 +607,43 @@ export async function beginOpenClawPostRestoreDoctor(
     },
     runtimeSelection,
   );
-  const stop = deps.captureOpenshell(["sandbox", "stop", sandboxName], lifecycleOptions);
-  if (stop.status !== 0) {
-    return {
-      ok: false,
-      stage: "stop",
-      detail: "OpenShell did not confirm the recreated sandbox stopped before doctor",
-    };
-  }
+  const stop = captureOpenClawDoctorLifecycle(
+    deps,
+    ["sandbox", "stop", sandboxName],
+    lifecycleOptions,
+  );
 
   // The in-container gateway marker is intentionally absent until actual
   // launch, so OpenShell can return this sandbox start after its supervisor is
   // executable while the trusted entrypoint remains inside the doctor gate.
-  const start = deps.captureOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
-  if (start.status !== 0) {
-    return {
-      ok: false,
-      stage: "restart",
-      detail: "OpenShell did not start the recreated sandbox for post-upgrade doctor",
-    };
-  }
+  // A lifecycle command's nonzero status is not authoritative: the gateway
+  // may have committed the mutation before the client lost its response. The
+  // exact ready receipt below is the sole proof that this transition converged.
+  const start = captureOpenClawDoctorLifecycle(
+    deps,
+    ["sandbox", "start", sandboxName],
+    lifecycleOptions,
+  );
 
   const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   const ready = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
-      const result = await deps.executeSandboxExecCommand(
-        sandboxName,
-        buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName),
-        Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
-        {
-          localDockerFallbackPolicy: "never",
-          ...(runtimeSelection ? { runtimeSelection } : {}),
-        },
-      );
-      return result?.status === 0;
+      try {
+        const result = await deps.executeSandboxExecCommand(
+          sandboxName,
+          buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName),
+          Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
+          {
+            localDockerFallbackPolicy: "never",
+            ...(runtimeSelection ? { runtimeSelection } : {}),
+          },
+        );
+        return result?.status === 0;
+      } catch {
+        return false;
+      }
     },
     {
       deadlineMs: reconciliationDeadlineMs,
@@ -465,10 +663,24 @@ export async function beginOpenClawPostRestoreDoctor(
       },
     };
   }
+  const abort = await abortOpenClawPostRestoreDoctor(
+    {
+      sandboxName,
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    },
+    deps,
+  );
+  const stage = stop.status !== 0 ? "stop" : start.status !== 0 ? "restart" : "doctor";
+  const detail =
+    stage === "stop"
+      ? "OpenShell did not converge the recreated sandbox stop into a verified doctor window"
+      : stage === "restart"
+        ? "OpenShell did not converge the recreated sandbox start into a verified doctor window"
+        : "startup did not prove doctor completion with the gateway held down";
   return {
     ok: false,
-    stage: "doctor",
-    detail: "startup did not prove doctor completion with the gateway held down",
+    stage: abort.ok ? stage : "abort",
+    detail: abort.ok ? detail : abort.detail,
   };
 }
 

@@ -11,6 +11,8 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const MARKER = "/* nemoclaw compact tool catalog (#2600) */";
 export const NATIVE_LLAMACPP_MARKER =
   "/* nemoclaw llama.cpp compact native tool catalog (#11105) */";
+export const NATIVE_LLAMACPP_TOOL_CALL_MARKER =
+  "/* nemoclaw llama.cpp JSON-string tool-call input (#11105) */";
 const ALL_CUSTOM_TOOLS_PATTERN =
   "\t\t\tconst allCustomTools = [...customTools, ...clientToolDefs];";
 const EFFECTIVE_TOOLS_PATTERN = "\t\tconst effectiveTools = [...tools, ...filteredBundledTools];";
@@ -64,6 +66,41 @@ const NATIVE_DIRECT_TOOL_REPLACEMENT = [
   '\tconst hideCoreCodingSurface = (process.env.NEMOCLAW_UPSTREAM_PROVIDER ?? "").trim() === "llama-cpp-local";',
   '\treturn classified.source === "openclaw" && (directToolNames.has(tool.name) || !hideCoreCodingSurface && isCoreCodingSurfaceToolName(tool.name) && classified.sourceName === "core");',
   "}",
+].join("\n");
+const NATIVE_TOOL_CALL_SCHEMA_PATTERN =
+  '\t\t\t\targs: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Tool input." }))';
+const NATIVE_TOOL_CALL_SCHEMA_REPLACEMENT = [
+  `\t\t\t\t${NATIVE_LLAMACPP_TOOL_CALL_MARKER}`,
+  '\t\t\t\targs: Type.Optional((process.env.NEMOCLAW_UPSTREAM_PROVIDER ?? "").trim() === "llama-cpp-local" ? Type.String({ description: "JSON-encoded tool input object." }) : Type.Record(Type.String(), Type.Unknown(), { description: "Tool input." }))',
+].join("\n");
+const NATIVE_TOOL_CALL_INPUT_PATTERN = [
+  "\tconst nestedInput = params.args ?? params.input;",
+  "\tif (nestedInput != null) return {",
+  "\t\tid: readToolSearchId(params),",
+  "\t\tinput: isRecord(nestedInput) ? {",
+  "\t\t\t...dottedInput,",
+  "\t\t\t...nestedInput",
+  "\t\t} : nestedInput",
+  "\t};",
+].join("\n");
+const NATIVE_TOOL_CALL_INPUT_REPLACEMENT = [
+  "\tlet nestedInput = params.args ?? params.input;",
+  '\tif (typeof nestedInput === "string" && (process.env.NEMOCLAW_UPSTREAM_PROVIDER ?? "").trim() === "llama-cpp-local") {',
+  "\t\ttry {",
+  "\t\t\tconst parsed = JSON.parse(nestedInput);",
+  '\t\t\tif (!isRecord(parsed)) throw new Error("not an object");',
+  "\t\t\tnestedInput = parsed;",
+  "\t\t} catch {",
+  '\t\t\tthrow new ToolInputError("args must be a JSON-encoded object.");',
+  "\t\t}",
+  "\t}",
+  "\tif (nestedInput != null) return {",
+  "\t\tid: readToolSearchId(params),",
+  "\t\tinput: isRecord(nestedInput) ? {",
+  "\t\t\t...dottedInput,",
+  "\t\t\t...nestedInput",
+  "\t\t} : nestedInput",
+  "\t};",
 ].join("\n");
 
 const EFFECTIVE_TOOLS_REPLACEMENT = [
@@ -302,26 +339,63 @@ function patchNativeLlamacppCatalogCompat(distDir: string): {
 
   const target = candidates[0];
   const source = fs.readFileSync(target, "utf-8");
-  if (source.includes(NATIVE_LLAMACPP_MARKER)) {
-    if (source.includes(NATIVE_DIRECT_TOOL_PATTERN)) {
+  let text = source;
+  let patched = false;
+  if (text.includes(NATIVE_LLAMACPP_MARKER)) {
+    if (text.includes(NATIVE_DIRECT_TOOL_PATTERN)) {
       throw new Error(`${target}: native llama.cpp marker is present but original target remains`);
     }
-    if (!source.includes(NATIVE_DIRECT_TOOL_REPLACEMENT)) {
+    if (!text.includes(NATIVE_DIRECT_TOOL_REPLACEMENT)) {
       throw new Error(`${target}: native llama.cpp compatibility patch shape is incomplete`);
     }
-    return { patched: false, file: target };
+  } else {
+    const count = countOccurrences(text, NATIVE_DIRECT_TOOL_PATTERN);
+    if (count !== 1) {
+      throw new Error(`${target}: expected exactly one native direct-tool target, found ${count}`);
+    }
+    text = text.replace(NATIVE_DIRECT_TOOL_PATTERN, NATIVE_DIRECT_TOOL_REPLACEMENT);
+    patched = true;
   }
 
-  const count = countOccurrences(source, NATIVE_DIRECT_TOOL_PATTERN);
-  if (count !== 1) {
-    throw new Error(`${target}: expected exactly one native direct-tool target, found ${count}`);
+  if (text.includes(NATIVE_LLAMACPP_TOOL_CALL_MARKER)) {
+    if (
+      text.includes(NATIVE_TOOL_CALL_SCHEMA_PATTERN) ||
+      text.includes(NATIVE_TOOL_CALL_INPUT_PATTERN)
+    ) {
+      throw new Error(
+        `${target}: native llama.cpp tool-call marker is present but an original target remains`,
+      );
+    }
+    if (
+      !text.includes(NATIVE_TOOL_CALL_SCHEMA_REPLACEMENT) ||
+      !text.includes(NATIVE_TOOL_CALL_INPUT_REPLACEMENT)
+    ) {
+      throw new Error(`${target}: native llama.cpp tool-call patch shape is incomplete`);
+    }
+  } else {
+    const schemaCount = countOccurrences(text, NATIVE_TOOL_CALL_SCHEMA_PATTERN);
+    const inputCount = countOccurrences(text, NATIVE_TOOL_CALL_INPUT_PATTERN);
+    if (schemaCount !== 1 || inputCount !== 1) {
+      throw new Error(
+        `${target}: expected one native llama.cpp tool-call schema and input target, found ${schemaCount} and ${inputCount}`,
+      );
+    }
+    text = text.replace(NATIVE_TOOL_CALL_SCHEMA_PATTERN, NATIVE_TOOL_CALL_SCHEMA_REPLACEMENT);
+    text = text.replace(NATIVE_TOOL_CALL_INPUT_PATTERN, NATIVE_TOOL_CALL_INPUT_REPLACEMENT);
+    patched = true;
   }
-  const text = source.replace(NATIVE_DIRECT_TOOL_PATTERN, NATIVE_DIRECT_TOOL_REPLACEMENT);
-  if (!text.includes(NATIVE_LLAMACPP_MARKER) || text.includes(NATIVE_DIRECT_TOOL_PATTERN)) {
+
+  if (
+    !text.includes(NATIVE_LLAMACPP_MARKER) ||
+    !text.includes(NATIVE_LLAMACPP_TOOL_CALL_MARKER) ||
+    text.includes(NATIVE_DIRECT_TOOL_PATTERN) ||
+    text.includes(NATIVE_TOOL_CALL_SCHEMA_PATTERN) ||
+    text.includes(NATIVE_TOOL_CALL_INPUT_PATTERN)
+  ) {
     throw new Error(`${target}: native llama.cpp compatibility patch verification failed`);
   }
-  fs.writeFileSync(target, text);
-  return { patched: true, file: target };
+  if (patched) fs.writeFileSync(target, text);
+  return { patched, file: target };
 }
 
 export function patchSelectionText(source: string, filePath: string): PatchSelectionResult {

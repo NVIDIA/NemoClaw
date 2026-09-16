@@ -5203,6 +5203,7 @@ run_requested_openclaw_post_upgrade_doctor() {
   local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
   local expected="nemoclaw-openclaw-post-upgrade-doctor-v2"
   local release_expected="nemoclaw-openclaw-post-upgrade-doctor-release-v1"
+  local abort_expected="nemoclaw-openclaw-post-upgrade-doctor-abort-v1"
   local ready="/tmp/nemoclaw-post-upgrade-doctor-ready"
   local ready_expected="nemoclaw-openclaw-post-upgrade-doctor-ready-v1"
   local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
@@ -5232,6 +5233,11 @@ EOF
       return 1
     fi
   } <"$marker" || return 1
+  if [ "$marker_value" = "$abort_expected" ]; then
+    rm -f -- "$marker" "$ready" || return 1
+    echo "[setup] OpenClaw post-upgrade maintenance abort consumed; sandbox remains stopped" >&2
+    return 1
+  fi
   [ "$marker_value" = "$expected" ] || {
     echo "[SECURITY] Refusing invalid post-upgrade doctor marker" >&2
     return 1
@@ -5296,6 +5302,11 @@ EOF
       echo "[setup] OpenClaw post-upgrade offline restore released gateway launch" >&2
       return 0
     fi
+    if [ "$marker_value" = "$abort_expected" ]; then
+      rm -f -- "$marker" "$ready" || return 1
+      echo "[setup] OpenClaw post-upgrade offline restore aborted; sandbox remains stopped" >&2
+      return 1
+    fi
     if [ "$marker_value" != "$expected" ]; then
       echo "[SECURITY] Post-upgrade doctor marker changed during offline restore" >&2
       return 1
@@ -5303,6 +5314,7 @@ EOF
     sleep 1
   done
   echo "[SECURITY] Timed out waiting for post-upgrade offline restore release" >&2
+  rm -f -- "$marker" "$ready" || return 1
   return 1
 }
 

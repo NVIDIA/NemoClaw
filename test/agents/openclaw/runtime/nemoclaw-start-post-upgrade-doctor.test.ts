@@ -158,6 +158,91 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     }
   });
 
+  it("consumes an abort transition before running doctor and remains stopped", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-abort-v1\n", {
+        mode: 0o600,
+      });
+      fs.writeFileSync(f.ready, "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n", {
+        mode: 0o600,
+      });
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status).toBe(1);
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("consumes an abort transition while the offline gate is armed", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      const staged = `${f.marker}.abort`;
+      const abortAfterReady = [
+        `(while [ ! -f ${JSON.stringify(f.ready)} ]; do sleep 0.01; done`,
+        `printf '%s\\n' nemoclaw-openclaw-post-upgrade-doctor-abort-v1 >${JSON.stringify(staged)}`,
+        `chmod 600 ${JSON.stringify(staged)}`,
+        `mv -f -- ${JSON.stringify(staged)} ${JSON.stringify(f.marker)}) &`,
+      ].join("; ");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\n${abortAfterReady}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status).toBe(1);
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans an abandoned gate on timeout so a future start cannot repeat it", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      const boundedFunction = doctorFunction(source, f.configDir, f.ready).replace(
+        '[ "$gate_attempt" -lt 600 ]',
+        '[ "$gate_attempt" -lt 2 ]',
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${boundedFunction}\nsleep() { return 0; }\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status).toBe(1);
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(result.stderr).toContain("Timed out waiting for post-upgrade offline restore release");
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
   it("retains the marker when doctor fails so recovery can retry", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();

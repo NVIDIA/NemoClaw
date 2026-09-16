@@ -62,6 +62,10 @@ describe("rebuild post-restore phase", () => {
       order.push("doctor-finish");
       return { ok: true };
     });
+    vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockImplementation(async () => {
+      order.push("doctor-abort");
+      return { ok: true };
+    });
     vi.spyOn(sessionModels, "reconcileStalePinnedSessionModelsAfterRebuild").mockImplementation(
       async () => {
         order.push("reconcile");
@@ -71,6 +75,9 @@ describe("rebuild post-restore phase", () => {
       async () => {
         order.push("messaging");
       },
+    );
+    vi.spyOn(rebuildMessaging, "finalizePendingMessagingRemovalsAfterRestore").mockImplementation(
+      (plan) => plan,
     );
     vi.spyOn(
       rebuildConfigHash,
@@ -189,6 +196,7 @@ describe("rebuild post-restore phase", () => {
       undefined,
     );
     expect(processRecovery.finishOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
+    expect(processRecovery.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
   it("re-establishes mutable config permissions after MCP writers settle", async () => {
@@ -334,6 +342,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
+    expect(processRecovery.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Post-upgrade structure repair failed before offline restoration");
     expect(output).not.toContain("rebuilt successfully");
@@ -380,6 +389,9 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
+    expect(processRecovery.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+    });
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Post-upgrade structure repair failed during final sandbox start");
     expect(output).not.toContain("sensitive doctor output");
@@ -401,8 +413,76 @@ describe("rebuild post-restore phase", () => {
       "OpenClaw messaging manifest config reapply failed during rebuild.",
     );
     expect(args.log).toHaveBeenCalledWith("Messaging manifest reapply failed: config write failed");
+    expect(processRecovery.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+    });
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain("Messaging manifest config reapply failed before gateway start");
+  });
+
+  it("aborts the maintenance gate when pending messaging removal cannot be committed", async () => {
+    const finalizedPlan = { transport: "slack" } as never;
+    vi.mocked(rebuildMessaging.finalizePendingMessagingRemovalsAfterRestore).mockReturnValue(
+      finalizedPlan,
+    );
+    vi.mocked(registry.updateSandbox).mockReturnValue(false);
+    const args = { ...input(), messagingPlan: { transport: "discord" } as never };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(args.bail).toHaveBeenCalledWith(
+      "Could not retire pending messaging removals after rebuild.",
+    );
+    expect(processRecovery.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+    });
+    expect(processRecovery.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      fail: () =>
+        vi
+          .mocked(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild)
+          .mockRejectedValue(new Error("session reconciliation failed")),
+      message: "session reconciliation failed",
+    },
+    {
+      fail: () =>
+        vi
+          .mocked(rebuildMcp.restoreMcpAfterRebuild)
+          .mockRejectedValue(new Error("MCP restoration failed")),
+      message: "MCP restoration failed",
+    },
+  ])(
+    "aborts the maintenance gate when an offline writer throws: $message",
+    async ({ fail, message }) => {
+      fail();
+
+      await expect(runRebuildPostRestorePhase(input())).rejects.toThrow(message);
+
+      expect(processRecovery.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+        sandboxName: "alpha",
+      });
+      expect(processRecovery.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not mask the restoration failure when the maintenance abort itself throws", async () => {
+    vi.mocked(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).mockRejectedValue(
+      new Error("original restoration failure"),
+    );
+    vi.mocked(processRecovery.abortOpenClawPostRestoreDoctor).mockRejectedValue(
+      new Error("sensitive abort failure"),
+    );
+    const args = input();
+
+    await expect(runRebuildPostRestorePhase(args)).rejects.toThrow("original restoration failure");
+
+    expect(args.log).toHaveBeenCalledWith("Post-upgrade doctor maintenance abort: unverified");
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain(
+      "sensitive abort failure",
+    );
   });
 
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {

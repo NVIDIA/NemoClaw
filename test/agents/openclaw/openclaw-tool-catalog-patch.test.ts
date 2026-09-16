@@ -7,7 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MARKER, NATIVE_LLAMACPP_MARKER } from "../../../scripts/patch-openclaw-tool-catalog.mts";
+import {
+  MARKER,
+  NATIVE_LLAMACPP_MARKER,
+  NATIVE_LLAMACPP_TOOL_CALL_MARKER,
+} from "../../../scripts/patch-openclaw-tool-catalog.mts";
 
 const PATCH_SCRIPT = path.join(
   import.meta.dirname,
@@ -158,6 +162,27 @@ function currentNativeToolSearchFixtureSource() {
 
 function currentNativeDirectToolFixtureSource() {
   return [
+    "const Type = {",
+    "\tOptional: (schema) => schema,",
+    "\tRecord: (_key, value, options = {}) => ({ type: 'object', patternProperties: { '^.*$': value }, ...options }),",
+    "\tString: (options = {}) => ({ type: 'string', ...options }),",
+    "\tUnknown: () => ({})",
+    "};",
+    "class ToolInputError extends Error {}",
+    "function isRecord(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }",
+    "function readToolSearchId(params) { return params.name; }",
+    "function readToolSearchCallArgs(params) {",
+    "\tconst dottedInput = {};",
+    "\tconst nestedInput = params.args ?? params.input;",
+    "\tif (nestedInput != null) return {",
+    "\t\tid: readToolSearchId(params),",
+    "\t\tinput: isRecord(nestedInput) ? {",
+    "\t\t\t...dottedInput,",
+    "\t\t\t...nestedInput",
+    "\t\t} : nestedInput",
+    "\t};",
+    "\treturn { id: readToolSearchId(params), input: dottedInput };",
+    "}",
     "function classifyTool(tool) { return { source: 'openclaw', sourceName: 'core', tool }; }",
     "function isCoreCodingSurfaceToolName(name) { return name === 'read'; }",
     "function isDirectVisibleCatalogTool(tool, directToolNames) {",
@@ -174,6 +199,22 @@ function currentNativeDirectToolFixtureSource() {
     "\t\telse process.env.NEMOCLAW_UPSTREAM_PROVIDER = previous;",
     "\t}",
     "}",
+    "function withProvider(env, callback) {",
+    "\tconst previous = process.env.NEMOCLAW_UPSTREAM_PROVIDER;",
+    "\tif (Object.hasOwn(env, 'NEMOCLAW_UPSTREAM_PROVIDER')) process.env.NEMOCLAW_UPSTREAM_PROVIDER = env.NEMOCLAW_UPSTREAM_PROVIDER;",
+    "\telse delete process.env.NEMOCLAW_UPSTREAM_PROVIDER;",
+    "\ttry { return callback(); }",
+    "\tfinally {",
+    "\t\tif (previous === undefined) delete process.env.NEMOCLAW_UPSTREAM_PROVIDER;",
+    "\t\telse process.env.NEMOCLAW_UPSTREAM_PROVIDER = previous;",
+    "\t}",
+    "}",
+    "export function toolCallArgsSchema(env = {}) {",
+    "\treturn withProvider(env, () => ({",
+    '\t\t\t\targs: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Tool input." }))',
+    "\t})).args;",
+    "}",
+    "export function readCall(params, env = {}) { return withProvider(env, () => readToolSearchCallArgs(params)); }",
     "",
   ].join("\n");
 }
@@ -278,7 +319,9 @@ describe("OpenClaw compact tool catalog patch", () => {
       expect(result.stdout).toContain("patched-native-llamacpp");
       expect(result.stdout).toContain("local-model-lean-fixture.js");
       expect(fs.readFileSync(builtinPath, "utf-8")).not.toContain(MARKER);
-      expect(fs.readFileSync(localModelPath, "utf-8")).toContain(NATIVE_LLAMACPP_MARKER);
+      const patchedLocalModel = fs.readFileSync(localModelPath, "utf-8");
+      expect(patchedLocalModel).toContain(NATIVE_LLAMACPP_MARKER);
+      expect(patchedLocalModel).toContain(NATIVE_LLAMACPP_TOOL_CALL_MARKER);
 
       const mod = await importSelection(localModelPath);
       expect(mod.visible({ name: "read" })).toBe(true);
@@ -290,6 +333,32 @@ describe("OpenClaw compact tool catalog patch", () => {
           "sessions_yield",
         ]),
       ).toBe(true);
+      expect(mod.toolCallArgsSchema()).toMatchObject({
+        type: "object",
+        patternProperties: { "^.*$": {} },
+      });
+      expect(mod.toolCallArgsSchema({ NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" })).toEqual({
+        type: "string",
+        description: "JSON-encoded tool input object.",
+      });
+      expect(
+        mod.readCall(
+          { name: "exec", args: '{"command":"pwd"}' },
+          { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
+        ),
+      ).toEqual({ id: "exec", input: { command: "pwd" } });
+      expect(() =>
+        mod.readCall(
+          { name: "exec", args: "[]" },
+          { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
+        ),
+      ).toThrow("args must be a JSON-encoded object.");
+      expect(() =>
+        mod.readCall(
+          { name: "exec", args: "not-json" },
+          { NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" },
+        ),
+      ).toThrow("args must be a JSON-encoded object.");
 
       const second = runPatch(currentNative.dist);
       expect(second.status, `${second.stdout}${second.stderr}`).toBe(0);

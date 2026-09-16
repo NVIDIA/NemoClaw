@@ -544,6 +544,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "nemoclaw: route unconfigured strict fetch through sandbox egress proxy",
           'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',
           "nemoclaw llama.cpp compact native tool catalog (#11105)",
+          "nemoclaw llama.cpp JSON-string tool-call input (#11105)",
         ].forEach((marker) => {
           const grep = grepRealDist(dist, marker);
           requireSpawnSuccess(grep, `find real-dist marker ${marker}`);

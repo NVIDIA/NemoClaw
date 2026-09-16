@@ -23,6 +23,7 @@ import type { HermesOperatorConfigRestoreReport } from "./rebuild-durable-config
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
+  type HermesPostRestoreGatewayRestartState,
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
   restartHermesGatewayAfterStateRestore,
@@ -40,6 +41,7 @@ import {
   reapplyMessagingManifestBeforeOpenClawStart,
 } from "./rebuild-messaging-phase";
 import {
+  abortOpenClawPostRestoreDoctor,
   beginOpenClawPostRestoreDoctor,
   finishOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
@@ -188,6 +190,8 @@ export async function runRebuildPostRestorePhase(
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
   let openClawDoctorWindow: OpenClawPostRestoreDoctorWindow | null = null;
+  let hermesGatewayRestartState: HermesPostRestoreGatewayRestartState = "not-applicable";
+  let mcpBridgeRestoreUnverified = true;
   // Rebuild freezes the OpenShell target before deletion and revalidates the
   // recreated registry binding above. Native restart and health checks remain
   // pinned to that selected runtime.
@@ -226,114 +230,135 @@ export async function runRebuildPostRestorePhase(
     }
   };
 
-  if (targetAgentName === "openclaw") {
-    // Recreate onboarding returns only after the replacement gateway is live.
-    // Enter a startup-owned maintenance gate first: startup stops the old
-    // process, runs doctor, and proves the gateway has not launched again.
-    // Every state/config writer below therefore runs inside one verified
-    // gateway-down window, and messaging is reapplied after doctor.
-    log("Entering verified OpenClaw post-upgrade maintenance window");
-    const doctorWindow = await beginOpenClawPostRestoreDoctor(sandboxName, mcpRuntimeSelection);
-    log(
-      `Post-upgrade doctor maintenance window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`,
-    );
-    if (!doctorWindow.ok) {
-      console.log(`  ${D}Post-upgrade structure repair failed before offline restoration${R}`);
-      bail("OpenClaw post-upgrade structure repair failed during rebuild.");
-      return;
-    }
-    openClawDoctorWindow = doctorWindow.window;
+  try {
+    if (targetAgentName === "openclaw") {
+      // Recreate onboarding returns only after the replacement gateway is live.
+      // Enter a startup-owned maintenance gate first: startup stops the old
+      // process, runs doctor, and proves the gateway has not launched again.
+      // Every state/config writer below therefore runs inside one verified
+      // gateway-down window, and messaging is reapplied after doctor.
+      log("Entering verified OpenClaw post-upgrade maintenance window");
+      const doctorWindow = await beginOpenClawPostRestoreDoctor(sandboxName, mcpRuntimeSelection);
+      log(
+        `Post-upgrade doctor maintenance window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`,
+      );
+      if (!doctorWindow.ok) {
+        console.log(`  ${D}Post-upgrade structure repair failed before offline restoration${R}`);
+        bail("OpenClaw post-upgrade structure repair failed during rebuild.");
+        return;
+      }
+      openClawDoctorWindow = doctorWindow.window;
 
-    // #7102: clear stale per-session pinned models left over from an
-    // `inference set` before this rebuild. The maintenance receipt above proves
-    // that OpenClaw cannot race this sessions.json mutation.
-    await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
+      // #7102: clear stale per-session pinned models left over from an
+      // `inference set` before this rebuild. The maintenance receipt above proves
+      // that OpenClaw cannot race this sessions.json mutation.
+      await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
+
+      try {
+        await reapplyMessagingManifestBeforeOpenClawStart(
+          sandboxName,
+          messagingPlan,
+          log,
+          mcpRuntimeSelection,
+        );
+      } catch (error) {
+        log(
+          `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        console.error(
+          `  ${YW}\u26a0${R} Messaging manifest config reapply failed before gateway start.`,
+        );
+        bail("OpenClaw messaging manifest config reapply failed during rebuild.");
+        return;
+      }
+
+      repairMutableOpenClawConfigPermissions(
+        "Restoring mutable OpenClaw config permissions after post-restore config writes",
+      );
+    }
 
     try {
-      await reapplyMessagingManifestBeforeOpenClawStart(
-        sandboxName,
-        messagingPlan,
+      const finalizedMessagingPlan = finalizePendingMessagingRemovalsAfterRestore(
+        effectiveMessagingPlan,
         log,
         mcpRuntimeSelection,
       );
+      if (finalizedMessagingPlan !== effectiveMessagingPlan && finalizedMessagingPlan) {
+        if (
+          !registry.updateSandbox(sandboxName, {
+            messaging: { schemaVersion: 1, plan: finalizedMessagingPlan },
+          })
+        ) {
+          bail("Could not retire pending messaging removals after rebuild.");
+          return;
+        }
+        effectiveMessagingPlan = finalizedMessagingPlan;
+      }
     } catch (error) {
-      log(
-        `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
+      bail(
+        `Could not finalize pending messaging removals after rebuild: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
-      console.error(
-        `  ${YW}\u26a0${R} Messaging manifest config reapply failed before gateway start.`,
-      );
-      bail("OpenClaw messaging manifest config reapply failed during rebuild.");
       return;
     }
 
-    repairMutableOpenClawConfigPermissions(
-      "Restoring mutable OpenClaw config permissions after post-restore config writes",
-    );
-  }
-
-  try {
-    const finalizedMessagingPlan = finalizePendingMessagingRemovalsAfterRestore(
-      effectiveMessagingPlan,
-      log,
+    // The managed image owns the ordinary Hermes process lifecycle. Only an
+    // active cron-restore gate requires the bounded replacement transaction that
+    // keeps dispatch drained across a process identity change.
+    hermesGatewayRestartState = hermesCronRestoreIdentity
+      ? await restartHermesGatewayAfterStateRestore(
+          sandboxName,
+          targetAgentName,
+          hermesPostRestoreGatewayDeps,
+        )
+      : "not-applicable";
+    mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
+      sandboxName,
+      mcpEntries,
       mcpRuntimeSelection,
-    );
-    if (finalizedMessagingPlan !== effectiveMessagingPlan && finalizedMessagingPlan) {
-      if (
-        !registry.updateSandbox(sandboxName, {
-          messaging: { schemaVersion: 1, plan: finalizedMessagingPlan },
-        })
-      ) {
-        bail("Could not retire pending messaging removals after rebuild.");
+    ));
+    if (targetAgentName === "openclaw") {
+      // MCP restoration is the last offline OpenClaw config writer. Re-establish
+      // the mutable-config posture, then release the already-running startup
+      // transaction into its one final gateway launch and health verification.
+      repairMutableOpenClawConfigPermissions(
+        "Restoring mutable OpenClaw config permissions after MCP restoration",
+      );
+
+      if (!openClawDoctorWindow) {
+        bail("OpenClaw post-upgrade maintenance authority was lost during rebuild.");
         return;
       }
-      effectiveMessagingPlan = finalizedMessagingPlan;
+      log("Releasing OpenClaw for one final start after all offline post-restore writes");
+      const doctorResult = await finishOpenClawPostRestoreDoctor(openClawDoctorWindow);
+      log(`Post-upgrade doctor final start: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
+      if (!doctorResult.ok) {
+        console.log(`  ${D}Post-upgrade structure repair failed during final sandbox start${R}`);
+        bail("OpenClaw post-upgrade structure repair failed during rebuild.");
+        return;
+      }
+      openClawDoctorWindow = null;
+      console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
     }
-  } catch (error) {
-    bail(
-      `Could not finalize pending messaging removals after rebuild: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return;
-  }
-
-  // The managed image owns the ordinary Hermes process lifecycle. Only an
-  // active cron-restore gate requires the bounded replacement transaction that
-  // keeps dispatch drained across a process identity change.
-  const hermesGatewayRestartState = hermesCronRestoreIdentity
-    ? await restartHermesGatewayAfterStateRestore(
-        sandboxName,
-        targetAgentName,
-        hermesPostRestoreGatewayDeps,
-      )
-    : "not-applicable";
-  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
-    sandboxName,
-    mcpEntries,
-    mcpRuntimeSelection,
-  ));
-  if (targetAgentName === "openclaw") {
-    // MCP restoration is the last offline OpenClaw config writer. Re-establish
-    // the mutable-config posture, then release the already-running startup
-    // transaction into its one final gateway launch and health verification.
-    repairMutableOpenClawConfigPermissions(
-      "Restoring mutable OpenClaw config permissions after MCP restoration",
-    );
-
-    if (!openClawDoctorWindow) {
-      bail("OpenClaw post-upgrade maintenance authority was lost during rebuild.");
-      return;
+  } finally {
+    if (openClawDoctorWindow) {
+      log("Aborting OpenClaw post-upgrade maintenance window after rebuild failure");
+      try {
+        const abortResult = await abortOpenClawPostRestoreDoctor(openClawDoctorWindow);
+        log(`Post-upgrade doctor maintenance abort: ${abortResult.ok ? "verified" : "unverified"}`);
+        if (!abortResult.ok) {
+          console.error(
+            `  ${YW}\u26a0${R} OpenClaw maintenance abort could not prove the sandbox stopped.`,
+          );
+        }
+      } catch {
+        log("Post-upgrade doctor maintenance abort: unverified");
+        console.error(
+          `  ${YW}\u26a0${R} OpenClaw maintenance abort could not prove the sandbox stopped.`,
+        );
+      }
     }
-    log("Releasing OpenClaw for one final start after all offline post-restore writes");
-    const doctorResult = await finishOpenClawPostRestoreDoctor(openClawDoctorWindow);
-    log(`Post-upgrade doctor final start: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
-    if (!doctorResult.ok) {
-      console.log(`  ${D}Post-upgrade structure repair failed during final sandbox start${R}`);
-      bail("OpenClaw post-upgrade structure repair failed during rebuild.");
-      return;
-    }
-    console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
   }
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
     mutableConfigHashRefreshUnverified = true;
