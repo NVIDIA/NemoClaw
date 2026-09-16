@@ -322,7 +322,7 @@ Before selecting one agent image, NemoClaw validates a complete three-agent coho
 If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
 Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
 An explicit `--from <Dockerfile>` remains a separate complete custom-image path.
-The portable experimental profile retains its existing workload path and lifecycle. Native Podman is independently selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts only exact managed-image workload receipts; legacy and custom Dockerfile builds remain disabled for that provider.
+Native Podman is selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts only exact managed-image workload receipts; legacy and custom Dockerfile builds remain disabled for that provider.
 <AgentOnly variant="openclaw">
 The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
 </AgentOnly>

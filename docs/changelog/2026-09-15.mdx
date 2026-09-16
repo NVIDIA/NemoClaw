@@ -6,17 +6,15 @@
 ## v0.0.126
 
 NemoClaw v0.0.126 moves sandbox, gateway, and host-forward recovery onto typed OpenShell lifecycle controls.
-It also strengthens Podman onboarding, destructive-operation safety, secret redaction, policy activation, Portable admission, and package execution.
+It also strengthens Podman onboarding, destructive-operation safety, secret redaction, policy activation, and package execution.
 
 - Sandbox lifecycle and host-forward operations now share typed OpenShell adapters for selection, registration, observation, recovery, and cleanup.
   Stop, destroy, and rebuild retain the local sandbox registry record when forward release cannot be proved.
-  Snapshot, messaging, and Hermes Portable paths apply the same ownership and cleanup rules.
   Gateway startup offers a service stop command only when one stable active service is the sole listener and owns the selected state, and supported recovery no longer replaces legacy keepalive containers.
   Related changes: [PR #11594](https://github.com/NVIDIA/NemoClaw/pull/11594), [PR #11725](https://github.com/NVIDIA/NemoClaw/pull/11725), [PR #11741](https://github.com/NVIDIA/NemoClaw/pull/11741), and [PR #11776](https://github.com/NVIDIA/NemoClaw/pull/11776).
   For more information, refer to [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - `nemoclaw <name> recover` now starts a stopped Docker-driver sandbox through OpenShell so the sandbox returns to `Ready` instead of leaving a running container in `Stopped`.
   A later `start` repairs the same phase mismatch, while paused sandboxes and running sandboxes in other phases remain unchanged.
-  Fresh Hermes Portable onboarding now performs privileged gateway verification and failed-gateway recovery through the receipt-owned Podman container without falling back to Docker discovery.
   Related changes: [PR #11784](https://github.com/NVIDIA/NemoClaw/pull/11784) and [PR #11797](https://github.com/NVIDIA/NemoClaw/pull/11797).
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Recover and Rebuild Sandboxes for Hermes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - Managed Podman onboarding now reads the structured OpenShell main-process specification, preserves its terminal setting, and releases the stopped original container before the replacement binds its port.
@@ -39,8 +37,7 @@ It also strengthens Podman onboarding, destructive-operation safety, secret reda
   Managed vLLM adoption now queries the published port by the inspected container ID, so a container-name transfer cannot redirect the adoption decision.
   Related changes: [PR #11815](https://github.com/NVIDIA/NemoClaw/pull/11815) and [PR #11821](https://github.com/NVIDIA/NemoClaw/pull/11821).
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
-- Hermes Portable onboarding now rejects non-x86_64 Linux hosts before it inspects or changes host state.
-  Managed image and CI builds use Node.js 24.18.1 with integrity-verified npm 12.0.2 while the public Node.js 22.19 compatibility floor remains unchanged.
+- Managed image and CI builds use Node.js 24.18.1 with integrity-verified npm 12.0.2 while the public Node.js 22.19 compatibility floor remains unchanged.
   Builds also set every `package.json` executable, including `nemoclaw-acp` and `nemoclaw-blueprint-runner`, to mode `0755`, so fresh packages can invoke them directly.
   Related changes: [PR #11736](https://github.com/NVIDIA/NemoClaw/pull/11736), [PR #11839](https://github.com/NVIDIA/NemoClaw/pull/11839), and [PR #11840](https://github.com/NVIDIA/NemoClaw/pull/11840).
   For more information, refer to [Quickstart with Hermes](/user-guide/hermes/get-started/quickstart) and [Troubleshooting](/user-guide/hermes/reference/troubleshooting).
