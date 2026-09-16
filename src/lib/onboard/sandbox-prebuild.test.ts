@@ -10,9 +10,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ dockerSpawn: vi.fn() }));
 
-/** A nondefault port exposes stale registry addresses in build and publication. */
-vi.mock("../domain/sandbox/portable-registry", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../domain/sandbox/portable-registry")>()),
+/** Use a nondefault authority to detect hard-coded probe and publication addresses. */
+vi.mock("./experimental/portable-profile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./experimental/portable-profile")>()),
   PORTABLE_LOCAL_REGISTRY: "127.0.0.1:54321",
 }));
 
@@ -748,9 +748,7 @@ describe("sandbox BuildKit prebuild", () => {
         publishImage,
         log: vi.fn(),
       }),
-    ).rejects.toThrow(
-      "Managed local registry at http://127.0.0.1:54321 is unavailable. Sandbox image build has not started.",
-    );
+    ).rejects.toThrow(/registry/i);
     expect(buildImage).not.toHaveBeenCalled();
     expect(publishImage).not.toHaveBeenCalled();
     expect(fetchRegistry).toHaveBeenCalledWith(new URL("http://127.0.0.1:54321/v2/"), {

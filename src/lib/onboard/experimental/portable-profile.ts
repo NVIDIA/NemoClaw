@@ -3,6 +3,12 @@
 
 import { DEFAULT_DOCKER_DRIVER_NETWORK_NAME } from "./docker-network-authority";
 
+export {
+  PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_HOST,
+  PORTABLE_REGISTRY_PORT,
+} from "../../domain/sandbox/image-tag";
+
 export const EXPERIMENTAL_PROFILE_ENV = "NEMOCLAW_EXPERIMENTAL_PROFILE";
 export const PORTABLE_EXPERIMENTAL_PROFILE = "portable";
 export const PORTABLE_ARCHITECTURE = Object.freeze({
@@ -19,14 +25,10 @@ export const PORTABLE_HOST_GATEWAY_IP = "169.254.2.2";
 export const PORTABLE_REGISTRY_IP = "10.87.0.3";
 export const PORTABLE_DOCKER_NETWORK_NAME = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 export const PORTABLE_DOCKER_NETWORK_SUBNET = "10.87.0.0/24";
-export {
-  PORTABLE_REGISTRY_HOST,
-  PORTABLE_REGISTRY_PORT,
-  PORTABLE_LOCAL_REGISTRY,
-} from "../../domain/sandbox/portable-registry";
 
 export type ExperimentalOnboardProfile = typeof PORTABLE_EXPERIMENTAL_PROFILE;
 
+/** Select Portable only for its explicit environment opt-in; ignore unknown profiles. */
 export function resolveExperimentalOnboardProfile(
   env: NodeJS.ProcessEnv = process.env,
 ): ExperimentalOnboardProfile | null {
@@ -35,6 +37,7 @@ export function resolveExperimentalOnboardProfile(
     : null;
 }
 
+/** Keep Portable-only behavior disabled unless the explicit profile resolves to Portable. */
 export function isPortableExperimentalProfile(env: NodeJS.ProcessEnv = process.env): boolean {
   return resolveExperimentalOnboardProfile(env) === PORTABLE_EXPERIMENTAL_PROFILE;
 }

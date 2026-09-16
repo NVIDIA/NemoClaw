@@ -25,6 +25,7 @@ const disabledHermesDashboardState = { config: null, enabled: false };
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const temporaryBuildContexts: string[] = [];
 
+/** Stage a private generated context that satisfies prebuild trust checks and is cleaned after each test. */
 function createTrustedBuildContext(): string {
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
   temporaryBuildContexts.push(buildCtx);

@@ -16,10 +16,7 @@ import {
 import { dockerSpawn } from "../adapters/docker/exec";
 import { dockerImageInspectFormat } from "../adapters/docker/inspect";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
-import {
-  LOCAL_SANDBOX_IMAGE_REPO,
-  PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
-} from "../domain/sandbox/image-tag";
+import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
@@ -140,6 +137,7 @@ export function resolveSandboxPrebuildEnabled(
   return !env.VITEST && env.NODE_ENV !== "test";
 }
 
+/** Bind Portable build and push tags to the same registry authority used by readiness checks. */
 export function sandboxLocalImageRef(
   sandboxName: string,
   buildId: string,
@@ -153,7 +151,7 @@ export function sandboxLocalImageRef(
   const buildPart = sanitize(buildId).slice(-32) || "build";
   const namePart = sanitize(sandboxName).slice(0, 127 - buildPart.length) || "sandbox";
   const repository = isPortableExperimentalProfile(env)
-    ? PORTABLE_LOCAL_SANDBOX_IMAGE_REPO
+    ? `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}`
     : LOCAL_SANDBOX_IMAGE_REPO;
   return `${repository}:${namePart}-${buildPart}`;
 }
@@ -246,7 +244,7 @@ export async function prebuildSandboxImageIfEligible(
       if (response.status !== 200) throw new Error("Registry is not ready");
     } catch {
       throw new Error(
-        `Managed local registry at ${registryUrl.origin} is unavailable. Sandbox image build has not started. Verify the managed registry's loopback listener and HTTP 200 response from /v2/ before retrying.`,
+        `Managed local registry at ${registryUrl.origin} is unavailable. Sandbox image build has not started. Restore the managed registry, then verify that ${registryUrl.href} returns HTTP 200 before retrying.`,
       );
     }
   }

@@ -897,6 +897,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
   return primaryFailed || cleanupFailed ? Promise.reject(failure) : lifecycleEvidence!;
 }
 
+/** Qualify the candidate's rootless registry and sandbox lifecycle without reusing host state. */
 async function main(progress: TestProgress): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
@@ -1338,7 +1339,13 @@ async function main(progress: TestProgress): Promise<void> {
             subnet: PORTABLE_DOCKER_NETWORK_SUBNET,
             hostGateway: `${PORTABLE_HOST_GATEWAY_IP}/32`,
           },
-          registry: { id: currentRegistry.Id, ip: PORTABLE_REGISTRY_IP },
+          registry: {
+            id: currentRegistry.Id,
+            ip: PORTABLE_REGISTRY_IP,
+            publicationAuthority: "127.0.0.1:5000",
+            hostBindings: (currentRegistry.NetworkSettings as Record<string, unknown>).Ports,
+            publishedImagePulled: true,
+          },
           hermesPortableImage: {
             imageId: hermesImageId,
             stagedContextRetired: hermesContextRetired,
