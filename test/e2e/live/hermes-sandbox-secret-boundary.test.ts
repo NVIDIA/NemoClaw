@@ -669,10 +669,13 @@ async function probeRuntimeApiServerKey(
   image: string,
   label: string,
 ): Promise<RuntimeApiKeyProbe> {
+  // Root startup refreshes both the strict and compatibility hashes.
   const result = await probe.run(
     [
       "run",
       "--rm",
+      "--user",
+      "root",
       "--entrypoint",
       "/usr/local/bin/nemoclaw-start",
       image,
