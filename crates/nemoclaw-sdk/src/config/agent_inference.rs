@@ -146,7 +146,9 @@ pub(crate) struct RuntimeAgent {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RuntimeInference {
+// This is the pinned Fabric adapter wire format. Its top-level model mirrors the
+// first agent for single-agent adapters; retain the encoding until images change.
+pub(crate) struct SandboxRuntimeSettings {
     pub provider: String,
     pub connection: RuntimeConnection,
     #[serde(rename = "webSearch", default, skip_serializing_if = "Option::is_none")]
@@ -229,7 +231,7 @@ impl RuntimeConnection {
     }
 }
 
-impl RuntimeInference {
+impl SandboxRuntimeSettings {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
         self.connection.validate(&self.provider, harness)?;
         self.tuning.validate(harness)?;
@@ -311,14 +313,12 @@ impl RuntimeInference {
     }
 }
 impl Document {
-    pub(crate) fn runtime_model(
+    fn runtime_model(
         &self,
-        agent: &Agent,
+        harness: &str,
+        provider: &InferenceProvider,
         route: &Route,
     ) -> Result<RuntimeModel, ConfigError> {
-        let harness = self.sandbox_harness()?;
-        let (_, scope) = self.scoped_inference(agent)?;
-        let provider = self.route_provider(route, scope)?;
         let connection = self.provider_connection(provider)?;
         let profile = crate::openshell::inference_profile(
             &provider.name,
@@ -331,7 +331,7 @@ impl Document {
             provider: provider.name.clone(),
             connection: RuntimeConnection {
                 provider: provider.provider.clone(),
-                model: (harness.kind != "pi").then(|| route.overrides.model.clone()),
+                model: (harness != "pi").then(|| route.overrides.model.clone()),
                 base_url: connection.endpoint,
                 api_key_env: profile
                     .credentials
@@ -339,66 +339,90 @@ impl Document {
                     .map(|credential| credential.name.clone())
                     .unwrap_or_else(|| "NEMOCLAW_ANONYMOUS_API_KEY".into()),
             },
-            api: provider
-                .api
-                .unwrap_or(InferenceApi::for_harness(&harness.kind)),
+            api: provider.api.unwrap_or(InferenceApi::for_harness(harness)),
             tuning: route.overrides.tuning.clone(),
         })
     }
 
-    pub(crate) fn runtime_inference(&self) -> Result<Option<RuntimeInference>, ConfigError> {
-        let agents = &self.spec.sandboxes[0].agents;
-        let agent = &agents[0];
+    pub(crate) fn sandbox_runtime_settings(&self) -> Result<SandboxRuntimeSettings, ConfigError> {
         let harness = self.sandbox_harness()?;
-        let primary_inference = self.agent_inference(agent)?;
-        let primary = self.runtime_model(agent, primary_inference.default_route()?)?;
-        let choices = agents.iter().any(|agent| {
-            self.agent_inference(agent)
-                .is_ok_and(|inference| inference.routes.len() > 1 || inference != primary_inference)
-        });
+        let resolved = self.spec.sandboxes[0]
+            .agents
+            .iter()
+            .map(|agent| {
+                let (inference, scope) = self.scoped_inference(agent)?;
+                let models = inference
+                    .routes
+                    .iter()
+                    .map(|route| {
+                        let provider = self.route_provider(route, scope)?;
+                        Ok((
+                            route.name.clone(),
+                            self.runtime_model(&harness.kind, provider, route)?,
+                        ))
+                    })
+                    .collect::<Result<_, ConfigError>>()?;
+                Ok(ResolvedAgent {
+                    agent,
+                    inference,
+                    models,
+                })
+            })
+            .collect::<Result<Vec<_>, ConfigError>>()?;
+        let first = &resolved[0];
+        let primary = first.models[first.inference.default_route()?.name.as_str()].clone();
+        let choices = resolved
+            .iter()
+            .any(|agent| agent.models.len() > 1 || agent.inference != first.inference);
         let web_search = self.web_search()?;
         let roster = choices
             || web_search.is_some()
-            || agents.len() > 1
-            || agents.iter().any(|agent| agent.tools.is_some());
-        let mut runtime_agents = Vec::new();
-        if roster {
-            for agent in agents {
-                let inference = self.agent_inference(agent)?;
-                runtime_agents.push(RuntimeAgent {
-                    name: agent.name.clone(),
-                    tools: agent.tools.clone(),
-                    inference: if choices {
-                        Some(RuntimeAgentInference {
-                            default: inference.default_route()?.name.clone(),
-                            models: inference
-                                .routes
-                                .iter()
-                                .map(|route| {
-                                    Ok((route.name.clone(), self.runtime_model(agent, route)?))
-                                })
-                                .collect::<Result<_, ConfigError>>()?,
-                        })
-                    } else {
-                        None
-                    },
-                });
-            }
-        }
-        Ok(Some(RuntimeInference {
-            provider: primary.provider.clone(),
+            || resolved.len() > 1
+            || resolved.iter().any(|agent| agent.agent.tools.is_some());
+        let auth = first.agent.auth.as_ref().map(|auth| RuntimeAuth {
+            method: auth.method.clone(),
+            provider_ref: primary.provider.clone(),
+        });
+        let agents = if roster {
+            resolved
+                .into_iter()
+                .map(|resolved| {
+                    Ok(RuntimeAgent {
+                        name: resolved.agent.name.clone(),
+                        tools: resolved.agent.tools.clone(),
+                        inference: if choices {
+                            Some(RuntimeAgentInference {
+                                default: resolved.inference.default_route()?.name.clone(),
+                                models: resolved.models,
+                            })
+                        } else {
+                            None
+                        },
+                    })
+                })
+                .collect::<Result<_, ConfigError>>()?
+        } else {
+            Vec::new()
+        };
+        Ok(SandboxRuntimeSettings {
+            provider: primary.provider,
             connection: primary.connection,
             api: primary.api,
             tuning: primary.tuning,
-            agents: runtime_agents,
+            agents,
             web_search,
             observability: harness.observability.clone(),
             execution: harness.execution.clone(),
             interfaces: harness.interfaces.clone(),
-            auth: agent.auth.as_ref().map(|auth| RuntimeAuth {
-                method: auth.method.clone(),
-                provider_ref: primary.provider,
-            }),
-        }))
+            auth,
+        })
     }
+}
+
+// Borrow authored definitions and resolve routes once while lowering settings.
+// The exported document keeps the original inline/reference forms.
+struct ResolvedAgent<'a> {
+    agent: &'a Agent,
+    inference: &'a Inference,
+    models: std::collections::BTreeMap<String, RuntimeModel>,
 }
