@@ -168,12 +168,6 @@ describe("NemoClawConfig v1", () => {
       },
     },
     {
-      field: "duplicate name",
-      mutate: ({ value, secondary }) => {
-        value.spec.sandboxes[0]!.agents.push(structuredClone(secondary));
-      },
-    },
-    {
       field: "order",
       mutate: ({ value }) => {
         value.spec.sandboxes[0]!.agents.reverse();
@@ -197,6 +191,14 @@ describe("NemoClawConfig v1", () => {
     const { value } = context;
     expect(() => validateNemoClawConfig(value)).toThrow(
       "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
+    );
+  });
+
+  it("rejects duplicate secondary names through sandbox-wide validation (#11854)", () => {
+    const { value, secondary } = twoAgentConfig();
+    value.spec.sandboxes[0]!.agents.push(structuredClone(secondary));
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents contains a duplicate name",
     );
   });
 

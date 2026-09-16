@@ -155,13 +155,11 @@ function hasReadOnlyTools(agent: NemoClawAgentConfig): boolean {
 
 function isPrimaryWithReadOnlyRoster(agents: readonly NemoClawAgentConfig[]): boolean {
   const [primary, ...additional] = agents;
-  const names = new Set(additional.map((agent) => agent.name));
   return (
     additional.length > 0 &&
     primary?.name === "primary" &&
     primary.type === "openclaw" &&
     !hasReadOnlyTools(primary) &&
-    names.size === additional.length &&
     additional.every(
       (agent) =>
         agent.type === "openclaw" &&
