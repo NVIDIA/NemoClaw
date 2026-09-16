@@ -1,24 +1,42 @@
----
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-title: "Set Up Ollama"
-sidebar-title: "Set Up Ollama"
-description: "Install, connect, and configure Ollama as NemoClaw's local inference server."
-description-agent: "Shows how to set up Ollama for NemoClaw, including installation, model selection, WSL routing, proxy security, and non-interactive onboarding."
-keywords: ["nemoclaw ollama", "ollama local inference", "ollama onboarding"]
-content:
-  type: "how_to"
-skill:
-  priority: 10
-agent-variants: ["openclaw", "hermes"]
----
-Use Ollama when you want the default local inference setup path.
-NemoClaw detects Ollama on the host and can install, start, or upgrade it on supported systems.
+<AgentOnly variant="hermes">
 
-## Prerequisites
+## Use Portable Ollama with Hermes
 
-- Install NemoClaw by following the [Quickstart](../../get-started/quickstart).
-- For the host Ollama path, use a host where Ollama is running or where the onboard wizard can install or start it.
+Fresh Hermes Portable onboarding does not use the host Ollama setup described in the remaining sections.
+It creates a receipt-owned Ollama runner through the current user's rootless Podman authority.
+Run the fresh Portable command in the [Hermes quickstart](../../get-started/quickstart#use-portable-ollama) with `NEMOCLAW_PROVIDER=ollama` and an explicit `NEMOCLAW_MODEL`.
+
+This experimental profile requires exactly Podman `5.7.0` for both the client and the local rootless engine.
+It rejects every other version, including newer releases.
+NemoClaw does not install Podman, and a remote-client-only package is insufficient.
+Before onboarding, run `podman version` and confirm that both reported versions are `5.7.0`.
+
+Before the provider-selection step completes, NemoClaw verifies the Portable network, registry, GPU, and Podman authority.
+NemoClaw launches the runner with `OLLAMA_CONTEXT_LENGTH=64000`.
+That value is part of the runner's launch and runtime identity.
+Before NemoClaw accepts or reuses the runner, the recorded launch arguments and inspected container environment must use the same value.
+A missing or changed value causes a configuration drift error instead of runner reuse.
+It then creates the runner, sends one validation request for the selected model, and confirms that Ollama loaded the selected model.
+This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
+
+If the published runner later stops, use `$$nemoclaw <name> recover` or `$$nemoclaw <name> connect --probe-only` to resume only the exact receipt-owned runner.
+Ordinary `connect` also resumes it when the recorded inference route is unavailable.
+When `launch` runs its complete preflight, it uses the same recovery path before it starts the agent.
+A launch that accepts existing launch-readiness evidence skips that preflight.
+Follow [Recover Portable Published Ollama](../../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for the authority checks, route proof, and failure procedure.
+
+<Warning title="Portable Cleanup Boundary">
+Run `$$nemoclaw uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
+Before its first mutation, NemoClaw records the schema `5` lifecycle receipt, sandbox registry revision and lifecycle generation, sandbox and Podman container identities, committed gateway provider revision and profile, inference runtime, socket, and Portable network.
+It revalidates that authority before each cleanup phase and preserves a provider or inference runtime that another recorded sandbox shares.
+An interrupted run keeps owner-private, credential-free recovery state.
+Preserve the reported state and rerun the same command to resume the recorded phase.
+An identity change, same-name replacement, stale sandbox readiness result, changed provider profile, or other authority drift makes uninstall exit nonzero before an unproven mutation.
+The command preserves every Podman image.
+Per-sandbox `destroy` remains outside this full-uninstall cleanup contract.
+</Warning>
+
+</AgentOnly>
 
 ## Install or Upgrade Ollama
 
