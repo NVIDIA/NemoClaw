@@ -89,6 +89,8 @@ it.each(stages.map(([stage]) => stage))(
       const result = spawnSync("/bin/bash", ["-c", failure.run! + ' && cat -- "$RECEIPT_PATH"'], {
         cwd: directory,
         encoding: "utf8",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
         env: {
           PATH: dirname(process.execPath) + ":/usr/bin:/bin",
           ADVISOR_DIR: process.cwd(),
