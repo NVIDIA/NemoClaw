@@ -136,7 +136,11 @@ fn failure_exit_code(error: &str) -> i32 {
         "Native(\"runtime-image-host-compression\")" => 118,
         "Native(\"runtime-image-attach\")" => 119,
         "Native(\"runtime-image-privilege\")" => 121,
-        "Native(\"runtime-image-mount-permissions\")" => 122,
+        "Native(\"runtime-image-mount-open\")"
+        | "Native(\"runtime-image-mount-kind\")"
+        | "Native(\"runtime-image-mount-descriptor\")"
+        | "Native(\"runtime-image-mount-descriptor-dacl\")"
+        | "Native(\"runtime-image-mount-permissions\")" => 122,
         _ => 120,
     }
 }

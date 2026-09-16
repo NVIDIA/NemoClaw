@@ -189,7 +189,7 @@ fn open_mount_point(path: &Path, access: u32) -> Result<Handle, Error> {
     };
     if handle.is_null() || handle as isize == INVALID {
         LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
-        return Err(Error::Native("runtime-image-mount-permissions"));
+        return Err(Error::Native("runtime-image-mount-open"));
     }
     let handle = Handle(handle);
     let mut tag = AttributeTag {
@@ -208,7 +208,7 @@ fn open_mount_point(path: &Path, access: u32) -> Result<Handle, Error> {
         || tag.attributes & REPARSE != 0
     {
         LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
-        return Err(Error::Native("runtime-image-mount-permissions"));
+        return Err(Error::Native("runtime-image-mount-kind"));
     }
     Ok(handle)
 }
@@ -242,7 +242,7 @@ fn authorize_mount_point(path: &Path) -> Result<(), Error> {
         || descriptor.is_null()
     {
         LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
-        return Err(Error::Native("runtime-image-mount-permissions"));
+        return Err(Error::Native("runtime-image-mount-descriptor"));
     }
     let _descriptor = LocalMemory(descriptor);
     let mut present = 0;
@@ -255,7 +255,7 @@ fn authorize_mount_point(path: &Path) -> Result<(), Error> {
         || dacl.is_null()
     {
         LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
-        return Err(Error::Native("runtime-image-mount-permissions"));
+        return Err(Error::Native("runtime-image-mount-descriptor-dacl"));
     }
     let status = unsafe {
         SetSecurityInfo(
