@@ -25,7 +25,10 @@ export type NvidiaFeaturedModelSessionOptions = {
   writeLine?: (message: string) => void;
   defaultModel?: string;
   loadingMessage?: string;
-} & Pick<NvidiaFeaturedModelOptions, "catalogLabel" | "catalogUrl" | "retiredModelIds" | "warn">;
+} & Pick<
+  NvidiaFeaturedModelOptions,
+  "catalogLabel" | "catalogUrl" | "fallbackModelOptions" | "retiredModelIds" | "warn"
+>;
 
 /** Create one catalog-backed model selector for an onboarding session. */
 export function createNvidiaFeaturedModelSession(
@@ -38,6 +41,7 @@ export function createNvidiaFeaturedModelSession(
   const loadPromptOptions = createNvidiaFeaturedModelPromptOptionsLoader({
     catalogLabel: options.catalogLabel,
     catalogUrl: options.catalogUrl,
+    fallbackModelOptions: options.fallbackModelOptions,
     retiredModelIds: options.retiredModelIds,
     warn: options.warn,
   });

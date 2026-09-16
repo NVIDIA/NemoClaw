@@ -24,6 +24,8 @@ Nemotron 3 Super remains the shared default for OpenClaw and Hermes when it is p
 LangChain Deep Agents Code uses Nemotron 3 Ultra as its NVIDIA Endpoints default.
 If an agent's default is unavailable, the first live featured model becomes the interactive default.
 
+When a saved NVIDIA Endpoints route uses a retired model, interactive onboarding asks you to choose a replacement. Non-interactive onboarding uses `NEMOCLAW_MODEL` when configured, otherwise it uses the agent's default model. This retirement recovery applies only to NVIDIA Endpoints; OpenRouter routes retain models allowed by OpenRouter.
+
 If `NEMOCLAW_MODEL` contains a safe custom model ID that is absent from the live catalog, it does not replace the live menu default.
 Choose **Other** to use that value as the pre-filled manual entry.
 NemoClaw validates the manual entry against the selected provider before continuing.

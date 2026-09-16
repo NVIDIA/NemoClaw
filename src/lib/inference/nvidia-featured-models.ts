@@ -34,6 +34,7 @@ const UNSAFE_TERMINAL_TEXT_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu;
 export interface NvidiaFeaturedModelOptions {
   catalogLabel?: string;
   catalogUrl?: string;
+  fallbackModelOptions?: readonly FeaturedModelOption[];
   retiredModelIds?: RetiredFeaturedModelIds;
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
   warn?: (message: string) => void;
@@ -202,7 +203,7 @@ export function getNvidiaFeaturedModelOptions(
   (options.warn ?? console.warn)(
     `  Warning: failed to load ${catalogLabel}; falling back to the bundled list (${detail}).`,
   );
-  return CLOUD_MODEL_OPTIONS;
+  return [...(options.fallbackModelOptions ?? CLOUD_MODEL_OPTIONS)];
 }
 
 function buildNvidiaFeaturedModelPromptOptions(

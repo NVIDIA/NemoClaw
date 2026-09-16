@@ -169,6 +169,29 @@ describe("NVIDIA featured model catalog", () => {
     ]);
   });
 
+  it("uses a provider-scoped fallback when its catalog is unavailable", () => {
+    const openRouterFallback = [
+      ...CLOUD_MODEL_OPTIONS,
+      { id: "minimaxai/minimax-m3", label: "Minimax M3" },
+    ];
+    const models = getNvidiaFeaturedModelOptions({
+      fallbackModelOptions: openRouterFallback,
+      retiredModelIds: [],
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 503,
+        curlStatus: 0,
+        body: "",
+        stderr: "",
+        message: "service unavailable",
+      }),
+      warn: () => {},
+    });
+
+    expect(models).toEqual(openRouterFallback);
+    expect(models.map((model) => model.id)).toContain("minimaxai/minimax-m3");
+  });
+
   it("removes terminal controls from featured catalog fallback warnings", () => {
     const warnings: string[] = [];
     getNvidiaFeaturedModelOptions({
