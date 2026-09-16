@@ -196,8 +196,11 @@ describe("Hermes Portable schema-8 operation authority", () => {
       const captureOpenShell = vi
         .spyOn(openshellAdapter, "captureHermesPortableOpenShellExecutableAuthority")
         .mockReturnValue(durable.receipt.openshellExecutableAuthority);
-      const capturePodman = vi
+      const capturePodmanFull = vi
         .spyOn(podmanAuthority, "captureHermesPortablePodmanExecutableAuthority")
+        .mockReturnValue(durable.receipt.podmanExecutableAuthority);
+      const capturePodman = vi
+        .spyOn(podmanAuthority, "captureHermesPortablePodmanExecutableFileAuthority")
         .mockReturnValue(durable.receipt.podmanExecutableAuthority);
       const assertFiles = vi.fn();
       vi.spyOn(fileProof, "createHermesPortableOperatingFileProof").mockReturnValue(assertFiles);
@@ -218,12 +221,14 @@ describe("Hermes Portable schema-8 operation authority", () => {
               first.assertCurrent();
               first.assertTransactionCurrent();
               expect(capturePodman).toHaveBeenCalledOnce();
+              expect(capturePodmanFull).not.toHaveBeenCalled();
               expect(captureOpenShell).toHaveBeenCalledOnce();
               expect(assertFiles).toHaveBeenCalledTimes(3);
               expect(captureSocket).toHaveBeenCalledTimes(4);
               now = 60_000;
               first.assertCurrent();
               expect(capturePodman).toHaveBeenCalledTimes(2);
+              expect(capturePodmanFull).not.toHaveBeenCalled();
               expect(captureOpenShell).toHaveBeenCalledTimes(2);
               captureSocket.mockReturnValue(socket("100"));
               expect(first.assertCurrent).toThrow(
@@ -329,6 +334,29 @@ describe("Hermes Portable schema-8 operation authority", () => {
     expect(captureSocketAuthority).toHaveBeenCalledOnce();
     expect(captureOpenShellExecutableAuthority).toHaveBeenCalledOnce();
     expect(capturePodmanExecutableAuthority).toHaveBeenCalledOnce();
+  });
+
+  it("retains full Podman content qualification for schema-7 requalification", () => {
+    const historical = snapshot(false);
+    vi.spyOn(podmanAdapter, "capturePodmanSocketAuthority").mockReturnValue(socket("99"));
+    vi.spyOn(openshellAdapter, "captureHermesPortableOpenShellExecutableAuthority").mockReturnValue(
+      historical.receipt.openshellExecutableAuthority,
+    );
+    const captureFull = vi
+      .spyOn(podmanAuthority, "captureHermesPortablePodmanExecutableAuthority")
+      .mockReturnValue(historical.receipt.podmanExecutableAuthority);
+    const captureFile = vi
+      .spyOn(podmanAuthority, "captureHermesPortablePodmanExecutableFileAuthority")
+      .mockReturnValue(historical.receipt.podmanExecutableAuthority);
+
+    qualifyHermesPortableOperatingAuthority(
+      historical,
+      { env: environment() },
+      { permitSchema5Requalification: true },
+    );
+
+    expect(captureFull).toHaveBeenCalledOnce();
+    expect(captureFile).not.toHaveBeenCalled();
   });
 
   it("admits new filesystem-instance identities while stable semantics agree (#10423)", () => {
