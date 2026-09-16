@@ -254,6 +254,14 @@ async function exerciseNativeOpenClawPluginLifecycle(
     { artifactName: "phase-4-native-plugin-install-v1", env: env(), timeoutMs: 120_000 },
   );
   expect(installV1.exitCode, resultText(installV1)).toBe(0);
+  const restart = await repoNemoclaw(
+    host,
+    [SANDBOX_NAME, "gateway", "restart"],
+    "phase-4-native-plugin-gateway-restart",
+    {},
+    180_000,
+  );
+  expect(restart.exitCode, resultText(restart)).toBe(0);
   await invokeNativeWeatherPlugin(sandbox, "v1", "phase-4-native-plugin-invoke-v1");
 
   const updateDryRun = await sandbox.exec(
@@ -284,15 +292,6 @@ async function exerciseNativeOpenClawPluginLifecycle(
     { artifactName: "phase-4-native-self-update-dry-run", env: env(), timeoutMs: 120_000 },
   );
   expect(selfUpdateDryRun.exitCode, resultText(selfUpdateDryRun)).toBe(0);
-
-  const restart = await repoNemoclaw(
-    host,
-    [SANDBOX_NAME, "gateway", "restart"],
-    "phase-4-native-plugin-gateway-restart",
-    {},
-    180_000,
-  );
-  expect(restart.exitCode, resultText(restart)).toBe(0);
 
   const uninstall = await sandbox.exec(
     SANDBOX_NAME,

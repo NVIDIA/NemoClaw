@@ -14,10 +14,18 @@ import {
 } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 describe("messaging provider installed-runtime paths", () => {
-  it("finds the installed WeChat runtime through native OpenClaw discovery (#11766)", () => {
+  it("finds the installed WeChat runtime through the root reported by OpenClaw (#11766)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-runtime-location-"));
     const stateDir = path.join(dir, "state");
-    const pluginRoot = path.join(stateDir, "extensions", "openclaw-weixin");
+    const pluginRoot = path.join(
+      stateDir,
+      "npm",
+      "projects",
+      "openclaw-openclaw-weixin-0123456789",
+      "node_modules",
+      "@tencent-weixin",
+      "openclaw-weixin",
+    );
 
     try {
       fs.mkdirSync(pluginRoot, { recursive: true });
@@ -25,7 +33,9 @@ describe("messaging provider installed-runtime paths", () => {
         path.join(pluginRoot, "package.json"),
         JSON.stringify({ name: "@tencent-weixin/openclaw-weixin", version: "2.4.3" }),
       );
-      expect(resolveInstalledWechatPluginRoot(stateDir)).toBe(fs.realpathSync(pluginRoot));
+      expect(resolveInstalledWechatPluginRoot(stateDir, pluginRoot)).toBe(
+        fs.realpathSync(pluginRoot),
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
