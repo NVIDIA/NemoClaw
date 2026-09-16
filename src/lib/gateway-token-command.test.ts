@@ -47,10 +47,10 @@ describe("parseGatewayTokenArgs", () => {
 });
 
 describe("runGatewayTokenCommand", () => {
-  it("prints the token to stdout and warns on stderr", () => {
+  it("prints the token to stdout and warns on stderr", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "secret-token-abc");
-    runGatewayTokenCommand(
+    await runGatewayTokenCommand(
       "alpha",
       { quiet: false },
       { fetchToken, log: sinks.log, error: sinks.error },
@@ -61,9 +61,9 @@ describe("runGatewayTokenCommand", () => {
     expect(sinks.err[0]).toMatch(/like a password/i);
   });
 
-  it("suppresses the security warning when quiet is set", () => {
+  it("suppresses the security warning when quiet is set", async () => {
     const sinks = makeSinks();
-    runGatewayTokenCommand(
+    await runGatewayTokenCommand(
       "alpha",
       { quiet: true },
       {
@@ -76,9 +76,9 @@ describe("runGatewayTokenCommand", () => {
     expect(sinks.err).toEqual([]);
   });
 
-  it("throws diagnostics when the token cannot be fetched", () => {
+  it("throws diagnostics when the token cannot be fetched", async () => {
     const sinks = makeSinks();
-    expect(() =>
+    await expect(
       runGatewayTokenCommand(
         "alpha",
         { quiet: false },
@@ -88,10 +88,10 @@ describe("runGatewayTokenCommand", () => {
           error: sinks.error,
         },
       ),
-    ).toThrow(GatewayTokenCommandError);
+    ).rejects.toThrow(GatewayTokenCommandError);
     expect(sinks.out).toEqual([]);
     try {
-      runGatewayTokenCommand("alpha", { quiet: false }, { fetchToken: () => null });
+      await runGatewayTokenCommand("alpha", { quiet: false }, { fetchToken: () => null });
     } catch (error) {
       expect(error).toBeInstanceOf(GatewayTokenCommandError);
       expect((error as GatewayTokenCommandError).exitCode).toBe(1);
@@ -100,9 +100,9 @@ describe("runGatewayTokenCommand", () => {
     }
   });
 
-  it("throws when fetchToken throws", () => {
+  it("throws when fetchToken throws", async () => {
     const sinks = makeSinks();
-    expect(() =>
+    await expect(
       runGatewayTokenCommand(
         "alpha",
         { quiet: true },
@@ -114,14 +114,14 @@ describe("runGatewayTokenCommand", () => {
           error: sinks.error,
         },
       ),
-    ).toThrow(/Could not retrieve/);
+    ).rejects.toThrow(/Could not retrieve/);
     expect(sinks.out).toEqual([]);
     expect(sinks.err).toEqual([]);
   });
 
-  it("treats an empty-string token as missing", () => {
+  it("treats an empty-string token as missing", async () => {
     const sinks = makeSinks();
-    expect(() =>
+    await expect(
       runGatewayTokenCommand(
         "alpha",
         { quiet: false },
@@ -131,20 +131,20 @@ describe("runGatewayTokenCommand", () => {
           error: sinks.error,
         },
       ),
-    ).toThrow(/Could not retrieve/);
+    ).rejects.toThrow(/Could not retrieve/);
     expect(sinks.out).toEqual([]);
   });
 
   // NCQ #3180: gateway-token is OpenClaw-specific. On non-OpenClaw agents
   // (e.g. Hermes) the misleading "make sure the sandbox is running" message
   // and the @oclif/core stack trace must NOT appear.
-  it("prints an agent-aware not-applicable message on hermes without invoking fetchToken", () => {
+  it("prints an agent-aware not-applicable message on hermes without invoking fetchToken", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "should-not-be-called");
     const getSandboxAgent = vi.fn(() => "hermes");
     let thrown: GatewayTokenCommandError | null = null;
     try {
-      runGatewayTokenCommand(
+      await runGatewayTokenCommand(
         "hermes",
         { quiet: false },
         { fetchToken, getSandboxAgent, log: sinks.log, error: sinks.error },
@@ -182,12 +182,12 @@ describe("runGatewayTokenCommand", () => {
     vi.unstubAllEnvs();
   });
 
-  it("Hermes diagnostic uses nemohermes when invoked through the NemoHermes alias", () => {
+  it("Hermes diagnostic uses nemohermes when invoked through the NemoHermes alias", async () => {
     vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
     const sinks = makeSinks();
     let thrown: GatewayTokenCommandError | null = null;
     try {
-      runGatewayTokenCommand(
+      await runGatewayTokenCommand(
         "hermes",
         { quiet: false },
         {
@@ -206,12 +206,12 @@ describe("runGatewayTokenCommand", () => {
     expect(stderr).not.toContain("nemoclaw hermes dashboard-url");
   });
 
-  it("Hermes diagnostic uses nemoclaw when Hermes is selected through the nemoclaw binary", () => {
+  it("Hermes diagnostic uses nemoclaw when Hermes is selected through the nemoclaw binary", async () => {
     vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemoclaw");
     const sinks = makeSinks();
     let thrown: GatewayTokenCommandError | null = null;
     try {
-      runGatewayTokenCommand(
+      await runGatewayTokenCommand(
         "hermes",
         { quiet: false },
         {
@@ -230,11 +230,11 @@ describe("runGatewayTokenCommand", () => {
     expect(stderr).not.toContain("nemohermes hermes dashboard-url");
   });
 
-  it("keeps a single explanatory line for non-Hermes, non-OpenClaw agents", () => {
+  it("keeps a single explanatory line for non-Hermes, non-OpenClaw agents", async () => {
     const sinks = makeSinks();
     let thrown: GatewayTokenCommandError | null = null;
     try {
-      runGatewayTokenCommand(
+      await runGatewayTokenCommand(
         "beta",
         { quiet: false },
         {
@@ -253,12 +253,12 @@ describe("runGatewayTokenCommand", () => {
     expect(thrown?.lines[0]).not.toMatch(/dashboard-url/);
   });
 
-  it("fetches and prints the token for a bearer_token agent that exposes one (e.g. hermes)", () => {
+  it("fetches and prints the token for a bearer_token agent that exposes one (e.g. hermes)", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "hermes-api-server-key");
     const getSandboxAgent = vi.fn(() => "hermes");
     const agentExposesToken = vi.fn(() => true);
-    runGatewayTokenCommand(
+    await runGatewayTokenCommand(
       "hermes",
       { quiet: true },
       { fetchToken, getSandboxAgent, agentExposesToken, log: sinks.log, error: sinks.error },
@@ -269,9 +269,9 @@ describe("runGatewayTokenCommand", () => {
     expect(sinks.err).toEqual([]);
   });
 
-  it("falls back to fetchToken when the agent lookup throws", () => {
+  it("falls back to fetchToken when the agent lookup throws", async () => {
     const sinks = makeSinks();
-    runGatewayTokenCommand(
+    await runGatewayTokenCommand(
       "alpha",
       { quiet: true },
       {
@@ -286,10 +286,10 @@ describe("runGatewayTokenCommand", () => {
     expect(sinks.out).toEqual(["openclaw-token"]);
   });
 
-  it("uses the OpenClaw control path when the resolved agent is openclaw", () => {
+  it("uses the OpenClaw control path when the resolved agent is openclaw", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "openclaw-token");
-    runGatewayTokenCommand(
+    await runGatewayTokenCommand(
       "alpha",
       { quiet: true },
       {
@@ -303,10 +303,10 @@ describe("runGatewayTokenCommand", () => {
     expect(sinks.out).toEqual(["openclaw-token"]);
   });
 
-  it("uses the OpenClaw control path when getSandboxAgent returns null", () => {
+  it("uses the OpenClaw control path when getSandboxAgent returns null", async () => {
     // Sandbox registry pre-dates the agent field — treat as OpenClaw.
     const sinks = makeSinks();
-    runGatewayTokenCommand(
+    await runGatewayTokenCommand(
       "alpha",
       { quiet: true },
       {

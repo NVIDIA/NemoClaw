@@ -25,10 +25,7 @@ import {
   recoverHermesPortableLaunchForwards,
 } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { startSandbox } from "../../../src/lib/actions/sandbox/start.ts";
-import {
-  configureHermesPortableRestartPolicy,
-  enrollHermesPortableContainer,
-} from "../../../src/lib/onboard/experimental/hermes-portable-container.ts";
+import { enrollHermesPortableContainer } from "../../../src/lib/onboard/experimental/hermes-portable-container.ts";
 import { resolveHermesPortableStartupContract } from "../../../src/lib/onboard/experimental/hermes-portable-contract.ts";
 import {
   stopHermesPortableSandboxLifecycle,
@@ -738,12 +735,11 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           configuring,
           receiptStateDir,
         );
-        const configured = configureHermesPortableRestartPolicy(configuring, containerDeps);
         const activeReceipt: HermesPortableConfiguredReceipt = {
           ...configuring,
           phase: "active",
           previousPhaseSha256: publishedConfiguring.sha256,
-          container: configured.authority,
+          container: configuring.container,
         };
         return publishHermesPortableLifecycleReceipt(activeReceipt, receiptStateDir);
       },
@@ -1333,7 +1329,13 @@ async function main(progress: TestProgress): Promise<void> {
             subnet: PORTABLE_DOCKER_NETWORK_SUBNET,
             hostGateway: `${PORTABLE_HOST_GATEWAY_IP}/32`,
           },
-          registry: { id: currentRegistry.Id, ip: PORTABLE_REGISTRY_IP },
+          registry: {
+            id: currentRegistry.Id,
+            ip: PORTABLE_REGISTRY_IP,
+            publicationAuthority: "127.0.0.1:5000",
+            hostBindings: (currentRegistry.NetworkSettings as Record<string, unknown>).Ports,
+            publishedImagePulled: true,
+          },
           hermesPortableImage: {
             imageId: hermesImageId,
             stagedContextRetired: hermesContextRetired,

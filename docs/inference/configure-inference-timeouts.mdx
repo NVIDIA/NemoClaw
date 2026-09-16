@@ -89,13 +89,6 @@ This setting only raises applicable provider-validation connection and total dea
 For validation paths that read `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`, raise it when the inference-server validation request needs more than 180 seconds.
 Large prompts, cold local model loads, and slower hardware can require a larger budget.
 
-<AgentOnly variant="openclaw,hermes">
-
-Portable onboarding uses a fixed 120-second deadline for its receipt-owned Podman inference validation request.
-`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` does not change this deadline.
-
-</AgentOnly>
-
 ```bash
 export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $$nemoclaw onboard

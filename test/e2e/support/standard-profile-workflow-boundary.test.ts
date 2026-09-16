@@ -204,8 +204,6 @@ describe("standard E2E execution profile", () => {
     steps.find((step) => step.name === "Validate catalogue execution plan")!.run = "echo skipped";
     steps.find((step) => step.name === "Provision trusted Hermes E2E swap")!.run +=
       "\necho candidate-controlled";
-    steps.find((step) => step.name === "Add swap for Hermes image rebuild")!.run =
-      "echo unsafe swap";
     steps.find((step) => step.name === "Install reviewed cloudflared")!.run =
       "sudo apt-get install cloudflared";
     steps.find((step) => step.name === "Download reviewed OpenShell SDK archive")!.with!.name =
@@ -230,7 +228,6 @@ describe("standard E2E execution profile", () => {
         expect.arrayContaining([
           "standard E2E profile must derive validated execution paths before candidate checkout",
           "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
-          "standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore",
           "standard E2E profile must install only the reviewed cloudflared package",
           "standard E2E profile must download the run-scoped reviewed SDK archive",
           "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",

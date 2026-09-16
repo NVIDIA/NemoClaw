@@ -244,7 +244,7 @@ export async function prebuildSandboxImageIfEligible(
       if (response.status !== 200) throw new Error("Registry is not ready");
     } catch {
       throw new Error(
-        `Managed local registry at ${registryUrl.origin} is unavailable. Sandbox image build has not started. Refer to https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/reference/troubleshooting#portable-managed-registry-is-unavailable before retrying.`,
+        `Managed local registry at ${registryUrl.origin} is unavailable. Sandbox image build has not started. Restore the managed registry, then verify that ${registryUrl.href} returns HTTP 200 before retrying.`,
       );
     }
   }

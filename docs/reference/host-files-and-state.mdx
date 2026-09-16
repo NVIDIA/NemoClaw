@@ -30,16 +30,11 @@ Share redacted diagnostics only.
 
 ## Files
 
-Unless a row says otherwise, full-uninstall removal behavior in this table applies outside portable cleanup.
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/config.json` | Host-level CLI configuration and defaults created by onboarding or config commands. | Only if you want NemoClaw to forget host defaults and rebuild them on the next setup. |
 | `~/.nemoclaw/credentials.json` | Legacy plaintext credential file from earlier releases. Onboarding stages allowlisted values, registers them with the OpenShell gateway, and securely deletes the file only after verifying their migration. Current releases do not create this file. | No; run `$$nemoclaw onboard` to complete migration and cleanup so you do not lose a credential that is not yet registered with the gateway. |
 | `~/.nemoclaw/sandboxes.json` | Current sandbox registry used by `$$nemoclaw list`, default sandbox selection, rebuild, and recovery commands. See [Malformed Registry File](#malformed-registry-file) when a command reports that this file is not valid JSON. | No. Deleting it makes the host forget existing sandboxes and can block state-preserving recovery. |
-| `~/.nemoclaw/portable-uninstall-retirement.json` | Current-user-owned portable cleanup recovery authority, written at mode `0600` under the current-user-owned, mode-`0700` `~/.nemoclaw/` directory. It binds cleanup targets and remains after cleanup until a later completed onboarding durably supersedes it. Its hashes are dictionary-testable pseudonymous fingerprints, not secrets. | No while cleanup, retry, or supersession recovery may be needed. Do not remove it manually; later completed onboarding retires it. |
-<AgentOnly variant="hermes">
-| `~/.nemoclaw/hermes-portable-uninstall-transaction.json` | Current-user-owned, mode-`0600`, credential-free recovery journal for full uninstall of a Hermes schema `5` Portable Ollama lifecycle. It binds sandbox, registry, provider, inference, socket, container, and network authority and records each durable cleanup phase. A completed journal makes a repeated uninstall a no-op until a later completed onboarding publishes a new schema `5` lifecycle. The next uninstall replaces the completed journal with that lifecycle's authority before mutation. | No. Preserve it through an interrupted or completed cleanup. |
-</AgentOnly>
 | `<selected-state-root>/onboard-session.json` | Resume or incomplete-state record for an onboarding attempt that did not complete. It can contain secret-free external component activation evidence bound to the sandbox identity fingerprint and lifecycle generation. | Only when you intentionally want to discard the failed session and `externalComponentActivation` is absent. Prefer `$$nemoclaw onboard --fresh` when available. If that field is present, preserve the file, sandbox registry, and sandbox for an identity-verified recovery decision. Version 1 does not support resume or recovery for that activation state. |
 | `~/.nemoclaw/gateways/<port>/automatic-gateway-port.pending` | Owner-only identity for an installer-selected alternate port whose onboarding is deferred or incomplete. When `NEMOCLAW_GATEWAY_PORT` is unset, the installer and CLI use this port so later or resumed onboarding and cleanup stay in the same state root. Successful installer-driven or direct CLI onboarding promotes it to `automatic-gateway-port`. | Preserve a valid marker; ordinary cleanup must use the reported gateway-scoped uninstall guidance. Fresh onboarding retains this automatic port and promotes it on success. If the resolver specifically reports an invalid automatic marker, inspect and remove only that invalid marker, or set `NEMOCLAW_GATEWAY_PORT` explicitly to target another environment. |
 | `~/.nemoclaw/gateways/<port>/automatic-gateway-port` | Owner-only completed identity for an installer-selected alternate port. When `NEMOCLAW_GATEWAY_PORT` is unset, later installer and CLI processes restore this port instead of using `8080`. | Preserve a valid marker; uninstalling this gateway removes it with the port-scoped state. If the resolver specifically reports an invalid automatic marker, inspect and remove only that invalid marker, or set `NEMOCLAW_GATEWAY_PORT` explicitly to target another environment. |
@@ -52,7 +47,6 @@ Unless a row says otherwise, full-uninstall removal behavior in this table appli
 | `~/.nemoclaw/ollama-backend` | Host-global legacy route URL used to restart the Ollama auth proxy and retained for compatibility with earlier releases. | No while any gateway uses the shared proxy. Rerun onboarding if this file is missing or damaged. |
 | `~/.nemoclaw/ollama-backend.json` | Mode-`0600`, versioned descriptor that identifies whether the matching legacy route fronts Ollama or a compatible endpoint. Recovery trusts its kind only when both files contain the same URL. | Yes, but recovery uses neutral remediation until onboarding recreates the descriptor. |
 | `~/.nemoclaw/ollama-proxy-port` | Host-global port used by the Ollama auth proxy and every Local Ollama sandbox route on the host. A command with a different `NEMOCLAW_OLLAMA_PROXY_PORT` stops before changing the shared proxy. | No while any gateway uses Local Ollama. Full uninstall uses this file to find the proxy and removes it with the other shared proxy state. |
-| `~/.nemoclaw/ollama/user-local-ownership.json` | Mode-`0600`, credential-free receipt containing a schema version and the fixed `~/.local/bin/ollama` path. Portable OpenClaw recovery requires this receipt before it starts the binary. A successful system Ollama install removes the receipt. | No while a portable OpenClaw sandbox uses the user-local daemon. Deleting it disables automatic daemon restart until you reinstall Ollama through onboarding. |
 | `~/.nemoclaw/dual-station-vllm-api-key` | Owner-only host-global bearer API key shared by authenticated NemoClaw-managed vLLM profiles. | No while any managed vLLM runtime uses it. Full uninstall removes it only after matching runtime cleanup succeeds and no sibling gateway remains. |
 | `~/.nemoclaw/host-local-vllm-runtime.json` | Owner-only, credential-free receipt for a catalog-selected single-host vLLM runtime. It binds the immutable catalog, preset, and recipe digests to the container ID and API-key fingerprint. | No while that runtime exists. Recovery and full uninstall fail closed if its profile labels do not match this receipt, and uninstall removes it only after container cleanup succeeds. |
 | `~/.nemoclaw/managed-llama-cpp/api-key` | Owner-only bearer API key mounted read-only into the managed llama.cpp container. It is absent from process arguments, logs, receipts, sandbox registry state, and status output. | No while the managed llama.cpp runtime exists. A retry reuses the same key. Destroy or full uninstall removes it only after runtime cleanup succeeds. |
@@ -103,9 +97,6 @@ Run `$$nemoclaw onboard` to register a sandbox again.
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/state/` | Operational coordination for lifecycle locks, local routing, and port-forward helpers. | No. Deleting it can disrupt an active operation and discard recovery context. |
-<AgentOnly variant="hermes">
-| `~/.nemoclaw/portable-inference/<sandbox-digest>/` | Current-user-owned, credential-free Portable Ollama provider and inference recovery state for one Hermes sandbox. Full uninstall removes it only after exclusive provider and inference cleanup succeeds. When a sibling registry row shares either the provider or inference runtime, uninstall preserves the directory as the sibling's recovery authority, including with `--destroy-user-data`. | No while the recorded provider or inference runtime exists, cleanup can be retried, or a sibling still owns the shared resource. |
-</AgentOnly>
 | `~/.nemoclaw/snapshots/` | Copies of host `~/.openclaw` state and configured external roots created by blueprint migration and rollback flows. NemoClaw excludes known authentication-state files and strips recognized credential values from copied JSON, YAML, and `.env` files. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
 | `~/.nemoclaw/rebuild-backups/` | Host-side snapshots written by `backup-all`, `snapshot create`, and rebuild flows. | Only after you no longer need rollback or restore points. |
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
@@ -140,7 +131,7 @@ Listing works on native Windows, but migration snapshot creation and deletion do
 
 ## Uninstall Behavior
 
-Outside portable cleanup, `$$nemoclaw uninstall --yes` removes active NemoClaw runtime resources but preserves the user data needed for recovery by default.
+`$$nemoclaw uninstall --yes` removes active NemoClaw runtime resources but preserves the user data needed for recovery by default.
 Preserved entries include `rebuild-backups/`, `backups/`, and `sandboxes.json`.
 Preserved `sandboxes.json` records are not automatically recoverable after reinstall, because uninstall removes the gateway registration, provider registrations, and Docker image they reference; uninstall warns about this at preserve time, and a later reinstall reports such records as not found on their recorded gateway with `$$nemoclaw <name> destroy` / `$$nemoclaw onboard` remediation.
 Interactive uninstall prompts before removing preserved state.
@@ -149,7 +140,7 @@ For non-interactive runs, pass `--destroy-user-data` only when you accept losing
 Uninstall scopes cleanup to one gateway port: it operates on the selected state root and leaves every other `~/.nemoclaw/gateways/<port>/` root and its gateway in place.
 It names the environments it left behind and prints the command that removes one of them.
 Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to remove every gateway port in one run.
-Outside portable cleanup, the shared host state is eligible for removal only when `--keep-openshell` is absent, no port fails or survives, and the selected gateway is not externally supervised.
+The shared host state is eligible for removal only when `--keep-openshell` is absent, no port fails or survives, and the selected gateway is not externally supervised.
 
 Before it removes a selected state root, uninstall must prove that its state-bound Amazon Bedrock adapter process is absent.
 It revalidates the process identity and lifecycle generation before each signal and revalidates the evidence before deletion.
@@ -157,21 +148,12 @@ If a stop remains unresolved after journal preparation, uninstall exits nonzero 
 An earlier evidence conflict also exits nonzero and preserves every existing lifecycle file.
 Only full uninstall performs adapter-port orphan discovery; selected-gateway cleanup does not inspect sibling gateway state.
 
-Portable cleanup instead retires only receipt-owned portable resources.
-It preserves model stores, Podman images, shared OpenShell providers and gateway registrations, the gateway service and process, and shared OpenShell binaries and configuration.
-<AgentOnly variant="openclaw,deepagents">
-It retains `~/.nemoclaw/portable-uninstall-retirement.json` even with `--destroy-user-data` so a retry or later completed onboarding can finish recovery.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Schema `5` Portable Ollama cleanup retains `~/.nemoclaw/hermes-portable-uninstall-transaction.json` so an interrupted run can resume its recorded phase and a completed rerun remains a no-op unless later onboarding publishes a new lifecycle.
-</AgentOnly>
-
 Before full uninstall deletes shared state, it removes only an authenticated host-local vLLM container and NemoClaw-owned llama.cpp container and network.
 Catalog-selected host-local vLLM also requires its owner-only runtime receipt; legacy authenticated containers without catalog profile labels retain their existing cleanup behavior.
 It refuses the remaining uninstall steps when Docker is unavailable or persisted ownership cannot be proved.
 Resolve the reported Docker or ownership error and rerun uninstall with the state still present.
 The shared Hugging Face cache used by managed vLLM and managed llama.cpp remains in place by default.
-Outside portable cleanup, `--delete-models` deletes every model in the local Ollama inventory and all non-credential data in the current user's shared Hugging Face cache.
+`--delete-models` deletes every model in the local Ollama inventory and all non-credential data in the current user's shared Hugging Face cache.
 The flag can delete cached files that other applications installed or use.
 It preserves the Hugging Face `token` and `stored_tokens` authentication files.
 NemoClaw deletes the non-credential cache data only after managed model runtimes stop and only when no sibling gateway remains.
