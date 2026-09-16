@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellGatewayLifecycle } from "./adapters/openshell/gateway-lifecycle-cli";
 import { createCliOpenShellGatewayObserver } from "./adapters/openshell/gateway-observer-cli";
 import type { OpenShellGatewayObservation } from "./adapters/openshell/gateway-observer";
 import * as openshellRuntime from "./adapters/openshell/runtime";
@@ -39,9 +40,9 @@ export const gatewayRuntimeDependencies = {
   observeGateway: createCliOpenShellGatewayObserver((args, opts) =>
     openshellRuntime.captureResolvedOpenshell(args, opts),
   ).observeGateway,
-  runOpenshell(...args: Parameters<typeof openshellRuntime.runOpenshell>) {
-    return openshellRuntime.runOpenshell(...args);
-  },
+  selectGateway: createCliOpenShellGatewayLifecycle((args, opts) =>
+    openshellRuntime.captureResolvedOpenshell(args, opts),
+  ).selectGateway,
   async startGatewayForRecovery(options?: StartGatewayForRecoveryOptions): Promise<void> {
     const onboard = (await import("./onboard")) as unknown as LegacyOnboardModule;
     return onboard.startGatewayForRecovery(options);
@@ -108,22 +109,15 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
 
   let after = before;
   if (!exactTargetTransportRecovery) {
-    gatewayRuntimeDependencies.runOpenshell(
-      ["gateway", "select", gatewayName],
-      openshellRuntime.withSelectedOpenShellCommandOptions(
-        {
-          ignoreError: true,
-          stdio: "ignore",
-          timeout: openshellRuntime.OPENSHELL_OPERATION_TIMEOUT_MS,
-        },
-        options.runtimeSelection,
-      ),
-    );
+    const selection = await gatewayRuntimeDependencies.selectGateway({
+      target: { kind: "named", gatewayName },
+      ...lifecycleOptions,
+    });
     after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-    if (after.recoveryBlocked) {
+    if (!selection.ok || after.recoveryBlocked) {
       return { recovered: false, before, after, attempted: true };
     }
-    if (after.state === "healthy_named") {
+    if (selection.ok && after.state === "healthy_named") {
       process.env.OPENSHELL_GATEWAY = gatewayName;
       return { recovered: true, before, after, attempted: true, via: "select" };
     }
@@ -145,19 +139,12 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     } catch (error) {
       startFailure = error;
     }
-    gatewayRuntimeDependencies.runOpenshell(
-      ["gateway", "select", gatewayName],
-      openshellRuntime.withSelectedOpenShellCommandOptions(
-        {
-          ignoreError: true,
-          stdio: "ignore",
-          timeout: openshellRuntime.OPENSHELL_OPERATION_TIMEOUT_MS,
-        },
-        options.runtimeSelection,
-      ),
-    );
+    const selection = await gatewayRuntimeDependencies.selectGateway({
+      target: { kind: "named", gatewayName },
+      ...lifecycleOptions,
+    });
     after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-    if (after.state === "healthy_named") {
+    if (selection.ok && after.state === "healthy_named") {
       process.env.OPENSHELL_GATEWAY = gatewayName;
       return { recovered: true, before, after, attempted: true, via: "start" };
     }

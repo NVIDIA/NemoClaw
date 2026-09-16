@@ -32,18 +32,12 @@ import {
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
 import { deleteSandboxProviderRegistrations } from "../../onboard/sandbox-provider-cleanup";
-import {
-  findAvailableDashboardPort,
-  getRegistryOccupiedDashboardPorts,
-  getRegistryOccupiedHermesApiPorts,
-  withDashboardPortReservationLock,
-} from "../../onboard/dashboard-port";
+import { withDashboardPortReservationLock } from "../../onboard/dashboard-port";
 import { isValidForwardPort } from "../../onboard/dashboard-runtime";
 import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
-import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   cleanupTempDir,
@@ -108,6 +102,10 @@ import {
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
+import {
+  allocateSnapshotCloneForwardPorts,
+  snapshotCloneHermesApiEnvArgs,
+} from "./snapshot/forward-port-allocation";
 import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -268,71 +266,6 @@ function resolveSrcPodImage(
   }
 }
 
-// Allocate the clone's own dashboard port. Dashboard ports are per-sandbox
-// host resources: the host forward for src's port is owned by src, so a clone
-// that inherits the port gets a dashboard URL that points at src's dashboard
-// and a rebuild preflight that rejects the clone forever (#6746). Allocate
-// dst's own port instead, from the same per-gateway forward list +
-// cross-gateway registry occupancy view as onboard's `ensureDashboardForward`.
-// Sources without a dashboard port (non-dashboard-managed agents) return null
-// so the clone's field stays unset. Callers must invoke this before any
-// destructive step (e.g. deleting a `--force` destination) so port-range
-// exhaustion aborts before, not after, the mutation.
-function allocateCloneDashboardPort(
-  dstName: string,
-  srcEntry: {
-    name?: string;
-    dashboardPort?: number | null;
-    hermesDashboardEnabled?: boolean;
-    hermesDashboardInternalPort?: number | null;
-  },
-): number | null {
-  const srcPort = srcEntry.dashboardPort;
-  if (typeof srcPort !== "number" || !Number.isInteger(srcPort) || srcPort <= 0) return null;
-  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  const occupied = getRegistryOccupiedDashboardPorts(dstName);
-  const hermesInternalPort = srcEntry.hermesDashboardInternalPort;
-  if (srcEntry.hermesDashboardEnabled === true && isValidForwardPort(hermesInternalPort)) {
-    occupied.set(
-      String(hermesInternalPort),
-      `${srcEntry.name ?? "source"} (Hermes dashboard internal)`,
-    );
-  }
-  try {
-    return findAvailableDashboardPort(dstName, srcPort, forwards.output || "", undefined, occupied);
-  } catch (err) {
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    snapshotExit(1);
-  }
-}
-
-// Allocate the clone's own API port. The source owns the host forward for its
-// port, and the sandbox exposes the API on the same number it is forwarded on,
-// so a clone that inherits the source's port gets no inference forward, and its
-// gateway restart never converges. Returns null for an agent that has no
-// per-sandbox API port, so the clone's field stays unset. Callers must invoke
-// this before any destructive step so range exhaustion aborts before the
-// mutation.
-function allocateCloneHermesApiPort(
-  dstName: string,
-  srcEntry: { name?: string; agent?: string | null },
-): number | null {
-  if (srcEntry.agent !== "hermes") return null;
-  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  try {
-    return findAvailableHermesApiPort(
-      dstName,
-      undefined,
-      forwards.output || "",
-      undefined,
-      getRegistryOccupiedHermesApiPorts(dstName),
-    );
-  } catch (err) {
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    snapshotExit(1);
-  }
-}
-
 function resolveCloneDashboardEnvArgs(
   srcEntry: SandboxEntry | { name: string },
   dstDashboardPort: number | null,
@@ -460,7 +393,7 @@ async function autoCreateSandboxFromSource(
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
     ...dashboardEnvArgs,
-    ...(dstHermesApiPort === null ? [] : [`${HERMES_API_PORT_ENV}=${dstHermesApiPort}`]),
+    ...snapshotCloneHermesApiEnvArgs(dstHermesApiPort),
     "nemoclaw-start",
   ];
   const createEnv = { ...process.env };
@@ -752,16 +685,19 @@ async function deleteSandboxForRestore(name: string): Promise<void> {
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
-function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
-  if (!selectSandboxGatewayIfRegistered(sandboxName)) return null;
-  if (!probeGatewayRunning(sandboxName)) return null;
+async function listLiveSandboxesOnSandboxGateway(sandboxName: string): Promise<Set<string> | null> {
+  if (!(await selectSandboxGatewayIfRegistered(sandboxName))) return null;
+  if (!(await probeGatewayRunning(sandboxName))) return null;
   const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (isLive.status !== 0) return null;
   return parseLiveSandboxNames(isLive.output || "");
 }
 
-function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string): Set<string> {
-  const liveNames = listLiveSandboxesOnSandboxGateway(sandboxName);
+async function requireLiveSandboxesOnSandboxGateway(
+  sandboxName: string,
+  error: string,
+): Promise<Set<string>> {
+  const liveNames = await listLiveSandboxesOnSandboxGateway(sandboxName);
   if (!liveNames) {
     console.error(error);
     snapshotExit(1);
@@ -769,8 +705,8 @@ function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string
   return liveNames;
 }
 
-function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+async function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     targetSandbox,
     `  Cannot verify destination sandbox '${targetSandbox}' on its registered gateway. Aborting restore.`,
   );
@@ -930,11 +866,11 @@ function removeIncompleteSnapshot(sandboxName: string, backupPath: string): void
   );
 }
 
-function runSnapshotCreate(
+async function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
-): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -1060,7 +996,7 @@ async function runSnapshotRestoreUnlocked(
   request: Extract<SnapshotRequest, { kind: "restore" }>,
   targetSandbox: string,
 ): Promise<void> {
-  const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+  const sourceLiveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -1364,8 +1300,20 @@ async function runSnapshotRestoreUnlocked(
       // dashboard-port-range exhaustion aborts before `deleteSandboxForRestore`
       // removes the existing `--force` destination — matching the pre-delete
       // validation the image and gateway-route checks above already do (#3756).
-      const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
-      const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
+      let clonePorts: Awaited<ReturnType<typeof allocateSnapshotCloneForwardPorts>>;
+      try {
+        clonePorts = await allocateSnapshotCloneForwardPorts({
+          destinationName: targetSandbox,
+          executable: getOpenshellBinary(),
+          gatewayName: lockedGatewayName,
+          gatewayPort: lockedGatewayPort,
+          source: lockedSourceEntry,
+        });
+      } catch (error) {
+        console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+        snapshotExit(1);
+      }
+      const { dashboardPort: dstDashboardPort, hermesApiPort: dstHermesApiPort } = clonePorts;
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let cloneCreatedPending = false;
@@ -1384,10 +1332,10 @@ async function runSnapshotRestoreUnlocked(
         clonePolicy = refreshedClonePolicy;
         if (targetExists) {
           if (targetEntry) {
-            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+            await verifyRestoreDestinationOnOwnGateway(targetSandbox);
           }
           await deleteSandboxForRestore(targetSandbox);
-          requireLiveSandboxesOnSandboxGateway(
+          await requireLiveSandboxesOnSandboxGateway(
             sandboxName,
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );

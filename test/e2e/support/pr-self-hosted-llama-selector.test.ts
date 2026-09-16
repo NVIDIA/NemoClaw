@@ -235,6 +235,12 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
       },
     });
 
+    const reviewedNpm = selector?.steps?.find((step) => step.name === "Install reviewed npm");
+    expect(reviewedNpm).toMatchObject({
+      if: "${{ steps.changed.outputs.selected == 'true' }}",
+      uses: "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
+    });
+
     const publication = selector?.steps?.find((step) => step.id === "publication");
     expect(publication).toMatchObject({
       env: {

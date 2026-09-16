@@ -266,19 +266,19 @@ export function revalidateManagedWorkloadRebuildBeforeDelete(
   };
 }
 
-export function checkRebuildGatewaySchemaPreflight(
+export async function checkRebuildGatewaySchemaPreflight(
   sandboxName: string,
   sb: RebuildSandboxEntry,
   bail: RebuildBail,
   runtimeSelection?: OpenShellRuntimeSelection,
-): boolean {
+): Promise<boolean> {
   const gatewayName = resolveSandboxGatewayName(sb);
   if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
     return bail(
       `Rebuild gateway schema target '${gatewayName}' does not match the frozen OpenShell target '${runtimeSelection.gatewayName}'.`,
     );
   }
-  const issue = detectOpenShellStateRpcPreflightIssue({
+  const issue = await detectOpenShellStateRpcPreflightIssue({
     gatewayName,
     ...(runtimeSelection ? { runtimeSelection } : {}),
   });
@@ -299,10 +299,10 @@ export function checkRebuildGatewaySchemaPreflight(
 }
 
 export async function runRebuildGatewayIntentPreflight<T>(options: {
-  checkGatewaySchema: () => boolean;
+  checkGatewaySchema: () => boolean | Promise<boolean>;
   confirmIntent: () => Promise<T | null>;
 }): Promise<T | null> {
-  if (!options.checkGatewaySchema()) return null;
+  if (!(await options.checkGatewaySchema())) return null;
   return options.confirmIntent();
 }
 
