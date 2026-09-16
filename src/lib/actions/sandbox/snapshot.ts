@@ -14,11 +14,14 @@ import {
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
+import {
+  createCliOpenShellSandboxLifecycleFromRunner,
+  createCliOpenShellSandboxObserverFromRunner,
+} from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { formatFailedBackupItems } from "../../domain/backup-failure";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -631,16 +634,31 @@ async function deleteSandboxForRestore(name: string): Promise<void> {
       }
     }
     console.log(`  Deleting existing destination '${name}' before restore...`);
-    const deleteResult = runOpenshell(["sandbox", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
+    const gatewayName = resolveSandboxGatewayName(sbMeta);
+    const deleteResult = await createCliOpenShellSandboxLifecycleFromRunner(
+      runOpenshell,
+    ).deleteSandbox({
+      sandboxName: name,
+      target: { kind: "named", gatewayName },
     });
-    const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-    if (deleteResult.status !== 0 && !alreadyGone) {
+    if (deleteResult.kind === "failed" && !deleteResult.ambiguous) {
       console.error(
-        `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
+        `  Failed to delete '${name}' (exit ${deleteResult.exitCode ?? 1}). Aborting restore.`,
       );
       snapshotExit(1);
+    }
+    if (deleteResult.kind !== "absent") {
+      const observed = await createCliOpenShellSandboxObserverFromRunner(
+        runOpenshell,
+      ).listSandboxes({
+        target: { kind: "named", gatewayName },
+      });
+      if (!observed.ok || observed.value.sandboxes.some((candidate) => candidate.name === name)) {
+        console.error(
+          `  OpenShell did not confirm that destination '${name}' is absent. Aborting restore.`,
+        );
+        snapshotExit(1);
+      }
     }
     if (hostLocalInferenceAuthority) {
       try {
