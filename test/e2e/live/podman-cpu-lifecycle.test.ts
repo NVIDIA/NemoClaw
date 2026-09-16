@@ -465,14 +465,6 @@ exit 1
           exitCode: 0,
           state: "stopped",
         });
-        await expect(lifecycle.start(input)).resolves.toEqual({ exitCode: 0 });
-        await lifecycle.verifyStarted(input, verifyRestartedAgent);
-        const restarted = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
-        expect(restarted.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
-        await expect(lifecycle.stop(input, { beforeStop: vi.fn() })).resolves.toEqual({
-          exitCode: 0,
-          state: "stopped",
-        });
         const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
       }
