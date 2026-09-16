@@ -6,12 +6,7 @@ import os from "node:os";
 import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
 import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import { isWsl } from "../../platform";
-import {
-  BoundedTextSchema,
-  EXPORTED_OLLAMA_MODEL,
-  TcpPortSchema,
-  type NemoClawOllamaServing,
-} from "../../config/model";
+import { BoundedTextSchema, TcpPortSchema, type NemoClawOllamaServing } from "../../config/model";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
@@ -94,7 +89,7 @@ export function observeOllamaProxy(input: OllamaProxyObservationInput): Observed
   const daemonPort = Number(backend?.[1]);
   if (
     input.backend.kind !== "ollama" ||
-    input.model !== EXPORTED_OLLAMA_MODEL ||
+    !Check(BoundedTextSchema, input.model) ||
     !Check(TcpPortSchema, daemonPort) ||
     !Check(TcpPortSchema, proxyPort) ||
     input.proxyPort !== String(proxyPort) ||
@@ -120,7 +115,7 @@ export function observeOllamaProxy(input: OllamaProxyObservationInput): Observed
       backend: "ollama",
       daemon: { management: "external", hostPort: daemonPort },
       proxy: { management: "nemoclaw", hostPort: proxyPort },
-      model: { servedName: EXPORTED_OLLAMA_MODEL, digest },
+      model: { servedName: input.model, digest },
     },
     pid,
     listenerAddress: active.listener.address,

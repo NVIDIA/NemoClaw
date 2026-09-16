@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const SPECIALIST_DIFF_FILE_NAME = "diff.patch";
+export const SPECIALIST_FOLLOW_UP_DIFF_FILE_NAME = "follow-up-diff.patch";
 
 function rejectSymbolicLink(target: string, message: string): void {
   try {
@@ -14,11 +15,11 @@ function rejectSymbolicLink(target: string, message: string): void {
   }
 }
 
-export function writeSpecialistDiff(directory: string, diff: string): string {
+function writeSpecialistPatch(directory: string, fileName: string, diff: string): string {
   rejectSymbolicLink(directory, "Specialist diff directory must not be a symbolic link");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
-  const file = path.join(directory, SPECIALIST_DIFF_FILE_NAME);
+  const file = path.join(directory, fileName);
   rejectSymbolicLink(file, "Specialist diff file must not be a symbolic link");
   const descriptor = fs.openSync(
     file,
@@ -32,4 +33,12 @@ export function writeSpecialistDiff(directory: string, diff: string): string {
     fs.closeSync(descriptor);
   }
   return file;
+}
+
+export function writeSpecialistDiff(directory: string, diff: string): string {
+  return writeSpecialistPatch(directory, SPECIALIST_DIFF_FILE_NAME, diff);
+}
+
+export function writeSpecialistFollowUpDiff(directory: string, diff: string): string {
+  return writeSpecialistPatch(directory, SPECIALIST_FOLLOW_UP_DIFF_FILE_NAME, diff);
 }

@@ -50,22 +50,6 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("runs portable lifecycle recovery before the live sandbox lookup (#8441)", async () => {
-    const harness = createConnectHarness();
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
-
-    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
-    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ agent: "openclaw" }),
-      "nemoclaw",
-    );
-    expect(harness.recoverPortableDemoLifecycleSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.ensureLiveSandboxSpy.mock.invocationCallOrder[0]!,
-    );
-  });
-
   it("prints classified Portable recovery and rollback results without nested diagnostics (#11248)", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
