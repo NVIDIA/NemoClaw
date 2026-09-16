@@ -1367,10 +1367,22 @@ def _gateway_healthy() -> bool:
     return _gateway_health_phase()[0]
 
 
+def _gateway_runtime_generation() -> tuple[int, int, int, int] | None:
+    """Observe metadata replacement without treating it as process authority."""
+    try:
+        record = os.stat(GATEWAY_PID_PATH, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(record.st_mode) or record.st_nlink != 1:
+        raise PermissionError("Hermes gateway PID record is unsafe")
+    return record.st_dev, record.st_ino, record.st_mtime_ns, record.st_ctime_ns
+
+
 def reload_gateway() -> bool:
     previous = _gateway_identity()
     if previous is None:
         return False
+    previous_generation = _gateway_runtime_generation()
     try:
         os.kill(previous[0], signal.SIGUSR1)
     except ProcessLookupError:
@@ -1396,9 +1408,15 @@ def reload_gateway() -> bool:
             break
         current = _gateway_identity()
         observed_phase = "waiting-for-replacement-identity"
+        generation = _gateway_runtime_generation()
+        restarted = current != previous or (
+            previous_generation is not None
+            and generation is not None
+            and generation != previous_generation
+        )
         if (
             current is not None
-            and current != previous
+            and restarted
             and _gateway_has_managed_parent(current[0])
         ):
             healthy, observed_phase = _gateway_health_phase(deadline)
@@ -1408,6 +1426,7 @@ def reload_gateway() -> bool:
                 confirmed = _gateway_identity()
                 if (
                     confirmed == current
+                    and _gateway_runtime_generation() == generation
                     and _gateway_has_managed_parent(current[0])
                     and time.monotonic() < deadline
                 ):
@@ -1509,15 +1528,19 @@ def execute(action: str, payload: dict[str, object]) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("add", "remove", "inspect", "probe"))
+    parser.add_argument("action", choices=("add", "remove", "inspect", "probe", "reload"))
     parser.add_argument("--payload")
     args = parser.parse_args()
     payload: dict[str, object] | None = None
     try:
-        if args.action == "probe":
+        if args.action in {"probe", "reload"}:
             if args.payload is not None:
-                raise ValueError("Hermes MCP lifecycle probe does not accept --payload")
+                raise ValueError("Hermes MCP lifecycle probe or reload does not accept --payload")
             result = probe()
+            if args.action == "reload":
+                if not reload_gateway():
+                    raise RuntimeError(GATEWAY_NOT_READY_MESSAGE)
+                result = {"ok": True, "changed": False, "reloaded": True}
         elif args.action == "inspect":
             if args.payload is None:
                 raise ValueError("Hermes MCP inspection requires --payload")

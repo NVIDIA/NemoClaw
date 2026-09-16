@@ -898,6 +898,9 @@ def main(argv: list[str]) -> int:
             print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
             return rc
         _harden_gateway_package_env(os.environ["HERMES_LAZY_INSTALL_TARGET"])
+        if argv == ["gateway", "restart"]:
+            helper = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py"
+            os.execv(helper, [helper, "reload"])
     try:
         adapter = _load_cli_adapter(_resolve_cli_adapter())
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)

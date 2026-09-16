@@ -4,7 +4,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import { classifyGatewayRestartFailure } from "./gateway-restart";
-import { restartSandboxGateway } from "./process-recovery";
+import { buildOpenClawGatewayRestartCommand } from "./runtime/openclaw-restart";
+import { restartSandboxGatewayWithDeps as restartSandboxGateway } from "./gateway-restart";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -77,7 +78,18 @@ describe("restartSandboxGateway native lifecycle", () => {
     });
     expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
       "alpha",
-      "openclaw gateway restart",
+      buildOpenClawGatewayRestartCommand(),
+      210000,
+    );
+  });
+
+  it("waits for the new runtime on the sandbox's configured OpenClaw port", async () => {
+    silenceConsole();
+    const deps = baseDeps({ resolveSandboxDashboardPort: () => 28789 });
+    await restartSandboxGateway("alpha", { quiet: true, deps });
+    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
+      "alpha",
+      buildOpenClawGatewayRestartCommand(28789),
       210000,
     );
   });

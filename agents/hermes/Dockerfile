@@ -99,6 +99,7 @@ COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-confi
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
+COPY agents/hermes/patch-gateway-native-restart.py /opt/nemoclaw-hermes-config/patch-gateway-native-restart.py
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
@@ -643,6 +644,17 @@ RUN /usr/bin/python3 -I \
         "$NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256" /opt/hermes/cron/jobs.py \
     | sha256sum -c -
 
+# Keep planned native restarts in the entrypoint's foreground process.
+ARG NEMOCLAW_HERMES_NATIVE_RESTART_PATCHER_SHA256=86d7a48b067570cffb762a64ff2a58446eac49c8ec19e7a80054291601fdf519
+ARG NEMOCLAW_HERMES_NATIVE_RESTART_OUTPUT_SHA256=55ad335cc6085012007ba1839c9ad50f0aa40a20b24d3f9a6e33b1e955817d83
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_NATIVE_RESTART_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-gateway-native-restart.py \
+    | sha256sum -c - \
+    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-gateway-native-restart.py /opt/hermes/gateway/run.py \
+    && printf '%s  %s\n' "$NEMOCLAW_HERMES_NATIVE_RESTART_OUTPUT_SHA256" /opt/hermes/gateway/run.py | sha256sum -c - \
+    && rm /opt/nemoclaw-hermes-config/patch-gateway-native-restart.py
+
 # Hermes v0.20.6 writes gateway lifecycle metadata directly below HERMES_HOME.
 # Managed stop/start recovery needs this metadata in the writable runtime
 # boundary. Relocate only Hermes's central PID/lock/status path helpers to the
@@ -811,7 +823,7 @@ RUN node \
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=3c769f05292b840424a8feec9a9eb441e393a48bf0212bd824b0db8a33a66331
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=0fd14ee9db7be48bb5a55922618e5dc8574e03812abaf72f06fd26d07d9d56a3
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=fa0751966926ac7e7fd8cd4667a14fa516b1fb41f483e2240b2c879b1a9d4751
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=e2093cae9d6460262c118c4445b82745df7eaad3cbe0be7bb4907d6facd5d321
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819

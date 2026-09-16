@@ -3,6 +3,7 @@
 
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
+import { buildOpenClawGatewayRestartCommand } from "./runtime/openclaw-restart";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
 
@@ -410,7 +411,10 @@ export async function restartSandboxGatewayWithDeps(
       `  Restarting ${agentRuntime.getAgentDisplayName(agent)} gateway in '${sandboxName}'...`,
     );
   }
-  const nativeCommand = `${agentName} gateway restart`;
+  const nativeCommand =
+    agentName === "openclaw"
+      ? buildOpenClawGatewayRestartCommand(dashboardPort)
+      : "hermes gateway restart";
   const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
   if (!restartResult || restartResult.status !== 0) {
     const classified = classifyGatewayRestartFailure(restartResult);

@@ -1174,6 +1174,7 @@ def stat_gateway(path):
     observed["gateway_check_uid"] = module.os.geteuid()
     return types.SimpleNamespace(st_uid=sandbox_uid)
 module.os.stat = stat_gateway
+module._gateway_runtime_generation = lambda: None
 def trusted_gateway(pid):
     observed["trusted_pids"].append(pid)
     return True
