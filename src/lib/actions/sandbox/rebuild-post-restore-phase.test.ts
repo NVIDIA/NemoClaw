@@ -854,21 +854,6 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("gateway-token --quiet");
   });
 
-  it("does not print the Hermes API token notice when post-restore verification is incomplete (#7175)", async () => {
-    agentName = "hermes";
-    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockResolvedValue(
-      "unverified",
-    );
-    const args = input();
-
-    await runRebuildPostRestorePhase(args);
-
-    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).not.toContain("Hermes API bearer token changed during rebuild");
-    expect(output).not.toContain("gateway-token --quiet");
-    expect(args.bail).toHaveBeenCalledWith("Hermes post-restore verification failed for 'alpha'.");
-  });
-
   it("still prints the Hermes API token notice when a non-fatal post-restore step is unverified (#7175)", async () => {
     agentName = "hermes";
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
@@ -897,21 +882,6 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "Prepared backup recovery for 'alpha' completed with unverified post-restore state.",
     );
-  });
-
-  it("prints the Hermes API token notice after gateway recovery (#7175)", async () => {
-    agentName = "hermes";
-    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockResolvedValue(
-      "recovered",
-    );
-    const args = input();
-
-    await runRebuildPostRestorePhase(args);
-
-    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(args.bail).not.toHaveBeenCalled();
-    expect(output).toContain("Hermes gateway recovered after state restore");
-    expect(output).toContain("Hermes API bearer token changed during rebuild");
   });
 
   it("reconciles the registry before verifying host forwarding (#8283)", async () => {

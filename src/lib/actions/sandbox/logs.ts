@@ -1,29 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type StdioOptions } from "node:child_process";
 import type { Writable } from "node:stream";
-import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
+import { cliOpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs-cli";
+import type {
+  OpenShellSandboxLogFollowSession,
+  OpenShellSandboxLogOutcome,
+  OpenShellSandboxLogs,
+} from "../../adapters/openshell/sandbox-logs";
 import { cliOpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings-cli";
 import type { OpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings";
 import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import * as agentRuntime from "../../agent/runtime";
-import { spawnExitCode } from "../../core/process-exit";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import {
-  buildSandboxLogsArgs,
-  buildSandboxOpenclawGatewayLogsArgs,
-  describeLogProbeResult,
   getLogsProbeTimeoutMs,
   isBrokenPipeRelayError,
   LOG_RELAY_BROKEN_PIPE_EXIT_CODE,
-  type LogProbeResult,
   mergeTailLogLines,
   normalizeSandboxLogsOptions,
   tagGatewayLogLine,
   tagGatewayLogLines,
 } from "../../domain/sandbox/logs";
-import { ROOT } from "../../runner";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 
 /**
@@ -36,6 +34,8 @@ const DRAIN_GRACE_MS = 200;
 // Source attribution depends only on the start of a line. Relay the rest after
 // this bound so one unterminated log line cannot grow host memory without limit.
 const MAX_BUFFERED_GATEWAY_LINE_PREFIX_CHARS = 4_096;
+const OPENSHELL_UNAVAILABLE_GUIDANCE =
+  "openshell CLI not found. Install OpenShell before using sandbox commands.";
 
 type GatewayLogChunkTagger = {
   finish: () => string;
@@ -102,45 +102,33 @@ function createGatewayLogChunkTagger(): GatewayLogChunkTagger {
   };
 }
 
-type RunOpenshellOptions = Parameters<typeof runOpenshell>[1];
-type RunOpenshellFn = (args: string[], options?: RunOpenshellOptions) => LogProbeResult;
-type SpawnFn = typeof spawn;
 type ExitFn = (code: number) => never;
 
 export type SandboxLogsRuntimeDeps = {
   enableAuditLogs?: OpenShellSandboxSettings["enableAuditLogs"];
-  env?: NodeJS.ProcessEnv;
   exit?: ExitFn;
-  getOpenshellBinary?: typeof getOpenshellBinary;
   getSessionAgent?: typeof agentRuntime.getSessionAgent;
   isDockerRuntimeDown?: typeof isDockerRuntimeDown;
+  logs?: OpenShellSandboxLogs;
   printDockerRuntimeDownGuidance?: typeof printDockerRuntimeDownGuidance;
-  runOpenshell?: RunOpenshellFn;
-  spawn?: SpawnFn;
+  stderr?: Writable;
   stdout?: Writable;
+  writeStderr?: (chunk: string) => boolean | void;
   writeStdout?: (chunk: string) => boolean | void;
 };
 
-function runOpenclawGatewayLogs(
-  sandboxName: string,
-  options: SandboxLogsOptions,
-  deps: SandboxLogsRuntimeDeps,
-): LogProbeResult {
-  const args = buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
-  // Capture stdout so the caller can merge with the OpenShell source
-  // (closes #4100). stderr still inherits so warnings print directly.
-  const result = (deps.runOpenshell ?? runOpenshell)(args, {
-    stdio: ["ignore", "pipe", "inherit"],
-    ignoreError: true,
-    timeout: getLogsProbeTimeoutMs(),
-  });
-  if (result.status !== 0) {
-    console.error(
-      `  OpenClaw log source unavailable (${describeLogProbeResult(result)}): ` +
-        `openshell ${args.join(" ")}`,
-    );
-  }
-  return result;
+function describeLogOutcome(outcome: OpenShellSandboxLogOutcome): string {
+  if (outcome.kind === "failed") return outcome.error.message;
+  if (outcome.termination === "broken_pipe") return "signal SIGPIPE";
+  if (outcome.termination === "hangup") return "signal SIGHUP";
+  if (outcome.termination === "interrupted") return "signal SIGINT";
+  if (outcome.termination === "terminated") return "signal SIGTERM";
+  if (outcome.termination === "other_signal") return "signal unknown";
+  return `exit ${outcome.exitCode}`;
+}
+
+function isOpenShellUnavailable(outcome: OpenShellSandboxLogOutcome): boolean {
+  return outcome.kind === "failed" && outcome.error.kind === "unavailable";
 }
 
 function shouldIncludeGatewayLogSource(sandboxName: string, deps: SandboxLogsRuntimeDeps): boolean {
@@ -154,28 +142,26 @@ async function streamSandboxFollowLogs(
   options: SandboxLogsOptions,
   deps: SandboxLogsRuntimeDeps,
 ): Promise<void> {
-  const openclawArgs =
-    options.since || !shouldIncludeGatewayLogSource(sandboxName, deps)
-      ? null
-      : buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
-  const openshellArgs = buildSandboxLogsArgs(sandboxName, options);
+  const logs = deps.logs ?? cliOpenShellSandboxLogs;
   const exit = deps.exit ?? process.exit;
+  const availabilityError = logs.checkAvailability();
+  if (availabilityError?.kind === "unavailable") {
+    console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
+    exit(1);
+    return;
+  }
+  const target = selectedOpenShellGateway();
+  const includeGateway = !options.since && shouldIncludeGatewayLogSource(sandboxName, deps);
   const outputStream = deps.stdout ?? process.stdout;
+  const diagnosticStream = deps.stderr ?? process.stderr;
   const writesThroughOutputStream = deps.writeStdout === undefined;
+  const writeStderr = deps.writeStderr ?? diagnosticStream.write.bind(diagnosticStream);
   const writeStdout = deps.writeStdout ?? outputStream.write.bind(outputStream);
-  // A tagged source is piped so each line can be attributed before it is
-  // relayed. Every other source keeps the original raw passthrough.
-  const spawnOptionsFor = (
-    tagged: boolean,
-  ): { cwd: string; env: NodeJS.ProcessEnv; stdio: StdioOptions } => ({
-    cwd: ROOT,
-    env: deps.env ?? process.env,
-    stdio: tagged ? ["inherit", "pipe", "inherit"] : "inherit",
-  });
   const sources: Array<{
     label: string;
-    child: import("node:child_process").ChildProcess;
+    session: OpenShellSandboxLogFollowSession;
     done: boolean;
+    cleanupDiagnostic: () => void;
   }> = [];
   let exiting = false;
   let completedSources = 0;
@@ -184,21 +170,23 @@ async function streamSandboxFollowLogs(
   let forcedExitTimer: NodeJS.Timeout | null = null;
   let setupComplete = false;
   let outputErrorHandler: ((error: NodeJS.ErrnoException) => void) | null = null;
+  const onInterrupt = () => requestExitAfterSignal("SIGINT", 130);
+  const onTerminate = () => requestExitAfterSignal("SIGTERM", 143);
 
   const exitRelay = (code: number): never => {
+    process.removeListener("SIGINT", onInterrupt);
+    process.removeListener("SIGTERM", onTerminate);
     if (outputErrorHandler) {
       outputStream.off("error", outputErrorHandler);
       outputErrorHandler = null;
     }
+    for (const source of sources) source.cleanupDiagnostic();
     return exit(code);
   };
 
   const stopChildren = (signal: NodeJS.Signals) => {
-    for (const { child } of sources) {
-      if (!child.killed && child.exitCode === null && child.signalCode === null) {
-        child.kill(signal);
-      }
-    }
+    const reason = signal === "SIGINT" ? "interrupt" : "terminate";
+    for (const { session } of sources) session.cancel(reason);
   };
   const maybeExit = () => {
     if (!setupComplete || completedSources !== sources.length) {
@@ -217,6 +205,7 @@ async function streamSandboxFollowLogs(
   ) => {
     if (source.done) return;
     source.done = true;
+    source.cleanupDiagnostic();
     completedSources += 1;
     if (status !== 0 && finalStatus === 0) {
       finalStatus = status;
@@ -236,13 +225,14 @@ async function streamSandboxFollowLogs(
     forcedExitTimer.unref?.();
     maybeExit();
   };
+  const requestUnavailableExit = () => {
+    if (requestedExitCode !== null) return;
+    console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
+    requestExitAfterSignal("SIGTERM", 1);
+  };
 
-  process.once("SIGINT", () => {
-    requestExitAfterSignal("SIGINT", 130);
-  });
-  process.once("SIGTERM", () => {
-    requestExitAfterSignal("SIGTERM", 143);
-  });
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onTerminate);
   // Node reports a closed downstream pipe on process.stdout asynchronously, as
   // an `error` event rather than a throw from write(), and an unhandled one
   // crashes the CLI. Own that channel only when this relay is the writer, so an
@@ -261,30 +251,59 @@ async function streamSandboxFollowLogs(
     outputStream.on("error", outputErrorHandler);
   }
 
-  const addSource = (label: string, args: string[], tagged = false) => {
-    const spawnProcess = deps.spawn ?? spawn;
-    const openshellBinary = (deps.getOpenshellBinary ?? getOpenshellBinary)();
+  const addSource = (label: string, sourceKind: "gateway" | "openshell", tagged = false) => {
+    const session = logs.follow({
+      target,
+      sandboxName,
+      source: sourceKind,
+      lines: options.lines,
+      since: sourceKind === "openshell" ? options.since : null,
+      timeoutMs: getLogsProbeTimeoutMs(),
+    });
+    const diagnostic = session.diagnostic;
+    let waitingForDiagnosticDrain = false;
+    const resumeDiagnostic = () => {
+      waitingForDiagnosticDrain = false;
+      diagnostic?.resume();
+    };
+    let diagnosticClosed = false;
+    const cleanupDiagnostic = () => {
+      if (diagnosticClosed) return;
+      diagnosticClosed = true;
+      diagnosticStream.off("drain", resumeDiagnostic);
+      diagnostic?.close();
+    };
     const source = {
       label,
-      child: spawnProcess(openshellBinary, args, spawnOptionsFor(tagged)),
+      session,
       done: false,
+      cleanupDiagnostic,
     };
     sources.push(source);
 
-    const stdout = tagged ? source.child.stdout : null;
+    diagnostic?.onChunk((chunk) => {
+      if (writeStderr(chunk) === false && !waitingForDiagnosticDrain) {
+        waitingForDiagnosticDrain = true;
+        diagnostic.pause();
+        diagnosticStream.once("drain", resumeDiagnostic);
+      }
+    });
+    diagnostic?.onError((error: NodeJS.ErrnoException) => {
+      const suffix = typeof error.code === "string" ? ` (${error.code})` : "";
+      console.error(`  ${label} diagnostic read failed${suffix}.`);
+      cleanupDiagnostic();
+    });
+
+    const stdout = tagged ? session.output : null;
     if (!stdout) {
-      source.child.on("error", (error: Error) => {
-        markSourceDone(source, 1, error.message);
-      });
-      source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
-        if (signal === "SIGPIPE") {
+      void session.completion.then(({ outcome }) => {
+        if (isOpenShellUnavailable(outcome)) {
+          requestUnavailableExit();
+        }
+        if (outcome.kind === "completed" && outcome.termination === "broken_pipe") {
           requestExitAfterSignal("SIGTERM", LOG_RELAY_BROKEN_PIPE_EXIT_CODE);
         }
-        markSourceDone(
-          source,
-          spawnExitCode({ status: code, signal }),
-          signal ? `signal ${signal}` : null,
-        );
+        markSourceDone(source, outcome.exitCode, describeLogOutcome(outcome));
       });
       return;
     }
@@ -305,7 +324,7 @@ async function streamSandboxFollowLogs(
 
     function completeSource(): void {
       outputStream.off("drain", resumeAfterDrain);
-      relayStdout.destroy();
+      relayStdout.close();
       markSourceDone(source, exitStatus, exitDetail);
     }
 
@@ -373,7 +392,7 @@ async function streamSandboxFollowLogs(
       if (source.done || finalizing) return;
       finalizing = true;
       stopSourceDrainTimer(false);
-      relayStdout.destroy();
+      relayStdout.close();
       finalOutput = tagger.finish();
       flushFinalOutput();
     }
@@ -401,11 +420,10 @@ async function streamSandboxFollowLogs(
         return;
       }
       startSourceDrainTimer();
-      if (!source.done && !relayStdout.destroyed) relayStdout.resume();
+      if (!source.done) relayStdout.resume();
     }
 
-    relayStdout.setEncoding("utf8");
-    relayStdout.on("data", (chunk: string) => {
+    relayStdout.onChunk((chunk) => {
       if (source.done || finalizing) return;
       relayOutput(tagger.write(chunk));
     });
@@ -415,34 +433,21 @@ async function streamSandboxFollowLogs(
       ended = true;
       if (exited) beginFinalization();
     };
-    relayStdout.on("end", settleAfterExit);
-    relayStdout.on("error", (error: NodeJS.ErrnoException) => {
+    relayStdout.onEnd(settleAfterExit);
+    relayStdout.onError((error: NodeJS.ErrnoException) => {
       if (source.done) return;
       const suffix = typeof error.code === "string" ? ` (${error.code})` : "";
       console.error(`  ${source.label} read failed${suffix}.`);
       exitStatus = 1;
       exitDetail = `read error${suffix}`;
-      if (
-        !exited &&
-        !source.child.killed &&
-        source.child.exitCode === null &&
-        source.child.signalCode === null
-      ) {
-        source.child.kill("SIGTERM");
-      }
+      if (!exited) source.session.cancel("terminate");
       beginFinalization();
     });
-    source.child.on("error", (error: Error) => {
-      if (source.done) return;
-      exitStatus = 1;
-      exitDetail = error.message;
-      beginFinalization();
-    });
-    source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+    void session.completion.then(({ outcome }) => {
       if (source.done || finalizing) return;
       exited = true;
-      exitStatus = spawnExitCode({ status: code, signal });
-      exitDetail = signal ? `signal ${signal}` : null;
+      exitStatus = outcome.exitCode;
+      exitDetail = describeLogOutcome(outcome);
       if (ended) {
         beginFinalization();
         return;
@@ -451,11 +456,16 @@ async function streamSandboxFollowLogs(
     });
   };
 
-  if (openclawArgs) {
-    addSource("OpenClaw log source", openclawArgs, true);
+  if (includeGateway) {
+    addSource("OpenClaw log source", "gateway", true);
   }
   await enableSandboxAuditLogs(sandboxName, deps);
-  addSource("OpenShell log source", openshellArgs);
+  if (requestedExitCode !== null) {
+    setupComplete = true;
+    maybeExit();
+    return;
+  }
+  addSource("OpenShell log source", "openshell");
   setupComplete = true;
   maybeExit();
 }
@@ -503,37 +513,70 @@ export async function showSandboxLogsWithDeps(
   }
 
   await enableSandboxAuditLogs(sandboxName, deps);
+  const logs = deps.logs ?? cliOpenShellSandboxLogs;
+  const target = selectedOpenShellGateway();
 
   // Capture stdout from both sources so --tail N can be applied once
   // to the merged stream rather than independently per source
   // (which previously returned up to 2*N lines). Closes #4100.
-  let gatewayResult: LogProbeResult | null = null;
+  let gatewayResult: Awaited<ReturnType<OpenShellSandboxLogs["read"]>> | null = null;
   if (!logsOptions.since && shouldIncludeGatewayLogSource(sandboxName, deps)) {
-    gatewayResult = runOpenclawGatewayLogs(sandboxName, logsOptions, deps);
+    gatewayResult = await logs.read({
+      target,
+      sandboxName,
+      source: "gateway",
+      lines: logsOptions.lines,
+      since: null,
+      timeoutMs: getLogsProbeTimeoutMs(),
+    });
+    if (gatewayResult.diagnostic) {
+      (deps.writeStderr ?? process.stderr.write.bind(process.stderr))(gatewayResult.diagnostic);
+    }
+    if (isOpenShellUnavailable(gatewayResult.outcome)) {
+      console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
+      (deps.exit ?? process.exit)(1);
+      return;
+    }
+    if (gatewayResult.outcome.kind === "failed" || gatewayResult.outcome.exitCode !== 0) {
+      console.error(
+        `  OpenClaw log source unavailable (${describeLogOutcome(gatewayResult.outcome)}).`,
+      );
+    }
   }
 
-  const openshellArgs = buildSandboxLogsArgs(sandboxName, logsOptions);
-  const openshellResult = (deps.runOpenshell ?? runOpenshell)(openshellArgs, {
-    stdio: ["ignore", "pipe", "inherit"],
-    ignoreError: true,
+  const openshellResult = await logs.read({
+    target,
+    sandboxName,
+    source: "openshell",
+    lines: logsOptions.lines,
+    since: logsOptions.since,
+    timeoutMs: getLogsProbeTimeoutMs(),
   });
+  if (openshellResult.diagnostic) {
+    (deps.writeStderr ?? process.stderr.write.bind(process.stderr))(openshellResult.diagnostic);
+  }
+  if (isOpenShellUnavailable(openshellResult.outcome)) {
+    console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
+    (deps.exit ?? process.exit)(1);
+    return;
+  }
 
   const targetLines = Number(logsOptions.lines);
   const maxLines = Number.isFinite(targetLines) && targetLines > 0 ? targetLines : 0;
   const sources: string[] = [];
   // Only the gateway source is rewritten. OpenShell already tags its own lines
   // ([sandbox], [proxy], ...), so tagging it too would double-tag (#10340).
-  if (gatewayResult?.stdout) sources.push(tagGatewayLogLines(String(gatewayResult.stdout)));
-  if (openshellResult.stdout) sources.push(String(openshellResult.stdout));
+  if (gatewayResult?.content) sources.push(tagGatewayLogLines(gatewayResult.content));
+  if (openshellResult.content) sources.push(openshellResult.content);
   const merged = mergeTailLogLines(sources, maxLines);
   if (merged) {
     (deps.writeStdout ?? process.stdout.write.bind(process.stdout))(merged);
   }
 
-  if (openshellResult.status !== 0) {
+  if (openshellResult.outcome.kind === "failed" || openshellResult.outcome.exitCode !== 0) {
     console.error(
-      `  Command failed (exit ${openshellResult.status}): openshell ${openshellArgs.join(" ")}`,
+      `  OpenShell log source failed (${describeLogOutcome(openshellResult.outcome)}).`,
     );
   }
-  (deps.exit ?? process.exit)(spawnExitCode(openshellResult));
+  (deps.exit ?? process.exit)(openshellResult.outcome.exitCode);
 }

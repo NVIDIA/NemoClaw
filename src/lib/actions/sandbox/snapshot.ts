@@ -68,10 +68,7 @@ import {
   removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
-import {
-  establishRestoredSandboxGatewayPairing,
-  waitForRestoredSandboxGatewaySupervisor,
-} from "./restore-gateway-pairing";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -339,7 +336,11 @@ async function prepareSnapshotClonePolicy(
   }
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
   try {
-    fs.writeFileSync(policyPath, policy, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    fs.writeFileSync(policyPath, policy, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
     return {
       policyPath,
       cleanup: createExactTempFileCleanup(policyPath, "nemoclaw-clone-policy"),
@@ -577,12 +578,6 @@ async function autoCreateSandboxFromSource(
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
-  const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
-  if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
-    registry.removeSandbox(dstName);
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
-  }
   // The pending registry row now owns any host-local inference reservation.
   // Keep it unpublished until the caller completes sensitive-file cleanup.
   cloneHostLocalReservation = null;
@@ -679,22 +674,27 @@ async function deleteSandboxForRestore(name: string): Promise<void> {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
-    await deleteSandboxProviderRegistrations(name, "messaging", { runOpenshell });
+    await deleteSandboxProviderRegistrations(name, "messaging", {
+      runOpenshell,
+    });
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
-function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
-  if (!selectSandboxGatewayIfRegistered(sandboxName)) return null;
-  if (!probeGatewayRunning(sandboxName)) return null;
+async function listLiveSandboxesOnSandboxGateway(sandboxName: string): Promise<Set<string> | null> {
+  if (!(await selectSandboxGatewayIfRegistered(sandboxName))) return null;
+  if (!(await probeGatewayRunning(sandboxName))) return null;
   const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (isLive.status !== 0) return null;
   return parseLiveSandboxNames(isLive.output || "");
 }
 
-function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string): Set<string> {
-  const liveNames = listLiveSandboxesOnSandboxGateway(sandboxName);
+async function requireLiveSandboxesOnSandboxGateway(
+  sandboxName: string,
+  error: string,
+): Promise<Set<string>> {
+  const liveNames = await listLiveSandboxesOnSandboxGateway(sandboxName);
   if (!liveNames) {
     console.error(error);
     snapshotExit(1);
@@ -702,8 +702,8 @@ function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string
   return liveNames;
 }
 
-function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+async function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     targetSandbox,
     `  Cannot verify destination sandbox '${targetSandbox}' on its registered gateway. Aborting restore.`,
   );
@@ -773,13 +773,6 @@ async function reconcilePendingSnapshotClone(
     throw new SnapshotCommandError(
       `Pending clone '${targetSandbox}' has the expected identity but is not Ready yet. Retry after it becomes Ready.`,
     );
-  }
-  if (
-    (pending.agent || "openclaw") === "openclaw" &&
-    !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
-  ) {
-    await deleteSandboxForRestore(targetSandbox);
-    return "removed";
   }
   if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
     throw new SnapshotCommandError(
@@ -863,11 +856,11 @@ function removeIncompleteSnapshot(sandboxName: string, backupPath: string): void
   );
 }
 
-function runSnapshotCreate(
+async function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
-): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -993,7 +986,7 @@ async function runSnapshotRestoreUnlocked(
   request: Extract<SnapshotRequest, { kind: "restore" }>,
   targetSandbox: string,
 ): Promise<void> {
-  const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+  const sourceLiveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -1329,10 +1322,10 @@ async function runSnapshotRestoreUnlocked(
         clonePolicy = refreshedClonePolicy;
         if (targetExists) {
           if (targetEntry) {
-            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+            await verifyRestoreDestinationOnOwnGateway(targetSandbox);
           }
           await deleteSandboxForRestore(targetSandbox);
-          requireLiveSandboxesOnSandboxGateway(
+          await requireLiveSandboxesOnSandboxGateway(
             sandboxName,
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );

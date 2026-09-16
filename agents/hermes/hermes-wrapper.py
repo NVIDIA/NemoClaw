@@ -80,6 +80,7 @@
 # credential-bearing dotenv file.
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -104,6 +105,7 @@ _HERMES_MAIN_DEV_FILENAME = "hermes-main.py"
 _GATEWAY_LAZY_INSTALL_TARGET = "/run/nemoclaw/hermes-gateway-lazy-packages"
 _MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
 _MANAGED_HERMES_HOME = "/sandbox/.hermes"
+_MANAGED_HERMES_ENV = "/sandbox/.hermes/.env"
 _MANAGED_HOME = "/sandbox"
 _GATEWAY_PACKAGE_ENV_KEYS = frozenset({"BASH_ENV", "ENV", "PATH", "VIRTUAL_ENV"})
 _GATEWAY_PACKAGE_ENV_PREFIXES = ("DYLD_", "LD_", "UV_", "PIP_", "PYTHON")
@@ -145,6 +147,12 @@ def _resolve_guard() -> str:
     if os.path.isfile(_INSTALLED_GUARD):
         return _INSTALLED_GUARD
     return os.path.join(_self_dir(), _GUARD_DEV_FILENAME)
+
+
+def _resolve_gateway_env_path(guard_path: str) -> str:
+    if os.path.abspath(guard_path) == _INSTALLED_GUARD:
+        return _MANAGED_HERMES_ENV
+    return os.path.join(_self_dir(), ".env")
 
 
 def _resolve_cli_adapter() -> str:
@@ -343,6 +351,14 @@ def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
     return proc.returncode
 
 
+def _gateway_guard_process_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for key in tuple(env):
+        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
+            env.pop(key, None)
+    return env
+
+
 def _run_gateway_guard(guard_path: str) -> int:
     python3 = _resolve_trusted_python3()
     if python3 is None:
@@ -352,19 +368,94 @@ def _run_gateway_guard(guard_path: str) -> int:
         )
         return 127
     logical_env = dict(os.environ)
-    env = dict(logical_env)
-    for key in tuple(env):
-        if key in _GATEWAY_PACKAGE_ENV_KEYS or key.startswith(_GATEWAY_PACKAGE_ENV_PREFIXES):
-            env.pop(key, None)
     payload = json.dumps(
         logical_env, ensure_ascii=True, separators=(",", ":")
     ).encode("ascii")
     return subprocess.run(
         [python3, "-I", guard_path, "runtime-env-json"],
         input=payload,
-        env=env,
+        env=_gateway_guard_process_env(),
         check=False,
     ).returncode
+
+
+def _gateway_env_fingerprint(path: str) -> tuple[tuple[int, ...], str]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        before = os.fstat(fd)
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(1024 * 1024, 4 * 1024 * 1024 + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > 4 * 1024 * 1024:
+                raise ValueError("Hermes env file exceeds the fingerprint limit")
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_uid,
+            before.st_gid,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_uid,
+            after.st_gid,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if identity != after_identity:
+            raise ValueError("Hermes env file changed while fingerprinting")
+        return identity, hashlib.sha256(b"".join(chunks)).hexdigest()
+    finally:
+        os.close(fd)
+
+
+def _run_gateway_env_file_guard(guard_path: str) -> int:
+    python3 = _resolve_trusted_python3()
+    if python3 is None:
+        print(
+            "[SECURITY] Refusing hermes gateway: no python3 at a trusted absolute path to run the secret-boundary guard",
+            file=sys.stderr,
+        )
+        return 127
+    env_path = _resolve_gateway_env_path(guard_path)
+    try:
+        before = _gateway_env_fingerprint(env_path)
+        rc = subprocess.run(
+            [python3, "-I", guard_path, "env-file", env_path],
+            env=_gateway_guard_process_env(),
+            check=False,
+        ).returncode
+        if rc != 0:
+            print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+            return rc
+        after = _gateway_env_fingerprint(env_path)
+    except (OSError, ValueError) as exc:
+        print(f"[SECURITY] Refusing hermes gateway: env-file validation failed: {exc}", file=sys.stderr)
+        print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+        return 1
+    if before != after:
+        print(
+            "[SECURITY] Refusing hermes gateway: env file changed during secret-boundary validation",
+            file=sys.stderr,
+        )
+        print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _harden_gateway_package_env(lazy_install_target: str) -> None:
@@ -799,8 +890,12 @@ def main(argv: list[str]) -> int:
         os.environ["HERMES_HOME"] = _MANAGED_HERMES_HOME
         os.environ["HERMES_BUNDLED_PLUGINS"] = _MANAGED_BUNDLED_PLUGINS
         os.environ["HOME"] = _MANAGED_HOME
+        rc = _run_gateway_env_file_guard(guard_path)
+        if rc != 0:
+            return rc
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
+            print("SECRET_BOUNDARY_REFUSED", file=sys.stderr)
             return rc
         _harden_gateway_package_env(os.environ["HERMES_LAZY_INSTALL_TARGET"])
     try:

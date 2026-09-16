@@ -426,7 +426,7 @@ Each entry owns these target properties:
 
 Host preparation is the reviewed E2E runner preparation mode.
 `none` makes no runner-level change.
-`hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap for the Hermes image rebuild.
+`hermes-swap` provisions swap for the remaining measured Hermes execution lanes.
 Targets that require cloudflared set `cloudflared: true` in the catalogue.
 The reusable workflow installs the pinned amd64 Debian package after validating its SHA-256 digest and package metadata.
 The installation step does not receive a catalogue profile credential.
@@ -439,9 +439,10 @@ Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
 
 The `double-onboard-hermes` and `onboard-resume-hermes` entries run the existing
-onboarding scenarios with Hermes and API port 8643. They retain sandbox identity,
-registered dashboard and API ports, and direct forward listener evidence before
-and after reuse or resume. The original entries retain OpenClaw coverage.
+onboarding scenarios with Hermes and API port 8643. `double-onboard-hermes`
+retains one sandbox identity check and proves dashboard and API forward ownership
+after reuse. `onboard-resume-hermes` retains its before-and-after resume evidence.
+The original entries retain OpenClaw coverage.
 
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
@@ -591,13 +592,14 @@ snake-case include entries and use `coverage_variant` when one job contributes
 multiple rows. `tools/e2e/workflow-plan.mts` composes and validates these sources.
 Do not add a separate hand-maintained execution list.
 
-The default coverage matrix excludes explicit-only jobs and inert typed-registry declarations.
-The rendered report lists those categories separately and inventories every typed declaration,
-including declarations that have no executable matrix cell.
-Explicit-only rows keep their coverage dimensions but do not join the default release matrix.
-Inert declarations report unresolved coverage fields and the missing executable ownership.
-
-The inert declarations are combinatorial gaps, not supported matrix cells. #8285 owns the decision on the inert cross-runtime foundation. #8286 owns executable-only registry cleanup after that decision. Do not schedule other Cartesian-product cells without an accepted supported combination. This migration removes no execution, so it requires no duplicate-to-retained-evidence mapping. A documented gap does not schedule a new combination or change release judgment.
+The typed registry contains executable matrix cells only. Each cell must name
+executable platform, install, runtime, and onboarding routes plus resolved
+coverage metadata. A declared lifecycle route must also be executable. Registry
+construction rejects invalid cells. Selecting a removed or unknown target ID
+fails and lists the available IDs. Proposed platform, agent, or runtime
+combinations stay in their owned planning issue until fixtures and execution
+ownership exist. Explicit-only workflow rows keep their coverage dimensions but
+do not join the default release matrix.
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
@@ -953,8 +955,6 @@ lanes:
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - the Anthropic-compatible `hermes-inference-switch` mode;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
-- `rebuild-hermes`;
-- `rebuild-hermes-stale-base`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
 The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
@@ -1272,14 +1272,12 @@ request resets that observation window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 11 routed workflow lane identities / 13
+telemetry for 9 routed workflow lane identities / 11
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
 - `common-egress-agent` with the `openclaw-balanced-weather`,
   `openclaw-open-reference`, and `hermes-open-reference` shards
-- `rebuild-hermes`
-- `rebuild-hermes-stale-base`
 - `mcp-bridge` with the `hermes` shard
 - `mcp-bridge` with the `deepagents` shard
 - `channels-stop-start` with the `hermes` shard
@@ -1304,9 +1302,7 @@ Each execution writes one bounded, ordered v2 time series to the canonical
 - an `initialize` endpoint after commit-bound artifact restoration; the rebuild
   jobs initialize after their fixed-capacity swap;
 - a distinct `scenario-start` for every test handled by the execution;
-- a `periodic` sample on an approximately 15-second fixed cadence for
-  `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
-  60-second fixed cadence for every other execution;
+- a `periodic` sample on an approximately 60-second fixed cadence;
 - a `phase` sample before each semantic phase transition and when the final
   phase stops; and
 - a `finalize` endpoint from an `always()` step immediately before artifact
@@ -1321,14 +1317,8 @@ catch-up burst. Each successful append also prints one bounded
 The v2 ledger accepts at most 256 samples. Ordinary sampling stops once 255
 records exist to reserve the last slot for `finalize`. A missing, historical-v1,
 already-finalized, full, or invalid ledger permanently disables comparison
-sampling for that test progress instance. The two Hermes rebuild lanes use their
-shorter cadence to improve Docker/BuildKit peak-RSS evidence without changing
-the ledger bound, schema, privacy contract, or reserved final slot. In
-`rebuild-hermes` and `rebuild-hermes-stale-base`, where legacy phase resource
-evidence is configured, the workflow establishes its 32 GiB swap before
-`initialize` so the ledger sees one stable swap capacity. If canonical sampling
-becomes unavailable, the existing five-minute full snapshot becomes the
-best-effort fallback.
+sampling for that test progress instance. If canonical sampling becomes unavailable,
+the existing five-minute full snapshot becomes the best-effort fallback.
 That full profile may run `ps`, `docker stats`, and `docker system df`
 sequentially with a 15-second timeout each, or 45 seconds in the worst case;
 canonical sampling suppresses this heavier collection while it remains active.

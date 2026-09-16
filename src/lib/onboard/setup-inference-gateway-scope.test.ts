@@ -178,22 +178,49 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     );
   });
 
-  it("selects the managed gateway for follow-up commands and fails closed on error", () => {
-    const run = vi.fn().mockReturnValueOnce({ status: 0 }).mockReturnValueOnce({ status: 17 });
+  it("selects the managed gateway for follow-up commands and fails closed on error", async () => {
+    const selectGateway = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, state: "completed" })
+      .mockResolvedValueOnce({
+        ok: false,
+        ambiguous: false,
+        unsupported: false,
+        error: { kind: "command", reason: "failed", message: "Denied" },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        ambiguous: false,
+        unsupported: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The named gateway is not registered.",
+        },
+      });
+    const lifecycle = { selectGateway };
     const error = vi.fn();
     const exitProcess = vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     });
 
-    expect(() => selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).not.toThrow();
-    expect(() => selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).toThrow(
-      "exit 17",
-    );
-    expect(run).toHaveBeenNthCalledWith(1, ["gateway", "select", GATEWAY], {
-      ignoreError: true,
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).resolves.toBeUndefined();
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).rejects.toThrow("exit 1");
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).rejects.toThrow("exit 1");
+    expect(selectGateway).toHaveBeenNthCalledWith(1, {
+      target: { kind: "named", gatewayName: GATEWAY },
     });
-    expect(run).toHaveBeenNthCalledWith(2, ["gateway", "select", GATEWAY], {
-      ignoreError: true,
+    expect(selectGateway).toHaveBeenNthCalledWith(2, {
+      target: { kind: "named", gatewayName: GATEWAY },
+    });
+    expect(selectGateway).toHaveBeenNthCalledWith(3, {
+      target: { kind: "named", gatewayName: GATEWAY },
     });
     expect(error).toHaveBeenCalledWith(expect.stringContaining("No follow-up operations"));
   });

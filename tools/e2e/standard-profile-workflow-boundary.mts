@@ -9,6 +9,10 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 type WorkflowRecord = Record<string, unknown>;
@@ -84,22 +88,6 @@ const PROFILE_JOBS = {
     maxParallel: 2,
   },
 } as const;
-
-const SDK_INSTALL_SCRIPT = [
-  "set -euo pipefail",
-  "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print | sort)",
-  'test "${#archives[@]}" -ge 1',
-  'test "${#archives[@]}" -le 2',
-  'for archive in "${archives[@]}"; do',
-  "  env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '    npm cache add "$archive" --offline --ignore-scripts',
-  "done",
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  "  npm ci --ignore-scripts --prefer-offline --no-audit --no-fund",
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '  node --input-type=module -e \'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");\'',
-  "",
-].join("\n");
 
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -356,7 +344,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Prepare native Podman E2E runtime",
     "Stage immutable stopped-state cleanup helper",
     "Install reviewed cloudflared",
-    "Add swap for Hermes image rebuild",
     "Initialize runner comparison telemetry",
     "Install OpenShell CLI",
     "Install OpenShell CLI without workflow credentials",
@@ -518,18 +505,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
   }
-  const sdkInstall = requireStep(
-    errors,
-    workflowSteps,
-    "Install reviewed OpenShell SDK archive without package credentials",
-  );
-  if (
-    !isDeepStrictEqual(sdkInstall, {
-      name: "Install reviewed OpenShell SDK archive without package credentials",
-      shell: "bash",
-      run: SDK_INSTALL_SCRIPT,
-    })
-  ) {
+  const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
     errors.push(
       "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
     );
@@ -598,43 +575,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
   ) {
     errors.push("standard E2E profile must install only the reviewed cloudflared package");
-  }
-  const rebuildSwap = requireStep(errors, workflowSteps, "Add swap for Hermes image rebuild");
-  const rebuildSwapRun = String(rebuildSwap?.run ?? "");
-  const rebuildSwapFragments = [
-    '[[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]',
-    '[[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]',
-    '[[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]',
-    '[[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted"',
-    'fail "refusing unexpected pre-existing rebuild swap path"',
-    "required_disk_bytes=$((swap_file_bytes + reserve_bytes))",
-    "trap cleanup_partial_swap EXIT",
-    '/usr/bin/sudo -n /usr/bin/fallocate -l "${swap_file_bytes}" "${swap_file}"',
-    '/usr/bin/sudo -n /usr/sbin/swapoff "${swap_file}" || true',
-    'fail "rebuild swap did not become active"',
-  ];
-  if (
-    rebuildSwap?.if !== "${{ inputs.host_preparation == 'rebuild-swap' }}" ||
-    rebuildSwap.shell !== EXECUTION_PLAN_SHELL ||
-    !isDeepStrictEqual(record(rebuildSwap.env), {
-      BASH_ENV: "/dev/null",
-      CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-      DISPATCH_SHA: "${{ github.sha }}",
-      ENV: "/dev/null",
-      EVENT_NAME: "${{ github.event_name }}",
-      EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-      LC_ALL: "C",
-      REF: "${{ github.ref }}",
-      REPOSITORY: "${{ github.repository }}",
-      RUNNER_ARCH_KIND: "${{ runner.arch }}",
-      RUNNER_ENVIRONMENT_KIND: "${{ runner.environment }}",
-      RUNNER_OS_KIND: "${{ runner.os }}",
-      WORKFLOW_SHA: "${{ github.workflow_sha }}",
-    }) ||
-    rebuildSwapFragments.some((fragment) => !rebuildSwapRun.includes(fragment)) ||
-    workflowSteps.indexOf(rebuildSwap ?? {}) !== workflowSteps.indexOf(cloudflared ?? {}) + 1
-  ) {
-    errors.push("standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore");
   }
   const comparisonInitialize = requireStep(
     errors,

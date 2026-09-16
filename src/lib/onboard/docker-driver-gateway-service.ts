@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
-import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
 import type { GatewayRecoveryOutput } from "./gateway-recovery";
 import {
@@ -129,14 +128,14 @@ export interface PackageManagedDockerDriverGatewayOptions {
   hasOpenShellGatewayUserService?: () => boolean;
   healthPollCount?: number;
   healthPollInterval?: number;
-  isDockerDriverGatewayReady?: () => Promise<boolean>;
+  isDockerDriverGatewayReady?: () => boolean | Promise<boolean>;
   managedServiceLogCommand?: string;
   now?: () => number;
   output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
   prepareOpenShellGatewayUserServiceEnv?: () => void;
   preparePortForOpenShellGatewayUserServiceStart?: () => void;
-  registerDockerDriverGatewayEndpoint: () => boolean;
-  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string;
+  registerDockerDriverGatewayEndpoint: () => boolean | Promise<boolean>;
+  observer: import("../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
   skipSandboxBridgeReachability: boolean;
   sleepSeconds?: (seconds: number) => void;
   startOpenShellGatewayUserService?: (
@@ -153,7 +152,7 @@ export interface PackageManagedDockerDriverGatewayOptions {
       output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
       skip?: boolean;
     },
-  ) => Promise<void>;
+  ) => void | Promise<void>;
 }
 
 interface OpenShellGatewayUserServiceTarget {
@@ -767,19 +766,9 @@ export function hasOpenShellGatewayUserService(
   return resolveOpenShellGatewayUserService(opts) !== null;
 }
 
-/**
- * Stop command for whichever service manager owns the gateway on this host, or
- * null when no managed service owns it and NemoClaw runs the gateway standalone.
- *
- * The resolver picks the upstream package unit, the NemoClaw unit, or the
- * Homebrew formula, so a caller that prints a stop command must ask for the
- * resolved name instead of deriving one from the platform (#8797).
- */
-export function getOpenShellGatewayServiceStopCommand(
-  opts: OpenShellGatewayUserServiceOptions = {},
-): string | null {
-  const service = resolveOpenShellGatewayUserService(opts);
-  if (!service) return null;
+function getOpenShellGatewayServiceStopCommandForTarget(
+  service: OpenShellGatewayUserServiceTarget,
+): string {
   const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
   return `${prefix} ${service.serviceName}`;
 }
@@ -1010,6 +999,11 @@ export interface TrustedActiveOpenShellGatewayUserServiceIdentity {
   executablePath: string | null;
 }
 
+export interface TrustedActiveOpenShellGatewayUserServiceStopTarget extends TrustedActiveOpenShellGatewayUserServiceIdentity {
+  /** Stop command for the same service target that supplied this process identity. */
+  stopCommand: string;
+}
+
 const OPENSHELL_HOMEBREW_SERVICE_LABELS = [
   `sh.brew.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
   `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
@@ -1045,9 +1039,9 @@ function getActiveHomebrewGatewayServiceIdentity(
   return identities.length === 1 ? identities[0] : null;
 }
 
-export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
+export function getTrustedActiveOpenShellGatewayUserServiceStopTarget(
   opts: OpenShellGatewayUserServiceOptions = {},
-): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
+): TrustedActiveOpenShellGatewayUserServiceStopTarget | null {
   const platform = opts.platform ?? process.platform;
   if (platform !== "linux" && platform !== "darwin") return null;
   const env = opts.env ?? process.env;
@@ -1063,11 +1057,17 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   if (!service) return null;
   if (service.manager === "homebrew") {
     if (!commandExists("launchctl")) return null;
-    return getActiveHomebrewGatewayServiceIdentity(service, {
+    const identity = getActiveHomebrewGatewayServiceIdentity(service, {
       env,
       existsSync: opts.existsSync ?? fs.existsSync,
       spawnSyncImpl,
     });
+    return identity
+      ? {
+          ...identity,
+          stopCommand: getOpenShellGatewayServiceStopCommandForTarget(service),
+        }
+      : null;
   }
   if (!commandExists("systemctl")) return null;
   const result = runSystemctlUser(
@@ -1095,8 +1095,19 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   }
   const mainPid = Number(properties.MainPID);
   return Number.isSafeInteger(mainPid) && mainPid > 0
-    ? { pid: mainPid, executablePath: identity.execStartPath }
+    ? {
+        pid: mainPid,
+        executablePath: identity.execStartPath,
+        stopCommand: getOpenShellGatewayServiceStopCommandForTarget(service),
+      }
     : null;
+}
+
+export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
+  const target = getTrustedActiveOpenShellGatewayUserServiceStopTarget(opts);
+  return target ? { pid: target.pid, executablePath: target.executablePath } : null;
 }
 
 export function getTrustedActiveOpenShellGatewayUserServicePid(
@@ -1414,7 +1425,7 @@ export async function startPackageManagedDockerDriverGateway({
   prepareOpenShellGatewayUserServiceEnv,
   preparePortForOpenShellGatewayUserServiceStart,
   registerDockerDriverGatewayEndpoint,
-  runCaptureOpenshell,
+  observer,
   skipSandboxBridgeReachability,
   sleepSeconds: sleepSecondsImpl = sleepSeconds,
   startOpenShellGatewayUserService: startService = startOpenShellGatewayUserService,
@@ -1514,21 +1525,16 @@ export async function startPackageManagedDockerDriverGateway({
   const waitOptions = createGatewayHealthWaitOptions(pollCount, pollInterval, now, (ms) =>
     sleepSecondsImpl(ms / 1000),
   );
-  let lastReadiness = { cliHealthy: false, grpcHealthy: false, registered: false };
+  const registered = waitOptions !== null && (await registerDockerDriverGatewayEndpoint());
+  let lastReadiness = { cliHealthy: false, grpcHealthy: false, registered };
   const healthy =
+    registered &&
     waitOptions !== null &&
     (await waitUntilAsync(async () => {
-      const registered = registerDockerDriverGatewayEndpoint();
-      if (!registered) {
-        lastReadiness = { cliHealthy: false, grpcHealthy: false, registered };
-        return false;
-      }
-      const status = runCaptureOpenshell(["status"], { ignoreError: true });
-      const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-        ignoreError: true,
+      const observation = await observer.observeGatewayReuse({
+        target: { kind: "named", gatewayName },
       });
-      const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-      const cliHealthy = isGatewayHealthy(status, namedInfo, currentInfo);
+      const cliHealthy = !observation.error && observation.healthy && observation.namedMetadata;
       const grpcHealthy = await isDockerDriverGatewayReady();
       lastReadiness = { cliHealthy, grpcHealthy, registered };
       return cliHealthy && grpcHealthy;
