@@ -386,7 +386,14 @@ export function createHermesPortableReadyRunner(
       scopeHermesPortableReadyExecArgs(args, sandboxName, gatewayName) ??
       (args[0] === "sandbox" && args[1] === "delete" && args.length === 3 && args[2] === sandboxName
         ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
-        : null);
+        : args.length === 5 &&
+            args[0] === "sandbox" &&
+            args[1] === "delete" &&
+            args[2] === "-g" &&
+            args[3] === gatewayName &&
+            args[4] === sandboxName
+          ? args
+          : null);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
     return capture(scoped);
   };

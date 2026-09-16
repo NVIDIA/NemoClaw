@@ -80,7 +80,7 @@ interface MakeEnvOptions {
  *    - `sandbox list` reports live sandboxes for the active gateway
  *      and omits `dst` from later source-gateway listings after deletion
  *    - `status` reports the gateway as Connected
- *    - `sandbox delete dst` exits 0 (and logs the call)
+ *    - the owner-scoped `sandbox delete` for `dst` exits 0 (and logs the call)
  *    - `sandbox create` exits non-zero (intentional; the integration tests
  *      only need to verify control flow reached/passed the delete step)
  *  - fake docker that:
@@ -174,7 +174,7 @@ function makeExistingDestEnv(
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
       destinationGatewayName
-        ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" = ${JSON.stringify(destinationGatewayName)} ]; then printf "NAME STATUS\\ndst Ready\\n"; else ${opts.foreignActiveGatewayListsDestination ? 'printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"' : 'printf "NAME STATUS\\nsrc Ready\\n"'}; fi`
+        ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" = ${JSON.stringify(destinationGatewayName)} ]; then if [ -e "$DELETED_DESTINATION" ]; then printf "NAME STATUS\\n"; else printf "NAME STATUS\\ndst Ready\\n"; fi; else ${opts.foreignActiveGatewayListsDestination ? 'printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"' : 'printf "NAME STATUS\\nsrc Ready\\n"'}; fi`
         : '  if [ -e "$DELETED_DESTINATION" ]; then printf "NAME STATUS\nsrc Ready\n"; else printf "NAME STATUS\nsrc Ready\ndst Ready\n"; fi',
       "  exit 0",
       "fi",
@@ -245,7 +245,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.out).toMatch(/Re-run with --force/);
     // Critically, no delete is attempted in the refuse path.
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
-    expect(log).not.toMatch(/sandbox delete dst/);
+    expect(log).not.toMatch(/sandbox delete(?: -g \S+)? dst/);
   });
 
   it("refuses by default when the destination is registered on another gateway", () => {
@@ -256,7 +256,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/Destination sandbox 'dst' already exists/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
-    expect(log).not.toMatch(/sandbox delete dst/);
+    expect(log).not.toMatch(/sandbox delete(?: -g \S+)? dst/);
   });
 
   it("refuses by default before running source-image preflight per Codex P2 review (#3796)", () => {
@@ -281,7 +281,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
-    expect(log).toMatch(/sandbox delete dst/);
+    expect(log).toContain("sandbox delete -g nemoclaw dst");
   });
 
   it("deletes a registered cross-gateway destination on its own gateway before recreating", () => {
@@ -292,7 +292,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/Deleting existing destination 'dst'/);
     const lines = fs.readFileSync(osLog, "utf-8").trim().split("\n");
-    const deleteIndex = lines.indexOf("sandbox delete dst");
+    const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8090 dst");
     expect(deleteIndex).toBeGreaterThan(0);
     expect(lines.slice(0, deleteIndex)).toContain("gateway select nemoclaw-8090");
     expect(lines.slice(deleteIndex + 1)).toContain("gateway select nemoclaw");
@@ -307,7 +307,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/Cannot verify destination sandbox 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
-    expect(log).not.toMatch(/sandbox delete dst/);
+    expect(log).not.toMatch(/sandbox delete(?: -g \S+)? dst/);
   });
 
   it("aborts before deleting when destination gateway select fails even if the active gateway lists dst", () => {
@@ -321,7 +321,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.out).toMatch(/Cannot verify destination sandbox 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
     expect(log).toMatch(/gateway select nemoclaw-8090/);
-    expect(log).not.toMatch(/sandbox delete dst/);
+    expect(log).not.toMatch(/sandbox delete(?: -g \S+)? dst/);
   });
 
   it("skips the prompt under NEMOCLAW_NON_INTERACTIVE=1 even without --yes", () => {
@@ -331,7 +331,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(base.osLog) ? fs.readFileSync(base.osLog, "utf-8") : "";
-    expect(log).toMatch(/sandbox delete dst/);
+    expect(log).toContain("sandbox delete -g nemoclaw dst");
   });
 
   // #3756 P1: preflight failures must not delete the destination.
@@ -344,7 +344,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.out).toMatch(/No snapshots found for 'src'/);
     expect(r.out).not.toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
-    expect(log).not.toMatch(/sandbox delete dst/);
+    expect(log).not.toMatch(/sandbox delete(?: -g \S+)? dst/);
   });
 
   it("does NOT delete the destination when the selector resolves to nothing (--force --yes)", () => {
@@ -357,7 +357,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.out).toMatch(/No snapshot matching 'not-a-real-snap' found/);
     expect(r.out).not.toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
-    expect(log).not.toMatch(/sandbox delete dst/);
+    expect(log).not.toMatch(/sandbox delete(?: -g \S+)? dst/);
   });
 
   it("does NOT delete the destination when the source pod image cannot be resolved (--force --yes)", () => {
@@ -370,6 +370,6 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(r.out).toMatch(/aborting before deleting 'dst'/);
     expect(r.out).not.toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
-    expect(log).not.toMatch(/sandbox delete dst/);
+    expect(log).not.toMatch(/sandbox delete(?: -g \S+)? dst/);
   });
 });

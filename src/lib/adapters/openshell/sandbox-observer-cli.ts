@@ -83,6 +83,7 @@ export type RunSandboxCommand = (
     ignoreError: true;
     killProcessTreeOnTimeout: true;
     killSignal: "SIGKILL";
+    stdio: ["ignore", "pipe", "pipe"];
     suppressOutput: true;
     timeout: number;
   },
@@ -161,7 +162,8 @@ function targetArgs(
 }
 
 function commandOutput(result: CapturedOpenShellCommandResult): string {
-  return `${result.stderr ?? ""}\n${result.stdout ?? result.output ?? ""}`.trim();
+  const streams = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
+  return streams || result.output.trim();
 }
 
 function successfulCommandOutput(result: CapturedOpenShellCommandResult): string {
@@ -196,7 +198,8 @@ export function classifyCliOpenShellCommandError(
   if (errorCode === "ETIMEDOUT") {
     return { kind: "timeout", message: messages.timeout };
   }
-  if (result.status === 0 && !result.error) return null;
+  const printedError = /^\s*Error:/imu.test(output);
+  if (result.status === 0 && !result.error && !printedError) return null;
   if (isOpenShellSandboxSchemaMismatch(output)) {
     return {
       kind: "schema",
@@ -231,7 +234,7 @@ export function classifyCliOpenShellCommandError(
       message: "OpenShell could not reach the selected gateway.",
     };
   }
-  if (result.status !== 0 || result.error) {
+  if (result.status !== 0 || result.error || printedError) {
     return {
       kind: "command",
       reason: result.status === 2 ? "invalid_request" : "failed",
@@ -267,11 +270,17 @@ export function isExplicitMissingOpenShellSandboxOutput(
   const structured = clean.replace(/\n\s*│\s*/g, " ");
   const exactStructuredNotFound =
     /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu;
-  if (exactStructuredNotFound.test(structured)) return true;
+  const exactStatusNotFound =
+    /^(?:error:\s*)?(?:×\s*)?status:\s*["']?Not\s+Found["']?\s*,\s*message:\s*["']sandbox not found["']$/iu;
+  if (exactStructuredNotFound.test(structured) || exactStatusNotFound.test(structured)) return true;
 
   const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
   return (
+    new RegExp(
+      `^(?:error:\\s*)?status:\\s*NotFound,\\s*sandbox\\s+${namedSandbox}\\s+not\\s+found[.!]?$`,
+      "iu",
+    ).test(clean) ||
     new RegExp(
       `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
       "iu",
@@ -292,30 +301,45 @@ function streamText(value: string | Buffer | null | undefined): string {
   return String(value ?? "");
 }
 
+function captureOpenShellCommandFromRunner(run: RunSandboxCommand): CaptureOpenShellCommand {
+  return (args, options) => {
+    const result = run(args, {
+      ignoreError: true,
+      killProcessTreeOnTimeout: true,
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
+      timeout: options.timeout,
+    });
+    const stdout = streamText(result.stdout);
+    const stderr = streamText(result.stderr);
+    return {
+      status: result.status ?? null,
+      output: `${stdout}\n${stderr}`.trim(),
+      stdout,
+      stderr,
+      ...(result.error ? { error: result.error } : {}),
+    };
+  };
+}
+
 /** Normalize structured runner results inside the CLI implementation. */
 export function createCliOpenShellSandboxObserverFromRunner(
   run: RunSandboxCommand,
   defaultTimeoutMs?: number,
 ): OpenShellSandboxObserver {
   return createCliOpenShellSandboxObserver({
-    capture: (args, options) => {
-      const result = run(args, {
-        ignoreError: true,
-        killProcessTreeOnTimeout: true,
-        killSignal: "SIGKILL",
-        suppressOutput: true,
-        timeout: options.timeout,
-      });
-      const stdout = streamText(result.stdout);
-      const stderr = streamText(result.stderr);
-      return {
-        status: result.status ?? null,
-        output: `${stdout}${stderr}`.trim(),
-        stdout,
-        stderr,
-        ...(result.error ? { error: result.error } : {}),
-      };
-    },
+    capture: captureOpenShellCommandFromRunner(run),
+    ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+  });
+}
+
+export function createCliOpenShellSandboxLookupFromRunner(
+  run: RunSandboxCommand,
+  defaultTimeoutMs?: number,
+): CliOpenShellSandboxLookup {
+  return createCliOpenShellSandboxLookup({
+    capture: captureOpenShellCommandFromRunner(run),
     ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
   });
 }
