@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   firstOccupiedInferencePublish,
   lsofListenArguments,
+  occupiedFromBindProbeStatus,
   occupiedInferencePublishMessage,
   parseLsofListener,
   publishedInferenceHostBindings,
@@ -88,9 +89,20 @@ describe("Podman inference publish preflight", () => {
         (address, port) =>
           address === "127.0.0.1" && port === 11434
             ? { address, port, process: "ollama", pid: 7 }
-            : null,
+            : { address, port, process: "rootlessport", pid: 9 },
       ),
     ).toEqual({ address: "127.0.0.1", port: 11434, process: "ollama", pid: 7 });
+  });
+
+  it("treats bind-probe status 2 as a preflight error, not a free port (#11723)", () => {
+    expect(occupiedFromBindProbeStatus(0, "169.254.2.2", 11434)).toBe(false);
+    expect(occupiedFromBindProbeStatus(1, "169.254.2.2", 11434)).toBe(true);
+    expect(() => occupiedFromBindProbeStatus(2, "169.254.2.2", 11434)).toThrow(
+      "Cannot bind the inference publish target 169.254.2.2:11434.",
+    );
+    expect(() => occupiedFromBindProbeStatus(null, "169.254.2.2", 11434)).toThrow(
+      "Cannot bind the inference publish target 169.254.2.2:11434.",
+    );
   });
 
   it("reports a portable gateway occupant when loopback is free (#11723)", () => {

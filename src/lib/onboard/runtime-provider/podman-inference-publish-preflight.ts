@@ -106,6 +106,16 @@ function lsofListener(address: string, port: number): OccupiedInferencePublish |
   return null;
 }
 
+export function occupiedFromBindProbeStatus(
+  status: number | null,
+  address: string,
+  port: number,
+): boolean {
+  if (status === 0) return false;
+  if (status === 1) return true;
+  throw new Error(`Cannot bind the inference publish target ${address}:${String(port)}.`);
+}
+
 function probePortBoundOnAddress(address: string, port: number): boolean {
   if (!IPV4.test(address) || !Number.isInteger(port) || port <= 0 || port > 65_535) return false;
   if (address === "127.0.0.1") return probePortBoundSync(port);
@@ -116,15 +126,14 @@ function probePortBoundOnAddress(address: string, port: number): boolean {
     "const exit = (code) => { if (!done) { done = true; process.exit(code); } };" +
     "srv.once('error', (e) => exit(e && e.code === 'EADDRINUSE' ? 1 : 2));" +
     `srv.listen(${String(port)}, ${JSON.stringify(address)}, () => srv.close(() => exit(0)));`;
-  try {
-    const result = spawnSync(process.execPath, ["-e", script], {
-      stdio: "ignore",
-      timeout: 2_000,
-    });
-    return result.status === 1;
-  } catch {
-    return false;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    stdio: "ignore",
+    timeout: 2_000,
+  });
+  if (result.error) {
+    throw new Error(`Cannot bind the inference publish target ${address}:${String(port)}.`);
   }
+  return occupiedFromBindProbeStatus(result.status, address, port);
 }
 
 export function inspectHostInferencePublish(
