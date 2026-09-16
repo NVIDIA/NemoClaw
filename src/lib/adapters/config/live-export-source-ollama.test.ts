@@ -10,7 +10,6 @@ import {
 import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { EXPORTED_OLLAMA_MODEL } from "../../config/model";
 import { validateNemoClawConfig } from "../../config/schema";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
@@ -28,7 +27,10 @@ import {
 
 function ollamaProbe(observed: ObservedOllamaProxy) {
   const models = JSON.stringify({
-    models: [{ name: observed.serving.model.servedName, digest: observed.serving.model.digest }],
+    models: [
+      { name: "unrelated:latest", digest: `sha256:${"b".repeat(64)}` },
+      { name: observed.serving.model.servedName, digest: observed.serving.model.digest },
+    ],
   });
   return {
     backend: {
@@ -51,9 +53,8 @@ function ollamaProbe(observed: ObservedOllamaProxy) {
   };
 }
 
-function mockOllamaSource() {
+function mockOllamaSource(model: string = "qwen3.5:9b") {
   vi.spyOn(os, "platform").mockReturnValue("linux");
-  const model = EXPORTED_OLLAMA_MODEL;
   const { source, observed } = ollamaSource(model);
   mockSupportedLiveSource(3, 3, source);
   const effective = configuration();
@@ -106,6 +107,13 @@ function mockOllamaSource() {
 describe("attached Ollama export pipeline", () => {
   it.each([
     {
+      name: "selected non-default model",
+      model: "qwen2.5:0.5b",
+      workspace: "default",
+      credentialEnv: null,
+      readProfile: () => Promise.resolve(openAiProviderProfile()),
+    },
+    {
       name: "legacy workspace without a user credential",
       workspace: "default",
       credentialEnv: null,
@@ -130,10 +138,10 @@ describe("attached Ollama export pipeline", () => {
       readProfile: () => Promise.reject({ code: 5 }),
     },
   ])(
-    "exports the $name binding without reading gateway credentials (#11435)",
-    async ({ workspace, credentialEnv, readProfile }) => {
+    "exports the $name binding without reading gateway credentials (#11857)",
+    async ({ workspace, credentialEnv, readProfile, model = "qwen3.5:9b" }) => {
       const { source, observed, probe, readCredential, localProvider, effectivePolicy } =
-        mockOllamaSource();
+        mockOllamaSource(model);
       source.credentialEnv = credentialEnv;
       localProvider.profileWorkspace = workspace;
       raw.getProviderProfile.mockImplementation(readProfile);
@@ -153,7 +161,7 @@ describe("attached Ollama export pipeline", () => {
         {
           name: "primary",
           providerRef: "local-ollama",
-          overrides: { model: EXPORTED_OLLAMA_MODEL },
+          overrides: { model },
         },
       ]);
       expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
@@ -165,6 +173,50 @@ describe("attached Ollama export pipeline", () => {
       );
       expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(effectivePolicy);
       expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      authority: "retained selection",
+      category: "drifted",
+      change: ({ source }: ReturnType<typeof mockOllamaSource>) => {
+        source.model = "qwen3.5:9b";
+      },
+    },
+    {
+      authority: "live route",
+      category: "live-verification-failed",
+      change: () => {
+        vi.mocked(getLiveGatewayInference).mockReturnValue({
+          failure: null,
+          inference: { provider: "ollama-local", model: "qwen3.5:9b" },
+          output: "",
+          status: 0,
+        });
+      },
+    },
+    {
+      authority: "startup profile",
+      category: "drifted",
+      change: ({ source }: ReturnType<typeof mockOllamaSource>) => {
+        source.workload = ollamaSource().source.workload;
+      },
+    },
+  ])(
+    "refuses a selected model that disagrees with the $authority (#11857)",
+    async ({ category, change }) => {
+      change(mockOllamaSource("qwen2.5:0.5b"));
+      expectExportRefusal(await exportLiveSource(), { category });
+    },
+  );
+
+  it.each(["readProxyModels", "readDaemonModels"] as const)(
+    "refuses invalid selected-model evidence from %s without publication (#11857)",
+    async (reader) => {
+      const { probe } = mockOllamaSource("qwen2.5:0.5b");
+      probe[reader].mockReturnValue(JSON.stringify({ models: [] }));
+      expectExportRefusal(await exportLiveSource(), { category: "live-verification-failed" });
     },
   );
   it.each([
@@ -220,12 +272,40 @@ describe("attached Ollama export pipeline", () => {
       category: "drifted",
     });
   });
-  it("refuses a continuously changing active proxy identity (#11435)", async () => {
-    const { observed } = mockOllamaSource();
-    let pid = observed.pid;
-    vi.mocked(createOllamaExportProbe).mockImplementation(() =>
-      ollamaProbe({ ...observed, pid: ++pid }),
-    );
+  it.each([
+    {
+      field: "pid",
+      change: (observed: ObservedOllamaProxy, revision: number) => {
+        Object.assign(observed, { pid: observed.pid + revision });
+      },
+    },
+    {
+      field: "daemon port",
+      change: (observed: ObservedOllamaProxy, revision: number) => {
+        observed.serving.daemon.hostPort += revision * 10;
+      },
+    },
+    {
+      field: "proxy port",
+      change: (observed: ObservedOllamaProxy, revision: number) => {
+        observed.serving.proxy.hostPort += revision;
+      },
+    },
+    {
+      field: "digest",
+      change: (observed: ObservedOllamaProxy, revision: number) => {
+        observed.serving.model.digest = `sha256:${String(revision).repeat(64)}`;
+      },
+    },
+  ])("refuses continuously changing Ollama $field observations (#11857)", async ({ change }) => {
+    const { observed } = mockOllamaSource("qwen2.5:0.5b");
+    let revision = 0;
+    vi.mocked(createOllamaExportProbe).mockImplementation(() => {
+      const changed = structuredClone(observed);
+      revision += 1;
+      change(changed, revision);
+      return ollamaProbe(changed);
+    });
     expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
   });
   it.each(["", "default"])(

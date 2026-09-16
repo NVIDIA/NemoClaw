@@ -3,7 +3,10 @@
 
 import { withSelectedOpenShellCommandOptions } from "./command-argv";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
-import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
+import {
+  assertNoOpenShellGatewayEndpointOverride,
+  OpenShellGatewayEndpointOverrideError,
+} from "./gateway-scope";
 import type { OpenShellGatewayObservation, OpenShellGatewayObserver } from "./gateway-observer";
 import { isValidName } from "../../sandbox-name-contract";
 import { stripAnsi as stripOpenShellCliAnsi } from "./client";
@@ -180,7 +183,14 @@ export function createCliOpenShellGatewayObserver(
             (state === "missing_named" && absentStatus),
           diagnostic,
         };
-      } catch {
+      } catch (error) {
+        if (error instanceof OpenShellGatewayEndpointOverrideError) {
+          return failed({
+            kind: "transport",
+            reason: "endpoint_override",
+            message: error.message,
+          });
+        }
         return failed({
           kind: "command",
           reason: "failed",
