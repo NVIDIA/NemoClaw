@@ -24,10 +24,10 @@ spec:
         provider: docker
       network:
         tier: isolated
+      harness:
+        kind: mini-swe-agent
       agents:
         - name: main
-          harness:
-            kind: mini-swe-agent
           inference:
             routes:
               - name: primary

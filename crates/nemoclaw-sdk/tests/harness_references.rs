@@ -9,17 +9,17 @@ use serde_json::{Value, json};
 fn input() -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["agents"][0]["harness"] =
+    value["spec"]["sandboxes"][0]["harness"] =
         json!({"kind":"openclaw", "execution":{"timeoutSeconds":900}});
     value
 }
 fn shared(mut value: Value, sandbox: bool) -> Value {
-    let harness = value["spec"]["sandboxes"][0]["agents"][0]
+    let harness = value["spec"]["sandboxes"][0]
         .as_object_mut()
         .unwrap()
         .remove("harness")
         .unwrap();
-    value["spec"]["sandboxes"][0]["agents"][0]["harnessRef"] = json!("assistant");
+    value["spec"]["sandboxes"][0]["harnessRef"] = json!("assistant");
     let scope = if sandbox {
         &mut value["spec"]["sandboxes"][0]
     } else {
@@ -70,22 +70,38 @@ fn shared_harness_configuration_compiles_identically_and_survives_export() {
     }
 }
 #[test]
-fn harness_selection_rejects_ambiguity_shadowing_and_conflicting_runtimes() {
+fn sandbox_harness_selection_rejects_ambiguity_agent_selection_and_unsupported_counts() {
     let mut missing = shared(input(), false);
-    missing["spec"]["sandboxes"][0]["agents"][0]["harnessRef"] = json!("missing");
+    missing["spec"]["sandboxes"][0]["harnessRef"] = json!("missing");
     let mut both = shared(input(), false);
-    both["spec"]["sandboxes"][0]["agents"][0]["harness"] = json!({"kind":"openclaw"});
+    both["spec"]["sandboxes"][0]["harness"] = json!({"kind":"openclaw"});
     let mut shadow = shared(input(), false);
     shadow["spec"]["sandboxes"][0]["harnesses"] = shadow["spec"]["harnesses"].clone();
-    let mut conflict = shared(input(), false);
-    let mut other = input()["spec"]["sandboxes"][0]["agents"][0].clone();
+    let mut absent = input();
+    absent["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("harness");
+    let mut legacy = input();
+    legacy["spec"]["sandboxes"][0]["agents"][0]["harness"] = json!({"kind":"openclaw"});
+    let mut legacy_ref = input();
+    legacy_ref["spec"]["sandboxes"][0]["agents"][0]["harnessRef"] = json!("assistant");
+    let mut limited = input();
+    limited["spec"]["gateway"] =
+        json!({"management":"external","endpoint":"http://127.0.0.1:8080"});
+    limited["spec"]["sandboxes"][0]["harness"] = json!({"kind":"hermes"});
+    let mut other = limited["spec"]["sandboxes"][0]["agents"][0].clone();
     other["name"] = json!("other");
-    other["harness"]["execution"]["timeoutSeconds"] = json!(1000);
-    conflict["spec"]["sandboxes"][0]["agents"]
+    limited["spec"]["sandboxes"][0]["agents"]
         .as_array_mut()
         .unwrap()
         .push(other);
-    for value in [missing, both, shadow, conflict] {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    for value in [absent, both, legacy, legacy_ref, limited] {
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+        assert!(!schema.is_valid(&value));
+    }
+    for value in [missing, shadow] {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
 }

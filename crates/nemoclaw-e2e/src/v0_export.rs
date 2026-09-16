@@ -222,6 +222,10 @@ pub fn desired_state_from_v0_export(
             }],
             sandboxes: vec![Sandbox {
                 name: sandbox.name,
+                harness: Some(Harness {
+                    kind: agent.harness,
+                    ..Harness::default()
+                }),
                 image: Image {
                     ref_: bindings.sandbox_image,
                 },
@@ -231,10 +235,6 @@ pub fn desired_state_from_v0_export(
                 network: sandbox.network,
                 agents: vec![Agent {
                     name: agent.name,
-                    harness: Some(Harness {
-                        kind: agent.harness,
-                        ..Harness::default()
-                    }),
                     inference: Some(agent.inference),
                     auth: agent.auth,
                     ..Agent::default()

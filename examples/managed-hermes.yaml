@@ -27,13 +27,13 @@ spec:
         provider: docker
       network:
         tier: isolated
+      harness:
+        kind: hermes
+        interfaces:
+          dashboard:
+            enabled: false
       agents:
         - name: main
-          harness:
-            kind: hermes
-            interfaces:
-              dashboard:
-                enabled: false
           inference:
             routes:
               - name: primary

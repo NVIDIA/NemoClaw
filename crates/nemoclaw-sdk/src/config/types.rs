@@ -216,6 +216,18 @@ pub struct ManagedOllama {
 #[serde(default, deny_unknown_fields)]
 /// The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.
 pub struct Sandbox {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Harness")]
+    /// Inline harness configuration. Exactly one of harness or harnessRef is required. Every agent in the sandbox is an instance of this harness implementation.
+    pub harness: Option<Harness>,
+    #[serde(
+        rename = "harnessRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Name of a visible harness configuration. Excludes inline harness.
+    pub harness_ref: Option<String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
     /// Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.
@@ -252,7 +264,7 @@ pub struct Sandbox {
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
     pub network: Network,
     #[serde(rename = "agents")]
-    /// One or more named OpenClaw agents sharing identical harness settings. Other harnesses require one agent.
+    /// Instances of the sandbox-selected harness. OpenClaw supports multiple named agents sharing one runtime process; other harnesses require one agent.
     pub agents: Vec<Agent>,
 }
 
@@ -301,7 +313,7 @@ pub struct Network {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// One Fabric harness and its inference route.
+/// One agent instance with its own inference choices, tools, and integrations.
 pub struct Agent {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
@@ -318,18 +330,6 @@ pub struct Agent {
     #[serde(rename = "name")]
     /// Lowercase agent name.
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "Harness")]
-    /// Inline harness configuration. Exactly one of harness or harnessRef is required. Agents in a sandbox must select identical harness settings.
-    pub harness: Option<Harness>,
-    #[serde(
-        rename = "harnessRef",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(default, with = "String")]
-    /// Name of an enclosing harness configuration. Excludes inline harness.
-    pub harness_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Inference")]
     /// Inline inference configuration. Exactly one of inference or inferenceRef is required.

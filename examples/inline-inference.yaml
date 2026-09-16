@@ -16,10 +16,10 @@ spec:
     endpoint: http://127.0.0.1:17681
   sandboxes:
     - name: assistant
+      harness:
+        kind: openclaw
       agents:
         - name: researcher
-          harness:
-            kind: openclaw
           inference:
             routes:
               - name: primary

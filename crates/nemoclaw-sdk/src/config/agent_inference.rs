@@ -316,7 +316,7 @@ impl Document {
         agent: &Agent,
         route: &Route,
     ) -> Result<RuntimeModel, ConfigError> {
-        let harness = self.agent_harness(agent)?;
+        let harness = self.sandbox_harness()?;
         let (_, scope) = self.scoped_inference(agent)?;
         let provider = self.route_provider(route, scope)?;
         let connection = self.provider_connection(provider)?;
@@ -349,7 +349,7 @@ impl Document {
     pub(crate) fn runtime_inference(&self) -> Result<Option<RuntimeInference>, ConfigError> {
         let agents = &self.spec.sandboxes[0].agents;
         let agent = &agents[0];
-        let harness = self.agent_harness(agent)?;
+        let harness = self.sandbox_harness()?;
         let primary_inference = self.agent_inference(agent)?;
         let primary = self.runtime_model(agent, primary_inference.default_route()?)?;
         let choices = agents.iter().any(|agent| {

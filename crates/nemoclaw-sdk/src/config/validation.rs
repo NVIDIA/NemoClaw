@@ -175,13 +175,13 @@ impl Document {
         )?;
         sandbox.network.validate()?;
         require(!sandbox.agents.is_empty(), "at least one agent is required")?;
-        let web_search = self.web_search()?;
-        sandbox.policy_proto(
-            web_search.is_some(),
-            self.agent_harness(&sandbox.agents[0])?
-                .observability
-                .as_ref(),
+        let harness = self.sandbox_harness()?;
+        require(
+            sandbox.agents.len() == 1 || harness.kind == "openclaw",
+            "multiple agents require OpenClaw",
         )?;
+        let web_search = self.web_search()?;
+        sandbox.policy_proto(web_search.is_some(), harness.observability.as_ref())?;
         if let Some(search) = web_search {
             require(
                 selected_providers
@@ -190,7 +190,7 @@ impl Document {
                 "brave-search is reserved for web search",
             )?;
             search.validate(
-                &self.agent_harness(&sandbox.agents[0])?.kind,
+                &harness.kind,
                 sandbox
                     .agents
                     .iter()
@@ -201,55 +201,46 @@ impl Document {
         let mut names = std::collections::BTreeSet::new();
         for agent in &sandbox.agents {
             require(names.insert(&agent.name), "agent names must be unique")?;
+
             require(
-                sandbox.agents.len() == 1 || self.agent_harness(agent)?.kind == "openclaw",
-                "multiple agents require OpenClaw",
-            )?;
-            require(
-                agent.tools.is_none() || self.agent_harness(agent)?.kind == "openclaw",
+                agent.tools.is_none() || harness.kind == "openclaw",
                 "tool restrictions require OpenClaw",
             )?;
             require(
                 SLUG.is_match(&agent.name),
                 "agent requires a lowercase name",
             )?;
+
             require(
-                is_fabric_harness(&self.agent_harness(agent)?.kind),
-                "agent requires a supported harness",
-            )?;
-            require(
-                self.agent_inference(agent)?.routes.len() == 1
-                    || self.agent_harness(agent)?.kind == "openclaw",
+                self.agent_inference(agent)?.routes.len() == 1 || harness.kind == "openclaw",
                 "multiple model choices require OpenClaw",
             )?;
             for route in &self.agent_inference(agent)?.routes {
                 let (_, scope) = self.scoped_inference(agent)?;
                 let provider = self.route_provider(route, scope)?;
                 require(
-                    matches!(
-                        self.agent_harness(agent)?.kind.as_str(),
-                        "openclaw" | "hermes"
-                    ) || (gateway.management == "external"
-                        && provider.service.is_none()
-                        && provider.ollama.is_none()),
+                    matches!(harness.kind.as_str(), "openclaw" | "hermes")
+                        || (gateway.management == "external"
+                            && provider.service.is_none()
+                            && provider.ollama.is_none()),
                     "this harness requires external gateway and inference services",
                 )?;
                 require(
-                    self.agent_harness(agent)?.kind != "pi" || provider.api.is_none(),
+                    harness.kind != "pi" || provider.api.is_none(),
                     "Pi selects its API through model metadata; omit provider api",
                 )?;
                 let api = provider
                     .api
-                    .unwrap_or(InferenceApi::for_harness(&self.agent_harness(agent)?.kind));
+                    .unwrap_or(InferenceApi::for_harness(&harness.kind));
                 require(
-                    api.supported(&self.agent_harness(agent)?.kind)
+                    api.supported(&harness.kind)
                         && (api == InferenceApi::AnthropicMessages)
                             == (provider.provider == "anthropic"),
                     "API must match the provider implementation and be supported by the harness",
                 )?;
                 if agent.auth.is_some() {
                     require(
-                        self.agent_harness(agent)?.kind == "hermes"
+                        harness.kind == "hermes"
                             && (provider.credential.is_some()
                                 || provider.ollama_proxy.is_some()
                                 || provider
@@ -259,12 +250,9 @@ impl Document {
                         "Hermes API-key auth must reference the routed provider with a credential",
                     )?;
                 }
-                route
-                    .overrides
-                    .tuning
-                    .validate(&self.agent_harness(agent)?.kind)?;
+                route.overrides.tuning.validate(&harness.kind)?;
                 require(
-                    route.overrides.pi_model.is_none() || self.agent_harness(agent)?.kind == "pi",
+                    route.overrides.pi_model.is_none() || harness.kind == "pi",
                     "piModel is supported only by the Pi harness",
                 )?;
                 require(
@@ -276,11 +264,7 @@ impl Document {
                     "service requires its declared served model and compatible sandbox placement",
                 )?;
                 if let Some(proxy) = &provider.ollama_proxy {
-                    proxy.validate(
-                        provider,
-                        &route.overrides.model,
-                        &self.agent_harness(agent)?.kind,
-                    )?;
+                    proxy.validate(provider, &route.overrides.model, &harness.kind)?;
                 }
                 if provider.ollama.is_some() || provider.ollama_proxy.is_some() {
                     require(

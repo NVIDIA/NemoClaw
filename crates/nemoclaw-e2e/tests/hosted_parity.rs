@@ -70,7 +70,7 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
     assert_eq!(process.run_as_user.as_deref(), Some("1000"));
     assert_eq!(process.run_as_group.as_deref(), Some("1000"));
     let agent = &sandbox.agents[0];
-    assert_eq!(v1.agent_harness(agent).unwrap().kind, "openclaw");
+    assert_eq!(v1.sandbox_harness().unwrap().kind, "openclaw");
     let inference = v1.agent_inference(agent).unwrap();
     assert_eq!(
         inference.routes[0].provider_ref.as_deref(),
@@ -343,7 +343,7 @@ mod live {
         assert_eq!(process.run_as_user.as_deref(), Some("1000"));
         assert_eq!(process.run_as_group.as_deref(), Some("1000"));
         let agent = &sandbox.agents[0];
-        assert_eq!(document.agent_harness(agent).unwrap().kind, "openclaw");
+        assert_eq!(document.sandbox_harness().unwrap().kind, "openclaw");
         let inference = document.agent_inference(agent).unwrap();
         assert_eq!(
             inference.routes[0].provider_ref.as_deref(),

@@ -25,10 +25,10 @@ spec:
         provider: docker
       network:
         tier: isolated
+      harness:
+        kind: remote-agent
       agents:
         - name: main
-          harness:
-            kind: remote-agent
           inference:
             routes:
               - name: primary

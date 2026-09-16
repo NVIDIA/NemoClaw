@@ -10,6 +10,9 @@ Commit bodies retain the test-first implementation decisions.
 The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as strict translation of a redacted v0 export artifact followed by a new v1 lifecycle.
 It is explicitly live-gated and is not qualification evidence until a native Linux run uses a qualified export artifact, records the reviewed `sandbox:sandbox` to `1000:1000` process-principal decision, and has its redacted lifecycle evidence reviewed and retained here.
 
+Current native inference qualification is [blocked by OpenShell main-process environment propagation](rust-native-inference-linux-arm64.md).
+The record separates passing schema and protocol fixtures from the failed live attempt.
+
 | Contract | Evidence |
 |---|---|
 | SDK and CLI plan/apply/export/destroy; ownership, identity, drift, partial creation, failed observations, interrupted destroy | Workspace behavioral tests and real OpenTofu protocol/lifecycle tests in [native platform qualification](rust-native-platforms.json) |

@@ -153,11 +153,7 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         "pi",
     ] {
         let mut document = original.clone();
-        document.spec.sandboxes[0].agents[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .kind = harness.into();
+        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.into();
         document.spec.inference_providers[0].provider = if harness == "claude" {
             "anthropic"
         } else {
@@ -166,19 +162,12 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         .into();
         assert!(document.validate().is_ok());
         assert_eq!(
-            document
-                .agent_harness(&document.spec.sandboxes[0].agents[0])
-                .unwrap()
-                .runtime(),
+            document.sandbox_harness().unwrap().runtime(),
             format!("fabric-{harness}")
         );
     }
     let mut wrong = original;
-    wrong.spec.sandboxes[0].agents[0]
-        .harness
-        .as_mut()
-        .unwrap()
-        .kind = "claude".into();
+    wrong.spec.sandboxes[0].harness.as_mut().unwrap().kind = "claude".into();
     assert!(wrong.validate().is_err());
     let base = include_str!("fixtures/config/managed-ollama.yaml");
     for (from, to) in [
@@ -199,8 +188,7 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
         include_str!("fixtures/config/managed-ollama.yaml"),
     ] {
         let mut document = Document::parse(input.as_bytes()).unwrap();
-        let agent = &mut document.spec.sandboxes[0].agents[0];
-        agent.harness.as_mut().unwrap().kind = "openclaw".into();
+        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = "openclaw".into();
         document.spec.sandboxes[0].image.ref_.clear();
         document.defaults();
         document.validate().unwrap();
@@ -211,27 +199,25 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
                 .starts_with("nc-multi-models@sha256:")
         );
         assert_eq!(
-            document
-                .agent_harness(&document.spec.sandboxes[0].agents[0])
-                .unwrap()
-                .runtime(),
+            document.sandbox_harness().unwrap().runtime(),
             "fabric-openclaw"
         );
-        let agent = &mut document.spec.sandboxes[0].agents[0];
-        agent.harness.as_mut().unwrap().kind.clear();
+        document.spec.sandboxes[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .kind
+            .clear();
         assert!(document.validate().is_err(), "a harness must be declared");
     }
 }
 
 #[test]
-fn harness_is_the_only_agent_selector() {
+fn sandbox_harness_is_the_only_implementation_selector() {
     let input = include_str!("fixtures/config/local.yaml");
     let document = Document::parse(input.as_bytes()).unwrap();
     assert_eq!(
-        document
-            .agent_harness(&document.spec.sandboxes[0].agents[0])
-            .unwrap()
-            .runtime(),
+        document.sandbox_harness().unwrap().runtime(),
         "fabric-openclaw"
     );
     assert!(!document.yaml().unwrap().contains("type:"));

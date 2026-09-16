@@ -57,10 +57,10 @@ spec:
         provider: podman
       network:
         tier: isolated
+      harness:
+        kind: openclaw
       agents:
         - name: assistant
-          harness:
-            kind: openclaw
           inference:
             routes:
               - name: primary

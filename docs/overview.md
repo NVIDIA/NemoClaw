@@ -4,7 +4,7 @@
 # Understand NemoClaw
 
 NemoClaw manages agent deployments from desired-state YAML.
-You declare the gateway, inference provider, sandbox, and agents, then use the CLI or Rust SDK to plan, apply, export, and destroy that deployment.
+You declare the gateway, inference providers, sandbox, and agents, then use the CLI or Rust SDK to plan, apply, export, and destroy that deployment.
 Start with [prerequisites](prerequisites.md) and [deploy OpenClaw with existing services](get-started.md).
 
 ## Choose an Interface
@@ -36,17 +36,17 @@ flowchart TD
     Tofu --> Gateway[OpenShell gateway]
     Tofu --> Service[Managed inference service]
     Gateway --> Sandbox[Sandbox running Fabric and the native agent]
-    Sandbox --> Route[OpenShell inference route]
+    Sandbox --> Route[Native inference endpoints through OpenShell]
     Route --> Service
     Route --> External[External inference endpoint]
 ```
 
-Choose one inference service path for a deployment.
+A deployment can select multiple inference providers; at most one may have managed inference dependencies.
 The gateway may also be managed or external.
 The diagram separates deployment operations from the agent's requests: the CLI can exit while the agent and managed services keep running.
 
-Each document selects one inference provider and contains one sandbox.
-OpenClaw can declare multiple agents sharing the primary inference route; other harnesses require one agent.
+Each document contains one sandbox, which selects exactly one harness configuration.
+OpenClaw can declare multiple agents with different model and provider choices; other harnesses require one agent.
 Use the [agent guide](agents.md) for accepted harnesses and the [inference guide](inference.md) for their API restrictions.
 
 Managed resources follow NemoClaw's lifecycle and retention rules.

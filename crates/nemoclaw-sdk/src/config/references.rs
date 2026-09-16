@@ -80,9 +80,10 @@ impl Document {
 }
 
 impl Document {
-    /// Resolve an agent's harness configuration from its enclosing definitions.
-    pub fn agent_harness<'a>(&'a self, agent: &'a Agent) -> Result<&'a Harness, ConfigError> {
-        match (&agent.harness, &agent.harness_ref) {
+    /// Resolve the sandbox's harness without replacing its authored selection.
+    pub fn sandbox_harness(&self) -> Result<&Harness, ConfigError> {
+        let sandbox = &self.spec.sandboxes[0];
+        match (&sandbox.harness, &sandbox.harness_ref) {
             (Some(harness), None) => Ok(harness),
             (None, Some(name)) => self
                 .spec
@@ -91,7 +92,7 @@ impl Document {
                 .or_else(|| self.spec.sandboxes[0].harnesses.get(name))
                 .ok_or(ConfigError("harness reference has no visible definition")),
             _ => Err(ConfigError(
-                "agent requires exactly one of harness or harnessRef",
+                "sandbox requires exactly one of harness or harnessRef",
             )),
         }
     }
@@ -117,27 +118,11 @@ impl Document {
             .harnesses
             .values()
             .chain(sandbox.harnesses.values())
-            .chain(
-                sandbox
-                    .agents
-                    .iter()
-                    .filter_map(|agent| agent.harness.as_ref()),
-            )
+            .chain(sandbox.harness.iter())
         {
             harness.validate()?;
         }
-        let first = sandbox
-            .agents
-            .first()
-            .ok_or(ConfigError("at least one agent is required"))?;
-        let selected = self.agent_harness(first)?;
-        for agent in &sandbox.agents {
-            if self.agent_harness(agent)? != selected {
-                return Err(ConfigError(
-                    "agents in a sandbox must share identical harness settings",
-                ));
-            }
-        }
+        self.sandbox_harness()?;
         Ok(())
     }
 }

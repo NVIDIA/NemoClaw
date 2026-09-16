@@ -126,7 +126,8 @@ Missing or unsupported runtime labels are failed observations, never absence.
 Old standalone state is not silently converted; its previous bundle remains necessary for export or teardown.
 Sandbox identities and agent data are not migrated by changing the agent type in YAML.
 
-Agents select typed harness and inference configurations inline or through application references; tools and integration selections remain per agent.
+The sandbox selects a typed harness configuration; agents select inference configurations.
+Both support inline definitions or application references; tools and integration selections remain per agent.
 A constant `type: fabric` added no selection, so it is removed.
 The harness still determines the same `fabric-<kind>` runtime identity and OpenTofu resource graph.
 

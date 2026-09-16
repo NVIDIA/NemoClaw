@@ -64,11 +64,7 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     )
     .unwrap();
     document.spec.gateway.endpoint = fixture.endpoint.clone();
-    document.spec.sandboxes[0].agents[0]
-        .harness
-        .as_mut()
-        .unwrap()
-        .kind = harness.into();
+    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.into();
     if harness == "pi" {
         let pi = Document::parse(
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
@@ -167,11 +163,7 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     let effects = fixture.state.lock().unwrap().effects;
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let mut changed = document.clone();
-    changed.spec.sandboxes[0].agents[0]
-        .harness
-        .as_mut()
-        .unwrap()
-        .kind = if harness == "deepagents" {
+    changed.spec.sandboxes[0].harness.as_mut().unwrap().kind = if harness == "deepagents" {
         "hermes"
     } else {
         "deepagents"

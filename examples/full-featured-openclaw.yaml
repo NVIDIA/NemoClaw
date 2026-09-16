@@ -131,9 +131,9 @@ spec:
                           path: /docs/**
                 binaries:
                   - path: /usr/local/bin/node
+      harnessRef: assistant
       agents:
         - name: researcher
-          harnessRef: assistant
           integrationRefs: [search]
           tools:
             disclosure: progressive
@@ -148,7 +148,6 @@ spec:
                   reasoning: true
                   reasoningEffort: high
         - name: writer
-          harnessRef: assistant
           integrationRefs: [search]
           tools:
             disclosure: progressive
@@ -164,7 +163,6 @@ spec:
                   reasoningEffort: high
         # Tool restriction, not filesystem isolation. This agent receives no search grant.
         - name: reader
-          harnessRef: assistant
           tools:
             allow: [read]
           inference:

@@ -22,7 +22,7 @@ Empty or zero selects a default only where stated.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, OpenClaw-only multiple choices, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
 - The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
-- The parser resolves harnessRef from enclosing harnesses and requires identical resolved harness settings across agents in a sandbox. Shared definitions reuse configuration, not runtime processes across sandboxes.
+- The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; only OpenClaw currently supports multiple agents. Shared definitions reuse configuration across sandboxes.
 - The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.
 - The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.
 - The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed inference dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.
@@ -48,7 +48,7 @@ Paths:
 
 ## Agent
 
-One Fabric harness and its inference route.
+One agent instance with its own inference choices, tools, and integrations.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -59,8 +59,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `auth` | [AgentAuth](#agentauth) | No | — | Hermes API-key authentication through the routed provider. The provider must declare a credential reference. |
-| `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. Agents in a sandbox must select identical harness settings. |
-| `harnessRef` | string | No | — | Name of an enclosing harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inference` | [Inference](#inference) | No | — | Inline inference configuration. Exactly one of inference or inferenceRef is required. |
 | `inferenceRef` | string | No | — | Name of an enclosing inference configuration. Excludes inline inference. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrationRefs` | array of string | No | — | Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions. Constraints: items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
@@ -91,7 +89,7 @@ Guide: [Agent runtimes](../agents.md).
 Paths:
 
 - `spec.harnesses.{key}.execution`
-- `spec.sandboxes[].agents[].harness.execution`
+- `spec.sandboxes[].harness.execution`
 - `spec.sandboxes[].harnesses.{key}.execution`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -108,7 +106,7 @@ Guide: [Agent interfaces](../interfaces.md).
 Paths:
 
 - `spec.harnesses.{key}.interfaces`
-- `spec.sandboxes[].agents[].harness.interfaces`
+- `spec.sandboxes[].harness.interfaces`
 - `spec.sandboxes[].harnesses.{key}.interfaces`
 
 Accepted input: [OpenClawInterfaces](#openclawinterfaces) or [HermesInterfaces](#hermesinterfaces).
@@ -122,7 +120,7 @@ Guide: [Agent runtimes](../agents.md).
 Paths:
 
 - `spec.harnesses.{key}.observability`
-- `spec.sandboxes[].agents[].harness.observability`
+- `spec.sandboxes[].harness.observability`
 - `spec.sandboxes[].harnesses.{key}.observability`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -264,7 +262,7 @@ Guide: [Agent interfaces](../interfaces.md).
 Paths:
 
 - `spec.harnesses.{key}.interfaces.dashboard.bind`
-- `spec.sandboxes[].agents[].harness.interfaces.dashboard.bind`
+- `spec.sandboxes[].harness.interfaces.dashboard.bind`
 - `spec.sandboxes[].harnesses.{key}.interfaces.dashboard.bind`
 
 Accepted input: string.
@@ -416,7 +414,7 @@ Guide: [Configuration and credentials](../usage.md#configuration-and-credentials
 Paths:
 
 - `spec.harnesses.{key}`
-- `spec.sandboxes[].agents[].harness`
+- `spec.sandboxes[].harness`
 - `spec.sandboxes[].harnesses.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -435,7 +433,7 @@ Guide: [Agent interfaces](../interfaces.md).
 Paths:
 
 - `spec.harnesses.{key}.interfaces.api`
-- `spec.sandboxes[].agents[].harness.interfaces.api`
+- `spec.sandboxes[].harness.interfaces.api`
 - `spec.sandboxes[].harnesses.{key}.interfaces.api`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -451,7 +449,7 @@ Guide: [Agent interfaces](../interfaces.md).
 Paths:
 
 - `spec.harnesses.{key}.interfaces.dashboard`
-- `spec.sandboxes[].agents[].harness.interfaces.dashboard`
+- `spec.sandboxes[].harness.interfaces.dashboard`
 - `spec.sandboxes[].harnesses.{key}.interfaces.dashboard`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -470,7 +468,7 @@ Guide: [Agent interfaces](../interfaces.md).
 Paths:
 
 - `spec.harnesses.{key}.interfaces`
-- `spec.sandboxes[].agents[].harness.interfaces`
+- `spec.sandboxes[].harness.interfaces`
 - `spec.sandboxes[].harnesses.{key}.interfaces`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -487,7 +485,7 @@ Guide: [Agent interfaces](../interfaces.md).
 Paths:
 
 - `spec.harnesses.{key}.interfaces.dashboard.tui`
-- `spec.sandboxes[].agents[].harness.interfaces.dashboard.tui`
+- `spec.sandboxes[].harness.interfaces.dashboard.tui`
 - `spec.sandboxes[].harnesses.{key}.interfaces.dashboard.tui`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -506,7 +504,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `ref` | string | No | `"nc-multi-models@sha256:a189e6f51291d5b4a30b68a3039e8d8e82f74c8082efb757894009d18f4c955b"` | Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the default. |
+| `ref` | string | No | `"nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0"` | Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the default. |
 
 ## Inference
 
@@ -897,7 +895,7 @@ Guide: [Agent interfaces](../interfaces.md).
 Paths:
 
 - `spec.harnesses.{key}.interfaces.dashboard`
-- `spec.sandboxes[].agents[].harness.interfaces.dashboard`
+- `spec.sandboxes[].harness.interfaces.dashboard`
 - `spec.sandboxes[].harnesses.{key}.interfaces.dashboard`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -914,7 +912,7 @@ Guide: [Agent interfaces](../interfaces.md).
 Paths:
 
 - `spec.harnesses.{key}.interfaces`
-- `spec.sandboxes[].agents[].harness.interfaces`
+- `spec.sandboxes[].harness.interfaces`
 - `spec.sandboxes[].harnesses.{key}.interfaces`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -930,7 +928,7 @@ Guide: [Agent runtimes](../agents.md).
 Paths:
 
 - `spec.harnesses.{key}.observability.otlp`
-- `spec.sandboxes[].agents[].harness.observability.otlp`
+- `spec.sandboxes[].harness.observability.otlp`
 - `spec.sandboxes[].harnesses.{key}.observability.otlp`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1201,7 +1199,7 @@ Guide: [Agent runtimes](../agents.md).
 Paths:
 
 - `spec.harnesses.{key}.observability.relay`
-- `spec.sandboxes[].agents[].harness.observability.relay`
+- `spec.sandboxes[].harness.observability.relay`
 - `spec.sandboxes[].harnesses.{key}.observability.relay`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1293,7 +1291,9 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `agents` | array of [Agent](#agent) | Yes | — | One or more named OpenClaw agents sharing identical harness settings. Other harnesses require one agent. Constraints: minimum items 1. |
+| `agents` | array of [Agent](#agent) | Yes | — | Instances of the sandbox-selected harness. OpenClaw supports multiple named agents sharing one runtime process; other harnesses require one agent. Constraints: minimum items 1. |
+| `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. Every agent in the sandbox is an instance of this harness implementation. |
+| `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `image` | [Image](#image) | No | — | Sandbox agent image; omission selects the SDK default. |
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions. |
