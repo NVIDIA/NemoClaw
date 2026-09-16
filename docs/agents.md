@@ -188,7 +188,7 @@ The [field reference](reference/configuration.md#otlptracing) defines the servic
 
 Enabling tracing adds the `nemoclaw-otlp` policy rule for the native Node executable to POST `/v1/traces` to the collector.
 The rule is added to the selected sandbox policy; an explicit rule with that reserved name is rejected.
-Export retains the integration declaration, and refresh checks the resulting policy and native configuration without rewriting drift.
+Export retains the tracing declaration, and refresh checks the resulting policy and native configuration without rewriting drift.
 Configuration readiness does not establish collector delivery; verify incoming traces in your collector.
 
 Use an image built with the updated [runtime build procedure](#runtime-lifecycle) and a fresh deployment when changing image or tracing intent.
@@ -245,23 +245,14 @@ Production migration remains gated on a released Fabric adapter compatible with 
 
 ## Define and Attach Integrations
 
-Integrations follow the schema-wide [definitions and references contract](configuration-references.md).
-
 Define an integration once in `spec.integrations` and select it from each consuming agent's `integrationRefs`.
 For reuse only within a sandbox, put the same definition in `spec.sandboxes[].integrations`.
 For one agent, define it directly in `spec.sandboxes[].agents[].integrations`; no reference is required.
 All three locations use the same [integration type](reference/configuration.md#integration).
 
-Definitions in deployment and sandbox scopes grant no access until an agent references them.
-References can see only those enclosing scopes, never another agent's inline definitions.
-Names must be unique in their map and must not shadow an enclosing definition.
-Unresolved or duplicate references are rejected; definitions are never implicitly merged or overridden.
-An agent can declare inline integrations and reference different enclosing definitions together, subject to the supported kinds and runtime limits.
-YAML anchors, aliases, and merge keys remain disabled.
-
-The current supported kind is `webSearch` with Brave.
-VoiceClaw and other kinds are rejected until their runtime behavior is implemented.
-The current schema still permits exactly one sandbox; deployment-level definitions do not add multi-sandbox support.
+Enclosing definitions require an explicit reference; an agent's inline definitions attach directly to that agent.
+The [shared authoring rules](configuration-references.md#the-authoring-rule) define visibility, name collisions, and unused definitions.
+Only `kind: webSearch` with Brave is currently supported; VoiceClaw and other kinds are rejected.
 
 ## Brave Web Search
 
@@ -287,7 +278,7 @@ spec:
           integrationRefs: [search]
 ```
 
-For a single consumer, the equivalent agent-inline fragment is:
+For one agent, put the definition directly under its `integrations` field:
 
 ```yaml
 agents:
@@ -463,7 +454,8 @@ The test creates and removes an owned sandbox against an existing inference serv
 
 ## Additional Agent Integrations
 
-The current declared integrations include [OpenClaw tracing](#openclaw-tracing), experimental [Hermes Relay tracing](#hermes-relay-tracing), and [Brave web search](#brave-web-search).
+The `integrations` field currently supports [Brave web search](#brave-web-search).
+[OpenClaw tracing](#openclaw-tracing) and experimental [Hermes Relay tracing](#hermes-relay-tracing) use the separate `observability` field.
 Native agent capabilities do not by themselves establish a complete NemoClaw deployment procedure.
 
 | Workflow | Documentation status |

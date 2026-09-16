@@ -1164,7 +1164,7 @@ Paths:
 
 ## Sandbox
 
-The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.
+The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -1177,7 +1177,7 @@ Paths:
 | `agents` | array of [Agent](#agent) | Yes | — | One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent. Constraints: minimum items 1. |
 | `image` | [Image](#image) | No | — | Sandbox agent image; omission selects the SDK default. |
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions. |
-| `integrations` | map of [Integration](#integration) | No | — | Named inline integration definitions visible only to this sandbox's agents. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agents through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated inference routing. |
 | `runtime` | [Runtime](#runtime) | No | — | Sandbox driver; omission selects Docker. A managed gateway requires Docker. |

@@ -3,15 +3,15 @@
 
 # Define Once or Configure Inline
 
-For a reusable application object, either define it directly on its consumer or name it in an enclosing collection and reference it from the consumer.
+Use an inline definition for one consumer, or a named definition with references to share it.
 Both forms use the same configuration type, defaults, and validation.
 A shared definition becomes active only when a consumer selects it.
 
 ## The Authoring Rule
 
-For a single object, the consumer accepts `thing` or `thingRef`, never both.
+For a single object, use `thing` or `thingRef`, never both.
 A required selection must supply exactly one form; an optional selection may omit both.
-For multiple objects, the consumer accepts inline `things` and references in `thingRefs`; it may combine distinct inline and referenced objects.
+For multiple objects, combine inline `things` and `thingRefs` only when they select distinct objects.
 An inline object belongs to its consumer and is not available to siblings.
 
 References resolve only in the enclosing collections explicitly supported for that family.
@@ -35,15 +35,13 @@ Paths below are relative to `spec`; `agents[]` is inside `sandboxes[]` and `rout
 | Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | One selected definition across all agents in the sandbox |
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
 
-The collections retain their existing encodings: inference providers are named list entries; integrations are maps keyed by name.
+Inference providers are list entries with a `name`; integrations are maps keyed by name.
 Inline providers also require `name`, which identifies the OpenShell provider registration.
-Both encodings follow the same selection and visibility rules.
 The schema currently supports exactly one sandbox and one primary route per agent.
 Multiple OpenClaw agents can reference the same provider and integration; distinct inline instances are not shared implicitly.
 
 Hermes `auth.method` uses the provider selected by its primary route.
-It does not select or define another provider, and the former `auth.providerRef` is rejected.
-See [Hermes authentication](inference.md#authenticate-hermes-through-the-provider) for credential custody.
+See [Hermes authentication](inference.md#authenticate-hermes-through-the-provider) for credential handling and migration from `auth.providerRef`.
 
 ## Reference an Inference Provider
 
@@ -70,7 +68,7 @@ spec:
 
 Move `inferenceProviders` under the sandbox to limit definition visibility to its routes.
 The route still uses `providerRef: local`.
-To configure the same provider inline instead, omit the enclosing definition and replace the route's reference with:
+To configure that provider inline, remove the enclosing definition and use this `inference` block on the agent:
 
 ```yaml
 inference:
@@ -87,21 +85,13 @@ inference:
 Use the [complete inline example](../examples/inline-inference.yaml) as a starting point and follow [deployment prerequisites and image selection](usage.md) before applying it.
 For integration examples, see [define and attach integrations](agents.md#define-and-attach-integrations).
 
-## What This Rule Does Not Imply
+## Other Configuration Objects
 
 An image `ref` selects an external immutable artifact, and `credential.env` selects a caller-supplied environment variable.
 These are not references to application definitions in this document, and inline credential values remain forbidden.
-Service, model, recipe, policy, gateway, and other nested settings do not acquire reusable collections merely because they are objects.
-Only the families in the table above support application definitions and references today.
+Service, model, recipe, policy, and gateway settings remain nested configuration.
+Only the families in the table above support shared application definitions.
 
 The [field reference](reference/configuration.md) lists exact shapes and constraints.
 Editor schema checks cover structure and conditional forms; the SDK parser also resolves names and checks selected-provider compatibility when multiple named definitions exist.
-Parser acceptance does not establish endpoint reachability, inference readiness, or permission to modify resources.
-
-## Evolve the Schema
-
-New reusable families must specify their definition collection, consumer, cardinality, visible scopes, and runtime identity before adding fields.
-Implement both inline and reference forms using the same typed definition and resolved behavior.
-Test missing and conflicting selections, scope collisions, unused definitions, and export/reapply before claiming support in this table.
-Do not add an accepted but inert kind or a reference form without its inline counterpart.
-Follow [schema maintenance](configuration-schema.md) to update types, tests, and generated documentation together.
+Validate connectivity and inference separately using the [deployment verification steps](inference.md#verify-the-result).

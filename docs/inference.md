@@ -6,7 +6,6 @@
 Choose who operates the inference service, then select the API and model used by the agent.
 NemoClaw selects one active inference provider per deployment document.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
-The provider's local `name` connects it to an agent route; it does not select a vendor or download a model catalog.
 
 ## Choose a Service Mode
 
@@ -26,7 +25,7 @@ An accepted example is a configuration contract; [validation records](validation
 
 ## Choose the Request API
 
-Set `inferenceProviders[].api` to the request API your endpoint accepts.
+Set `api` on the selected provider, whether inline or referenced, to the request API your endpoint accepts.
 OpenShell routes the request and supplies the provider credential; selecting an API does not translate requests into a different protocol.
 
 | Harness | API when omitted | Explicit API choices |
@@ -257,12 +256,13 @@ Supply `NOUS_API_KEY` to the applying process through your secret-management mec
 The SDK resolves the reference and supplies the credential to the OpenShell provider.
 Hermes sends requests through `https://inference.local/v1` using a sandbox placeholder key; the real upstream key is not added to its launch environment or exported YAML.
 Authentication derives its provider from the primary route, including when that provider is inline.
-Omit the former `auth.providerRef` field; it is rejected.
-Retained Hermes intent containing that field is not migrated automatically; editing only the input YAML does not update saved intent.
-Use the matching previous bundle for export or teardown of that deployment.
 The selected provider must carry a credential.
 That provider may also use a generated credential from a [managed vLLM service](#authenticate-a-managed-vllm-service) or [Ollama proxy](#use-external-ollama-through-a-managed-proxy).
 Interactive Hermes login and separate authentication providers are unsupported.
+
+Omit the former `auth.providerRef` field; it is rejected.
+Retained Hermes intent containing that field is not migrated automatically; editing only the input YAML does not update saved intent.
+Use the matching previous bundle for export or teardown of that deployment.
 
 The gateway retains the provider credential until the owned provider is removed or updated.
 Destroy removes the owned provider registration; it does not revoke the upstream key.

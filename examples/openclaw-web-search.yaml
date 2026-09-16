@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 
+# Two agents share one inference provider and one Brave search definition.
+# Set your own deployment UID, endpoints, and model; see docs/agents.md#brave-web-search.
+
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -24,6 +27,7 @@ spec:
   sandboxes:
     - name: assistant
       image:
+        # Replace with the digest from a current OpenClaw image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       agents:
         - name: researcher

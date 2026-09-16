@@ -2359,7 +2359,7 @@
           }
         }
       ],
-      "description": "The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.",
+      "description": "The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.",
       "properties": {
         "agents": {
           "description": "One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent.",
@@ -2403,7 +2403,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/Integration"
           },
-          "description": "Named inline integration definitions visible only to this sandbox's agents. Names must not collide with deployment definitions.",
+          "description": "Named integration definitions selected by this sandbox's agents through integrationRefs. Names must not collide with deployment definitions.",
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
           },

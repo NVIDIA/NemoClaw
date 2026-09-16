@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 
+# Defines the provider on its sole consuming route; see docs/configuration-references.md.
+# Set your own deployment UID, endpoints, and model before applying.
+
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

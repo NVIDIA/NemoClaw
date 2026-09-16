@@ -75,6 +75,14 @@ For a rule that the schema cannot express, document the parser check in the gene
 Schema validation does not establish image availability, host capacity, credential access, ownership, or inference readiness.
 The [reference's validation limits](reference/configuration.md#validation-beyond-the-schema) list those boundaries.
 
+## Add a Reusable Configuration Family
+
+Follow the [definitions and references contract](configuration-references.md).
+Specify the definition collection, consumer, cardinality, visible scopes, and runtime identity before adding fields.
+Use the same typed definition and resolved behavior for inline and reference forms.
+Test missing and conflicting selections, scope collisions, unused definitions, and export/reapply.
+Add the family to the authoring guide's coverage table only when its runtime behavior is implemented.
+
 ## Keep Generation Reproducible
 
 The generator selects JSON Schema Draft 2020-12 explicitly, sorts object keys, and writes LF-terminated files.

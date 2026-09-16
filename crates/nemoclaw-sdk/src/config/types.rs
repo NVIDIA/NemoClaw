@@ -206,7 +206,7 @@ pub struct ManagedOllama {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.
+/// The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.
 pub struct Sandbox {
     #[serde(
         rename = "inferenceProviders",
@@ -218,7 +218,7 @@ pub struct Sandbox {
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
-    /// Named inline integration definitions visible only to this sandbox's agents. Names must not collide with deployment definitions.
+    /// Named integration definitions selected by this sandbox's agents through integrationRefs. Names must not collide with deployment definitions.
     pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(rename = "name")]
     /// Lowercase sandbox name.
