@@ -5,6 +5,8 @@
 
 Select `dgx-station-express` by itself in the `jobs` or `targets` input of the E2E workflow. The target is excluded from default runs. Its GitHub-hosted controller runs from the trusted main workflow and sends the candidate commit and selected managed-image publication revision to the operator's Station receiver.
 
+The backend selects only the Station case in `test/e2e/live/dgx-express.test.ts` with `E2E_TARGET_ID=dgx-station-express` and `--selector '^dgx-station-express:'`. The Spark case has its own selector.
+
 Configure the GitHub repository variable `DGX_STATION_DISPATCH_URL` with the receiver's HTTPS origin. Station uses its own queue, OIDC audience, receipt, and artifact namespace. The controller does not use `JETSON_DISPATCH_URL`.
 
 The receiver uses the configured runner account’s normal HOME so its systemd user manager can discover the gateway service. It requires this account’s NemoClaw installation state to be clean between runs. The receiver needs a dedicated Station with prepared host prerequisites, a cached Nemotron 3 Ultra 550B model, and the vLLM image selected by the candidate recipe. Each job uses `/tmp/ncs/<job-id>` for temporary files so `tsx` IPC socket paths fit the Linux pathname limit. The test runs the local candidate installer:

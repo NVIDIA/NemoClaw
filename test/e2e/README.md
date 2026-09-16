@@ -1479,8 +1479,10 @@ npm run test:e2e-phases:check
 
 ### DGX Spark Express vLLM
 
-`spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
-It requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
+`dgx-express.test.ts` contains separate physical-host cases for Spark and Station Express.
+The Spark case qualifies the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
+The canonical runner requires an explicit selector matching `E2E_TARGET_ID`; it rejects missing, unknown, or mismatched selections before starting Vitest.
+The Spark case requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
 The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
 The target sources `scripts/install.sh` from the candidate checkout, calls the Express option-selection functions with option 2, and invokes the candidate CLI directly for onboarding.
 It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
@@ -1493,12 +1495,7 @@ The standard E2E artifacts retain bounded command output.
 Run the target from a clean candidate checkout on the Spark host:
 
 ```bash
-E2E_JOB=1 \
-E2E_TARGET_ID=spark-express-vllm \
-NEMOCLAW_RUN_LIVE_E2E=1 \
-NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm \
-npx tsx tools/e2e/live-vitest-invocation.mts run \
-  --test-path test/e2e/live/spark-express-vllm.test.ts
+E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
 A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.

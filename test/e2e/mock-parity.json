@@ -871,8 +871,11 @@
       ]
     },
     {
-      "live": "test/e2e/live/spark-express-vllm.test.ts",
+      "live": "test/e2e/live/dgx-express.test.ts",
       "fast": [
+        "test/e2e/support/dgx-station-express.test.ts",
+        "test/e2e/support/live-vitest-invocation.test.ts",
+        "test/installer-integration/install-express-noninteractive.test.ts",
         "src/lib/inference/serving/catalog.test.ts",
         "src/lib/inference/serving/host-local-vllm-selection.test.ts",
         "src/lib/inference/vllm-models.test.ts",

@@ -5485,7 +5485,7 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: dgx-station-express
-      E2E_TEST_FILE: test/e2e/live/dgx-station-express.test.ts
+      E2E_TEST_FILE: test/e2e/live/dgx-express.test.ts
       E2E_DEFAULT_ENABLED: "0"
       E2E_GATEWAY_RUNTIMES: agnostic
       E2E_AGENT_RUNTIME: openclaw
