@@ -68,6 +68,7 @@ export type DestroyHarness = {
     stdout?: string;
     stderr?: string;
   }) => void;
+  setRegisteredSandboxCount: (count: number) => void;
   setRegistryEntryPresent: (present: boolean) => void;
   setRetainedRecoveryRecords: (records: RetainedSandboxRecoveryRecord[]) => void;
   setSandboxPresent: (present: boolean) => void;
@@ -102,7 +103,6 @@ type DestroyHarnessOptions = {
   detachedProviders?: string[];
   endpointUrl?: string;
   executeSandboxDestroyResult?: SandboxDestroyExecutionResult;
-  finalGatewayRegisteredSandboxCount?: number;
   finalizeMcpBridgeError?: string;
   finalizeMcpError?: string;
   imageTag?: string | null;
@@ -706,16 +706,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       requireSource(destroyModulePath).destroySandbox(sandboxName, destroyOptions, {
         finalGatewayCleanup: {
           sleep: finalGatewaySleepSpy,
-          ...(options.finalGatewayRegisteredSandboxCount === undefined
-            ? {}
-            : {
-                listSandboxes: () => ({
-                  sandboxes: Array.from(
-                    { length: options.finalGatewayRegisteredSandboxCount ?? 0 },
-                    (_, index) => ({ name: `late-sb-${index}` }),
-                  ),
-                }),
-              }),
         },
       }),
     prepareSandboxDestroy: requireSource("./destroy-preflight.js").prepareSandboxDestroy,
@@ -754,6 +744,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     sessionState,
     setDockerIdentityResult: (result) => {
       dockerIdentityResult = result;
+    },
+    setRegisteredSandboxCount: (count: number) => {
+      registeredSandboxCount = count;
     },
     setRegistryEntryPresent: (present: boolean) => {
       registryEntryPresent = present;

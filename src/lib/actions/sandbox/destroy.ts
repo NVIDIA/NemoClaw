@@ -1250,19 +1250,20 @@ async function destroySandboxUnlocked(
   if (cleanupDecision !== null && !(await confirmCleanupGatewayDecision(cleanupDecision))) {
     reportGatewayPreserved(cleanupGatewayName);
   } else if (cleanupDecision !== null) {
-    const finalGatewayCleanup = await resolveFinalDestroyGatewayCleanup(
-      {
-        deleteSucceededOrAlreadyGone,
-        removedRegistryEntry: registryEntryAbsent,
-        sandboxName,
-        ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
-      },
-      {
-        ...deps.finalGatewayCleanup,
-        ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
-      },
-    );
-    if (finalGatewayCleanup.status === "cleanup") {
+    const finalGatewayCleanup = await withGatewayRouteMutationLock(cleanupGatewayName, async () => {
+      const verdict = await resolveFinalDestroyGatewayCleanup(
+        {
+          deleteSucceededOrAlreadyGone,
+          removedRegistryEntry: registryEntryAbsent,
+          sandboxName,
+          ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
+        },
+        {
+          ...deps.finalGatewayCleanup,
+          ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
+        },
+      );
+      if (verdict.status !== "cleanup") return verdict;
       if (destroyRuntimeProviderId || destroyRuntimeSelection) {
         await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
           ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
@@ -1271,7 +1272,9 @@ async function destroySandboxUnlocked(
       } else {
         await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
       }
-    } else {
+      return verdict;
+    });
+    if (finalGatewayCleanup.status !== "cleanup") {
       reportFinalGatewayLeftRunning(
         cleanupGatewayName,
         finalGatewayCleanup,

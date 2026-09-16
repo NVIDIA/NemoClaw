@@ -164,16 +164,29 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     expect(warnOutput(harness)).toContain("openshell gateway remove nemoclaw-19080");
   });
 
-  it("reports a sandbox registered between the initial and final cleanup checks", async () => {
+  it("rechecks the registry after concurrent onboarding publishes under the gateway lock", async () => {
     const harness = createDestroyHarness({
       executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
-      finalGatewayRegisteredSandboxCount: 1,
     });
+    harness.withGatewayRouteMutationLockSpy
+      .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) =>
+        (operation as () => Promise<unknown>)(),
+      )
+      .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) => {
+        harness.setRegisteredSandboxCount(1);
+        return (operation as () => Promise<unknown>)();
+      });
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
     ).resolves.toBeUndefined();
 
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledTimes(2);
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenNthCalledWith(
+      2,
+      "nemoclaw-19080",
+      expect.any(Function),
+    );
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
     expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
