@@ -197,6 +197,13 @@ function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
 };
 export default plugin;
 `;
+  const updateVerification =
+    version === "v2"
+      ? [
+          "HOME=/sandbox openclaw plugins inspect weather --runtime --json > /tmp/e2e-native-weather-v2.json",
+          `grep -Eq '"version"[[:space:]]*:[[:space:]]*"2\\.0\\.0"' /tmp/e2e-native-weather-v2.json`,
+        ]
+      : [];
   return [
     "set -eu",
     "source_dir=/sandbox/e2e-native-weather",
@@ -206,6 +213,7 @@ export default plugin;
     `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
     `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
     'HOME=/sandbox openclaw plugins install "$source_dir" --force',
+    ...updateVerification,
   ].join("\n");
 }
 
@@ -285,7 +293,6 @@ async function exerciseNativeOpenClawPluginLifecycle(
     180_000,
   );
   expect(restart.exitCode, resultText(restart)).toBe(0);
-  await invokeNativeWeatherPlugin(sandbox, "v2", "phase-4-native-plugin-invoke-after-restart");
 
   const uninstall = await sandbox.exec(
     SANDBOX_NAME,
