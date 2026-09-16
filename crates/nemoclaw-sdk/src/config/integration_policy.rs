@@ -11,14 +11,10 @@ impl Sandbox {
     pub(crate) fn policy_proto(
         &self,
         web_search: bool,
+        observability: Option<&super::AgentObservability>,
     ) -> Result<proto::SandboxPolicy, ConfigError> {
         let base = self.network.policy_proto()?;
-        if self
-            .agents
-            .first()
-            .is_none_or(|a| a.observability.is_none())
-            && !web_search
-        {
+        if observability.is_none() && !web_search {
             return Ok(base);
         }
         let mut value = openshell_policy::sandbox_policy_to_json_value(&base)
@@ -30,12 +26,7 @@ impl Sandbox {
             .or_insert_with(|| json!({}));
         let mut policy: ExplicitPolicy = serde_json::from_value(value)
             .map_err(|_| ConfigError("cannot represent sandbox policy"))?;
-        if self
-            .agents
-            .first()
-            .and_then(|a| a.observability.as_ref())
-            .is_some_and(|observability| observability.uses_otlp())
-        {
+        if observability.is_some_and(|observability| observability.uses_otlp()) {
             let name = "nemoclaw-otlp";
             if policy.network_policies.contains_key(name) {
                 return Err(ConfigError(

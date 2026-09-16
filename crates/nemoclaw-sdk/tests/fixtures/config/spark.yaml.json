@@ -1,5 +1,5 @@
 {
-  "digest": "94b6145b9bf3f201cfb2a4f4bc246d8db018728c952ca4289d034b7b31b1fa65",
+  "digest": "8d52469e9d8e2b80d04f7435aef40920cc6ebff3184c0548fbbaa9eb23ba416c",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -108,7 +108,9 @@
         {
           "agents": [
             {
-              "harness": "openclaw",
+              "harness": {
+                "kind": "openclaw"
+              },
               "inference": {
                 "routes": [
                   {

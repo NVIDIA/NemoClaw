@@ -27,7 +27,8 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: codex
+          harness:
+            kind: codex
           inference:
             routes:
               - name: primary

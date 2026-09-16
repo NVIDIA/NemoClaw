@@ -59,7 +59,7 @@ fn unsafe_yaml_and_secret_values_are_rejected_without_echoing_input() {
             "model: '${file(\"secret-do-not-print\")}'",
         ),
         ("provider: docker", "provider: unsupported"),
-        ("harness: openclaw", "harness: unknown"),
+        ("kind: openclaw", "kind: unknown"),
     ];
     for (from, to) in changes {
         let error = Document::parse(base.replace(from, to).as_bytes()).unwrap_err();
@@ -153,7 +153,11 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         "pi",
     ] {
         let mut document = original.clone();
-        document.spec.sandboxes[0].agents[0].harness = harness.into();
+        document.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .kind = harness.into();
         document.spec.inference_providers[0].provider = if harness == "claude" {
             "anthropic"
         } else {
@@ -162,12 +166,19 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         .into();
         assert!(document.validate().is_ok());
         assert_eq!(
-            document.spec.sandboxes[0].agents[0].runtime(),
+            document
+                .agent_harness(&document.spec.sandboxes[0].agents[0])
+                .unwrap()
+                .runtime(),
             format!("fabric-{harness}")
         );
     }
     let mut wrong = original;
-    wrong.spec.sandboxes[0].agents[0].harness = "claude".into();
+    wrong.spec.sandboxes[0].agents[0]
+        .harness
+        .as_mut()
+        .unwrap()
+        .kind = "claude".into();
     assert!(wrong.validate().is_err());
     let base = include_str!("fixtures/config/managed-ollama.yaml");
     for (from, to) in [
@@ -189,7 +200,7 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
     ] {
         let mut document = Document::parse(input.as_bytes()).unwrap();
         let agent = &mut document.spec.sandboxes[0].agents[0];
-        agent.harness = "openclaw".into();
+        agent.harness.as_mut().unwrap().kind = "openclaw".into();
         document.spec.sandboxes[0].image.ref_.clear();
         document.defaults();
         document.validate().unwrap();
@@ -200,11 +211,14 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
                 .starts_with("nc-native-inference-b3e4ad457@sha256:")
         );
         assert_eq!(
-            document.spec.sandboxes[0].agents[0].runtime(),
+            document
+                .agent_harness(&document.spec.sandboxes[0].agents[0])
+                .unwrap()
+                .runtime(),
             "fabric-openclaw"
         );
         let agent = &mut document.spec.sandboxes[0].agents[0];
-        agent.harness.clear();
+        agent.harness.as_mut().unwrap().kind.clear();
         assert!(document.validate().is_err(), "a harness must be declared");
     }
 }
@@ -214,19 +228,22 @@ fn harness_is_the_only_agent_selector() {
     let input = include_str!("fixtures/config/local.yaml");
     let document = Document::parse(input.as_bytes()).unwrap();
     assert_eq!(
-        document.spec.sandboxes[0].agents[0].runtime(),
+        document
+            .agent_harness(&document.spec.sandboxes[0].agents[0])
+            .unwrap()
+            .runtime(),
         "fabric-openclaw"
     );
     assert!(!document.yaml().unwrap().contains("type:"));
     for field in ["type: fabric", "type: openclaw"] {
         let legacy = input.replace(
-            "harness: openclaw",
-            &format!("{field}\n          harness: openclaw"),
+            "kind: openclaw",
+            &format!("{field}\n          kind: openclaw"),
         );
         assert!(Document::parse(legacy.as_bytes()).is_err());
     }
     for invalid in ["", "unknown"] {
-        let changed = input.replace("harness: openclaw", &format!("harness: '{invalid}'"));
+        let changed = input.replace("kind: openclaw", &format!("kind: '{invalid}'"));
         assert!(Document::parse(changed.as_bytes()).is_err());
     }
 }
@@ -257,7 +274,7 @@ fn pi_preserves_yaml_model_ids_and_explicit_custom_metadata() {
     route.overrides.model = "gpt-4o-mini".into();
     route.overrides.pi_model = None;
     catalog.validate().unwrap();
-    assert!(Document::parse(input.replace("harness: pi", "harness: codex").as_bytes()).is_err());
+    assert!(Document::parse(input.replace("kind: pi", "kind: codex").as_bytes()).is_err());
 }
 
 #[test]

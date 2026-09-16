@@ -27,11 +27,12 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: openclaw
-          interfaces:
-            dashboard:
-              port: 18800
-              bind: 127.0.0.1
+          harness:
+            kind: openclaw
+            interfaces:
+              dashboard:
+                port: 18800
+                bind: 127.0.0.1
           inference:
             routes:
               - name: primary

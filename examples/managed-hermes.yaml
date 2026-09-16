@@ -29,10 +29,11 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: hermes
-          interfaces:
-            dashboard:
-              enabled: false
+          harness:
+            kind: hermes
+            interfaces:
+              dashboard:
+                enabled: false
           inference:
             routes:
               - name: primary

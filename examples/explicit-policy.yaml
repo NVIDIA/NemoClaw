@@ -54,7 +54,8 @@ spec:
                   - path: /usr/bin/curl
       agents:
         - name: main
-          harness: openclaw
+          harness:
+            kind: openclaw
           inference:
             routes:
               - name: primary

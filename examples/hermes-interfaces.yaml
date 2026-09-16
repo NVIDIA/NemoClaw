@@ -26,16 +26,17 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: hermes
-          interfaces:
-            api:
-              port: 8643
-            dashboard:
-              enabled: true
-              port: 18800
-              internalPort: 19120
-              tui:
+          harness:
+            kind: hermes
+            interfaces:
+              api:
+                port: 8643
+              dashboard:
                 enabled: true
+                port: 18800
+                internalPort: 19120
+                tui:
+                  enabled: true
           inference:
             routes:
               - name: primary

@@ -3,7 +3,7 @@
 use super::ConfigError;
 use serde::{Deserialize, Serialize};
 
-/// OpenClaw execution defaults shared by the sandbox. Declare only on the first agent; other agents use the same native defaults.
+/// OpenClaw execution defaults shared by the sandbox through its harness configuration.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentExecution {

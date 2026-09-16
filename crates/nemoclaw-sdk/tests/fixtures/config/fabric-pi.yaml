@@ -26,7 +26,8 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: pi
+          harness:
+            kind: pi
           inference:
             routes:
               - name: primary

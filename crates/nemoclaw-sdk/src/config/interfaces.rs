@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-/// Native agent interfaces. Declare once on the first agent in a shared sandbox.
+/// Native interfaces belonging to the sandbox harness runtime.
 pub struct OpenClawInterfaces {
     /// Enable the OpenClaw dashboard with sandbox-local token authentication.
     pub dashboard: OpenClawDashboard,

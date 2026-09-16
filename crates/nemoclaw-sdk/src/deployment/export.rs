@@ -133,7 +133,11 @@ async fn export_sandbox(
             "sandbox configuration drift requires inspection",
         ));
     }
-    if document.spec.sandboxes[0].agents[0].harness == "pi" {
+    if document
+        .agent_harness(&document.spec.sandboxes[0].agents[0])?
+        .kind
+        == "pi"
+    {
         expected.insert(
             "pi_model_config".into(),
             serde_json::to_string(

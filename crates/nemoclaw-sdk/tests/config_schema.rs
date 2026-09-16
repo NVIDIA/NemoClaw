@@ -156,7 +156,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "local.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
+            "/spec/sandboxes/0/agents/0/harness/kind",
             json!("claude"),
             false,
         ),
@@ -168,7 +168,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "fabric-pi.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
+            "/spec/sandboxes/0/agents/0/harness/kind",
             json!("codex"),
             false,
         ),
@@ -252,7 +252,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "vllm.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
+            "/spec/sandboxes/0/agents/0/harness/kind",
             json!("deepagents"),
             false,
         ),

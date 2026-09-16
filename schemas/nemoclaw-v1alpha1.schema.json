@@ -13,113 +13,38 @@
           "then": {
             "properties": {
               "harness": {
-                "const": "openclaw"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "observability": {
-                "required": [
-                  "otlp"
-                ]
-              }
-            },
-            "required": [
-              "observability"
-            ]
-          },
-          "then": {
-            "properties": {
-              "harness": {
-                "const": "openclaw"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "observability": {
-                "required": [
-                  "relay"
-                ]
-              }
-            },
-            "required": [
-              "observability"
-            ]
-          },
-          "then": {
-            "not": {
-              "required": [
-                "interfaces"
-              ]
-            },
-            "properties": {
-              "harness": {
-                "const": "hermes"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "execution"
-            ]
-          },
-          "then": {
-            "properties": {
-              "harness": {
-                "const": "openclaw"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "interfaces"
-            ]
-          },
-          "then": {
-            "allOf": [
-              {
-                "else": {
-                  "properties": {
-                    "interfaces": {
-                      "$ref": "#/$defs/HermesInterfaces"
-                    }
-                  }
-                },
-                "if": {
-                  "properties": {
-                    "harness": {
-                      "const": "openclaw"
-                    }
-                  }
-                },
-                "then": {
-                  "properties": {
-                    "interfaces": {
-                      "$ref": "#/$defs/OpenClawInterfaces"
-                    }
+                "properties": {
+                  "kind": {
+                    "const": "openclaw"
                   }
                 }
               }
-            ],
-            "properties": {
-              "harness": {
-                "enum": [
-                  "openclaw",
-                  "hermes"
-                ]
-              }
             }
           }
+        },
+        {
+          "oneOf": [
+            {
+              "not": {
+                "required": [
+                  "harnessRef"
+                ]
+              },
+              "required": [
+                "harness"
+              ]
+            },
+            {
+              "not": {
+                "required": [
+                  "harness"
+                ]
+              },
+              "required": [
+                "harnessRef"
+              ]
+            }
+          ]
         }
       ],
       "description": "One Fabric harness and its inference route.",
@@ -150,24 +75,13 @@
           "$ref": "#/$defs/AgentAuth",
           "description": "Hermes API-key authentication through the routed provider. The provider must declare a credential reference."
         },
-        "execution": {
-          "$ref": "#/$defs/AgentExecution",
-          "description": "OpenClaw timeout and heartbeat defaults. Declare only on the first agent in a shared sandbox."
-        },
         "harness": {
-          "description": "Agent harness. Harnesses other than openclaw require external gateway and inference services.",
-          "enum": [
-            "deepagents",
-            "hermes",
-            "openclaw",
-            "claude",
-            "codex",
-            "mini-swe-agent",
-            "nooa",
-            "nooa-bench",
-            "remote-agent",
-            "pi"
-          ],
+          "$ref": "#/$defs/Harness",
+          "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. Agents in a sandbox must select identical harness settings."
+        },
+        "harnessRef": {
+          "description": "Name of an enclosing harness configuration. Excludes inline harness.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
         "inference": {
@@ -198,18 +112,10 @@
           },
           "type": "object"
         },
-        "interfaces": {
-          "$ref": "#/$defs/AgentInterfaces",
-          "description": "Native dashboard access, declared only on the first agent in a sandbox."
-        },
         "name": {
           "description": "Lowercase agent name.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
-        },
-        "observability": {
-          "$ref": "#/$defs/AgentObservability",
-          "description": "Harness-native tracing, declared only on the first agent."
         },
         "tools": {
           "$ref": "#/$defs/AgentTools",
@@ -217,8 +123,7 @@
         }
       },
       "required": [
-        "name",
-        "harness"
+        "name"
       ],
       "type": "object"
     },
@@ -238,7 +143,7 @@
     },
     "AgentExecution": {
       "additionalProperties": false,
-      "description": "OpenClaw execution defaults shared by the sandbox. Declare only on the first agent; other agents use the same native defaults.",
+      "description": "OpenClaw execution defaults shared by the sandbox through its harness configuration.",
       "minProperties": 1,
       "properties": {
         "heartbeatEvery": {
@@ -270,7 +175,7 @@
     },
     "AgentObservability": {
       "additionalProperties": false,
-      "description": "Harness-native telemetry, declared on the first agent and shared by its sandbox.",
+      "description": "Harness-native telemetry shared by the sandbox.",
       "oneOf": [
         {
           "not": {
@@ -792,6 +697,149 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "Harness": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "observability": {
+                "required": [
+                  "otlp"
+                ]
+              }
+            },
+            "required": [
+              "observability"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "const": "openclaw"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "observability": {
+                "required": [
+                  "relay"
+                ]
+              }
+            },
+            "required": [
+              "observability"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "interfaces"
+              ]
+            },
+            "properties": {
+              "kind": {
+                "const": "hermes"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "execution"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "const": "openclaw"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "interfaces"
+            ]
+          },
+          "then": {
+            "allOf": [
+              {
+                "else": {
+                  "properties": {
+                    "interfaces": {
+                      "$ref": "#/$defs/HermesInterfaces"
+                    }
+                  }
+                },
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "openclaw"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "interfaces": {
+                      "$ref": "#/$defs/OpenClawInterfaces"
+                    }
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "openclaw",
+                  "hermes"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "description": "One harness runtime configuration. Every sandbox runs its own instance; agents within a sandbox share its settings.",
+      "properties": {
+        "execution": {
+          "$ref": "#/$defs/AgentExecution",
+          "description": "OpenClaw timeout and heartbeat defaults shared by the sandbox."
+        },
+        "interfaces": {
+          "$ref": "#/$defs/AgentInterfaces",
+          "description": "Native dashboard access for this sandbox runtime."
+        },
+        "kind": {
+          "description": "Fabric harness implementation. Multiple agents require OpenClaw.",
+          "enum": [
+            "deepagents",
+            "hermes",
+            "openclaw",
+            "claude",
+            "codex",
+            "mini-swe-agent",
+            "nooa",
+            "nooa-bench",
+            "remote-agent",
+            "pi"
+          ],
+          "type": "string"
+        },
+        "observability": {
+          "$ref": "#/$defs/AgentObservability",
+          "description": "Harness-native tracing shared by the sandbox."
+        }
+      },
+      "required": [
+        "kind"
+      ],
       "type": "object"
     },
     "HermesApi": {
@@ -1708,7 +1756,7 @@
     },
     "OpenClawInterfaces": {
       "additionalProperties": false,
-      "description": "Native agent interfaces. Declare once on the first agent in a shared sandbox.",
+      "description": "Native interfaces belonging to the sandbox harness runtime.",
       "properties": {
         "dashboard": {
           "$ref": "#/$defs/OpenClawDashboard",
@@ -2383,7 +2431,11 @@
                 "items": {
                   "properties": {
                     "harness": {
-                      "const": "openclaw"
+                      "properties": {
+                        "kind": {
+                          "const": "openclaw"
+                        }
+                      }
                     }
                   }
                 }
@@ -2397,29 +2449,20 @@
         "agents": {
           "description": "One or more named OpenClaw agents sharing identical inference settings. Other harnesses require one agent.",
           "items": {
-            "$ref": "#/$defs/Agent",
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "execution"
-                  ]
-                },
-                {
-                  "required": [
-                    "observability"
-                  ]
-                }
-              ]
-            }
+            "$ref": "#/$defs/Agent"
           },
           "minItems": 1,
-          "prefixItems": [
-            {
-              "$ref": "#/$defs/Agent"
-            }
-          ],
           "type": "array"
+        },
+        "harnesses": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Harness"
+          },
+          "description": "Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
         },
         "image": {
           "$ref": "#/$defs/Image",
@@ -3092,6 +3135,16 @@
           "$ref": "#/$defs/Gateway",
           "description": "OpenShell gateway connection or managed gateway settings."
         },
+        "harnesses": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Harness"
+          },
+          "description": "Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
+        },
         "inferenceProviders": {
           "description": "Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.",
           "items": {
@@ -3300,39 +3353,89 @@
       "if": {
         "allOf": [
           {
-            "properties": {
-              "spec": {
+            "allOf": [
+              {
                 "properties": {
-                  "inferenceProviders": {
-                    "maxItems": 1,
-                    "minItems": 1
+                  "spec": {
+                    "properties": {
+                      "inferenceProviders": {
+                        "maxItems": 1,
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "inferenceProviders"
+                    ]
                   }
                 },
                 "required": [
-                  "inferenceProviders"
+                  "spec"
                 ]
-              }
-            },
-            "required": [
-              "spec"
-            ]
-          },
-          {
-            "properties": {
-              "spec": {
+              },
+              {
                 "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "inferenceProviders": {
-                          "maxItems": 0
+                  "spec": {
+                    "properties": {
+                      "sandboxes": {
+                        "items": {
+                          "properties": {
+                            "inferenceProviders": {
+                              "maxItems": 0
+                            }
+                          }
                         }
                       }
                     }
                   }
                 }
+              },
+              {
+                "properties": {
+                  "spec": {
+                    "properties": {
+                      "sandboxes": {
+                        "items": {
+                          "properties": {
+                            "agents": {
+                              "items": {
+                                "properties": {
+                                  "inference": {
+                                    "properties": {
+                                      "routes": {
+                                        "items": {
+                                          "required": [
+                                            "providerRef"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "routes"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "inference"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "agents"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "sandboxes"
+                    ]
+                  }
+                },
+                "required": [
+                  "spec"
+                ]
               }
-            }
+            ]
           },
           {
             "properties": {
@@ -3344,23 +3447,17 @@
                         "agents": {
                           "items": {
                             "properties": {
-                              "inference": {
+                              "harness": {
                                 "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "required": [
-                                        "providerRef"
-                                      ]
-                                    }
-                                  }
+                                  "kind": {}
                                 },
                                 "required": [
-                                  "routes"
+                                  "kind"
                                 ]
                               }
                             },
                             "required": [
-                              "inference"
+                              "harness"
                             ]
                           }
                         }
@@ -3396,7 +3493,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "pi"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "pi"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -3623,12 +3727,19 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "enum": [
-                                      "openclaw",
-                                      "hermes"
-                                    ]
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "enum": [
+                                          "openclaw",
+                                          "hermes"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -3757,7 +3868,14 @@
                                     "items": {
                                       "properties": {
                                         "harness": {
-                                          "const": "claude"
+                                          "properties": {
+                                            "kind": {
+                                              "const": "claude"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ]
                                         }
                                       },
                                       "required": [
@@ -3842,7 +3960,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "claude"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "claude"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -3896,7 +4021,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "codex"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "codex"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -3950,14 +4082,21 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "enum": [
-                                      "openclaw",
-                                      "hermes",
-                                      "claude",
-                                      "codex"
-                                    ]
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "enum": [
+                                          "openclaw",
+                                          "hermes",
+                                          "claude",
+                                          "codex"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -4011,9 +4150,16 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "const": "openclaw"
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "const": "openclaw"
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -4141,7 +4287,11 @@
                                 "items": {
                                   "properties": {
                                     "harness": {
-                                      "const": "hermes"
+                                      "properties": {
+                                        "kind": {
+                                          "const": "hermes"
+                                        }
+                                      }
                                     }
                                   }
                                 }
@@ -4210,9 +4360,16 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "const": "pi"
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "const": "pi"
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -4348,41 +4505,91 @@
       "if": {
         "allOf": [
           {
-            "properties": {
-              "spec": {
+            "allOf": [
+              {
                 "properties": {
-                  "inferenceProviders": {
-                    "maxItems": 0
+                  "spec": {
+                    "properties": {
+                      "inferenceProviders": {
+                        "maxItems": 0
+                      }
+                    }
                   }
                 }
-              }
-            }
-          },
-          {
-            "properties": {
-              "spec": {
+              },
+              {
                 "properties": {
-                  "sandboxes": {
-                    "items": {
-                      "properties": {
-                        "inferenceProviders": {
-                          "maxItems": 1,
-                          "minItems": 1
+                  "spec": {
+                    "properties": {
+                      "sandboxes": {
+                        "items": {
+                          "properties": {
+                            "inferenceProviders": {
+                              "maxItems": 1,
+                              "minItems": 1
+                            }
+                          },
+                          "required": [
+                            "inferenceProviders"
+                          ]
                         }
-                      },
-                      "required": [
-                        "inferenceProviders"
-                      ]
-                    }
+                      }
+                    },
+                    "required": [
+                      "sandboxes"
+                    ]
                   }
                 },
                 "required": [
-                  "sandboxes"
+                  "spec"
+                ]
+              },
+              {
+                "properties": {
+                  "spec": {
+                    "properties": {
+                      "sandboxes": {
+                        "items": {
+                          "properties": {
+                            "agents": {
+                              "items": {
+                                "properties": {
+                                  "inference": {
+                                    "properties": {
+                                      "routes": {
+                                        "items": {
+                                          "required": [
+                                            "providerRef"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "routes"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "inference"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "agents"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "sandboxes"
+                    ]
+                  }
+                },
+                "required": [
+                  "spec"
                 ]
               }
-            },
-            "required": [
-              "spec"
             ]
           },
           {
@@ -4395,23 +4602,17 @@
                         "agents": {
                           "items": {
                             "properties": {
-                              "inference": {
+                              "harness": {
                                 "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "required": [
-                                        "providerRef"
-                                      ]
-                                    }
-                                  }
+                                  "kind": {}
                                 },
                                 "required": [
-                                  "routes"
+                                  "kind"
                                 ]
                               }
                             },
                             "required": [
-                              "inference"
+                              "harness"
                             ]
                           }
                         }
@@ -4447,7 +4648,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "pi"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "pi"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -4698,12 +4906,19 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "enum": [
-                                      "openclaw",
-                                      "hermes"
-                                    ]
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "enum": [
+                                          "openclaw",
+                                          "hermes"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -4853,7 +5068,14 @@
                                     "items": {
                                       "properties": {
                                         "harness": {
-                                          "const": "claude"
+                                          "properties": {
+                                            "kind": {
+                                              "const": "claude"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ]
                                         }
                                       },
                                       "required": [
@@ -4953,7 +5175,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "claude"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "claude"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -5013,7 +5242,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "codex"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "codex"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -5073,14 +5309,21 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "enum": [
-                                      "openclaw",
-                                      "hermes",
-                                      "claude",
-                                      "codex"
-                                    ]
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "enum": [
+                                          "openclaw",
+                                          "hermes",
+                                          "claude",
+                                          "codex"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -5140,9 +5383,16 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "const": "openclaw"
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "const": "openclaw"
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -5270,7 +5520,11 @@
                                 "items": {
                                   "properties": {
                                     "harness": {
-                                      "const": "hermes"
+                                      "properties": {
+                                        "kind": {
+                                          "const": "hermes"
+                                        }
+                                      }
                                     }
                                   }
                                 }
@@ -5348,9 +5602,16 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "const": "pi"
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "const": "pi"
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -5493,49 +5754,93 @@
     },
     {
       "if": {
-        "properties": {
-          "spec": {
+        "allOf": [
+          {
             "properties": {
-              "sandboxes": {
-                "items": {
-                  "properties": {
-                    "agents": {
-                      "items": {
-                        "properties": {
-                          "inference": {
+              "spec": {
+                "properties": {
+                  "sandboxes": {
+                    "items": {
+                      "properties": {
+                        "agents": {
+                          "items": {
                             "properties": {
-                              "routes": {
-                                "items": {
-                                  "required": [
-                                    "provider"
-                                  ]
-                                }
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "required": [
+                                        "provider"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "routes"
+                                ]
                               }
                             },
                             "required": [
-                              "routes"
+                              "inference"
                             ]
                           }
-                        },
-                        "required": [
-                          "inference"
-                        ]
-                      }
+                        }
+                      },
+                      "required": [
+                        "agents"
+                      ]
                     }
-                  },
-                  "required": [
-                    "agents"
-                  ]
-                }
+                  }
+                },
+                "required": [
+                  "sandboxes"
+                ]
               }
             },
             "required": [
-              "sandboxes"
+              "spec"
+            ]
+          },
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "sandboxes": {
+                    "items": {
+                      "properties": {
+                        "agents": {
+                          "items": {
+                            "properties": {
+                              "harness": {
+                                "properties": {
+                                  "kind": {}
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "harness"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "agents"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "sandboxes"
+                ]
+              }
+            },
+            "required": [
+              "spec"
             ]
           }
-        },
-        "required": [
-          "spec"
         ]
       },
       "then": {
@@ -5552,7 +5857,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "pi"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "pi"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -5863,12 +6175,19 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "enum": [
-                                      "openclaw",
-                                      "hermes"
-                                    ]
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "enum": [
+                                          "openclaw",
+                                          "hermes"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -6069,7 +6388,14 @@
                                     "items": {
                                       "properties": {
                                         "harness": {
-                                          "const": "claude"
+                                          "properties": {
+                                            "kind": {
+                                              "const": "claude"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ]
                                         }
                                       },
                                       "required": [
@@ -6206,7 +6532,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "claude"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "claude"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -6280,7 +6613,14 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "const": "codex"
+                                  "properties": {
+                                    "kind": {
+                                      "const": "codex"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -6354,14 +6694,21 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "enum": [
-                                      "openclaw",
-                                      "hermes",
-                                      "claude",
-                                      "codex"
-                                    ]
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "enum": [
+                                          "openclaw",
+                                          "hermes",
+                                          "claude",
+                                          "codex"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -6435,9 +6782,16 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "const": "openclaw"
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "const": "openclaw"
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -6565,7 +6919,11 @@
                                 "items": {
                                   "properties": {
                                     "harness": {
-                                      "const": "hermes"
+                                      "properties": {
+                                        "kind": {
+                                          "const": "hermes"
+                                        }
+                                      }
                                     }
                                   }
                                 }
@@ -6666,9 +7024,16 @@
                             "items": {
                               "properties": {
                                 "harness": {
-                                  "not": {
-                                    "const": "pi"
-                                  }
+                                  "properties": {
+                                    "kind": {
+                                      "not": {
+                                        "const": "pi"
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ]
                                 }
                               },
                               "required": [
@@ -6868,6 +7233,7 @@
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
+    "The parser resolves harnessRef from enclosing harnesses and requires identical resolved harness settings across agents in a sandbox. Shared definitions reuse configuration, not runtime processes across sandboxes.",
     "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
     "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing and multiple selected definitions, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",

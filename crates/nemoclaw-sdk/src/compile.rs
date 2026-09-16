@@ -76,7 +76,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             vec![
                 ("image", sandbox.image.ref_.clone()),
                 ("agent_name", agent.name.clone()),
-                ("agent_runtime", agent.runtime()),
+                ("agent_runtime", document.agent_harness(agent)?.runtime()),
             ],
         ),
     ] {
@@ -99,7 +99,10 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                     serde_json::to_string(&settings).expect("typed inference settings"),
                 );
             }
-            let mut policy = sandbox.policy_proto(document.web_search()?.is_some())?;
+            let mut policy = sandbox.policy_proto(
+                document.web_search()?.is_some(),
+                document.agent_harness(agent)?.observability.as_ref(),
+            )?;
             let profile = crate::openshell::inference_profile(
                 &provider.name,
                 &connection.endpoint,

@@ -42,6 +42,10 @@ pub struct Metadata {
 pub struct Spec {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
+    /// Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.
+    pub harnesses: std::collections::BTreeMap<String, Harness>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
     /// Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.
     pub inferences: std::collections::BTreeMap<String, Inference>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -214,6 +218,10 @@ pub struct ManagedOllama {
 pub struct Sandbox {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
+    /// Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.
+    pub harnesses: std::collections::BTreeMap<String, Harness>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
     /// Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.
     pub inferences: std::collections::BTreeMap<String, Inference>,
     #[serde(
@@ -307,20 +315,21 @@ pub struct Agent {
     #[schemars(default)]
     /// Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions.
     pub integration_refs: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentObservability")]
-    /// Harness-native tracing, declared only on the first agent.
-    pub observability: Option<super::AgentObservability>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentExecution")]
-    /// OpenClaw timeout and heartbeat defaults. Declare only on the first agent in a shared sandbox.
-    pub execution: Option<super::AgentExecution>,
     #[serde(rename = "name")]
     /// Lowercase agent name.
     pub name: String,
-    #[serde(rename = "harness")]
-    /// Agent harness. Harnesses other than openclaw require external gateway and inference services.
-    pub harness: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Harness")]
+    /// Inline harness configuration. Exactly one of harness or harnessRef is required. Agents in a sandbox must select identical harness settings.
+    pub harness: Option<Harness>,
+    #[serde(
+        rename = "harnessRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Name of an enclosing harness configuration. Excludes inline harness.
+    pub harness_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Inference")]
     /// Inline inference configuration. Exactly one of inference or inferenceRef is required.
@@ -337,10 +346,6 @@ pub struct Agent {
     #[schemars(default, with = "super::AgentAuth")]
     /// Hermes API-key authentication through the routed provider. The provider must declare a credential reference.
     pub auth: Option<super::AgentAuth>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentInterfaces")]
-    /// Native dashboard access, declared only on the first agent in a sandbox.
-    pub interfaces: Option<super::AgentInterfaces>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentTools")]
     /// OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access.
@@ -599,4 +604,25 @@ pub struct ServicePublication {
     pub endpoint: String,
     /// Private host IPv4 address outside the service Docker subnet. Loopback is rejected.
     pub bind_address: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// One harness runtime configuration. Every sandbox runs its own instance; agents within a sandbox share its settings.
+pub struct Harness {
+    /// Fabric harness implementation. Multiple agents require OpenClaw.
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentObservability")]
+    /// Harness-native tracing shared by the sandbox.
+    pub observability: Option<super::AgentObservability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentExecution")]
+    /// OpenClaw timeout and heartbeat defaults shared by the sandbox.
+    pub execution: Option<super::AgentExecution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentInterfaces")]
+    /// Native dashboard access for this sandbox runtime.
+    pub interfaces: Option<super::AgentInterfaces>,
 }

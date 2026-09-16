@@ -27,7 +27,8 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: nooa-bench
+          harness:
+            kind: nooa-bench
           inference:
             routes:
               - name: primary

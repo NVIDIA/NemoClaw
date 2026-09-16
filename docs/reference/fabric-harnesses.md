@@ -7,7 +7,7 @@ Choose a harness before selecting an image, inference API, and management mode.
 This matrix describes accepted configuration combinations, not live qualification of every model or host.
 Use [inference API selection](../inference.md#choose-the-request-api) for the protocol restrictions and [agent access](../agents.md#choose-native-access) for interaction and session behavior.
 
-| `harness` | Agents per sandbox | Gateway and inference management | Maintained example |
+| `harness.kind` | Agents per sandbox | Gateway and inference management | Maintained example |
 |---|---|---|---|
 | `openclaw` | One or more; shared primary route | External or managed | [OpenClaw](../../examples/fabric-openclaw.yaml) |
 | `hermes` | One | External or managed | [Hermes](../../examples/fabric-hermes.yaml), [managed Hermes](../../examples/managed-hermes.yaml) |
@@ -23,7 +23,7 @@ Use [inference API selection](../inference.md#choose-the-request-api) for the pr
 Managed inference means an accepted Ollama or vLLM service configuration, with that mode's prerequisites.
 It does not promise arbitrary model compatibility.
 OpenClaw and Hermes also accept external Ollama with a managed proxy; the inference provider stays `management: external`, while NemoClaw manages only the proxy and its credential storage.
-External services remain operated by their owners; NemoClaw still owns its deployment's provider registration, route, and sandbox.
+External services remain operated by their owners; NemoClaw still owns its deployment's provider registration, endpoint profile, and sandbox.
 
 Build an image for the selected harness using [the Fabric image procedure](../inference.md#build-an-image-with-the-configuration-interface).
 Replace example identities, endpoints, and local/placeholder image digests with your own values.

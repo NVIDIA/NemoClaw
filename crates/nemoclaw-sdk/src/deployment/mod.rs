@@ -231,7 +231,7 @@ impl Deployment {
         changes.extend(check_plan(&plan, &allowed, &bindings)?);
         let agent = &document.spec.sandboxes[0].agents[0];
         if !fresh
-            && agent.harness == "pi"
+            && document.agent_harness(agent)?.kind == "pi"
             && document.agent_inference(agent)?.routes[0].overrides
                 != record
                     .document
@@ -260,7 +260,7 @@ impl Deployment {
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
         (self.progress)(Progress::Applying);
-        if agent.harness == "pi"
+        if document.agent_harness(agent)?.kind == "pi"
             && let Some(binding) = bindings.get(&targets[3].address)
         {
             let mut sandbox = targets[3].values.clone();
@@ -300,7 +300,7 @@ impl Deployment {
         );
         (self.progress)(Progress::Readiness);
         let agent = &document.spec.sandboxes[0].agents[0];
-        if agent.harness == "pi" {
+        if document.agent_harness(agent)?.kind == "pi" {
             sandbox.insert(
                 "pi_model_config".into(),
                 serde_json::to_string(&document.agent_inference(agent)?.routes[0].overrides)

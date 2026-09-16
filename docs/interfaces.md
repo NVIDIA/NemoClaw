@@ -48,8 +48,8 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 
 ## OpenClaw Dashboard
 
-Declare OpenClaw dashboard settings on the first agent in a sandbox.
-All agents share its native gateway; secondary agents must omit `interfaces`.
+Declare `interfaces` inside the selected OpenClaw harness configuration.
+All agents share its native gateway and must resolve to identical harness settings; use [a shared harness definition](configuration-references.md#reference-a-harness-configuration) to declare them once.
 
 ```yaml
 interfaces:
@@ -147,7 +147,7 @@ flowchart LR
     Dashboard --> UIState["Dashboard session state"]
 ```
 
-Use the [Hermes interface example](../examples/hermes-interfaces.yaml) to override the ports:
+Use the [Hermes interface example](../examples/hermes-interfaces.yaml) to override the ports inside its `harness` configuration:
 
 ```yaml
 interfaces:

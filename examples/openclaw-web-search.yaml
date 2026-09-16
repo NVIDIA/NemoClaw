@@ -31,7 +31,8 @@ spec:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       agents:
         - name: researcher
-          harness: openclaw
+          harness:
+            kind: openclaw
           integrationRefs: [search]
           inference:
             routes:
@@ -40,7 +41,8 @@ spec:
                 overrides:
                   model: qwen3:4b
         - name: writer
-          harness: openclaw
+          harness:
+            kind: openclaw
           integrationRefs: [search]
           inference:
             routes:

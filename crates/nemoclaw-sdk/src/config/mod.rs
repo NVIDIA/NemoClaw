@@ -254,11 +254,6 @@ impl Gateway {
         bridge_address(&self.network_cidr)
     }
 }
-impl Agent {
-    pub fn runtime(&self) -> String {
-        format!("fabric-{}", self.harness)
-    }
-}
 impl Service {
     pub fn served_model(&self) -> &str {
         if let Some(recipe) = &self.recipe {

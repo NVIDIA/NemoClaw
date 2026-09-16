@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 fn input(harness: &str) -> Value {
     let mut v: Value =
         serde_saphyr::from_str(include_str!("../../../examples/local.yaml")).unwrap();
-    v["spec"]["sandboxes"][0]["agents"][0]["harness"] = json!(harness);
+    v["spec"]["sandboxes"][0]["agents"][0]["harness"]["kind"] = json!(harness);
     v
 }
 fn parse(v: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {

@@ -4,7 +4,7 @@ use super::ConfigError;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const OTLP_ENDPOINT: &str = "http://host.openshell.internal:4318";
-/// Harness-native telemetry, declared on the first agent and shared by its sandbox.
+/// Harness-native telemetry shared by the sandbox.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentObservability {

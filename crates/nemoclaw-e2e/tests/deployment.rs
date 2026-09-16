@@ -70,11 +70,14 @@ async fn execution_settings_cli_export_reapply_and_drift() {
         let mut document =
             Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
                 .unwrap();
-        document.spec.sandboxes[0].agents[0].execution =
-            Some(nemoclaw_sdk::config::AgentExecution {
-                timeout_seconds: Some(900),
-                heartbeat_every: heartbeat.map(String::from),
-            });
+        document.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .execution = Some(nemoclaw_sdk::config::AgentExecution {
+            timeout_seconds: Some(900),
+            heartbeat_every: heartbeat.map(String::from),
+        });
         lifecycle(&document.yaml().unwrap()).await;
     }
 }
@@ -84,7 +87,11 @@ async fn execution_settings_cli_export_reapply_and_drift() {
 async fn observability_cli_export_reapply_and_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document.spec.sandboxes[0].agents[0].observability = Some(
+    document.spec.sandboxes[0].agents[0]
+        .harness
+        .as_mut()
+        .unwrap()
+        .observability = Some(
         serde_json::from_value(serde_json::json!({
         "otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318",
                 "serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}}))
@@ -339,8 +346,18 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     }
     if document.inference_provider().unwrap().api.is_some()
         || document.spec.sandboxes[0].agents[0].auth.is_some()
-        || document.spec.sandboxes[0].agents[0].execution.is_some()
-        || document.spec.sandboxes[0].agents[0].observability.is_some()
+        || document.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .execution
+            .is_some()
+        || document.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .observability
+            .is_some()
     {
         let key = format!(
             "{}/{}",
@@ -364,9 +381,19 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
                 .any(|cmd| cmd.ends_with(&["--inference".into(), original.clone()]))
         );
         let mut changed = document.clone();
-        if let Some(execution) = &mut changed.spec.sandboxes[0].agents[0].execution {
+        if let Some(execution) = &mut changed.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .execution
+        {
             execution.timeout_seconds = Some(1200);
-        } else if let Some(observability) = &mut changed.spec.sandboxes[0].agents[0].observability {
+        } else if let Some(observability) = &mut changed.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .observability
+        {
             observability.otlp.as_mut().unwrap().sample_rate = 1.into();
         } else {
             changed.inference_provider_mut().unwrap().api = Some(

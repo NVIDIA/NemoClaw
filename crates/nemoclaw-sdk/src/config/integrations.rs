@@ -82,8 +82,7 @@ impl Sandbox {
                 }
                 match definition {
                     Integration::WebSearch(_)
-                        if agent.harness != "openclaw"
-                            || matches!(agent.tools, Some(AgentTools::ReadOnly { .. })) =>
+                        if matches!(agent.tools, Some(AgentTools::ReadOnly { .. })) =>
                     {
                         return Err(ConfigError(
                             "web search requires unrestricted OpenClaw agents",

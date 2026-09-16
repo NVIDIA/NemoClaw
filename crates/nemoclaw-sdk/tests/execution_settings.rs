@@ -21,9 +21,8 @@ fn execution_settings_reach_the_runtime_and_round_trip_with_many_agents() {
         json!({"timeoutSeconds":600,"heartbeatEvery":"0m"}),
     ] {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["agents"][0]["execution"] = execution.clone();
+        value["spec"]["sandboxes"][0]["agents"][0]["harness"]["execution"] = execution.clone();
         let mut reader = value["spec"]["sandboxes"][0]["agents"][0].clone();
-        reader.as_object_mut().unwrap().remove("execution");
         reader["tools"] = json!({"allow":["read"]});
         for name in ["reader", "reviewer", "auditor"] {
             reader["name"] = json!(name);
@@ -45,14 +44,15 @@ fn execution_settings_reach_the_runtime_and_round_trip_with_many_agents() {
         let runtime: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
         assert_eq!(runtime["execution"], execution);
         assert_eq!(runtime["agents"].as_array().unwrap().len(), 4);
-        value["spec"]["sandboxes"][0]["agents"][1]["execution"] = json!({"timeoutSeconds":1200});
+        value["spec"]["sandboxes"][0]["agents"][1]["harness"]["execution"] =
+            json!({"timeoutSeconds":1200});
         assert!(
             parse(&value).is_err(),
-            "execution belongs to the primary agent"
+            "agents must agree on harness execution settings"
         );
         assert!(
-            !schema.is_valid(&value),
-            "schema must reject secondary execution"
+            schema.is_valid(&value),
+            "cross-agent agreement is checked by the parser"
         );
     }
 }
@@ -72,14 +72,14 @@ fn malformed_execution_fails_before_planning() {
         json!({"heartbeatEvery":"1m","extra":true}),
     ] {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["agents"][0]["execution"] = execution;
+        value["spec"]["sandboxes"][0]["agents"][0]["harness"]["execution"] = execution;
         assert!(parse(&value).is_err());
         assert!(!schema.is_valid(&value));
     }
     let mut value = input();
     let agent = &mut value["spec"]["sandboxes"][0]["agents"][0];
-    agent["harness"] = json!("hermes");
-    agent["execution"] = json!({"timeoutSeconds":900});
+    agent["harness"]["kind"] = json!("hermes");
+    agent["harness"]["execution"] = json!({"timeoutSeconds":900});
     assert!(parse(&value).is_err());
     assert!(!schema.is_valid(&value));
 }

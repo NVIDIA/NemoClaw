@@ -82,7 +82,7 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     )
     .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
-    value["spec"]["sandboxes"][0]["agents"][0]["harness"] = harness.into();
+    value["spec"]["sandboxes"][0]["agents"][0]["harness"]["kind"] = harness.into();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
     value["spec"]["inferenceProviders"][0]["service"]["placement"] =

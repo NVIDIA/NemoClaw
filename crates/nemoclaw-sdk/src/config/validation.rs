@@ -153,6 +153,7 @@ impl Document {
             self.spec.sandboxes.len() == 1,
             "exactly one sandbox is required",
         )?;
+        self.validate_harness_references()?;
         let provider = self.inference_provider()?;
         self.validate_inference_references()?;
         for definition in self.provider_definitions() {
@@ -174,14 +175,19 @@ impl Document {
         sandbox.network.validate()?;
         require(!sandbox.agents.is_empty(), "at least one agent is required")?;
         let web_search = self.web_search()?;
-        sandbox.policy_proto(web_search.is_some())?;
+        sandbox.policy_proto(
+            web_search.is_some(),
+            self.agent_harness(&sandbox.agents[0])?
+                .observability
+                .as_ref(),
+        )?;
         if let Some(search) = web_search {
             require(
                 provider.name != "brave-search",
                 "brave-search is reserved for web search",
             )?;
             search.validate(
-                &sandbox.agents[0].harness,
+                &self.agent_harness(&sandbox.agents[0])?.kind,
                 sandbox
                     .agents
                     .iter()
@@ -194,13 +200,13 @@ impl Document {
             require(names.insert(&agent.name), "agent names must be unique")?;
             require(
                 sandbox.agents.len() == 1
-                    || (agent.harness == "openclaw"
+                    || (self.agent_harness(agent)?.kind == "openclaw"
                         && self.agent_inference(agent)?
                             == self.agent_inference(&sandbox.agents[0])?),
                 "multiple agents require OpenClaw and identical inference settings",
             )?;
             require(
-                agent.tools.is_none() || agent.harness == "openclaw",
+                agent.tools.is_none() || self.agent_harness(agent)?.kind == "openclaw",
                 "tool restrictions require OpenClaw",
             )?;
             require(
@@ -208,57 +214,34 @@ impl Document {
                 "agent requires a lowercase name",
             )?;
             require(
-                is_fabric_harness(&agent.harness),
+                is_fabric_harness(&self.agent_harness(agent)?.kind),
                 "agent requires a supported harness",
             )?;
             require(
-                matches!(agent.harness.as_str(), "openclaw" | "hermes")
-                    || (gateway.management == "external"
-                        && provider.service.is_none()
-                        && provider.ollama.is_none()),
+                matches!(
+                    self.agent_harness(agent)?.kind.as_str(),
+                    "openclaw" | "hermes"
+                ) || (gateway.management == "external"
+                    && provider.service.is_none()
+                    && provider.ollama.is_none()),
                 "this harness requires external gateway and inference services",
             )?;
             require(
-                agent.harness != "pi" || provider.api.is_none(),
+                self.agent_harness(agent)?.kind != "pi" || provider.api.is_none(),
                 "Pi selects its API through model metadata; omit provider api",
             )?;
             let api = provider
                 .api
-                .unwrap_or(InferenceApi::for_harness(&agent.harness));
+                .unwrap_or(InferenceApi::for_harness(&self.agent_harness(agent)?.kind));
             require(
-                api.supported(&agent.harness)
+                api.supported(&self.agent_harness(agent)?.kind)
                     && (api == InferenceApi::AnthropicMessages)
                         == (provider.provider == "anthropic"),
                 "API must match the provider implementation and be supported by the harness",
             )?;
-            if let Some(interfaces) = &agent.interfaces {
-                require(
-                    agent.name == sandbox.agents[0].name,
-                    "interfaces belong to the first agent in a shared sandbox",
-                )?;
-                interfaces.validate(&agent.harness)?;
-            }
-            if let Some(execution) = &agent.execution {
-                require(
-                    agent.name == sandbox.agents[0].name,
-                    "execution defaults belong to the first agent in a shared sandbox",
-                )?;
-                execution.validate(&agent.harness)?;
-            }
-            if let Some(observability) = &agent.observability {
-                require(
-                    agent.name == sandbox.agents[0].name,
-                    "observability belongs to the first agent in a shared sandbox",
-                )?;
-                observability.validate(&agent.harness)?;
-                require(
-                    !observability.uses_relay() || agent.interfaces.is_none(),
-                    "Hermes Relay tracing cannot be combined with native Hermes interfaces",
-                )?;
-            }
             if agent.auth.is_some() {
                 require(
-                    agent.harness == "hermes"
+                    self.agent_harness(agent)?.kind == "hermes"
                         && (provider.credential.is_some()
                             || provider.ollama_proxy.is_some()
                             || provider
@@ -277,9 +260,12 @@ impl Document {
                 route.name == "primary" && MODEL.is_match(&route.overrides.model),
                 "primary route must reference the declared provider and valid model",
             )?;
-            route.overrides.tuning.validate(&agent.harness)?;
+            route
+                .overrides
+                .tuning
+                .validate(&self.agent_harness(agent)?.kind)?;
             require(
-                route.overrides.pi_model.is_none() || agent.harness == "pi",
+                route.overrides.pi_model.is_none() || self.agent_harness(agent)?.kind == "pi",
                 "piModel is supported only by the Pi harness",
             )?;
             require(
@@ -290,7 +276,11 @@ impl Document {
                 "service requires its declared served model and compatible sandbox placement",
             )?;
             if let Some(proxy) = &provider.ollama_proxy {
-                proxy.validate(provider, &route.overrides.model, &agent.harness)?;
+                proxy.validate(
+                    provider,
+                    &route.overrides.model,
+                    &self.agent_harness(agent)?.kind,
+                )?;
             }
             if let Some(ollama) = &provider.ollama {
                 let url = Url::parse(&provider.endpoint)

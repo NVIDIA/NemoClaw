@@ -247,6 +247,7 @@ impl RuntimeInference {
 impl Document {
     pub(crate) fn runtime_inference(&self) -> Result<Option<RuntimeInference>, ConfigError> {
         let agent = &self.spec.sandboxes[0].agents[0];
+        let harness = self.agent_harness(agent)?;
         let provider = self.inference_provider()?;
         let tuning = &self.agent_inference(agent)?.routes[0].overrides.tuning;
         let agents = &self.spec.sandboxes[0].agents;
@@ -283,9 +284,9 @@ impl Document {
                     .unwrap_or_else(|| "NEMOCLAW_ANONYMOUS_API_KEY".into()),
             },
             web_search,
-            observability: agent.observability.clone(),
-            execution: agent.execution.clone(),
-            interfaces: agent.interfaces.clone(),
+            observability: harness.observability.clone(),
+            execution: harness.execution.clone(),
+            interfaces: harness.interfaces.clone(),
             agents: if roster {
                 agents
                     .iter()
@@ -299,7 +300,7 @@ impl Document {
             },
             api: provider
                 .api
-                .unwrap_or(InferenceApi::for_harness(&agent.harness)),
+                .unwrap_or(InferenceApi::for_harness(&harness.kind)),
             tuning: tuning.clone(),
             auth: agent.auth.as_ref().map(|auth| RuntimeAuth {
                 method: auth.method.clone(),

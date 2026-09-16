@@ -18,7 +18,7 @@ fn relay() -> Value {
 #[test]
 fn telemetry_preserves_intent_and_adds_only_collector_egress() {
     let mut value = input();
-    value["spec"]["sandboxes"][0]["agents"][0]["observability"] = telemetry();
+    value["spec"]["sandboxes"][0]["agents"][0]["harness"]["observability"] = telemetry();
     let doc = Document::parse(value.to_string().as_bytes()).expect("OTLP settings must parse");
     assert!(
         jsonschema::validator_for(&input_schema())
@@ -74,27 +74,30 @@ fn invalid_telemetry_is_rejected_before_planning() {
         let mut value = input();
         let mut otlp = telemetry();
         otlp["otlp"][field] = invalid;
-        value["spec"]["sandboxes"][0]["agents"][0]["observability"] = otlp;
+        value["spec"]["sandboxes"][0]["agents"][0]["harness"]["observability"] = otlp;
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
         assert!(!schema.is_valid(&value));
     }
     let mut value = input();
     let mut agent = value["spec"]["sandboxes"][0]["agents"][0].clone();
     agent["name"] = json!("reader");
-    agent["observability"] = telemetry();
+    agent["harness"]["observability"] = telemetry();
     value["spec"]["sandboxes"][0]["agents"]
         .as_array_mut()
         .unwrap()
         .push(agent);
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
-    assert!(!schema.is_valid(&value));
+    assert!(
+        schema.is_valid(&value),
+        "cross-agent agreement is checked by the parser"
+    );
 }
 
 #[test]
 fn hermes_relay_tracing_selects_in_process_runtime_without_new_egress() {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-hermes.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["agents"][0]["observability"] = relay();
+    value["spec"]["sandboxes"][0]["agents"][0]["harness"]["observability"] = relay();
     let doc = Document::parse(value.to_string().as_bytes()).expect("Relay settings must parse");
     assert!(
         jsonschema::validator_for(&input_schema())
@@ -127,13 +130,13 @@ fn relay_tracing_rejects_unsupported_combinations() {
         json!({"relay":{"enabled":true},"otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318","serviceName":"fixture","sampleRate":1}}),
     ] {
         let mut value = hermes.clone();
-        value["spec"]["sandboxes"][0]["agents"][0]["observability"] = observability;
+        value["spec"]["sandboxes"][0]["agents"][0]["harness"]["observability"] = observability;
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
         assert!(!schema.is_valid(&value));
     }
     let mut with_interfaces = hermes;
-    with_interfaces["spec"]["sandboxes"][0]["agents"][0]["observability"] = relay();
-    with_interfaces["spec"]["sandboxes"][0]["agents"][0]["interfaces"] =
+    with_interfaces["spec"]["sandboxes"][0]["agents"][0]["harness"]["observability"] = relay();
+    with_interfaces["spec"]["sandboxes"][0]["agents"][0]["harness"]["interfaces"] =
         json!({"dashboard":{"enabled":false}});
     assert!(Document::parse(with_interfaces.to_string().as_bytes()).is_err());
     assert!(!schema.is_valid(&with_interfaces));

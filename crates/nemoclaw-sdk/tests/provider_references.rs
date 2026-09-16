@@ -93,7 +93,7 @@ fn unused_provider_definitions_require_no_secrets_or_resources() {
 fn hermes_auth_uses_the_selected_inline_provider_without_a_second_reference() {
     let mut value = inline(input());
     let agent = &mut value["spec"]["sandboxes"][0]["agents"][0];
-    agent["harness"] = json!("hermes");
+    agent["harness"]["kind"] = json!("hermes");
     agent["auth"] = json!({"method":"api-key"});
     agent["inference"]["routes"][0]["provider"]["endpoint"] =
         json!("https://inference.example.test/v1");

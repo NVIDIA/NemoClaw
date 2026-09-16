@@ -24,7 +24,8 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: openclaw
+          harness:
+            kind: openclaw
           inference:
             routes:
               - name: primary

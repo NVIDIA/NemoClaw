@@ -13,6 +13,22 @@ metadata:
   name: full-featured-openclaw
   uid: c5641f3b-688b-4d2b-935d-ab21718e6ef8
 spec:
+  harnesses:
+    assistant:
+      kind: openclaw
+      interfaces:
+        dashboard:
+          port: 18800
+          bind: 127.0.0.1
+      observability:
+        otlp:
+          enabled: true
+          endpoint: http://host.openshell.internal:4318
+          serviceName: research-team
+          sampleRate: 0.5
+      execution:
+        timeoutSeconds: 900
+        heartbeatEvery: 30m
   gateway:
     management: managed
     endpoint: http://127.0.0.1:17695
@@ -116,25 +132,11 @@ spec:
                 binaries:
                   - path: /usr/local/bin/node
       agents:
-        # Shared gateway settings belong only on the first agent.
         - name: researcher
-          harness: openclaw
+          harnessRef: assistant
           integrationRefs: [search]
           tools:
             disclosure: progressive
-          execution:
-            timeoutSeconds: 900
-            heartbeatEvery: 30m
-          observability:
-            otlp:
-              enabled: true
-              endpoint: http://host.openshell.internal:4318
-              serviceName: research-team
-              sampleRate: 0.5
-          interfaces:
-            dashboard:
-              port: 18800
-              bind: 127.0.0.1
           inference:
             routes:
               - name: primary
@@ -146,7 +148,7 @@ spec:
                   reasoning: true
                   reasoningEffort: high
         - name: writer
-          harness: openclaw
+          harnessRef: assistant
           integrationRefs: [search]
           tools:
             disclosure: progressive
@@ -162,7 +164,7 @@ spec:
                   reasoningEffort: high
         # Tool restriction, not filesystem isolation. This agent receives no search grant.
         - name: reader
-          harness: openclaw
+          harnessRef: assistant
           tools:
             allow: [read]
           inference:

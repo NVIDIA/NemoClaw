@@ -18,7 +18,8 @@ spec:
     - name: assistant
       agents:
         - name: researcher
-          harness: openclaw
+          harness:
+            kind: openclaw
           inference:
             routes:
               - name: primary

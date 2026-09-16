@@ -3,7 +3,7 @@
 
 # Agent Runtimes and Native Access
 
-OpenClaw runs through Fabric, using `harness: openclaw`.
+OpenClaw runs through Fabric, using `harness: {kind: openclaw}`.
 The default sandbox image is the pinned Fabric OpenClaw image.
 Fabric owns the agent process inside the sandbox, while OpenShell owns isolation and inference routing.
 
@@ -15,6 +15,19 @@ API and native-interface requirements differ between harnesses.
 
 The strict schema rejects unsupported combinations.
 See [inference configuration](inference.md) for API selection, OpenClaw route tuning, and Hermes authentication.
+
+## Configure the Shared Harness
+
+Each sandbox runs one harness runtime.
+Select its configuration inline with `harness: {kind: openclaw}` or through `harnessRef` from enclosing `harnesses` definitions.
+All agents in a sandbox must resolve to identical harness settings.
+Execution defaults, tracing, and native interfaces belong inside that configuration; they no longer belong to the first agent.
+A shared definition reuses settings, not a running process across sandboxes.
+See [shared harness definitions](configuration-references.md#reference-a-harness-configuration) for an example.
+
+The former scalar `harness` and agent-level `execution`, `observability`, and `interfaces` fields are rejected.
+Move those settings under the typed harness object when authoring a new deployment.
+Use the matching previous bundle for retained deployments; editing YAML does not migrate their state or native data.
 
 ## Choose Native Access
 
@@ -36,7 +49,7 @@ Native channel/plugin capabilities need their own prerequisites; see [integratio
 
 ### Run One Deep Agents Request
 
-Use an already applied `harness: deepagents` deployment with an external gateway and inference endpoint, a compatible current image, and an API/model you can invoke.
+Use an already applied `harness: {kind: deepagents}` deployment with an external gateway and inference endpoint, a compatible current image, and an API/model you can invoke.
 Follow its [harness matrix entry](reference/fabric-harnesses.md) and the shared [deployment procedure](usage.md) to create it first.
 This call starts a separate Fabric runtime inside the sandbox and sends a real model request, which can incur charges.
 It shares `/sandbox/workspace` with the hosted runtime and can use the agent's tools; it writes invocation artifacts to `/sandbox/sdk-smoke`.
@@ -139,7 +152,7 @@ See [agent interfaces](interfaces.md) for OpenClaw and Hermes dashboard, API, an
 
 ## OpenClaw Execution Settings
 
-Set optional execution defaults on the first agent in `spec.sandboxes[].agents`:
+Set optional execution defaults inside the selected `harness`:
 
 ```yaml
 execution:
@@ -157,7 +170,7 @@ Use a whole number followed by `s`, `m`, or `h`.
 See the [execution field reference](reference/configuration.md#agentexecution) for bounds.
 
 Execution settings apply to the shared OpenClaw gateway defaults.
-Only the first agent may declare them; a sandbox still accepts one or more OpenClaw agents.
+All agents in a sandbox must select identical harness settings; use a shared `harnessRef` to avoid repeating them.
 Other harnesses and empty `execution` objects are rejected.
 Export preserves explicit settings and leaves omitted fields absent.
 
@@ -169,7 +182,7 @@ Restore the expected settings before retrying, or use a fresh deployment with se
 
 ## OpenClaw Tracing
 
-Declare tracing on the first OpenClaw agent:
+Declare `observability` inside the selected OpenClaw `harness`:
 
 ```yaml
 observability:
@@ -196,7 +209,7 @@ The offline native test proves trace delivery to a disposable collector; it does
 
 ## Hermes Relay Tracing
 
-Enable the experimental Hermes tracing path on the first agent:
+Enable the experimental tracing path inside the selected Hermes `harness`:
 
 ```yaml
 observability:
@@ -216,7 +229,7 @@ Do not rely on the local adapter's manual approvals when evaluating this mode.
 Its native home is under the Fabric artifact root at `.fabric/hermes/runtimes/<runtime-id>`, rather than the local API/dashboard homes.
 
 Build the current Hermes image with the [Fabric image procedure](inference.md#build-an-image-with-the-configuration-interface).
-Adapt [the Hermes example](../examples/fabric-hermes.yaml) with your own image, deployment UID, external services and model, then add the declaration above to its sole agent.
+Adapt [the Hermes example](../examples/fabric-hermes.yaml) with your own image, deployment UID, external services and model, then add the declaration above inside its harness configuration.
 Use a separate state directory and [plan/apply](usage.md) the new deployment.
 Switching adapters changes the sandbox launch specification; ordinary apply refuses replacement, so use a fresh deployment rather than editing an existing sandbox in place.
 
@@ -271,10 +284,10 @@ spec:
     - name: assistant
       agents:
         - name: researcher
-          harness: openclaw
+          harness: {kind: openclaw}
           integrationRefs: [search]
         - name: writer
-          harness: openclaw
+          harness: {kind: openclaw}
           integrationRefs: [search]
 ```
 
@@ -283,7 +296,7 @@ For one agent, put the definition directly under its `integrations` field:
 ```yaml
 agents:
   - name: researcher
-    harness: openclaw
+    harness: {kind: openclaw}
     integrations:
       search:
         kind: webSearch
