@@ -13,6 +13,7 @@
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "fast": [
+        "src/lib/onboard/experimental/hermes-portable-container.test.ts",
         "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
@@ -465,7 +466,8 @@
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
       ]
     },
     {
@@ -812,25 +814,14 @@
     },
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
-      "liveSources": [
-        "test/e2e/live/rebuild-hermes-base-identity.ts",
-        "test/e2e/live/rebuild-hermes-bootstrap.ts",
-        "test/e2e/live/rebuild-hermes-cron-restore.ts",
-        "test/e2e/live/rebuild-hermes-env.ts",
-        "test/e2e/live/rebuild-hermes-host-policy.ts"
-      ],
       "fast": [
-        "src/lib/sandbox-base-image-resolution.test.ts",
+        "src/lib/actions/sandbox/gateway-restart.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "test/agents/hermes/hermes-gateway-wrapper.test.ts",
+        "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/hermes-acp-live.test.ts",
-        "test/e2e/support/rebuild-hermes-bootstrap.test.ts",
-        "test/e2e/support/rebuild-hermes-env.test.ts",
-        "test/e2e/support/rebuild-hermes-base-identity.test.ts",
-        "test/e2e/support/rebuild-hermes-image-state.test.ts",
-        "test/e2e/support/rebuild-hermes-old-base-fixture.test.ts",
-        "test/e2e/support/rebuild-hermes-progress.test.ts"
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
       ]
     },
     {
@@ -839,14 +830,15 @@
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/onboard/machine/handlers/finalization.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "test/agents/native-gateway-lifecycle.test.ts",
         "src/lib/actions/sandbox/gateway-state-probe-recovery-start.test.ts",
-        "src/lib/actions/sandbox/process-recovery-managed-startup.test.ts",
         "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -952,6 +944,7 @@
     {
       "live": "test/e2e/live/hermes-sandbox-secret-boundary.test.ts",
       "fast": [
+        "test/agents/native-gateway-lifecycle.test.ts",
         "test/agents/hermes/hermes-runtime-api-key.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
