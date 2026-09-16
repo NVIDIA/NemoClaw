@@ -5,12 +5,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const MANAGED_MESSAGING_NESTED_OVERRIDES = [
-  "node_modules/@openclaw/discord/node_modules/@discord/embedded-app-sdk/node_modules/uuid",
-  "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/file-type",
-  "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/protobufjs",
-] as const;
-
 function readJsonRecord(filename: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(filename, "utf8"));
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -19,14 +13,52 @@ function readJsonRecord(filename: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function overridePackageName(selector: string): string {
+  const versionSeparator = selector.lastIndexOf("@");
+  const packageName = versionSeparator > 0 ? selector.slice(0, versionSeparator) : selector;
+  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u.test(packageName)) {
+    throw new Error(`managed messaging override selector is invalid: ${selector}`);
+  }
+  return packageName;
+}
+
+export function managedMessagingNestedOverridePaths(
+  manifest: Record<string, unknown>,
+): readonly string[] {
+  const overrides = manifest.overrides;
+  if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
+    throw new Error("managed messaging manifest is missing its overrides map");
+  }
+  const locations = new Set<string>();
+  const visit = (node: Record<string, unknown>, ancestors: readonly string[]): void => {
+    for (const [selector, value] of Object.entries(node)) {
+      if (selector === ".") continue;
+      const packages = [...ancestors, overridePackageName(selector)];
+      if (typeof value === "string") {
+        if (packages.length > 1) {
+          locations.add(packages.map((name) => `node_modules/${name}`).join("/"));
+        }
+        continue;
+      }
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error(`managed messaging override value is invalid: ${selector}`);
+      }
+      visit(value as Record<string, unknown>, packages);
+    }
+  };
+  visit(overrides as Record<string, unknown>, []);
+  return Object.freeze([...locations].sort());
+}
+
 export function verifyManagedMessagingOfflineInstall(lockfile: string, prefix: string): void {
   const lock = readJsonRecord(lockfile);
+  const manifest = readJsonRecord(path.join(path.dirname(lockfile), "package.json"));
   const packages = lock.packages;
   if (typeof packages !== "object" || packages === null || Array.isArray(packages)) {
     throw new Error("managed messaging lockfile is missing its packages map");
   }
 
-  for (const location of MANAGED_MESSAGING_NESTED_OVERRIDES) {
+  for (const location of managedMessagingNestedOverridePaths(manifest)) {
     const locked = (packages as Record<string, unknown>)[location];
     if (typeof locked !== "object" || locked === null || Array.isArray(locked)) {
       throw new Error(`managed messaging lockfile is missing nested override: ${location}`);

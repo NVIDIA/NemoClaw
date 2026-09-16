@@ -337,7 +337,11 @@ describe("OpenClaw compact tool catalog patch", () => {
         type: "object",
         patternProperties: { "^.*$": {} },
       });
-      expect(mod.toolCallArgsSchema({ NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local" })).toEqual({
+      expect(
+        mod.toolCallArgsSchema({
+          NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local",
+        }),
+      ).toEqual({
         type: "string",
         description: "JSON-encoded tool input object.",
       });
@@ -404,6 +408,31 @@ describe("OpenClaw compact tool catalog patch", () => {
     }
   });
 
+  it("fails closed before adding the llama.cpp tool-call guard without ToolInputError", () => {
+    const fixture = makeFixture({ version: "2026.9.1" });
+    try {
+      fs.rmSync(path.join(fixture.dist, "selection-empty.js"));
+      fs.rmSync(fixture.selectionPath);
+      fs.writeFileSync(
+        path.join(fixture.dist, "builtin-openclaw-fixture.js"),
+        currentNativeToolSearchFixtureSource(),
+      );
+      fs.writeFileSync(
+        path.join(fixture.dist, "local-model-lean-fixture.js"),
+        currentNativeDirectToolFixtureSource().replace(
+          "class ToolInputError extends Error {}\n",
+          "",
+        ),
+      );
+
+      const result = runPatch(fixture.dist);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("native llama.cpp ToolInputError binding is missing");
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("captures only catalog controls in the fake provider request and preserves rollback", async () => {
     const fixture = makeFixture();
     try {
@@ -425,7 +454,9 @@ describe("OpenClaw compact tool catalog patch", () => {
         "tool_search",
       ]);
 
-      const rollback = await mod.runFakeAgentTurn({ NEMOCLAW_TOOL_CATALOG: "0" });
+      const rollback = await mod.runFakeAgentTurn({
+        NEMOCLAW_TOOL_CATALOG: "0",
+      });
       const rollbackToolNames = rollback.request.tools.map((tool: any) => tool.function.name);
       expect(rollbackToolNames).toEqual(["exec", "read"]);
       expect(rollback.request.messages[0].content).toBe("tools=exec,read");

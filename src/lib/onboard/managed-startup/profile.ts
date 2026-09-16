@@ -394,7 +394,7 @@ const PROFILE_CAPABILITIES = {
     supportsAgentTimeout: true,
     supportsHeartbeat: true,
     supportsExtraAgents: true,
-    supportsDeviceAuth: true,
+    supportsDeviceAuth: false,
     observability: "openclaw-otel",
     supportsMinimalBootstrap: true,
   },
@@ -806,75 +806,177 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "OPENCLAW_VERSION", reason: "release-composition" },
     { input: "OPENCLAW_2026_9_1_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_9_1_TARBALL", reason: "release-composition" },
-    { input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    {
+      input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW",
+      reason: "release-composition",
+    },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "OPENCLAW_2026_3_11_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_3_11_TARBALL", reason: "release-composition" },
     { input: "OPENCLAW_2026_4_24_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_4_24_TARBALL", reason: "release-composition" },
     { input: "CODEX_ACP_0_11_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY", reason: "integrity-pin" },
+    {
+      input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
     { input: "MCPORTER_VERSION", reason: "release-composition" },
     { input: "MCPORTER_0_7_3_INTEGRITY", reason: "integrity-pin" },
     { input: "MCPORTER_0_7_3_TARBALL", reason: "release-composition" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   hermes: [
     { input: "BASE_IMAGE", reason: "release-composition" },
     { input: "SSL_CERT_FILE", reason: "fixed-image-contract" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
-    { input: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
+    {
+      input: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_WRAPPER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CLI_ADAPTER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_VALIDATOR_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   "langchain-deepagents-code": [
     { input: "BASE_IMAGE", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   pi: [
     { input: "BASE_IMAGE", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "PI_VERSION", reason: "integrity-pin" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
 } as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupExcludedDockerInput[]>;
 
@@ -1425,7 +1527,9 @@ function cloneJsonValue(
 function requireJsonObjectOrNull(value: unknown, where: string): ManagedStartupJsonObject | null {
   if (value === null) return null;
   if (!isPlainObject(value)) invalid(`${where} must be null or a plain JSON object`);
-  return cloneJsonValue(value, where, { nullPrototypeObjects: true }) as ManagedStartupJsonObject;
+  return cloneJsonValue(value, where, {
+    nullPrototypeObjects: true,
+  }) as ManagedStartupJsonObject;
 }
 
 function requireJsonObject(value: unknown, where: string): ManagedStartupJsonObject {
@@ -2120,7 +2224,9 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
  */
 export function validateManagedStartupProfile(value: unknown): ManagedStartupProfile {
   assertPayloadStructureAndCredentialShapes(value);
-  const ownedValue = cloneJsonValue(value, "profile", { nullPrototypeObjects: true });
+  const ownedValue = cloneJsonValue(value, "profile", {
+    nullPrototypeObjects: true,
+  });
   assertPayloadWithinByteLimit(ownedValue);
   const profile = requireRecord(ownedValue, "profile");
   rejectUnknownKeys(profile, PROFILE_KEYS, "profile");
@@ -2194,7 +2300,10 @@ function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProf
   rejectUnknownKeys(profile, PROFILE_KEYS, "profile");
   if (profile.agent !== "openclaw") {
     return {
-      value: { ...profile, schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION },
+      value: {
+        ...profile,
+        schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+      },
       migratedLegacyProfile: true,
     };
   }

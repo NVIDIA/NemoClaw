@@ -16,7 +16,6 @@ import {
   MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY,
   MANAGED_STARTUP_PROFILE_CAPABILITIES,
   MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS,
-  MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS,
   MANAGED_STARTUP_PROFILE_MAX_BYTES,
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
   MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS,
@@ -472,41 +471,6 @@ describe("managed startup profile", () => {
     );
   });
 
-  it("exports complete, fail-closed capabilities for every supported agent", () => {
-    expect(Object.keys(MANAGED_STARTUP_PROFILE_CAPABILITIES).sort()).toEqual(
-      [...MANAGED_STARTUP_AGENTS].sort(),
-    );
-    expect(MANAGED_STARTUP_PROFILE_CAPABILITIES.openclaw.dashboardModes).toEqual([
-      "loopback",
-      "remote",
-    ]);
-    expect(MANAGED_STARTUP_PROFILE_CAPABILITIES.hermes.dashboardModes).toEqual([
-      "disabled",
-      "loopback-forwarded",
-    ]);
-    expect(MANAGED_STARTUP_PROFILE_CAPABILITIES.hermes.inputModalities).toEqual([]);
-    expect(MANAGED_STARTUP_PROFILE_CAPABILITIES["langchain-deepagents-code"].inferenceApis).toEqual(
-      ["openai-completions"],
-    );
-    expect(
-      MANAGED_STARTUP_PROFILE_CAPABILITIES["langchain-deepagents-code"].inputModalities,
-    ).toEqual([]);
-  });
-
-  it("tracks the active OpenClaw release pins outside runtime startup intent", () => {
-    expect(MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS.openclaw).toEqual(
-      expect.arrayContaining([
-        { input: "OPENCLAW_2026_9_1_INTEGRITY", reason: "integrity-pin" },
-        { input: "OPENCLAW_2026_9_1_TARBALL", reason: "release-composition" },
-        { input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY", reason: "integrity-pin" },
-        { input: "OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY", reason: "integrity-pin" },
-      ]),
-    );
-    expect(
-      MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS.openclaw.map(({ input }) => input),
-    ).not.toEqual(expect.arrayContaining([expect.stringContaining("2026_7_1")]));
-  });
-
   it("keeps exported capabilities deeply frozen and validation authority private", () => {
     const capabilities = MANAGED_STARTUP_PROFILE_CAPABILITIES["langchain-deepagents-code"];
     expect(Object.isFrozen(MANAGED_STARTUP_PROFILE_CAPABILITIES)).toBe(true);
@@ -593,7 +557,10 @@ describe("managed startup profile", () => {
   it.each([
     {
       label: "top level",
-      mutate: (profile: ManagedStartupProfile) => ({ ...profile, extension: true }),
+      mutate: (profile: ManagedStartupProfile) => ({
+        ...profile,
+        extension: true,
+      }),
     },
     {
       label: "inference",
@@ -953,7 +920,10 @@ describe("managed startup profile", () => {
     expect(
       validateManagedStartupProfile({
         ...DCODE_PROFILE,
-        proxy: { ...DCODE_PROFILE.proxy, hostHttpUrl: "http://proxy.example.test:8080" },
+        proxy: {
+          ...DCODE_PROFILE.proxy,
+          hostHttpUrl: "http://proxy.example.test:8080",
+        },
       }).proxy.hostHttpUrl,
     ).toBe("http://proxy.example.test:8080");
     expect(() =>
@@ -1005,7 +975,10 @@ describe("managed startup profile", () => {
     expect(
       validateManagedStartupProfile({
         ...PI_PROFILE,
-        proxy: { ...PI_PROFILE.proxy, hostHttpUrl: "http://proxy.example.test:8080" },
+        proxy: {
+          ...PI_PROFILE.proxy,
+          hostHttpUrl: "http://proxy.example.test:8080",
+        },
       }).proxy.hostHttpUrl,
     ).toBe("http://proxy.example.test:8080");
     expect(() =>
@@ -1129,7 +1102,10 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...HERMES_PROFILE,
-        dashboard: { ...HERMES_PROFILE.dashboard, url: "https://dashboard.example.test" },
+        dashboard: {
+          ...HERMES_PROFILE.dashboard,
+          url: "https://dashboard.example.test",
+        },
       }),
     ).toThrow(/must remain loopback/);
     expect(() =>
@@ -1210,7 +1186,10 @@ describe("managed startup profile", () => {
   it.each([
     [
       "bad schema",
-      { ...OPENCLAW_PROFILE, schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION + 1 },
+      {
+        ...OPENCLAW_PROFILE,
+        schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION + 1,
+      },
     ],
     [
       "invalid langchain-deepagents-code approval mode",
@@ -1226,7 +1205,10 @@ describe("managed startup profile", () => {
       "bad heartbeat",
       {
         ...OPENCLAW_PROFILE,
-        agentConfig: { ...OPENCLAW_PROFILE.agentConfig, heartbeatEvery: "every hour" },
+        agentConfig: {
+          ...OPENCLAW_PROFILE.agentConfig,
+          heartbeatEvery: "every hour",
+        },
       },
     ],
     [

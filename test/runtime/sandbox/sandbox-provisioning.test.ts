@@ -80,7 +80,9 @@ function dockerHealthCommandBetween(
 
 function runOpenclawRepairLayoutCase(
   legacy: boolean,
-  options: { prepareLegacyFixture?: (tmp: string, dataDir: string) => void } = {},
+  options: {
+    prepareLegacyFixture?: (tmp: string, dataDir: string) => void;
+  } = {},
 ) {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const cleanupBlock = dockerRunCommandBetween(
@@ -1020,12 +1022,13 @@ describe("sandbox provisioning: base runtime tools", () => {
     expect(aptInstall).toBeDefined();
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });
-  it("runtime hardening installs procps and e2fsprogs when a stale base lacks ps and chattr", () => {
+  it("runtime hardening restores required tools when a stale base lacks them", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-procps-"));
     const log = path.join(tmp, "calls.log");
     const marker = path.join(tmp, "ps-installed");
     const chattrMarker = path.join(tmp, "chattr-installed");
+    const lsofMarker = path.join(tmp, "lsof-installed");
     const tmuxMarker = path.join(tmp, "tmux-installed");
     const lists = path.join(tmp, "apt-lists");
     fs.mkdirSync(lists);
@@ -1040,10 +1043,11 @@ describe("sandbox provisioning: base runtime tools", () => {
       `call_log=${JSON.stringify(log)}`,
       `ps_marker=${JSON.stringify(marker)}`,
       `chattr_marker=${JSON.stringify(chattrMarker)}`,
+      `lsof_marker=${JSON.stringify(lsofMarker)}`,
       `tmux_marker=${JSON.stringify(tmuxMarker)}`,
       'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
-      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b12"* ]]; then touch "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"tmux=3.5a-3"* ]]; then touch "$tmux_marker"; fi; }',
-      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "tmux" ]; then [ -f "$tmux_marker" ]; else builtin command "$@"; fi; }',
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b12"* ]]; then touch "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"lsof=4.99.4+dfsg-2"* ]]; then touch "$lsof_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"tmux=3.5a-3"* ]]; then touch "$tmux_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "lsof" ]; then [ -f "$lsof_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "tmux" ]; then [ -f "$tmux_marker" ]; else builtin command "$@"; fi; }',
       'ps() { [ -f "$ps_marker" ] || return 127; printf "procps test version\\n"; }',
       command,
     ].join("\n");
@@ -1056,11 +1060,12 @@ describe("sandbox provisioning: base runtime tools", () => {
       });
       expect(result.status).toBe(0);
       const calls = fs.readFileSync(log, "utf-8");
-      expect(calls).toContain("apt-mark manual procps e2fsprogs");
+      expect(calls).toContain("apt-mark manual procps e2fsprogs lsof tmux");
       expect(calls).toContain("apt-get autoremove --purge -y");
       expect(calls).toContain("apt-get update");
       expect(calls).toContain("apt-get install -y --no-install-recommends procps=2:4.0.4-9");
       expect(calls).toContain("apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b12");
+      expect(calls).toContain("apt-get install -y --no-install-recommends lsof=4.99.4+dfsg-2");
       expect(result.stdout).toContain("procps test version");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

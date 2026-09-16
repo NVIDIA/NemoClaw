@@ -132,6 +132,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b12 \
+        lsof=4.99.4+dfsg-2 \
         "dos2unix=7.5.2-1*" \
         libonig5=6.9.9-1+b1 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
@@ -220,12 +221,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2" \
     && test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2" \
+    && test "$(dpkg-query -W -f='${Version}' lsof)" = "4.99.4+dfsg-2" \
     && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u5+nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' perl)" = "$perl_version_before" \
     && test "$(jq --version)" = "jq-1.8.2" \
     && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
     && test "$(tmux -V)" = "tmux 3.5a" \
     && ldd /usr/bin/tmux | grep -Eq 'libevent_core-2[.]1[.]so[.]7' \
+    && command -v lsof >/dev/null \
     && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
     && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.3', pyexpat.EXPAT_VERSION" \
     && printf '%s  %s\n' \

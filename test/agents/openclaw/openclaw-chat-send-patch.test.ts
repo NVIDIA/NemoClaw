@@ -104,7 +104,9 @@ function writeChatSend20260610Fixture(
           ]),
       "      }",
       "    };",
-      "    void replyOptions;",
+      ...(runStartShape === "dispatch"
+        ? ["    await invokeReplyOptions(replyOptions);"]
+        : ["    void replyOptions;"]),
       "    if (!agentRunStarted) {",
       "      const transcriptReply = '';",
       "      const persistedContentForAppend = [];",
@@ -140,6 +142,9 @@ function writeChatSend20260610Fixture(
       "        message",
       "      });",
       "    }",
+      ...(runStartShape === "dispatch"
+        ? ["    return { agentRunStarted, replyDispatchRun };"]
+        : []),
       "  }",
       "};",
       "",
@@ -652,7 +657,10 @@ async function runPatchedFollowupFixture(
   const context = {
     createReplyOperation: (value: unknown) => value,
     crypto: { randomUUID: () => "fallback-run-id" },
-    admitReplyTurn: async () => ({ status: "admitted", operation: { sessionId: "session" } }),
+    admitReplyTurn: async () => ({
+      status: "admitted",
+      operation: { sessionId: "session" },
+    }),
     registerAgentRunContext: (runId: string) => registeredRuns.push(runId),
     replySessionKey: "reply-session",
     sessionKey: "fallback-session-key",
@@ -666,6 +674,72 @@ async function runPatchedFollowupFixture(
 
   const runId = await createFollowupRunner(params)(queued);
   return { registeredRuns, runId };
+}
+
+async function runPatchedDispatchChatFixture(patchedSource: string) {
+  const addChatRunCalls: unknown[][] = [];
+  const dispatchOptions = { source: "fixture-dispatch" };
+  let captureAgentTranscriptStartCalls = 0;
+  const chatHandlers = vm.runInNewContext(`${patchedSource}\nchatHandlers;`, {
+    appendAssistantTranscriptMessage: async () => ({ ok: false }),
+    broadcastChatFinal: () => undefined,
+    cfg: {},
+    emitFirstAssistantServerTiming: () => undefined,
+    emitServerTiming: () => undefined,
+    hasVisibleAssistantFinalMessage: () => false,
+    invokeReplyOptions: async (replyOptions: {
+      onAgentRunStart: (runId: string, identity: undefined, options: unknown) => void;
+    }) => replyOptions.onAgentRunStart("agent-run-id", undefined, dispatchOptions),
+    latestEntry: undefined,
+    latestStorePath: "fixture-store",
+    replyDispatch: {
+      captureAgentTranscriptStart: () => {
+        captureAgentTranscriptStartCalls += 1;
+        return true;
+      },
+    },
+    sessionId: "fixture-session",
+    ttsSupplementMarker: "fixture-tts",
+  }) as Record<
+    string,
+    (args: {
+      params: { idempotencyKey: string };
+      context: { addChatRun: (...args: unknown[]) => void };
+    }) => Promise<{ agentRunStarted: boolean; replyDispatchRun: unknown }>
+  >;
+
+  const result = await chatHandlers["chat.send"]({
+    params: { idempotencyKey: "client-run-id" },
+    context: { addChatRun: (...args: unknown[]) => addChatRunCalls.push(args) },
+  });
+  return {
+    addChatRunCalls,
+    captureAgentTranscriptStartCalls,
+    dispatchOptions,
+    result,
+  };
+}
+
+async function runPatchedAdmittedFollowupFixture(
+  patchedSource: string,
+  defaults: { opts?: { runId?: string } },
+  queued: { runId?: string; currentInboundContext: unknown },
+) {
+  const context = {
+    crypto: { randomUUID: () => "fallback-run-id" },
+    refreshActiveGoalContext: (currentInboundContext: unknown) => currentInboundContext,
+  };
+  const createFollowupRunner = vm.runInNewContext(
+    `${patchedSource}\ncreateFollowupRunner;`,
+    context,
+  ) as (defaults: {
+    opts?: { runId?: string };
+  }) => (queued: {
+    runId?: string;
+    currentInboundContext: unknown;
+  }) => Promise<{ kind: string; turn: { runId: string } }>;
+
+  return await createFollowupRunner(defaults)(queued);
 }
 
 function runPatchedEmbeddedAgentFixture(
@@ -768,23 +842,35 @@ describe("OpenClaw chat.send compatibility patch", () => {
         runPatchedFollowupFixture(
           patchedFollowup,
           { opts: { runId: "opts-run-id" } },
-          { runId: "queued-run-id", run: { sessionId: "session", sessionKey: "key" } },
+          {
+            runId: "queued-run-id",
+            run: { sessionId: "session", sessionKey: "key" },
+          },
         ),
-      ).resolves.toMatchObject({ runId: "queued-run-id", registeredRuns: ["queued-run-id"] });
+      ).resolves.toMatchObject({
+        runId: "queued-run-id",
+        registeredRuns: ["queued-run-id"],
+      });
       await expect(
         runPatchedFollowupFixture(
           patchedFollowup,
           { opts: { runId: "opts-run-id" } },
           { run: { sessionId: "session", sessionKey: "key" } },
         ),
-      ).resolves.toMatchObject({ runId: "opts-run-id", registeredRuns: ["opts-run-id"] });
+      ).resolves.toMatchObject({
+        runId: "opts-run-id",
+        registeredRuns: ["opts-run-id"],
+      });
       await expect(
         runPatchedFollowupFixture(
           patchedFollowup,
           {},
           { run: { sessionId: "session", sessionKey: "key" } },
         ),
-      ).resolves.toMatchObject({ runId: "fallback-run-id", registeredRuns: ["fallback-run-id"] });
+      ).resolves.toMatchObject({
+        runId: "fallback-run-id",
+        registeredRuns: ["fallback-run-id"],
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -809,23 +895,35 @@ describe("OpenClaw chat.send compatibility patch", () => {
         runPatchedFollowupFixture(
           patchedFollowup,
           { opts: { runId: "opts-run-id" } },
-          { runId: "queued-run-id", run: { sessionId: "session", sessionKey: "key" } },
+          {
+            runId: "queued-run-id",
+            run: { sessionId: "session", sessionKey: "key" },
+          },
         ),
-      ).resolves.toMatchObject({ runId: "queued-run-id", registeredRuns: ["queued-run-id"] });
+      ).resolves.toMatchObject({
+        runId: "queued-run-id",
+        registeredRuns: ["queued-run-id"],
+      });
       await expect(
         runPatchedFollowupFixture(
           patchedFollowup,
           { opts: { runId: "opts-run-id" } },
           { run: { sessionId: "session", sessionKey: "key" } },
         ),
-      ).resolves.toMatchObject({ runId: "opts-run-id", registeredRuns: ["opts-run-id"] });
+      ).resolves.toMatchObject({
+        runId: "opts-run-id",
+        registeredRuns: ["opts-run-id"],
+      });
       await expect(
         runPatchedFollowupFixture(
           patchedFollowup,
           {},
           { run: { sessionId: "session", sessionKey: "key" } },
         ),
-      ).resolves.toMatchObject({ runId: "fallback-run-id", registeredRuns: ["fallback-run-id"] });
+      ).resolves.toMatchObject({
+        runId: "fallback-run-id",
+        registeredRuns: ["fallback-run-id"],
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -887,9 +985,15 @@ describe("OpenClaw chat.send compatibility patch", () => {
         runPatchedFollowupFixture(
           patchedFollowup,
           { opts: { runId: "opts-run-id" } },
-          { runId: "queued-run-id", run: { sessionId: "session", sessionKey: "key" } },
+          {
+            runId: "queued-run-id",
+            run: { sessionId: "session", sessionKey: "key" },
+          },
         ),
-      ).resolves.toMatchObject({ runId: "queued-run-id", registeredRuns: ["queued-run-id"] });
+      ).resolves.toMatchObject({
+        runId: "queued-run-id",
+        registeredRuns: ["queued-run-id"],
+      });
 
       const audit = runPatchAudit(dist);
       expect(audit.status, `${audit.stdout}${audit.stderr}`).toBe(0);
@@ -962,9 +1066,15 @@ describe("OpenClaw chat.send compatibility patch", () => {
         runPatchedFollowupFixture(
           patchedFollowup,
           { opts: { runId: "opts-run-id" } },
-          { runId: "queued-run-id", run: { sessionId: "session", sessionKey: "key" } },
+          {
+            runId: "queued-run-id",
+            run: { sessionId: "session", sessionKey: "key" },
+          },
         ),
-      ).resolves.toMatchObject({ runId: "queued-run-id", registeredRuns: ["queued-run-id"] });
+      ).resolves.toMatchObject({
+        runId: "queued-run-id",
+        registeredRuns: ["queued-run-id"],
+      });
 
       const audit = runPatchAudit(dist);
       expect(audit.status, `${audit.stdout}${audit.stderr}`).toBe(0);
@@ -976,7 +1086,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
     }
   });
 
-  it("recognizes the 2026.9.1 chat dispatch and admitted followup turn shapes", () => {
+  it("recognizes the 2026.9.1 chat dispatch and admitted followup turn shapes", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-691-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -1001,6 +1111,31 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(patchedFollowup).toContain(
         "runId: queued.runId ?? params.defaults.opts?.runId ?? crypto.randomUUID(), // nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)",
       );
+
+      await expect(runPatchedDispatchChatFixture(patchedChat)).resolves.toMatchObject({
+        addChatRunCalls: [
+          ["agent-run-id", { sessionKey: "issue2603", clientRunId: "client-run-id" }],
+        ],
+        captureAgentTranscriptStartCalls: 1,
+        dispatchOptions: { source: "fixture-dispatch" },
+        result: {
+          agentRunStarted: true,
+          replyDispatchRun: { source: "fixture-dispatch" },
+        },
+      });
+      await expect(
+        runPatchedAdmittedFollowupFixture(
+          patchedFollowup,
+          { opts: { runId: "opts-run-id" } },
+          {
+            runId: "queued-run-id",
+            currentInboundContext: { source: "fixture" },
+          },
+        ),
+      ).resolves.toMatchObject({
+        kind: "admitted",
+        turn: { runId: "queued-run-id" },
+      });
 
       const rerun = runPatch(dist);
       expect(rerun.status, `${rerun.stdout}${rerun.stderr}`).toBe(0);

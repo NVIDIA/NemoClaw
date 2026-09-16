@@ -307,11 +307,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \\' Dockerfile
 	! grep -Fq 'patch-openclaw-mcp-tools-list-timeout.js' Dockerfile
 
-	phase_count="$(grep -Ec -- '--phase (runtime-setup|post-agent-install)' Dockerfile)"
-test "$phase_count" -eq 2
-grep -Fq -- '--phase runtime-setup' Dockerfile
-grep -Fq -- 'messaging_phase=agent-install;' Dockerfile
-grep -Fq -- '--phase post-agent-install' Dockerfile
+	test "$(grep -Fc -- '--phase runtime-setup' Dockerfile)" -eq 1
+	grep -Fq -- 'messaging_phase=agent-install;' Dockerfile
+	test "$(grep -Fc -- '--phase post-agent-install' Dockerfile)" -eq 1
 `,
       ],
       {

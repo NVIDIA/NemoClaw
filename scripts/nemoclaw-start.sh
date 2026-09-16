@@ -520,7 +520,8 @@ export OPENCLAW_STATE_DIR="${_OPENCLAW_STATE_DIR}"
 export OPENCLAW_CONFIG_PATH="${_OPENCLAW_STATE_DIR}/openclaw.json"
 export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 # NemoClaw's entrypoint owns the gateway process. This selects OpenClaw's
-# bounded in-process restart path instead of a host service manager.
+# authenticated external restart handoff instead of a host service manager;
+# the supervisor loop below consumes that handoff before any replacement.
 export OPENCLAW_SUPERVISOR_MODE="external"
 
 # ── Mutable config permission normalize (#2681) ─────────────────
@@ -4871,13 +4872,28 @@ openclaw_gateway_healthy() {
   esac
 }
 
+openclaw_gateway_startup_complete() {
+  local pid="$1"
+  local expected_identity="$2"
+  local payload
+  openclaw_gateway_healthy "$pid" "$expected_identity" || return 1
+  payload="$(curl -fsS --max-time 3 "http://127.0.0.1:${_DASHBOARD_PORT}/startupz" 2>/dev/null)" \
+    || return 1
+  printf '%s' "$payload" | python3 -c \
+    'import json, sys; payload = json.load(sys.stdin); sys.exit(0 if isinstance(payload, dict) and payload.get("status") == "started" else 1)' \
+    || return 1
+  openclaw_supervised_pid_is_live "$pid" "$expected_identity" \
+    && openclaw_gateway_pid_owns_listener "$pid" "$_DASHBOARD_PORT" \
+    && openclaw_supervised_pid_is_live "$pid" "$expected_identity"
+}
+
 wait_for_openclaw_gateway_internal() {
   local pid="$1"
   local expected_identity="$2"
   local deadline=$((SECONDS + 90))
   while [ "$SECONDS" -lt "$deadline" ]; do
     openclaw_supervised_pid_is_live "$pid" "$expected_identity" || return 1
-    openclaw_gateway_healthy "$pid" "$expected_identity" && return 0
+    openclaw_gateway_startup_complete "$pid" "$expected_identity" && return 0
     sleep 1
   done
   return 1
@@ -5029,6 +5045,147 @@ launch_openclaw_gateway_non_root() {
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH
   record_portable_openclaw_gateway_startup_timing
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
+}
+
+run_openclaw_restart_handoff_cli() {
+  local -a run_prefix=()
+  if [ "$(id -u)" -eq 0 ]; then
+    run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
+  fi
+  timeout --signal=TERM --kill-after=5s 2m \
+    "${run_prefix[@]+"${run_prefix[@]}"}" \
+    /usr/bin/env -u BASH_ENV HOME=/sandbox "$OPENCLAW" \
+    gateway restart-handoff "$@"
+}
+
+openclaw_restart_handoff_capabilities_valid() {
+  python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+valid = (
+    isinstance(payload, dict)
+    and payload.get("ok") is True
+    and payload.get("protocol") == "openclaw.gateway.restart-handoff"
+    and payload.get("protocolVersion") == 1
+    and payload.get("operations") == ["consume"]
+)
+raise SystemExit(0 if valid else 1)
+'
+}
+
+# Exit 0 for an accepted handoff, 10 for the exact clean-stop result, and 1
+# for every refusal or malformed response. The distinct clean-stop result lets
+# a deliberate SIGTERM settle the OpenShell sandbox as Stopped without treating
+# a rejected replacement request as successful.
+classify_openclaw_restart_handoff() {
+  local expected_pid="$1"
+  python3 -c '
+import json
+import sys
+
+expected_pid = int(sys.argv[1])
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+valid_envelope = (
+    isinstance(payload, dict)
+    and payload.get("ok") is True
+    and payload.get("protocol") == "openclaw.gateway.restart-handoff"
+    and payload.get("protocolVersion") == 1
+)
+if not valid_envelope:
+    raise SystemExit(1)
+if payload.get("status") == "none" and payload.get("reason") == "missing":
+    raise SystemExit(10)
+handoff = payload.get("handoff")
+accepted = (
+    payload.get("status") == "accepted"
+    and isinstance(handoff, dict)
+    and handoff.get("pid") == expected_pid
+    and handoff.get("supervisorMode") == "external"
+    and handoff.get("restartKind") in {"full-process", "update-process"}
+)
+raise SystemExit(0 if accepted else 1)
+' "$expected_pid"
+}
+
+launch_openclaw_gateway_replacement() {
+  local launch_identity="$1"
+  local replacement_pid
+  mark_in_container_gateway
+  launch_openclaw_gateway_process append "$launch_identity" \
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
+  replacement_pid="$GATEWAY_PID"
+  if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
+    kill "$replacement_pid" 2>/dev/null || true
+    wait "$replacement_pid" 2>/dev/null || true
+    GATEWAY_PID=0
+    GATEWAY_PID_START_IDENTITY=""
+    clear_gateway_pid_record
+    echo "[gateway] could not capture replacement gateway process identity" >&2
+    return 1
+  fi
+  record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
+  # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+  SANDBOX_WAIT_PID="$GATEWAY_PID"
+  if [ "$launch_identity" = current ]; then
+    _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH
+    record_portable_openclaw_gateway_startup_timing
+  fi
+  refresh_openclaw_supervised_child_pids
+  if ! wait_for_openclaw_gateway_internal "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"; then
+    echo "[gateway] replacement did not prove listener ownership and /startupz readiness" >&2
+    if ! stop_openclaw_supervised_gateway "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"; then
+      echo "[gateway] replacement cleanup could not confirm the tracked process stopped" >&2
+    fi
+    mark_openclaw_gateway_stopped
+    return 1
+  fi
+  echo "[gateway] OpenClaw restart handoff launched healthy replacement pid $GATEWAY_PID" >&2
+}
+
+supervise_openclaw_gateway() {
+  local launch_identity="$1"
+  local exited_pid gateway_rc capabilities consume classification_rc
+  while :; do
+    exited_pid="$GATEWAY_PID"
+    gateway_rc=0
+    wait "$exited_pid" || gateway_rc=$?
+    mark_openclaw_gateway_stopped
+
+    capabilities="$(run_openclaw_restart_handoff_cli capabilities --json)" || {
+      echo "[gateway] restart-handoff capability negotiation failed after pid $exited_pid exited" >&2
+      return 1
+    }
+    if ! printf '%s' "$capabilities" | openclaw_restart_handoff_capabilities_valid; then
+      echo "[gateway] restart-handoff capability contract was not recognized" >&2
+      return 1
+    fi
+
+    consume="$(run_openclaw_restart_handoff_cli consume --expected-pid "$exited_pid" --json)" || {
+      echo "[gateway] restart-handoff consumption failed; leaving the gateway safely stopped" >&2
+      return 1
+    }
+    classification_rc=0
+    printf '%s' "$consume" | classify_openclaw_restart_handoff "$exited_pid" \
+      || classification_rc=$?
+    if [ "$classification_rc" -eq 10 ] && [ "$gateway_rc" -eq 0 ]; then
+      echo "[gateway] gateway stopped cleanly without a restart handoff" >&2
+      return 0
+    fi
+    if [ "$classification_rc" -ne 0 ]; then
+      echo "[gateway] restart-handoff was absent or refused; leaving the gateway safely stopped" >&2
+      [ "$gateway_rc" -ne 0 ] && return "$gateway_rc"
+      return 1
+    fi
+    launch_openclaw_gateway_replacement "$launch_identity" || return 1
+  done
 }
 
 openclaw_supervised_aux_pid_is_live() {
@@ -5460,7 +5617,7 @@ if [ "$(id -u)" -ne 0 ]; then
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   print_dashboard_urls
 
-  wait "$GATEWAY_PID"
+  supervise_openclaw_gateway current
   exit $?
 fi
 
@@ -5607,10 +5764,11 @@ seed_default_workspace_templates_as_sandbox
 # inject code into any Node process via NODE_OPTIONS).
 validate_nemoclaw_tmp_permissions
 
-# Start the gateway as the native sandbox agent user. OpenClaw owns its gateway
-# lifecycle, including in-process restart; NemoClaw only performs initial
-# startup, records the process for health integration, and forwards sandbox
-# shutdown signals.
+# Start the gateway as the native sandbox agent user. OpenClaw owns restart
+# admission and persists its bounded SQLite handoff; NemoClaw consumes that
+# machine contract, launches the replacement, proves /startupz, records the
+# new process identity for health integration, and forwards sandbox shutdown
+# signals.
 # The launch primitive arms signal and EXIT cleanup before writing the marker.
 launch_openclaw_gateway
 
@@ -5670,4 +5828,4 @@ if ! run_openclaw_config_guard publish-startup-ready --startup-owner; then
 fi
 print_dashboard_urls
 
-wait "$GATEWAY_PID"
+supervise_openclaw_gateway sandbox

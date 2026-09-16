@@ -124,7 +124,9 @@
 
   if (process.__nemoclawSlackChannelGuardInstalled) return;
   try {
-    Object.defineProperty(process, "__nemoclawSlackChannelGuardInstalled", { value: true });
+    Object.defineProperty(process, "__nemoclawSlackChannelGuardInstalled", {
+      value: true,
+    });
   } catch (_e) {
     process.__nemoclawSlackChannelGuardInstalled = true;
   }
@@ -201,9 +203,31 @@
     return bindings;
   }
 
+  function collectAwaitedDestructuredBindings(source, initializer) {
+    var bindings = Object.create(null);
+    var declaration = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*await\s+([A-Za-z_$][\w$]*)\s*\(/g;
+    var match;
+    while ((match = declaration.exec(source)) !== null) {
+      if (match[2] !== initializer) continue;
+      var entries = match[1].split(",");
+      for (var i = 0; i < entries.length; i++) {
+        var binding = entries[i].trim().replace(/^\.\.\./, "");
+        var aliasSeparator = binding.indexOf(":");
+        if (aliasSeparator !== -1) binding = binding.slice(aliasSeparator + 1);
+        binding = binding.split("=", 1)[0].trim();
+        if (binding) bindings[binding] = true;
+      }
+    }
+    return bindings;
+  }
+
   function missingNativeDeniedSenderBindings(source) {
     var paramsBindings = collectDestructuredBindings(source, "params");
     var authorizationBindings = collectDestructuredBindings(source, "authorization");
+    var mentionBindings = collectAwaitedDestructuredBindings(
+      source,
+      "resolveSlackExplicitMentionState",
+    );
     var missing = [];
     var requiredParamsBindings = [
       "ctx",
@@ -214,7 +238,7 @@
     ];
     for (var i = 0; i < requiredParamsBindings.length; i++) {
       var binding = requiredParamsBindings[i];
-      if (!paramsBindings[binding]) missing.push(binding);
+      if (!paramsBindings[binding] && !mentionBindings[binding]) missing.push(binding);
     }
     if (!authorizationBindings.senderId) missing.push("senderId");
     return missing;

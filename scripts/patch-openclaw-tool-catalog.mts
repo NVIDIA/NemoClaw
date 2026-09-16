@@ -102,6 +102,10 @@ const NATIVE_TOOL_CALL_INPUT_REPLACEMENT = [
   "\t\t} : nestedInput",
   "\t};",
 ].join("\n");
+const NATIVE_TOOL_INPUT_ERROR_BINDING_PATTERNS = [
+  /class\s+ToolInputError\s+extends\s+Error\b/u,
+  /import\s*\{[^}]*\b(?:ToolInputError|\w+\s+as\s+ToolInputError)\b[^}]*\}\s*from\s*["'][^"']*tool-input-error[^"']*["']/su,
+];
 
 const EFFECTIVE_TOOLS_REPLACEMENT = [
   EFFECTIVE_TOOLS_PATTERN,
@@ -339,6 +343,9 @@ function patchNativeLlamacppCatalogCompat(distDir: string): {
 
   const target = candidates[0];
   const source = fs.readFileSync(target, "utf-8");
+  if (!NATIVE_TOOL_INPUT_ERROR_BINDING_PATTERNS.some((pattern) => pattern.test(source))) {
+    throw new Error(`${target}: native llama.cpp ToolInputError binding is missing`);
+  }
   let text = source;
   let patched = false;
   if (text.includes(NATIVE_LLAMACPP_MARKER)) {

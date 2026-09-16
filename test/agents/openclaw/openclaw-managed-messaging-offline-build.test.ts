@@ -10,7 +10,7 @@ import {
   lockedArchives,
 } from "../../../scripts/checks/materialize-locked-npm-cache-seed.mts";
 import {
-  MANAGED_MESSAGING_NESTED_OVERRIDES,
+  managedMessagingNestedOverridePaths,
   verifyManagedMessagingOfflineInstall,
 } from "../../../scripts/checks/verify-managed-messaging-offline-install.mts";
 
@@ -27,6 +27,7 @@ const runtimeManifest = JSON.parse(
 );
 const runtimeLockSource = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"), "utf8");
 const runtimeLock = JSON.parse(runtimeLockSource);
+const nestedOverrideLocations = managedMessagingNestedOverridePaths(runtimeManifest);
 
 interface DockerArchivePin {
   archive: string;
@@ -95,11 +96,10 @@ describe("OpenClaw managed messaging offline image build", () => {
         },
       },
     });
-    expect(MANAGED_MESSAGING_NESTED_OVERRIDES).toEqual([
-      "node_modules/@openclaw/discord/node_modules/@discord/embedded-app-sdk/node_modules/uuid",
-      "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/file-type",
-      "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/protobufjs",
-    ]);
+    expect(nestedOverrideLocations).toHaveLength(3);
+    nestedOverrideLocations.forEach((location) => {
+      expect(runtimeLock.packages[location]?.version).toMatch(/^\d/u);
+    });
     expect(runtimeManifest.dependencies).toMatchObject({
       "@emnapi/core": "1.11.1",
       "@emnapi/runtime": "1.11.1",
@@ -232,26 +232,14 @@ describe("OpenClaw managed messaging offline image build", () => {
   it("rejects nested installed versions that differ from the reviewed lock", () => {
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "managed-messaging-install-test-"));
     try {
-      writeInstalledVersion(
-        temporary,
-        MANAGED_MESSAGING_NESTED_OVERRIDES[0],
-        runtimeLock.packages[MANAGED_MESSAGING_NESTED_OVERRIDES[0]].version,
-      );
-      writeInstalledVersion(
-        temporary,
-        MANAGED_MESSAGING_NESTED_OVERRIDES[1],
-        runtimeLock.packages[MANAGED_MESSAGING_NESTED_OVERRIDES[1]].version,
-      );
-      writeInstalledVersion(
-        temporary,
-        MANAGED_MESSAGING_NESTED_OVERRIDES[2],
-        runtimeLock.packages[MANAGED_MESSAGING_NESTED_OVERRIDES[2]].version,
-      );
+      nestedOverrideLocations.forEach((location) => {
+        writeInstalledVersion(temporary, location, runtimeLock.packages[location].version);
+      });
       verifyManagedMessagingOfflineInstall(
         path.join(runtimeDirectory, "package-lock.json"),
         temporary,
       );
-      writeInstalledVersion(temporary, MANAGED_MESSAGING_NESTED_OVERRIDES[0], "0.0.0");
+      writeInstalledVersion(temporary, nestedOverrideLocations[0], "0.0.0");
       expect(() =>
         verifyManagedMessagingOfflineInstall(
           path.join(runtimeDirectory, "package-lock.json"),

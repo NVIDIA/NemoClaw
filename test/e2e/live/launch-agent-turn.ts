@@ -1641,19 +1641,16 @@ else
   printf '\003' >&3 2>/dev/null || true
   trap - PIPE
 fi
-exec 3>&-
 
 if wait "$session_pid"; then
   launch_status=0
 else
   launch_status=$?
 fi
+exec 3>&-
 session_pid=""
 
-if [[ "$launch_status" != 0 &&
-  ( "$launch_status" != 130 ||
-    "$exit_command_write_status" != 0 ||
-    "$NEMOCLAW_LAUNCH_EXIT_COMMAND" != "/exit" ) ]]; then
+if [[ "$launch_status" != 0 ]]; then
   if [[ "$exit_command_write_status" != 0 ]]; then
     echo "launch PTY closed before the exit command was submitted (status $exit_command_write_status)" >&2
   fi

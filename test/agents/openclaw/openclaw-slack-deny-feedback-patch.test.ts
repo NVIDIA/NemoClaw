@@ -56,6 +56,11 @@ function prepareModuleSource(
     "\t}",
     "\treturn { senderId: params.message.user };",
     "}",
+    "async function resolveSlackExplicitMentionState(params) {",
+    withMentionState
+      ? "\treturn { explicitlyMentionedBotUser: Boolean(params.explicitlyMentionedBotUser), explicitlyMentionedBotSubteam: Boolean(params.explicitlyMentionedBotSubteam), explicitlyMentioned: false };"
+      : "\treturn { mentionedBotUser: Boolean(params.mentionedBotUser), mentionedBotSubteam: Boolean(params.mentionedBotSubteam), explicitlyMentioned: false };",
+    "}",
     ...(withMentionState
       ? []
       : [
@@ -79,8 +84,8 @@ function prepareModuleSource(
       ? "\tconst { senderId: authorizedSenderId } = authorization;"
       : "\tconst { senderId } = authorization;",
     withMentionState
-      ? "\tconst { explicitlyMentionedBotUser, explicitlyMentionedBotSubteam, explicitlyMentioned } = params;"
-      : "\tconst { mentionedBotUser, mentionedBotSubteam, explicitlyMentioned } = params;",
+      ? "\tconst { explicitlyMentionedBotUser, explicitlyMentionedBotSubteam, explicitlyMentioned } = await resolveSlackExplicitMentionState(params);"
+      : "\tconst { mentionedBotUser, mentionedBotSubteam, explicitlyMentioned } = await resolveSlackExplicitMentionState(params);",
     "\tconst isRoomish = true;",
     "\tconst messageIngress = { senderAccess: { gate: { allowed: false } } };",
     "\tconst senderGate = messageIngress.senderAccess.gate;",
@@ -148,7 +153,12 @@ function writeSlackPackage(
   return prepareFile;
 }
 
-type FeedbackCall = { method: string; channel?: string; user?: string; text?: string };
+type FeedbackCall = {
+  method: string;
+  channel?: string;
+  user?: string;
+  text?: string;
+};
 
 function runGuardProbe(
   prepareFile: string,
@@ -269,7 +279,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       );
 
       // Denied explicit @-mention: command stays denied, exactly one ephemeral feedback.
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
       expect(mention.calls[0]).toMatchObject({
@@ -282,23 +295,35 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       expect(mention.calls[0].text?.toLowerCase()).not.toContain("allowlist");
 
       // Denied non-mention: no sender feedback (stays silent, as before).
-      const silent = output?.silent as { result: unknown; calls: FeedbackCall[] };
+      const silent = output?.silent as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(silent.result).toBeNull();
       expect(silent.calls).toHaveLength(0);
 
       // Explicit bot mention on a non-app_mention event also triggers feedback.
-      const explicitUser = output?.explicitUser as { result: unknown; calls: FeedbackCall[] };
+      const explicitUser = output?.explicitUser as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(explicitUser.result).toBeNull();
       expect(explicitUser.calls).toHaveLength(1);
       expect(explicitUser.calls[0].method).toBe("chat.postEphemeral");
 
-      const explicitSubteam = output?.explicitSubteam as { result: unknown; calls: FeedbackCall[] };
+      const explicitSubteam = output?.explicitSubteam as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(explicitSubteam.result).toBeNull();
       expect(explicitSubteam.calls).toHaveLength(1);
       expect(explicitSubteam.calls[0].method).toBe("chat.postEphemeral");
 
       // Definitive non-delivery (user_not_in_channel) falls back to a DM.
-      const fallback = output?.fallback as { result: unknown; calls: FeedbackCall[] };
+      const fallback = output?.fallback as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(fallback.result).toBeNull();
       expect(fallback.calls.map((call) => call.method)).toEqual([
         "chat.postEphemeral",
@@ -307,7 +332,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       expect(fallback.calls[1]).toMatchObject({ channel: "DU999DENIED" });
 
       // Ambiguous failure (Slack may have accepted it): log, no DM, no double-notify.
-      const ambiguous = output?.ambiguous as { result: unknown; calls: FeedbackCall[] };
+      const ambiguous = output?.ambiguous as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(ambiguous.result).toBeNull();
       expect(ambiguous.calls.map((call) => call.method)).toEqual(["chat.postEphemeral"]);
     } finally {
@@ -328,7 +356,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
         "__nemoclawNotifyDeniedSlackMention",
       );
 
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
       expect(mention.calls[0]).toMatchObject({
@@ -352,7 +383,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(result.stderr).not.toMatch(/loadSync|returned for the "source" from the "load" hook/u);
 
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
       expect(mention.calls[0].method).toBe("chat.postEphemeral");
@@ -365,9 +399,14 @@ describe("OpenClaw Slack denial-feedback patch", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-deny-idem-"));
     const prepareFile = writeSlackPackage(tmp);
     try {
-      const { result, output } = runGuardProbe(prepareFile, { requireGuardTwice: true });
+      const { result, output } = runGuardProbe(prepareFile, {
+        requireGuardTwice: true,
+      });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
     } finally {
@@ -388,12 +427,17 @@ describe("OpenClaw Slack denial-feedback patch", () => {
     });
     try {
       const original = fs.readFileSync(prepareFile, "utf8");
-      const { result, output } = runGuardProbe(prepareFile, { loadMode: "import" });
+      const { result, output } = runGuardProbe(prepareFile, {
+        loadMode: "import",
+      });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(fs.readFileSync(prepareFile, "utf8")).toBe(original);
       expect(original).not.toContain("__nemoclawNotifyDeniedSlackMention");
 
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
       expect(mention.calls[0]).toMatchObject({
@@ -402,7 +446,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
         user: "U999DENIED",
       });
 
-      const silent = output?.silent as { result: unknown; calls: FeedbackCall[] };
+      const silent = output?.silent as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(silent.result).toBeNull();
       expect(silent.calls).toHaveLength(0);
     } finally {
