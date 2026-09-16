@@ -1026,7 +1026,7 @@ function probePrivateBridge(
   options.journalStore.assertExecution(lease);
   bridge.start(authority);
   options.journalStore.assertExecution(lease);
-  const timeoutSeconds = Math.min(readinessTimeoutSeconds(options), 30);
+  const timeoutSeconds = readinessTimeoutSeconds(options);
   const curlArguments = (url: string): readonly string[] => [
     "--fail",
     "--silent",

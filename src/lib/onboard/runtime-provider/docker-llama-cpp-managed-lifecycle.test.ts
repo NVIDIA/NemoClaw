@@ -572,7 +572,10 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
 
     lifecycle.start(receiptWriter());
 
-    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith(
+      "http://127.0.0.1:8081/health",
+      1_800,
+    );
     expect(hostNetworkRuns(fixture)).toEqual([]);
     expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
       expect.arrayContaining([
@@ -647,7 +650,10 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       hostLoopbackProbe.mockClear();
 
       expect(run()).toEqual(receipt);
-      expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+      expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith(
+        "http://127.0.0.1:8081/health",
+        1_800,
+      );
       expect(hostNetworkRuns(fixture)).toEqual([]);
       expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
         expect.arrayContaining(["--network", "openshell-docker"]),
@@ -693,7 +699,10 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(recovery).toEqual({ recovered: [TRANSACTION_ID], failures: [] });
     expect(replayWriter.writeExact).toHaveBeenCalledOnce();
     expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
-    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith(
+      "http://127.0.0.1:8081/health",
+      1_800,
+    );
     expect(hostNetworkRuns(fixture)).toEqual([]);
   });
 
