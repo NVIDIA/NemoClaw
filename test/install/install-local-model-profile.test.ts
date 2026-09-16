@@ -76,4 +76,15 @@ describe("local model installer gate", () => {
     expect(result.status, output).toBe(0);
     expect(output).toContain("HARNESS_REACHED runtime=vllm gate=1 no_express=1");
   });
+
+  it("rejects a noncanonical vLLM host port before installer work", () => {
+    const result = runInstallerMain(["--local-model-runtime=vllm"], {
+      NEMOCLAW_VLLM_PORT: "08000",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status).not.toBe(0);
+    expect(output).toContain("NEMOCLAW_VLLM_PORT must be an integer between 1024 and 65535");
+    expect(output).not.toContain("HARNESS_REACHED");
+  });
 });

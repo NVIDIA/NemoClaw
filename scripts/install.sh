@@ -236,6 +236,29 @@ error_with_status() {
 error() { error_with_status 1 "$@"; }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
+validate_forwarded_service_port_overrides() {
+  local env_name raw port
+  local -a env_names=(
+    NEMOCLAW_DASHBOARD_PORT
+    NEMOCLAW_VLLM_PORT
+    NEMOCLAW_OLLAMA_PORT
+    NEMOCLAW_OLLAMA_PROXY_PORT
+    NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT
+    NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT
+    NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT
+  )
+  for env_name in "${env_names[@]}"; do
+    raw="${!env_name:-}"
+    [[ -n "$raw" ]] || continue
+    port="${raw#"${raw%%[![:space:]]*}"}"
+    port="${port%"${port##*[![:space:]]}"}"
+    if [[ ! "$port" =~ ^[1-9][0-9]{3,4}$ ]] \
+      || [ "$((10#$port))" -lt 1024 ] || [ "$((10#$port))" -gt 65535 ]; then
+      error "${env_name} must be an integer between 1024 and 65535."
+    fi
+  done
+}
+
 resolve_nemoclaw_gateway_port() {
   local port="${NEMOCLAW_GATEWAY_PORT:-}" persisted_port persisted_status
   if [[ -z "$port" ]]; then
@@ -7165,6 +7188,11 @@ main() {
 
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
+
+  # Validate service-port overrides before dependency installation or any
+  # other host mutation. The installed CLI applies the same canonical-decimal
+  # contract when it consumes these forwarded values.
+  validate_forwarded_service_port_overrides
 
   load_station_vllm_conflict_helpers
   if consume_station_local_vllm_resume; then
