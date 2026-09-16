@@ -157,6 +157,40 @@ try {
     # the bounded no-error detach once the attach script has run.
     $imageAttached=$true
     if($attachStatus -ne 0){throw 'The preauthorized runtime image could not be attached read-only.'}
+    # DiskPart materializes the host directory as a mount-point reparse record.
+    # Apply the same package-read DACL at that final boundary; applying it to
+    # the empty directory before assignment does not prove the retained mount.
+    $mountSecurity=[Security.AccessControl.DirectorySecurity]::new()
+    $mountSecurity.SetAccessRuleProtection($true,$false)
+    $administrators=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+    $mountSecurity.SetOwner($administrators)
+    $inherit=[Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach($entry in @(
+        @{sid='S-1-5-18';rights=[Security.AccessControl.FileSystemRights]::FullControl},
+        @{sid='S-1-5-32-544';rights=[Security.AccessControl.FileSystemRights]::FullControl},
+        @{sid='S-1-5-11';rights=[Security.AccessControl.FileSystemRights]::ReadAndExecute},
+        @{sid='S-1-15-2-1';rights=[Security.AccessControl.FileSystemRights]::ReadAndExecute},
+        @{sid='S-1-15-2-2';rights=[Security.AccessControl.FileSystemRights]::ReadAndExecute}
+    )){
+        $principal=[Security.Principal.SecurityIdentifier]::new($entry.sid)
+        $rule=[Security.AccessControl.FileSystemAccessRule]::new($principal,$entry.rights,$inherit,
+            [Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
+        $mountSecurity.AddAccessRule($rule)|Out-Null
+    }
+    Set-Acl -LiteralPath $imageMount -AclObject $mountSecurity
+    $mountPointAcl=Get-Acl -LiteralPath $imageMount
+    $mountPointRows=@($mountPointAcl.Access|ForEach-Object{
+        $identity=$_.IdentityReference
+        $sid=if($identity.Value -ceq 'APPLICATION PACKAGE AUTHORITY\ALL APPLICATION PACKAGES'){'S-1-15-2-1'}
+        elseif($identity.Value -ceq 'APPLICATION PACKAGE AUTHORITY\ALL RESTRICTED APPLICATION PACKAGES'){'S-1-15-2-2'}
+        elseif($identity -is [Security.Principal.SecurityIdentifier]){$identity.Value}else{
+            try{$identity.Translate([Security.Principal.SecurityIdentifier]).Value}catch{$identity.Value}
+        }
+        $mask=[uint32]([int64]([int32]$_.FileSystemRights) -band 0xffffffffL)
+        [pscustomobject]@{sid=$sid;mask=$mask;inherited=$_.IsInherited;
+            inheritanceFlags=[string]$_.InheritanceFlags;propagationFlags=[string]$_.PropagationFlags;
+            accessControlType=[string]$_.AccessControlType}
+    })
     $preauthorized=Join-Path $imageMount 'workers'
     $preauthorizedAcl=Get-Acl -LiteralPath $preauthorized
     $preauthorizedRows=@($preauthorizedAcl.Access|ForEach-Object{
@@ -173,6 +207,7 @@ try {
     })
     $requiredReadMask=[uint32]0x001200a9
     $receipt.preauthorizedRuntime=[ordered]@{imageReceipt=(Get-Content -LiteralPath $imageReceipt -Raw|ConvertFrom-Json);
+        mountPointSddl=$mountPointAcl.Sddl;mountPointAccess=$mountPointRows;
         workersSddl=$preauthorizedAcl.Sddl;workersAccess=$preauthorizedRows;readMask=$requiredReadMask;readOnlyAttachment=$true}
     foreach($sid in @('S-1-15-2-1','S-1-15-2-2')){
         $matches=@($preauthorizedRows|Where-Object{$_.sid -ceq $sid -and $_.accessControlType -ceq 'Allow' -and

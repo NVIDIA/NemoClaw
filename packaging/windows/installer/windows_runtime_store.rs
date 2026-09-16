@@ -168,9 +168,10 @@ impl Drop for VirtualDisk {
     }
 }
 
-fn open_mount_point(path: &Path, access: u32) -> Result<Handle, Error> {
+fn open_mount_point(path: &Path, access: u32, mounted: bool) -> Result<Handle, Error> {
     const DIRECTORY: u32 = 0x10;
     const REPARSE: u32 = 0x400;
+    const MOUNT_POINT_TAG: u32 = 0xa000_0003;
     const INVALID: isize = -1;
     let path = path
         .as_os_str()
@@ -206,7 +207,11 @@ fn open_mount_point(path: &Path, access: u32) -> Result<Handle, Error> {
         )
     } == 0
         || tag.attributes & DIRECTORY == 0
-        || tag.attributes & REPARSE != 0
+        || if mounted {
+            tag.attributes & REPARSE == 0 || tag.tag != MOUNT_POINT_TAG
+        } else {
+            tag.attributes & REPARSE != 0
+        }
     {
         LAST_NATIVE_STATUS.store(unsafe { GetLastError() }, Ordering::Relaxed);
         return Err(Error::Native("runtime-image-mount-kind"));
@@ -214,10 +219,10 @@ fn open_mount_point(path: &Path, access: u32) -> Result<Handle, Error> {
     Ok(handle)
 }
 
-fn authorize_mount_point(path: &Path) -> Result<(), Error> {
+fn authorize_mount_point(path: &Path, mounted: bool) -> Result<(), Error> {
     // The immutable volume already grants these package SIDs read/execute on
-    // its roots. Grant the same access on the host mount point before it
-    // becomes a reparse point, without making any Program Files parent public.
+    // its roots. Grant the same access on the pinned host mount point after
+    // assignment, without making any Program Files parent public.
     const SDDL: &str = concat!(
         "D:P",
         "(A;OICI;FA;;;SY)",
@@ -228,7 +233,7 @@ fn authorize_mount_point(path: &Path) -> Result<(), Error> {
     );
     // Hold the verified directory without delete sharing so the name cannot be
     // replaced between the reparse check and the named security update.
-    let _handle = open_mount_point(path, 0x0002_0000)?;
+    let _handle = open_mount_point(path, 0x0002_0000, mounted)?;
     let mut path = path
         .as_os_str()
         .encode_wide()
@@ -541,7 +546,6 @@ impl WindowsStore {
             return Ok(());
         }
         std::fs::create_dir_all(&mount).map_err(|_| Error::Native("runtime-image-mount"))?;
-        authorize_mount_point(&mount)?;
         attach_virtual_disk(&image)?;
         let image_text = image.to_str().ok_or(Error::Identity)?;
         // DiskPart's folder-mount grammar takes the empty directory path itself;
@@ -561,6 +565,11 @@ impl WindowsStore {
             ],
         )
         .inspect_err(|_| {
+            let status = LAST_NATIVE_STATUS.load(Ordering::Relaxed);
+            let _ = detach_virtual_disk(&image);
+            LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+        })?;
+        authorize_mount_point(Path::new(&mount), true).inspect_err(|_| {
             let status = LAST_NATIVE_STATUS.load(Ordering::Relaxed);
             let _ = detach_virtual_disk(&image);
             LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
@@ -1003,14 +1012,14 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir(&path).unwrap();
-        authorize_mount_point(&path).unwrap_or_else(|error| {
+        authorize_mount_point(&path, false).unwrap_or_else(|error| {
             panic!(
                 "mount authorization failed: {error:?}; Windows {}",
                 diagnostic_status()
             )
         });
         {
-            let handle = open_mount_point(&path, 0x0002_0000).unwrap();
+            let handle = open_mount_point(&path, 0x0002_0000, false).unwrap();
             let mut dacl = null_mut();
             let mut descriptor = null_mut();
             assert_eq!(

@@ -128,6 +128,8 @@ def verify_preauthorized_runtime(record):
         and set(record)
         == {
             "imageReceipt",
+            "mountPointSddl",
+            "mountPointAccess",
             "workersSddl",
             "workersAccess",
             "readMask",
@@ -135,10 +137,13 @@ def verify_preauthorized_runtime(record):
         }
         and type(record.get("workersSddl")) is str
         and bool(record["workersSddl"])
+        and type(record.get("mountPointSddl")) is str
+        and bool(record["mountPointSddl"])
         and record.get("readMask") == READ_MASK
         and record.get("readOnlyAttachment") is True,
         "The preauthorized runtime proof is incomplete or not read-only.",
     )
+    verify_acl_rows(record["mountPointAccess"], detailed=True)
     verify_acl_rows(record["workersAccess"], detailed=True)
     image = record.get("imageReceipt")
     require(

@@ -198,6 +198,8 @@ class SystemDriveProofTests(unittest.TestCase):
                     "innerFilesystemAcl": gate.IMAGE_ACL,
                     "manifestSha256": "c" * 64,
                 },
+                "mountPointSddl": workers_sddl,
+                "mountPointAccess": copy.deepcopy(detailed_access),
                 "workersSddl": workers_sddl,
                 "workersAccess": detailed_access,
                 "readMask": gate.READ_MASK,
@@ -474,6 +476,12 @@ class SystemDriveProofTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exact package read grants"):
             self.verify()
         access[-1]["mask"] += 1
+        mount_access = self.proof["preauthorizedRuntime"]["mountPointAccess"]
+        mount_access[-1]["mask"] -= 1
+        self.save()
+        with self.assertRaisesRegex(ValueError, "exact package read grants"):
+            self.verify()
+        mount_access[-1]["mask"] += 1
         image = self.proof["preauthorizedRuntime"]["imageReceipt"]
         image["mountedReadOnly"] = False
         self.save()
