@@ -168,6 +168,17 @@ function run(command: string, args: readonly string[]): string {
   return String(result.stdout).trim();
 }
 
+function readPodmanLogs(containerName: string): string {
+  const result = spawnSync("podman", ["logs", containerName], {
+    encoding: "utf-8",
+    env: process.env,
+    killSignal: "SIGKILL",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 15_000,
+  });
+  return `${String(result.stdout)}${String(result.stderr)}`.trim();
+}
+
 function probeHermesDashboardHttp(containerName: string, host: string) {
   return spawnSync(
     "podman",
@@ -200,7 +211,7 @@ function probeHermesDashboardHttp(containerName: string, host: string) {
 }
 
 async function waitForHermesDashboard(containerName: string, attempt = 0): Promise<void> {
-  const timeoutDetail = attempt < 60 ? "" : `\n${run("podman", ["logs", containerName])}`;
+  const timeoutDetail = attempt < 60 ? "" : `\n${readPodmanLogs(containerName)}`;
   assert.ok(attempt < 60, `Hermes dashboard did not become ready:${timeoutDetail}`);
   const response = probeHermesDashboardHttp(containerName, "nemoclaw0-abc123.brevlab.com");
   const ready = response.status === 0 && response.stdout.trim() === "200";
@@ -217,7 +228,7 @@ async function waitForHermesDashboard(containerName: string, attempt = 0): Promi
         },
       );
   const runningOrReady = ready || (running?.status === 0 && running.stdout.trim() === "true");
-  const exitDetail = runningOrReady ? "" : `\n${run("podman", ["logs", containerName])}`;
+  const exitDetail = runningOrReady ? "" : `\n${readPodmanLogs(containerName)}`;
   assert.equal(
     runningOrReady,
     true,
