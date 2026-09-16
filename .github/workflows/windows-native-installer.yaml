@@ -831,6 +831,22 @@ jobs:
             -NodePath "$env:RUNNER_TEMP\system-drive-inputs\node\node.exe" `
             -ArtifactDirectory "$env:RUNNER_TEMP\system-root-mxc-proof"
           if ($LASTEXITCODE -ne 0) { throw 'The Windows PowerShell 5.1 system-drive proof failed.' }
+      - name: Set up pinned proof verifier Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.1.0
+        with:
+          python-version: 3.13.13
+          architecture: arm64
+      - name: Bind the actual proof to the package verifier
+        shell: pwsh
+        run: |
+          & python packaging/windows/installer/verify-system-drive-proof.py `
+            --helper "$env:RUNNER_TEMP\host-preparation-helper\NemoClawHostPreparation.exe" `
+            --build-receipt "$env:RUNNER_TEMP\host-preparation-helper\build-receipt.json" `
+            --proof-directory "$env:RUNNER_TEMP\system-root-mxc-proof" `
+            --source-root $env:GITHUB_WORKSPACE --source-revision $env:GITHUB_SHA `
+            --node-path "$env:RUNNER_TEMP\system-drive-inputs\node\node.exe" `
+            --output "$env:RUNNER_TEMP\system-root-mxc-proof\system-drive-build-gate.json"
+          if ($LASTEXITCODE -ne 0) { throw 'The package verifier rejected the actual system-drive proof.' }
       - name: Preserve fixed-purpose preparation evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1711,8 +1727,8 @@ jobs:
             & python -m unittest discover -s "$env:GITHUB_WORKSPACE\packaging\windows\installer" -p 'test_*.py' -v 2>&1 | Tee-Object -FilePath $pythonLog
             $pythonResult = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
-          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 60 tests') {
-            throw 'The sixty MSI build and metadata controls did not all pass.'
+          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 61 tests') {
+            throw 'The sixty-one MSI build and metadata controls did not all pass.'
           }
           $log = Join-Path $output 'msi-helper-tests.log'
           try {
