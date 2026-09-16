@@ -258,7 +258,13 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
 function providerHarness(agent: (typeof AGENTS)[number]) {
   const sandboxName = agent === "langchain-deepagents-code" ? "dcode-podman" : `${agent}-podman`;
   const lifecycle = lifecycleEngine(sandboxName);
+  const captureSandboxLifecycle = vi.fn((args: readonly string[]) => {
+    const action = String(args[1]);
+    lifecycle.capture([action, CONTAINER_ID]);
+    return { status: 0, output: action };
+  });
   const bundle = createPodmanRuntimeProviderBundle({
+    captureSandboxLifecycle,
     engines: { hostDoctor: hostDoctorEngine(), sandboxLifecycle: lifecycle },
     preflight: { platform: "linux", architecture: "x64" },
   });
@@ -268,7 +274,7 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
     name: sandboxName,
     openshellDriver: "podman",
   };
-  return { entry, lifecycle, providers, sandboxName };
+  return { captureSandboxLifecycle, entry, lifecycle, providers, sandboxName };
 }
 
 function readyObserver(sandboxName: string): OpenShellSandboxObserver {
@@ -340,11 +346,11 @@ describe("managed Podman runtime provider", () => {
       }),
     ).rejects.toBe(gatewayFailure);
     expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
-    expect(
-      (runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls.some(
-        ([args]) => (args as readonly string[])[0] === "start",
-      ),
-    ).toBe(true);
+    expect(runtime.captureSandboxLifecycle).toHaveBeenCalledWith(
+      ["sandbox", "start", "-g", "nemoclaw", runtime.sandboxName],
+      expect.any(Object),
+      expect.any(Number),
+    );
   });
 
   it("executes privileged control through the lifecycle-bound Podman engine", () => {
