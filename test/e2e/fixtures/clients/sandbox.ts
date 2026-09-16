@@ -133,7 +133,7 @@ export class SandboxClient {
     options: ShellProbeRunOptions = {},
   ): Promise<boolean> {
     validateSandboxName(gatewayName);
-    const result = await this.openshell(["gateway", "info", "-g", gatewayName], {
+    const result = await this.openshell(["gateway", "info", "-g", gatewayName, "-o", "json"], {
       ...options,
       artifactName: `${options.artifactName ?? "precleanup"}-gateway-info`,
     });
@@ -145,11 +145,15 @@ export class SandboxClient {
       .shift()
       ?.replace(/^Error:\s*/u, "")
       .replace(/^×\s*/u, "");
-    const missing = diagnostic === `Unknown gateway '${gatewayName}'.`;
-    const guidanceOnly = lines.every(
-      (line) =>
-        line === `│ Register it first: openshell gateway add <endpoint> --name ${gatewayName}` ||
-        line === "│ Or list available gateways: openshell gateway select",
+    // Pinned OpenShell gateway info maps an unresolved explicit -g lookup to
+    // this diagnostic; other commands' generic absence messages are not evidence here.
+    const notConfigured = diagnostic === "No gateway configured.";
+    const missing = diagnostic === `Unknown gateway '${gatewayName}'.` || notConfigured;
+    const guidanceOnly = lines.every((line) =>
+      notConfigured
+        ? line === "│ Register a gateway with: openshell gateway add <endpoint>"
+        : line === `│ Register it first: openshell gateway add <endpoint> --name ${gatewayName}` ||
+          line === "│ Or list available gateways: openshell gateway select",
     );
     if (
       result.exitCode === 1 &&
@@ -161,14 +165,17 @@ export class SandboxClient {
     )
       return false;
     assertExitZero(result, `inspect initial cleanup gateway ${gatewayName}`);
-    const declarations = [...result.stdout.matchAll(/^\s*Gateway:\s+(.+?)\s*$/gmu)];
+    const info: unknown = JSON.parse(result.stdout);
     if (
       result.timedOut ||
       result.signal !== null ||
       result.stderr.trim() !== "" ||
-      /^\s*Error:/mu.test(result.stdout) ||
-      declarations.length !== 1 ||
-      declarations[0][1] !== gatewayName
+      !info ||
+      typeof info !== "object" ||
+      Array.isArray(info) ||
+      !("gateway" in info) ||
+      info.gateway !== gatewayName ||
+      "error" in info
     ) {
       throw new Error(`Initial cleanup could not verify gateway ${gatewayName}`);
     }

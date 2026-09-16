@@ -145,18 +145,19 @@ function startProgressActivity(progress: AgentTurnProgress | undefined, label: s
   };
 }
 
-async function runCleanupStep(
+async function runCleanupStep<T>(
   label: string,
-  run: () => Promise<unknown>,
+  run: () => Promise<T>,
   progress?: AgentTurnProgress,
   acceptNonzero?: (value: unknown) => boolean,
-): Promise<void> {
+): Promise<T> {
   emitProgressEvent(progress, `${label} started`);
   const finishActivity = startProgressActivity(progress, `cleanup: ${label}`);
   try {
     const result = await run();
     requireCleanupSuccess(label, result, acceptNonzero);
     emitProgressEvent(progress, `${label} passed`);
+    return result;
   } catch (error) {
     emitProgressEvent(progress, `${label} failed`);
     if (error instanceof Error && error.message.startsWith("cleanup failed (")) throw error;
@@ -366,9 +367,14 @@ export async function cleanupTurnSandboxes(
   progress?: AgentTurnProgress,
 ): Promise<void> {
   const cleanupEnv = env(OPENCLAW_SANDBOX, "openclaw", inference);
-  const gatewayPresent = await sandbox.hasGatewayForInitialCleanup(
-    cleanupEnv.OPENSHELL_GATEWAY ?? "nemoclaw",
-    { env: cleanupEnv, timeoutMs: 60_000 },
+  const gatewayPresent = await runCleanupStep(
+    "inspect OpenShell gateway",
+    () =>
+      sandbox.hasGatewayForInitialCleanup(cleanupEnv.OPENSHELL_GATEWAY ?? "nemoclaw", {
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    progress,
   );
   for (const [name, agent] of [
     [OPENCLAW_SANDBOX, "openclaw"],

@@ -798,12 +798,12 @@ describe("E2E fixture clients", () => {
 
   it("initial cleanup verifies the requested gateway before deleting a sandbox", async () => {
     const runner = new FakeRunner();
-    runner.enqueue({ stdout: "Gateway: nemoclaw\nStatus: Connected\n" });
+    runner.enqueue({ stdout: JSON.stringify({ gateway: "nemoclaw", status: "healthy" }) });
     const sandbox = new SandboxClient(runner);
     const options = { env: { OPENSHELL_GATEWAY: "nemoclaw" }, timeoutMs: 60000 };
     await sandbox.cleanupSandboxBeforeOnboard("assistant", options);
     expect(runner.calls.map(({ args }) => args)).toEqual([
-      ["gateway", "info", "-g", "nemoclaw"],
+      ["gateway", "info", "-g", "nemoclaw", "-o", "json"],
       ["sandbox", "delete", "assistant"],
     ]);
     expect(runner.calls[0].options).toMatchObject(options);
@@ -821,19 +821,41 @@ describe("E2E fixture clients", () => {
     expect(runner.calls).toHaveLength(1);
   });
 
+  it("initial cleanup accepts the pinned gateway-info no-configuration result", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({
+      exitCode: 1,
+      stderr:
+        "Error:   × No gateway configured.\n  │ Register a gateway with: openshell gateway add <endpoint>",
+    });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).resolves.toBeUndefined();
+    expect(runner.calls.map(({ args }) => args)).toEqual([
+      ["gateway", "info", "-g", "nemoclaw", "-o", "json"],
+    ]);
+  });
+
   it.each([
     { exitCode: 1, stderr: "permission denied" },
     { exitCode: 1, stderr: "connection refused" },
     { exitCode: 1, stderr: "No active gateway." },
+    { exitCode: 1, stderr: "No gateway configured.\npermission denied" },
+    { exitCode: 1, stderr: "No gateway configured.", timedOut: true },
+    { exitCode: 1, stderr: "No gateway configured.", stdout: "unexpected output" },
     { exitCode: 1, stderr: "Unknown gateway 'other'." },
     { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.\npermission denied" },
     { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.", stdout: "unexpected output" },
     { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'.", timedOut: true },
     { exitCode: null, stderr: "Unknown gateway 'nemoclaw'.", signal: "SIGTERM" as const },
-    { exitCode: 0, stdout: "Gateway: other" },
-    { exitCode: 0, stdout: "Gateway: nemoclaw\nGateway: other" },
-    { exitCode: 0, stdout: "Gateway: nemoclaw\nError: connection refused" },
-    { exitCode: 0, stdout: "Gateway: nemoclaw", stderr: "permission denied" },
+    { exitCode: 0, stdout: '{"gateway":"other"}' },
+    { exitCode: 0, stdout: '[{"gateway":"nemoclaw"}]' },
+    { exitCode: 0, stdout: '{"gateway":"nemoclaw","error":"connection refused"}' },
+    { exitCode: 0, stdout: '{"gateway":"nemoclaw"}', stderr: "permission denied" },
+    { exitCode: 0, stdout: '{"gateway":"nemoclaw"}', timedOut: true },
+    { exitCode: 0, stdout: '{"gateway":"nemoclaw"}', signal: "SIGTERM" as const },
+    { exitCode: 0, stdout: "null" },
+    { exitCode: 0, stdout: "{}" },
+    { exitCode: 0, stdout: "Gateway: nemoclaw" },
     { exitCode: 0, stdout: "" },
   ])("initial cleanup rejects an unverified gateway observation: %j", async (response) => {
     const runner = new FakeRunner();
@@ -845,7 +867,7 @@ describe("E2E fixture clients", () => {
 
   it("initial cleanup retains deletion failures for a verified gateway", async () => {
     const runner = new FakeRunner();
-    runner.enqueue({ stdout: "Gateway: nemoclaw\n" });
+    runner.enqueue({ stdout: '{"gateway":"nemoclaw"}' });
     runner.enqueue({ exitCode: 1, stderr: "permission denied" });
     const sandbox = new SandboxClient(runner);
     await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).rejects.toThrow(
