@@ -88,7 +88,7 @@ async function finalizeMigration(
       isDeploymentHealthy: () => true,
       reportDeploymentReadiness: () => undefined,
       verifyWebSearchInsideSandbox: async () => true,
-      printDashboard: () => undefined,
+      printDashboard: async () => undefined,
       error: () => undefined,
       log: () => undefined,
     },

@@ -3,10 +3,7 @@
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import {
-  cleanupWhenCommandAvailable,
-  cleanupWhenOpenShellAvailable,
-} from "../fixtures/cleanup-resources.ts";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import {
   assertExitZero as expectExitZero,
   resultText,
@@ -87,14 +84,6 @@ export async function precleanSandbox(
   prefix: string,
 ): Promise<void> {
   await runSecondaryCleanup(() =>
-    host.command("node", [CLI, sandboxName, "destroy", "--yes"], {
-      artifactName: `${prefix}-nemoclaw-destroy`,
-      env,
-      redactionValues: redactions,
-      timeoutMs: 15 * 60_000,
-    }),
-  );
-  await runSecondaryCleanup(() =>
     host.command(host.openshellCommandPath, ["sandbox", "delete", sandboxName], {
       artifactName: `${prefix}-openshell-sandbox-delete`,
       env,
@@ -131,12 +120,6 @@ export function trackSandboxCleanup(
       timeoutMs: 120_000,
     }),
   );
-  cleanup.trackSandbox(host, sandboxName, {
-    artifactName: `${prefix}-nemoclaw-destroy`,
-    env,
-    redactionValues: redactions,
-    timeoutMs: 15 * 60_000,
-  });
 }
 
 export function trackPreinstallSandboxCleanup(
@@ -165,40 +148,6 @@ export function trackPreinstallSandboxCleanup(
       },
       () => sandbox.cleanupSandbox(sandboxName, openshellOptions),
     ),
-  );
-  const nemoclawOptions = {
-    artifactName: `${prefix}-nemoclaw-destroy`,
-    env,
-    redactionValues: redactions,
-    timeoutMs: 15 * 60_000,
-  };
-  cleanup.trackSandbox(
-    {
-      cleanupSandbox: (name: string) =>
-        cleanupWhenCommandAvailable(
-          host,
-          host.commandPath,
-          {
-            artifactName: `${prefix}-probe-nemoclaw-destroy`,
-            env,
-            redactionValues: redactions,
-            timeoutMs: 30_000,
-          },
-          () =>
-            cleanupWhenOpenShellAvailable(
-              host,
-              {
-                artifactName: `${prefix}-probe-openshell-nemoclaw-destroy`,
-                env,
-                redactionValues: redactions,
-                timeoutMs: 30_000,
-              },
-              () => host.cleanupSandbox(name, nemoclawOptions),
-            ),
-        ),
-    },
-    sandboxName,
-    nemoclawOptions,
   );
 }
 

@@ -14,6 +14,7 @@ import {
   isSafeCredentialPlaceholder,
   isSensitiveFile,
   redactCredentialText,
+  replaceUrlTokens,
   sanitizeEnvFileContent,
   SECRET_BLOCK_PATTERNS,
   SECRET_PATTERNS,
@@ -39,6 +40,33 @@ describe("shared credential filter", () => {
     ["malformed authority", "https://operator:secret@[not-an-ip/path"],
   ])("matches the complete %s URL token", (_case, value) => {
     expect(value.match(new RegExp(URL_TOKEN_PATTERN_SOURCE, "giu"))).toEqual([value]);
+  });
+
+  it.each([
+    "no URL here",
+    "123+.-https://operator:secret@example.test/path",
+    "https://example.test/a custom+scheme://operator:secret@example.test/b",
+    ":// https://example.test/path",
+    "https://' https://operator:secret@example.test/path",
+    "https://operator:secret'fragment@example.test/path",
+    "https://example.test/nested://value",
+  ])("preserves URL token boundaries in %s", (value) => {
+    const replace = (token: string): string => `[${token}]`;
+    expect(replaceUrlTokens(value, replace)).toBe(
+      value.replace(new RegExp(URL_TOKEN_PATTERN_SOURCE, "giu"), replace),
+    );
+  });
+
+  it("redacts URLs after long non-URL diagnostics without rescanning each suffix", () => {
+    const prefix = "a".repeat(65_000);
+    const value = `${prefix} https://operator:fixture-secret@example.test/path`;
+    const started = performance.now();
+
+    const result = redactCredentialText(value);
+
+    expect(result).not.toContain("fixture-secret");
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("preserves the ConfigValue return contract (#8291)", () => {

@@ -918,7 +918,7 @@ function validateCredentialWindowJob(
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
     E2E_OBSERVABLE_OUTCOME:
-      "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs",
+      "Stable-handle refresh, revocation, detach, re-add, and valid rebuild preserve authorization epochs; expired inference credentials block rebuild before source deletion",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
       "Ubuntu managed runtime host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,

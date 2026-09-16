@@ -49,9 +49,10 @@ export function expectSuccessfulLiveDestroy(harness: DestroyHarness, exitSpy: Mo
   expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
     "alpha",
     "nemoclaw-19080",
-    harness.runOpenshellSpy,
+    expect.objectContaining({ selectGateway: expect.any(Function) }),
+    undefined,
   );
-  expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080"]);
+  expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080", "nemoclaw-19080"]);
   expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
     ["sandbox", "list", "-o", "json"],
     expect.objectContaining({ ignoreError: true }),
@@ -59,7 +60,7 @@ export function expectSuccessfulLiveDestroy(harness: DestroyHarness, exitSpy: Mo
   expect(harness.stopNimByNameSpy).toHaveBeenCalledWith("alpha-nim");
   expect(harness.killStaleProxySpy).toHaveBeenCalledTimes(1);
   expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-    ["sandbox", "delete", "alpha"],
+    ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
     expect.objectContaining({ ignoreError: true }),
   );
   expect(harness.unloadOllamaModelsSpy).toHaveBeenCalledTimes(1);
@@ -76,7 +77,7 @@ export function expectFailedDeletePreservesHostState(
   exitSpy: MockInstance,
 ): void {
   expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-    ["sandbox", "delete", "alpha"],
+    ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
     expect.objectContaining({ ignoreError: true }),
   );
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
