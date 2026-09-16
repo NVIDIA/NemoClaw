@@ -7,6 +7,80 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn interrupted_create_requires_original_intent_and_destroy_allows_recreation() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    fixture.state.lock().unwrap().lose_create = true;
+    assert!(deployment.apply(&document, &cancel).await.is_err());
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
+    assert_eq!(record["pending"], true);
+    let mut changed = document.clone();
+    changed.spec.sandboxes[0].agents[0]
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model = "changed".into();
+    let error = deployment.apply(&changed, &cancel).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unfinished apply has different intent"),
+        "{error}"
+    );
+    deployment.apply(&document, &cancel).await.unwrap();
+    let effects = fixture.state.lock().unwrap().effects;
+    assert_eq!(effects, 4);
+    let preview = deployment.plan_destroy(&cancel).await.unwrap();
+    assert_eq!(preview.changes.len(), 3);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    let destroyed = Command::new(
+        bundle
+            .join("bin")
+            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+    )
+    .args(["destroy", "--state-dir"])
+    .arg(directory.path())
+    .output()
+    .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+
+    assert!(
+        deployment
+            .destroy(&cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert_eq!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .len(),
+        3
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
     lifecycle(include_str!(
         "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
@@ -206,20 +280,6 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     let planning = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(planning.outcome, Outcome::Planned);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
-    fixture.state.lock().unwrap().lose_create = true;
-    assert!(deployment.apply(&document, &cancel).await.is_err());
-    let record: serde_json::Value =
-        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
-    assert_eq!(record["pending"], true);
-    let mut changed = document.clone();
-    changed.spec.sandboxes[0].agents[0]
-        .inference
-        .as_mut()
-        .unwrap()
-        .routes[0]
-        .overrides
-        .model = "changed".into();
-    assert!(deployment.apply(&changed, &cancel).await.is_err());
     let applied = deployment.apply(&document, &cancel).await;
     assert!(applied.is_ok(), "{applied:?}");
     let effects = fixture.state.lock().unwrap().effects;
@@ -489,9 +549,6 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .unwrap()
             .policy = original;
     }
-    let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), if has_search { 5 } else { 3 });
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
             .join("bin")
@@ -506,24 +563,11 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         "{}",
         String::from_utf8_lossy(&destroyed.stderr)
     );
-    assert!(
-        deployment
-            .destroy(&cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
-    );
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
-    assert_eq!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .len(),
-        if has_search { 5 } else { 3 }
-    );
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.workspaces.len(), 1);
+    assert!(state.sandboxes.is_empty());
+    assert!(state.providers.is_empty());
+    assert!(state.profiles.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
