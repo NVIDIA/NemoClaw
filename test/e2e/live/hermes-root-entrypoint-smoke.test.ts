@@ -369,6 +369,8 @@ async function runCleanVariant(
     [
       "run",
       "-d",
+      "--user",
+      "root",
       "--name",
       container,
       "--env",
@@ -418,10 +420,10 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
     [
       "run",
       "-d",
-      "--name",
-      container,
       "--user",
       "root",
+      "--name",
+      container,
       "--entrypoint",
       "/bin/bash",
       image,
@@ -464,10 +466,10 @@ exec ${entrypoint} >/tmp/nemoclaw-refusal.log 2>&1`;
   const result = await probe.run(
     [
       "run",
-      "--name",
-      container,
       "--user",
       "root",
+      "--name",
+      container,
       "--entrypoint",
       "/bin/bash",
       image,
