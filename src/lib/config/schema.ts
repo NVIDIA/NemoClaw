@@ -165,7 +165,9 @@ function isPrimaryWithReadOnlyRoster(agents: readonly NemoClawAgentConfig[]): bo
         agent.type === "openclaw" &&
         hasReadOnlyTools(agent) &&
         isValidNemoClawSecondaryAgentName(agent.name) &&
-        agent.execution === undefined,
+        agent.execution === undefined &&
+        agent.interfaces === undefined &&
+        agent.observability === undefined,
     )
   );
 }

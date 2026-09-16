@@ -276,7 +276,7 @@ For hosted OpenClaw inference, the export preserves nondefault managed context-w
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
 For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one or more secondary agents in runtime order.
 Each secondary agent has a unique name, shares the primary hosted route, and uses only `tools.allow: [read]`.
-The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution settings, a primary-agent override, or a default subagent setting.
+The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution, interfaces, observability, a primary-agent override, or a default subagent setting.
 For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.

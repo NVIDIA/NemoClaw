@@ -185,6 +185,27 @@ describe("NemoClawConfig v1", () => {
         Object.assign(secondary, { execution: { timeoutSeconds: 1 } });
       },
     },
+    {
+      field: "interfaces",
+      mutate: ({ secondary }) => {
+        Object.assign(secondary, { interfaces: { dashboard: { port: 19000 } } });
+      },
+    },
+    {
+      field: "observability",
+      mutate: ({ secondary }) => {
+        Object.assign(secondary, {
+          observability: {
+            otlp: {
+              enabled: true,
+              endpoint: "http://host.openshell.internal:4318",
+              serviceName: "researcher",
+              sampleRate: 0.5,
+            },
+          },
+        });
+      },
+    },
   ])("rejects secondary configuration with incompatible $field (#11434)", ({ mutate }) => {
     const context = twoAgentConfig();
     mutate(context);
