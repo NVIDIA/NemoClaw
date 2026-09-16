@@ -18,7 +18,16 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     )
     .unwrap();
     document.spec.gateway.endpoint = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    struct Keys;
+    impl nemoclaw_sdk::openshell::Secrets for Keys {
+        fn resolve(&self, _: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            Ok("owned-fixture-credential".into())
+        }
+    }
+    document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
+    document.spec.inference_providers[0].credential =
+        Some(serde_json::from_value(serde_json::json!({"env":"FIRST_KEY"})).unwrap());
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(Keys)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -43,7 +52,18 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let mut provider = recovered.into_parts().0.unwrap();
     let id = provider["id"].clone();
-    provider.insert("endpoint".into(), "https://changed.example/v1".into());
+    let mut changed_endpoint = provider.clone();
+    changed_endpoint.insert("endpoint".into(), "https://changed.example/v1".into());
+    let effects = fixture.state.lock().unwrap().effects;
+    assert!(
+        client
+            .ensure("provider", &changed_endpoint)
+            .await
+            .error()
+            .is_some()
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    provider.insert("credential_env".into(), "SECOND_KEY".into());
     let updated = client.ensure("provider", &provider).await;
     assert!(updated.error().is_none());
     assert_eq!(updated.into_parts().0.unwrap()["id"], id);

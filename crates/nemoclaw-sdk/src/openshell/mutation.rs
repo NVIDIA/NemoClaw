@@ -45,6 +45,24 @@ impl OpenShell {
         } else {
             None
         };
+        if let Some(profile) = &profile {
+            let bound = self
+                .observe_profile(value(want, "workspace"), &profile.id)
+                .await?
+                .ok_or(ObservationError::BindingMismatch)?;
+            if ["owner", "generation", "endpoint", "provider_type"]
+                .iter()
+                .any(|key| value(&bound, key) != value(want, key))
+                || value(&bound, "authenticated")
+                    != if profile.credentials.is_empty() {
+                        "false"
+                    } else {
+                        "true"
+                    }
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
+        }
         let credential = if !source.is_empty() {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);
