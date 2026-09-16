@@ -386,6 +386,34 @@ describe("Docker managed-bootstrap GPU probe diagnostics", () => {
 });
 
 describe("Docker managed-bootstrap GPU probe image", () => {
+  it("pulls an uncached Jetson image before bounded GPU mode probes (#11677)", async () => {
+    const { dependencies, dockerRun } = gpuModeDependencies();
+    const seed = authority("openclaw");
+    const originalInput = compatibilityLifecycleInput(seed, dependencies);
+    const input = {
+      ...originalInput,
+      sandboxGpuConfig: { ...originalInput.sandboxGpuConfig, hostGpuPlatform: "jetson" as const },
+    };
+    const sandboxImage = `${input.image.repository}@${input.image.manifestDigest}`;
+    dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerRun.mockImplementation(() => {
+      // A cold image cannot finish its implicit pull within the short GPU probe.
+      expect(dockerAdapterMocks.pullWithProgressWatchdog).toHaveBeenCalledOnce();
+      return { status: 0, stdout: "probe-id" };
+    });
+
+    await runCompatibilityCreate(input, seed);
+
+    expect(dockerAdapterMocks.pullWithProgressWatchdog).toHaveBeenCalledWith(
+      sandboxImage,
+      expect.objectContaining({ maxTimeoutMs: 30 * 60 * 1000 }),
+    );
+    expect(dockerRun.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["--runtime", "nvidia", "--pull", "never"]),
+    );
+    expect(dockerRun.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 30_000 }));
+  });
+
   it("pulls an uncached WSL sandbox image before bounded GPU mode probes", async () => {
     const { dependencies, dockerRun } = gpuModeDependencies();
     const seed = authority("openclaw");
@@ -473,21 +501,31 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     );
   });
 
-  it("skips the pull when the exact WSL sandbox image is already local", async () => {
-    const { dependencies, dockerRun } = gpuModeDependencies();
-    const seed = authority("openclaw");
-    const input = compatibilityLifecycleInput(seed, dependencies);
-    const sandboxImage = `${input.image.repository}@${input.image.manifestDigest}`;
-    sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
+  it.each([
+    ["WSL", true, "n1x"],
+    ["Jetson", false, "jetson"],
+  ] as const)(
+    "skips the pull when the exact %s sandbox image is already local",
+    async (_host, wsl, platform) => {
+      const { dependencies, dockerRun } = gpuModeDependencies();
+      const seed = authority("openclaw");
+      const originalInput = compatibilityLifecycleInput(seed, dependencies);
+      const input = {
+        ...originalInput,
+        sandboxGpuConfig: { ...originalInput.sandboxGpuConfig, hostGpuPlatform: platform },
+      };
+      const sandboxImage = `${input.image.repository}@${input.image.manifestDigest}`;
+      sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(wsl);
 
-    await runCompatibilityCreate(input, seed);
+      await runCompatibilityCreate(input, seed);
 
-    expect(dockerAdapterMocks.imageInspect).toHaveBeenCalledOnce();
-    expect(dockerAdapterMocks.pullWithProgressWatchdog).not.toHaveBeenCalled();
-    const probeArgs = dockerRun.mock.calls[0]?.[0] ?? [];
-    expect(probeArgs).toEqual(expect.arrayContaining(["--pull", "never"]));
-    expect(probeArgs.slice(-2)).toEqual([sandboxImage, "true"]);
-  });
+      expect(dockerAdapterMocks.imageInspect).toHaveBeenCalledOnce();
+      expect(dockerAdapterMocks.pullWithProgressWatchdog).not.toHaveBeenCalled();
+      const probeArgs = dockerRun.mock.calls[0]?.[0] ?? [];
+      expect(probeArgs).toEqual(expect.arrayContaining(["--pull", "never"]));
+      expect(probeArgs.slice(-2)).toEqual([sandboxImage, "true"]);
+    },
+  );
 
   it("retains implicit pull behaviour on other Docker hosts", async () => {
     const { dependencies, dockerRun } = gpuModeDependencies();
@@ -505,29 +543,39 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     expect(probeArgs).not.toContain("--pull");
   });
 
-  it("stops before GPU mode probing when the WSL image pull exceeds its limit", async () => {
-    const { dependencies, dockerRun } = gpuModeDependencies();
-    const seed = authority("openclaw");
-    const input = compatibilityLifecycleInput(seed, dependencies);
-    sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
-    dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
-    dockerAdapterMocks.pullWithProgressWatchdog.mockResolvedValue({
-      status: 124,
-      signal: "SIGTERM",
-      output: "pull stopped",
-      timedOut: true,
-      timeoutKind: "max",
-    });
-    const lifecycle = createDockerManagedBootstrapSurface().createLifecycle(input);
+  it.each([
+    ["WSL", true, "n1x"],
+    ["Jetson", false, "jetson"],
+  ] as const)(
+    "stops before GPU mode probing when the %s image pull exceeds its limit",
+    async (_host, wsl, platform) => {
+      const { dependencies, dockerRun } = gpuModeDependencies();
+      const seed = authority("openclaw");
+      const originalInput = compatibilityLifecycleInput(seed, dependencies);
+      const input = {
+        ...originalInput,
+        sandboxGpuConfig: { ...originalInput.sandboxGpuConfig, hostGpuPlatform: platform },
+      };
+      sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(wsl);
+      dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
+      dockerAdapterMocks.pullWithProgressWatchdog.mockResolvedValue({
+        status: 124,
+        signal: "SIGTERM",
+        output: "pull stopped",
+        timedOut: true,
+        timeoutKind: "max",
+      });
+      const lifecycle = createDockerManagedBootstrapSurface().createLifecycle(input);
 
-    await expect(
-      lifecycle.runCreate(async () => ({ value: "created", receipt: seed.handle.createReceipt })),
-    ).rejects.toThrow(
-      "Docker managed sandbox image pull failed before GPU mode selection: exceeded the 30-minute safety limit.",
-    );
-    expect(dockerRun).not.toHaveBeenCalled();
-    expect(adapterMocks.prepare).not.toHaveBeenCalled();
-  });
+      await expect(
+        lifecycle.runCreate(async () => ({ value: "created", receipt: seed.handle.createReceipt })),
+      ).rejects.toThrow(
+        "Docker managed sandbox image pull failed before GPU mode selection: exceeded the 30-minute safety limit.",
+      );
+      expect(dockerRun).not.toHaveBeenCalled();
+      expect(adapterMocks.prepare).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     {

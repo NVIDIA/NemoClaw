@@ -167,7 +167,7 @@ function selectedDockerMode(
         device: input.sandboxGpuConfig.sandboxGpuDevice,
         backend,
         dockerDesktopWsl,
-        ...(dockerDesktopWsl ? { pullPolicy: "never" as const } : {}),
+        ...(dockerDesktopWsl || backend === "jetson" ? { pullPolicy: "never" as const } : {}),
       },
       withDockerClientEnvDeps(input.dependencies as DockerGpuPatchDeps, prepared),
     );
@@ -248,8 +248,13 @@ function createDockerLifecycle(
   }
   const dockerDesktopWsl =
     input.route === "compatibility" ? isDockerDesktopWslRuntime() : undefined;
-  const preselectedMode = dockerDesktopWsl ? null : selectedDockerMode(input, dockerDesktopWsl);
   const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
+  const prepareGpuProbeImage =
+    input.route === "compatibility" &&
+    input.sandboxGpuConfig.sandboxGpuEnabled &&
+    (dockerDesktopWsl || backend === "jetson");
+  // Cold image downloads must not consume the bounded GPU-mode probe timeout.
+  const preselectedMode = prepareGpuProbeImage ? null : selectedDockerMode(input, dockerDesktopWsl);
   const persistStartupCommand =
     input.persistStartupCommand && (input.route !== "native" || input.requiredLimits.length > 0);
   const commandExecutor = input.dependencies.commandExecutor;
@@ -350,11 +355,7 @@ function createDockerLifecycle(
         readonly bootstrapIdentity: string;
       }) => Promise<ManagedBootstrapRuntimeCreateLaunchResult<T>>,
     ): Promise<T> {
-      if (
-        dockerDesktopWsl &&
-        input.route === "compatibility" &&
-        input.sandboxGpuConfig.sandboxGpuEnabled
-      ) {
+      if (prepareGpuProbeImage) {
         await prepareDockerManagedBootstrapGpuProbeImage(
           managedBootstrapImageReference(input),
           input.dockerClientEnv,
