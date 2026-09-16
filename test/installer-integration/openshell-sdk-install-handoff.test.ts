@@ -18,6 +18,38 @@ const PUBLIC_DEPENDENCIES = [
   "@connectrpc/connect-node",
 ];
 
+function packPublicDependency(
+  name: string,
+  root: string,
+  npmEnvironment: NodeJS.ProcessEnv,
+  sourceLock: { packages: Record<string, unknown> },
+): [string, unknown] {
+  const packed = spawnSync(
+    "npm",
+    [
+      "pack",
+      path.join(REPOSITORY_ROOT, "node_modules", name),
+      "--ignore-scripts",
+      "--json",
+      "--pack-destination",
+      root,
+    ],
+    { encoding: "utf8", env: npmEnvironment },
+  );
+  expect(packed.status, packed.stderr).toBe(0);
+  const result = parseSingleNpmPackResult(packed.stdout);
+  expect(result.filename).toBeTruthy();
+  expect(result.integrity).toBeTruthy();
+  return [
+    `node_modules/${name}`,
+    {
+      ...sourceLock.packages[`node_modules/${name}`],
+      resolved: `file:${path.join(root, result.filename!)}`,
+      integrity: result.integrity,
+    },
+  ];
+}
+
 it(
   "source installer prepares and loads the vendored OpenShell SDK before build (#11921)",
   { timeout: 120_000 },
@@ -71,29 +103,14 @@ it(
       "": manifest,
       [`node_modules/${SDK_NAME}`]: sourceLock.packages[`node_modules/${SDK_NAME}`],
     };
-    for (const name of PUBLIC_DEPENDENCIES) {
-      const packed = spawnSync(
-        "npm",
-        [
-          "pack",
-          path.join(REPOSITORY_ROOT, "node_modules", name),
-          "--ignore-scripts",
-          "--json",
-          "--pack-destination",
-          root,
-        ],
-        { encoding: "utf8", env: npmEnvironment },
-      );
-      expect(packed.status, packed.stderr).toBe(0);
-      const result = parseSingleNpmPackResult(packed.stdout);
-      expect(result.filename).toBeTruthy();
-      expect(result.integrity).toBeTruthy();
-      packages[`node_modules/${name}`] = {
-        ...sourceLock.packages[`node_modules/${name}`],
-        resolved: `file:${path.join(root, result.filename!)}`,
-        integrity: result.integrity,
-      };
-    }
+    Object.assign(
+      packages,
+      Object.fromEntries([
+        packPublicDependency(PUBLIC_DEPENDENCIES[0], root, npmEnvironment, sourceLock),
+        packPublicDependency(PUBLIC_DEPENDENCIES[1], root, npmEnvironment, sourceLock),
+        packPublicDependency(PUBLIC_DEPENDENCIES[2], root, npmEnvironment, sourceLock),
+      ]),
+    );
 
     fs.mkdirSync(path.join(root, ".git"));
     fs.mkdirSync(path.join(root, "scripts", "lib"), { recursive: true });
@@ -102,16 +119,18 @@ it(
       path.join(root, "scripts", "vendor", "openshell-sdk"),
       { recursive: true },
     );
-    for (const filename of [
-      "openshell-sdk-install.mts",
-      "reviewed-npm-archive.mts",
-      "reviewed-npm-cache.mts",
-    ]) {
-      fs.copyFileSync(
-        path.join(REPOSITORY_ROOT, "scripts", "lib", filename),
-        path.join(root, "scripts", "lib", filename),
-      );
-    }
+    fs.copyFileSync(
+      path.join(REPOSITORY_ROOT, "scripts", "lib", "openshell-sdk-install.mts"),
+      path.join(root, "scripts", "lib", "openshell-sdk-install.mts"),
+    );
+    fs.copyFileSync(
+      path.join(REPOSITORY_ROOT, "scripts", "lib", "reviewed-npm-archive.mts"),
+      path.join(root, "scripts", "lib", "reviewed-npm-archive.mts"),
+    );
+    fs.copyFileSync(
+      path.join(REPOSITORY_ROOT, "scripts", "lib", "reviewed-npm-cache.mts"),
+      path.join(root, "scripts", "lib", "reviewed-npm-cache.mts"),
+    );
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
     fs.writeFileSync(
       path.join(root, "package-lock.json"),
