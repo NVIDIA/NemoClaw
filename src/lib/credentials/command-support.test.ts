@@ -60,6 +60,31 @@ describe("credential gateway recovery diagnostics", () => {
     expect(lines.join("\n")).not.toContain(canary);
   });
 
+  it("directs endpoint override recovery without exposing the endpoint", async () => {
+    const endpointOverride = failedObservation(
+      {
+        kind: "transport",
+        reason: "endpoint_override",
+        message: "http://credential-shaped-canary.invalid",
+      },
+      true,
+    );
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({
+      recovered: false,
+      attempted: false,
+      before: endpointOverride,
+      after: endpointOverride,
+    });
+    const reportFailure = vi.fn();
+
+    await expect(recoverGatewayOrExit("reach", reportFailure)).resolves.toBe(false);
+
+    const lines = reportFailure.mock.calls[0][0] as readonly string[];
+    expect(lines.join("\n")).toContain("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(lines.join("\n")).toContain("Unset or correct");
+    expect(lines.join("\n")).not.toContain("credential-shaped-canary");
+  });
+
   it("retains start guidance when the named gateway is unreachable", async () => {
     const unreachable = failedObservation(
       {

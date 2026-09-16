@@ -15,35 +15,18 @@ afterEach(() => {
 });
 
 describe("credential gateway endpoint diagnostics", () => {
-  it.each([
-    [
-      "responding non-gateway",
-      { status: 0, output: "plain HTTP responder" },
-      "did not prove the expected gateway identity",
-    ],
-    [
-      "unreachable endpoint",
-      { status: 1, output: "client error (Connect): Connection refused" },
-      "Is it running?",
-    ],
-  ])(
-    "distinguishes a %s through the production recovery path (#11414)",
-    async (_label, result, expected) => {
-      vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "http://127.0.0.1:18081");
-      const capture = vi.fn().mockResolvedValue(result);
-      gatewayRuntimeDependencies.observeGateway =
-        createCliOpenShellGatewayObserver(capture).observeGateway;
-      const reportFailure = vi.fn();
+  it("rejects an endpoint override through the production recovery path (#11414)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "http://127.0.0.1:18081");
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "plain HTTP responder" });
+    gatewayRuntimeDependencies.observeGateway =
+      createCliOpenShellGatewayObserver(capture).observeGateway;
+    const reportFailure = vi.fn();
 
-      await expect(recoverGatewayOrExit("reach", reportFailure)).resolves.toBe(false);
+    await expect(recoverGatewayOrExit("reach", reportFailure)).resolves.toBe(false);
 
-      expect(reportFailure.mock.calls[0][0].join("\n")).toContain(expected);
-      expect(capture).toHaveBeenCalledTimes(1);
-      expect(capture.mock.calls[0][0]).toEqual(["status"]);
-      expect(capture.mock.calls[0][1]).toMatchObject({
-        env: { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:18081" },
-        replaceEnv: true,
-      });
-    },
-  );
+    const output = reportFailure.mock.calls[0][0].join("\n");
+    expect(output).toContain("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(output).toContain("Unset or correct");
+    expect(capture).not.toHaveBeenCalled();
+  });
 });

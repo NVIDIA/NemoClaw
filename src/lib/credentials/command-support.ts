@@ -44,6 +44,14 @@ export function credentialsGatewayIdentityFailureLines(kind: "query" | "reach"):
   ];
 }
 
+export function credentialsGatewayEndpointOverrideFailureLines(kind: "query" | "reach"): string[] {
+  const action = kind === "query" ? "query" : "reach";
+  return [
+    `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway because OPENSHELL_GATEWAY_ENDPOINT overrides the recorded gateway selection.`,
+    `  Unset or correct OPENSHELL_GATEWAY_ENDPOINT before retrying.`,
+  ];
+}
+
 export function credentialsGatewayAuthorityFailureLines(
   error: unknown,
   operation: "mutation" | "query" = "mutation",
@@ -65,6 +73,14 @@ function hasGatewayIdentityMismatch(
   );
 }
 
+function hasGatewayEndpointOverride(
+  observation: GatewayRecovery["before"] | GatewayRecovery["after"],
+): boolean {
+  return (
+    observation?.error?.kind === "transport" && observation.error.reason === "endpoint_override"
+  );
+}
+
 export async function recoverGatewayOrExit(
   kind: "query" | "reach",
   reportFailure: (lines: readonly string[]) => void = (lines) =>
@@ -75,10 +91,14 @@ export async function recoverGatewayOrExit(
 
   const identityUnproven =
     hasGatewayIdentityMismatch(recovery.before) || hasGatewayIdentityMismatch(recovery.after);
+  const endpointOverride =
+    hasGatewayEndpointOverride(recovery.before) || hasGatewayEndpointOverride(recovery.after);
   reportFailure(
-    identityUnproven
-      ? credentialsGatewayIdentityFailureLines(kind)
-      : credentialsGatewayRecoveryFailureLines(kind),
+    endpointOverride
+      ? credentialsGatewayEndpointOverrideFailureLines(kind)
+      : identityUnproven
+        ? credentialsGatewayIdentityFailureLines(kind)
+        : credentialsGatewayRecoveryFailureLines(kind),
   );
   return false;
 }
