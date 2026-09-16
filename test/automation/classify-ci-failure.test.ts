@@ -209,6 +209,24 @@ function classifierTemporaryDirectories(prefix: "nemoclaw-ci-log." | "nemoclaw-c
 async function waitForFile(path: string): Promise<void> {
   await vi.waitFor(() => expect(existsSync(path)).toBe(true), { timeout: 2_000, interval: 10 });
 }
+/** Accept termination without requiring the host init process to reap orphaned children. */
+async function expectProcessTerminated(pid: number): Promise<void> {
+  await vi.waitFor(
+    () => {
+      let stat: string;
+      try {
+        stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      } catch (error) {
+        expect(error).toHaveProperty("code", "ENOENT");
+        return;
+      }
+      // The command name can contain spaces and closing parentheses.
+      const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
+      expect(["Z", "X"]).toContain(state);
+    },
+    { timeout: 2_000, interval: 10 },
+  );
+}
 type FakePath = {
   type: "directory" | "file" | "symlink";
   mode?: number;
@@ -1000,6 +1018,10 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(result.stdout).not.toContain(secret);
   });
 
+  test("does not accept a live process as terminated", async () => {
+    await expect(expectProcessTerminated(process.pid)).rejects.toThrow();
+  });
+
   test("retains a leader for an ignored-stdio process-group member until timeout", async () => {
     const root = mkdtempSync(join(tmpdir(), "classify-ci-timeout-"));
     roots.push(root);
@@ -1018,7 +1040,7 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(Date.now() - started).toBeGreaterThanOrEqual(200);
     expect(result.exitCode).not.toBe(0);
     expect(result.timedOut).toBe(true);
-    expect(() => process.kill(descendantPid, 0)).toThrow();
+    await expectProcessTerminated(descendantPid);
   });
 
   test("drains a process group whose command exits promptly on SIGTERM", async () => {
@@ -1051,8 +1073,8 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     );
     expect(result).toEqual({ code: 143, signal: null });
     expect(readFileSync(signals, "utf8").trim().split("\n")).toEqual(["SIGTERM"]);
-    expect(() => process.kill(wrapperPid, 0)).toThrow();
-    expect(() => process.kill(commandPid, 0)).toThrow();
+    await expectProcessTerminated(wrapperPid);
+    await expectProcessTerminated(commandPid);
     expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
     expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
   });
@@ -1147,8 +1169,8 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
           child.once("close", (code, closeSignal) => resolve({ code, signal: closeSignal })),
       );
       expect(result).toEqual({ code: exitCode, signal: null });
-      expect(() => process.kill(groupPid, 0)).toThrow();
-      expect(() => process.kill(descendantPid, 0)).toThrow();
+      await expectProcessTerminated(groupPid);
+      await expectProcessTerminated(descendantPid);
       expect(stderr.length).toBeLessThanOrEqual(2000);
       const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
       const remaining = existsSync(temporaryRoot)
