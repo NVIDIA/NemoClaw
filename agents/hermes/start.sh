@@ -2178,6 +2178,7 @@ wait_for_hermes_gateway_internal() {
   local gateway_pid="$1"
   local deadline=$((SECONDS + 90))
   local code
+  local gateway_status
   local service_user=current
   [ "$(id -u)" -eq 0 ] && service_user=gateway
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -2194,8 +2195,13 @@ wait_for_hermes_gateway_internal() {
       esac
     fi
     if ! hermes_tracked_role_is_current gateway "$gateway_pid" "$service_user" "$INTERNAL_PORT"; then
-      wait "$gateway_pid"
-      return $?
+      gateway_status=0
+      wait "$gateway_pid" || gateway_status=$?
+      echo "[gateway] Hermes gateway exited before readiness (status ${gateway_status})" >&2
+      if [ -s /tmp/gateway.log ]; then
+        sed 's/^/[gateway-log:] /' /tmp/gateway.log >&2
+      fi
+      return "$gateway_status"
     fi
     sleep 1
   done
